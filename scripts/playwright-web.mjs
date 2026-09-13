@@ -127,7 +127,11 @@ export function buildBrowserConfig(browser, paths, viewport = DEFAULT_VIEWPORT) 
 export function validateBrowserConfig(config, browser) {
   const b = config?.browser;
   if (!b || b.browserName !== browser) throw new Error(`${browser} config has the wrong browserName`);
-  validateViewport(b.contextOptions?.viewport);
+  try {
+    validateViewport(b.contextOptions?.viewport);
+  } catch (error) {
+    throw new Error(`${browser} config has invalid viewport: ${error.message}`);
+  }
   if (browser === 'chromium') {
     if (b.launchOptions?.channel !== 'chromium') throw new Error('chromium config must set launchOptions.channel to chromium');
     if (b.launchOptions?.headless !== true) throw new Error('chromium config must be headless');
