@@ -32,6 +32,11 @@ if ! declare -F megabrain_dispatch_preamble >/dev/null 2>&1; then
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-facts.sh"
 fi
 
+if ! declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1; then
+  # shellcheck source=local/megabrain/lib/module-context.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-context.sh"
+fi
+
 MEGABRAIN_DISPATCH_PROTOCOL="$(megabrain_dispatch_protocol)"
 MEGABRAIN_SUPERSET_PROTOCOL="$MEGABRAIN_DISPATCH_PROTOCOL"
 
@@ -651,6 +656,19 @@ megabrain_dispatch_meta_update_state() {
   esac
 }
 
+megabrain_dispatch_terminal_status_required() {
+  local meta="$1"
+  if ! declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1; then
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS_ERROR='terminal identity check unavailable'
+    return 1
+  fi
+  if ! megabrain_dispatch_terminal_status "$meta"; then
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS_ERROR='terminal identity check failed'
+    return 1
+  fi
+  return 0
+}
+
 megabrain_dispatch_release_terminal_process() {
   local dispatch_id="$1" meta runtime transcript_path process_state terminal_state terminal_status
   MEGABRAIN_DISPATCH_RELEASE_STATUS=not-released
@@ -670,7 +688,12 @@ megabrain_dispatch_release_terminal_process() {
   else
     # Host terminals have no persisted transcript. Their terminal identity is the
     # durable record, so only a proven identity may be closed automatically.
-    megabrain_dispatch_terminal_status "$meta"
+    if ! megabrain_dispatch_terminal_status_required "$meta"; then
+      megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+        "${MEGABRAIN_DISPATCH_TERMINAL_STATUS_ERROR}; process was not released" __keep__ || return 1
+      MEGABRAIN_DISPATCH_RELEASE_STATUS=unproven
+      return 0
+    fi
     terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
     case "$terminal_status" in
       missing)
