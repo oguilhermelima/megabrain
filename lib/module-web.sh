@@ -284,12 +284,18 @@ command_web_viewport() {
 }
 
 command_web_devices() {
-  local filter="" flag_value=""
+  local action="list" filter="" flag_value=""
   local device_args=()
-  shift || true
+  case "${1:-}" in
+    add|remove|list) action="$1"; shift || true ;;
+  esac
+  if [ "$action" = add ] || [ "$action" = remove ]; then
+    node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" "device-$action" --root "$MEGABRAIN_PLAYWRIGHT_ROOT" "$@"
+    return
+  fi
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --filter|--orientation)
+      --filter|--orientation|--devices-file)
         flag_value="${2:-}"
         [ -n "$flag_value" ] || { megabrain_usage_fail web-devices; return "$MEGABRAIN_USAGE_ERROR"; }
         device_args+=("$1" "$flag_value")
@@ -306,16 +312,36 @@ command_web_devices() {
   fi
 }
 
+command_web_visual() {
+  local action="$1"
+  shift
+  case "${1:-}" in
+    -h|--help) megabrain_usage_show "web-$action"; return 0 ;;
+  esac
+  node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" "$action" --root "$MEGABRAIN_PLAYWRIGHT_ROOT" "$@"
+}
+
 command_web() {
   case "${1:-}" in
     userscript) shift; command_web_userscript "$@" ;;
     viewport) shift; command_web_viewport "$@" ;;
-    devices) command_web_devices "$@" ;;
+    devices) shift; command_web_devices "$@" ;;
+    capture|measure|session-save) action="$1"; shift; command_web_visual "$action" "$@" ;;
+    session)
+      shift
+      case "${1:-}" in
+        -h|--help) megabrain_usage_show web-session; return 0 ;;
+      esac
+      [ "${1:-}" = save ] || { megabrain_usage_fail web-session; return "$MEGABRAIN_USAGE_ERROR"; }
+      shift
+      command_web_visual session-save "$@"
+      ;;
     --device|--category|--viewport|--width|--height)
       command_web_viewport set "$@"
       ;;
     -h|--help|"")
-      megabrain_usage_show web web-viewport web-devices web-userscript
+      megabrain_usage_show web web-viewport web-devices web-userscript web-capture web-measure web-session
+      printf '%s\n' 'Use web capture, web measure, and web session save for visual parity workflows.'
       printf '%s\n' 'Use --device SLUG for a persisted device viewport; categories set viewport size only.'
       ;;
     *) megabrain_error "unknown web command: $1"; megabrain_usage_show web web-viewport web-devices web-userscript; return "$MEGABRAIN_USAGE_ERROR" ;;
