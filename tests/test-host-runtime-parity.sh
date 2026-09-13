@@ -37,12 +37,14 @@ source "$root/lib/common.sh"
 source "$root/lib/module-tmux-runtime.sh"
 source "$root/lib/module-context.sh"
 source "$root/lib/module-orchestrate.sh"
+source "$root/lib/module-worktree.sh"
 
 megabrain_dispatch_require_parent() {
   megabrain_dispatch_meta_read "$1"
 }
 
 close_log="$state_dir/close.log"
+orca_title_log="$state_dir/orca-title.log"
 host_close_mode=success
 megabrain_superset() {
   if [ "${1:-}" = terminals ] && [ "${2:-}" = read ]; then
@@ -62,8 +64,29 @@ megabrain_superset() {
 }
 
 orca() {
+  if [ "${1:-}" = terminal ] && [ "${2:-}" = create ]; then
+    local title=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --title ]; then
+        title="${2:-}"
+        shift 2
+      else
+        shift
+      fi
+    done
+    printf '%s\n' "$title" >"$orca_title_log"
+    printf '%s\n' '{"result":{"terminal":{"handle":"orca-launch-terminal"}}}'
+    return 0
+  fi
   if [ "${1:-}" = terminal ] && [ "${2:-}" = read ]; then
     printf '%s\n' '{"text":"orca host output"}'
+    return 0
+  fi
+  if [ "${1:-}" = terminal ] && [ "${2:-}" = send ]; then
+    printf '%s\n' '{"ok":true}'
+    return 0
+  fi
+  if [ "${1:-}" = terminal ] && [ "${2:-}" = wait ]; then
     return 0
   fi
   if [ "${1:-}" = terminal ] && [ "${2:-}" = close ]; then
@@ -124,5 +147,33 @@ assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 0
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "host-unproven") | .reason')" 'host terminal identity is unproven; dispatch terminal was retained'
 assert_file "$state_dir/dispatches/host-unproven/meta.json"
 printf 'prune keeps a host dispatch whose terminal identity is unproven\n'
+
+megabrain_context_detect() {
+  printf 'orca\n'
+}
+megabrain_session_id() {
+  MEGABRAIN_SESSION_ID=parent-session
+  MEGABRAIN_SESSION_HOST=orca
+}
+megabrain_workspace_id_for_target() {
+  printf 'workspace-test\n'
+}
+megabrain_resolve_spawn_runtime() {
+  MEGABRAIN_SPAWN_RUNTIME=host
+  MEGABRAIN_SPAWN_CONTEXT=orca
+}
+megabrain_dispatch_preamble() {
+  printf 'test preamble\n'
+}
+megabrain_agent_command() {
+  printf 'true\n'
+}
+megabrain_dispatch_send_prompt_with_receipt() {
+  return 0
+}
+megabrain_launch_agent "$root" workspace-test codex gpt-5 low title-check label false >/dev/null
+launch_dispatch_id="$MEGABRAIN_LAST_DISPATCH"
+assert_equal "$(grep -F "$launch_dispatch_id" "$orca_title_log" | wc -l | tr -d ' ')" 1
+printf 'Orca host launch titles include the dispatch identity\n'
 
 printf 'ok: host runtime release, read, and prune parity\n'
