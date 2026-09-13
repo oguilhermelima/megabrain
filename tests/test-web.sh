@@ -18,6 +18,7 @@ import path from 'node:path';
 const script = process.argv[2];
 const {
   DEFAULT_VIEWPORT,
+  VIEWPORT_CATEGORIES,
   buildBrowserConfig,
   doctor,
   resolveViewport,
@@ -57,6 +58,18 @@ assert.deepEqual(
   resolveViewport({ device: 'Test Phone' }, { 'Test Phone': { viewport: { width: 393, height: 852 } } }),
   { width: 393, height: 852 },
   'a named device must resolve through the Playwright registry',
+);
+assert.deepEqual(resolveViewport({ category: 'mobile' }, {}), { width: 390, height: 844 });
+assert.deepEqual(resolveViewport({ category: 'tablet' }, {}), { width: 768, height: 1024 });
+assert.deepEqual(resolveViewport({ category: 'desktop' }, {}), { width: 1920, height: 1080 });
+assert.deepEqual(resolveViewport({ category: 'ultrawide' }, {}), { width: 3440, height: 1440 });
+assert.deepEqual(VIEWPORT_CATEGORIES['mobile-small'], { width: 360, height: 800 });
+assert.deepEqual(VIEWPORT_CATEGORIES['mobile-large'], { width: 414, height: 896 });
+assert.deepEqual(resolveViewport({ category: 'mobile' }, { mobile: { viewport: { width: 111, height: 222 } } }), { width: 390, height: 844 });
+assert.throws(
+  () => resolveViewport({ category: 'unknown' }, {}),
+  /unknown viewport category.*mobile.*tablet.*desktop.*ultrawide/,
+  'an unknown category must name the available categories',
 );
 assert.throws(
   () => resolveViewport({ viewport: '0x844' }, {}),
