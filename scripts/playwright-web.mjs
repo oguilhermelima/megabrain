@@ -74,6 +74,10 @@ export const VIEWPORT_DEVICES = Object.freeze({
   iphone16e: { label: 'iPhone 16e', registry: 'iPhone 16e', category: 'mobile' },
   iphone16pro: { label: 'iPhone 16 Pro', registry: 'iPhone 16 Pro', category: 'mobile' },
   iphone16promax: { label: 'iPhone 16 Pro Max', registry: 'iPhone 16 Pro Max', category: 'mobile' },
+  // Safari measurement via Appium WebDriver on iOS 26.5, 2026-09-13:
+  // window.innerWidth=402, window.innerHeight=714 (outerHeight=874). The
+  // Playwright registry reports 402x681; no override is applied because the
+  // requested CSS viewport measurement does not reproduce either 874 or 681.
   iphone17: { label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile' },
   iphone17e: { label: 'iPhone 17e', registry: 'iPhone 17e', category: 'mobile' },
   iphone17pro: { label: 'iPhone 17 Pro', registry: 'iPhone 17 Pro', category: 'mobile' },
@@ -197,7 +201,7 @@ export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_V
   return validateViewport(fallback);
 }
 
-function normalizeDeviceDescriptor(descriptor) {
+function normalizeDeviceDescriptor(descriptor, { requireSource = false } = {}) {
   const viewport = validateViewport(descriptor.viewport);
   const scale = descriptor.deviceScaleFactor ?? 1;
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('deviceScaleFactor must be a positive number');
@@ -212,6 +216,10 @@ function normalizeDeviceDescriptor(descriptor) {
   if (descriptor.userAgent != null) {
     if (typeof descriptor.userAgent !== 'string' || !descriptor.userAgent) throw new Error('userAgent must be a non-empty string');
     normalized.userAgent = descriptor.userAgent;
+  }
+  if (descriptor.source != null || requireSource) {
+    if (typeof descriptor.source !== 'string' || !descriptor.source.trim()) throw new Error('source must be a non-empty string');
+    normalized.source = descriptor.source;
   }
   return normalized;
 }
@@ -256,7 +264,8 @@ export function resolveDeviceDescriptor(options = {}, devices = {}, customDevice
 
 export function buildContextOptions(descriptor, extras = {}) {
   const normalized = normalizeDeviceDescriptor(descriptor);
-  const options = { ...normalized, ...extras };
+  const { source: _source, ...contextDescriptor } = normalized;
+  const options = { ...contextDescriptor, ...extras };
   if (extras.colorScheme != null && !['light', 'dark', 'no-preference'].includes(extras.colorScheme)) {
     throw new Error('colorScheme must be light, dark, or no-preference');
   }
@@ -267,17 +276,22 @@ export function readCustomDevices(file = DEFAULT_DEVICES) {
   if (!existsSync(file)) return {};
   const parsed = readJson(file, {});
   if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`custom device registry must be an object: ${file}`);
-  return Object.fromEntries(Object.entries(parsed).map(([slug, descriptor]) => [slug, normalizeDeviceDescriptor(descriptor)]));
+  return Object.fromEntries(Object.entries(parsed).map(([slug, descriptor]) => [slug, normalizeDeviceDescriptor(descriptor, { requireSource: true })]));
 }
 
 export function upsertCustomDevice(devices, slug, descriptor) {
-  if (!slug || /[\\/]/.test(slug)) throw new Error('custom device slug must be a non-empty path-safe value');
-  return { ...(devices || {}), [slug]: normalizeDeviceDescriptor(descriptor) };
+  const normalizedSlug = normalizeDeviceSlug(slug);
+  if (!slug || !normalizedSlug || /[\\/]/.test(slug)) throw new Error('custom device slug must be a non-empty path-safe value');
+  if (VIEWPORT_DEVICES[normalizedSlug]) throw new Error(`custom device slug conflicts with built-in device: ${slug}`);
+  const existingSlug = Object.keys(devices || {}).find(name => normalizeDeviceSlug(name) === normalizedSlug);
+  if (existingSlug && existingSlug !== slug) throw new Error(`custom device slug conflicts with existing device: ${existingSlug}`);
+  return { ...(devices || {}), [slug]: normalizeDeviceDescriptor(descriptor, { requireSource: true }) };
 }
 
 export function removeCustomDevice(devices, slug) {
   const next = { ...(devices || {}) };
-  delete next[slug];
+  const normalizedSlug = normalizeDeviceSlug(slug);
+  Object.keys(next).filter(name => normalizeDeviceSlug(name) === normalizedSlug).forEach(name => delete next[name]);
   return next;
 }
 
@@ -316,15 +330,11 @@ export async function settlePage(page) {
 export async function prepareDeterministicRendering(page, { now = '2026-01-01T00:00:00.000Z' } = {}) {
   const timestamp = new Date(now).getTime();
   if (!Number.isFinite(timestamp)) throw new Error('freeze time must be a valid date');
-  await page.addInitScript({ content: `(() => {
-    const OriginalDate = Date;
-    const fixedTime = ${timestamp};
-    class FrozenDate extends OriginalDate {
-      constructor(...args) { super(args.length ? args : [fixedTime]); }
-      static now() { return fixedTime; }
-    }
-    globalThis.Date = FrozenDate;
-  })()` });
+  await page.clock.install({ time: timestamp });
+  await disableAnimations(page);
+}
+
+export async function disableAnimations(page) {
   await page.addStyleTag({ content: '*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }' });
 }
 
@@ -427,6 +437,7 @@ export function listDevicePresets(devices, { filter = '', orientation = 'portrai
       isMobile: descriptor.isMobile,
       hasTouch: descriptor.hasTouch,
       ...(descriptor.userAgent ? { userAgent: descriptor.userAgent } : {}),
+      source: descriptor.source,
     }));
   return [...builtIns, ...custom];
 }
@@ -1077,7 +1088,7 @@ async function renderScreen(context, screen, freezeTime) {
   const page = await context.newPage();
   await prepareDeterministicRendering(page, { now: freezeTime });
   await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
-  await prepareDeterministicRendering(page, { now: freezeTime });
+  await disableAnimations(page);
   await settlePage(page);
   return page;
 }
@@ -1217,12 +1228,15 @@ function customDeviceFromArgs(args) {
   if (!viewport) throw new Error('device-add requires --viewport WIDTHxHEIGHT');
   const match = String(viewport).match(/^([0-9]+)x([0-9]+)$/);
   if (!match) throw new Error('device-add viewport must use WIDTHxHEIGHT dimensions');
+  const source = argumentValue(args, '--source', '');
+  if (!source) throw new Error('device-add requires --source');
   return {
     viewport: { width: Number(match[1]), height: Number(match[2]) },
     deviceScaleFactor: Number(argumentValue(args, '--device-scale-factor', '1')),
     isMobile: args.includes('--mobile'),
     hasTouch: args.includes('--touch'),
     ...(argumentValue(args, '--user-agent', '') ? { userAgent: argumentValue(args, '--user-agent', '') } : {}),
+    source,
   };
 }
 

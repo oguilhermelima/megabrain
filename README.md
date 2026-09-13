@@ -453,9 +453,14 @@ idle, fonts, image decoding, reduced motion, disabled animations, and a frozen c
 Custom devices are stored separately from installed browser profiles and use private file mode:
 
 ```sh
-megabrain web devices add office --viewport 1512x982 --device-scale-factor 2
+megabrain web devices add office --viewport 1512x982 --device-scale-factor 2 \
+  --source 'Apple MacBook Pro technical specifications; panel 3024x1964'
 megabrain web devices --filter office
 ```
+
+Custom descriptors require a source so their owned values remain traceable. Their registry is
+separate from the built-in table, and adding a slug that collides with a built-in device is
+refused.
 
 `doctor` names the missing piece and the command that installs it rather than failing silently.
 
