@@ -194,7 +194,7 @@ printf 'scenario 10: browser profile roles are explicit\n'
 
 # Scenario 11: a failing container test leaves named output outside the stdout pipe.
 if [ "${MEGABRAIN_IN_CONTAINER:-false}" = true ]; then
-  printf 'scenario 11: skipped inside the container runner (Docker is host-owned)\n'
+  printf 'skip: scenario 11 skipped inside the container runner because Docker is host-owned\n'
 else
   container_fixture="$root/tests/.container-failure-fixture.sh"
   container_output_dir="$state_dir/container-results"
