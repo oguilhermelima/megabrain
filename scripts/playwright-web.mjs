@@ -264,7 +264,8 @@ export function resolveDeviceDescriptor(options = {}, devices = {}, customDevice
 
 export function buildContextOptions(descriptor, extras = {}) {
   const normalized = normalizeDeviceDescriptor(descriptor);
-  const options = { ...normalized, ...extras };
+  const { source: _source, ...contextDescriptor } = normalized;
+  const options = { ...contextDescriptor, ...extras };
   if (extras.colorScheme != null && !['light', 'dark', 'no-preference'].includes(extras.colorScheme)) {
     throw new Error('colorScheme must be light, dark, or no-preference');
   }
