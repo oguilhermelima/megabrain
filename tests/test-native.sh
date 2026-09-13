@@ -164,7 +164,7 @@ assert_contains "$(cat "$SIMCTL_LOG")" 'simctl terminate phone-1 com.config.phon
 
 printf 'scenario: simulator listing reuses candidates in plain output and JSON\n'
 SIMCTL_DEVICES_JSON="$root/tests/fixtures/native-simctl-list.json"
-rm -f "$SIMCTL_LOG"
+rm -f "$SIMCTL_BOOT_MARKER" "$SIMCTL_LOG"
 list_output="$(command_native sim list phone)" || fail "phone list failed: $list_output"
 assert_contains "$list_output" 'iPhone 17 Pro'
 assert_contains "$list_output" 'Shutdown'
