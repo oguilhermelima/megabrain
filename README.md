@@ -427,7 +427,7 @@ used by multiple captures without profile locking. Save a signed-in session once
 capture or measure:
 
 ```sh
-megabrain web session-save --url http://localhost:3000/login --output .megabrain/session.json
+megabrain web session save --url http://localhost:3000/login --output .megabrain/session.json
 megabrain web capture --url http://localhost:3000/movie/42 --screen details \
   --content-id movie-42 --theme dark --device macbookpro14 \
   --storage-state .megabrain/session.json --output-root visual-captures

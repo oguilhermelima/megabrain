@@ -245,6 +245,9 @@ megabrain web viewport set|show|devices ...
 megabrain web viewport set
 megabrain web viewport show
 megabrain web devices [FILTER] [--orientation portrait|landscape|all]
+megabrain web capture --url URL --screen NAME [options]
+megabrain web measure --url URL --screen NAME [options]
+megabrain web session save --url URL --output FILE [options]
 megabrain web userscript install <file.user.js>
 megabrain web userscript list
 megabrain web userscript remove <file.user.js>
@@ -265,6 +268,10 @@ documented CSS viewport sizes. Use `megabrain web devices` to filter the availab
 is the default and landscape/all are explicit options.
 The set command accepts `--browser chromium|firefox|both`, `--viewport WxH`, `--device SLUG`,
 `--category NAME`, `--width W --height H`, and `--orientation portrait|landscape`.
+
+Visual parity commands use non-persistent contexts and can reuse a private storage state. Capture
+writes candidates by default, and baseline replacement requires an explicit flag. Screens listed
+in a JSON file run sequentially in declaration order; separate invocations can run in parallel.
 
 ## tmux
 
