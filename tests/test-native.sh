@@ -98,10 +98,10 @@ EOF
 chmod +x "$bin_dir/curl"
 
 cat >"$work_dir/shutdown.json" <<'EOF'
-{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Shutdown","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Shutdown","isAvailable":true}]}}
+{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Shutdown","isAvailable":true},{"udid":"phone-2","name":"iPhone Other","state":"Shutdown","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Shutdown","isAvailable":true}]}}
 EOF
 cat >"$work_dir/booted.json" <<'EOF'
-{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Booted","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Booted","isAvailable":true}]}}
+{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Booted","isAvailable":true},{"udid":"phone-2","name":"iPhone Other","state":"Booted","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Booted","isAvailable":true}]}}
 EOF
 cat >"$work_dir/tv-only.json" <<'EOF'
 {"devices":{"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Shutdown","isAvailable":true}]}}
@@ -133,7 +133,7 @@ assert_contains "$(cat "$SIMCTL_LOG")" 'simctl boot phone-1'
 printf 'scenario: templates render exact phone and tv URLs without config\n'
 SIMCTL_DEVICES_JSON="$SIMCTL_BOOTED_JSON" SIMCTL_METRO_READY=true
 rm -f "$SIMCTL_LOG"
-phone_output="$(command_native app reload phone --route deep/link --bundle-id com.example.phone --url-template 'exp://127.0.0.1:{metro_port}/--/{route}' --device phone-1 --metro-port 8082 --timeout 1)" || fail "phone reload failed: $phone_output"
+phone_output="$(command_native app reload phone --route deep/link --bundle-id com.example.phone --url-template 'exp://127.0.0.1:{metro_port}/--/{route}' --device iPhone --metro-port 8082 --timeout 1)" || fail "phone reload failed: $phone_output"
 assert_contains "$phone_output" 'exp://127.0.0.1:8082/--/deep/link'
 assert_equal "$(tail -1 "$SIMCTL_LOG")" 'simctl openurl phone-1 exp://127.0.0.1:8082/--/deep/link'
 rm -f "$SIMCTL_LOG"
@@ -155,12 +155,46 @@ assert_not_contains "$output" 'rendered'
 
 printf 'scenario: config supplies surface defaults\n'
 cat >"$work_dir/worktree/.megabrain/native.json" <<'EOF'
-{"version":1,"surfaces":{"phone":{"urlTemplate":"exp://127.0.0.1:{metro_port}/--/{route}","bundleId":"com.config.phone","metroPort":"8082"},"tv":{"urlTemplate":"canto:///{route}","bundleId":"com.config.tv","metroPort":"none"}}}
+{"version":1,"surfaces":{"phone":{"urlTemplate":"exp://127.0.0.1:{metro_port}/--/{route}","bundleId":"com.config.phone","metroPort":"8082","device":"iPhone"},"tv":{"urlTemplate":"canto:///{route}","bundleId":"com.config.tv","metroPort":"none","device":"Apple TV"}}}
 EOF
 rm -f "$SIMCTL_LOG"
-config_output="$(cd "$work_dir/worktree" && command_native app reload phone --route configured --device phone-1 --timeout 1)" || fail "config reload failed: $config_output"
+config_output="$(cd "$work_dir/worktree" && command_native app reload phone --route configured --timeout 1)" || fail "config reload failed: $config_output"
 assert_contains "$config_output" 'exp://127.0.0.1:8082/--/configured'
 assert_contains "$(cat "$SIMCTL_LOG")" 'simctl terminate phone-1 com.config.phone'
+
+printf 'scenario: simulator listing reuses candidates in plain output and JSON\n'
+SIMCTL_DEVICES_JSON="$root/tests/fixtures/native-simctl-list.json"
+rm -f "$SIMCTL_BOOT_MARKER" "$SIMCTL_LOG"
+list_output="$(command_native sim list phone)" || fail "phone list failed: $list_output"
+assert_contains "$list_output" 'iPhone 17 Pro'
+assert_contains "$list_output" 'Shutdown'
+assert_contains "$list_output" '82626DF1-0880-48A7-A63F-ABAE8BBB9D03'
+assert_not_contains "$list_output" 'Apple TV'
+list_json="$(command_native sim list tv --json)" || fail "tv list failed: $list_json"
+assert_equal "$(printf '%s' "$list_json" | jq -r '.kind')" tv
+assert_equal "$(printf '%s' "$list_json" | jq -r '.devices | length')" 3
+assert_equal "$(printf '%s' "$list_json" | jq -r '.devices[0].name')" 'Apple TV 4K (3rd generation)'
+[ "$(grep -c 'simctl list devices --json' "$SIMCTL_LOG")" -eq 2 ] || fail 'list did not reuse one candidate query per kind'
+
+printf 'scenario: names select uniquely and missing or ambiguous names fail loudly\n'
+SIMCTL_DEVICES_JSON="$SIMCTL_BOOTED_JSON"
+name_output="$(command_native app reload phone --route named --bundle-id com.named.phone --url-template 'exp://127.0.0.1:{metro_port}/--/{route}' --device iPhone --metro-port 8082 --timeout 1)" || fail "name selection failed: $name_output"
+assert_contains "$(cat "$SIMCTL_LOG")" 'simctl openurl phone-1 exp://127.0.0.1:8082/--/named'
+if output="$(command_native sim ensure phone --device 'Missing iPhone' --timeout 1 2>&1)"; then fail 'missing device name unexpectedly succeeded'; fi
+assert_contains "$output" 'no iOS simulator matches device name Missing iPhone'
+cat >"$work_dir/duplicate-name.json" <<'EOF'
+{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Shutdown","isAvailable":true},{"udid":"phone-2","name":"iPhone","state":"Shutdown","isAvailable":true}]}}
+EOF
+SIMCTL_DEVICES_JSON="$work_dir/duplicate-name.json"
+if output="$(command_native sim ensure phone --device iPhone --timeout 1 2>&1)"; then fail 'ambiguous device name unexpectedly succeeded'; fi
+assert_contains "$output" 'more than one iOS simulator matches name iPhone'
+
+printf 'scenario: configured device defaults apply to ensure\n'
+SIMCTL_DEVICES_JSON="$work_dir/shutdown.json"
+rm -f "$SIMCTL_BOOT_MARKER" "$SIMCTL_LOG"
+configured_output="$(cd "$work_dir/worktree" && command_native sim ensure phone --timeout 1)" || fail "configured ensure failed: $configured_output"
+assert_contains "$configured_output" 'simulator phone-1 is booted'
+assert_contains "$(cat "$SIMCTL_LOG")" 'simctl boot phone-1'
 
 printf 'scenario: simulator selection and wait errors stay distinct\n'
 rm -f "$SIMCTL_BOOT_MARKER"

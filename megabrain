@@ -59,6 +59,7 @@ Commands:
   check [options]                       Check for replies from the direct coordinator
   ack <delivery-id> [options]          Acknowledge a child reply delivery
   received                            Confirm receipt of a dispatch prompt
+  native sim list <phone|tv> ...       List available Apple simulators
   native appium start|stop|status      Manage the shared Appium server
   native sim ensure <phone|tv> ...     Boot a requested Apple simulator
   native app reload <phone|tv> ...     Terminate and deep-link an app
