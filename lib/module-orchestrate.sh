@@ -16,12 +16,16 @@ MEGABRAIN_DISPATCH_CLOSE_ERROR=""
 MEGABRAIN_DISPATCH_LIVE_ACTIVITY_WINDOW_SECONDS=60
 MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS=7
 MEGABRAIN_TRANSCRIPT_MAX_BYTES="${MEGABRAIN_TRANSCRIPT_MAX_BYTES:-10485760}"
+MEGABRAIN_LAST_MESSAGE_SEQ=""
+MEGABRAIN_LAST_SUPERSEDE_QUEUED=0
+MEGABRAIN_LAST_SUPERSEDE_DELIVERED=0
+MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES='[]'
 
 # Single source of truth for mail visibility, keyed "from:type". actionable mail
 # is surfaced by default and triggers a notify; protocol mail is durable evidence
 # surfaced only with --full. Every site that routes or filters mail consults this.
-MEGABRAIN_DISPATCH_MAIL_ACTIONABLE_KEYS=(child:ask child:done child:stalled megabrain:usage)
-MEGABRAIN_DISPATCH_MAIL_PROTOCOL_KEYS=(child:received child:ack child:done-repeat)
+MEGABRAIN_DISPATCH_MAIL_ACTIONABLE_KEYS=(child:ask child:done child:stalled megabrain:usage parent:withdrawal)
+MEGABRAIN_DISPATCH_MAIL_PROTOCOL_KEYS=(child:received child:ack child:done-repeat parent:interrupt parent:interrupt-result)
 
 megabrain_dispatch_prune_states() {
   printf 'closed,done,failed,orphaned,circuit_broken\n'
@@ -1393,6 +1397,7 @@ megabrain_dispatch_path_age_seconds() {
 
 megabrain_dispatch_message_append_locked() {
   local dispatch_id="$1" from="$2" type="$3" text="$4" session_id="$5"
+  local supersedes_json="${6:-null}"
   local messages_dir path tmp seq file_name recipient meta notify=false class
   messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
   seq="$(find "$messages_dir" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sed 's|.*/||; s|-.*||' | sort -n | tail -n 1)"
@@ -1401,9 +1406,16 @@ megabrain_dispatch_message_append_locked() {
   file_name="$(printf '%04d-%s-%s.json' "$seq" "$from" "$type")"
   path="$messages_dir/$file_name"
   tmp="$(mktemp "$messages_dir/.message.XXXXXX")" || return 1
-  if ! jq -n --argjson seq "$seq" --arg from "$from" --arg type "$type" --arg text "$text" \
-    --arg createdAt "$(megabrain_iso_now)" --arg sessionId "$session_id" \
-    '{seq: $seq, from: $from, type: $type, text: $text, createdAt: $createdAt, sessionId: $sessionId}' >"$tmp"; then
+  if [ "$supersedes_json" = null ]; then
+    if ! jq -n --argjson seq "$seq" --arg from "$from" --arg type "$type" --arg text "$text" \
+      --arg createdAt "$(megabrain_iso_now)" --arg sessionId "$session_id" \
+      '{seq: $seq, from: $from, type: $type, text: $text, createdAt: $createdAt, sessionId: $sessionId}' >"$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  elif ! jq -n --argjson seq "$seq" --arg from "$from" --arg type "$type" --arg text "$text" \
+    --arg createdAt "$(megabrain_iso_now)" --arg sessionId "$session_id" --argjson supersedes "$supersedes_json" \
+    '{seq: $seq, from: $from, type: $type, text: $text, createdAt: $createdAt, sessionId: $sessionId, supersedes: $supersedes}' >"$tmp"; then
     rm -f "$tmp"
     return 1
   fi
@@ -1412,6 +1424,7 @@ megabrain_dispatch_message_append_locked() {
   MEGABRAIN_LAST_MESSAGE_NUDGE=""
   case "$from:$type" in
     parent:reply) recipient=child; notify=true ;;
+    parent:withdrawal|parent:interrupt|parent:interrupt-result) recipient=child ;;
     *)
       class="$(megabrain_dispatch_mail_class_for_message "$dispatch_id" "$from:$type" "$seq" 2>/dev/null || true)"
       case "$class" in
@@ -1506,6 +1519,62 @@ megabrain_dispatch_mail_class_for_message() {
   megabrain_dispatch_mail_class "$classification_key"
 }
 
+megabrain_dispatch_delivery_mark_superseded() {
+  local path="$1" delivered="$2" tmp now
+  now="$(megabrain_iso_now)"
+  tmp="$(mktemp "$(dirname "$path")/.delivery.XXXXXX")" || return 1
+  if [ "$delivered" = true ]; then
+    if ! jq --arg now "$now" \
+      '.superseded = true | .supersededAt = $now | .updatedAt = $now' "$path" >"$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  elif ! jq --arg now "$now" \
+    '.status = "superseded" | .superseded = true | .supersededAt = $now | .updatedAt = $now' "$path" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$path"
+}
+
+megabrain_dispatch_supersede_replies_locked() {
+  local dispatch_id="$1" session_id="$2"
+  local deliveries_dir path status consumer message_seqs withdrawal_text sequences_text
+  local already_superseded=false
+  MEGABRAIN_LAST_SUPERSEDE_QUEUED=0
+  MEGABRAIN_LAST_SUPERSEDE_DELIVERED=0
+  MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES='[]'
+  deliveries_dir="$(megabrain_dispatch_deliveries_dir "$dispatch_id")" || return 1
+  for path in "$deliveries_dir"/*.json; do
+    [ -f "$path" ] || continue
+    megabrain_dispatch_delivery_is_reply "$dispatch_id" "$path" || continue
+    already_superseded="$(jq -r '.superseded // false' "$path" 2>/dev/null || printf 'false')"
+    [ "$already_superseded" = true ] && continue
+    status="$(jq -r '.status // empty' "$path" 2>/dev/null || true)"
+    consumer="$(jq -r '.consumer // empty' "$path" 2>/dev/null || true)"
+    message_seqs="$(jq -c '.messageSeqs // []' "$path" 2>/dev/null || printf '[]')"
+    case "$status:$consumer" in
+      outstanding:)
+        megabrain_dispatch_delivery_mark_superseded "$path" false || return 1
+        MEGABRAIN_LAST_SUPERSEDE_QUEUED=$((MEGABRAIN_LAST_SUPERSEDE_QUEUED + 1))
+        ;;
+      outstanding:*|acknowledged:*|fenced:*)
+        megabrain_dispatch_delivery_mark_superseded "$path" true || return 1
+        MEGABRAIN_LAST_SUPERSEDE_DELIVERED=$((MEGABRAIN_LAST_SUPERSEDE_DELIVERED + 1))
+        MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES="$(jq -c --argjson additions "$message_seqs" '. + $additions' <<<"$MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES")" || return 1
+        ;;
+      *)
+        continue
+        ;;
+    esac
+  done
+  if [ "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED" -gt 0 ]; then
+    sequences_text="$(jq -r 'map(tostring) | join(", ")' <<<"$MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES")"
+    withdrawal_text="withdrawn parent direction message sequence(s): $sequences_text"
+    megabrain_dispatch_message_append_locked "$dispatch_id" parent withdrawal "$withdrawal_text" "$session_id" "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES" >/dev/null || return 1
+  fi
+}
+
 megabrain_dispatch_delivery_is_reply() {
   local dispatch_id="$1" delivery_path="$2" messages_dir message_seqs seq path found=false
   messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
@@ -1583,6 +1652,7 @@ megabrain_dispatch_delivery_report() {
     done) status=done ;;
     stalled) status=stalled ;;
     reply) status=reply ;;
+    withdrawal) status=withdrawal ;;
     received) status=received ;;
     ack) status=acknowledged ;;
     *) status=done ;;
@@ -1646,9 +1716,9 @@ megabrain_dispatch_delivery_matches_mailbox() {
       fi
     elif [ "$mailbox" = child ] && [ "$from" = parent ]; then
       if [ "$full" = true ]; then
-        case "$type" in reply|received|ack|ask|done|stalled) return 0 ;; esac
+        case "$type" in reply|withdrawal|received|ack|ask|done|stalled|interrupt|interrupt-result) return 0 ;; esac
       else
-        [ "$type" = reply ] && return 0
+        [ "$type" = reply ] || [ "$type" = withdrawal ] && return 0
       fi
     fi
   done < <(megabrain_dispatch_message_paths "$messages_dir")
@@ -2081,7 +2151,7 @@ megabrain_dispatch_report() {
 megabrain_dispatch_mailbox_watch() {
   local mailbox="$1" dispatch_id timeout=120 poll_interval=3 wait_mode=nudge json=false full=false arg meta start_time now remaining
   local consumer="${MEGABRAIN_CONSUMER_ID:-}" generation="${MEGABRAIN_CONSUMER_GENERATION:-1}"
-  local messages_dir deliveries_dir lock path seq from type message_seqs delivery_id outstanding_path outstanding_consumer outstanding_generation outstanding_seq candidate_seq
+  local messages_dir deliveries_dir lock path seq from type message_seqs delivery_id outstanding_path outstanding_consumer outstanding_generation outstanding_seq candidate_seq delivery_status
   shift
   case "${1:-}" in
     -h|--help)
@@ -2153,7 +2223,9 @@ megabrain_dispatch_mailbox_watch() {
     outstanding_seq=""
     for path in "$deliveries_dir"/*.json; do
       [ -f "$path" ] || continue
-      [ "$(jq -r '.status // empty' "$path" 2>/dev/null || true)" = outstanding ] || continue
+      delivery_status="$(jq -r '.status // empty' "$path" 2>/dev/null || true)"
+      [ "$delivery_status" = outstanding ] || { [ "$full" = true ] && [ "$delivery_status" = superseded ]; } || continue
+      [ "$full" = true ] || [ "$(jq -r '.superseded // false' "$path" 2>/dev/null || true)" != true ] || continue
       megabrain_dispatch_delivery_matches_mailbox "$dispatch_id" "$path" "$mailbox" "$full" || continue
       outstanding_consumer="$(jq -r '.consumer // empty' "$path" 2>/dev/null || true)"
       if [ -z "$outstanding_consumer" ] || [ "$outstanding_consumer" = "$consumer" ]; then
@@ -2288,7 +2360,7 @@ megabrain_dispatch_ack_for_owner() {
       megabrain_error "delivery $delivery_id refused: delivery is fenced"
       return 1
       ;;
-    outstanding) ;;
+    outstanding|superseded) ;;
     *)
       rmdir "$lock"
       megabrain_error "delivery $delivery_id refused: status is invalid ($status)"
@@ -2337,7 +2409,7 @@ megabrain_dispatch_child_ack() {
 }
 
 megabrain_dispatch_reply() {
-  local dispatch_id="${1:-}" answer="" json=false arg meta state status nudge
+  local dispatch_id="${1:-}" answer="" json=false supersede=false arg meta state status nudge lock
   case "$dispatch_id" in
     -h|--help) megabrain_usage_show orchestrate-reply; return 0 ;;
   esac
@@ -2347,6 +2419,7 @@ megabrain_dispatch_reply() {
     arg="$1"
     case "$arg" in
       --text) answer="${2:-}"; shift 2 ;;
+      --supersede) supersede=true; shift ;;
       --json) json=true; shift ;;
       -h|--help) megabrain_usage_show orchestrate-reply; return 0 ;;
       *) megabrain_error "unknown orchestrate reply option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
@@ -2367,7 +2440,21 @@ megabrain_dispatch_reply() {
     esac
     return 1
   fi
-  megabrain_dispatch_message_append "$dispatch_id" parent reply "$answer" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+  MEGABRAIN_LAST_SUPERSEDE_QUEUED=0
+  MEGABRAIN_LAST_SUPERSEDE_DELIVERED=0
+  MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES='[]'
+  if [ "$supersede" = true ]; then
+    lock="$(megabrain_dispatch_messages_dir "$dispatch_id")/.lock"
+    megabrain_dispatch_lock_acquire "$lock" || return 1
+    if ! megabrain_dispatch_supersede_replies_locked "$dispatch_id" "$MEGABRAIN_SESSION_ID" ||
+      ! megabrain_dispatch_message_append_locked "$dispatch_id" parent reply "$answer" "$MEGABRAIN_SESSION_ID" >/dev/null; then
+      rmdir "$lock"
+      return 1
+    fi
+    rmdir "$lock"
+  else
+    megabrain_dispatch_message_append "$dispatch_id" parent reply "$answer" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+  fi
   status=queued
   # The reply is durable either way; the nudge is only a best-effort pointer into the
   # pane. Report status=queued always, and say separately whether the nudge was typed,
@@ -2378,11 +2465,154 @@ megabrain_dispatch_reply() {
   fi
   if [ "$json" = true ]; then
     jq -n --arg dispatchId "$dispatch_id" --arg status "$status" --arg nudge "$nudge" \
-      '{dispatchId: $dispatchId, status: $status, nudge: $nudge}'
+      --argjson supersededQueued "$MEGABRAIN_LAST_SUPERSEDE_QUEUED" \
+      --argjson supersededDelivered "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED" \
+      --argjson deliveredSequences "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES" \
+      '{dispatchId: $dispatchId, status: $status, nudge: $nudge, supersededQueued: $supersededQueued, supersededDelivered: $supersededDelivered, deliveredSequences: $deliveredSequences}'
   else
     printf '%s: %s\n' "$status" "$dispatch_id"
+    [ "$supersede" = true ] && printf 'superseded queued: %s\nsuperseded delivered: %s\n' "$MEGABRAIN_LAST_SUPERSEDE_QUEUED" "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED"
     [ "$nudge" = typed ] || printf 'nudge not typed; the child will still find this reply with megabrain check\n'
   fi
+}
+
+megabrain_dispatch_stop() {
+  local dispatch_id="${1:-}" json=false arg meta runtime liveness_status liveness_reason agent pane
+  local interrupt_affordance interrupt_status attempted_text result_text
+  case "$dispatch_id" in
+    -h|--help) megabrain_usage_show orchestrate-stop; return 0 ;;
+  esac
+  [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-stop; return "$MEGABRAIN_USAGE_ERROR"; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --json) json=true; shift ;;
+      -h|--help) megabrain_usage_show orchestrate-stop; return 0 ;;
+      *) megabrain_error "unknown orchestrate stop option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
+  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
+  if [ "$runtime" != tmux ]; then
+    megabrain_error "dispatch $dispatch_id cannot be stopped: host runtime has no Escape"
+    return 1
+  fi
+  megabrain_dispatch_liveness_read "$dispatch_id" --json >/dev/null || return 1
+  liveness_status="${MEGABRAIN_DISPATCH_LIVENESS_STATUS:-unknown}"
+  liveness_reason="${MEGABRAIN_DISPATCH_LIVENESS_REASON:-liveness is not proven}"
+  if [ "$liveness_status" != working ]; then
+    case "$liveness_status" in
+      pending-check) liveness_reason='pending check frame: messages are waiting for the next tool call' ;;
+      unknown) liveness_reason="unknown liveness: ${liveness_reason:-liveness is not proven}" ;;
+      *) liveness_reason="${liveness_status}: ${liveness_reason:-agent is not working}" ;;
+    esac
+    megabrain_error "dispatch $dispatch_id cannot be stopped: $liveness_reason"
+    return 1
+  fi
+  pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
+  agent="$(printf '%s' "$meta" | jq -r '.agent // empty')"
+  [ -n "$agent" ] || agent="$(megabrain_tmux_agent_for_pane "$pane" 2>/dev/null || true)"
+  interrupt_affordance="$(megabrain_tmux_interrupt_affordance "$agent" 2>/dev/null || true)"
+  [ -n "$interrupt_affordance" ] || {
+    megabrain_error "dispatch $dispatch_id cannot be stopped: interrupt affordance is unknown for agent $agent"
+    return 1
+  }
+  attempted_text="interrupt attempted for dispatch $dispatch_id with $interrupt_affordance"
+  megabrain_dispatch_message_append "$dispatch_id" parent interrupt "$attempted_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+  if megabrain_tmux_send_interrupt "$pane" "$agent"; then
+    interrupt_status="${MEGABRAIN_TMUX_INTERRUPT_STATUS:-not-landed}"
+  else
+    interrupt_status="${MEGABRAIN_TMUX_INTERRUPT_STATUS:-not-landed}"
+  fi
+  if [ "$interrupt_status" = landed ] || [ "$interrupt_status" = queued ]; then
+    result_text="interrupt landed for dispatch $dispatch_id"
+    result_text="${result_text/landed/$interrupt_status}"
+    megabrain_dispatch_message_append "$dispatch_id" parent interrupt-result "$result_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+    if [ "$json" = true ]; then
+      jq -n --arg dispatchId "$dispatch_id" --arg status interrupted --arg result "$interrupt_status" \
+        '{dispatchId: $dispatchId, status: $status, result: $result, interrupted: true}'
+    else
+      printf 'interrupted: %s\nresult: %s\n' "$dispatch_id" "$interrupt_status"
+    fi
+    return 0
+  fi
+  result_text="interrupt did not land for dispatch $dispatch_id"
+  megabrain_dispatch_message_append "$dispatch_id" parent interrupt-result "$result_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+  if [ "$json" = true ]; then
+    jq -n --arg dispatchId "$dispatch_id" --arg status not-interrupted --arg result "$interrupt_status" \
+      '{dispatchId: $dispatchId, status: $status, result: $result, interrupted: false}'
+  else
+    printf 'interrupted: false\nresult: %s\n' "$interrupt_status"
+  fi
+  return 1
+}
+
+megabrain_dispatch_change() {
+  local dispatch_id="${1:-}" answer="" json=false arg meta state lock stop_reason stop_rc temp_path
+  case "$dispatch_id" in
+    -h|--help) megabrain_usage_show orchestrate-change; return 0 ;;
+  esac
+  [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-change; return "$MEGABRAIN_USAGE_ERROR"; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --text) answer="${2:-}"; shift 2 ;;
+      --json) json=true; shift ;;
+      -h|--help) megabrain_usage_show orchestrate-change; return 0 ;;
+      *) megabrain_error "unknown orchestrate change option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  [ -n "$answer" ] || { megabrain_error "--text is required"; return "$MEGABRAIN_USAGE_ERROR"; }
+  megabrain_dispatch_require_session || return 1
+  meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
+  state="$(printf '%s' "$meta" | jq -r '.state // empty')"
+  megabrain_dispatch_reply_state_allowed "$state" || {
+    megabrain_error "dispatch $dispatch_id cannot receive a change in state $state"
+    return 1
+  }
+  MEGABRAIN_LAST_SUPERSEDE_QUEUED=0
+  MEGABRAIN_LAST_SUPERSEDE_DELIVERED=0
+  MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES='[]'
+  lock="$(megabrain_dispatch_messages_dir "$dispatch_id")/.lock"
+  megabrain_dispatch_lock_acquire "$lock" || return 1
+  if ! megabrain_dispatch_supersede_replies_locked "$dispatch_id" "$MEGABRAIN_SESSION_ID" ||
+    ! megabrain_dispatch_message_append_locked "$dispatch_id" parent reply "$answer" "$MEGABRAIN_SESSION_ID" >/dev/null; then
+    rmdir "$lock"
+    return 1
+  fi
+  rmdir "$lock"
+  [ "$state" = done ] || megabrain_dispatch_meta_update_state "$dispatch_id" running || return 1
+  temp_path="$(mktemp "${TMPDIR:-/tmp}/megabrain-change.XXXXXX")" || return 1
+  if megabrain_dispatch_stop "$dispatch_id" --json >/dev/null 2>"$temp_path"; then
+    stop_rc=0
+  else
+    stop_rc=$?
+  fi
+  stop_reason="$(cat "$temp_path")"
+  rm -f "$temp_path"
+  if [ "$stop_rc" -eq 0 ]; then
+    if [ "$json" = true ]; then
+      jq -n --arg dispatchId "$dispatch_id" --argjson queued "$MEGABRAIN_LAST_SUPERSEDE_QUEUED" \
+        --argjson delivered "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED" \
+        --argjson deliveredSequences "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES" \
+        '{dispatchId: $dispatchId, queueChanged: true, interrupted: true, supersededQueued: $queued, supersededDelivered: $delivered, deliveredSequences: $deliveredSequences}'
+    else
+      printf 'changed: %s\ninterrupted: true\n' "$dispatch_id"
+    fi
+    return 0
+  fi
+  if [ "$json" = true ]; then
+    jq -n --arg dispatchId "$dispatch_id" --arg reason "$stop_reason" \
+      --argjson queued "$MEGABRAIN_LAST_SUPERSEDE_QUEUED" \
+      --argjson delivered "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED" \
+      --argjson deliveredSequences "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED_SEQUENCES" \
+      '{dispatchId: $dispatchId, queueChanged: true, interrupted: false, supersededQueued: $queued, supersededDelivered: $delivered, deliveredSequences: $deliveredSequences, reason: $reason, message: "queue changed; agent was not interrupted"}'
+  else
+    printf 'changed: %s\ninterrupted: false\nqueue changed; agent was not interrupted\n' "$dispatch_id"
+  fi
+  return 0
 }
 
 megabrain_dispatch_close() {
