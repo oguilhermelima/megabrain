@@ -441,7 +441,8 @@ command_native() {
     sim)
       case "$operation" in
         ensure) megabrain_native_sim_ensure "$@" ;;
-        -h|--help|"") megabrain_usage_show native-sim-ensure ;;
+        list) megabrain_native_sim_list "$@" ;;
+        -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure ;;
         *) megabrain_error "unknown native sim operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
@@ -452,7 +453,7 @@ command_native() {
         *) megabrain_error "unknown native app operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
-    -h|--help|"") megabrain_usage_show native-appium ;;
+    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-appium ;;
     *) megabrain_error "unknown native command: $family"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }

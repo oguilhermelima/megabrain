@@ -281,6 +281,7 @@ megabrain_usage_line() {
     fact-edit) printf 'fact edit <id> [--json]' ;;
     fact-remove) printf 'fact remove <id> [--json]' ;;
     native-appium) printf 'native appium start|stop|status' ;;
+    native-sim-list) printf 'native sim list <phone|tv> [--json]' ;;
     native-sim-ensure) printf 'native sim ensure <phone|tv> [--device <udid>] [--timeout <seconds>] [--json]' ;;
     native-app-reload) printf 'native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <udid>] [--metro-port <p>] [--timeout <s>] [--json]' ;;
     tv-connect) printf 'tv connect <ip> [--port <port>]' ;;
