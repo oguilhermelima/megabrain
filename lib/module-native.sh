@@ -333,7 +333,7 @@ megabrain_native_select_device() {
 
 megabrain_native_sim_ensure() {
   local kind='' device='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg
-  local candidates state boot_output boot_rc attempt
+  local candidates state boot_output boot_rc attempt configured_value
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -354,6 +354,11 @@ megabrain_native_sim_ensure() {
   [ -n "$kind" ] || { megabrain_usage_fail native-sim-ensure; return "$MEGABRAIN_USAGE_ERROR"; }
   megabrain_native_validate_kind "$kind" || return $?
   megabrain_native_validate_timeout "$timeout" || return $?
+  megabrain_native_config_validate || return 1
+  if [ -z "$device" ]; then
+    configured_value="$(megabrain_native_config_value "$kind" device)"
+    device="$configured_value"
+  fi
   megabrain_native_require_simctl || return 1
   megabrain_native_select_device "$kind" "$device" false || return 1
 
@@ -463,13 +468,17 @@ megabrain_native_app_reload() {
     configured_value="$(megabrain_native_config_value "$kind" metroPort)"
     metro_port="$configured_value"
   fi
+  if [ -z "$device" ]; then
+    configured_value="$(megabrain_native_config_value "$kind" device)"
+    device="$configured_value"
+  fi
   [ -n "$url_template" ] || { megabrain_error "URL template is required for $kind; pass --url-template"; return 1; }
   [ -n "$bundle_id" ] || { megabrain_error "bundle id is required for $kind; pass --bundle-id"; return 1; }
   [ "$metro_port" = none ] && metro_port=''
   megabrain_native_validate_metro_port "$metro_port" || return $?
-  url="$(megabrain_native_render_url "$url_template" "$route" "$metro_port" "$bundle_id" "$device")" || return 1
   megabrain_native_require_simctl || return 1
   megabrain_native_select_device "$kind" "$device" true || return 1
+  url="$(megabrain_native_render_url "$url_template" "$route" "$metro_port" "$bundle_id" "$MEGABRAIN_NATIVE_SELECTED_UDID")" || return 1
   megabrain_native_wait_for_metro "$metro_port" "$timeout" || return 1
 
   terminate_output="$(xcrun simctl terminate "$MEGABRAIN_NATIVE_SELECTED_UDID" "$bundle_id" 2>&1)"

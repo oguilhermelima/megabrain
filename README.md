@@ -373,7 +373,8 @@ waits until `simctl` reports the selected device as `Booted`, bounded by
 `.megabrain/native.json` file in each worktree supplies `phone` and `tv` surface defaults. URL
 templates use `{route}`, `{metro_port}`, `{bundle_id}`, and `{device}` placeholders, so the
 same command supports structurally different links such as `exp://127.0.0.1:8082/--/{route}`
-and `canto:///{route}`. `native app reload` checks Metro when a port is configured, terminates
+and `canto:///{route}`. A surface's optional `device` value in `.megabrain/native.json` supplies
+the default name or identifier for both simulator commands. `native app reload` checks Metro when a port is configured, terminates
 the app (a stopped app is harmless), and opens the URL; it reports no claim about the app's
 rendered screen.
 
