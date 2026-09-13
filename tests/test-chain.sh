@@ -271,6 +271,8 @@ assert_equal "$(printf '%s' "$monthly_run_output" | jq -r '.skipped[0].kind')" l
 assert_contains "$(printf '%s' "$monthly_run_output" | jq -r '.skipped[0].reason')" 'primary-43200m'
 printf 'run monthly-only fallback: threshold migrates at 97 percent\n'
 rm -f "$rollouts_dir"/rollout-monthly-near-limit.jsonl
+write_rollout "$rollouts_dir/rollout-run.jsonl" 97.0 "$future_reset"
+set_mtime_offset "$rollouts_dir/rollout-run.jsonl" 30
 
 write_config '{"chains":{"run":{"when":{"parentAgent":"codex"},"steps":[{"agent":"claude","model":"m1","effort":"e1"},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
 command_orchestrate() {
