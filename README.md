@@ -422,6 +422,34 @@ slugs resolve through Playwright's registry, while laptop and desktop slugs use 
 sizes. Use `megabrain web devices [FILTER] --orientation portrait|landscape|all` to inspect the
 available presets. Unknown slugs are refused with matching registry suggestions when available.
 
+Visual parity workflows use non-persistent browser contexts, so one private storage state can be
+used by multiple captures without profile locking. Save a signed-in session once, then pass it to
+capture or measure:
+
+```sh
+megabrain web session-save --url http://localhost:3000/login --output .megabrain/session.json
+megabrain web capture --url http://localhost:3000/movie/42 --screen details \
+  --content-id movie-42 --theme dark --device macbookpro14 \
+  --storage-state .megabrain/session.json --output-root visual-captures
+megabrain web measure --screens screens.json --storage-state .megabrain/session.json
+```
+
+Capture writes candidate/ by default. Use `--baseline` deliberately; an existing baseline is
+never replaced unless `--replace-baseline` is also present. The output is grouped as
+side/surface/content-id/theme/viewport/screen, where a viewport such as 1512x982@2x records CSS
+dimensions and device scale factor without resizing the PNG. Viewport capture is the default;
+`--full-page` is explicit. A screens JSON file is processed sequentially in declaration order so
+results are deterministic; separate invocations can safely run in parallel with the same session
+state. Geometry is measured during the same settled page visit as the screenshot, after network
+idle, fonts, image decoding, reduced motion, disabled animations, and a frozen clock.
+
+Custom devices are stored separately from installed browser profiles and use private file mode:
+
+```sh
+megabrain web devices add office --viewport 1512x982 --device-scale-factor 2
+megabrain web devices --filter office
+```
+
 `doctor` names the missing piece and the command that installs it rather than failing silently.
 
 ## Examples
