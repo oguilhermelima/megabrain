@@ -316,15 +316,11 @@ export async function settlePage(page) {
 export async function prepareDeterministicRendering(page, { now = '2026-01-01T00:00:00.000Z' } = {}) {
   const timestamp = new Date(now).getTime();
   if (!Number.isFinite(timestamp)) throw new Error('freeze time must be a valid date');
-  await page.addInitScript({ content: `(() => {
-    const OriginalDate = Date;
-    const fixedTime = ${timestamp};
-    class FrozenDate extends OriginalDate {
-      constructor(...args) { super(args.length ? args : [fixedTime]); }
-      static now() { return fixedTime; }
-    }
-    globalThis.Date = FrozenDate;
-  })()` });
+  await page.clock.install({ time: timestamp });
+  await disableAnimations(page);
+}
+
+export async function disableAnimations(page) {
   await page.addStyleTag({ content: '*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }' });
 }
 
@@ -1077,7 +1073,7 @@ async function renderScreen(context, screen, freezeTime) {
   const page = await context.newPage();
   await prepareDeterministicRendering(page, { now: freezeTime });
   await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
-  await prepareDeterministicRendering(page, { now: freezeTime });
+  await disableAnimations(page);
   await settlePage(page);
   return page;
 }
