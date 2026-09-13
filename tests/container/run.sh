@@ -41,6 +41,9 @@ exec docker run --rm \
       git -C "$HOME/work" remote add origin "$origin_url"
     fi
     git -C "$HOME/work" symbolic-ref HEAD refs/heads/main
+    git -C "$HOME/work" add -A
+    git -C "$HOME/work" -c user.name=megabrain-test -c user.email=test@example.invalid \
+      commit -qm 'fixture container source'
     cd "$HOME/work"
     printf "bash %s on %s\n\n" "$BASH_VERSION" "$(uname -sm)"
     selected_tests=""
