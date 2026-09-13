@@ -34,12 +34,74 @@ export const VIEWPORT_CATEGORIES = Object.freeze({
   'mobile-small': Object.freeze({ width: 360, height: 800 }),
   'mobile-large': Object.freeze({ width: 414, height: 896 }),
   tablet: Object.freeze({ width: 768, height: 1024 }),
+  laptop: Object.freeze({ width: 1366, height: 768 }),
   desktop: Object.freeze({ width: 1920, height: 1080 }),
   'desktop-laptop': Object.freeze({ width: 1366, height: 768 }),
   'desktop-monitor': Object.freeze({ width: 1440, height: 900 }),
   'desktop-qhd': Object.freeze({ width: 2560, height: 1440 }),
   ultrawide: Object.freeze({ width: 3440, height: 1440 }),
   'ultrawide-wide': Object.freeze({ width: 2560, height: 1080 }),
+});
+
+// Registry entries intentionally keep only Playwright names. Owned entries are
+// CSS viewport sizes, not panel resolutions. Manufacturer specifications support
+// the MacBook values; the generic values follow the StatCounter-derived guide.
+// The Air 13 value 1440x900 and Air 15 value 1710x1080 were rejected because
+// their aspect ratios do not match the published panels. Air 15 has a 1112/1107
+// source disagreement; 1112 is retained from the source that matched Air 13.
+export const VIEWPORT_DEVICES = Object.freeze({
+  iphonese: { label: 'iPhone SE', registry: 'iPhone SE', category: 'mobile' },
+  iphonese3: { label: 'iPhone SE (3rd gen)', registry: 'iPhone SE (3rd gen)', category: 'mobile' },
+  iphone13mini: { label: 'iPhone 13 Mini', registry: 'iPhone 13 Mini', category: 'mobile' },
+  iphone14: { label: 'iPhone 14', registry: 'iPhone 14', category: 'mobile' },
+  iphone14promax: { label: 'iPhone 14 Pro Max', registry: 'iPhone 14 Pro Max', category: 'mobile' },
+  iphone15: { label: 'iPhone 15', registry: 'iPhone 15', category: 'mobile' },
+  iphone15pro: { label: 'iPhone 15 Pro', registry: 'iPhone 15 Pro', category: 'mobile' },
+  iphone15promax: { label: 'iPhone 15 Pro Max', registry: 'iPhone 15 Pro Max', category: 'mobile' },
+  iphone16: { label: 'iPhone 16', registry: 'iPhone 16', category: 'mobile' },
+  iphone16e: { label: 'iPhone 16e', registry: 'iPhone 16e', category: 'mobile' },
+  iphone16pro: { label: 'iPhone 16 Pro', registry: 'iPhone 16 Pro', category: 'mobile' },
+  iphone16promax: { label: 'iPhone 16 Pro Max', registry: 'iPhone 16 Pro Max', category: 'mobile' },
+  iphone17: { label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile' },
+  iphone17e: { label: 'iPhone 17e', registry: 'iPhone 17e', category: 'mobile' },
+  iphone17pro: { label: 'iPhone 17 Pro', registry: 'iPhone 17 Pro', category: 'mobile' },
+  iphone17promax: { label: 'iPhone 17 Pro Max', registry: 'iPhone 17 Pro Max', category: 'mobile' },
+  galaxys24: { label: 'Galaxy S24', registry: 'Galaxy S24', category: 'mobile' },
+  galaxya55: { label: 'Galaxy A55', registry: 'Galaxy A55', category: 'mobile' },
+  pixel5: { label: 'Pixel 5', registry: 'Pixel 5', category: 'mobile' },
+  pixel7: { label: 'Pixel 7', registry: 'Pixel 7', category: 'mobile' },
+  zfold7: { label: 'Galaxy Z Fold 7', registry: 'Galaxy Z Fold 7', category: 'mobile' },
+  zfold7cover: { label: 'Galaxy Z Fold 7 Cover', registry: 'Galaxy Z Fold 7 Cover', category: 'mobile' },
+  zflip7: { label: 'Galaxy Z Flip 7', registry: 'Galaxy Z Flip 7', category: 'mobile' },
+  zflip7cover: { label: 'Galaxy Z Flip 7 Cover', registry: 'Galaxy Z Flip 7 Cover', category: 'mobile' },
+  ipadmini: { label: 'iPad Mini', registry: 'iPad Mini', category: 'tablet' },
+  ipad7: { label: 'iPad (gen 7)', registry: 'iPad (gen 7)', category: 'tablet' },
+  ipad11: { label: 'iPad (gen 11)', registry: 'iPad (gen 11)', category: 'tablet' },
+  ipadpro11: { label: 'iPad Pro 11', registry: 'iPad Pro 11', category: 'tablet' },
+  galaxytabs4: { label: 'Galaxy Tab S4', registry: 'Galaxy Tab S4', category: 'tablet' },
+  galaxytabs9: { label: 'Galaxy Tab S9', registry: 'Galaxy Tab S9', category: 'tablet' },
+  macbookair13: {
+    label: 'MacBook Air 13-inch', viewport: { width: 1470, height: 956 }, category: 'laptop',
+    source: 'Apple MacBook Air technical specifications; panel 2560x1664',
+  },
+  macbookair15: {
+    label: 'MacBook Air 15-inch', viewport: { width: 1710, height: 1112 }, category: 'laptop',
+    source: 'Apple MacBook Air technical specifications; panel 2880x1864',
+  },
+  macbookpro14: {
+    label: 'MacBook Pro 14-inch', viewport: { width: 1512, height: 982 }, category: 'laptop',
+    source: 'Apple MacBook Pro technical specifications; panel 3024x1964',
+  },
+  macbookpro16: {
+    label: 'MacBook Pro 16-inch', viewport: { width: 1728, height: 1117 }, category: 'laptop',
+    source: 'Apple MacBook Pro technical specifications; panel 3456x2234',
+  },
+  fullhd: { label: 'Full HD desktop', viewport: { width: 1920, height: 1080 }, category: 'desktop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  laptop2k: { label: '2K laptop', viewport: { width: 2560, height: 1440 }, category: 'laptop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  laptop768: { label: '1366 laptop', viewport: { width: 1366, height: 768 }, category: 'laptop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  laptop900: { label: '1440 laptop', viewport: { width: 1440, height: 900 }, category: 'laptop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  ultrawide: { label: 'Ultrawide', viewport: { width: 3440, height: 1440 }, category: 'ultrawide', source: 'BrowserStack availability guide' },
+  ultrawidefhd: { label: 'Ultrawide Full HD', viewport: { width: 2560, height: 1080 }, category: 'ultrawide', source: 'BrowserStack availability guide' },
 });
 
 export function validateViewport(viewport) {
@@ -62,16 +124,52 @@ function parseViewport(value) {
   return { width: parseDimension(match[1], 'width'), height: parseDimension(match[2], 'height') };
 }
 
+function normalizeDeviceSlug(slug) {
+  return String(slug).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function matchingRegistryDevices(slug, devices) {
+  const normalized = normalizeDeviceSlug(slug).replace(/[0-9]+$/, '');
+  return Object.keys(devices)
+    .filter(name => normalizeDeviceSlug(name).startsWith(normalized))
+    .filter(name => !/ landscape$/i.test(name))
+    .slice(0, 5);
+}
+
+function resolveDeviceSlug(slug, devices, orientation = 'portrait') {
+  const normalizedSlug = normalizeDeviceSlug(slug);
+  const entry = VIEWPORT_DEVICES[normalizedSlug];
+  if (!entry) {
+    const matches = matchingRegistryDevices(slug, devices);
+    const suffix = matches.length ? `; Playwright registry offers: ${matches.join(', ')}` : '';
+    throw new Error(`unknown viewport device: ${slug}${suffix}`);
+  }
+  if (entry.registry) {
+    const registryName = orientation === 'landscape' ? `${entry.registry} landscape` : entry.registry;
+    const device = devices[registryName];
+    if (!device) {
+      const matches = matchingRegistryDevices(entry.registry, devices);
+      const suffix = matches.length ? `; Playwright registry offers: ${matches.join(', ')}` : '';
+      throw new Error(`viewport device ${slug} requires Playwright device ${registryName}, which is unavailable${suffix}`);
+    }
+    return validateViewport(device.viewport);
+  }
+  const viewport = entry.viewport;
+  return validateViewport(orientation === 'landscape'
+    ? { width: viewport.height, height: viewport.width }
+    : viewport);
+}
+
 export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_VIEWPORT) {
   const request = options || {};
+  const orientation = request.orientation || 'portrait';
+  if (!['portrait', 'landscape'].includes(orientation)) throw new Error('orientation must be portrait or landscape');
   const hasRaw = request.viewport != null || request.width != null || request.height != null;
   const hasCategory = request.category != null;
   if (request.device != null && (hasRaw || hasCategory)) throw new Error('viewport device cannot be combined with raw dimensions or a category');
   if (hasCategory && hasRaw) throw new Error('viewport category cannot be combined with raw dimensions');
   if (request.device != null) {
-    const device = devices[request.device];
-    if (!device) throw new Error(`unknown Playwright device: ${request.device}`);
-    return validateViewport(device.viewport);
+    return resolveDeviceSlug(request.device, devices, orientation);
   }
   if (hasCategory) {
     const category = VIEWPORT_CATEGORIES[request.category];
@@ -84,6 +182,41 @@ export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_V
     height: parseDimension(request.height, 'height'),
   });
   return validateViewport(fallback);
+}
+
+export function listDevicePresets(devices, { filter = '', orientation = 'portrait' } = {}) {
+  if (!['portrait', 'landscape', 'all'].includes(orientation)) throw new Error('orientation must be portrait, landscape, or all');
+  const normalizedFilter = normalizeDeviceSlug(filter);
+  const entries = Object.entries(VIEWPORT_DEVICES);
+  const exactEntries = normalizedFilter
+    ? entries.filter(([slug, entry]) => {
+      const model = normalizeDeviceSlug(entry.label).replace(/^(iphone|ipad|galaxy|pixel)/, '');
+      return slug === normalizedFilter || normalizeDeviceSlug(entry.label) === normalizedFilter || model === normalizedFilter;
+    })
+    : [];
+  const orientations = orientation === 'all' ? ['portrait', 'landscape'] : [orientation];
+  return (exactEntries.length ? exactEntries : entries).flatMap(([slug, entry]) => {
+    if (normalizedFilter && !exactEntries.length && !`${slug} ${entry.label}`.toLowerCase().includes(String(filter).toLowerCase())) return [];
+    return orientations.map(selectedOrientation => {
+      const registry = entry.registry
+        ? (selectedOrientation === 'landscape' ? `${entry.registry} landscape` : entry.registry)
+        : undefined;
+      const sourceDevice = registry ? devices[registry] : null;
+      const viewport = registry ? sourceDevice?.viewport : entry.viewport;
+      const orientedViewport = viewport && selectedOrientation === 'landscape' && !registry
+        ? { width: viewport.height, height: viewport.width }
+        : viewport;
+      return {
+        slug,
+        label: entry.label,
+        kind: entry.registry ? 'registry' : 'owned',
+        ...(registry ? { registry } : {}),
+        category: entry.category,
+        viewport: orientedViewport || null,
+        ...(entry.source ? { source: entry.source } : {}),
+      };
+    });
+  });
 }
 
 function chromiumPaths(root) {
@@ -644,7 +777,7 @@ function viewportRequestFromArgs(args) {
   const request = {};
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
-    if (['--viewport', '--width', '--height', '--device', '--category'].includes(flag)) {
+    if (['--viewport', '--width', '--height', '--device', '--category', '--orientation'].includes(flag)) {
       if (args[index + 1] == null) throw new Error(`${flag} requires a value`);
       request[flag.slice(2)] = args[index + 1];
       index += 1;
@@ -701,6 +834,13 @@ function showViewport(root, browser) {
     .filter(item => manifest.profiles?.[item]);
   if (browsers.length === 0) throw new Error(`no ${browser} browser profile is installed`);
   return browsers.map(selected => ({ browser: selected, viewport: configuredViewport(manifest, selected) }));
+}
+
+async function listDevices(root, args) {
+  const devices = await loadPlaywrightDevices(root);
+  const filter = argumentValue(args, '--filter', '');
+  const orientation = argumentValue(args, '--orientation', 'portrait');
+  return listDevicePresets(devices, { filter, orientation });
 }
 
 export async function doctor(root, { currentVersions = null } = {}) {
@@ -788,9 +928,17 @@ async function main(args) {
       }
       return;
     }
+    case 'device-list': {
+      for (const item of await listDevices(root, args)) {
+        const dimensions = item.viewport ? `${item.viewport.width}x${item.viewport.height}` : 'unavailable';
+        const origin = item.kind === 'registry' ? `registry:${item.registry}` : `owned:${item.source}`;
+        console.log(`${item.slug}\t${item.label}\t${item.category}\t${origin}\t${dimensions}`);
+      }
+      return;
+    }
     case 'doctor': console.log(JSON.stringify(await doctor(root))); return;
     case 'e2e-proof': await e2eProof(root); return;
-    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|viewport-set|viewport-show|doctor|e2e-proof');
+    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|viewport-set|viewport-show|device-list|doctor|e2e-proof');
   }
 }
 

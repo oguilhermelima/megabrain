@@ -287,14 +287,15 @@ megabrain_usage_line() {
     tv-disconnect) printf 'tv disconnect [<ip>]' ;;
     tmux-tune) printf 'tmux tune [--yes] [--dry-run] [--revert] [--json]' ;;
     tmux-wrapper) printf 'tmux wrapper [--yes] [--dry-run] [--revert] [--json]' ;;
-    web) printf 'web viewport|userscript ...' ;;
-    web-viewport) printf 'web viewport set|show ...' ;;
-    web-viewport-set) printf 'web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device NAME|--category NAME|--width W --height H]' ;;
+    web) printf 'web [--device SLUG|--category NAME|--viewport WxH] ...' ;;
+    web-viewport) printf 'web viewport set|show|devices ...' ;;
+    web-viewport-set) printf 'web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape]' ;;
     web-viewport-show) printf 'web viewport show [--browser chromium|firefox|both]' ;;
+    web-devices) printf 'web devices [FILTER] [--orientation portrait|landscape|all]' ;;
     web-userscript) printf 'web userscript install|list|remove ...' ;;
-    web-userscript-install) printf 'web userscript install <file.user.js> [--viewport WxH|--device NAME|--category NAME]' ;;
+    web-userscript-install) printf 'web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]' ;;
     web-userscript-list) printf 'web userscript list' ;;
-    web-userscript-remove) printf 'web userscript remove <file.user.js> [--viewport WxH|--device NAME|--category NAME]' ;;
+    web-userscript-remove) printf 'web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]' ;;
     *) return 1 ;;
   esac
 }

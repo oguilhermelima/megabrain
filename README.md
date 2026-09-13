@@ -399,7 +399,8 @@ or use a Playwright device preset for a named device:
 
 ```sh
 megabrain web viewport set --category mobile
-megabrain web viewport set --device "iPhone 13"
+megabrain web --device iphone17pro
+megabrain web devices iphone --orientation portrait
 megabrain web viewport show
 ```
 
@@ -411,8 +412,10 @@ BrowserStack's 2026 screen-resolution guide, which sources StatCounter; ultrawid
 availability conventions because no market-share figures were found.
 
 Userscript install and removal also accept `--viewport WIDTHxHEIGHT`, `--category NAME`, or
-`--device NAME` for a one-time override. Device names come from Playwright's registry; an
-unknown name is refused.
+`--device SLUG` for a one-time override. Device slugs are curated and stable: registry-backed
+slugs resolve through Playwright's registry, while laptop and desktop slugs use owned CSS viewport
+sizes. Use `megabrain web devices [FILTER] --orientation portrait|landscape|all` to inspect the
+available presets. Unknown slugs are refused with matching registry suggestions when available.
 
 `doctor` names the missing piece and the command that installs it rather than failing silently.
 

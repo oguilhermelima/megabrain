@@ -51,12 +51,14 @@
 - Run megabrain tv disconnect [<ip>].
 - Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json].
 - Run megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json].
+- Run megabrain web [--device SLUG|--category NAME|--viewport WxH] ....
 - Run megabrain web viewport|userscript ....
-- Run megabrain web viewport set|show ....
-- Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device NAME|--category NAME|--width W --height H].
+- Run megabrain web viewport set|show|devices ....
+- Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape].
+- Run megabrain web devices [FILTER] [--orientation portrait|landscape|all].
 - Run megabrain web viewport show [--browser chromium|firefox|both].
 - Run megabrain web userscript install|list|remove ....
-- Run megabrain web userscript install <file.user.js> [--viewport WxH|--device NAME|--category NAME].
+- Run megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
 - Run megabrain web userscript list.
-- Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device NAME|--category NAME].
+- Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
 - Run ./install.sh [--agents claude,codex,agy|none] [--skill none|global|project] [--agents-md none|global|project] [--modules list|all|none] [--yes].
