@@ -60,7 +60,7 @@ megabrain_superset() {
 }
 
 scenario_terminal_status_requires_process_identity() {
-  local output process_pid
+  local output="" process_pid=""
   rm -rf "$MEGABRAIN_STATE_DIR"
   mkdir -p "$MEGABRAIN_STATE_DIR"
   host_calls=0
@@ -95,7 +95,7 @@ setup_git_fixture() {
 }
 
 scenario_subdirectory_selector_is_refused() {
-  local output subdir
+  local output="" subdir=""
   setup_git_fixture subpath
   mkdir -p "$work_dir/repo/apps/web"
   subdir="$work_dir/repo/apps/web"
@@ -122,7 +122,7 @@ scenario_subdirectory_selector_is_refused() {
 }
 
 scenario_env_files_are_copied_without_contents() {
-  local output destination root_mode local_mode symlink_target
+  local output="" destination="" root_mode="" local_mode="" symlink_target=""
   setup_git_fixture env-copy
   mkdir -p "$work_dir/repo/apps/web" "$work_dir/repo/apps/mobile"
   printf 'root-secret-for-test\n' >"$work_dir/repo/.env"
@@ -158,7 +158,7 @@ scenario_env_files_are_copied_without_contents() {
 }
 
 scenario_no_env_file_is_normal() {
-  local output destination
+  local output="" destination=""
   setup_git_fixture no-env
   megabrain_workspace_id_for_target() { :; }
   megabrain_ensure_superset_project() { printf '%s\n' '{"id":"project-id","created":false}'; }
