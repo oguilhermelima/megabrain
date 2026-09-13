@@ -377,7 +377,7 @@ The two simulator modules need the Xcode Simulator, Appium and the XCUITest driv
 only on macOS; asked for elsewhere they report `unsupported: macOS only` rather than half
 installing. `tv-adb` needs Android platform-tools and `simulator-web` uses pinned Playwright 1.62.1;
 it needs Node.js, npm, npx, and
-the selected Playwright browser. Chromium uses a fixed 1280x720 viewport, uBlock Origin Lite,
+the selected Playwright browser. Chromium uses a configurable 1280x720 default viewport, uBlock Origin Lite,
 and Violentmonkey; Firefox uses its own persistent profile with full uBlock Origin and the signed
 Violentmonkey add-on. Extension versions are resolved and pinned when the module is installed,
 so a browser run does not change behavior behind the operator's back. Chromium is the profile
@@ -393,6 +393,18 @@ megabrain web userscript install hello.user.js
 megabrain web userscript list
 megabrain web userscript remove hello.user.js
 ```
+
+The browser viewport defaults to 1280x720. Persist a different size in the installed profile,
+or use a Playwright device preset for a named device:
+
+```sh
+megabrain web viewport set --viewport 390x844
+megabrain web viewport set --device "iPhone 13"
+megabrain web viewport show
+```
+
+Userscript install and removal also accept `--viewport WIDTHxHEIGHT` or `--device NAME` for a
+one-time override. Device names come from Playwright's registry; an unknown name is refused.
 
 `doctor` names the missing piece and the command that installs it rather than failing silently.
 

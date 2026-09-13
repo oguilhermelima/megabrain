@@ -238,13 +238,17 @@ megabrain doctor simulator-native      iOS and tvOS simulators, macOS only
 megabrain doctor simulator-tv          Apple TV simulator
 megabrain install simulator-web        Playwright MCP browser testing
 megabrain install simulator-web --browser chromium|firefox|both
+megabrain web viewport|userscript ...
+megabrain web viewport set|show ...
+megabrain web viewport set
+megabrain web viewport show
 megabrain web userscript install <file.user.js>
 megabrain web userscript list
 megabrain web userscript remove <file.user.js>
 ```
 
 `simulator-web` uses pinned Playwright 1.62.1 and keeps separate persistent Chromium and Firefox profiles under
-`~/.megabrain/playwright`, with a fixed Chromium viewport and extension versions pinned at
+`~/.megabrain/playwright`, with a configurable viewport and extension versions pinned at
 install time. Chromium is the userscript profile. To install or refresh a script, place it in
 `~/.megabrain/userscripts/` and run `megabrain web userscript install <file.user.js>`; the tool
 enables Chrome's one-time userScripts permission and sends the script through Violentmonkey.
