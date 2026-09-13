@@ -174,7 +174,7 @@ list_json="$(command_native sim list tv --json)" || fail "tv list failed: $list_
 assert_equal "$(printf '%s' "$list_json" | jq -r '.kind')" tv
 assert_equal "$(printf '%s' "$list_json" | jq -r '.devices | length')" 3
 assert_equal "$(printf '%s' "$list_json" | jq -r '.devices[0].name')" 'Apple TV 4K (3rd generation)'
-[ "$(grep -c 'simctl list devices --json' "$SIMCTL_LOG")" -eq 1 ] || fail 'list did not reuse a single candidate query'
+[ "$(grep -c 'simctl list devices --json' "$SIMCTL_LOG")" -eq 2 ] || fail 'list did not reuse one candidate query per kind'
 
 printf 'scenario: names select uniquely and missing or ambiguous names fail loudly\n'
 SIMCTL_DEVICES_JSON="$SIMCTL_BOOTED_JSON"
