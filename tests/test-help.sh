@@ -95,6 +95,11 @@ run_help native appium --help
 run_help native appium start --help
 run_help native appium stop --help
 run_help native appium status --help
+run_help native sim --help
+run_help native sim list --help
+run_help native sim ensure --help
+run_help native app --help
+run_help native app reload --help
 run_help tv --help
 run_help tv connect --help
 run_help tv disconnect --help

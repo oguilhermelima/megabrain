@@ -45,8 +45,9 @@
 - Run megabrain native appium start.
 - Run megabrain native appium status.
 - Run megabrain native appium stop.
-- Run megabrain native sim ensure <phone|tv> [--device <udid>] [--timeout <seconds>] [--json].
-- Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <udid>] [--metro-port <p>] [--timeout <s>] [--json].
+- Run megabrain native sim list <phone|tv> [--json].
+- Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json].
+- Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json].
 - Run megabrain tv connect <ip> [--port <port>].
 - Run megabrain tv disconnect [<ip>].
 - Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json].

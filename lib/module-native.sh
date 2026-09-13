@@ -53,7 +53,7 @@ megabrain_appium_pid() {
 }
 
 megabrain_appium_status() {
-  local pid command_line
+  local pid='' command_line=''
   pid="$(megabrain_appium_pid)"
   if [ -z "$pid" ]; then
     printf 'appium: down (port %s)\n' "$MEGABRAIN_APPIUM_PORT"
@@ -69,7 +69,7 @@ megabrain_appium_status() {
 }
 
 megabrain_appium_start() {
-  local pid
+  local pid=''
   if megabrain_appium_status >/dev/null 2>&1; then
     megabrain_appium_status
     return 0
@@ -82,7 +82,7 @@ megabrain_appium_start() {
   nohup appium --port "$MEGABRAIN_APPIUM_PORT" >"$MEGABRAIN_APPIUM_LOG" 2>&1 &
   pid=$!
   printf '%s\n' "$pid" >"$MEGABRAIN_APPIUM_PIDFILE"
-  local attempt
+  local attempt=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.2
     if megabrain_appium_status >/dev/null 2>&1; then
@@ -95,7 +95,7 @@ megabrain_appium_start() {
 }
 
 megabrain_appium_stop() {
-  local pid command_line
+  local pid='' command_line=''
   pid="$(megabrain_appium_pid)"
   if [ -z "$pid" ]; then
     rm -f "$MEGABRAIN_APPIUM_PIDFILE"
@@ -108,7 +108,7 @@ megabrain_appium_stop() {
     return 1
   fi
   kill "$pid" >/dev/null 2>&1 || true
-  local attempt
+  local attempt=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$pid" >/dev/null 2>&1 || break
     sleep 0.2
@@ -144,7 +144,7 @@ megabrain_native_require_simctl() {
 }
 
 megabrain_native_worktree_root() {
-  local path="${MEGABRAIN_NATIVE_WORKTREE:-$PWD}" root
+  local path="${MEGABRAIN_NATIVE_WORKTREE:-$PWD}" root=''
   root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$root" ]; then
     printf '%s\n' "$root"
@@ -158,7 +158,7 @@ megabrain_native_config_file() {
 }
 
 megabrain_native_config_validate() {
-  local config
+  local config=''
   config="$(megabrain_native_config_file)"
   [ -f "$config" ] || return 0
   if ! jq -e 'type == "object" and .version == 1 and (.surfaces | type == "object")' "$config" >/dev/null 2>&1; then
@@ -168,7 +168,7 @@ megabrain_native_config_validate() {
 }
 
 megabrain_native_config_value() {
-  local surface="$1" key="$2" config
+  local surface="$1" key="$2" config=''
   config="$(megabrain_native_config_file)"
   [ -f "$config" ] || return 0
   jq -r --arg surface "$surface" --arg key "$key" \
@@ -193,7 +193,7 @@ megabrain_native_validate_metro_port() {
 }
 
 megabrain_native_simulator_candidates() {
-  local kind="$1" devices runtime_fragment
+  local kind="$1" devices='' runtime_fragment=''
   runtime_fragment="iOS"
   [ "$kind" = tv ] && runtime_fragment="tvOS"
   devices="$(xcrun simctl list devices --json 2>/dev/null)" || {
@@ -213,34 +213,99 @@ megabrain_native_simulator_candidates() {
   }
 }
 
+megabrain_native_sim_list() {
+  local kind='' json=false arg='' candidates='' line='' udid='' state='' name=''
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --json) json=true; shift ;;
+      -h|--help) megabrain_usage_show native-sim-list; return 0 ;;
+      -*) megabrain_error "unknown native sim list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+      *)
+        [ -z "$kind" ] || { megabrain_usage_fail native-sim-list; return "$MEGABRAIN_USAGE_ERROR"; }
+        kind="$arg"; shift ;;
+    esac
+  done
+  [ -n "$kind" ] || { megabrain_usage_fail native-sim-list; return "$MEGABRAIN_USAGE_ERROR"; }
+  megabrain_native_validate_kind "$kind" || return $?
+  megabrain_native_require_simctl || return 1
+  candidates="$(megabrain_native_simulator_candidates "$kind")" || return 1
+
+  if [ "$json" = true ]; then
+    printf '%s\n' "$candidates" | jq -Rsc --arg kind "$kind" '
+      split("\n")
+      | map(select(length > 0) | split("\t") | {udid: .[0], state: .[1], name: .[2]})
+      | {kind: $kind, devices: .}
+    '
+    return $?
+  fi
+
+  while IFS=$'\t' read -r udid state name; do
+    [ -n "$udid" ] || continue
+    printf '%s\t%s\t%s\n' "$name" "$state" "$udid"
+  done <<<"$candidates"
+}
+
 megabrain_native_select_device() {
-  local kind="$1" requested="$2" booted_only="$3" candidates line udid state name
-  local count=0 selected_udid='' selected_state=''
+  local kind="$1" requested="$2" booted_only="$3" candidates='' line='' udid='' state='' name=''
+  local count=0 identifier_count=0 name_count=0 selected_udid='' selected_state='' selector_type=''
   candidates="$(megabrain_native_simulator_candidates "$kind")" || return 1
   while IFS=$'\t' read -r udid state name; do
     [ -n "$udid" ] || continue
-    if [ -n "$requested" ] && [ "$udid" != "$requested" ]; then
-      continue
-    fi
     if [ "$booted_only" = true ] && [ "$state" != Booted ]; then
       continue
     fi
-    count=$((count + 1))
-    selected_udid="$udid"
-    selected_state="$state"
+    if [ -n "$requested" ]; then
+      if [ "$udid" = "$requested" ]; then
+        identifier_count=$((identifier_count + 1))
+        selected_udid="$udid"
+        selected_state="$state"
+      elif [ "$name" = "$requested" ]; then
+        name_count=$((name_count + 1))
+        if [ "$identifier_count" -eq 0 ]; then
+          selected_udid="$udid"
+          selected_state="$state"
+        fi
+      fi
+    else
+      count=$((count + 1))
+      selected_udid="$udid"
+      selected_state="$state"
+    fi
   done <<<"$candidates"
 
-  local label
+  if [ -n "$requested" ]; then
+    case "$requested" in
+      *[!0123456789abcdefABCDEF-]*) selector_type='name' ;;
+      *) selector_type='device' ;;
+    esac
+    if [ "$identifier_count" -gt 0 ]; then
+      count="$identifier_count"
+    else
+      count="$name_count"
+      [ "$name_count" -gt 0 ] && selector_type='name'
+    fi
+  fi
+
+  local label=''
   label="$(megabrain_native_kind_label "$kind")"
   if [ "$count" -eq 0 ]; then
     if [ "$booted_only" = true ]; then
       if [ -n "$requested" ]; then
-        megabrain_error "simulator $requested is not a booted $label simulator"
+        if [ "$selector_type" = name ]; then
+          megabrain_error "simulator name $requested is not a booted $label simulator"
+        else
+          megabrain_error "simulator $requested is not a booted $label simulator"
+        fi
       else
         megabrain_error "no booted $label simulator is available; run megabrain native sim ensure $kind"
       fi
     elif [ -n "$requested" ]; then
-      megabrain_error "no $label simulator matches device $requested"
+      if [ "$selector_type" = name ]; then
+        megabrain_error "no $label simulator matches device name $requested"
+      else
+        megabrain_error "no $label simulator matches device $requested"
+      fi
     else
       megabrain_error "no $label simulator matches the requested kind"
     fi
@@ -248,9 +313,17 @@ megabrain_native_select_device() {
   fi
   if [ "$count" -gt 1 ]; then
     if [ "$booted_only" = true ]; then
-      megabrain_error "more than one booted $label simulator matches; pass --device <udid>"
+      if [ "$selector_type" = name ]; then
+        megabrain_error "more than one booted $label simulator matches name $requested; pass --device <udid>"
+      else
+        megabrain_error "more than one booted $label simulator matches; pass --device <udid>"
+      fi
     else
-      megabrain_error "more than one $label simulator matches; pass --device <udid>"
+      if [ "$selector_type" = name ]; then
+        megabrain_error "more than one $label simulator matches name $requested; pass --device <udid>"
+      else
+        megabrain_error "more than one $label simulator matches; pass --device <udid>"
+      fi
     fi
     return 1
   fi
@@ -259,8 +332,8 @@ megabrain_native_select_device() {
 }
 
 megabrain_native_sim_ensure() {
-  local kind='' device='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg
-  local candidates state boot_output boot_rc attempt
+  local kind='' device='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg=''
+  local candidates='' state='' boot_output='' boot_rc=0 attempt=0 configured_value=''
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -281,6 +354,11 @@ megabrain_native_sim_ensure() {
   [ -n "$kind" ] || { megabrain_usage_fail native-sim-ensure; return "$MEGABRAIN_USAGE_ERROR"; }
   megabrain_native_validate_kind "$kind" || return $?
   megabrain_native_validate_timeout "$timeout" || return $?
+  megabrain_native_config_validate || return 1
+  if [ -z "$device" ]; then
+    configured_value="$(megabrain_native_config_value "$kind" device)"
+    device="$configured_value"
+  fi
   megabrain_native_require_simctl || return 1
   megabrain_native_select_device "$kind" "$device" false || return 1
 
@@ -349,8 +427,8 @@ megabrain_native_wait_for_metro() {
 }
 
 megabrain_native_app_reload() {
-  local kind='' route='' bundle_id='' url_template='' device='' metro_port='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg
-  local configured_value url terminate_output terminate_rc terminate_lower
+  local kind='' route='' bundle_id='' url_template='' device='' metro_port='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg=''
+  local configured_value='' url='' terminate_output='' terminate_rc=0 terminate_lower=''
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -390,13 +468,17 @@ megabrain_native_app_reload() {
     configured_value="$(megabrain_native_config_value "$kind" metroPort)"
     metro_port="$configured_value"
   fi
+  if [ -z "$device" ]; then
+    configured_value="$(megabrain_native_config_value "$kind" device)"
+    device="$configured_value"
+  fi
   [ -n "$url_template" ] || { megabrain_error "URL template is required for $kind; pass --url-template"; return 1; }
   [ -n "$bundle_id" ] || { megabrain_error "bundle id is required for $kind; pass --bundle-id"; return 1; }
   [ "$metro_port" = none ] && metro_port=''
   megabrain_native_validate_metro_port "$metro_port" || return $?
-  url="$(megabrain_native_render_url "$url_template" "$route" "$metro_port" "$bundle_id" "$device")" || return 1
   megabrain_native_require_simctl || return 1
   megabrain_native_select_device "$kind" "$device" true || return 1
+  url="$(megabrain_native_render_url "$url_template" "$route" "$metro_port" "$bundle_id" "$MEGABRAIN_NATIVE_SELECTED_UDID")" || return 1
   megabrain_native_wait_for_metro "$metro_port" "$timeout" || return 1
 
   terminate_output="$(xcrun simctl terminate "$MEGABRAIN_NATIVE_SELECTED_UDID" "$bundle_id" 2>&1)"
@@ -421,7 +503,7 @@ megabrain_native_app_reload() {
 }
 
 command_native() {
-  local family="${1:-}" operation="${2:-}" arg
+  local family="${1:-}" operation="${2:-}" arg=''
   shift || true
   shift || true
   case "$family" in
@@ -441,7 +523,8 @@ command_native() {
     sim)
       case "$operation" in
         ensure) megabrain_native_sim_ensure "$@" ;;
-        -h|--help|"") megabrain_usage_show native-sim-ensure ;;
+        list) megabrain_native_sim_list "$@" ;;
+        -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure ;;
         *) megabrain_error "unknown native sim operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
@@ -452,7 +535,7 @@ command_native() {
         *) megabrain_error "unknown native app operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
-    -h|--help|"") megabrain_usage_show native-appium ;;
+    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-appium ;;
     *) megabrain_error "unknown native command: $family"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }

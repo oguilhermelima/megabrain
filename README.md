@@ -352,7 +352,8 @@ megabrain install simulator-web --browser chromium
 
 ```sh
 megabrain native appium start|status|stop   # one shared Appium server, not one per project
-megabrain native sim ensure phone --device <udid>  # boot and wait for an iOS simulator
+megabrain native sim list phone             # list available iOS simulators
+megabrain native sim ensure phone --device <name-or-udid>  # boot and wait for an iOS simulator
 megabrain native app reload phone --route <route> --bundle-id <id>  # terminate and open a deep link
 megabrain tv connect 192.168.1.50           # pair an Android TV
 megabrain tv disconnect
@@ -364,12 +365,16 @@ invocations, megabrain compares and repairs registered agent copies when needed;
 `doctor` skip that runtime repair. A per-target stamp makes an unchanged copy a no-op. Drift is
 reported as `skill-sync` rather than being hidden behind another module's status.
 
-`native sim ensure` waits until `simctl` reports the selected device as `Booted`, bounded by
+`native sim list` shows each available simulator's name, state and identifier. Device selectors accept
+either the simulator name or its identifier; an ambiguous name must be disambiguated with the
+identifier. `native sim ensure`
+waits until `simctl` reports the selected device as `Booted`, bounded by
 `--timeout`; a boot failure and a wait timeout are reported separately. The optional
 `.megabrain/native.json` file in each worktree supplies `phone` and `tv` surface defaults. URL
 templates use `{route}`, `{metro_port}`, `{bundle_id}`, and `{device}` placeholders, so the
 same command supports structurally different links such as `exp://127.0.0.1:8082/--/{route}`
-and `canto:///{route}`. `native app reload` checks Metro when a port is configured, terminates
+and `canto:///{route}`. A surface's optional `device` value in `.megabrain/native.json` supplies
+the default name or identifier for both simulator commands. `native app reload` checks Metro when a port is configured, terminates
 the app (a stopped app is harmless), and opens the URL; it reports no claim about the app's
 rendered screen.
 
