@@ -5,6 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue-control.XXXXXX")"
 pane_fixture="$state_dir/pane.transcript"
+stop_calls_file="$state_dir/stop.calls"
 stop_send_status=queued
 stop_send_calls=0
 
@@ -66,6 +67,7 @@ megabrain_tmux_agent_for_pane() {
 
 megabrain_tmux_send_interrupt() {
   stop_send_calls=$((stop_send_calls + 1))
+  printf 'interrupt\n' >>"$stop_calls_file"
   MEGABRAIN_TMUX_INTERRUPT_STATUS="$stop_send_status"
   [ "$stop_send_status" = queued ]
 }
@@ -102,7 +104,8 @@ scenario_supersede_undelivered() {
   assert_equal "$(jq -r '.supersededDelivered' <<<"$result")" 0
   assert_equal "$(jq -r '.deliveredSequences | length' <<<"$result")" 0
   assert_equal "$(jq -r '.status' <<<"$result")" queued
-  assert_equal "$(jq -r '.status' "$state_dir/dispatches/supersede-queued/deliveries"/*.json | sort | tr '\n' ' ')" 'superseded superseded outstanding '
+  assert_equal "$(jq -s '[.[].status] | map(select(. == "superseded")) | length' "$state_dir/dispatches/supersede-queued/deliveries"/*.json)" 2
+  assert_equal "$(jq -s '[.[].status] | map(select(. == "outstanding")) | length' "$state_dir/dispatches/supersede-queued/deliveries"/*.json)" 1
   export SUPERSET_TERMINAL_ID=supersede-queued-child
   child_view="$(megabrain_dispatch_child_check --timeout 0 --poll-interval 0 --json)"
   assert_contains "$(jq -r '.text' <<<"$child_view")" 'new authoritative direction'
@@ -161,9 +164,10 @@ scenario_stop_working() {
   set_pane_fixture working
   stop_send_status=queued
   stop_send_calls=0
+  : >"$stop_calls_file"
   result="$(megabrain_dispatch_stop stop-working --json)"
   assert_equal "$(jq -r '.status' <<<"$result")" interrupted
-  assert_equal "$stop_send_calls" 1
+  assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
   message_types="$(jq -r '.type' "$state_dir/dispatches/stop-working/messages"/*.json | tr '\n' ' ')"
   assert_equal "$message_types" 'interrupt interrupt-result '
   printf 'working transcript records the interrupt before and after Escape\n'
