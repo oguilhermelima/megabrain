@@ -1914,6 +1914,42 @@ megabrain_dispatch_release_tmux_process() {
   MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
 }
 
+megabrain_dispatch_host_terminal_read() {
+  local meta="$1" host workspace_id terminal_id response
+  host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
+  workspace_id="$(printf '%s' "$meta" | jq -r '.workspaceId // empty')"
+  terminal_id="$(printf '%s' "$meta" | jq -r '.terminalId // empty')"
+  case "$host" in
+    superset)
+      response="$(megabrain_superset terminals read --workspace "$workspace_id" --terminal "$terminal_id" --json 2>&1)" || {
+        megabrain_error "Superset terminal $terminal_id could not be read; host terminal output is unavailable"
+        return 1
+      }
+      ;;
+    orca)
+      response="$(orca terminal read --terminal "$terminal_id" --json 2>&1)" || {
+        megabrain_error "Orca terminal $terminal_id could not be read; host terminal output is unavailable"
+        return 1
+      }
+      ;;
+    *)
+      megabrain_error "unsupported host terminal $host; host terminal output is unavailable"
+      return 1
+      ;;
+  esac
+  printf '%s' "$response" | jq -e . >/dev/null 2>&1 || {
+    megabrain_error "$host terminal $terminal_id returned invalid read-back data; host terminal output is unavailable"
+    return 1
+  }
+  printf '%s' "$response" | jq -r '
+    if type == "string" then .
+    elif type == "object" then
+      (.text // .output // .content // .result.text // .result.output //
+       .terminal.text // .terminal.output // tostring)
+    else tostring end
+  '
+}
+
 megabrain_dispatch_read() {
   local dispatch_id="${1:-}" lines=200 json=false arg meta runtime pane output source transcript_path
   local truncated=false transcript_bytes
@@ -1934,30 +1970,35 @@ megabrain_dispatch_read() {
   [[ "$lines" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "--lines must be a positive number"; return "$MEGABRAIN_USAGE_ERROR"; }
   meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || { megabrain_error "dispatch $dispatch_id does not use tmux-runtime"; return 1; }
-  pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-  source=tmux
-  if ! output="$(megabrain_tmux_capture_pane "$pane" "-$lines" 2>/dev/null)"; then
-    transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")"
-    if [ -f "$transcript_path" ]; then
-      output="$(megabrain_dispatch_render_transcript "$transcript_path" "$lines")" || {
-        megabrain_error "could not render dispatch transcript $transcript_path"
+  if [ "$runtime" = tmux ]; then
+    pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
+    source=tmux
+    if ! output="$(megabrain_tmux_capture_pane "$pane" "-$lines" 2>/dev/null)"; then
+      transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")"
+      if [ -f "$transcript_path" ]; then
+        output="$(megabrain_dispatch_render_transcript "$transcript_path" "$lines")" || {
+          megabrain_error "could not render dispatch transcript $transcript_path"
+          return 1
+        }
+        source=file
+        # The render path never loads more than MEGABRAIN_TRANSCRIPT_MAX_BYTES of the
+        # source file, so a transcript over that bound loses content the caller asked
+        # for; that fact must reach the caller rather than being promoted to a
+        # complete answer.
+        transcript_bytes="$(wc -c <"$transcript_path" 2>/dev/null | tr -d ' ')"
+        case "$transcript_bytes" in
+          ''|*[!0-9]*) ;;
+          *) [ "$transcript_bytes" -gt "$MEGABRAIN_TRANSCRIPT_MAX_BYTES" ] && truncated=true ;;
+        esac
+      else
+        megabrain_error "could not read tmux pane $pane and no persisted transcript exists"
         return 1
-      }
-      source=file
-      # The render path never loads more than MEGABRAIN_TRANSCRIPT_MAX_BYTES of the
-      # source file, so a transcript over that bound loses content the caller asked
-      # for; that fact must reach the caller rather than being promoted to a
-      # complete answer.
-      transcript_bytes="$(wc -c <"$transcript_path" 2>/dev/null | tr -d ' ')"
-      case "$transcript_bytes" in
-        ''|*[!0-9]*) ;;
-        *) [ "$transcript_bytes" -gt "$MEGABRAIN_TRANSCRIPT_MAX_BYTES" ] && truncated=true ;;
-      esac
-    else
-      megabrain_error "could not read tmux pane $pane and no persisted transcript exists"
-      return 1
+      fi
     fi
+  else
+    output="$(megabrain_dispatch_host_terminal_read "$meta")" || return 1
+    source=host
+    pane=""
   fi
   if [ "$json" = true ]; then
     jq -n --arg dispatchId "$dispatch_id" --arg pane "$pane" --arg source "$source" --arg output "$output" \
