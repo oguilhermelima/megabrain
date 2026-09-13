@@ -106,7 +106,7 @@ exec docker run --rm \
       elapsed=$(( $(date +%s) - started ))
       # Tests declare skipped scenarios with one `skip: reason` line each.
       # Count the captured declarations here so a new scenario needs no runner registry.
-      skipped="$(awk '/^skip:[[:space:]]/ { count += 1 } END { print count + 0 }' "$out")"
+      skipped="$(awk "/^skip:[[:space:]]/ { count += 1 } END { print count + 0 }" "$out")"
       printf "%s %s %s\n" "$test_status" "$elapsed" "$skipped" >"$meta"
     }
     export result_dir
@@ -158,7 +158,7 @@ exec docker run --rm \
           [ -n "$skip_line" ] || continue
           printf "    SKIP %s: %s\n" "$t" "$skip_line"
         done <<EOF
-$(awk '/^skip:[[:space:]]/ { print }' "$out")
+$(awk "/^skip:[[:space:]]/ { print }" "$out")
 EOF
         skipped=$((skipped + test_skipped))
       fi
