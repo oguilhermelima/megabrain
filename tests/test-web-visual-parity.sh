@@ -40,7 +40,9 @@ const registry = {
   },
 };
 const descriptor = resolveDeviceDescriptor({ device: 'iphone17' }, registry);
-assert.deepEqual(descriptor.viewport, { width: 402, height: 874 });
+const registryDeviceName = VIEWPORT_DEVICES.iphone17.registry;
+assert.equal(registryDeviceName, 'iPhone 17');
+assert.deepEqual(descriptor.viewport, registry[registryDeviceName].viewport);
 assert.equal(descriptor.deviceScaleFactor, 3);
 assert.equal(descriptor.isMobile, true);
 assert.equal(descriptor.hasTouch, true);
