@@ -1899,6 +1899,39 @@ megabrain_dispatch_close_output_is_absent() {
   esac
 }
 
+MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS=not-landed
+MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON=''
+
+megabrain_dispatch_native_interrupt() {
+  local meta="$1" host terminal_id
+  MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS=not-landed
+  MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON=''
+  host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
+  terminal_id="$(printf '%s' "$meta" | jq -r '.terminalId // empty')"
+  case "$host" in
+    superset)
+      MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON='Superset terminals send offers no interrupt capability'
+      return 1
+      ;;
+    orca)
+      [ -n "$terminal_id" ] || {
+        MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON='Orca terminal id is missing'
+        return 1
+      }
+      if orca terminal send --terminal "$terminal_id" --interrupt --json >/dev/null 2>&1; then
+        MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS=landed
+        return 0
+      fi
+      MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON="Orca terminal $terminal_id rejected --interrupt"
+      return 1
+      ;;
+    *)
+      MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON="interrupt capability is unavailable for host $host"
+      return 1
+      ;;
+  esac
+}
+
 megabrain_dispatch_close_result() {
   local output="$1" close_rc="$2"
   [ "$close_rc" -eq 0 ] && return 0
@@ -2477,8 +2510,8 @@ megabrain_dispatch_reply() {
 }
 
 megabrain_dispatch_stop() {
-  local dispatch_id="${1:-}" json=false arg meta runtime liveness_status liveness_reason agent pane
-  local interrupt_affordance interrupt_status attempted_text result_text
+  local dispatch_id="${1:-}" json=false arg meta runtime host liveness_status liveness_reason agent pane terminal_status
+  local interrupt_affordance interrupt_status attempted_text result_text interrupt_reason=''
   case "$dispatch_id" in
     -h|--help) megabrain_usage_show orchestrate-stop; return 0 ;;
   esac
@@ -2494,36 +2527,66 @@ megabrain_dispatch_stop() {
   done
   meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  if [ "$runtime" != tmux ]; then
-    megabrain_error "dispatch $dispatch_id cannot be stopped: host runtime has no Escape"
-    return 1
-  fi
-  megabrain_dispatch_liveness_read "$dispatch_id" --json >/dev/null || return 1
-  liveness_status="${MEGABRAIN_DISPATCH_LIVENESS_STATUS:-unknown}"
-  liveness_reason="${MEGABRAIN_DISPATCH_LIVENESS_REASON:-liveness is not proven}"
-  if [ "$liveness_status" != working ]; then
-    case "$liveness_status" in
-      pending-check) liveness_reason='pending check frame: messages are waiting for the next tool call' ;;
-      unknown) liveness_reason="unknown liveness: ${liveness_reason:-liveness is not proven}" ;;
-      *) liveness_reason="${liveness_status}: ${liveness_reason:-agent is not working}" ;;
-    esac
-    megabrain_error "dispatch $dispatch_id cannot be stopped: $liveness_reason"
-    return 1
-  fi
-  pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-  agent="$(printf '%s' "$meta" | jq -r '.agent // empty')"
-  [ -n "$agent" ] || agent="$(megabrain_tmux_agent_for_pane "$pane" 2>/dev/null || true)"
-  interrupt_affordance="$(megabrain_tmux_interrupt_affordance "$agent" 2>/dev/null || true)"
-  [ -n "$interrupt_affordance" ] || {
-    megabrain_error "dispatch $dispatch_id cannot be stopped: interrupt affordance is unknown for agent $agent"
-    return 1
-  }
-  attempted_text="interrupt attempted for dispatch $dispatch_id with $interrupt_affordance"
-  megabrain_dispatch_message_append "$dispatch_id" parent interrupt "$attempted_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
-  if megabrain_tmux_send_interrupt "$pane" "$agent"; then
+  if [ "$runtime" = tmux ]; then
+    megabrain_dispatch_liveness_read "$dispatch_id" --json >/dev/null || return 1
+    liveness_status="${MEGABRAIN_DISPATCH_LIVENESS_STATUS:-unknown}"
+    liveness_reason="${MEGABRAIN_DISPATCH_LIVENESS_REASON:-liveness is not proven}"
+    if [ "$liveness_status" != working ]; then
+      case "$liveness_status" in
+        pending-check) liveness_reason='pending check frame: messages are waiting for the next tool call' ;;
+        unknown) liveness_reason="unknown liveness: ${liveness_reason:-liveness is not proven}" ;;
+        *) liveness_reason="${liveness_status}: ${liveness_reason:-agent is not working}" ;;
+      esac
+      megabrain_error "dispatch $dispatch_id cannot be stopped: $liveness_reason"
+      return 1
+    fi
+    pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
+    agent="$(printf '%s' "$meta" | jq -r '.agent // empty')"
+    [ -n "$agent" ] || agent="$(megabrain_tmux_agent_for_pane "$pane" 2>/dev/null || true)"
+    interrupt_affordance="$(megabrain_tmux_interrupt_affordance "$agent" 2>/dev/null || true)"
+    [ -n "$interrupt_affordance" ] || {
+      megabrain_error "dispatch $dispatch_id cannot be stopped: interrupt affordance is unknown for agent $agent"
+      return 1
+    }
+    attempted_text="interrupt attempted for dispatch $dispatch_id with $interrupt_affordance"
+    megabrain_dispatch_message_append "$dispatch_id" parent interrupt "$attempted_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+    megabrain_tmux_send_interrupt "$pane" "$agent" || true
     interrupt_status="${MEGABRAIN_TMUX_INTERRUPT_STATUS:-not-landed}"
   else
-    interrupt_status="${MEGABRAIN_TMUX_INTERRUPT_STATUS:-not-landed}"
+    host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
+    case "$host" in
+      orca)
+        megabrain_dispatch_terminal_status "$meta" || {
+          megabrain_error "dispatch $dispatch_id cannot be stopped: Orca terminal identity check failed"
+          return 1
+        }
+        terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
+        case "$terminal_status" in
+          proven) ;;
+          missing)
+            megabrain_error "dispatch $dispatch_id cannot be stopped: Orca terminal identity is missing; cannot safely interrupt"
+            return 1
+            ;;
+          *)
+            megabrain_error "dispatch $dispatch_id cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt"
+            return 1
+            ;;
+        esac
+        attempted_text="interrupt attempted for dispatch $dispatch_id with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca"
+        megabrain_dispatch_message_append "$dispatch_id" parent interrupt "$attempted_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
+        megabrain_dispatch_native_interrupt "$meta" || true
+        interrupt_status="${MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS:-not-landed}"
+        interrupt_reason="${MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON:-}"
+        ;;
+      superset)
+        megabrain_error "dispatch $dispatch_id cannot be stopped: Superset terminals send offers no interrupt capability"
+        return 1
+        ;;
+      *)
+        megabrain_error "dispatch $dispatch_id cannot be stopped: interrupt capability is unavailable for host ${host:-unknown}"
+        return 1
+        ;;
+    esac
   fi
   if [ "$interrupt_status" = landed ] || [ "$interrupt_status" = queued ]; then
     result_text="interrupt landed for dispatch $dispatch_id"
@@ -2538,6 +2601,7 @@ megabrain_dispatch_stop() {
     return 0
   fi
   result_text="interrupt did not land for dispatch $dispatch_id"
+  [ -n "$interrupt_reason" ] && result_text="$result_text: $interrupt_reason"
   megabrain_dispatch_message_append "$dispatch_id" parent interrupt-result "$result_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
   if [ "$json" = true ]; then
     jq -n --arg dispatchId "$dispatch_id" --arg status not-interrupted --arg result "$interrupt_status" \
