@@ -52,8 +52,11 @@
 - Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json].
 - Run megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json].
 - Run megabrain web viewport|userscript ....
+- Run megabrain web viewport set|show ....
+- Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device NAME|--width W --height H].
+- Run megabrain web viewport show [--browser chromium|firefox|both].
 - Run megabrain web userscript install|list|remove ....
-- Run megabrain web userscript install <file.user.js>.
+- Run megabrain web userscript install <file.user.js> [--viewport WxH|--device NAME].
 - Run megabrain web userscript list.
-- Run megabrain web userscript remove <file.user.js>.
+- Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device NAME].
 - Run ./install.sh [--agents claude,codex,agy|none] [--skill none|global|project] [--agents-md none|global|project] [--modules list|all|none] [--yes].
