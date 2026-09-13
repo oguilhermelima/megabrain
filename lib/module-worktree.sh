@@ -1246,9 +1246,21 @@ megabrain_terminal_host_entry() {
 }
 
 megabrain_terminal_host_process_status() {
-  local records="$1" terminal_id="$2" record="$3" entry exited host_pid port listener_pid
+  local records="$1" terminal_id="$2" record="$3" entry exited host_pid record_pid
   entry="$(megabrain_terminal_host_entry "$records" "$terminal_id")"
   [ -n "$entry" ] || { printf 'unknown\n'; return 0; }
+  record_pid="$(printf '%s' "$record" | jq -r '.rootPid // .pid // empty' 2>/dev/null || true)"
+  case "$record_pid" in
+    ''|0|*[!0-9]*) record_pid='' ;;
+  esac
+  host_pid="$(printf '%s' "$entry" | jq -r '.rootPid // .pid // .processId // .process.pid // empty' 2>/dev/null || true)"
+  case "$host_pid" in
+    ''|0|*[!0-9]*) host_pid='' ;;
+  esac
+  [ -n "$record_pid" ] && [ -n "$host_pid" ] && [ "$record_pid" = "$host_pid" ] || {
+    printf 'unknown\n'
+    return 0
+  }
   exited="$(printf '%s' "$entry" | jq -r 'if has("exited") then .exited else empty end' 2>/dev/null || true)"
   case "$exited" in
     true) printf 'dead\n'; return 0 ;;
