@@ -109,8 +109,9 @@ printf 'archived dispatch remains readable through list and read\n'
 megabrain_dispatch_meta_write delete-dispatch parent-terminal superset superset workspace child-terminal "$root" main codex label failed gpt-5 true codex '' '' host ide >/dev/null
 set_old delete-dispatch
 delete_result="$(command_orchestrate prune --delete --json)"
-assert_equal "$(printf '%s' "$delete_result" | jq -r '.deleted')" 1
-assert_missing "$MEGABRAIN_DISPATCH_DIR/delete-dispatch"
+assert_equal "$(printf '%s' "$delete_result" | jq -r '.deleted')" 0
+assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "delete-dispatch") | .reason')" 'host terminal identity is unproven; dispatch terminal was retained'
+assert_file "$MEGABRAIN_DISPATCH_DIR/delete-dispatch/meta.json"
 assert_file "$MEGABRAIN_DISPATCH_DIR/running-dispatch/meta.json"
 assert_file "$MEGABRAIN_DISPATCH_DIR/unknown-dispatch/meta.json"
 assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unknown-dispatch") | .state')" future_state

@@ -120,6 +120,16 @@ set_state_dir() {
   mkdir -p "$state_dir/bin"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$state_dir/bin/codex"
   chmod +x "$state_dir/bin/codex"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [ "${1:-}" = terminals ] && [ "${2:-}" = list ]; then' \
+    '  printf '\''{"sessions":[{"terminalId":"child-terminal","title":"megabrain-dispatch-%s"}]}\n'\'' "${MEGABRAIN_TEST_DISPATCH_ID:-}"' \
+    'elif [ "${1:-}" = terminals ] && [ "${2:-}" = read ]; then' \
+    '  printf '\''{"text":"READY"}\n'\''' \
+    'else' \
+    '  printf '\''{"ok":true}\n'\''' \
+    'fi' >"$state_dir/bin/superset"
+  chmod +x "$state_dir/bin/superset"
   export PATH="$state_dir/bin:$PATH"
   jq -n '{chains:{loop:{when:{parentAgent:"codex"},steps:[{agent:"codex",model:"gpt-5.6-luna",effort:"low"}]}},defaultSteps:[]}' >"$MEGABRAIN_CHAIN_FILE"
 }
@@ -220,6 +230,8 @@ megabrain_superset() {
     printf '{"terminalId":"child-terminal"}\n'
   elif [ "${1:-}" = terminals ] && [ "${2:-}" = read ]; then
     printf '{"text":"READY"}\n'
+  elif [ "${1:-}" = terminals ] && [ "${2:-}" = list ]; then
+    printf '{"sessions":[{"terminalId":"child-terminal","title":"megabrain-dispatch-%s"}]}\n' "${MEGABRAIN_TEST_DISPATCH_ID:-}"
   elif [ "${1:-}" = terminals ] && [ "${2:-}" = send ]; then
     [ "$fake_send_mode" = fail ] && return 1
     printf '%s\n' "${8:-}" >>"$state_dir/fake-sends.log"
@@ -353,6 +365,7 @@ run_flow() {
   assert_equal "$(printf '%s' "$chain_output" | jq -r '.agent')" codex
   dispatch_id="$(printf '%s' "$chain_output" | jq -r '.dispatch.dispatch // empty')"
   [ -n "$dispatch_id" ] || fail "$runtime chain did not launch a dispatch"
+  export MEGABRAIN_TEST_DISPATCH_ID="$dispatch_id"
   if [ "$runtime" = tmux ]; then
     assert_equal "$(tmux_cmd show-environment -t "$session_name" MEGABRAIN_STATE_DIR)" "MEGABRAIN_STATE_DIR=$state_dir"
   fi
