@@ -981,7 +981,7 @@ megabrain_chain_agy_usage() {
 }
 
 megabrain_chain_limit_read() {
-  local agent="$1" window="$2" rollout snapshot="" latest_snapshot="" matching_snapshot="" candidate="" candidate_snapshot="" candidate_matches="" field expected_minutes now fetched_at result observed
+  local agent="$1" window="$2" rollout snapshot="" latest_snapshot="" matching_snapshot="" candidate="" candidate_snapshot="" candidate_matches="" field expected_minutes now fetched_at result observed window_count actual_window
   MEGABRAIN_CHAIN_LIMIT_STATUS=unknown
   MEGABRAIN_CHAIN_LIMIT_USED=""
   MEGABRAIN_CHAIN_LIMIT_RESETS=""
@@ -1076,8 +1076,37 @@ megabrain_chain_limit_read() {
     ] | first // empty
   ' 2>/dev/null)"
   if [ -z "$field" ]; then
-    megabrain_chain_limit_unknown codex "$window" "snapshot reports $observed; requested window is not present"
-    return 0
+    window_count="$(printf '%s' "$snapshot" | jq -r '
+      [to_entries[] |
+        select((.value | type) == "object") |
+        select((.value.window_minutes | type) == "number")
+      ] | length
+    ' 2>/dev/null)"
+    # WHY: with one reported window it is the account's only governing quota;
+    # with several, choosing one would invent a policy the provider did not state.
+    case "$window_count" in
+      1) ;;
+      *)
+      megabrain_chain_limit_unknown codex "$window" "snapshot reports $observed; requested window is not present"
+      return 0
+      ;;
+    esac
+    field="$(printf '%s' "$snapshot" | jq -r '
+      [to_entries[] |
+        select((.value | type) == "object") |
+        select((.value.window_minutes | type) == "number") |
+        .key
+      ] | first // empty
+    ' 2>/dev/null)"
+    actual_window="$(printf '%s' "$snapshot" | jq -r --arg field "$field" '
+      .[$field].window_minutes as $minutes |
+      if $minutes == 300 then "5h"
+      elif $minutes == 10080 then "weekly"
+      else ($field + "-" + ($minutes | tostring) + "m")
+      end
+    ' 2>/dev/null)"
+  else
+    actual_window="$window"
   fi
   if ! printf '%s' "$snapshot" | jq -e --arg field "$field" '
     (.[$field].used_percent | type == "number") and
@@ -1103,7 +1132,7 @@ megabrain_chain_limit_read() {
   MEGABRAIN_CHAIN_LIMIT_FETCHED_AT="$fetched_at"
   MEGABRAIN_CHAIN_LIMIT_STATUS=current
   MEGABRAIN_CHAIN_LIMIT_SOURCE=disk
-  MEGABRAIN_CHAIN_LIMIT_REASON="codex $window window at $(megabrain_chain_percent_text "$MEGABRAIN_CHAIN_LIMIT_USED") percent"
+  MEGABRAIN_CHAIN_LIMIT_REASON="codex $actual_window window at $(megabrain_chain_percent_text "$MEGABRAIN_CHAIN_LIMIT_USED") percent"
 }
 
 MEGABRAIN_CHAIN_SELECTED_NAME=""
