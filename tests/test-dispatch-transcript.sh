@@ -509,7 +509,9 @@ megabrain_dispatch_terminal_status() {
   MEGABRAIN_TERMINAL_STATUS=unknown
 }
 unproven_prune_result="$(command_orchestrate prune --json)"
-assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.archived')" 1
+assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.archived')" 0
+assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unproven-session") | .reason')" 'terminal identity is unproven'
+assert_file "$MEGABRAIN_DISPATCH_DIR/unproven-session/meta.json"
 if grep -Fx 'unproven-session' "$live_sessions" >/dev/null 2>&1; then
   :
 else

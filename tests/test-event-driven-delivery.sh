@@ -46,6 +46,10 @@ source "$root/lib/common.sh"
 source "$root/lib/module-orchestrate.sh"
 source "$root/lib/module-parent-notify.sh"
 
+declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1 || \
+  fail 'module-orchestrate did not load the terminal identity helper'
+printf 'module-orchestrate loads the terminal identity helper\n'
+
 parent_nudges=0
 child_nudges=0
 megabrain_parent_notify() {

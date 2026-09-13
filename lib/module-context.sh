@@ -71,6 +71,25 @@ MEGABRAIN_DISPATCH_LIST_SUPERSET_VALID=false
 MEGABRAIN_DISPATCH_LIST_SUPERSET_TERMINALS='[]'
 MEGABRAIN_DISPATCH_LIST_SUPERSET_IDS=''
 
+megabrain_dispatch_terminal_ids() {
+  local host="$1" records="$2"
+  case "$host" in
+    orca)
+      printf '%s' "$records" | jq -r '
+        def terminals: if type == "array" then . else (.result.terminals // []) end;
+        terminals[]? | .handle // empty
+      ' 2>/dev/null
+      ;;
+    superset)
+      printf '%s' "$records" | jq -r '
+        def terminals: if type == "array" then . else (.sessions // .result.sessions // .result.terminals // .terminals // []) end;
+        terminals[]? | .terminalId // empty
+      ' 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 megabrain_dispatch_list_cache_prepare_host() {
   local host="$1" records
   case "$host" in
@@ -85,10 +104,7 @@ megabrain_dispatch_list_cache_prepare_host() {
       MEGABRAIN_DISPATCH_LIST_ORCA_TERMINALS="$records"
       if printf '%s' "$records" | jq -e . >/dev/null 2>&1; then
         MEGABRAIN_DISPATCH_LIST_ORCA_VALID=true
-        MEGABRAIN_DISPATCH_LIST_ORCA_IDS="$(printf '%s' "$records" | jq -r '
-          def records: if type == "array" then . else (.result.terminals // .terminals // .sessions // .result.sessions // []) end;
-          records[]? | (.handle // .terminalHandle // .terminalId // .sessionId // .id // "")
-        ' 2>/dev/null || true)"
+        MEGABRAIN_DISPATCH_LIST_ORCA_IDS="$(megabrain_dispatch_terminal_ids orca "$records" 2>/dev/null || true)"
       fi
       ;;
     superset)
@@ -102,10 +118,7 @@ megabrain_dispatch_list_cache_prepare_host() {
       MEGABRAIN_DISPATCH_LIST_SUPERSET_TERMINALS="$records"
       if printf '%s' "$records" | jq -e . >/dev/null 2>&1; then
         MEGABRAIN_DISPATCH_LIST_SUPERSET_VALID=true
-        MEGABRAIN_DISPATCH_LIST_SUPERSET_IDS="$(printf '%s' "$records" | jq -r '
-          def records: if type == "array" then . else (.result.terminals // .terminals // .sessions // .result.sessions // []) end;
-          records[]? | (.handle // .terminalHandle // .terminalId // .sessionId // .id // "")
-        ' 2>/dev/null || true)"
+        MEGABRAIN_DISPATCH_LIST_SUPERSET_IDS="$(megabrain_dispatch_terminal_ids superset "$records" 2>/dev/null || true)"
       fi
       ;;
   esac
@@ -146,26 +159,23 @@ megabrain_dispatch_host_terminal_records() {
 }
 
 megabrain_dispatch_terminal_id_exists() {
-  local records="$1" terminal_id="$2"
-  printf '%s' "$records" | jq -e --arg id "$terminal_id" '
-    def records: if type == "array" then . else (.result.terminals // .terminals // .sessions // .result.sessions // []) end;
-    any(records[]?; (.handle // .terminalHandle // .terminalId // .sessionId // .id // "") == $id)
-  ' >/dev/null 2>&1
-}
-
-megabrain_dispatch_terminal_identity_matches() {
-  local records="$1" terminal_id="$2" dispatch_id="$3"
-  printf '%s' "$records" | jq -e --arg id "$terminal_id" --arg dispatch "$dispatch_id" '
-    def records: if type == "array" then . else (.result.terminals // .terminals // .sessions // .result.sessions // []) end;
-    any(records[]?;
-      (.handle // .terminalHandle // .terminalId // .sessionId // .id // "") == $id and
-      (($id == $dispatch) or ([
-        .dispatchId, .metadata.dispatchId,
-        .env.MEGABRAIN_DISPATCH_ID, .environment.MEGABRAIN_DISPATCH_ID,
-        .command, .title, .name
-      ] | map(select(. != null) | tostring) | join(" ") | contains($dispatch)))
-    )
-  ' >/dev/null 2>&1
+  local host="$1" records="$2" terminal_id="$3"
+  [ -n "$terminal_id" ] || return 1
+  case "$host" in
+    orca)
+      printf '%s' "$records" | jq -e --arg id "$terminal_id" '
+        def terminals: if type == "array" then . else (.result.terminals // []) end;
+        any(terminals[]?; (.handle // "") == $id)
+      ' >/dev/null 2>&1
+      ;;
+    superset)
+      printf '%s' "$records" | jq -e --arg id "$terminal_id" '
+        def terminals: if type == "array" then . else (.sessions // .result.sessions // .result.terminals // .terminals // []) end;
+        any(terminals[]?; (.terminalId // "") == $id)
+      ' >/dev/null 2>&1
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 megabrain_dispatch_process_has_identity() {
@@ -241,7 +251,7 @@ megabrain_dispatch_parent_status() {
       megabrain_require_command orca || return 0
       terminals="$(orca terminal list --json 2>/dev/null || true)"
       printf '%s' "$terminals" | jq -e . >/dev/null 2>&1 || return 0
-      if megabrain_dispatch_terminal_id_exists "$terminals" "$parent"; then
+      if megabrain_dispatch_terminal_id_exists orca "$terminals" "$parent"; then
         MEGABRAIN_PARENT_STATUS=alive
       else
         MEGABRAIN_PARENT_STATUS=gone
@@ -256,7 +266,7 @@ megabrain_dispatch_parent_status() {
         queried=true
         terminals="$(megabrain_superset terminals list --workspace "$workspace_id" --json 2>/dev/null || true)"
         printf '%s' "$terminals" | jq -e . >/dev/null 2>&1 || { MEGABRAIN_PARENT_STATUS=unknown; return 0; }
-        if megabrain_dispatch_terminal_id_exists "$terminals" "$parent"; then
+        if megabrain_dispatch_terminal_id_exists superset "$terminals" "$parent"; then
           MEGABRAIN_PARENT_STATUS=alive
           return 0
         fi
@@ -268,10 +278,11 @@ megabrain_dispatch_parent_status() {
 }
 
 megabrain_dispatch_terminal_status() {
-  local meta="$1" dispatch_id terminal_id runtime records tmux_session tmux_pane pane_pid
+  local meta="$1" dispatch_id terminal_id runtime host records tmux_session tmux_pane pane_pid
   MEGABRAIN_TERMINAL_STATUS=unknown
   dispatch_id="$(printf '%s' "$meta" | jq -r '.dispatchId')"
   terminal_id="$(printf '%s' "$meta" | jq -r '.terminalId // empty')"
+  host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
   if [ "$runtime" = tmux ]; then
     tmux_session="$(printf '%s' "$meta" | jq -r '.tmuxSession // empty')"
@@ -293,11 +304,7 @@ megabrain_dispatch_terminal_status() {
   records="$(megabrain_dispatch_host_terminal_records "$meta" 2>/dev/null || true)"
   [ -n "$records" ] || return 0
   printf '%s' "$records" | jq -e . >/dev/null 2>&1 || return 0
-  if ! megabrain_dispatch_terminal_id_exists "$records" "$terminal_id"; then
-    MEGABRAIN_TERMINAL_STATUS=missing
-    return 0
-  fi
-  if megabrain_dispatch_terminal_identity_matches "$records" "$terminal_id" "$dispatch_id"; then
+  if megabrain_dispatch_terminal_id_exists "$host" "$records" "$terminal_id"; then
     MEGABRAIN_TERMINAL_STATUS=proven
   fi
 }

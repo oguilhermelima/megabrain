@@ -32,6 +32,11 @@ if ! declare -F megabrain_dispatch_preamble >/dev/null 2>&1; then
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-facts.sh"
 fi
 
+if ! declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1; then
+  # shellcheck source=local/megabrain/lib/module-context.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-context.sh"
+fi
+
 MEGABRAIN_DISPATCH_PROTOCOL="$(megabrain_dispatch_protocol)"
 MEGABRAIN_SUPERSET_PROTOCOL="$MEGABRAIN_DISPATCH_PROTOCOL"
 
@@ -647,21 +652,82 @@ megabrain_dispatch_meta_update_state() {
   megabrain_dispatch_validate_transition dispatch "$current_state" "$state" || return 1
   megabrain_dispatch_meta_update_fields "$dispatch_id" "$state" "__keep__" "__keep__" "__keep__" "__keep__" "__keep__" "__keep__" "__keep__" || return 1
   case "$state" in
-    done|failed|circuit_broken) megabrain_dispatch_release_terminal_process "$dispatch_id" || return 1 ;;
+    done|failed|circuit_broken)
+      if ! megabrain_dispatch_release_terminal_process "$dispatch_id"; then
+        # The dispatch outcome is durable queue state; terminal cleanup is housekeeping.
+        # A cleanup failure must be recorded without rejecting the child outcome.
+        megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+          'terminal release failed; process was not released' __keep__ || true
+      fi
+      ;;
   esac
 }
 
+megabrain_dispatch_terminal_status_required() {
+  local meta="$1"
+  if ! declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1; then
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS_ERROR='terminal identity check unavailable'
+    return 1
+  fi
+  if ! megabrain_dispatch_terminal_status "$meta"; then
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS_ERROR='terminal identity check failed'
+    return 1
+  fi
+  return 0
+}
+
 megabrain_dispatch_release_terminal_process() {
-  local dispatch_id="$1" meta runtime transcript_path process_state terminal_state
-  transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")" || return 1
-  # WHY: the transcript is the durable record that makes releasing the live pane safe.
-  [ -f "$transcript_path" ] || return 0
+  local dispatch_id="$1" meta runtime transcript_path process_state terminal_state terminal_status
+  MEGABRAIN_DISPATCH_RELEASE_STATUS=not-released
+  MEGABRAIN_DISPATCH_RELEASED_TERMINAL=false
   meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || return 0
   terminal_state="$(printf '%s' "$meta" | jq -r '.terminalState // "owned"')"
-  [ "$terminal_state" != released ] || return 0
-  megabrain_dispatch_release_tmux_process "$meta" || return 1
+  [ "$terminal_state" != released ] || {
+    MEGABRAIN_DISPATCH_RELEASE_STATUS=released
+    return 0
+  }
+  if [ "$runtime" = tmux ]; then
+    transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")" || return 1
+    # WHY: the transcript is the durable record that makes releasing the live pane safe.
+    [ -f "$transcript_path" ] || return 0
+    megabrain_dispatch_release_tmux_process "$meta" || return 1
+  else
+    # Host terminals have no persisted transcript. Their terminal identity is the
+    # durable record, so only a proven identity may be closed automatically.
+    if ! megabrain_dispatch_terminal_status_required "$meta"; then
+      megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+        "${MEGABRAIN_DISPATCH_TERMINAL_STATUS_ERROR}; process was not released" __keep__ || return 1
+      MEGABRAIN_DISPATCH_RELEASE_STATUS=unproven
+      return 0
+    fi
+    terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
+    case "$terminal_status" in
+      missing)
+        MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
+        MEGABRAIN_DISPATCH_RELEASE_STATUS=missing
+        ;;
+      unknown)
+        megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+          'host terminal identity is unproven; process was not released' __keep__ || return 1
+        MEGABRAIN_DISPATCH_RELEASE_STATUS=unproven
+        return 0
+        ;;
+      proven)
+        if ! megabrain_dispatch_native_close "$meta"; then
+          megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+            "${MEGABRAIN_DISPATCH_CLOSE_ERROR:-terminal release failed; process was not released}" __keep__ || return 1
+          MEGABRAIN_DISPATCH_RELEASE_STATUS=not-released
+          return 0
+        fi
+        MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
+        MEGABRAIN_DISPATCH_RELEASE_STATUS=released
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  fi
   if [ "$MEGABRAIN_DISPATCH_RELEASED_TERMINAL" = true ]; then
     process_state="$(printf '%s' "$meta" | jq -r '.processState // empty')"
     case "$process_state" in
@@ -1092,6 +1158,33 @@ megabrain_dispatch_timestamp_epoch() {
   printf '%s\n' "$epoch"
 }
 
+megabrain_dispatch_prune_release() {
+  local dispatch_id="$1" meta="$2" runtime terminal_state
+  MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON=""
+  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
+  if [ "$runtime" = host ]; then
+    if ! megabrain_dispatch_release_terminal_process "$dispatch_id"; then
+      MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='could not release dispatch terminal'
+      return 1
+    fi
+    terminal_state="$(jq -r '.terminalState // "owned"' "$(megabrain_dispatch_meta_path "$dispatch_id")" 2>/dev/null || printf 'owned')"
+    if [ "$terminal_state" = retained ]; then
+      MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='host terminal identity is unproven; dispatch terminal was retained'
+      return 1
+    fi
+    return 0
+  fi
+  megabrain_dispatch_release_tmux_session "$meta" || {
+    MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='could not release dispatch terminal'
+    return 1
+  }
+  if [ "${MEGABRAIN_DISPATCH_TERMINAL_STATUS:-unknown}" = unknown ]; then
+    MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='terminal identity is unproven'
+    return 1
+  fi
+  return 0
+}
+
 megabrain_dispatch_prune() {
   local older_than="$MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS" state_filter="$(megabrain_dispatch_prune_states)"
   local mode=archive dry_run=false json=false arg now_epoch cutoff archive_month
@@ -1194,25 +1287,29 @@ megabrain_dispatch_prune() {
         reason="archive destination already exists"
       elif ! meta="$(cat "$meta_path")"; then
         reason="could not read dispatch metadata"
-      elif ! megabrain_dispatch_release_tmux_session "$meta"; then
-        reason="could not release dispatch terminal"
-      elif mkdir -p "$(dirname "$target")" && mv "$dispatch_dir" "$target"; then
-        archived_count=$((archived_count + 1))
-        archived_ids="$(jq --arg dispatchId "$dispatch_id" --arg path "$target" '. + [{dispatchId: $dispatchId, path: $path}]' <<<"$archived_ids")"
-        continue
       else
-        reason="could not archive dispatch"
+        if ! megabrain_dispatch_prune_release "$dispatch_id" "$meta"; then
+          reason="${MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON:-could not release dispatch terminal}"
+        elif mkdir -p "$(dirname "$target")" && mv "$dispatch_dir" "$target"; then
+          archived_count=$((archived_count + 1))
+          archived_ids="$(jq --arg dispatchId "$dispatch_id" --arg path "$target" '. + [{dispatchId: $dispatchId, path: $path}]' <<<"$archived_ids")"
+          continue
+        else
+          reason="could not archive dispatch"
+        fi
       fi
     elif ! meta="$(cat "$meta_path")"; then
       reason="could not read dispatch metadata"
-    elif ! megabrain_dispatch_release_tmux_session "$meta"; then
-      reason="could not release dispatch terminal"
-    elif rm -rf "$dispatch_dir"; then
-      deleted_count=$((deleted_count + 1))
-      deleted_ids="$(jq --arg dispatchId "$dispatch_id" '. + [$dispatchId]' <<<"$deleted_ids")"
-      continue
     else
-      reason="could not delete dispatch"
+      if ! megabrain_dispatch_prune_release "$dispatch_id" "$meta"; then
+        reason="${MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON:-could not release dispatch terminal}"
+      elif rm -rf "$dispatch_dir"; then
+        deleted_count=$((deleted_count + 1))
+        deleted_ids="$(jq --arg dispatchId "$dispatch_id" '. + [$dispatchId]' <<<"$deleted_ids")"
+        continue
+      else
+        reason="could not delete dispatch"
+      fi
     fi
     skipped_count=$((skipped_count + 1))
     skipped_dispatches="$(jq --arg dispatchId "$dispatch_id" --arg state "$state" --arg reason "$reason" '. + [{dispatchId: $dispatchId, state: (if $state == "" then null else $state end), reason: $reason}]' <<<"$skipped_dispatches")"
@@ -1796,18 +1893,29 @@ megabrain_dispatch_tmux_session_owned() {
 megabrain_dispatch_release_tmux_session() {
   local meta="$1" allow_caller="${2:-false}" runtime tmux_session terminal_status
   MEGABRAIN_DISPATCH_RELEASED_TERMINAL=false
+  MEGABRAIN_DISPATCH_TERMINAL_STATUS=unknown
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || return 0
+  [ "$runtime" = tmux ] || {
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS=not-applicable
+    return 0
+  }
   tmux_session="$(printf '%s' "$meta" | jq -r '.tmuxSession // empty')"
-  [ -n "$tmux_session" ] || return 0
+  [ -n "$tmux_session" ] || {
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS=missing
+    return 0
+  }
   megabrain_dispatch_terminal_status "$meta"
   terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
+  MEGABRAIN_DISPATCH_TERMINAL_STATUS="$terminal_status"
   # WHY: tmux pane ids are recycled; never kill a session until its process tree
   # proves that the pane still belongs to this dispatch.
   [ "$terminal_status" = proven ] || return 0
   megabrain_dispatch_tmux_session_owned "$meta" "$allow_caller" || return 0
   declare -F megabrain_tmux_session_exists >/dev/null 2>&1 || return 0
-  megabrain_tmux_session_exists "$tmux_session" || return 0
+  if ! megabrain_tmux_session_exists "$tmux_session"; then
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS=missing
+    return 0
+  fi
   if [ "$allow_caller" != true ]; then
     megabrain_dispatch_close_refuse_caller "$meta" || return 1
   fi
@@ -1841,6 +1949,42 @@ megabrain_dispatch_release_tmux_process() {
   MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
 }
 
+megabrain_dispatch_host_terminal_read() {
+  local meta="$1" host workspace_id terminal_id response
+  host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
+  workspace_id="$(printf '%s' "$meta" | jq -r '.workspaceId // empty')"
+  terminal_id="$(printf '%s' "$meta" | jq -r '.terminalId // empty')"
+  case "$host" in
+    superset)
+      response="$(megabrain_superset terminals read --workspace "$workspace_id" --terminal "$terminal_id" --json 2>&1)" || {
+        megabrain_error "Superset terminal $terminal_id could not be read; host terminal output is unavailable"
+        return 1
+      }
+      ;;
+    orca)
+      response="$(orca terminal read --terminal "$terminal_id" --json 2>&1)" || {
+        megabrain_error "Orca terminal $terminal_id could not be read; host terminal output is unavailable"
+        return 1
+      }
+      ;;
+    *)
+      megabrain_error "unsupported host terminal $host; host terminal output is unavailable"
+      return 1
+      ;;
+  esac
+  printf '%s' "$response" | jq -e . >/dev/null 2>&1 || {
+    megabrain_error "$host terminal $terminal_id returned invalid read-back data; host terminal output is unavailable"
+    return 1
+  }
+  printf '%s' "$response" | jq -r '
+    if type == "string" then .
+    elif type == "object" then
+      (.text // .output // .content // .result.text // .result.output //
+       .terminal.text // .terminal.output // tostring)
+    else tostring end
+  '
+}
+
 megabrain_dispatch_read() {
   local dispatch_id="${1:-}" lines=200 json=false arg meta runtime pane output source transcript_path
   local truncated=false transcript_bytes
@@ -1861,30 +2005,35 @@ megabrain_dispatch_read() {
   [[ "$lines" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "--lines must be a positive number"; return "$MEGABRAIN_USAGE_ERROR"; }
   meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || { megabrain_error "dispatch $dispatch_id does not use tmux-runtime"; return 1; }
-  pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-  source=tmux
-  if ! output="$(megabrain_tmux_capture_pane "$pane" "-$lines" 2>/dev/null)"; then
-    transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")"
-    if [ -f "$transcript_path" ]; then
-      output="$(megabrain_dispatch_render_transcript "$transcript_path" "$lines")" || {
-        megabrain_error "could not render dispatch transcript $transcript_path"
+  if [ "$runtime" = tmux ]; then
+    pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
+    source=tmux
+    if ! output="$(megabrain_tmux_capture_pane "$pane" "-$lines" 2>/dev/null)"; then
+      transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")"
+      if [ -f "$transcript_path" ]; then
+        output="$(megabrain_dispatch_render_transcript "$transcript_path" "$lines")" || {
+          megabrain_error "could not render dispatch transcript $transcript_path"
+          return 1
+        }
+        source=file
+        # The render path never loads more than MEGABRAIN_TRANSCRIPT_MAX_BYTES of the
+        # source file, so a transcript over that bound loses content the caller asked
+        # for; that fact must reach the caller rather than being promoted to a
+        # complete answer.
+        transcript_bytes="$(wc -c <"$transcript_path" 2>/dev/null | tr -d ' ')"
+        case "$transcript_bytes" in
+          ''|*[!0-9]*) ;;
+          *) [ "$transcript_bytes" -gt "$MEGABRAIN_TRANSCRIPT_MAX_BYTES" ] && truncated=true ;;
+        esac
+      else
+        megabrain_error "could not read tmux pane $pane and no persisted transcript exists"
         return 1
-      }
-      source=file
-      # The render path never loads more than MEGABRAIN_TRANSCRIPT_MAX_BYTES of the
-      # source file, so a transcript over that bound loses content the caller asked
-      # for; that fact must reach the caller rather than being promoted to a
-      # complete answer.
-      transcript_bytes="$(wc -c <"$transcript_path" 2>/dev/null | tr -d ' ')"
-      case "$transcript_bytes" in
-        ''|*[!0-9]*) ;;
-        *) [ "$transcript_bytes" -gt "$MEGABRAIN_TRANSCRIPT_MAX_BYTES" ] && truncated=true ;;
-      esac
-    else
-      megabrain_error "could not read tmux pane $pane and no persisted transcript exists"
-      return 1
+      fi
     fi
+  else
+    output="$(megabrain_dispatch_host_terminal_read "$meta")" || return 1
+    source=host
+    pane=""
   fi
   if [ "$json" = true ]; then
     jq -n --arg dispatchId "$dispatch_id" --arg pane "$pane" --arg source "$source" --arg output "$output" \
