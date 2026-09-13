@@ -652,7 +652,14 @@ megabrain_dispatch_meta_update_state() {
   megabrain_dispatch_validate_transition dispatch "$current_state" "$state" || return 1
   megabrain_dispatch_meta_update_fields "$dispatch_id" "$state" "__keep__" "__keep__" "__keep__" "__keep__" "__keep__" "__keep__" "__keep__" || return 1
   case "$state" in
-    done|failed|circuit_broken) megabrain_dispatch_release_terminal_process "$dispatch_id" || return 1 ;;
+    done|failed|circuit_broken)
+      if ! megabrain_dispatch_release_terminal_process "$dispatch_id"; then
+        # The dispatch outcome is durable queue state; terminal cleanup is housekeeping.
+        # A cleanup failure must be recorded without rejecting the child outcome.
+        megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+          'terminal release failed; process was not released' __keep__ || true
+      fi
+      ;;
   esac
 }
 
@@ -707,7 +714,12 @@ megabrain_dispatch_release_terminal_process() {
         return 0
         ;;
       proven)
-        megabrain_dispatch_native_close "$meta" || return 1
+        if ! megabrain_dispatch_native_close "$meta"; then
+          megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+            "${MEGABRAIN_DISPATCH_CLOSE_ERROR:-terminal release failed; process was not released}" __keep__ || return 1
+          MEGABRAIN_DISPATCH_RELEASE_STATUS=not-released
+          return 0
+        fi
         MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
         MEGABRAIN_DISPATCH_RELEASE_STATUS=released
         ;;
