@@ -98,10 +98,10 @@ EOF
 chmod +x "$bin_dir/curl"
 
 cat >"$work_dir/shutdown.json" <<'EOF'
-{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Shutdown","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Shutdown","isAvailable":true}]}}
+{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Shutdown","isAvailable":true},{"udid":"phone-2","name":"iPhone Other","state":"Shutdown","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Shutdown","isAvailable":true}]}}
 EOF
 cat >"$work_dir/booted.json" <<'EOF'
-{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Booted","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Booted","isAvailable":true}]}}
+{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"phone-1","name":"iPhone","state":"Booted","isAvailable":true},{"udid":"phone-2","name":"iPhone Other","state":"Booted","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Booted","isAvailable":true}]}}
 EOF
 cat >"$work_dir/tv-only.json" <<'EOF'
 {"devices":{"com.apple.CoreSimulator.SimRuntime.tvOS-26-5":[{"udid":"tv-1","name":"Apple TV","state":"Shutdown","isAvailable":true}]}}
