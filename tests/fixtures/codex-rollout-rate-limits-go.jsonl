@@ -1,0 +1,1 @@
+{"rate_limits":{"limit_id":"codex","primary":{"used_percent":35.0,"window_minutes":43200,"resets_at":1790564688},"secondary":null,"plan_type":"go"}}
