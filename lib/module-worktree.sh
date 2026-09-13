@@ -49,7 +49,7 @@ megabrain_worktree_root() {
   fi
   if [ -z "$raw" ]; then
     if [ "$read_only" = true ] || [ ! -t 0 ]; then
-      megabrain_error "$host shared worktree root is unset; choose one interactively with megabrain worktree create or set $MEGABRAIN_STATE_DIR/worktree-root"
+      megabrain_error "shared worktree root for host '$host' is unset; choose one interactively with megabrain worktree create or set $MEGABRAIN_STATE_DIR/worktree-root"
       return 1
     fi
     read -r -p "Shared worktree root: " raw
