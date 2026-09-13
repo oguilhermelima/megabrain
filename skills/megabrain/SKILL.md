@@ -61,6 +61,7 @@ megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--
 
 `watch` returns a delivery that **replays until acked**, so nothing is lost if you read it and
 do not act. Ack it once you have acted; acking twice is safe and reports `duplicate`.
+When no delivery is available, watch and check report status `empty`; a timeout is not implied.
 
 **Do not assume you will be told.** When a child runs `ask` or `done`, megabrain tries to type a
 one-line pointer into the parent's terminal, but that nudge is best effort and the transport can

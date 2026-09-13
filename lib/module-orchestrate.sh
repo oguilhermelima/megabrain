@@ -1602,9 +1602,9 @@ megabrain_dispatch_empty_delivery_report() {
   local dispatch_id="$1" json="$2"
   if [ "$json" = true ]; then
     jq -n --arg dispatchId "$dispatch_id" \
-      '{dispatchId: $dispatchId, deliveryId: null, replayed: false, status: "timeout", messageSeqs: [], messages: [], text: ""}'
+      '{dispatchId: $dispatchId, deliveryId: null, replayed: false, status: "empty", messageSeqs: [], messages: [], text: ""}'
   else
-    megabrain_dispatch_report "$dispatch_id" timeout "" false
+    megabrain_dispatch_report "$dispatch_id" empty "" false
   fi
 }
 
