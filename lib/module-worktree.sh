@@ -1283,11 +1283,11 @@ megabrain_terminal_host_process_status() {
   exited="$(printf '%s' "$entry" | jq -r 'if has("exited") then .exited else empty end' 2>/dev/null || true)"
   case "$exited" in
     true) printf 'dead\n'; return 0 ;;
-    false) printf 'alive\n'; return 0 ;;
+    false) ;;
   esac
   case "$(printf '%s' "$entry" | jq -r '.status // .state // empty' 2>/dev/null || true)" in
     exited|dead|stopped|terminated) printf 'dead\n'; return 0 ;;
-    active|alive|running) printf 'alive\n'; return 0 ;;
+    active|alive|running) ;;
   esac
   host_pid="$(printf '%s' "$record" | jq -r '.rootPid // .pid // empty' 2>/dev/null || true)"
   case "$host_pid" in
