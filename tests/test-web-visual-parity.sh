@@ -16,6 +16,7 @@ const {
   VIEWPORT_DEVICES,
   buildCapturePaths,
   buildContextOptions,
+  listDevicePresets,
   measureSelectors,
   prepareDeterministicRendering,
   readCustomDevices,
@@ -55,7 +56,16 @@ assert.deepEqual(resolveDeviceDescriptor({}, {}), {
 });
 assert.deepEqual(buildContextOptions(descriptor), descriptor);
 
-// Scenario: an operator can add, read, and remove a custom descriptor.
+// Scenario: an operator must provide a source for a custom descriptor.
+assert.throws(
+  () => upsertCustomDevice({}, 'unsourced', {
+    viewport: { width: 1512, height: 982 },
+  }),
+  /source/,
+  'a custom device must be traceable to a source',
+);
+
+// Scenario: an operator can add, read, and remove a traceable custom descriptor.
 const deviceFile = path.join(work, 'devices.json');
 let customDevices = readCustomDevices(deviceFile);
 customDevices = upsertCustomDevice(customDevices, 'office', {
@@ -64,10 +74,36 @@ customDevices = upsertCustomDevice(customDevices, 'office', {
   isMobile: false,
   hasTouch: false,
   userAgent: 'office-agent',
+  source: 'local device lab measurement, 2026-09-13',
 });
 writePrivateJson(deviceFile, customDevices);
 assert.equal(fs.statSync(deviceFile).mode & 0o777, 0o600);
 assert.equal(readCustomDevices(deviceFile).office.userAgent, 'office-agent');
+assert.equal(readCustomDevices(deviceFile).office.source, 'local device lab measurement, 2026-09-13');
+assert.deepEqual(
+  listDevicePresets({}, { filter: 'office', customDevices: readCustomDevices(deviceFile) }),
+  [{
+    slug: 'office',
+    label: 'office',
+    kind: 'custom',
+    category: 'desktop',
+    viewport: { width: 1512, height: 982 },
+    deviceScaleFactor: 2,
+    isMobile: false,
+    hasTouch: false,
+    userAgent: 'office-agent',
+    source: 'local device lab measurement, 2026-09-13',
+  }],
+  'custom device listings must retain traceability metadata',
+);
+assert.throws(
+  () => upsertCustomDevice({}, 'iphone17', {
+    viewport: { width: 402, height: 714 },
+    source: 'local device lab measurement, 2026-09-13',
+  }),
+  /conflicts with built-in device/,
+  'a custom device must not shadow a built-in slug',
+);
 customDevices = removeCustomDevice(customDevices, 'office');
 assert.deepEqual(customDevices, {});
 
@@ -106,14 +142,30 @@ const fakePage = {
   waitForLoadState: async state => calls.push(['load', state]),
   evaluate: async () => calls.push(['evaluate']),
   addStyleTag: async options => calls.push(['style', options.content]),
-  addInitScript: async options => calls.push(['init', options]),
+  clock: { install: async options => calls.push(['clock', options]) },
 };
 await settlePage(fakePage);
 await prepareDeterministicRendering(fakePage, { now: '2026-01-01T00:00:00.000Z' });
 assert.deepEqual(calls[0], ['load', 'networkidle']);
 assert.ok(calls.some(([name]) => name === 'evaluate'), 'settling must await fonts and decoded images');
 assert.ok(calls.some(([name]) => name === 'style'), 'rendering must disable animations');
-assert.ok(calls.some(([name]) => name === 'init'), 'rendering must freeze the clock');
+assert.deepEqual(
+  calls.find(([name]) => name === 'clock'),
+  ['clock', { time: 1767225600000 }],
+  'rendering must freeze Playwright clock at the chosen instant',
+);
+assert.equal(calls.some(([name]) => name === 'init'), false, 'rendering must not patch Date in page script');
+
+const suppliedClockCalls = [];
+await prepareDeterministicRendering({
+  addStyleTag: async () => {},
+  clock: { install: async options => suppliedClockCalls.push(options) },
+}, { now: '2030-05-06T07:08:09.000Z' });
+assert.deepEqual(
+  suppliedClockCalls,
+  [{ time: 1904281689000 }],
+  'the caller must be able to choose the frozen instant',
+);
 
 // Scenario: geometry is extracted from the same page visit as the capture.
 const geometryPage = {
@@ -132,6 +184,17 @@ assert.deepEqual(await measureSelectors(geometryPage, { title: '.title', poster:
 
 console.log('ok: visual parity scenarios');
 NODE
+
+# Scenario: the public CLI persists and removes custom device descriptors.
+cli_devices_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-web-devices.XXXXXX")"
+cli_devices_file="$cli_devices_root/devices.json"
+MEGABRAIN_PLAYWRIGHT_ROOT="$cli_devices_root" "$root/megabrain" web devices add studio \
+  --devices-file "$cli_devices_file" --viewport 1000x700 --device-scale-factor 2 \
+  --source 'QA simulator measurement, 2026-09-13' >/dev/null
+jq -e '.studio.source == "QA simulator measurement, 2026-09-13"' "$cli_devices_file" >/dev/null
+MEGABRAIN_PLAYWRIGHT_ROOT="$cli_devices_root" "$root/megabrain" web devices remove studio \
+  --devices-file "$cli_devices_file" >/dev/null
+jq -e 'has("studio") | not' "$cli_devices_file" >/dev/null
 
 web_root="${HOME}/.megabrain/playwright"
 if [ "${MEGABRAIN_WEB_E2E:-true}" = false ]; then
