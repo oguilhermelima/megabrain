@@ -23,6 +23,9 @@ docker build -t "$image" -f "$root/tests/container/Dockerfile" "$root/tests/cont
 exec docker run --rm \
   -e "MEGABRAIN_TEST_JOBS=${MEGABRAIN_TEST_JOBS:-}" \
   -e "MEGABRAIN_TEST_TIMING=${MEGABRAIN_TEST_TIMING:-}" \
+  -e "TEST_SCENARIO=${TEST_SCENARIO:-}" \
+  -e "SCENARIO=${SCENARIO:-}" \
+  -e "FINISH_SCENARIO=${FINISH_SCENARIO:-}" \
   -e MEGABRAIN_IN_CONTAINER=true \
   -e MEGABRAIN_TEST_OUTPUT_DIR=/results \
   -v "$root:/src:ro" \
@@ -90,7 +93,7 @@ exec docker run --rm \
     failure_report="$result_dir/failures.log"
     : >"$failure_report"
     run_test() {
-      local t="$1" name out meta started test_status elapsed
+      local t="$1" name out meta started test_status elapsed skipped
       name="$(basename "$t" .sh)"
       out="$result_dir/$name.out"
       meta="$result_dir/$name.meta"
@@ -101,23 +104,37 @@ exec docker run --rm \
         test_status=$?
       fi
       elapsed=$(( $(date +%s) - started ))
-      printf "%s %s\n" "$test_status" "$elapsed" >"$meta"
+      # Tests declare skipped scenarios with one `skip: reason` line each.
+      # Count the captured declarations here so a new scenario needs no runner registry.
+      skipped="$(awk '/^skip:[[:space:]]/ { count += 1 } END { print count + 0 }' "$out")"
+      printf "%s %s %s\n" "$test_status" "$elapsed" "$skipped" >"$meta"
     }
     export result_dir
     export -f run_test
     printf "%s\n" "${test_jobs} test workers"
     printf "%s\\n" $selected_tests | xargs -P "$test_jobs" -n 1 bash -c "run_test \"\$1\"" _
 
-    failed=0 passed=0 slowest_test="" slowest_seconds=0
+    failed=0 passed=0 skipped=0 slowest_test="" slowest_seconds=0
+    for selection in TEST_SCENARIO SCENARIO FINISH_SCENARIO; do
+      case "$selection" in
+        TEST_SCENARIO) value="${TEST_SCENARIO:-}" ;;
+        SCENARIO) value="${SCENARIO:-}" ;;
+        FINISH_SCENARIO) value="${FINISH_SCENARIO:-}" ;;
+      esac
+      if [ -n "$value" ]; then
+        printf "scenario selection: %s=%s\n" "$selection" "$value"
+      fi
+    done
     for t in $selected_tests; do
       name="$(basename "$t" .sh)"
       out="$result_dir/$name.out"
       meta="$result_dir/$name.meta"
       if [ -f "$meta" ]; then
-        IFS=" " read -r test_status elapsed <"$meta"
+        IFS=" " read -r test_status elapsed test_skipped <"$meta"
       else
         test_status=124
         elapsed=60
+        test_skipped=0
       fi
       if [ -z "$slowest_test" ] || [ "$elapsed" -gt "$slowest_seconds" ]; then
         slowest_seconds="$elapsed"
@@ -136,8 +153,17 @@ exec docker run --rm \
         } >>"$failure_report"
         failed=$((failed + 1))
       fi
+      if [ "$test_skipped" -gt 0 ]; then
+        while IFS= read -r skip_line; do
+          [ -n "$skip_line" ] || continue
+          printf "    SKIP %s: %s\n" "$t" "$skip_line"
+        done <<EOF
+$(awk '/^skip:[[:space:]]/ { print }' "$out")
+EOF
+        skipped=$((skipped + test_skipped))
+      fi
     done
-    printf "\n%s passed, %s failed\n" "$passed" "$failed"
+    printf "\n%s passed, %s failed, %s skipped\n" "$passed" "$failed" "$skipped"
     printf "slowest: %s (%ss); timeout ceiling: 60s; workers: %s\n" "$slowest_test" "$slowest_seconds" "$test_jobs"
     if [ "$failed" -eq 0 ]; then
       printf "No failing tests.\n" >"$failure_report"
