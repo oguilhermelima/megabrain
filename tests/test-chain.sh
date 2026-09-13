@@ -115,7 +115,25 @@ assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" '73.0 percent'
 assert_equal "$(printf '%s' "$MEGABRAIN_CHAIN_LIMIT_RESULT" | jq -r '.windows[0].usedPercent | type')" number
 assert_equal "$(printf '%s' "$MEGABRAIN_CHAIN_LIMIT_RESULT" | jq -r '.reading.kind')" floor
 assert_equal "$(printf '%s' "$MEGABRAIN_CHAIN_LIMIT_RESULT" | jq -r '.reading.basis')" last-recorded-turn
+megabrain_chain_limit_read codex weekly
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" current
+assert_percent "$MEGABRAIN_CHAIN_LIMIT_USED" 28.0
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_RESETS" 4102444800
 printf 'limit real-shaped sample guard: current at 73 percent\n'
+
+rm -f "$rollouts_dir"/rollout-*.jsonl
+cp "$root/tests/fixtures/codex-rollout-rate-limits-go.jsonl" "$rollouts_dir/rollout-go-shaped.jsonl"
+megabrain_chain_limit_read codex 5h
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" unknown
+assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'primary 43200 minutes'
+printf 'limit go-shaped sample: monthly window is reported as unavailable for 5h\n'
+
+rm -f "$rollouts_dir"/rollout-*.jsonl
+printf '%s\n' '{"timestamp":"2026-09-07T08:15:20.790Z","ordinal":14,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":35.0,"window_minutes":15,"resets_at":4102444800},"secondary":null}}}' >"$rollouts_dir/rollout-unknown-shaped.jsonl"
+megabrain_chain_limit_read codex 5h
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" unknown
+assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'primary 15 minutes'
+printf 'limit unknown-shaped sample: unexpected window is named in the reason\n'
 
 write_rollout "$rollouts_dir/rollout-current.jsonl" 97.0 "$future_reset"
 printf '%s\n' '{"timestamp":"2026-09-07T08:15:22.790Z","ordinal":16,"type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400}}}' >>"$rollouts_dir/rollout-current.jsonl"
