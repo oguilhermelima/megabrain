@@ -58,7 +58,7 @@
 - Run megabrain web viewport|userscript ....
 - Run megabrain web viewport set|show|devices ....
 - Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape].
-- Run megabrain web devices [FILTER] [--orientation portrait|landscape|all].
+- Run megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG.
 - Run megabrain web capture --url URL --screen NAME [options].
 - Run megabrain web measure --url URL --screen NAME [options].
 - Run megabrain web session save --url URL --output FILE [options].
