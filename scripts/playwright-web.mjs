@@ -74,10 +74,7 @@ export const VIEWPORT_DEVICES = Object.freeze({
   iphone16e: { label: 'iPhone 16e', registry: 'iPhone 16e', category: 'mobile' },
   iphone16pro: { label: 'iPhone 16 Pro', registry: 'iPhone 16 Pro', category: 'mobile' },
   iphone16promax: { label: 'iPhone 16 Pro Max', registry: 'iPhone 16 Pro Max', category: 'mobile' },
-  iphone17: {
-    label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile',
-    viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
-  },
+  iphone17: { label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile' },
   iphone17e: { label: 'iPhone 17e', registry: 'iPhone 17e', category: 'mobile' },
   iphone17pro: { label: 'iPhone 17 Pro', registry: 'iPhone 17 Pro', category: 'mobile' },
   iphone17promax: { label: 'iPhone 17 Pro Max', registry: 'iPhone 17 Pro Max', category: 'mobile' },
