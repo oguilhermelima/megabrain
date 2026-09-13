@@ -8,6 +8,8 @@ pane_fixture="$state_dir/pane.transcript"
 stop_calls_file="$state_dir/stop.calls"
 stop_send_status=queued
 stop_send_calls=0
+orca_interrupt_calls=0
+terminal_status_fixture=proven
 
 cleanup() {
   rm -rf "$state_dir"
@@ -54,7 +56,7 @@ megabrain_parent_notify_dispatch() {
 }
 
 megabrain_dispatch_terminal_status() {
-  MEGABRAIN_TERMINAL_STATUS=proven
+  MEGABRAIN_TERMINAL_STATUS="$terminal_status_fixture"
 }
 
 megabrain_tmux_capture_pane() {
@@ -72,14 +74,24 @@ megabrain_tmux_send_interrupt() {
   [ "$stop_send_status" = queued ]
 }
 
+orca() {
+  if [ "${1:-}" = terminal ] && [ "${2:-}" = send ]; then
+    orca_interrupt_calls=$((orca_interrupt_calls + 1))
+    printf '%s\n' "$*" >>"$stop_calls_file"
+    printf '{"ok":true}\n'
+    return 0
+  fi
+  return 1
+}
+
 begin_scenario() {
   export SUPERSET_TERMINAL_ID=parent-terminal
   unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 }
 
 create_dispatch() {
-  local dispatch_id="$1" runtime="${2:-tmux}"
-  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal superset superset workspace-test \
+  local dispatch_id="$1" runtime="${2:-tmux}" host="${3:-superset}"
+  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal superset "$host" "$host" \
     "$dispatch_id-child" "$root" main codex label running gpt-5 true codex session-% "$dispatch_id-pane" \
     "$runtime" "$runtime" >/dev/null
 }
@@ -188,10 +200,41 @@ scenario_stop_host() {
   begin_scenario
   create_dispatch stop-host host
   if result="$(megabrain_dispatch_stop stop-host --json 2>&1)"; then
-    fail 'host runtime accepted an Escape interrupt'
+    fail 'Superset runtime accepted an interrupt it cannot provide'
   fi
-  assert_contains "$result" 'host runtime has no Escape'
-  printf 'host runtime refuses an unsupported interrupt affordance\n'
+  assert_contains "$result" 'Superset terminals send offers no interrupt capability'
+  printf 'Superset runtime refuses its missing interrupt capability explicitly\n'
+}
+
+scenario_stop_orca() {
+  local result message
+  begin_scenario
+  create_dispatch stop-orca host orca
+  terminal_status_fixture=proven
+  orca_interrupt_calls=0
+  : >"$stop_calls_file"
+  result="$(megabrain_dispatch_stop stop-orca --json)"
+  assert_equal "$(jq -r '.status' <<<"$result")" interrupted
+  assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
+  assert_contains "$(cat "$stop_calls_file")" '--interrupt'
+  message="$(jq -r '.text' "$state_dir/dispatches/stop-orca/messages"/*-parent-interrupt.json)"
+  assert_contains "$message" 'working liveness and pending-check frame are unavailable on Orca'
+  printf 'Orca interrupts through terminal send and records its weaker guard explicitly\n'
+}
+
+scenario_stop_orca_unproven() {
+  local result
+  begin_scenario
+  create_dispatch stop-orca-unproven host orca
+  terminal_status_fixture=unknown
+  orca_interrupt_calls=0
+  : >"$stop_calls_file"
+  if result="$(megabrain_dispatch_stop stop-orca-unproven --json 2>&1)"; then
+    fail 'Orca runtime interrupted without terminal identity proof'
+  fi
+  assert_contains "$result" 'Orca terminal identity is unproven'
+  assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 0
+  printf 'Orca refuses an interrupt when terminal identity cannot be proven\n'
 }
 
 scenario_change_on_refusal() {
@@ -217,6 +260,8 @@ case "${1:-all}" in
   pending) scenario_stop_pending_check ;;
   working) scenario_stop_working ;;
   host) scenario_stop_host ;;
+  orca) scenario_stop_orca ;;
+  orca-unproven) scenario_stop_orca_unproven ;;
   change) scenario_change_on_refusal ;;
   all)
     scenario_empty_report
@@ -225,6 +270,8 @@ case "${1:-all}" in
     scenario_stop_pending_check
     scenario_stop_working
     scenario_stop_host
+    scenario_stop_orca
+    scenario_stop_orca_unproven
     scenario_change_on_refusal
     ;;
   *) fail "unknown scenario: $1" ;;
