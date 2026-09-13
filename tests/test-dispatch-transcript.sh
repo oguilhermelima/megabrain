@@ -249,7 +249,7 @@ if [ -n "$real_transcript" ]; then
   [ "$history_defect_line" -lt "$history_refusal_line" ] || fail 'rendered history reordered DEFECT A and refusal'
   printf 'read preserves scrolled history from a real transcript slice in order\n'
 else
-  printf 'read history scenario skipped because no suitable real transcript is available\n'
+  printf 'skip: read history scenario skipped because no suitable real transcript is available\n'
 fi
 
 # Cap and truncation scenarios only need a file whose size crosses
