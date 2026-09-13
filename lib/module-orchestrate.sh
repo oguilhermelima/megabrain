@@ -21,7 +21,7 @@ MEGABRAIN_TRANSCRIPT_MAX_BYTES="${MEGABRAIN_TRANSCRIPT_MAX_BYTES:-10485760}"
 # is surfaced by default and triggers a notify; protocol mail is durable evidence
 # surfaced only with --full. Every site that routes or filters mail consults this.
 MEGABRAIN_DISPATCH_MAIL_ACTIONABLE_KEYS=(child:ask child:done child:stalled megabrain:usage)
-MEGABRAIN_DISPATCH_MAIL_PROTOCOL_KEYS=(child:received child:ack)
+MEGABRAIN_DISPATCH_MAIL_PROTOCOL_KEYS=(child:received child:ack child:done-repeat)
 
 megabrain_dispatch_prune_states() {
   printf 'closed,done,failed,orphaned,circuit_broken\n'
@@ -265,7 +265,7 @@ megabrain_dispatch_migrate_legacy_deliveries() {
     case "$from:$type" in
       parent:reply) recipient=child ;;
       *)
-        class="$(megabrain_dispatch_mail_class "$from:$type" 2>/dev/null || true)"
+        class="$(megabrain_dispatch_mail_class_for_message "$dispatch_id" "$from:$type" "$seq" 2>/dev/null || true)"
         [ -n "$class" ] && recipient=parent || continue
         ;;
     esac
@@ -1413,7 +1413,7 @@ megabrain_dispatch_message_append_locked() {
   case "$from:$type" in
     parent:reply) recipient=child; notify=true ;;
     *)
-      class="$(megabrain_dispatch_mail_class "$from:$type" 2>/dev/null || true)"
+      class="$(megabrain_dispatch_mail_class_for_message "$dispatch_id" "$from:$type" "$seq" 2>/dev/null || true)"
       case "$class" in
         actionable) recipient=parent; notify=true ;;
         protocol) recipient=parent ;;
@@ -1481,6 +1481,29 @@ megabrain_dispatch_mail_class() {
     [ "$candidate" = "$key" ] && { printf 'protocol\n'; return 0; }
   done
   return 1
+}
+
+megabrain_dispatch_has_prior_child_done() {
+  local dispatch_id="$1" before_seq="${2:-}" messages_dir path candidate_seq
+  messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
+  for path in "$messages_dir"/*.json; do
+    [ -f "$path" ] || continue
+    if [ -n "$before_seq" ]; then
+      candidate_seq="$(jq -r '.seq // 0' "$path" 2>/dev/null || true)"
+      [[ "$candidate_seq" =~ ^[0-9]+$ ]] || continue
+      [ "$candidate_seq" -lt "$before_seq" ] || continue
+    fi
+    jq -e '.from == "child" and .type == "done"' "$path" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+megabrain_dispatch_mail_class_for_message() {
+  local dispatch_id="$1" key="$2" message_seq="${3:-}" classification_key="$2"
+  if [ "$key" = child:done ] && megabrain_dispatch_has_prior_child_done "$dispatch_id" "$message_seq"; then
+    classification_key=child:done-repeat
+  fi
+  megabrain_dispatch_mail_class "$classification_key"
 }
 
 megabrain_dispatch_delivery_is_reply() {
@@ -1615,7 +1638,7 @@ megabrain_dispatch_delivery_matches_mailbox() {
     from="$(jq -r '.from // empty' "$path" 2>/dev/null || true)"
     type="$(jq -r '.type // empty' "$path" 2>/dev/null || true)"
     if [ "$mailbox" = parent ] && { [ "$from" = child ] || [ "$from" = megabrain ]; }; then
-      class="$(megabrain_dispatch_mail_class "$from:$type" 2>/dev/null || true)"
+      class="$(megabrain_dispatch_mail_class_for_message "$dispatch_id" "$from:$type" "$seq" 2>/dev/null || true)"
       if [ "$full" = true ]; then
         [ -n "$class" ] && return 0
       else
