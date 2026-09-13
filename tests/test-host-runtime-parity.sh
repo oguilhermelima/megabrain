@@ -50,7 +50,7 @@ megabrain_superset() {
     return 0
   fi
   if [ "${1:-}" = terminals ] && [ "${2:-}" = close ]; then
-    printf 'superset:%s\n' "${4:-}" >>"$close_log"
+    printf 'superset:%s\n' "${6:-}" >>"$close_log"
     if [ "$host_close_mode" = failure ]; then
       printf '%s\n' '{"error":{"message":"host close denied"}}'
       return 1
