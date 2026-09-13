@@ -239,18 +239,32 @@ megabrain doctor simulator-native      iOS and tvOS simulators, macOS only
 megabrain doctor simulator-tv          Apple TV simulator
 megabrain install simulator-web        Playwright MCP browser testing
 megabrain install simulator-web --browser chromium|firefox|both
+megabrain web [--device SLUG|--category NAME|--viewport WxH] ...
+megabrain web viewport|devices|userscript ...
+megabrain web viewport set|show|devices ...
+megabrain web viewport set
+megabrain web viewport show
+megabrain web devices [FILTER] [--orientation portrait|landscape|all]
 megabrain web userscript install <file.user.js>
 megabrain web userscript list
 megabrain web userscript remove <file.user.js>
 ```
 
 `simulator-web` uses pinned Playwright 1.62.1 and keeps separate persistent Chromium and Firefox profiles under
-`~/.megabrain/playwright`, with a fixed Chromium viewport and extension versions pinned at
+`~/.megabrain/playwright`, with a configurable viewport and extension versions pinned at
 install time. Chromium is the userscript profile. To install or refresh a script, place it in
 `~/.megabrain/userscripts/` and run `megabrain web userscript install <file.user.js>`; the tool
 enables Chrome's one-time userScripts permission and sends the script through Violentmonkey.
 `list` reports scripts installed in the Chromium profile, and `remove` removes one from that
 profile while leaving the source file available for editing. Firefox has no userscript command.
+`web viewport set` accepts category presets (mobile, tablet, laptop, desktop, or ultrawide, each
+with named size variants), raw dimensions, or a curated device slug. Categories set viewport size
+only; they do not emulate a device user agent, pixel ratio, or touch support. Registry-backed
+device slugs resolve through Playwright's installed registry; owned laptop and desktop slugs use
+documented CSS viewport sizes. Use `megabrain web devices` to filter the available slugs; portrait
+is the default and landscape/all are explicit options.
+The set command accepts `--browser chromium|firefox|both`, `--viewport WxH`, `--device SLUG`,
+`--category NAME`, `--width W --height H`, and `--orientation portrait|landscape`.
 
 ## tmux
 

@@ -23,6 +23,201 @@ const REPOSITORIES = {
 };
 
 const MCP_CONFIG_NAMES = { chromium: 'chromium.json', firefox: 'firefox.json' };
+export const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 720 });
+export const MAX_VIEWPORT_DIMENSION = 10000;
+// BrowserStack's 2026 screen-resolution guide (sourcing StatCounter) informs the
+// mobile, tablet, and desktop conventions. Its figures are market-share context,
+// not device emulation. Ultrawide values are availability conventions; no share
+// figures were found for that category.
+export const VIEWPORT_CATEGORIES = Object.freeze({
+  mobile: Object.freeze({ width: 390, height: 844 }),
+  'mobile-small': Object.freeze({ width: 360, height: 800 }),
+  'mobile-large': Object.freeze({ width: 414, height: 896 }),
+  tablet: Object.freeze({ width: 768, height: 1024 }),
+  laptop: Object.freeze({ width: 1366, height: 768 }),
+  desktop: Object.freeze({ width: 1920, height: 1080 }),
+  'desktop-laptop': Object.freeze({ width: 1366, height: 768 }),
+  'desktop-monitor': Object.freeze({ width: 1440, height: 900 }),
+  'desktop-qhd': Object.freeze({ width: 2560, height: 1440 }),
+  ultrawide: Object.freeze({ width: 3440, height: 1440 }),
+  'ultrawide-wide': Object.freeze({ width: 2560, height: 1080 }),
+});
+
+// Registry entries intentionally keep only Playwright names. Owned entries are
+// CSS viewport sizes, not panel resolutions. Manufacturer specifications support
+// the MacBook values; the generic values follow the StatCounter-derived guide.
+// The Air 13 value 1440x900 and Air 15 value 1710x1080 were rejected because
+// their aspect ratios do not match the published panels. Air 15 has a 1112/1107
+// source disagreement; 1112 is retained from the source that matched Air 13.
+export const VIEWPORT_DEVICES = Object.freeze({
+  iphonese: { label: 'iPhone SE', registry: 'iPhone SE', category: 'mobile' },
+  iphonese3: { label: 'iPhone SE (3rd gen)', registry: 'iPhone SE (3rd gen)', category: 'mobile' },
+  iphone13mini: { label: 'iPhone 13 Mini', registry: 'iPhone 13 Mini', category: 'mobile' },
+  iphone14: { label: 'iPhone 14', registry: 'iPhone 14', category: 'mobile' },
+  iphone14promax: { label: 'iPhone 14 Pro Max', registry: 'iPhone 14 Pro Max', category: 'mobile' },
+  iphone15: { label: 'iPhone 15', registry: 'iPhone 15', category: 'mobile' },
+  iphone15pro: { label: 'iPhone 15 Pro', registry: 'iPhone 15 Pro', category: 'mobile' },
+  iphone15promax: { label: 'iPhone 15 Pro Max', registry: 'iPhone 15 Pro Max', category: 'mobile' },
+  iphone16: { label: 'iPhone 16', registry: 'iPhone 16', category: 'mobile' },
+  iphone16e: { label: 'iPhone 16e', registry: 'iPhone 16e', category: 'mobile' },
+  iphone16pro: { label: 'iPhone 16 Pro', registry: 'iPhone 16 Pro', category: 'mobile' },
+  iphone16promax: { label: 'iPhone 16 Pro Max', registry: 'iPhone 16 Pro Max', category: 'mobile' },
+  iphone17: { label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile' },
+  iphone17e: { label: 'iPhone 17e', registry: 'iPhone 17e', category: 'mobile' },
+  iphone17pro: { label: 'iPhone 17 Pro', registry: 'iPhone 17 Pro', category: 'mobile' },
+  iphone17promax: { label: 'iPhone 17 Pro Max', registry: 'iPhone 17 Pro Max', category: 'mobile' },
+  galaxys24: { label: 'Galaxy S24', registry: 'Galaxy S24', category: 'mobile' },
+  galaxya55: { label: 'Galaxy A55', registry: 'Galaxy A55', category: 'mobile' },
+  pixel5: { label: 'Pixel 5', registry: 'Pixel 5', category: 'mobile' },
+  pixel7: { label: 'Pixel 7', registry: 'Pixel 7', category: 'mobile' },
+  zfold7: { label: 'Galaxy Z Fold 7', registry: 'Galaxy Z Fold 7', category: 'mobile' },
+  zfold7cover: { label: 'Galaxy Z Fold 7 Cover', registry: 'Galaxy Z Fold 7 Cover', category: 'mobile' },
+  zflip7: { label: 'Galaxy Z Flip 7', registry: 'Galaxy Z Flip 7', category: 'mobile' },
+  zflip7cover: { label: 'Galaxy Z Flip 7 Cover', registry: 'Galaxy Z Flip 7 Cover', category: 'mobile' },
+  ipadmini: { label: 'iPad Mini', registry: 'iPad Mini', category: 'tablet' },
+  ipad7: { label: 'iPad (gen 7)', registry: 'iPad (gen 7)', category: 'tablet' },
+  ipad11: { label: 'iPad (gen 11)', registry: 'iPad (gen 11)', category: 'tablet' },
+  ipadpro11: { label: 'iPad Pro 11', registry: 'iPad Pro 11', category: 'tablet' },
+  galaxytabs4: { label: 'Galaxy Tab S4', registry: 'Galaxy Tab S4', category: 'tablet' },
+  galaxytabs9: { label: 'Galaxy Tab S9', registry: 'Galaxy Tab S9', category: 'tablet' },
+  macbookair13: {
+    label: 'MacBook Air 13-inch', viewport: { width: 1470, height: 956 }, category: 'laptop',
+    source: 'Apple MacBook Air technical specifications; panel 2560x1664',
+  },
+  macbookair15: {
+    label: 'MacBook Air 15-inch', viewport: { width: 1710, height: 1112 }, category: 'laptop',
+    source: 'Apple MacBook Air technical specifications; panel 2880x1864',
+  },
+  macbookpro14: {
+    label: 'MacBook Pro 14-inch', viewport: { width: 1512, height: 982 }, category: 'laptop',
+    source: 'Apple MacBook Pro technical specifications; panel 3024x1964',
+  },
+  macbookpro16: {
+    label: 'MacBook Pro 16-inch', viewport: { width: 1728, height: 1117 }, category: 'laptop',
+    source: 'Apple MacBook Pro technical specifications; panel 3456x2234',
+  },
+  fullhd: { label: 'Full HD desktop', viewport: { width: 1920, height: 1080 }, category: 'desktop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  laptop2k: { label: '2K laptop', viewport: { width: 2560, height: 1440 }, category: 'laptop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  laptop768: { label: '1366 laptop', viewport: { width: 1366, height: 768 }, category: 'laptop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  laptop900: { label: '1440 laptop', viewport: { width: 1440, height: 900 }, category: 'laptop', source: 'BrowserStack 2026 screen-resolution guide (StatCounter)' },
+  ultrawide: { label: 'Ultrawide', viewport: { width: 3440, height: 1440 }, category: 'ultrawide', source: 'BrowserStack availability guide' },
+  ultrawidefhd: { label: 'Ultrawide Full HD', viewport: { width: 2560, height: 1080 }, category: 'ultrawide', source: 'BrowserStack availability guide' },
+});
+
+export function validateViewport(viewport) {
+  if (!viewport || !Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) ||
+      viewport.width < 1 || viewport.height < 1 ||
+      viewport.width > MAX_VIEWPORT_DIMENSION || viewport.height > MAX_VIEWPORT_DIMENSION) {
+    throw new Error(`viewport width and height must be positive integers no greater than ${MAX_VIEWPORT_DIMENSION}`);
+  }
+  return { width: viewport.width, height: viewport.height };
+}
+
+function parseDimension(value, label) {
+  if (!/^[0-9]+$/.test(String(value))) throw new Error(`viewport ${label} must be a positive integer`);
+  return Number(value);
+}
+
+function parseViewport(value) {
+  const match = String(value).match(/^([0-9]+)x([0-9]+)$/i);
+  if (!match) throw new Error('viewport must use WIDTHxHEIGHT dimensions');
+  return { width: parseDimension(match[1], 'width'), height: parseDimension(match[2], 'height') };
+}
+
+function normalizeDeviceSlug(slug) {
+  return String(slug).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function matchingRegistryDevices(slug, devices) {
+  const normalized = normalizeDeviceSlug(slug).replace(/[0-9]+$/, '');
+  return Object.keys(devices)
+    .filter(name => normalizeDeviceSlug(name).startsWith(normalized))
+    .filter(name => !/ landscape$/i.test(name))
+    .slice(0, 5);
+}
+
+function resolveDeviceSlug(slug, devices, orientation = 'portrait') {
+  const normalizedSlug = normalizeDeviceSlug(slug);
+  const entry = VIEWPORT_DEVICES[normalizedSlug];
+  if (!entry) {
+    const matches = matchingRegistryDevices(slug, devices);
+    const suffix = matches.length ? `; Playwright registry offers: ${matches.join(', ')}` : '';
+    throw new Error(`unknown viewport device: ${slug}${suffix}`);
+  }
+  if (entry.registry) {
+    const registryName = orientation === 'landscape' ? `${entry.registry} landscape` : entry.registry;
+    const device = devices[registryName];
+    if (!device) {
+      const matches = matchingRegistryDevices(entry.registry, devices);
+      const suffix = matches.length ? `; Playwright registry offers: ${matches.join(', ')}` : '';
+      throw new Error(`viewport device ${slug} requires Playwright device ${registryName}, which is unavailable${suffix}`);
+    }
+    return validateViewport(device.viewport);
+  }
+  const viewport = entry.viewport;
+  return validateViewport(orientation === 'landscape'
+    ? { width: viewport.height, height: viewport.width }
+    : viewport);
+}
+
+export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_VIEWPORT) {
+  const request = options || {};
+  const orientation = request.orientation || 'portrait';
+  if (!['portrait', 'landscape'].includes(orientation)) throw new Error('orientation must be portrait or landscape');
+  const hasRaw = request.viewport != null || request.width != null || request.height != null;
+  const hasCategory = request.category != null;
+  if (request.device != null && (hasRaw || hasCategory)) throw new Error('viewport device cannot be combined with raw dimensions or a category');
+  if (hasCategory && hasRaw) throw new Error('viewport category cannot be combined with raw dimensions');
+  if (request.device != null) {
+    return resolveDeviceSlug(request.device, devices, orientation);
+  }
+  if (hasCategory) {
+    const category = VIEWPORT_CATEGORIES[request.category];
+    if (!category) throw new Error(`unknown viewport category: ${request.category}; available: ${Object.keys(VIEWPORT_CATEGORIES).join(', ')}`);
+    return validateViewport(category);
+  }
+  if (request.viewport != null) return validateViewport(parseViewport(request.viewport));
+  if (hasRaw) return validateViewport({
+    width: parseDimension(request.width, 'width'),
+    height: parseDimension(request.height, 'height'),
+  });
+  return validateViewport(fallback);
+}
+
+export function listDevicePresets(devices, { filter = '', orientation = 'portrait' } = {}) {
+  if (!['portrait', 'landscape', 'all'].includes(orientation)) throw new Error('orientation must be portrait, landscape, or all');
+  const normalizedFilter = normalizeDeviceSlug(filter);
+  const entries = Object.entries(VIEWPORT_DEVICES);
+  const exactEntries = normalizedFilter
+    ? entries.filter(([slug, entry]) => {
+      const model = normalizeDeviceSlug(entry.label).replace(/^(iphone|ipad|galaxy|pixel)/, '');
+      return slug === normalizedFilter || normalizeDeviceSlug(entry.label) === normalizedFilter || model === normalizedFilter;
+    })
+    : [];
+  const orientations = orientation === 'all' ? ['portrait', 'landscape'] : [orientation];
+  return (exactEntries.length ? exactEntries : entries).flatMap(([slug, entry]) => {
+    if (normalizedFilter && !exactEntries.length && !`${slug} ${entry.label}`.toLowerCase().includes(String(filter).toLowerCase())) return [];
+    return orientations.map(selectedOrientation => {
+      const registry = entry.registry
+        ? (selectedOrientation === 'landscape' ? `${entry.registry} landscape` : entry.registry)
+        : undefined;
+      const sourceDevice = registry ? devices[registry] : null;
+      const viewport = registry ? sourceDevice?.viewport : entry.viewport;
+      const orientedViewport = viewport && selectedOrientation === 'landscape' && !registry
+        ? { width: viewport.height, height: viewport.width }
+        : viewport;
+      return {
+        slug,
+        label: entry.label,
+        kind: entry.registry ? 'registry' : 'owned',
+        ...(registry ? { registry } : {}),
+        category: entry.category,
+        viewport: orientedViewport || null,
+        ...(entry.source ? { source: entry.source } : {}),
+      };
+    });
+  });
+}
 
 function chromiumPaths(root) {
   return {
@@ -46,7 +241,8 @@ function firefoxPaths(root) {
   };
 }
 
-export function buildBrowserConfig(browser, paths) {
+export function buildBrowserConfig(browser, paths, viewport = DEFAULT_VIEWPORT) {
+  const configuredViewport = validateViewport(viewport);
   if (browser === 'chromium') {
     const extensionPaths = [paths.extensions.ublock, paths.extensions.violentmonkey].join(',');
     return {
@@ -61,7 +257,7 @@ export function buildBrowserConfig(browser, paths) {
             `--load-extension=${extensionPaths}`,
           ],
         },
-        contextOptions: { viewport: { width: 1280, height: 720 } },
+        contextOptions: { viewport: configuredViewport },
       },
     };
   }
@@ -77,7 +273,7 @@ export function buildBrowserConfig(browser, paths) {
             'extensions.enabledScopes': 15,
           },
         },
-        contextOptions: { viewport: { width: 1280, height: 720 } },
+        contextOptions: { viewport: configuredViewport },
       },
     };
   }
@@ -87,12 +283,14 @@ export function buildBrowserConfig(browser, paths) {
 export function validateBrowserConfig(config, browser) {
   const b = config?.browser;
   if (!b || b.browserName !== browser) throw new Error(`${browser} config has the wrong browserName`);
+  try {
+    validateViewport(b.contextOptions?.viewport);
+  } catch (error) {
+    throw new Error(`${browser} config has invalid viewport: ${error.message}`);
+  }
   if (browser === 'chromium') {
     if (b.launchOptions?.channel !== 'chromium') throw new Error('chromium config must set launchOptions.channel to chromium');
     if (b.launchOptions?.headless !== true) throw new Error('chromium config must be headless');
-    if (b.contextOptions?.viewport?.width !== 1280 || b.contextOptions?.viewport?.height !== 720) {
-      throw new Error('chromium config must set viewport to 1280x720');
-    }
     if (!b.launchOptions.args?.some(arg => arg.startsWith('--load-extension='))) throw new Error('chromium config must load extensions');
   } else {
     if (b.launchOptions?.headless !== true) throw new Error('firefox config must be headless');
@@ -251,7 +449,7 @@ function ensurePlaywright(root, browsers) {
   for (const browser of browsers) execFileSync(process.execPath, [playwrightCli(root), 'install', browser], { stdio: 'inherit' });
 }
 
-async function install(root, browser) {
+async function install(root, browser, { viewport = null } = {}) {
   const browsers = browser === 'both' ? ['chromium', 'firefox'] : [browser];
   if (!browsers.every(item => ['chromium', 'firefox'].includes(item))) throw new Error(`browser must be chromium, firefox, or both`);
   ensurePlaywright(root, browsers);
@@ -266,10 +464,13 @@ async function install(root, browser) {
     userscripts: previous.userscripts || [],
   };
   for (const selected of browsers) {
+    const previousConfig = readJson(previous.profiles?.[selected]?.configPath || path.join(root, MCP_CONFIG_NAMES[selected]));
+    const persistedViewport = previousConfig?.browser?.contextOptions?.viewport || DEFAULT_VIEWPORT;
+    const configuredViewport = viewport || validateViewport(persistedViewport);
     if (selected === 'chromium') {
       const installed = await installChromiumExtensions(root);
       mkdirSync(installed.paths.profile, { recursive: true });
-      const config = buildBrowserConfig(selected, installed.paths);
+      const config = buildBrowserConfig(selected, installed.paths, configuredViewport);
       validateBrowserConfig(config, selected);
       const configPath = path.join(root, MCP_CONFIG_NAMES[selected]);
       jsonWrite(configPath, config);
@@ -278,7 +479,7 @@ async function install(root, browser) {
     } else {
       const installed = await installFirefoxExtensions(root);
       mkdirSync(installed.paths.profile, { recursive: true });
-      const config = buildBrowserConfig(selected, installed.paths);
+      const config = buildBrowserConfig(selected, installed.paths, configuredViewport);
       validateBrowserConfig(config, selected);
       const configPath = path.join(root, MCP_CONFIG_NAMES[selected]);
       jsonWrite(configPath, config);
@@ -297,15 +498,17 @@ function manifestFor(root) {
   return manifest;
 }
 
-async function loadChromium(root, manifest, { chromeUrls = false } = {}) {
+async function loadChromium(root, manifest, { chromeUrls = false, viewport = null } = {}) {
   const playwright = await import(pathToFileURL(path.join(root, 'node_modules', 'playwright', 'index.mjs')).href);
   const config = readJson(manifest.profiles.chromium.configPath);
   const args = [...config.browser.launchOptions.args];
   if (chromeUrls) args.push('--extensions-on-chrome-urls');
+  const contextOptions = { ...config.browser.contextOptions };
+  if (viewport) contextOptions.viewport = validateViewport(viewport);
   const context = await playwright.chromium.launchPersistentContext(config.browser.userDataDir, {
     ...config.browser.launchOptions,
     args,
-    ...config.browser.contextOptions,
+    ...contextOptions,
   });
   return { context, config };
 }
@@ -419,12 +622,12 @@ export function userScriptSource(userscripts, name) {
   return { file, code: readFileSync(file, 'utf8') };
 }
 
-async function installUserScript(root, userscripts, name) {
+async function installUserScript(root, userscripts, name, { viewport = null } = {}) {
   const manifest = manifestFor(root);
   if (!manifest.profiles?.chromium) throw new Error('Chromium profile is not installed; userscripts require Chromium');
   const source = userScriptSource(userscripts, name);
   const installUrl = `https://megabrain.local/userscripts/${name}`;
-  const { context } = await loadChromium(root, manifest, { chromeUrls: true });
+  const { context } = await loadChromium(root, manifest, { chromeUrls: true, viewport });
   try {
     const worker = await extensionWorker(context, 'Violentmonkey');
     const extensionId = new URL(worker.url()).hostname;
@@ -459,11 +662,11 @@ async function listUserScripts(root) {
   for (const item of manifest.userscripts || []) console.log(`${item.name}\t${item.installedAt || ''}`);
 }
 
-async function removeUserScript(root, name) {
+async function removeUserScript(root, name, { viewport = null } = {}) {
   const manifest = manifestFor(root);
   const record = (manifest.userscripts || []).find(item => item.name === name);
   if (!record) return;
-  const { context } = await loadChromium(root, manifest);
+  const { context } = await loadChromium(root, manifest, { viewport });
   try {
     const worker = await extensionWorker(context, 'Violentmonkey');
     const extensionId = new URL(worker.url()).hostname;
@@ -563,7 +766,84 @@ async function latestVersions() {
   };
 }
 
-async function doctor(root) {
+async function loadPlaywrightDevices(root) {
+  const playwrightFile = path.join(root, 'node_modules', 'playwright', 'index.mjs');
+  if (!existsSync(playwrightFile)) throw new Error(`Playwright is not installed under ${root}; install simulator-web first`);
+  const playwright = await import(pathToFileURL(playwrightFile).href);
+  return playwright.devices || {};
+}
+
+function viewportRequestFromArgs(args) {
+  const request = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    if (['--viewport', '--width', '--height', '--device', '--category', '--orientation'].includes(flag)) {
+      if (args[index + 1] == null) throw new Error(`${flag} requires a value`);
+      request[flag.slice(2)] = args[index + 1];
+      index += 1;
+    }
+  }
+  return request;
+}
+
+function hasViewportRequest(request) {
+  return Object.keys(request).length > 0;
+}
+
+async function resolveViewportRequest(root, request, fallback = DEFAULT_VIEWPORT) {
+  const devices = request.device != null ? await loadPlaywrightDevices(root) : {};
+  return resolveViewport(request, devices, fallback);
+}
+
+function configuredViewport(manifest, browser) {
+  const profile = manifest.profiles?.[browser];
+  const config = profile ? readJson(profile.configPath) : null;
+  return validateViewport(config?.browser?.contextOptions?.viewport || DEFAULT_VIEWPORT);
+}
+
+async function setViewport(root, browser, args) {
+  if (!['chromium', 'firefox', 'both'].includes(browser)) throw new Error('browser must be chromium, firefox, or both');
+  const manifest = manifestFor(root);
+  const browsers = (browser === 'both' ? ['chromium', 'firefox'] : [browser])
+    .filter(item => manifest.profiles?.[item]);
+  if (browsers.length === 0) throw new Error(`no ${browser} browser profile is installed`);
+  const request = viewportRequestFromArgs(args);
+  const viewport = await resolveViewportRequest(root, request, configuredViewport(manifest, browsers[0]));
+  const updates = [];
+  for (const selected of browsers) {
+    const profile = manifest.profiles[selected];
+    const config = readJson(profile.configPath);
+    const next = {
+      ...config,
+      browser: {
+        ...config?.browser,
+        contextOptions: { ...config?.browser?.contextOptions, viewport },
+      },
+    };
+    validateBrowserConfig(next, selected);
+    updates.push({ path: profile.configPath, config: next });
+  }
+  for (const update of updates) jsonWrite(update.path, update.config);
+  return { browsers, viewport };
+}
+
+function showViewport(root, browser) {
+  if (!['chromium', 'firefox', 'both'].includes(browser)) throw new Error('browser must be chromium, firefox, or both');
+  const manifest = manifestFor(root);
+  const browsers = (browser === 'both' ? ['chromium', 'firefox'] : [browser])
+    .filter(item => manifest.profiles?.[item]);
+  if (browsers.length === 0) throw new Error(`no ${browser} browser profile is installed`);
+  return browsers.map(selected => ({ browser: selected, viewport: configuredViewport(manifest, selected) }));
+}
+
+async function listDevices(root, args) {
+  const devices = await loadPlaywrightDevices(root);
+  const filter = argumentValue(args, '--filter', '');
+  const orientation = argumentValue(args, '--orientation', 'portrait');
+  return listDevicePresets(devices, { filter, orientation });
+}
+
+export async function doctor(root, { currentVersions = null } = {}) {
   const manifest = readJson(path.join(root, 'manifest.json'));
   if (!manifest) return { status: 'missing', reason: `browser manifest is missing under ${root}`, mismatches: [] };
   const mismatches = [];
@@ -576,7 +856,9 @@ async function doctor(root) {
     if (!profile) continue;
     const config = readJson(profile.configPath);
     const expectedPaths = browser === 'chromium' ? chromiumPaths(root) : firefoxPaths(root);
-    const expectedConfig = buildBrowserConfig(browser, expectedPaths);
+    let expectedViewport = DEFAULT_VIEWPORT;
+    try { expectedViewport = validateViewport(config?.browser?.contextOptions?.viewport || DEFAULT_VIEWPORT); } catch {}
+    const expectedConfig = buildBrowserConfig(browser, expectedPaths, expectedViewport);
     try { validateBrowserConfig(config, browser); } catch (error) { mismatches.push(`${browser}: ${error.message}`); }
     mismatches.push(...compareJson(config, expectedConfig, `${browser}.config`));
     if (profile.configPath !== path.join(root, MCP_CONFIG_NAMES[browser])) {
@@ -586,7 +868,7 @@ async function doctor(root) {
   }
   let aged = [];
   try {
-    const current = await latestVersions();
+    const current = currentVersions || await latestVersions();
     const expected = {};
     for (const browser of Object.keys(manifest.profiles || {})) expected[browser] = current[browser];
     aged = compareManifest(manifest.extensions || {}, expected);
@@ -609,20 +891,54 @@ async function main(args) {
   const root = argumentValue(args, '--root', DEFAULT_ROOT);
   switch (command) {
     case 'install': {
-      const manifest = await install(root, argumentValue(args, '--browser', 'both'));
+      const request = viewportRequestFromArgs(args);
+      const viewport = hasViewportRequest(request) ? await resolveViewportRequest(root, request) : null;
+      const manifest = await install(root, argumentValue(args, '--browser', 'both'), { viewport });
       console.log(`configured ${manifest.activeBrowser} browser profile with Playwright ${manifest.playwrightVersion}`);
       return;
     }
     case 'userscript-install': {
-      const result = await installUserScript(root, argumentValue(args, '--userscripts', DEFAULT_USERSCRIPTS), argumentValue(args, '--file', ''));
+      const request = viewportRequestFromArgs(args);
+      const manifest = manifestFor(root);
+      const viewport = hasViewportRequest(request)
+        ? await resolveViewportRequest(root, request, configuredViewport(manifest, 'chromium'))
+        : null;
+      const result = await installUserScript(root, argumentValue(args, '--userscripts', DEFAULT_USERSCRIPTS), argumentValue(args, '--file', ''), { viewport });
       console.log(result.message);
       return;
     }
     case 'userscript-list': await listUserScripts(root); return;
-    case 'userscript-remove': await removeUserScript(root, argumentValue(args, '--file', '')); return;
+    case 'userscript-remove': {
+      const request = viewportRequestFromArgs(args);
+      const manifest = manifestFor(root);
+      const viewport = hasViewportRequest(request)
+        ? await resolveViewportRequest(root, request, configuredViewport(manifest, 'chromium'))
+        : null;
+      await removeUserScript(root, argumentValue(args, '--file', ''), { viewport });
+      return;
+    }
+    case 'viewport-set': {
+      const result = await setViewport(root, argumentValue(args, '--browser', 'both'), args);
+      console.log(`configured viewport ${result.viewport.width}x${result.viewport.height} for ${result.browsers.join(', ')}`);
+      return;
+    }
+    case 'viewport-show': {
+      for (const item of showViewport(root, argumentValue(args, '--browser', 'both'))) {
+        console.log(`${item.browser}: ${item.viewport.width}x${item.viewport.height}`);
+      }
+      return;
+    }
+    case 'device-list': {
+      for (const item of await listDevices(root, args)) {
+        const dimensions = item.viewport ? `${item.viewport.width}x${item.viewport.height}` : 'unavailable';
+        const origin = item.kind === 'registry' ? `registry:${item.registry}` : `owned:${item.source}`;
+        console.log(`${item.slug}\t${item.label}\t${item.category}\t${origin}\t${dimensions}`);
+      }
+      return;
+    }
     case 'doctor': console.log(JSON.stringify(await doctor(root))); return;
     case 'e2e-proof': await e2eProof(root); return;
-    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|doctor|e2e-proof');
+    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|viewport-set|viewport-show|device-list|doctor|e2e-proof');
   }
 }
 

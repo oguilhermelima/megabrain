@@ -382,7 +382,7 @@ The two simulator modules need the Xcode Simulator, Appium and the XCUITest driv
 only on macOS; asked for elsewhere they report `unsupported: macOS only` rather than half
 installing. `tv-adb` needs Android platform-tools and `simulator-web` uses pinned Playwright 1.62.1;
 it needs Node.js, npm, npx, and
-the selected Playwright browser. Chromium uses a fixed 1280x720 viewport, uBlock Origin Lite,
+the selected Playwright browser. Chromium uses a configurable 1280x720 default viewport, uBlock Origin Lite,
 and Violentmonkey; Firefox uses its own persistent profile with full uBlock Origin and the signed
 Violentmonkey add-on. Extension versions are resolved and pinned when the module is installed,
 so a browser run does not change behavior behind the operator's back. Chromium is the profile
@@ -398,6 +398,29 @@ megabrain web userscript install hello.user.js
 megabrain web userscript list
 megabrain web userscript remove hello.user.js
 ```
+
+The browser viewport defaults to 1280x720. Persist a different size in the installed profile,
+or use a Playwright device preset for a named device:
+
+```sh
+megabrain web viewport set --category mobile
+megabrain web --device iphone17pro
+megabrain web devices iphone --orientation portrait
+megabrain web viewport show
+```
+
+Categories are testing conventions, not device emulation: they set only the viewport. The
+available categories are mobile (390x844, with mobile-small and mobile-large variants), tablet
+(768x1024), desktop (1920x1080, with laptop, monitor, and QHD variants), and ultrawide
+(3440x1440, with a 2560x1080 variant). The mobile, tablet, and desktop conventions follow
+BrowserStack's 2026 screen-resolution guide, which sources StatCounter; ultrawide values are
+availability conventions because no market-share figures were found.
+
+Userscript install and removal also accept `--viewport WIDTHxHEIGHT`, `--category NAME`, or
+`--device SLUG` for a one-time override. Device slugs are curated and stable: registry-backed
+slugs resolve through Playwright's registry, while laptop and desktop slugs use owned CSS viewport
+sizes. Use `megabrain web devices [FILTER] --orientation portrait|landscape|all` to inspect the
+available presets. Unknown slugs are refused with matching registry suggestions when available.
 
 `doctor` names the missing piece and the command that installs it rather than failing silently.
 

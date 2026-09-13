@@ -196,11 +196,18 @@ module_simulator_web_install() {
 }
 
 command_web_userscript() {
-  local action="${1:-}" name="" userscripts="$HOME/.megabrain/userscripts"
+  local action="${1:-}" name="" userscripts="$HOME/.megabrain/userscripts" flag_value=""
+  local viewport_args=()
   shift || true
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --userscripts) userscripts="${2:-}"; shift 2 ;;
+      --viewport|--device|--category|--orientation|--width|--height)
+        flag_value="${2:-}"
+        [ -n "$flag_value" ] || { megabrain_usage_fail "web-userscript-${action}"; return "$MEGABRAIN_USAGE_ERROR"; }
+        viewport_args+=("$1" "$flag_value")
+        shift 2
+        ;;
       -h|--help) megabrain_usage_show "web-userscript-${action:-install}"; return 0 ;;
       *) [ -z "$name" ] || { megabrain_usage_fail "web-userscript-${action}"; return "$MEGABRAIN_USAGE_ERROR"; }; name="$1"; shift ;;
     esac
@@ -212,16 +219,105 @@ command_web_userscript() {
     *) megabrain_usage_show web-userscript; return 0 ;;
   esac
   case "$action" in
-    install) node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-install --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --userscripts "$userscripts" --file "$name" ;;
+    install)
+      if [ "${#viewport_args[@]}" -gt 0 ]; then
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-install --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --userscripts "$userscripts" --file "$name" "${viewport_args[@]}"
+      else
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-install --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --userscripts "$userscripts" --file "$name"
+      fi
+      ;;
     list) node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-list --root "$MEGABRAIN_PLAYWRIGHT_ROOT" ;;
-    remove) node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-remove --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --file "$name" ;;
+    remove)
+      if [ "${#viewport_args[@]}" -gt 0 ]; then
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-remove --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --file "$name" "${viewport_args[@]}"
+      else
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" userscript-remove --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --file "$name"
+      fi
+      ;;
   esac
+}
+
+command_web_viewport() {
+  local action="${1:-}" browser="both" filter="" flag_value=""
+  local viewport_args=()
+  shift || true
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --browser) browser="${2:-}"; shift 2 ;;
+      --filter)
+        [ "$action" = devices ] || { megabrain_usage_fail "web-viewport-${action:-set}"; return "$MEGABRAIN_USAGE_ERROR"; }
+        filter="${2:-}"; [ -n "$filter" ] || { megabrain_usage_fail web-devices; return "$MEGABRAIN_USAGE_ERROR"; }; shift 2
+        ;;
+      --viewport|--device|--category|--orientation|--width|--height)
+        flag_value="${2:-}"
+        [ -n "$flag_value" ] || { megabrain_usage_fail "web-viewport-${action:-set}"; return "$MEGABRAIN_USAGE_ERROR"; }
+        viewport_args+=("$1" "$flag_value")
+        shift 2
+        ;;
+      -h|--help)
+        megabrain_usage_show "web-viewport-${action:-set}"
+        printf '%s\n' 'Categories: mobile, tablet, desktop, ultrawide (with named size variants). Devices come from Playwright.'
+        return 0
+        ;;
+      *) megabrain_usage_fail "web-viewport-${action:-set}"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  case "$action" in
+    set)
+      if [ "${#viewport_args[@]}" -gt 0 ]; then
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" viewport-set --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --browser "$browser" "${viewport_args[@]}"
+      else
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" viewport-set --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --browser "$browser"
+      fi
+      ;;
+    devices)
+      if [ "${#viewport_args[@]}" -gt 0 ]; then
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" device-list --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --filter "$filter" "${viewport_args[@]}"
+      else
+        node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" device-list --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --filter "$filter"
+      fi
+      ;;
+    show) [ "${#viewport_args[@]}" -eq 0 ] || { megabrain_usage_fail web-viewport-show; return "$MEGABRAIN_USAGE_ERROR"; }
+      node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" viewport-show --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --browser "$browser" ;;
+    *) megabrain_usage_show web-viewport; return 0 ;;
+  esac
+}
+
+command_web_devices() {
+  local filter="" flag_value=""
+  local device_args=()
+  shift || true
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --filter|--orientation)
+        flag_value="${2:-}"
+        [ -n "$flag_value" ] || { megabrain_usage_fail web-devices; return "$MEGABRAIN_USAGE_ERROR"; }
+        device_args+=("$1" "$flag_value")
+        shift 2
+        ;;
+      -h|--help) megabrain_usage_show web-devices; return 0 ;;
+      *) [ -z "$filter" ] || { megabrain_usage_fail web-devices; return "$MEGABRAIN_USAGE_ERROR"; }; filter="$1"; shift ;;
+    esac
+  done
+  if [ "${#device_args[@]}" -gt 0 ]; then
+    node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" device-list --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --filter "$filter" "${device_args[@]}"
+  else
+    node "$MEGABRAIN_PLAYWRIGHT_SCRIPT" device-list --root "$MEGABRAIN_PLAYWRIGHT_ROOT" --filter "$filter"
+  fi
 }
 
 command_web() {
   case "${1:-}" in
     userscript) shift; command_web_userscript "$@" ;;
-    -h|--help|"") megabrain_usage_show web web-userscript ;;
-    *) megabrain_error "unknown web command: $1"; megabrain_usage_show web web-userscript; return "$MEGABRAIN_USAGE_ERROR" ;;
+    viewport) shift; command_web_viewport "$@" ;;
+    devices) command_web_devices "$@" ;;
+    --device|--category|--viewport|--width|--height)
+      command_web_viewport set "$@"
+      ;;
+    -h|--help|"")
+      megabrain_usage_show web web-viewport web-devices web-userscript
+      printf '%s\n' 'Use --device SLUG for a persisted device viewport; categories set viewport size only.'
+      ;;
+    *) megabrain_error "unknown web command: $1"; megabrain_usage_show web web-viewport web-devices web-userscript; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }

@@ -17,7 +17,13 @@ import path from 'node:path';
 
 const script = process.argv[2];
 const {
+  DEFAULT_VIEWPORT,
+  VIEWPORT_CATEGORIES,
+  VIEWPORT_DEVICES,
   buildBrowserConfig,
+  doctor,
+  listDevicePresets,
+  resolveViewport,
   validateBrowserConfig,
   compareManifest,
   upsertUserScriptRecord,
@@ -39,6 +45,67 @@ assert.equal(chromium.browser.browserName, 'chromium');
 assert.equal(chromium.browser.launchOptions.channel, 'chromium');
 assert.deepEqual(chromium.browser.contextOptions.viewport, { width: 1280, height: 720 });
 assert.equal(validateBrowserConfig(chromium, 'chromium').valid, true);
+assert.deepEqual(DEFAULT_VIEWPORT, { width: 1280, height: 720 }, 'the default viewport must stay unchanged');
+assert.deepEqual(
+  resolveViewport({ viewport: '390x844' }, {}),
+  { width: 390, height: 844 },
+  'a per-invocation viewport must override the default',
+);
+assert.deepEqual(
+  resolveViewport({ viewport: '390x844' }, {}, { width: 1280, height: 720 }),
+  { width: 390, height: 844 },
+  'a per-invocation viewport must override the persisted one',
+);
+assert.deepEqual(
+  resolveViewport({ device: 'iphone17pro' }, { 'iPhone 17 Pro': { viewport: { width: 402, height: 681 } } }),
+  { width: 402, height: 681 },
+  'a device slug must resolve through the Playwright registry',
+);
+assert.deepEqual(resolveViewport({ device: 'macbookair13' }, {}), { width: 1470, height: 956 });
+assert.equal(VIEWPORT_DEVICES.iphone17pro.registry, 'iPhone 17 Pro');
+assert.deepEqual(resolveViewport({ category: 'mobile' }, {}), { width: 390, height: 844 });
+assert.deepEqual(resolveViewport({ category: 'tablet' }, {}), { width: 768, height: 1024 });
+assert.deepEqual(resolveViewport({ category: 'desktop' }, {}), { width: 1920, height: 1080 });
+assert.deepEqual(resolveViewport({ category: 'ultrawide' }, {}), { width: 3440, height: 1440 });
+assert.deepEqual(VIEWPORT_CATEGORIES['mobile-small'], { width: 360, height: 800 });
+assert.deepEqual(VIEWPORT_CATEGORIES['mobile-large'], { width: 414, height: 896 });
+assert.deepEqual(resolveViewport({ category: 'mobile' }, { mobile: { viewport: { width: 111, height: 222 } } }), { width: 390, height: 844 });
+assert.throws(
+  () => resolveViewport({ category: 'unknown' }, {}),
+  /unknown viewport category.*mobile.*tablet.*desktop.*ultrawide/,
+  'an unknown category must name the available categories',
+);
+assert.deepEqual(
+  listDevicePresets({
+    'iPhone 17 Pro': { viewport: { width: 402, height: 681 } },
+    'iPhone 17 Pro landscape': { viewport: { width: 681, height: 402 } },
+  }, { filter: 'iphone17pro' }),
+  [{ slug: 'iphone17pro', label: 'iPhone 17 Pro', kind: 'registry', registry: 'iPhone 17 Pro', category: 'mobile', viewport: { width: 402, height: 681 } }],
+  'device listing defaults to portrait entries',
+);
+assert.deepEqual(
+  listDevicePresets({
+    'iPhone 17 Pro': { viewport: { width: 402, height: 681 } },
+    'iPhone 17 Pro landscape': { viewport: { width: 681, height: 402 } },
+  }, { filter: 'iphone17pro', orientation: 'landscape' }),
+  [{ slug: 'iphone17pro', label: 'iPhone 17 Pro', kind: 'registry', registry: 'iPhone 17 Pro landscape', category: 'mobile', viewport: { width: 681, height: 402 } }],
+  'landscape entries are reachable by explicit orientation',
+);
+assert.deepEqual(
+  listDevicePresets({ 'iPhone 17 Pro': { viewport: { width: 402, height: 681 } } }, { filter: '17PRO' }),
+  [{ slug: 'iphone17pro', label: 'iPhone 17 Pro', kind: 'registry', registry: 'iPhone 17 Pro', category: 'mobile', viewport: { width: 402, height: 681 } }],
+  'device listing supports a case-insensitive name fragment',
+);
+assert.throws(
+  () => resolveViewport({ device: 'galaxys26' }, { 'Galaxy S24': { viewport: { width: 360, height: 780 } } }),
+  /unknown viewport device: galaxys26.*Galaxy S24/,
+  'an unavailable device slug must suggest a matching registry device',
+);
+assert.throws(
+  () => resolveViewport({ viewport: '0x844' }, {}),
+  /positive integer/,
+  'an invalid viewport must be refused',
+);
 assert.throws(
   () => validateBrowserConfig({ browser: { browserName: 'chromium', launchOptions: {}, contextOptions: chromium.browser.contextOptions } }, 'chromium'),
   /channel/,
@@ -57,7 +124,57 @@ assert.equal(firefox.browser.browserName, 'firefox');
 assert.equal(firefox.browser.launchOptions.firefoxUserPrefs['extensions.autoDisableScopes'], 0);
 assert.equal(firefox.browser.launchOptions.firefoxUserPrefs['extensions.enabledScopes'], 15);
 assert.match(firefox.browser.userDataDir, /profiles[\\/]firefox$/);
+
+const doctorRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'megabrain-web-doctor-'));
+const doctorConfigPath = path.join(doctorRoot, 'chromium.json');
+const doctorProfilePath = path.join(doctorRoot, 'profiles', 'chromium');
+fs.mkdirSync(doctorProfilePath, { recursive: true });
+fs.mkdirSync(path.join(doctorRoot, 'node_modules', 'playwright'), { recursive: true });
+fs.writeFileSync(path.join(doctorRoot, 'node_modules', 'playwright', 'package.json'), JSON.stringify({ version: '1.62.1' }));
+fs.writeFileSync(doctorConfigPath, JSON.stringify(buildBrowserConfig('chromium', {
+  root: doctorRoot,
+  profile: doctorProfilePath,
+  extensions: {
+    ublock: path.join(doctorRoot, 'extensions', 'chromium', 'ublock-origin-lite'),
+    violentmonkey: path.join(doctorRoot, 'extensions', 'chromium', 'violentmonkey'),
+  },
+}, { width: 390, height: 844 })));
+fs.writeFileSync(path.join(doctorRoot, 'manifest.json'), JSON.stringify({
+  playwrightVersion: '1.62.1',
+  profiles: { chromium: { configPath: doctorConfigPath, userDataDir: doctorProfilePath } },
+  extensions: { chromium: { ublock: 'one', violentmonkey: 'two' } },
+}));
+const doctorReport = await doctor(doctorRoot, { currentVersions: { chromium: { ublock: 'one', violentmonkey: 'two' } } });
+assert.equal(doctorReport.status, 'ok', 'doctor must accept a configured non-default viewport');
 NODE
+
+viewport_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-web-viewport.XXXXXX")"
+cleanup_viewport() {
+  rm -rf "$viewport_root"
+}
+trap cleanup_viewport EXIT
+mkdir -p "$viewport_root/profiles/chromium"
+node --input-type=module - "$root/scripts/playwright-web.mjs" "$viewport_root" <<'NODE'
+import fs from 'node:fs';
+import path from 'node:path';
+const script = process.argv[2];
+const root = process.argv[3];
+const { buildBrowserConfig } = await import(script);
+const profile = path.join(root, 'profiles', 'chromium');
+const configPath = path.join(root, 'chromium.json');
+fs.writeFileSync(configPath, JSON.stringify(buildBrowserConfig('chromium', {
+  root,
+  profile,
+  extensions: { ublock: path.join(root, 'ublock'), violentmonkey: path.join(root, 'violentmonkey') },
+})));
+fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
+  profiles: { chromium: { configPath, userDataDir: profile } },
+}));
+NODE
+MEGABRAIN_PLAYWRIGHT_ROOT="$viewport_root" "$root/megabrain" web viewport set --browser chromium --width 390 --height 844 >/dev/null
+persisted_viewport="$(jq -c '.browser.contextOptions.viewport' "$viewport_root/chromium.json")"
+[ "$persisted_viewport" = '{"width":390,"height":844}' ] || fail "persisted viewport was not honoured: $persisted_viewport"
+printf 'ok: viewport defaults, persistence, overrides, presets, validation, and doctor scenarios\n'
 
 node --input-type=module - "$root/scripts/playwright-web.mjs" <<'NODE'
 import assert from 'node:assert/strict';
