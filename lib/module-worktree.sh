@@ -60,6 +60,22 @@ megabrain_worktree_root() {
   printf '%s\n' "$MEGABRAIN_SHARED_ROOT"
 }
 
+megabrain_worktree_root_for_selector() {
+  local selector="$1" selected_path worktree_root
+  selected_path="$(cd "$selector" 2>/dev/null && pwd -P || true)"
+  worktree_root="$(git -C "$selector" rev-parse --show-toplevel 2>/dev/null || true)"
+  worktree_root="$(cd "$worktree_root" 2>/dev/null && pwd -P || true)"
+  [ -n "$worktree_root" ] || {
+    megabrain_error "worktree path is not a Git directory: $selector"
+    return 1
+  }
+  if [ "$selected_path" != "$worktree_root" ]; then
+    megabrain_error "worktree selector points to subdirectory: $selected_path; pass the worktree root $worktree_root and put cd $selected_path in the command"
+    return 1
+  fi
+  printf '%s\n' "$worktree_root"
+}
+
 megabrain_repo_from_orca() {
   local selector="$1"
   local selector_lower path display_name display_lower base_name git_root common_dir canonical_root
@@ -266,7 +282,7 @@ megabrain_worktree_parent_resolve() {
     return 1
   fi
   if [ "$kind" = path ]; then
-    path="$(git -C "$value" rev-parse --show-toplevel 2>/dev/null || true)"
+    path="$(megabrain_worktree_root_for_selector "$value")" || return 1
   else
     current_path=""
     while IFS= read -r line; do
@@ -309,7 +325,10 @@ megabrain_worktree_parent_branch() {
 megabrain_worktree_target_path() {
   local target="$1" shared_root="${2:-}" path
   if [ -d "$target" ]; then
-    git -C "$target" rev-parse --show-toplevel 2>/dev/null && return 0
+    if git -C "$target" rev-parse --show-toplevel >/dev/null 2>&1; then
+      megabrain_worktree_root_for_selector "$target"
+      return $?
+    fi
   fi
   if [ -n "$shared_root" ]; then
     path="$(megabrain_find_worktree_path "$target" "$shared_root" 2>/dev/null || true)"
@@ -1137,7 +1156,7 @@ megabrain_terminal_create() {
   fi
   if [ -n "$worktree_selector" ]; then
     if [ -d "$worktree_selector" ]; then
-      worktree_path="$(git -C "$worktree_selector" rev-parse --show-toplevel 2>/dev/null || true)"
+      worktree_path="$(megabrain_worktree_root_for_selector "$worktree_selector")" || return 1
     else
       megabrain_error "worktree path is not a Git directory: $worktree_selector"
       return 1
@@ -1328,7 +1347,7 @@ megabrain_terminal_list() {
   done
   if [ -n "$worktree_selector" ]; then
     if [ -d "$worktree_selector" ]; then
-      worktree_filter="$(git -C "$worktree_selector" rev-parse --show-toplevel 2>/dev/null || true)"
+      worktree_filter="$(megabrain_worktree_root_for_selector "$worktree_selector")" || return 1
     else
       megabrain_error "worktree path is not a Git directory: $worktree_selector"
       return 1
@@ -1439,7 +1458,7 @@ megabrain_terminal_resolve_selector() {
   esac
   [ -n "$value" ] || return 1
   if [ "$kind" = worktree ] && [ -d "$value" ]; then
-    value="$(git -C "$value" rev-parse --show-toplevel 2>/dev/null || true)"
+    value="$(megabrain_worktree_root_for_selector "$value")" || return 1
   fi
   for path in "$MEGABRAIN_TERMINAL_DIR"/*.json; do
     [ -f "$path" ] || continue
@@ -1896,7 +1915,7 @@ megabrain_worktree_create() {
   fi
   if [ -n "$worktree_selector" ]; then
     if [ -d "$worktree_selector" ]; then
-      worktree_path="$(git -C "$worktree_selector" rev-parse --show-toplevel 2>/dev/null || true)"
+      worktree_path="$(megabrain_worktree_root_for_selector "$worktree_selector")" || return 1
     else
       shared_root="$(megabrain_worktree_root --read-only 2>/dev/null || true)"
       worktree_path="$(megabrain_find_worktree_path "$worktree_selector" "$shared_root" 2>/dev/null || true)"
@@ -2098,7 +2117,7 @@ megabrain_worktree_create() {
 megabrain_find_worktree_path() {
   local target="$1" shared_root="$2" path branch line current_path current_branch
   if [ -d "$target" ] && git -C "$target" rev-parse --show-toplevel >/dev/null 2>&1; then
-    git -C "$target" rev-parse --show-toplevel
+    megabrain_worktree_root_for_selector "$target"
     return 0
   fi
   if [ -z "$shared_root" ]; then
@@ -2179,6 +2198,9 @@ megabrain_worktree_finish() {
       megabrain_worktree_finish_json false "" "" "" "" "" "" "" invalid-arguments "$usage_message"
     fi
     return "$MEGABRAIN_USAGE_ERROR"
+  fi
+  if [ -d "$target" ]; then
+    megabrain_worktree_root_for_selector "$target" >/dev/null || return 1
   fi
   shared_root="$(megabrain_worktree_root 2>/dev/null || true)"
   path=""
@@ -2303,6 +2325,9 @@ megabrain_worktree_pr() {
     esac
   done
   [ -n "$target" ] || { megabrain_usage_fail worktree-pr; return "$MEGABRAIN_USAGE_ERROR"; }
+  if [ -d "$target" ]; then
+    megabrain_worktree_root_for_selector "$target" >/dev/null || return 1
+  fi
   shared_root="$(megabrain_worktree_root --read-only 2>/dev/null || true)"
   path="$(megabrain_worktree_target_path "$target" "$shared_root" || true)"
   [ -n "$path" ] || { megabrain_error "worktree not found: $target"; return 1; }
@@ -2446,9 +2471,12 @@ megabrain_worktree_adopt() {
     esac
   done
   [ -n "$target" ] || { megabrain_usage_fail worktree-adopt; return "$MEGABRAIN_USAGE_ERROR"; }
+  if [ -d "$target" ]; then
+    megabrain_worktree_root_for_selector "$target" >/dev/null || return 1
+  fi
   shared_root="$(megabrain_worktree_root)" || return 1
   if [ -d "$target" ]; then
-    path="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null || true)"
+    path="$(megabrain_worktree_root_for_selector "$target")" || return 1
   else
     path="$(megabrain_find_worktree_path "$target" "$shared_root" 2>/dev/null || true)"
   fi
