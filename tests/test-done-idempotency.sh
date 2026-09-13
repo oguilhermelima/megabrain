@@ -91,9 +91,11 @@ printf 'repeated done creates one actionable nudge and durable protocol mail\n'
 create_dispatch different-outcome
 export SUPERSET_TERMINAL_ID=child-different-outcome
 megabrain_dispatch_meta_update_state different-outcome failed >/dev/null
-if different_output="$(megabrain_dispatch_child_message done 'completion after failure' 2>&1)"; then
+different_output_path="$state_dir/different-output"
+if megabrain_dispatch_child_message done 'completion after failure' >"$different_output_path" 2>&1; then
   fail 'done after failed dispatch was accepted'
 fi
+different_output="$(cat "$different_output_path")"
 assert_contains "$different_output" 'illegal dispatch state transition: failed -> done'
 assert_equal "$parent_nudges" 2
 assert_equal "$(message_count different-outcome)" 1
