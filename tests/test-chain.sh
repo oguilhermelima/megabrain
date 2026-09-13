@@ -124,16 +124,28 @@ printf 'limit real-shaped sample guard: current at 73 percent\n'
 rm -f "$rollouts_dir"/rollout-*.jsonl
 cp "$root/tests/fixtures/codex-rollout-rate-limits-go.jsonl" "$rollouts_dir/rollout-go-shaped.jsonl"
 megabrain_chain_limit_read codex 5h
-assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" unknown
-assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'primary 43200 minutes'
-printf 'limit go-shaped sample: monthly window is reported as unavailable for 5h\n'
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" current
+assert_percent "$MEGABRAIN_CHAIN_LIMIT_USED" 35.0
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_RESETS" 1790564688
+assert_equal "$(printf '%s' "$MEGABRAIN_CHAIN_LIMIT_RESULT" | jq -r '.windows[0].name')" primary-43200m
+assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'primary-43200m'
+printf 'limit go-shaped sample: single monthly window is usable for 5h\n'
 
 rm -f "$rollouts_dir"/rollout-*.jsonl
 printf '%s\n' '{"timestamp":"2026-09-07T08:15:20.790Z","ordinal":14,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":35.0,"window_minutes":15,"resets_at":4102444800},"secondary":null}}}' >"$rollouts_dir/rollout-unknown-shaped.jsonl"
 megabrain_chain_limit_read codex 5h
+assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" current
+assert_percent "$MEGABRAIN_CHAIN_LIMIT_USED" 35.0
+assert_equal "$(printf '%s' "$MEGABRAIN_CHAIN_LIMIT_RESULT" | jq -r '.windows[0].name')" primary-15m
+printf 'limit single unexpected window: usable fallback is named\n'
+
+rm -f "$rollouts_dir"/rollout-*.jsonl
+printf '%s\n' '{"timestamp":"2026-09-07T08:15:21.790Z","ordinal":15,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":35.0,"window_minutes":43200,"resets_at":4102444800},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":4102444800}}}}' >"$rollouts_dir/rollout-multi-window.jsonl"
+megabrain_chain_limit_read codex 5h
 assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" unknown
-assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'primary 15 minutes'
-printf 'limit unknown-shaped sample: unexpected window is named in the reason\n'
+assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'primary 43200 minutes'
+assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'secondary 10080 minutes'
+printf 'limit multi-window without requested window: unknown names every available window\n'
 
 write_rollout "$rollouts_dir/rollout-current.jsonl" 97.0 "$future_reset"
 printf '%s\n' '{"timestamp":"2026-09-07T08:15:22.790Z","ordinal":16,"type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400}}}' >>"$rollouts_dir/rollout-current.jsonl"
@@ -248,6 +260,17 @@ assert_contains "$(printf '%s' "$run_output" | jq -r '.skipped[0].reason')" '97.
 assert_contains "$(cat "$call_file")" 'spawn'
 assert_contains "$(cat "$call_file")" '--agent agy'
 printf 'run limit skip: step 2 and spawn entry point invoked\n'
+
+rm -f "$rollouts_dir"/rollout-*.jsonl
+printf '%s\n' '{"timestamp":"2026-09-07T08:15:22.790Z","ordinal":16,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":97.0,"window_minutes":43200,"resets_at":4102444800},"secondary":null}}}' >"$rollouts_dir/rollout-monthly-near-limit.jsonl"
+set_mtime_offset "$rollouts_dir/rollout-monthly-near-limit.jsonl" 30
+write_config '{"chains":{"monthly-fallback":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h"}},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
+monthly_run_output="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"
+assert_equal "$(printf '%s' "$monthly_run_output" | jq -r '.step')" 2
+assert_equal "$(printf '%s' "$monthly_run_output" | jq -r '.skipped[0].kind')" limit
+assert_contains "$(printf '%s' "$monthly_run_output" | jq -r '.skipped[0].reason')" 'primary-43200m'
+printf 'run monthly-only fallback: threshold migrates at 97 percent\n'
+rm -f "$rollouts_dir"/rollout-monthly-near-limit.jsonl
 
 write_config '{"chains":{"run":{"when":{"parentAgent":"codex"},"steps":[{"agent":"claude","model":"m1","effort":"e1"},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
 command_orchestrate() {
