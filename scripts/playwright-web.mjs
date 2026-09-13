@@ -2,7 +2,18 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const PLAYWRIGHT_VERSION = '1.62.1';
 export const DEFAULT_ROOT = path.join(os.homedir(), '.megabrain', 'playwright');
 export const DEFAULT_USERSCRIPTS = path.join(os.homedir(), '.megabrain', 'userscripts');
+export const DEFAULT_DEVICES = path.join(os.homedir(), '.megabrain', 'devices.json');
 export const EXTENSION_IDS = {
   ublock: 'uBlock0@raymondhill.net',
   violentmonkey: '{aecec67f-0d10-4fa7-b7c7-609a2db280cf}',
@@ -62,7 +74,10 @@ export const VIEWPORT_DEVICES = Object.freeze({
   iphone16e: { label: 'iPhone 16e', registry: 'iPhone 16e', category: 'mobile' },
   iphone16pro: { label: 'iPhone 16 Pro', registry: 'iPhone 16 Pro', category: 'mobile' },
   iphone16promax: { label: 'iPhone 16 Pro Max', registry: 'iPhone 16 Pro Max', category: 'mobile' },
-  iphone17: { label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile' },
+  iphone17: {
+    label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile',
+    viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+  },
   iphone17e: { label: 'iPhone 17e', registry: 'iPhone 17e', category: 'mobile' },
   iphone17pro: { label: 'iPhone 17 Pro', registry: 'iPhone 17 Pro', category: 'mobile' },
   iphone17promax: { label: 'iPhone 17 Pro Max', registry: 'iPhone 17 Pro Max', category: 'mobile' },
@@ -90,6 +105,7 @@ export const VIEWPORT_DEVICES = Object.freeze({
   },
   macbookpro14: {
     label: 'MacBook Pro 14-inch', viewport: { width: 1512, height: 982 }, category: 'laptop',
+    deviceScaleFactor: 2,
     source: 'Apple MacBook Pro technical specifications; panel 3024x1964',
   },
   macbookpro16: {
@@ -184,7 +200,192 @@ export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_V
   return validateViewport(fallback);
 }
 
-export function listDevicePresets(devices, { filter = '', orientation = 'portrait' } = {}) {
+function normalizeDeviceDescriptor(descriptor) {
+  const viewport = validateViewport(descriptor.viewport);
+  const scale = descriptor.deviceScaleFactor ?? 1;
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error('deviceScaleFactor must be a positive number');
+  if (typeof (descriptor.isMobile ?? false) !== 'boolean') throw new Error('isMobile must be boolean');
+  if (typeof (descriptor.hasTouch ?? false) !== 'boolean') throw new Error('hasTouch must be boolean');
+  const normalized = {
+    viewport,
+    deviceScaleFactor: scale,
+    isMobile: descriptor.isMobile ?? false,
+    hasTouch: descriptor.hasTouch ?? false,
+  };
+  if (descriptor.userAgent != null) {
+    if (typeof descriptor.userAgent !== 'string' || !descriptor.userAgent) throw new Error('userAgent must be a non-empty string');
+    normalized.userAgent = descriptor.userAgent;
+  }
+  return normalized;
+}
+
+function customDeviceEntry(customDevices, slug) {
+  const normalized = normalizeDeviceSlug(slug);
+  const found = Object.entries(customDevices || {}).find(([name]) => normalizeDeviceSlug(name) === normalized);
+  return found ? found[1] : null;
+}
+
+export function resolveDeviceDescriptor(options = {}, devices = {}, customDevices = {}) {
+  const request = options || {};
+  if (request.device != null) {
+    const custom = customDeviceEntry(customDevices, request.device);
+    if (custom) return normalizeDeviceDescriptor(custom);
+    const normalized = normalizeDeviceSlug(request.device);
+    const entry = VIEWPORT_DEVICES[normalized];
+    if (!entry) throw new Error(`unknown viewport device: ${request.device}`);
+    const orientation = request.orientation || 'portrait';
+    if (!['portrait', 'landscape'].includes(orientation)) throw new Error('orientation must be portrait or landscape');
+    const registryName = entry.registry
+      ? (orientation === 'landscape' ? `${entry.registry} landscape` : entry.registry)
+      : null;
+    const registry = registryName ? devices[registryName] : null;
+    if (entry.registry && !registry) {
+      throw new Error(`viewport device ${request.device} requires Playwright device ${registryName}`);
+    }
+    const registeredViewport = registry?.viewport;
+    const ownedViewport = entry.viewport || registeredViewport;
+    const viewport = orientation === 'landscape' && !entry.viewport && ownedViewport
+      ? { width: ownedViewport.height, height: ownedViewport.width }
+      : ownedViewport;
+    return normalizeDeviceDescriptor({
+      ...registry,
+      ...entry,
+      viewport,
+    });
+  }
+  const viewport = resolveViewport(request, devices);
+  return normalizeDeviceDescriptor({ viewport });
+}
+
+export function buildContextOptions(descriptor, extras = {}) {
+  const normalized = normalizeDeviceDescriptor(descriptor);
+  const options = { ...normalized, ...extras };
+  if (extras.colorScheme != null && !['light', 'dark', 'no-preference'].includes(extras.colorScheme)) {
+    throw new Error('colorScheme must be light, dark, or no-preference');
+  }
+  return options;
+}
+
+export function readCustomDevices(file = DEFAULT_DEVICES) {
+  if (!existsSync(file)) return {};
+  const parsed = readJson(file, {});
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`custom device registry must be an object: ${file}`);
+  return Object.fromEntries(Object.entries(parsed).map(([slug, descriptor]) => [slug, normalizeDeviceDescriptor(descriptor)]));
+}
+
+export function upsertCustomDevice(devices, slug, descriptor) {
+  if (!slug || /[\\/]/.test(slug)) throw new Error('custom device slug must be a non-empty path-safe value');
+  return { ...(devices || {}), [slug]: normalizeDeviceDescriptor(descriptor) };
+}
+
+export function removeCustomDevice(devices, slug) {
+  const next = { ...(devices || {}) };
+  delete next[slug];
+  return next;
+}
+
+export function writePrivateJson(file, value) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.tmp-${process.pid}`;
+  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(temp, 0o600);
+  renameSync(temp, file);
+  chmodSync(file, 0o600);
+}
+
+export function validateStorageStateFile(file) {
+  let info;
+  try { info = lstatSync(file); } catch { throw new Error(`storage state file does not exist: ${file}`); }
+  if (!info.isFile()) throw new Error(`storage state must be a regular file: ${file}`);
+  if ((info.mode & 0o077) !== 0) throw new Error(`storage state file has unsafe permissions: ${file}`);
+  return file;
+}
+
+export async function settlePage(page) {
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+    const images = [...document.images];
+    await Promise.all(images.map(async image => {
+      if (!image.complete) await new Promise(resolve => {
+        image.addEventListener('load', resolve, { once: true });
+        image.addEventListener('error', resolve, { once: true });
+      });
+      if (image.decode) await image.decode().catch(() => {});
+    }));
+  });
+}
+
+export async function prepareDeterministicRendering(page, { now = '2026-01-01T00:00:00.000Z' } = {}) {
+  const timestamp = new Date(now).getTime();
+  if (!Number.isFinite(timestamp)) throw new Error('freeze time must be a valid date');
+  await page.addInitScript({ content: `(() => {
+    const OriginalDate = Date;
+    const fixedTime = ${timestamp};
+    class FrozenDate extends OriginalDate {
+      constructor(...args) { super(args.length ? args : [fixedTime]); }
+      static now() { return fixedTime; }
+    }
+    globalThis.Date = FrozenDate;
+  })()` });
+  await page.addStyleTag({ content: '*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }' });
+}
+
+export async function measureSelectors(page, selectors = {}) {
+  if (!selectors || typeof selectors !== 'object' || Array.isArray(selectors)) throw new Error('selectors must be an object');
+  return page.evaluate(requested => Object.fromEntries(Object.entries(requested).map(([name, selector]) => {
+    const element = document.querySelector(selector);
+    if (!element) return [name, null];
+    const rect = element.getBoundingClientRect();
+    return [name, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }];
+  })), selectors);
+}
+
+function outputSegment(value, label) {
+  const segment = String(value ?? '');
+  if (!segment || segment === '.' || segment === '..' || /[\\/]/.test(segment)) throw new Error(`${label} must be a non-empty path-safe value`);
+  return segment;
+}
+
+export function buildCapturePaths({
+  outputRoot,
+  side = 'candidate',
+  surface = 'web',
+  contentId,
+  theme = 'light',
+  viewport,
+  deviceScaleFactor = 1,
+  screen,
+}) {
+  if (!['candidate', 'baseline'].includes(side)) throw new Error('capture side must be candidate or baseline');
+  const dimensions = validateViewport(viewport);
+  const scale = Number(deviceScaleFactor);
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error('deviceScaleFactor must be a positive number');
+  const themeSegment = outputSegment(theme, 'theme');
+  const viewportSegment = `${dimensions.width}x${dimensions.height}@${String(scale).replace(/\.0$/, '')}x`;
+  const directory = path.join(
+    outputRoot || path.join(process.cwd(), 'visual-captures'),
+    side,
+    outputSegment(surface, 'surface'),
+    outputSegment(contentId, 'content id'),
+    themeSegment,
+    viewportSegment,
+  );
+  const name = outputSegment(screen, 'screen');
+  return {
+    side,
+    surface,
+    contentId,
+    theme,
+    screen,
+    image: path.join(directory, `${name}.png`),
+    geometry: path.join(directory, `${name}.json`),
+    viewport: dimensions,
+    deviceScaleFactor: scale,
+  };
+}
+
+export function listDevicePresets(devices, { filter = '', orientation = 'portrait', customDevices = {} } = {}) {
   if (!['portrait', 'landscape', 'all'].includes(orientation)) throw new Error('orientation must be portrait, landscape, or all');
   const normalizedFilter = normalizeDeviceSlug(filter);
   const entries = Object.entries(VIEWPORT_DEVICES);
@@ -195,15 +396,15 @@ export function listDevicePresets(devices, { filter = '', orientation = 'portrai
     })
     : [];
   const orientations = orientation === 'all' ? ['portrait', 'landscape'] : [orientation];
-  return (exactEntries.length ? exactEntries : entries).flatMap(([slug, entry]) => {
+  const builtIns = (exactEntries.length ? exactEntries : entries).flatMap(([slug, entry]) => {
     if (normalizedFilter && !exactEntries.length && !`${slug} ${entry.label}`.toLowerCase().includes(String(filter).toLowerCase())) return [];
     return orientations.map(selectedOrientation => {
       const registry = entry.registry
         ? (selectedOrientation === 'landscape' ? `${entry.registry} landscape` : entry.registry)
         : undefined;
       const sourceDevice = registry ? devices[registry] : null;
-      const viewport = registry ? sourceDevice?.viewport : entry.viewport;
-      const orientedViewport = viewport && selectedOrientation === 'landscape' && !registry
+      const viewport = entry.viewport || (registry ? sourceDevice?.viewport : entry.viewport);
+      const orientedViewport = viewport && selectedOrientation === 'landscape' && (Boolean(entry.viewport) || !registry)
         ? { width: viewport.height, height: viewport.width }
         : viewport;
       return {
@@ -217,6 +418,20 @@ export function listDevicePresets(devices, { filter = '', orientation = 'portrai
       };
     });
   });
+  const custom = Object.entries(customDevices || {})
+    .filter(([slug, descriptor]) => !normalizedFilter || `${slug} ${descriptor.userAgent || ''}`.toLowerCase().includes(String(filter).toLowerCase()))
+    .map(([slug, descriptor]) => ({
+      slug,
+      label: slug,
+      kind: 'custom',
+      category: descriptor.isMobile ? 'mobile' : 'desktop',
+      viewport: descriptor.viewport,
+      deviceScaleFactor: descriptor.deviceScaleFactor,
+      isMobile: descriptor.isMobile,
+      hasTouch: descriptor.hasTouch,
+      ...(descriptor.userAgent ? { userAgent: descriptor.userAgent } : {}),
+    }));
+  return [...builtIns, ...custom];
 }
 
 function chromiumPaths(root) {
@@ -795,6 +1010,163 @@ async function resolveViewportRequest(root, request, fallback = DEFAULT_VIEWPORT
   return resolveViewport(request, devices, fallback);
 }
 
+async function resolveDeviceRequest(root, request) {
+  const devices = request.device != null ? await loadPlaywrightDevices(root) : {};
+  return resolveDeviceDescriptor(request, devices, readCustomDevices());
+}
+
+async function launchBrowser(root, browser, { headless = true } = {}) {
+  if (!['chromium', 'firefox'].includes(browser)) throw new Error('browser must be chromium or firefox');
+  const manifest = manifestFor(root);
+  const profile = manifest.profiles?.[browser];
+  if (!profile) throw new Error(`no ${browser} browser profile is installed`);
+  const playwright = await import(pathToFileURL(path.join(root, 'node_modules', 'playwright', 'index.mjs')).href);
+  const config = readJson(profile.configPath);
+  const launchOptions = { ...(config?.browser?.launchOptions || {}), headless };
+  delete launchOptions.userDataDir;
+  return playwright[browser].launch(launchOptions);
+}
+
+function jsonFromFile(file, label) {
+  if (!file) return {};
+  const value = readJson(file, null);
+  if (value == null) throw new Error(`${label} is missing or invalid: ${file}`);
+  return value;
+}
+
+function captureScreensFromArgs(args) {
+  const screensFile = argumentValue(args, '--screens', '');
+  if (screensFile) {
+    const screens = jsonFromFile(screensFile, 'screens file');
+    if (!Array.isArray(screens) || screens.length === 0) throw new Error('screens file must contain a non-empty array');
+    return screens.map(screen => ({ ...screen }));
+  }
+  const url = argumentValue(args, '--url', '');
+  const name = argumentValue(args, '--screen', '');
+  if (!url || !name) throw new Error('capture and measure require --url and --screen, or --screens FILE');
+  return [{
+    name,
+    url,
+    selectors: jsonFromFile(argumentValue(args, '--selectors', ''), 'selectors file'),
+  }];
+}
+
+function validateScreen(screen) {
+  if (!screen || typeof screen !== 'object' || !screen.url || !screen.name) throw new Error('each screen needs name and url');
+  if (screen.selectors != null && (typeof screen.selectors !== 'object' || Array.isArray(screen.selectors))) {
+    throw new Error(`selectors for ${screen.name} must be an object`);
+  }
+  return { ...screen, selectors: screen.selectors || {} };
+}
+
+function captureRequestFromArgs(args) {
+  const request = viewportRequestFromArgs(args);
+  return {
+    ...request,
+    browser: argumentValue(args, '--browser', 'chromium'),
+    theme: argumentValue(args, '--theme', 'light'),
+    surface: argumentValue(args, '--surface', 'web'),
+    contentId: argumentValue(args, '--content-id', 'default'),
+    outputRoot: argumentValue(args, '--output-root', path.join(process.cwd(), 'visual-captures')),
+    storageState: argumentValue(args, '--storage-state', ''),
+    side: args.includes('--baseline') ? 'baseline' : 'candidate',
+    replaceBaseline: args.includes('--replace-baseline'),
+    fullPage: args.includes('--full-page'),
+    freezeTime: argumentValue(args, '--freeze-time', '2026-01-01T00:00:00.000Z'),
+  };
+}
+
+async function renderScreen(context, screen, freezeTime) {
+  const page = await context.newPage();
+  await prepareDeterministicRendering(page, { now: freezeTime });
+  await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
+  await prepareDeterministicRendering(page, { now: freezeTime });
+  await settlePage(page);
+  return page;
+}
+
+function refuseBaselineOverwrite(paths, replaceBaseline) {
+  if (paths.side === 'baseline' && !replaceBaseline && (existsSync(paths.image) || existsSync(paths.geometry))) {
+    throw new Error(`baseline already exists; pass --replace-baseline to replace ${paths.image}`);
+  }
+}
+
+async function runVisualScreens(root, args, { capture = true } = {}) {
+  const request = captureRequestFromArgs(args);
+  const screens = captureScreensFromArgs(args).map(validateScreen);
+  const descriptor = await resolveDeviceRequest(root, request);
+  const contextOptions = buildContextOptions(descriptor, {
+    colorScheme: request.theme,
+    reducedMotion: 'reduce',
+    ...(request.storageState ? { storageState: validateStorageStateFile(request.storageState) } : {}),
+  });
+  const browser = await launchBrowser(root, request.browser);
+  const context = await browser.newContext(contextOptions);
+  const results = [];
+  try {
+    for (const screen of screens) {
+      const page = await renderScreen(context, screen, request.freezeTime);
+      try {
+        const geometry = await measureSelectors(page, screen.selectors);
+        if (!capture) {
+          results.push({ name: screen.name, geometry });
+          continue;
+        }
+        const paths = buildCapturePaths({
+          outputRoot: request.outputRoot,
+          side: request.side,
+          surface: request.surface,
+          contentId: request.contentId,
+          theme: request.theme,
+          viewport: descriptor.viewport,
+          deviceScaleFactor: descriptor.deviceScaleFactor,
+          screen: screen.name,
+        });
+        refuseBaselineOverwrite(paths, request.replaceBaseline);
+        mkdirSync(path.dirname(paths.image), { recursive: true });
+        await page.screenshot({ path: paths.image, fullPage: request.fullPage, animations: 'disabled' });
+        writeFileSync(paths.geometry, `${JSON.stringify({
+          screen: screen.name,
+          viewport: descriptor.viewport,
+          deviceScaleFactor: descriptor.deviceScaleFactor,
+          fullPage: request.fullPage,
+          elements: geometry,
+        }, null, 2)}\n`);
+        results.push({ ...paths, name: screen.name });
+      } finally {
+        await page.close();
+      }
+    }
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+  return results;
+}
+
+async function saveSession(root, args) {
+  const url = argumentValue(args, '--url', '');
+  const output = argumentValue(args, '--output', '');
+  if (!url || !output) throw new Error('session-save requires --url and --output');
+  if (existsSync(output) && !args.includes('--replace')) throw new Error(`session state already exists: ${output}; pass --replace to replace it`);
+  const request = captureRequestFromArgs(args);
+  const descriptor = await resolveDeviceRequest(root, request);
+  const browser = await launchBrowser(root, request.browser, { headless: false });
+  const context = await browser.newContext(buildContextOptions(descriptor, { colorScheme: request.theme, reducedMotion: 'reduce' }));
+  const page = await context.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    console.log('Sign in in the browser, then press Enter here to save session state.');
+    await new Promise(resolve => process.stdin.once('data', resolve));
+    const state = await context.storageState();
+    writePrivateJson(output, state);
+    console.log(`saved private session state to ${output}`);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
 function configuredViewport(manifest, browser) {
   const profile = manifest.profiles?.[browser];
   const config = profile ? readJson(profile.configPath) : null;
@@ -840,7 +1212,47 @@ async function listDevices(root, args) {
   const devices = await loadPlaywrightDevices(root);
   const filter = argumentValue(args, '--filter', '');
   const orientation = argumentValue(args, '--orientation', 'portrait');
-  return listDevicePresets(devices, { filter, orientation });
+  return listDevicePresets(devices, { filter, orientation, customDevices: readCustomDevices(argumentValue(args, '--devices-file', DEFAULT_DEVICES)) });
+}
+
+function customDeviceFromArgs(args) {
+  const viewport = argumentValue(args, '--viewport', '');
+  if (!viewport) throw new Error('device-add requires --viewport WIDTHxHEIGHT');
+  const match = String(viewport).match(/^([0-9]+)x([0-9]+)$/);
+  if (!match) throw new Error('device-add viewport must use WIDTHxHEIGHT dimensions');
+  return {
+    viewport: { width: Number(match[1]), height: Number(match[2]) },
+    deviceScaleFactor: Number(argumentValue(args, '--device-scale-factor', '1')),
+    isMobile: args.includes('--mobile'),
+    hasTouch: args.includes('--touch'),
+    ...(argumentValue(args, '--user-agent', '') ? { userAgent: argumentValue(args, '--user-agent', '') } : {}),
+  };
+}
+
+function addCustomDevice(args) {
+  const slug = positionalArgument(args);
+  if (!slug) throw new Error('device-add requires a slug');
+  const file = argumentValue(args, '--devices-file', DEFAULT_DEVICES);
+  const devices = upsertCustomDevice(readCustomDevices(file), slug, customDeviceFromArgs(args));
+  writePrivateJson(file, devices);
+  console.log(`saved custom device ${slug} to ${file}`);
+}
+
+function removeCustomDeviceFromArgs(args) {
+  const slug = positionalArgument(args);
+  if (!slug) throw new Error('device-remove requires a slug');
+  const file = argumentValue(args, '--devices-file', DEFAULT_DEVICES);
+  const devices = removeCustomDevice(readCustomDevices(file), slug);
+  writePrivateJson(file, devices);
+  console.log(`removed custom device ${slug} from ${file}`);
+}
+
+function positionalArgument(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index].startsWith('--')) { index += 1; continue; }
+    return args[index];
+  }
+  return '';
 }
 
 export async function doctor(root, { currentVersions = null } = {}) {
@@ -931,14 +1343,26 @@ async function main(args) {
     case 'device-list': {
       for (const item of await listDevices(root, args)) {
         const dimensions = item.viewport ? `${item.viewport.width}x${item.viewport.height}` : 'unavailable';
-        const origin = item.kind === 'registry' ? `registry:${item.registry}` : `owned:${item.source}`;
+        const origin = item.kind === 'registry' ? `registry:${item.registry}` : item.kind === 'custom' ? 'custom' : `owned:${item.source}`;
         console.log(`${item.slug}\t${item.label}\t${item.category}\t${origin}\t${dimensions}`);
       }
       return;
     }
+    case 'device-add': addCustomDevice(args.slice(1)); return;
+    case 'device-remove': removeCustomDeviceFromArgs(args.slice(1)); return;
+    case 'capture': {
+      for (const item of await runVisualScreens(root, args, { capture: true })) console.log(`captured ${item.name}: ${item.image}`);
+      return;
+    }
+    case 'measure': {
+      const results = await runVisualScreens(root, args, { capture: false });
+      console.log(JSON.stringify(results.length === 1 ? results[0].geometry : results));
+      return;
+    }
+    case 'session-save': await saveSession(root, args); return;
     case 'doctor': console.log(JSON.stringify(await doctor(root))); return;
     case 'e2e-proof': await e2eProof(root); return;
-    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|viewport-set|viewport-show|device-list|doctor|e2e-proof');
+    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|viewport-set|viewport-show|device-list|device-add|device-remove|capture|measure|session-save|doctor|e2e-proof');
   }
 }
 

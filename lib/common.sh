@@ -289,6 +289,9 @@ megabrain_usage_line() {
     tmux-tune) printf 'tmux tune [--yes] [--dry-run] [--revert] [--json]' ;;
     tmux-wrapper) printf 'tmux wrapper [--yes] [--dry-run] [--revert] [--json]' ;;
     web) printf 'web [--device SLUG|--category NAME|--viewport WxH] ...' ;;
+    web-capture) printf 'web capture --url URL --screen NAME [options]' ;;
+    web-measure) printf 'web measure --url URL --screen NAME [options]' ;;
+    web-session-save) printf 'web session-save --url URL --output FILE [options]' ;;
     web-viewport) printf 'web viewport set|show|devices ...' ;;
     web-viewport-set) printf 'web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape]' ;;
     web-viewport-show) printf 'web viewport show [--browser chromium|firefox|both]' ;;

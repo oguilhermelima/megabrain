@@ -53,7 +53,7 @@ Commands:
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   fact list|add|edit|remove ...             Manage versioned environment facts
-  web [--device ...]|viewport|devices|userscript ...  Configure browser viewport and userscripts
+  web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
   ask "question"                       Ask the direct coordinator from a child dispatch
   done "summary"                        Mark a child dispatch done
   check [options]                       Check for replies from the direct coordinator
