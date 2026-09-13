@@ -48,7 +48,9 @@ Commands:
   orchestrate watch <dispatch-id> ...  Watch a dispatch file channel for child messages
   orchestrate read <dispatch-id> ...   Read a tmux dispatch pane
   orchestrate ack <dispatch-id> ...    Acknowledge a delivery batch
-  orchestrate reply <dispatch-id> ...  Queue a reply for a child dispatch
+  orchestrate reply <dispatch-id> ...  Queue a reply for a child dispatch (--supersede replaces old replies)
+  orchestrate stop <dispatch-id> ...   Interrupt a working child without closing its pane
+  orchestrate change <dispatch-id> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id> ...  Close a Superset dispatch terminal
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
