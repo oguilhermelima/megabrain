@@ -1756,6 +1756,25 @@ megabrain_worktree_create_rollback() {
   return 1
 }
 
+megabrain_worktree_copy_env_files() {
+  local source_root="$1" destination_root="$2" source_file="" relative_path destination_file
+  MEGABRAIN_ENV_COPY_ERROR=""
+  while IFS= read -r -d '' source_file; do
+    relative_path="${source_file#"$source_root/"}"
+    destination_file="$destination_root/$relative_path"
+    if ! mkdir -p "$(dirname "$destination_file")"; then
+      MEGABRAIN_ENV_COPY_ERROR="could not create directory for $relative_path"
+      return 1
+    fi
+    if ! cp -Pp "$source_file" "$destination_file"; then
+      MEGABRAIN_ENV_COPY_ERROR="could not copy $relative_path"
+      return 1
+    fi
+  done < <(find "$source_root" -path "$source_root/.git" -prune -o \
+    \( -type f -o -type l \) \( -name '.env' -o \( -name '.env.*' ! -name '.env.example' \) \) \
+    -print0 2>/dev/null)
+}
+
 megabrain_worktree_create() {
   local repo_selector="" branch="" base="" slug="" agent="" model="" effort="" chain_name="" prompt="" label="" worktree_selector="" parent_selector="" issue="" linear_issue="" pr_number="" orchestrate=false json=false reused=false browser=false
   local parent_requested=false no_parent=false parent_path="" parent_branch="" parent_tag=""
@@ -1960,6 +1979,11 @@ megabrain_worktree_create() {
       return 1
     fi
     worktree_created=true
+    if ! megabrain_worktree_copy_env_files "$repo_path" "$worktree_path"; then
+      megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "" false "" false true \
+        "${MEGABRAIN_ENV_COPY_ERROR:-could not copy worktree env files}"
+      return 1
+    fi
     project_record="$(megabrain_ensure_superset_project "$repo_path" --record)" || {
       project_id="$(megabrain_project_id_for_path "$repo_path" 2>/dev/null || true)"
       megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" unknown "" false true "could not register Superset project"
