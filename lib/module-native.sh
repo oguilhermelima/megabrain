@@ -213,6 +213,39 @@ megabrain_native_simulator_candidates() {
   }
 }
 
+megabrain_native_sim_list() {
+  local kind='' json=false arg candidates line udid state name
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --json) json=true; shift ;;
+      -h|--help) megabrain_usage_show native-sim-list; return 0 ;;
+      -*) megabrain_error "unknown native sim list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+      *)
+        [ -z "$kind" ] || { megabrain_usage_fail native-sim-list; return "$MEGABRAIN_USAGE_ERROR"; }
+        kind="$arg"; shift ;;
+    esac
+  done
+  [ -n "$kind" ] || { megabrain_usage_fail native-sim-list; return "$MEGABRAIN_USAGE_ERROR"; }
+  megabrain_native_validate_kind "$kind" || return $?
+  megabrain_native_require_simctl || return 1
+  candidates="$(megabrain_native_simulator_candidates "$kind")" || return 1
+
+  if [ "$json" = true ]; then
+    printf '%s\n' "$candidates" | jq -Rsc --arg kind "$kind" '
+      split("\n")
+      | map(select(length > 0) | split("\t") | {udid: .[0], state: .[1], name: .[2]})
+      | {kind: $kind, devices: .}
+    '
+    return $?
+  fi
+
+  while IFS=$'\t' read -r udid state name; do
+    [ -n "$udid" ] || continue
+    printf '%s\t%s\t%s\n' "$name" "$state" "$udid"
+  done <<<"$candidates"
+}
+
 megabrain_native_select_device() {
   local kind="$1" requested="$2" booted_only="$3" candidates line udid state name
   local count=0 selected_udid='' selected_state=''
