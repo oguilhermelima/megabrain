@@ -172,6 +172,33 @@ assert_equal "$(jq -r '.terminalReason' "$state_dir/dispatches/host-no-terminal-
 assert_equal "$(tail -n 1 "$close_log")" 'orca:orca-renamed-terminal'
 printf 'a dispatch without terminalId is retained without release\n'
 
+create_host_dispatch host-missing-identity-helper superset running absent-terminal
+megabrain_dispatch_meta_update_process_state host-missing-identity-helper succeeded
+unset -f megabrain_dispatch_terminal_status
+megabrain_dispatch_meta_update_state host-missing-identity-helper done
+assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/host-missing-identity-helper/meta.json")" retained
+assert_equal "$(jq -r '.terminalReason' "$state_dir/dispatches/host-missing-identity-helper/meta.json")" \
+  'terminal identity check unavailable; process was not released'
+assert_equal "$(tail -n 1 "$close_log")" 'orca:orca-renamed-terminal'
+printf 'missing identity helper retains the terminal without release\n'
+
+source "$root/lib/module-context.sh"
+host_close_mode=failure
+superset_terminals='{"sessions":[{"terminalId":"superset-release-failure","title":"release failure"}]}'
+create_host_dispatch host-release-failure superset running superset-release-failure
+megabrain_dispatch_meta_update_process_state host-release-failure succeeded
+if megabrain_dispatch_meta_update_state host-release-failure done; then
+  release_transition_status=0
+else
+  release_transition_status=$?
+fi
+assert_equal "$release_transition_status" 0
+assert_equal "$(jq -r '.state' "$state_dir/dispatches/host-release-failure/meta.json")" done
+assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/host-release-failure/meta.json")" retained
+assert_equal "$(jq -r '.terminalReason' "$state_dir/dispatches/host-release-failure/meta.json")" 'host close denied'
+printf 'release failure does not reject a completed dispatch\n'
+host_close_mode=success
+
 old='2020-01-01T00:00:00Z'
 jq --arg old "$old" '.createdAt = $old | .updatedAt = $old' \
   "$state_dir/dispatches/host-unproven/meta.json" >"$state_dir/old-meta.json"
