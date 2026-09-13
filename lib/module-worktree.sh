@@ -61,7 +61,7 @@ megabrain_worktree_root() {
 }
 
 megabrain_worktree_root_for_selector() {
-  local selector="$1" selected_path worktree_root
+  local selector="$1" selected_path="" worktree_root=""
   selected_path="$(cd "$selector" 2>/dev/null && pwd -P || true)"
   worktree_root="$(git -C "$selector" rev-parse --show-toplevel 2>/dev/null || true)"
   worktree_root="$(cd "$worktree_root" 2>/dev/null && pwd -P || true)"
@@ -1265,7 +1265,7 @@ megabrain_terminal_host_entry() {
 }
 
 megabrain_terminal_host_process_status() {
-  local records="$1" terminal_id="$2" record="$3" entry exited host_pid record_pid
+  local records="$1" terminal_id="$2" record="$3" entry="" exited="" host_pid="" record_pid=""
   entry="$(megabrain_terminal_host_entry "$records" "$terminal_id")"
   [ -n "$entry" ] || { printf 'unknown\n'; return 0; }
   record_pid="$(printf '%s' "$record" | jq -r '.rootPid // .pid // empty' 2>/dev/null || true)"
@@ -1757,7 +1757,7 @@ megabrain_worktree_create_rollback() {
 }
 
 megabrain_worktree_copy_env_files() {
-  local source_root="$1" destination_root="$2" source_file="" relative_path destination_file
+  local source_root="$1" destination_root="$2" source_file="" relative_path="" destination_file=""
   MEGABRAIN_ENV_COPY_ERROR=""
   while IFS= read -r -d '' source_file; do
     relative_path="${source_file#"$source_root/"}"
