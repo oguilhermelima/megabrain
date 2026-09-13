@@ -91,7 +91,10 @@ fs.writeFileSync(path.join(doctorRoot, 'node_modules', 'playwright', 'package.js
 fs.writeFileSync(doctorConfigPath, JSON.stringify(buildBrowserConfig('chromium', {
   root: doctorRoot,
   profile: doctorProfilePath,
-  extensions: { ublock: path.join(doctorRoot, 'ublock'), violentmonkey: path.join(doctorRoot, 'violentmonkey') },
+  extensions: {
+    ublock: path.join(doctorRoot, 'extensions', 'chromium', 'ublock-origin-lite'),
+    violentmonkey: path.join(doctorRoot, 'extensions', 'chromium', 'violentmonkey'),
+  },
 }, { width: 390, height: 844 })));
 fs.writeFileSync(path.join(doctorRoot, 'manifest.json'), JSON.stringify({
   playwrightVersion: '1.62.1',
