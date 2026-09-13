@@ -1123,6 +1123,33 @@ megabrain_dispatch_timestamp_epoch() {
   printf '%s\n' "$epoch"
 }
 
+megabrain_dispatch_prune_release() {
+  local dispatch_id="$1" meta="$2" runtime terminal_state
+  MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON=""
+  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
+  if [ "$runtime" = host ]; then
+    if ! megabrain_dispatch_release_terminal_process "$dispatch_id"; then
+      MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='could not release dispatch terminal'
+      return 1
+    fi
+    terminal_state="$(jq -r '.terminalState // "owned"' "$(megabrain_dispatch_meta_path "$dispatch_id")" 2>/dev/null || printf 'owned')"
+    if [ "$terminal_state" = retained ]; then
+      MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='host terminal identity is unproven; dispatch terminal was retained'
+      return 1
+    fi
+    return 0
+  fi
+  megabrain_dispatch_release_tmux_session "$meta" || {
+    MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='could not release dispatch terminal'
+    return 1
+  }
+  if [ "${MEGABRAIN_DISPATCH_TERMINAL_STATUS:-unknown}" = unknown ]; then
+    MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='terminal identity is unproven'
+    return 1
+  fi
+  return 0
+}
+
 megabrain_dispatch_prune() {
   local older_than="$MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS" state_filter="$(megabrain_dispatch_prune_states)"
   local mode=archive dry_run=false json=false arg now_epoch cutoff archive_month
@@ -1225,25 +1252,29 @@ megabrain_dispatch_prune() {
         reason="archive destination already exists"
       elif ! meta="$(cat "$meta_path")"; then
         reason="could not read dispatch metadata"
-      elif ! megabrain_dispatch_release_tmux_session "$meta"; then
-        reason="could not release dispatch terminal"
-      elif mkdir -p "$(dirname "$target")" && mv "$dispatch_dir" "$target"; then
-        archived_count=$((archived_count + 1))
-        archived_ids="$(jq --arg dispatchId "$dispatch_id" --arg path "$target" '. + [{dispatchId: $dispatchId, path: $path}]' <<<"$archived_ids")"
-        continue
       else
-        reason="could not archive dispatch"
+        if ! megabrain_dispatch_prune_release "$dispatch_id" "$meta"; then
+          reason="${MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON:-could not release dispatch terminal}"
+        elif mkdir -p "$(dirname "$target")" && mv "$dispatch_dir" "$target"; then
+          archived_count=$((archived_count + 1))
+          archived_ids="$(jq --arg dispatchId "$dispatch_id" --arg path "$target" '. + [{dispatchId: $dispatchId, path: $path}]' <<<"$archived_ids")"
+          continue
+        else
+          reason="could not archive dispatch"
+        fi
       fi
     elif ! meta="$(cat "$meta_path")"; then
       reason="could not read dispatch metadata"
-    elif ! megabrain_dispatch_release_tmux_session "$meta"; then
-      reason="could not release dispatch terminal"
-    elif rm -rf "$dispatch_dir"; then
-      deleted_count=$((deleted_count + 1))
-      deleted_ids="$(jq --arg dispatchId "$dispatch_id" '. + [$dispatchId]' <<<"$deleted_ids")"
-      continue
     else
-      reason="could not delete dispatch"
+      if ! megabrain_dispatch_prune_release "$dispatch_id" "$meta"; then
+        reason="${MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON:-could not release dispatch terminal}"
+      elif rm -rf "$dispatch_dir"; then
+        deleted_count=$((deleted_count + 1))
+        deleted_ids="$(jq --arg dispatchId "$dispatch_id" '. + [$dispatchId]' <<<"$deleted_ids")"
+        continue
+      else
+        reason="could not delete dispatch"
+      fi
     fi
     skipped_count=$((skipped_count + 1))
     skipped_dispatches="$(jq --arg dispatchId "$dispatch_id" --arg state "$state" --arg reason "$reason" '. + [{dispatchId: $dispatchId, state: (if $state == "" then null else $state end), reason: $reason}]' <<<"$skipped_dispatches")"
@@ -1827,18 +1858,29 @@ megabrain_dispatch_tmux_session_owned() {
 megabrain_dispatch_release_tmux_session() {
   local meta="$1" allow_caller="${2:-false}" runtime tmux_session terminal_status
   MEGABRAIN_DISPATCH_RELEASED_TERMINAL=false
+  MEGABRAIN_DISPATCH_TERMINAL_STATUS=unknown
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || return 0
+  [ "$runtime" = tmux ] || {
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS=not-applicable
+    return 0
+  }
   tmux_session="$(printf '%s' "$meta" | jq -r '.tmuxSession // empty')"
-  [ -n "$tmux_session" ] || return 0
+  [ -n "$tmux_session" ] || {
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS=missing
+    return 0
+  }
   megabrain_dispatch_terminal_status "$meta"
   terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
+  MEGABRAIN_DISPATCH_TERMINAL_STATUS="$terminal_status"
   # WHY: tmux pane ids are recycled; never kill a session until its process tree
   # proves that the pane still belongs to this dispatch.
   [ "$terminal_status" = proven ] || return 0
   megabrain_dispatch_tmux_session_owned "$meta" "$allow_caller" || return 0
   declare -F megabrain_tmux_session_exists >/dev/null 2>&1 || return 0
-  megabrain_tmux_session_exists "$tmux_session" || return 0
+  if ! megabrain_tmux_session_exists "$tmux_session"; then
+    MEGABRAIN_DISPATCH_TERMINAL_STATUS=missing
+    return 0
+  fi
   if [ "$allow_caller" != true ]; then
     megabrain_dispatch_close_refuse_caller "$meta" || return 1
   fi
