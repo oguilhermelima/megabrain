@@ -19,8 +19,10 @@ const script = process.argv[2];
 const {
   DEFAULT_VIEWPORT,
   VIEWPORT_CATEGORIES,
+  VIEWPORT_DEVICES,
   buildBrowserConfig,
   doctor,
+  listDevicePresets,
   resolveViewport,
   validateBrowserConfig,
   compareManifest,
@@ -55,10 +57,12 @@ assert.deepEqual(
   'a per-invocation viewport must override the persisted one',
 );
 assert.deepEqual(
-  resolveViewport({ device: 'Test Phone' }, { 'Test Phone': { viewport: { width: 393, height: 852 } } }),
-  { width: 393, height: 852 },
-  'a named device must resolve through the Playwright registry',
+  resolveViewport({ device: 'iphone17pro' }, { 'iPhone 17 Pro': { viewport: { width: 402, height: 681 } } }),
+  { width: 402, height: 681 },
+  'a device slug must resolve through the Playwright registry',
 );
+assert.deepEqual(resolveViewport({ device: 'macbookair13' }, {}), { width: 1470, height: 956 });
+assert.equal(VIEWPORT_DEVICES.iphone17pro.registry, 'iPhone 17 Pro');
 assert.deepEqual(resolveViewport({ category: 'mobile' }, {}), { width: 390, height: 844 });
 assert.deepEqual(resolveViewport({ category: 'tablet' }, {}), { width: 768, height: 1024 });
 assert.deepEqual(resolveViewport({ category: 'desktop' }, {}), { width: 1920, height: 1080 });
@@ -70,6 +74,32 @@ assert.throws(
   () => resolveViewport({ category: 'unknown' }, {}),
   /unknown viewport category.*mobile.*tablet.*desktop.*ultrawide/,
   'an unknown category must name the available categories',
+);
+assert.deepEqual(
+  listDevicePresets({
+    'iPhone 17 Pro': { viewport: { width: 402, height: 681 } },
+    'iPhone 17 Pro landscape': { viewport: { width: 681, height: 402 } },
+  }, { filter: 'iphone17pro' }),
+  [{ slug: 'iphone17pro', label: 'iPhone 17 Pro', kind: 'registry', registry: 'iPhone 17 Pro', category: 'mobile', viewport: { width: 402, height: 681 } }],
+  'device listing defaults to portrait entries',
+);
+assert.deepEqual(
+  listDevicePresets({
+    'iPhone 17 Pro': { viewport: { width: 402, height: 681 } },
+    'iPhone 17 Pro landscape': { viewport: { width: 681, height: 402 } },
+  }, { filter: 'iphone17pro', orientation: 'landscape' }),
+  [{ slug: 'iphone17pro', label: 'iPhone 17 Pro', kind: 'registry', registry: 'iPhone 17 Pro landscape', category: 'mobile', viewport: { width: 681, height: 402 } }],
+  'landscape entries are reachable by explicit orientation',
+);
+assert.deepEqual(
+  listDevicePresets({ 'iPhone 17 Pro': { viewport: { width: 402, height: 681 } } }, { filter: '17PRO' }),
+  [{ slug: 'iphone17pro', label: 'iPhone 17 Pro', kind: 'registry', registry: 'iPhone 17 Pro', category: 'mobile', viewport: { width: 402, height: 681 } }],
+  'device listing supports a case-insensitive name fragment',
+);
+assert.throws(
+  () => resolveViewport({ device: 'galaxys26' }, { 'Galaxy S24': { viewport: { width: 360, height: 780 } } }),
+  /unknown viewport device: galaxys26.*Galaxy S24/,
+  'an unavailable device slug must suggest a matching registry device',
 );
 assert.throws(
   () => resolveViewport({ viewport: '0x844' }, {}),
