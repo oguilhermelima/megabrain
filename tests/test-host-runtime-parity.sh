@@ -39,6 +39,16 @@ source "$root/lib/module-context.sh"
 source "$root/lib/module-orchestrate.sh"
 source "$root/lib/module-worktree.sh"
 
+# The host command responses are mocked below; keep this fixture runnable in the
+# container where the real Orca and Superset CLIs are intentionally absent.
+megabrain_require_command() {
+  return 0
+}
+
+megabrain_superset_available() {
+  return 0
+}
+
 megabrain_dispatch_require_parent() {
   megabrain_dispatch_meta_read "$1"
 }
