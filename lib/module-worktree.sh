@@ -907,7 +907,9 @@ ${prompt}"
   case "$context" in
     orca)
       megabrain_require_command orca || { megabrain_error "orca CLI is not available"; return 1; }
-      response="$(orca terminal create --worktree "path:$worktree_path" --title "$agent $worktree_path" --json)" || {
+      # WHY: Orca terminal list exposes the title but not command or environment;
+      # include the dispatch identity so a later release can prove ownership.
+      response="$(orca terminal create --worktree "path:$worktree_path" --title "$agent $worktree_path [$dispatch_id]" --json)" || {
         megabrain_error "orca terminal create failed for $worktree_path"
         return 1
       }
