@@ -254,6 +254,10 @@ install time. Chromium is the userscript profile. To install or refresh a script
 enables Chrome's one-time userScripts permission and sends the script through Violentmonkey.
 `list` reports scripts installed in the Chromium profile, and `remove` removes one from that
 profile while leaving the source file available for editing. Firefox has no userscript command.
+`web viewport set` accepts category presets (mobile, tablet, desktop, or ultrawide, each with
+named size variants), raw dimensions, or a Playwright device name. Categories set viewport size
+only; they do not emulate a device user agent, pixel ratio, or touch support. Device names are
+looked up in Playwright's registry and unknown names are refused.
 
 ## tmux
 

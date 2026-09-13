@@ -398,13 +398,21 @@ The browser viewport defaults to 1280x720. Persist a different size in the insta
 or use a Playwright device preset for a named device:
 
 ```sh
-megabrain web viewport set --viewport 390x844
+megabrain web viewport set --category mobile
 megabrain web viewport set --device "iPhone 13"
 megabrain web viewport show
 ```
 
-Userscript install and removal also accept `--viewport WIDTHxHEIGHT` or `--device NAME` for a
-one-time override. Device names come from Playwright's registry; an unknown name is refused.
+Categories are testing conventions, not device emulation: they set only the viewport. The
+available categories are mobile (390x844, with mobile-small and mobile-large variants), tablet
+(768x1024), desktop (1920x1080, with laptop, monitor, and QHD variants), and ultrawide
+(3440x1440, with a 2560x1080 variant). The mobile, tablet, and desktop conventions follow
+BrowserStack's 2026 screen-resolution guide, which sources StatCounter; ultrawide values are
+availability conventions because no market-share figures were found.
+
+Userscript install and removal also accept `--viewport WIDTHxHEIGHT`, `--category NAME`, or
+`--device NAME` for a one-time override. Device names come from Playwright's registry; an
+unknown name is refused.
 
 `doctor` names the missing piece and the command that installs it rather than failing silently.
 

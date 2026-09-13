@@ -202,7 +202,7 @@ command_web_userscript() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --userscripts) userscripts="${2:-}"; shift 2 ;;
-      --viewport|--device|--width|--height)
+      --viewport|--device|--category|--width|--height)
         flag_value="${2:-}"
         [ -n "$flag_value" ] || { megabrain_usage_fail "web-userscript-${action}"; return "$MEGABRAIN_USAGE_ERROR"; }
         viewport_args+=("$1" "$flag_value")
@@ -232,13 +232,17 @@ command_web_viewport() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --browser) browser="${2:-}"; shift 2 ;;
-      --viewport|--device|--width|--height)
+      --viewport|--device|--category|--width|--height)
         flag_value="${2:-}"
         [ -n "$flag_value" ] || { megabrain_usage_fail "web-viewport-${action:-set}"; return "$MEGABRAIN_USAGE_ERROR"; }
         viewport_args+=("$1" "$flag_value")
         shift 2
         ;;
-      -h|--help) megabrain_usage_show "web-viewport-${action:-set}"; return 0 ;;
+      -h|--help)
+        megabrain_usage_show "web-viewport-${action:-set}"
+        printf '%s\n' 'Categories: mobile, tablet, desktop, ultrawide (with named size variants). Devices come from Playwright.'
+        return 0
+        ;;
       *) megabrain_usage_fail "web-viewport-${action:-set}"; return "$MEGABRAIN_USAGE_ERROR" ;;
     esac
   done

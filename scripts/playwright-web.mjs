@@ -25,6 +25,22 @@ const REPOSITORIES = {
 const MCP_CONFIG_NAMES = { chromium: 'chromium.json', firefox: 'firefox.json' };
 export const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 720 });
 export const MAX_VIEWPORT_DIMENSION = 10000;
+// BrowserStack's 2026 screen-resolution guide (sourcing StatCounter) informs the
+// mobile, tablet, and desktop conventions. Its figures are market-share context,
+// not device emulation. Ultrawide values are availability conventions; no share
+// figures were found for that category.
+export const VIEWPORT_CATEGORIES = Object.freeze({
+  mobile: Object.freeze({ width: 390, height: 844 }),
+  'mobile-small': Object.freeze({ width: 360, height: 800 }),
+  'mobile-large': Object.freeze({ width: 414, height: 896 }),
+  tablet: Object.freeze({ width: 768, height: 1024 }),
+  desktop: Object.freeze({ width: 1920, height: 1080 }),
+  'desktop-laptop': Object.freeze({ width: 1366, height: 768 }),
+  'desktop-monitor': Object.freeze({ width: 1440, height: 900 }),
+  'desktop-qhd': Object.freeze({ width: 2560, height: 1440 }),
+  ultrawide: Object.freeze({ width: 3440, height: 1440 }),
+  'ultrawide-wide': Object.freeze({ width: 2560, height: 1080 }),
+});
 
 export function validateViewport(viewport) {
   if (!viewport || !Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) ||
@@ -49,11 +65,18 @@ function parseViewport(value) {
 export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_VIEWPORT) {
   const request = options || {};
   const hasRaw = request.viewport != null || request.width != null || request.height != null;
-  if (request.device != null && hasRaw) throw new Error('viewport device cannot be combined with raw dimensions');
+  const hasCategory = request.category != null;
+  if (request.device != null && (hasRaw || hasCategory)) throw new Error('viewport device cannot be combined with raw dimensions or a category');
+  if (hasCategory && hasRaw) throw new Error('viewport category cannot be combined with raw dimensions');
   if (request.device != null) {
     const device = devices[request.device];
     if (!device) throw new Error(`unknown Playwright device: ${request.device}`);
     return validateViewport(device.viewport);
+  }
+  if (hasCategory) {
+    const category = VIEWPORT_CATEGORIES[request.category];
+    if (!category) throw new Error(`unknown viewport category: ${request.category}; available: ${Object.keys(VIEWPORT_CATEGORIES).join(', ')}`);
+    return validateViewport(category);
   }
   if (request.viewport != null) return validateViewport(parseViewport(request.viewport));
   if (hasRaw) return validateViewport({
@@ -621,7 +644,7 @@ function viewportRequestFromArgs(args) {
   const request = {};
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
-    if (['--viewport', '--width', '--height', '--device'].includes(flag)) {
+    if (['--viewport', '--width', '--height', '--device', '--category'].includes(flag)) {
       if (args[index + 1] == null) throw new Error(`${flag} requires a value`);
       request[flag.slice(2)] = args[index + 1];
       index += 1;

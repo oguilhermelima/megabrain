@@ -289,12 +289,12 @@ megabrain_usage_line() {
     tmux-wrapper) printf 'tmux wrapper [--yes] [--dry-run] [--revert] [--json]' ;;
     web) printf 'web viewport|userscript ...' ;;
     web-viewport) printf 'web viewport set|show ...' ;;
-    web-viewport-set) printf 'web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device NAME|--width W --height H]' ;;
+    web-viewport-set) printf 'web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device NAME|--category NAME|--width W --height H]' ;;
     web-viewport-show) printf 'web viewport show [--browser chromium|firefox|both]' ;;
     web-userscript) printf 'web userscript install|list|remove ...' ;;
-    web-userscript-install) printf 'web userscript install <file.user.js> [--viewport WxH|--device NAME]' ;;
+    web-userscript-install) printf 'web userscript install <file.user.js> [--viewport WxH|--device NAME|--category NAME]' ;;
     web-userscript-list) printf 'web userscript list' ;;
-    web-userscript-remove) printf 'web userscript remove <file.user.js> [--viewport WxH|--device NAME]' ;;
+    web-userscript-remove) printf 'web userscript remove <file.user.js> [--viewport WxH|--device NAME|--category NAME]' ;;
     *) return 1 ;;
   esac
 }
