@@ -197,7 +197,7 @@ export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_V
   return validateViewport(fallback);
 }
 
-function normalizeDeviceDescriptor(descriptor) {
+function normalizeDeviceDescriptor(descriptor, { requireSource = false } = {}) {
   const viewport = validateViewport(descriptor.viewport);
   const scale = descriptor.deviceScaleFactor ?? 1;
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('deviceScaleFactor must be a positive number');
@@ -212,6 +212,10 @@ function normalizeDeviceDescriptor(descriptor) {
   if (descriptor.userAgent != null) {
     if (typeof descriptor.userAgent !== 'string' || !descriptor.userAgent) throw new Error('userAgent must be a non-empty string');
     normalized.userAgent = descriptor.userAgent;
+  }
+  if (descriptor.source != null || requireSource) {
+    if (typeof descriptor.source !== 'string' || !descriptor.source.trim()) throw new Error('source must be a non-empty string');
+    normalized.source = descriptor.source;
   }
   return normalized;
 }
@@ -267,17 +271,22 @@ export function readCustomDevices(file = DEFAULT_DEVICES) {
   if (!existsSync(file)) return {};
   const parsed = readJson(file, {});
   if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`custom device registry must be an object: ${file}`);
-  return Object.fromEntries(Object.entries(parsed).map(([slug, descriptor]) => [slug, normalizeDeviceDescriptor(descriptor)]));
+  return Object.fromEntries(Object.entries(parsed).map(([slug, descriptor]) => [slug, normalizeDeviceDescriptor(descriptor, { requireSource: true })]));
 }
 
 export function upsertCustomDevice(devices, slug, descriptor) {
-  if (!slug || /[\\/]/.test(slug)) throw new Error('custom device slug must be a non-empty path-safe value');
-  return { ...(devices || {}), [slug]: normalizeDeviceDescriptor(descriptor) };
+  const normalizedSlug = normalizeDeviceSlug(slug);
+  if (!slug || !normalizedSlug || /[\\/]/.test(slug)) throw new Error('custom device slug must be a non-empty path-safe value');
+  if (VIEWPORT_DEVICES[normalizedSlug]) throw new Error(`custom device slug conflicts with built-in device: ${slug}`);
+  const existingSlug = Object.keys(devices || {}).find(name => normalizeDeviceSlug(name) === normalizedSlug);
+  if (existingSlug && existingSlug !== slug) throw new Error(`custom device slug conflicts with existing device: ${existingSlug}`);
+  return { ...(devices || {}), [slug]: normalizeDeviceDescriptor(descriptor, { requireSource: true }) };
 }
 
 export function removeCustomDevice(devices, slug) {
   const next = { ...(devices || {}) };
-  delete next[slug];
+  const normalizedSlug = normalizeDeviceSlug(slug);
+  Object.keys(next).filter(name => normalizeDeviceSlug(name) === normalizedSlug).forEach(name => delete next[name]);
   return next;
 }
 
@@ -423,6 +432,7 @@ export function listDevicePresets(devices, { filter = '', orientation = 'portrai
       isMobile: descriptor.isMobile,
       hasTouch: descriptor.hasTouch,
       ...(descriptor.userAgent ? { userAgent: descriptor.userAgent } : {}),
+      source: descriptor.source,
     }));
   return [...builtIns, ...custom];
 }
@@ -1213,12 +1223,15 @@ function customDeviceFromArgs(args) {
   if (!viewport) throw new Error('device-add requires --viewport WIDTHxHEIGHT');
   const match = String(viewport).match(/^([0-9]+)x([0-9]+)$/);
   if (!match) throw new Error('device-add viewport must use WIDTHxHEIGHT dimensions');
+  const source = argumentValue(args, '--source', '');
+  if (!source) throw new Error('device-add requires --source');
   return {
     viewport: { width: Number(match[1]), height: Number(match[2]) },
     deviceScaleFactor: Number(argumentValue(args, '--device-scale-factor', '1')),
     isMobile: args.includes('--mobile'),
     hasTouch: args.includes('--touch'),
     ...(argumentValue(args, '--user-agent', '') ? { userAgent: argumentValue(args, '--user-agent', '') } : {}),
+    source,
   };
 }
 

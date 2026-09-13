@@ -297,7 +297,7 @@ megabrain_usage_line() {
     web-viewport) printf 'web viewport set|show|devices ...' ;;
     web-viewport-set) printf 'web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape]' ;;
     web-viewport-show) printf 'web viewport show [--browser chromium|firefox|both]' ;;
-    web-devices) printf 'web devices [FILTER] [--orientation portrait|landscape|all]' ;;
+    web-devices) printf 'web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG' ;;
     web-userscript) printf 'web userscript install|list|remove ...' ;;
     web-userscript-install) printf 'web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]' ;;
     web-userscript-list) printf 'web userscript list' ;;
