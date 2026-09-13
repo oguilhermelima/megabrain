@@ -60,7 +60,7 @@ megabrain_superset() {
 }
 
 scenario_terminal_status_requires_process_identity() {
-  local output
+  local output process_pid
   rm -rf "$MEGABRAIN_STATE_DIR"
   mkdir -p "$MEGABRAIN_STATE_DIR"
   host_calls=0
@@ -71,9 +71,10 @@ scenario_terminal_status_requires_process_identity() {
   assert_json "$output" 'any(.[]; .terminalId == "terminal-unverified" and .status == "unknown")'
   printf 'an active host status with a different process identity remains unknown\n'
 
+  process_pid="$$"
   megabrain_terminal_record_write terminal-proven superset workspace-test "$root" \
-    'DEV proven' 'run server' now 777 null 777
-  host_records='{"sessions":[{"terminalId":"terminal-proven","status":"active","pid":777}]}'
+    'DEV proven' 'run server' now "$process_pid" null "$process_pid"
+  host_records="{\"sessions\":[{\"terminalId\":\"terminal-proven\",\"status\":\"active\",\"pid\":$process_pid}]}"
   output="$(command_terminal list --json)"
   assert_json "$output" 'any(.[]; .terminalId == "terminal-proven" and .status == "alive")'
   printf 'a host status with the recorded process identity remains classifiable\n'
