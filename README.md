@@ -213,6 +213,13 @@ dispatch session.
 `closed`, `circuit_broken`, or `timeout`. It exits non-zero and tells you to open a new dispatch,
 instead of queuing a reply that cannot be delivered.
 
+`orchestrate stop` interrupts a working child without closing its terminal. Its guarantees depend
+on the host: tmux proves working liveness and refuses a pending-check frame before sending Escape;
+Orca proves terminal identity and sends `--interrupt`, but cannot observe working liveness or the
+pending-check frame; Superset refuses because `terminals send` has no interrupt capability. A refusal
+names the missing proof or capability. `orchestrate change` supersedes queued directions, records
+withdrawals for delivered directions, and applies the same host-specific interrupt rules.
+
 ## Where it runs
 
 A dispatch runs as a **tmux split** or as a **tab in an orchestrator**, and the two are not rivals.

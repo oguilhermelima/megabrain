@@ -50,10 +50,12 @@ command_orchestrate() {
     read) megabrain_dispatch_read "$@" ;;
     ack|acknowledge) megabrain_dispatch_ack "$@" ;;
     reply) megabrain_dispatch_reply "$@" ;;
+    stop) megabrain_dispatch_stop "$@" ;;
+    change) megabrain_dispatch_change "$@" ;;
     close) megabrain_dispatch_close "$@" ;;
     -h|--help|"")
       megabrain_usage_show orchestrate-spawn orchestrate-list orchestrate-reconcile \
-        orchestrate-prune orchestrate-watch orchestrate-read orchestrate-ack orchestrate-reply orchestrate-close
+        orchestrate-prune orchestrate-watch orchestrate-read orchestrate-ack orchestrate-reply orchestrate-stop orchestrate-change orchestrate-close
       ;;
     *) megabrain_error "unknown orchestrate command: $subcommand"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac

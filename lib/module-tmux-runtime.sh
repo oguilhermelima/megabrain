@@ -383,12 +383,21 @@ megabrain_tmux_nudge_affordance() {
   esac
 }
 
+megabrain_tmux_interrupt_affordance() {
+  case "$1" in
+    claude|codex) printf 'Escape\n' ;;
+    *) return 1 ;;
+  esac
+}
+
 # Each row is agent|liveness|first marker (grep -E)|second marker (grep -E)|reason.
 # The first and second markers are separate because tmux also captures echoed prompts.
-MEGABRAIN_AGENT_LIVENESS_MARKERS="codex|working|Working \(|esc to interrupt|terminal shows the working indicator
+MEGABRAIN_AGENT_LIVENESS_MARKERS="codex|pending-check|Messages to be submitted after next tool call|press esc to interrupt and send immediately|terminal is waiting to submit queued messages
+codex|working|Working \(|esc to interrupt|terminal shows the working indicator
 codex|idle|^[[:space:]]*› Ask Codex to do anything[[:space:]]*$||terminal shows an empty Codex composer
 codex|blocked|^[[:space:]]*You've hit your usage limit for|Switch to another model now,|terminal shows a usage limit refusal
 codex|blocked|Hook error:|socket connection was closed unexpectedly|terminal shows a socket connection transport error
+claude|pending-check|Messages to be submitted after next tool call|press esc to interrupt and send immediately|terminal is waiting to submit queued messages
 claude|working|Working|esc to interrupt|terminal shows the working indicator
 claude|idle|^[[:space:]]*❯[[:space:]]*$||terminal shows an empty Claude composer
 claude|blocked|API Error:|authentication|terminal shows an authentication error"
@@ -526,6 +535,22 @@ megabrain_tmux_send_nudge() {
   fi
   text="$(megabrain_tmux_nudge_text_for_pane "$pane" "$text")"
   megabrain_tmux_send_text "$pane" "$text" "$agent" nudge
+}
+
+MEGABRAIN_TMUX_INTERRUPT_STATUS=not-landed
+
+megabrain_tmux_send_interrupt() {
+  local pane="$1" agent="${2:-}" affordance
+  MEGABRAIN_TMUX_INTERRUPT_STATUS=not-landed
+  [ -n "$agent" ] || agent="$(megabrain_tmux_agent_for_pane "$pane" 2>/dev/null || true)"
+  affordance="$(megabrain_tmux_interrupt_affordance "$agent" 2>/dev/null || true)"
+  [ -n "$affordance" ] || return 1
+  megabrain_tmux_send_lock_acquire "$pane" || return 1
+  if tmux send-keys -t "$pane" "$affordance"; then
+    MEGABRAIN_TMUX_INTERRUPT_STATUS=landed
+  fi
+  megabrain_tmux_send_lock_release
+  [ "$MEGABRAIN_TMUX_INTERRUPT_STATUS" = landed ]
 }
 
 megabrain_tmux_send_text() {
