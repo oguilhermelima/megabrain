@@ -53,7 +53,7 @@ megabrain_appium_pid() {
 }
 
 megabrain_appium_status() {
-  local pid command_line
+  local pid='' command_line=''
   pid="$(megabrain_appium_pid)"
   if [ -z "$pid" ]; then
     printf 'appium: down (port %s)\n' "$MEGABRAIN_APPIUM_PORT"
@@ -69,7 +69,7 @@ megabrain_appium_status() {
 }
 
 megabrain_appium_start() {
-  local pid
+  local pid=''
   if megabrain_appium_status >/dev/null 2>&1; then
     megabrain_appium_status
     return 0
@@ -82,7 +82,7 @@ megabrain_appium_start() {
   nohup appium --port "$MEGABRAIN_APPIUM_PORT" >"$MEGABRAIN_APPIUM_LOG" 2>&1 &
   pid=$!
   printf '%s\n' "$pid" >"$MEGABRAIN_APPIUM_PIDFILE"
-  local attempt
+  local attempt=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.2
     if megabrain_appium_status >/dev/null 2>&1; then
@@ -95,7 +95,7 @@ megabrain_appium_start() {
 }
 
 megabrain_appium_stop() {
-  local pid command_line
+  local pid='' command_line=''
   pid="$(megabrain_appium_pid)"
   if [ -z "$pid" ]; then
     rm -f "$MEGABRAIN_APPIUM_PIDFILE"
@@ -108,7 +108,7 @@ megabrain_appium_stop() {
     return 1
   fi
   kill "$pid" >/dev/null 2>&1 || true
-  local attempt
+  local attempt=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$pid" >/dev/null 2>&1 || break
     sleep 0.2
@@ -144,7 +144,7 @@ megabrain_native_require_simctl() {
 }
 
 megabrain_native_worktree_root() {
-  local path="${MEGABRAIN_NATIVE_WORKTREE:-$PWD}" root
+  local path="${MEGABRAIN_NATIVE_WORKTREE:-$PWD}" root=''
   root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$root" ]; then
     printf '%s\n' "$root"
@@ -158,7 +158,7 @@ megabrain_native_config_file() {
 }
 
 megabrain_native_config_validate() {
-  local config
+  local config=''
   config="$(megabrain_native_config_file)"
   [ -f "$config" ] || return 0
   if ! jq -e 'type == "object" and .version == 1 and (.surfaces | type == "object")' "$config" >/dev/null 2>&1; then
@@ -168,7 +168,7 @@ megabrain_native_config_validate() {
 }
 
 megabrain_native_config_value() {
-  local surface="$1" key="$2" config
+  local surface="$1" key="$2" config=''
   config="$(megabrain_native_config_file)"
   [ -f "$config" ] || return 0
   jq -r --arg surface "$surface" --arg key "$key" \
@@ -193,7 +193,7 @@ megabrain_native_validate_metro_port() {
 }
 
 megabrain_native_simulator_candidates() {
-  local kind="$1" devices runtime_fragment
+  local kind="$1" devices='' runtime_fragment=''
   runtime_fragment="iOS"
   [ "$kind" = tv ] && runtime_fragment="tvOS"
   devices="$(xcrun simctl list devices --json 2>/dev/null)" || {
@@ -214,7 +214,7 @@ megabrain_native_simulator_candidates() {
 }
 
 megabrain_native_sim_list() {
-  local kind='' json=false arg candidates line udid state name
+  local kind='' json=false arg='' candidates='' line='' udid='' state='' name=''
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -247,7 +247,7 @@ megabrain_native_sim_list() {
 }
 
 megabrain_native_select_device() {
-  local kind="$1" requested="$2" booted_only="$3" candidates line udid state name
+  local kind="$1" requested="$2" booted_only="$3" candidates='' line='' udid='' state='' name=''
   local count=0 identifier_count=0 name_count=0 selected_udid='' selected_state='' selector_type=''
   candidates="$(megabrain_native_simulator_candidates "$kind")" || return 1
   while IFS=$'\t' read -r udid state name; do
@@ -287,7 +287,7 @@ megabrain_native_select_device() {
     fi
   fi
 
-  local label
+  local label=''
   label="$(megabrain_native_kind_label "$kind")"
   if [ "$count" -eq 0 ]; then
     if [ "$booted_only" = true ]; then
@@ -332,8 +332,8 @@ megabrain_native_select_device() {
 }
 
 megabrain_native_sim_ensure() {
-  local kind='' device='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg
-  local candidates state boot_output boot_rc attempt configured_value
+  local kind='' device='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg=''
+  local candidates='' state='' boot_output='' boot_rc=0 attempt=0 configured_value=''
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -427,8 +427,8 @@ megabrain_native_wait_for_metro() {
 }
 
 megabrain_native_app_reload() {
-  local kind='' route='' bundle_id='' url_template='' device='' metro_port='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg
-  local configured_value url terminate_output terminate_rc terminate_lower
+  local kind='' route='' bundle_id='' url_template='' device='' metro_port='' timeout="$MEGABRAIN_NATIVE_DEFAULT_TIMEOUT" json=false arg=''
+  local configured_value='' url='' terminate_output='' terminate_rc=0 terminate_lower=''
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -503,7 +503,7 @@ megabrain_native_app_reload() {
 }
 
 command_native() {
-  local family="${1:-}" operation="${2:-}" arg
+  local family="${1:-}" operation="${2:-}" arg=''
   shift || true
   shift || true
   case "$family" in
