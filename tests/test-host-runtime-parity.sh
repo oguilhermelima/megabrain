@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-host-runtime.XXXXXX")"
+
+cleanup() {
+  local rc=$?
+  rm -rf "$state_dir"
+  return "$rc"
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+assert_equal() {
+  [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
+}
+
+assert_file() {
+  [ -e "$1" ] || fail "expected path to exist: $1"
+}
+
+assert_missing() {
+  [ ! -e "$1" ] || fail "expected path to be absent: $1"
+}
+
+export MEGABRAIN_STATE_DIR="$state_dir"
+export SUPERSET_TERMINAL_ID=parent-terminal
+unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
+
+source "$root/lib/common.sh"
+source "$root/lib/module-tmux-runtime.sh"
+source "$root/lib/module-context.sh"
+source "$root/lib/module-orchestrate.sh"
+
+megabrain_dispatch_require_parent() {
+  megabrain_dispatch_meta_read "$1"
+}
+
+close_log="$state_dir/close.log"
+host_close_mode=success
+megabrain_superset() {
+  if [ "${1:-}" = terminals ] && [ "${2:-}" = read ]; then
+    printf '%s\n' '{"output":"superset host output"}'
+    return 0
+  fi
+  if [ "${1:-}" = terminals ] && [ "${2:-}" = close ]; then
+    printf 'superset:%s\n' "${4:-}" >>"$close_log"
+    if [ "$host_close_mode" = failure ]; then
+      printf '%s\n' '{"error":{"message":"host close denied"}}'
+      return 1
+    fi
+    printf '%s\n' '{"ok":true}'
+    return 0
+  fi
+  return 1
+}
+
+orca() {
+  if [ "${1:-}" = terminal ] && [ "${2:-}" = read ]; then
+    printf '%s\n' '{"text":"orca host output"}'
+    return 0
+  fi
+  if [ "${1:-}" = terminal ] && [ "${2:-}" = close ]; then
+    printf 'orca:%s\n' "${4:-}" >>"$close_log"
+    printf '%s\n' '{"ok":true}'
+    return 0
+  fi
+  return 1
+}
+
+create_host_dispatch() {
+  local dispatch_id="$1" host="${2:-superset}" state="${3:-running}"
+  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal "$host" "$host" workspace-test "$dispatch_id-terminal" \
+    "$root" main codex label "$state" gpt-5 true codex '' '' host ide >/dev/null
+}
+
+megabrain_dispatch_terminal_status() {
+  MEGABRAIN_TERMINAL_STATUS=proven
+}
+
+create_host_dispatch host-release
+megabrain_dispatch_meta_update_process_state host-release succeeded
+megabrain_dispatch_meta_update_state host-release done
+assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/host-release/meta.json")" released
+assert_equal "$(jq -r '.processState' "$state_dir/dispatches/host-release/meta.json")" succeeded
+assert_equal "$(cat "$close_log")" 'superset:host-release-terminal'
+printf 'finished host dispatch closes its proven terminal without a transcript\n'
+
+create_host_dispatch host-read
+host_read_result="$(command_orchestrate read host-read --json)"
+assert_equal "$(printf '%s' "$host_read_result" | jq -r '.source')" host
+assert_equal "$(printf '%s' "$host_read_result" | jq -r '.text')" 'superset host output'
+printf 'host read returns output from the Superset terminal\n'
+
+jq '.childHost = "orca"' "$state_dir/dispatches/host-read/meta.json" >"$state_dir/orca-meta.json"
+mv -f "$state_dir/orca-meta.json" "$state_dir/dispatches/host-read/meta.json"
+orca_read_result="$(command_orchestrate read host-read --json)"
+assert_equal "$(printf '%s' "$orca_read_result" | jq -r '.source')" host
+assert_equal "$(printf '%s' "$orca_read_result" | jq -r '.text')" 'orca host output'
+printf 'host read returns output from the Orca terminal\n'
+
+megabrain_dispatch_terminal_status() {
+  MEGABRAIN_TERMINAL_STATUS=unknown
+}
+create_host_dispatch host-unproven
+megabrain_dispatch_meta_update_process_state host-unproven succeeded
+megabrain_dispatch_meta_update_state host-unproven done
+assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/host-unproven/meta.json")" retained
+assert_equal "$(jq -r '.terminalReason' "$state_dir/dispatches/host-unproven/meta.json")" 'host terminal identity is unproven; process was not released'
+printf 'unproven host terminal is retained with a release reason\n'
+
+old='2020-01-01T00:00:00Z'
+jq --arg old "$old" '.createdAt = $old | .updatedAt = $old' \
+  "$state_dir/dispatches/host-unproven/meta.json" >"$state_dir/old-meta.json"
+mv -f "$state_dir/old-meta.json" "$state_dir/dispatches/host-unproven/meta.json"
+prune_result="$(command_orchestrate prune --json)"
+assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 0
+assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "host-unproven") | .reason')" 'host terminal identity is unproven; dispatch terminal was retained'
+assert_file "$state_dir/dispatches/host-unproven/meta.json"
+printf 'prune keeps a host dispatch whose terminal identity is unproven\n'
+
+printf 'ok: host runtime release, read, and prune parity\n'
