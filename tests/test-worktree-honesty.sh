@@ -137,7 +137,7 @@ scenario_env_files_are_copied_without_contents() {
   megabrain_ensure_superset_project() { printf '%s\n' '{"id":"project-id","created":false}'; }
   megabrain_workspace_create() { printf '%s\n' '{"id":"workspace-id","created":true}'; }
   output="$(megabrain_worktree_create --repo "$work_dir/repo" --branch "$fixture_branch" --json)"
-  destination="$fixture_shared_root/env-copy"
+  destination="$fixture_shared_root/fix-env-copy"
   assert_json "$output" '.worktree == "'"$destination"'"'
   [ -f "$destination/.env" ] || fail 'root .env was not copied'
   [ -f "$destination/apps/web/.env.local" ] || fail 'nested .env.local was not copied'
@@ -163,7 +163,7 @@ scenario_no_env_file_is_normal() {
   megabrain_ensure_superset_project() { printf '%s\n' '{"id":"project-id","created":false}'; }
   megabrain_workspace_create() { printf '%s\n' '{"id":"workspace-id","created":true}'; }
   output="$(megabrain_worktree_create --repo "$work_dir/repo" --branch "$fixture_branch" --json)"
-  destination="$fixture_shared_root/no-env"
+  destination="$fixture_shared_root/fix-no-env"
   assert_json "$output" '.worktree == "'"$destination"'"'
   [ ! -e "$destination/.env" ] || fail 'an absent source env file was invented'
   printf 'a repository without env files still creates its worktree\n'
