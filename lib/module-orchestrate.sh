@@ -652,16 +652,47 @@ megabrain_dispatch_meta_update_state() {
 }
 
 megabrain_dispatch_release_terminal_process() {
-  local dispatch_id="$1" meta runtime transcript_path process_state terminal_state
-  transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")" || return 1
-  # WHY: the transcript is the durable record that makes releasing the live pane safe.
-  [ -f "$transcript_path" ] || return 0
+  local dispatch_id="$1" meta runtime transcript_path process_state terminal_state terminal_status
+  MEGABRAIN_DISPATCH_RELEASE_STATUS=not-released
+  MEGABRAIN_DISPATCH_RELEASED_TERMINAL=false
   meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
   runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || return 0
   terminal_state="$(printf '%s' "$meta" | jq -r '.terminalState // "owned"')"
-  [ "$terminal_state" != released ] || return 0
-  megabrain_dispatch_release_tmux_process "$meta" || return 1
+  [ "$terminal_state" != released ] || {
+    MEGABRAIN_DISPATCH_RELEASE_STATUS=released
+    return 0
+  }
+  if [ "$runtime" = tmux ]; then
+    transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")" || return 1
+    # WHY: the transcript is the durable record that makes releasing the live pane safe.
+    [ -f "$transcript_path" ] || return 0
+    megabrain_dispatch_release_tmux_process "$meta" || return 1
+  else
+    # Host terminals have no persisted transcript. Their terminal identity is the
+    # durable record, so only a proven identity may be closed automatically.
+    megabrain_dispatch_terminal_status "$meta"
+    terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
+    case "$terminal_status" in
+      missing)
+        MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
+        MEGABRAIN_DISPATCH_RELEASE_STATUS=missing
+        ;;
+      unknown)
+        megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ retained __keep__ __keep__ __keep__ \
+          'host terminal identity is unproven; process was not released' __keep__ || return 1
+        MEGABRAIN_DISPATCH_RELEASE_STATUS=unproven
+        return 0
+        ;;
+      proven)
+        megabrain_dispatch_native_close "$meta" || return 1
+        MEGABRAIN_DISPATCH_RELEASED_TERMINAL=true
+        MEGABRAIN_DISPATCH_RELEASE_STATUS=released
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  fi
   if [ "$MEGABRAIN_DISPATCH_RELEASED_TERMINAL" = true ]; then
     process_state="$(printf '%s' "$meta" | jq -r '.processState // empty')"
     case "$process_state" in
