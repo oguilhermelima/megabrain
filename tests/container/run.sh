@@ -5,6 +5,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source_git_dir="$(git -C "$root" rev-parse --git-common-dir)"
 image=megabrain-suite
 output_root="${MEGABRAIN_TEST_OUTPUT_DIR:-${TMPDIR:-/tmp}/megabrain-suite-results}"
 
@@ -29,6 +30,7 @@ exec docker run --rm \
   -e MEGABRAIN_IN_CONTAINER=true \
   -e MEGABRAIN_TEST_OUTPUT_DIR=/results \
   -v "$root:/src:ro" \
+  -v "$source_git_dir:/source-git:ro" \
   -v "$output_dir:/results" \
   "$image" -c '
     set -uo pipefail
@@ -40,7 +42,11 @@ exec docker run --rm \
     if [ -n "$origin_url" ]; then
       git -C "$HOME/work" remote add origin "$origin_url"
     fi
+    git -C "$HOME/work" fetch -q /source-git "refs/tags/*:refs/tags/*" || true
     git -C "$HOME/work" symbolic-ref HEAD refs/heads/main
+    git -C "$HOME/work" add -A
+    git -C "$HOME/work" -c user.name=megabrain-test -c user.email=test@example.invalid \
+      commit -qm "fixture container source"
     cd "$HOME/work"
     printf "bash %s on %s\n\n" "$BASH_VERSION" "$(uname -sm)"
     selected_tests=""

@@ -86,6 +86,36 @@ committed_archive="$work/committed.tar.gz"
 committed_formula="$work/committed-formula.rb"
 matching_output="$($release_script "v$version" --output "$committed_archive" --formula-output "$committed_formula" 2>&1)" ||
   fail "release script refused the committed release tree: $matching_output"
+# Match release.sh's capability check: without --mtime, git archive timestamps entries at runtime.
+archive_help_output="$(git -C "$root" archive -h 2>&1 || true)"
+case "$archive_help_output" in
+  *--mtime*)
+    formula_release_tag="$(sed -n 's#^  url ".*releases/download/\(v[^/]*\)/megabrain-[^/]*\.tar\.gz"$#\1#p' "$root/Formula/megabrain.rb")"
+    [ -n "$formula_release_tag" ] || fail 'committed formula has no release tag in its URL'
+    if ! git -C "$root" rev-parse --verify "refs/tags/$formula_release_tag^{commit}" >/dev/null 2>&1; then
+      printf 'skip: committed formula hash comparison skipped because tag %s is unavailable\n' \
+        "$formula_release_tag"
+    else
+      formula_archive_version="$(sed -n 's#^  url ".*releases/download/v[^/]*/megabrain-\([^/]*\)\.tar\.gz"$#\1#p' "$root/Formula/megabrain.rb")"
+      [ -n "$formula_archive_version" ] || fail 'committed formula has no archive version in its URL'
+      formula_archive="$work/formula-release.tar.gz"
+      if ! git -C "$root" archive --format=tar --mtime='1970-01-01 00:00:00' \
+        --prefix="megabrain-$formula_archive_version/" "$formula_release_tag^{tree}" -- . \
+        ':(exclude)Formula' | gzip -n >"$formula_archive"; then
+        fail "could not create archive for formula tag $formula_release_tag"
+      fi
+      formula_hash="$(sed -n 's/^  sha256 "\([0-9a-f]\{64\}\)"$/\1/p' "$root/Formula/megabrain.rb")"
+      [ -n "$formula_hash" ] || fail 'committed formula has no sha256'
+      committed_hash="$(shasum -a 256 "$formula_archive" | awk '{print $1}')"
+      [ "$formula_hash" = "$committed_hash" ] ||
+        fail "committed formula hash $formula_hash does not match $formula_release_tag archive $committed_hash"
+      printf 'scenario 4: committed formula hash matches its tagged release archive\n'
+    fi
+    ;;
+  *)
+    printf 'skip: committed formula hash comparison requires git archive --mtime for reproducible archives\n'
+    ;;
+esac
 printf '\n# Formula-only release invariant test\n' >>"$committed_root/Formula/megabrain.rb"
 git -C "$committed_root" -c user.name=megabrain-test -c user.email=megabrain-test@example.com \
   add Formula/megabrain.rb || fail 'could not stage the Formula-only change'
@@ -110,7 +140,7 @@ changed_entries="$(tar -tzf "$changed_archive")" ||
 if printf '%s\n' "$changed_entries" | grep -F '/Formula/' >/dev/null; then
   fail 'release archive includes Formula files'
 fi
-printf 'scenario 4: Formula-only commit preserves the release.sh archive\n'
+printf 'scenario 5: Formula-only commit preserves the release.sh archive\n'
 
 manifest_mismatch_root="$work/manifest-mismatch"
 git clone -q "$root" "$manifest_mismatch_root" || fail 'could not clone the manifest tree'
@@ -127,6 +157,6 @@ case "$mismatch_output" in
   *'version mismatch'*'.claude-plugin/marketplace.json'*) ;;
   *) fail "version mismatch error was not actionable: $mismatch_output" ;;
 esac
-printf 'scenario 5: release refuses mismatched JSON release versions\n'
+printf 'scenario 6: release refuses mismatched JSON release versions\n'
 
 printf 'ok: release guard scenarios\n'
