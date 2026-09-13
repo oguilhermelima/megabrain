@@ -74,6 +74,10 @@ export const VIEWPORT_DEVICES = Object.freeze({
   iphone16e: { label: 'iPhone 16e', registry: 'iPhone 16e', category: 'mobile' },
   iphone16pro: { label: 'iPhone 16 Pro', registry: 'iPhone 16 Pro', category: 'mobile' },
   iphone16promax: { label: 'iPhone 16 Pro Max', registry: 'iPhone 16 Pro Max', category: 'mobile' },
+  // Safari measurement via Appium WebDriver on iOS 26.5, 2026-09-13:
+  // window.innerWidth=402, window.innerHeight=714 (outerHeight=874). The
+  // Playwright registry reports 402x681; no override is applied because the
+  // requested CSS viewport measurement does not reproduce either 874 or 681.
   iphone17: { label: 'iPhone 17', registry: 'iPhone 17', category: 'mobile' },
   iphone17e: { label: 'iPhone 17e', registry: 'iPhone 17e', category: 'mobile' },
   iphone17pro: { label: 'iPhone 17 Pro', registry: 'iPhone 17 Pro', category: 'mobile' },
