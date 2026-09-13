@@ -248,32 +248,64 @@ megabrain_native_sim_list() {
 
 megabrain_native_select_device() {
   local kind="$1" requested="$2" booted_only="$3" candidates line udid state name
-  local count=0 selected_udid='' selected_state=''
+  local count=0 identifier_count=0 name_count=0 selected_udid='' selected_state='' selector_type=''
   candidates="$(megabrain_native_simulator_candidates "$kind")" || return 1
   while IFS=$'\t' read -r udid state name; do
     [ -n "$udid" ] || continue
-    if [ -n "$requested" ] && [ "$udid" != "$requested" ]; then
-      continue
-    fi
     if [ "$booted_only" = true ] && [ "$state" != Booted ]; then
       continue
     fi
-    count=$((count + 1))
-    selected_udid="$udid"
-    selected_state="$state"
+    if [ -n "$requested" ]; then
+      if [ "$udid" = "$requested" ]; then
+        identifier_count=$((identifier_count + 1))
+        selected_udid="$udid"
+        selected_state="$state"
+      elif [ "$name" = "$requested" ]; then
+        name_count=$((name_count + 1))
+        if [ "$identifier_count" -eq 0 ]; then
+          selected_udid="$udid"
+          selected_state="$state"
+        fi
+      fi
+    else
+      count=$((count + 1))
+      selected_udid="$udid"
+      selected_state="$state"
+    fi
   done <<<"$candidates"
+
+  if [ -n "$requested" ]; then
+    case "$requested" in
+      *[!0123456789abcdefABCDEF-]*) selector_type='name' ;;
+      *) selector_type='device' ;;
+    esac
+    if [ "$identifier_count" -gt 0 ]; then
+      count="$identifier_count"
+    else
+      count="$name_count"
+      [ "$name_count" -gt 0 ] && selector_type='name'
+    fi
+  fi
 
   local label
   label="$(megabrain_native_kind_label "$kind")"
   if [ "$count" -eq 0 ]; then
     if [ "$booted_only" = true ]; then
       if [ -n "$requested" ]; then
-        megabrain_error "simulator $requested is not a booted $label simulator"
+        if [ "$selector_type" = name ]; then
+          megabrain_error "simulator name $requested is not a booted $label simulator"
+        else
+          megabrain_error "simulator $requested is not a booted $label simulator"
+        fi
       else
         megabrain_error "no booted $label simulator is available; run megabrain native sim ensure $kind"
       fi
     elif [ -n "$requested" ]; then
-      megabrain_error "no $label simulator matches device $requested"
+      if [ "$selector_type" = name ]; then
+        megabrain_error "no $label simulator matches device name $requested"
+      else
+        megabrain_error "no $label simulator matches device $requested"
+      fi
     else
       megabrain_error "no $label simulator matches the requested kind"
     fi
@@ -281,9 +313,17 @@ megabrain_native_select_device() {
   fi
   if [ "$count" -gt 1 ]; then
     if [ "$booted_only" = true ]; then
-      megabrain_error "more than one booted $label simulator matches; pass --device <udid>"
+      if [ "$selector_type" = name ]; then
+        megabrain_error "more than one booted $label simulator matches name $requested; pass --device <udid>"
+      else
+        megabrain_error "more than one booted $label simulator matches; pass --device <udid>"
+      fi
     else
-      megabrain_error "more than one $label simulator matches; pass --device <udid>"
+      if [ "$selector_type" = name ]; then
+        megabrain_error "more than one $label simulator matches name $requested; pass --device <udid>"
+      else
+        megabrain_error "more than one $label simulator matches; pass --device <udid>"
+      fi
     fi
     return 1
   fi
