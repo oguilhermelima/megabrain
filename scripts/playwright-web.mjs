@@ -23,6 +23,45 @@ const REPOSITORIES = {
 };
 
 const MCP_CONFIG_NAMES = { chromium: 'chromium.json', firefox: 'firefox.json' };
+export const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 720 });
+export const MAX_VIEWPORT_DIMENSION = 10000;
+
+export function validateViewport(viewport) {
+  if (!viewport || !Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) ||
+      viewport.width < 1 || viewport.height < 1 ||
+      viewport.width > MAX_VIEWPORT_DIMENSION || viewport.height > MAX_VIEWPORT_DIMENSION) {
+    throw new Error(`viewport width and height must be positive integers no greater than ${MAX_VIEWPORT_DIMENSION}`);
+  }
+  return { width: viewport.width, height: viewport.height };
+}
+
+function parseDimension(value, label) {
+  if (!/^[0-9]+$/.test(String(value))) throw new Error(`viewport ${label} must be a positive integer`);
+  return Number(value);
+}
+
+function parseViewport(value) {
+  const match = String(value).match(/^([0-9]+)x([0-9]+)$/i);
+  if (!match) throw new Error('viewport must use WIDTHxHEIGHT dimensions');
+  return { width: parseDimension(match[1], 'width'), height: parseDimension(match[2], 'height') };
+}
+
+export function resolveViewport(options = {}, devices = {}, fallback = DEFAULT_VIEWPORT) {
+  const request = options || {};
+  const hasRaw = request.viewport != null || request.width != null || request.height != null;
+  if (request.device != null && hasRaw) throw new Error('viewport device cannot be combined with raw dimensions');
+  if (request.device != null) {
+    const device = devices[request.device];
+    if (!device) throw new Error(`unknown Playwright device: ${request.device}`);
+    return validateViewport(device.viewport);
+  }
+  if (request.viewport != null) return validateViewport(parseViewport(request.viewport));
+  if (hasRaw) return validateViewport({
+    width: parseDimension(request.width, 'width'),
+    height: parseDimension(request.height, 'height'),
+  });
+  return validateViewport(fallback);
+}
 
 function chromiumPaths(root) {
   return {
@@ -46,7 +85,8 @@ function firefoxPaths(root) {
   };
 }
 
-export function buildBrowserConfig(browser, paths) {
+export function buildBrowserConfig(browser, paths, viewport = DEFAULT_VIEWPORT) {
+  const configuredViewport = validateViewport(viewport);
   if (browser === 'chromium') {
     const extensionPaths = [paths.extensions.ublock, paths.extensions.violentmonkey].join(',');
     return {
@@ -61,7 +101,7 @@ export function buildBrowserConfig(browser, paths) {
             `--load-extension=${extensionPaths}`,
           ],
         },
-        contextOptions: { viewport: { width: 1280, height: 720 } },
+        contextOptions: { viewport: configuredViewport },
       },
     };
   }
@@ -77,7 +117,7 @@ export function buildBrowserConfig(browser, paths) {
             'extensions.enabledScopes': 15,
           },
         },
-        contextOptions: { viewport: { width: 1280, height: 720 } },
+        contextOptions: { viewport: configuredViewport },
       },
     };
   }
@@ -87,12 +127,10 @@ export function buildBrowserConfig(browser, paths) {
 export function validateBrowserConfig(config, browser) {
   const b = config?.browser;
   if (!b || b.browserName !== browser) throw new Error(`${browser} config has the wrong browserName`);
+  validateViewport(b.contextOptions?.viewport);
   if (browser === 'chromium') {
     if (b.launchOptions?.channel !== 'chromium') throw new Error('chromium config must set launchOptions.channel to chromium');
     if (b.launchOptions?.headless !== true) throw new Error('chromium config must be headless');
-    if (b.contextOptions?.viewport?.width !== 1280 || b.contextOptions?.viewport?.height !== 720) {
-      throw new Error('chromium config must set viewport to 1280x720');
-    }
     if (!b.launchOptions.args?.some(arg => arg.startsWith('--load-extension='))) throw new Error('chromium config must load extensions');
   } else {
     if (b.launchOptions?.headless !== true) throw new Error('firefox config must be headless');
@@ -251,7 +289,7 @@ function ensurePlaywright(root, browsers) {
   for (const browser of browsers) execFileSync(process.execPath, [playwrightCli(root), 'install', browser], { stdio: 'inherit' });
 }
 
-async function install(root, browser) {
+async function install(root, browser, { viewport = null } = {}) {
   const browsers = browser === 'both' ? ['chromium', 'firefox'] : [browser];
   if (!browsers.every(item => ['chromium', 'firefox'].includes(item))) throw new Error(`browser must be chromium, firefox, or both`);
   ensurePlaywright(root, browsers);
@@ -266,10 +304,13 @@ async function install(root, browser) {
     userscripts: previous.userscripts || [],
   };
   for (const selected of browsers) {
+    const previousConfig = readJson(previous.profiles?.[selected]?.configPath || path.join(root, MCP_CONFIG_NAMES[selected]));
+    const persistedViewport = previousConfig?.browser?.contextOptions?.viewport || DEFAULT_VIEWPORT;
+    const configuredViewport = viewport || validateViewport(persistedViewport);
     if (selected === 'chromium') {
       const installed = await installChromiumExtensions(root);
       mkdirSync(installed.paths.profile, { recursive: true });
-      const config = buildBrowserConfig(selected, installed.paths);
+      const config = buildBrowserConfig(selected, installed.paths, configuredViewport);
       validateBrowserConfig(config, selected);
       const configPath = path.join(root, MCP_CONFIG_NAMES[selected]);
       jsonWrite(configPath, config);
@@ -278,7 +319,7 @@ async function install(root, browser) {
     } else {
       const installed = await installFirefoxExtensions(root);
       mkdirSync(installed.paths.profile, { recursive: true });
-      const config = buildBrowserConfig(selected, installed.paths);
+      const config = buildBrowserConfig(selected, installed.paths, configuredViewport);
       validateBrowserConfig(config, selected);
       const configPath = path.join(root, MCP_CONFIG_NAMES[selected]);
       jsonWrite(configPath, config);
@@ -297,15 +338,17 @@ function manifestFor(root) {
   return manifest;
 }
 
-async function loadChromium(root, manifest, { chromeUrls = false } = {}) {
+async function loadChromium(root, manifest, { chromeUrls = false, viewport = null } = {}) {
   const playwright = await import(pathToFileURL(path.join(root, 'node_modules', 'playwright', 'index.mjs')).href);
   const config = readJson(manifest.profiles.chromium.configPath);
   const args = [...config.browser.launchOptions.args];
   if (chromeUrls) args.push('--extensions-on-chrome-urls');
+  const contextOptions = { ...config.browser.contextOptions };
+  if (viewport) contextOptions.viewport = validateViewport(viewport);
   const context = await playwright.chromium.launchPersistentContext(config.browser.userDataDir, {
     ...config.browser.launchOptions,
     args,
-    ...config.browser.contextOptions,
+    ...contextOptions,
   });
   return { context, config };
 }
@@ -419,12 +462,12 @@ export function userScriptSource(userscripts, name) {
   return { file, code: readFileSync(file, 'utf8') };
 }
 
-async function installUserScript(root, userscripts, name) {
+async function installUserScript(root, userscripts, name, { viewport = null } = {}) {
   const manifest = manifestFor(root);
   if (!manifest.profiles?.chromium) throw new Error('Chromium profile is not installed; userscripts require Chromium');
   const source = userScriptSource(userscripts, name);
   const installUrl = `https://megabrain.local/userscripts/${name}`;
-  const { context } = await loadChromium(root, manifest, { chromeUrls: true });
+  const { context } = await loadChromium(root, manifest, { chromeUrls: true, viewport });
   try {
     const worker = await extensionWorker(context, 'Violentmonkey');
     const extensionId = new URL(worker.url()).hostname;
@@ -459,11 +502,11 @@ async function listUserScripts(root) {
   for (const item of manifest.userscripts || []) console.log(`${item.name}\t${item.installedAt || ''}`);
 }
 
-async function removeUserScript(root, name) {
+async function removeUserScript(root, name, { viewport = null } = {}) {
   const manifest = manifestFor(root);
   const record = (manifest.userscripts || []).find(item => item.name === name);
   if (!record) return;
-  const { context } = await loadChromium(root, manifest);
+  const { context } = await loadChromium(root, manifest, { viewport });
   try {
     const worker = await extensionWorker(context, 'Violentmonkey');
     const extensionId = new URL(worker.url()).hostname;
@@ -563,7 +606,77 @@ async function latestVersions() {
   };
 }
 
-async function doctor(root) {
+async function loadPlaywrightDevices(root) {
+  const playwrightFile = path.join(root, 'node_modules', 'playwright', 'index.mjs');
+  if (!existsSync(playwrightFile)) throw new Error(`Playwright is not installed under ${root}; install simulator-web first`);
+  const playwright = await import(pathToFileURL(playwrightFile).href);
+  return playwright.devices || {};
+}
+
+function viewportRequestFromArgs(args) {
+  const request = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    if (['--viewport', '--width', '--height', '--device'].includes(flag)) {
+      if (args[index + 1] == null) throw new Error(`${flag} requires a value`);
+      request[flag.slice(2)] = args[index + 1];
+      index += 1;
+    }
+  }
+  return request;
+}
+
+function hasViewportRequest(request) {
+  return Object.keys(request).length > 0;
+}
+
+async function resolveViewportRequest(root, request, fallback = DEFAULT_VIEWPORT) {
+  const devices = request.device != null ? await loadPlaywrightDevices(root) : {};
+  return resolveViewport(request, devices, fallback);
+}
+
+function configuredViewport(manifest, browser) {
+  const profile = manifest.profiles?.[browser];
+  const config = profile ? readJson(profile.configPath) : null;
+  return validateViewport(config?.browser?.contextOptions?.viewport || DEFAULT_VIEWPORT);
+}
+
+async function setViewport(root, browser, args) {
+  if (!['chromium', 'firefox', 'both'].includes(browser)) throw new Error('browser must be chromium, firefox, or both');
+  const manifest = manifestFor(root);
+  const browsers = (browser === 'both' ? ['chromium', 'firefox'] : [browser])
+    .filter(item => manifest.profiles?.[item]);
+  if (browsers.length === 0) throw new Error(`no ${browser} browser profile is installed`);
+  const request = viewportRequestFromArgs(args);
+  const viewport = await resolveViewportRequest(root, request, configuredViewport(manifest, browsers[0]));
+  const updates = [];
+  for (const selected of browsers) {
+    const profile = manifest.profiles[selected];
+    const config = readJson(profile.configPath);
+    const next = {
+      ...config,
+      browser: {
+        ...config?.browser,
+        contextOptions: { ...config?.browser?.contextOptions, viewport },
+      },
+    };
+    validateBrowserConfig(next, selected);
+    updates.push({ path: profile.configPath, config: next });
+  }
+  for (const update of updates) jsonWrite(update.path, update.config);
+  return { browsers, viewport };
+}
+
+function showViewport(root, browser) {
+  if (!['chromium', 'firefox', 'both'].includes(browser)) throw new Error('browser must be chromium, firefox, or both');
+  const manifest = manifestFor(root);
+  const browsers = (browser === 'both' ? ['chromium', 'firefox'] : [browser])
+    .filter(item => manifest.profiles?.[item]);
+  if (browsers.length === 0) throw new Error(`no ${browser} browser profile is installed`);
+  return browsers.map(selected => ({ browser: selected, viewport: configuredViewport(manifest, selected) }));
+}
+
+export async function doctor(root, { currentVersions = null } = {}) {
   const manifest = readJson(path.join(root, 'manifest.json'));
   if (!manifest) return { status: 'missing', reason: `browser manifest is missing under ${root}`, mismatches: [] };
   const mismatches = [];
@@ -576,7 +689,9 @@ async function doctor(root) {
     if (!profile) continue;
     const config = readJson(profile.configPath);
     const expectedPaths = browser === 'chromium' ? chromiumPaths(root) : firefoxPaths(root);
-    const expectedConfig = buildBrowserConfig(browser, expectedPaths);
+    let expectedViewport = DEFAULT_VIEWPORT;
+    try { expectedViewport = validateViewport(config?.browser?.contextOptions?.viewport || DEFAULT_VIEWPORT); } catch {}
+    const expectedConfig = buildBrowserConfig(browser, expectedPaths, expectedViewport);
     try { validateBrowserConfig(config, browser); } catch (error) { mismatches.push(`${browser}: ${error.message}`); }
     mismatches.push(...compareJson(config, expectedConfig, `${browser}.config`));
     if (profile.configPath !== path.join(root, MCP_CONFIG_NAMES[browser])) {
@@ -586,7 +701,7 @@ async function doctor(root) {
   }
   let aged = [];
   try {
-    const current = await latestVersions();
+    const current = currentVersions || await latestVersions();
     const expected = {};
     for (const browser of Object.keys(manifest.profiles || {})) expected[browser] = current[browser];
     aged = compareManifest(manifest.extensions || {}, expected);
@@ -609,20 +724,46 @@ async function main(args) {
   const root = argumentValue(args, '--root', DEFAULT_ROOT);
   switch (command) {
     case 'install': {
-      const manifest = await install(root, argumentValue(args, '--browser', 'both'));
+      const request = viewportRequestFromArgs(args);
+      const viewport = hasViewportRequest(request) ? await resolveViewportRequest(root, request) : null;
+      const manifest = await install(root, argumentValue(args, '--browser', 'both'), { viewport });
       console.log(`configured ${manifest.activeBrowser} browser profile with Playwright ${manifest.playwrightVersion}`);
       return;
     }
     case 'userscript-install': {
-      const result = await installUserScript(root, argumentValue(args, '--userscripts', DEFAULT_USERSCRIPTS), argumentValue(args, '--file', ''));
+      const request = viewportRequestFromArgs(args);
+      const manifest = manifestFor(root);
+      const viewport = hasViewportRequest(request)
+        ? await resolveViewportRequest(root, request, configuredViewport(manifest, 'chromium'))
+        : null;
+      const result = await installUserScript(root, argumentValue(args, '--userscripts', DEFAULT_USERSCRIPTS), argumentValue(args, '--file', ''), { viewport });
       console.log(result.message);
       return;
     }
     case 'userscript-list': await listUserScripts(root); return;
-    case 'userscript-remove': await removeUserScript(root, argumentValue(args, '--file', '')); return;
+    case 'userscript-remove': {
+      const request = viewportRequestFromArgs(args);
+      const manifest = manifestFor(root);
+      const viewport = hasViewportRequest(request)
+        ? await resolveViewportRequest(root, request, configuredViewport(manifest, 'chromium'))
+        : null;
+      await removeUserScript(root, argumentValue(args, '--file', ''), { viewport });
+      return;
+    }
+    case 'viewport-set': {
+      const result = await setViewport(root, argumentValue(args, '--browser', 'both'), args);
+      console.log(`configured viewport ${result.viewport.width}x${result.viewport.height} for ${result.browsers.join(', ')}`);
+      return;
+    }
+    case 'viewport-show': {
+      for (const item of showViewport(root, argumentValue(args, '--browser', 'both'))) {
+        console.log(`${item.browser}: ${item.viewport.width}x${item.viewport.height}`);
+      }
+      return;
+    }
     case 'doctor': console.log(JSON.stringify(await doctor(root))); return;
     case 'e2e-proof': await e2eProof(root); return;
-    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|doctor|e2e-proof');
+    default: throw new Error('usage: playwright-web.mjs install|userscript-install|userscript-list|userscript-remove|viewport-set|viewport-show|doctor|e2e-proof');
   }
 }
 
