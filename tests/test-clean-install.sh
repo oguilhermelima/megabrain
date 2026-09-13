@@ -18,12 +18,6 @@ fail() {
   exit 1
 }
 
-if [ "${MEGABRAIN_IN_CONTAINER:-false}" = true ]; then
-  git -C "$root" add -A
-  git -C "$root" -c user.name=megabrain-test -c user.email=test@example.invalid \
-    commit -qm 'fixture release source' || fail 'could not commit the container release fixture'
-fi
-
 version="$(jq -r '.version' "$release_source_root/.claude-plugin/plugin.json")"
 archive="$work/release.tar.gz"
 install_root="$work/install"
