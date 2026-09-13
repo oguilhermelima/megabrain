@@ -72,6 +72,11 @@ megabrain_tmux_send_interrupt() {
   [ "$stop_send_status" = queued ]
 }
 
+begin_scenario() {
+  export SUPERSET_TERMINAL_ID=parent-terminal
+  unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
+}
+
 create_dispatch() {
   local dispatch_id="$1" runtime="${2:-tmux}"
   megabrain_dispatch_meta_write "$dispatch_id" parent-terminal superset superset workspace-test \
@@ -85,6 +90,7 @@ set_pane_fixture() {
 
 scenario_empty_report() {
   local json plain
+  begin_scenario
   json="$(megabrain_dispatch_empty_delivery_report empty-report true)"
   assert_equal "$(jq -r '.status' <<<"$json")" empty
   plain="$(megabrain_dispatch_empty_delivery_report empty-report false)"
@@ -94,6 +100,7 @@ scenario_empty_report() {
 
 scenario_supersede_undelivered() {
   local result old_first old_second child_view full_view
+  begin_scenario
   create_dispatch supersede-queued host
   megabrain_dispatch_reply supersede-queued --text 'old direction one' >/dev/null
   old_first="$MEGABRAIN_LAST_MESSAGE_SEQ"
@@ -122,6 +129,7 @@ scenario_supersede_undelivered() {
 
 scenario_supersede_delivered() {
   local result old_seq child_view withdrawal_path
+  begin_scenario
   create_dispatch supersede-delivered host
   megabrain_dispatch_reply supersede-delivered --text 'old delivered direction' >/dev/null
   old_seq="$MEGABRAIN_LAST_MESSAGE_SEQ"
@@ -146,6 +154,7 @@ scenario_supersede_delivered() {
 
 scenario_stop_pending_check() {
   local result
+  begin_scenario
   create_dispatch stop-pending
   set_pane_fixture pending-check
   stop_send_calls=0
@@ -160,6 +169,7 @@ scenario_stop_pending_check() {
 
 scenario_stop_working() {
   local result message_types
+  begin_scenario
   create_dispatch stop-working
   set_pane_fixture working
   stop_send_status=queued
@@ -175,6 +185,7 @@ scenario_stop_working() {
 
 scenario_stop_host() {
   local result
+  begin_scenario
   create_dispatch stop-host host
   if result="$(megabrain_dispatch_stop stop-host --json 2>&1)"; then
     fail 'host runtime accepted an Escape interrupt'
@@ -185,6 +196,7 @@ scenario_stop_host() {
 
 scenario_change_on_refusal() {
   local result child_view
+  begin_scenario
   create_dispatch change-refused
   megabrain_dispatch_reply change-refused --text 'obsolete direction' >/dev/null
   set_pane_fixture pending-check
