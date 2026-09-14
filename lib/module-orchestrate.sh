@@ -2853,6 +2853,11 @@ command_done() {
 }
 
 command_check() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_CHECK_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" check "$@"
+    return $?
+  fi
   megabrain_dispatch_child_check "$@"
 }
 
