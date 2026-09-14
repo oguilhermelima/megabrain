@@ -14,8 +14,11 @@ const script = process.argv[2];
 const {
   DEFAULT_VIEWPORT,
   VIEWPORT_DEVICES,
+  buildBrowserConfig,
+  buildCaptureLaunchOptions,
   buildCapturePaths,
   buildContextOptions,
+  captureRequestFromArgs,
   listDevicePresets,
   measureSelectors,
   prepareDeterministicRendering,
@@ -155,6 +158,67 @@ assert.deepEqual(
   'rendering must freeze Playwright clock at the chosen instant',
 );
 assert.equal(calls.some(([name]) => name === 'init'), false, 'rendering must not patch Date in page script');
+
+// Scenario: an image with no terminal event is reported after the per-image timeout.
+const previousDocument = globalThis.document;
+globalThis.document = {
+  fonts: { ready: Promise.resolve() },
+  images: [{ complete: false, alt: 'avatar image', addEventListener: () => {}, removeEventListener: () => {} }],
+};
+let slowImages;
+try {
+  slowImages = await Promise.race([
+    settlePage({
+      waitForLoadState: async () => {},
+      evaluate: async evaluate => evaluate(10),
+    }, { imageTimeout: 10 }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('settlePage exceeded test deadline')), 50)),
+  ]);
+} finally {
+  if (previousDocument === undefined) delete globalThis.document;
+  else globalThis.document = previousDocument;
+}
+assert.deepEqual(slowImages, ['avatar image'], 'settling must name images that exceed the timeout');
+
+// Scenario: capture and measure strip browsing extensions from their launch.
+const browsingChromiumConfig = buildBrowserConfig('chromium', {
+  profile: '/tmp/chromium-profile',
+  extensions: { ublock: '/tmp/ublock', violentmonkey: '/tmp/violentmonkey' },
+});
+const captureChromiumOptions = buildCaptureLaunchOptions(browsingChromiumConfig, 'chromium');
+assert.ok(
+  browsingChromiumConfig.browser.launchOptions.args.some(arg => arg.startsWith('--load-extension=')),
+  'browsing profile must keep its extensions',
+);
+assert.equal(
+  captureChromiumOptions.args.some(arg => arg.startsWith('--load-extension=') || arg.startsWith('--disable-extensions-except=')),
+  false,
+  'capture launch must not load browsing extensions',
+);
+const browsingFirefoxConfig = buildBrowserConfig('firefox', {
+  profile: '/tmp/firefox-profile',
+  extensions: { ublockXpi: '/tmp/ublock.xpi', violentmonkeyXpi: '/tmp/violentmonkey.xpi' },
+});
+assert.equal(
+  Object.hasOwn(buildCaptureLaunchOptions(browsingFirefoxConfig, 'firefox'), 'firefoxUserPrefs'),
+  false,
+  'capture launch must not enable installed Firefox extensions',
+);
+
+// Scenario: visual commands retain an explicitly supplied config path.
+const visualRequest = captureRequestFromArgs([
+  'capture', '--config', '/tmp/clean-chromium.json', '--image-timeout', '125',
+]);
+assert.equal(visualRequest.config, '/tmp/clean-chromium.json');
+assert.equal(visualRequest.imageTimeout, 125);
+
+// Scenario: no freeze flag leaves the browser clock untouched.
+const noClockCalls = [];
+await prepareDeterministicRendering({
+  addStyleTag: async () => {},
+  clock: { install: async options => noClockCalls.push(options) },
+});
+assert.deepEqual(noClockCalls, [], 'the clock must remain real unless --freeze-time is supplied');
 
 const suppliedClockCalls = [];
 await prepareDeterministicRendering({
