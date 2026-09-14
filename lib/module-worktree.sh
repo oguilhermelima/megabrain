@@ -1911,6 +1911,7 @@ megabrain_worktree_create() {
   host="$(megabrain_context_detect)"
   if [ "$orchestrate" = true ]; then
     if [ -z "$agent" ]; then
+      megabrain_resolve_parent_context
       if ! declare -F megabrain_chain_walk >/dev/null 2>&1; then
         # shellcheck source=local/megabrain/lib/module-chain.sh
         source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-chain.sh" || return 1
@@ -1918,9 +1919,9 @@ megabrain_worktree_create() {
       chain_config="$(megabrain_chain_read)" || return 1
       megabrain_chain_validate_config "$chain_config" || return 1
       if [ -n "$chain_name" ]; then
-        megabrain_chain_select "$chain_config" "$chain_name" "${SUPERSET_AGENT_ID:-}" "${SUPERSET_AGENT_MODEL:-}" "${SUPERSET_AGENT_EFFORT:-}" flag || return 1
+        megabrain_chain_select "$chain_config" "$chain_name" "$MEGABRAIN_PARENT_AGENT" "$MEGABRAIN_PARENT_MODEL" "$MEGABRAIN_PARENT_EFFORT" flag || return 1
       else
-        megabrain_chain_select "$chain_config" '' "${SUPERSET_AGENT_ID:-}" "${SUPERSET_AGENT_MODEL:-}" "${SUPERSET_AGENT_EFFORT:-}" selector || return 1
+        megabrain_chain_select "$chain_config" '' "$MEGABRAIN_PARENT_AGENT" "$MEGABRAIN_PARENT_MODEL" "$MEGABRAIN_PARENT_EFFORT" selector || return 1
       fi
       if [ "${#agent_args[@]}" -gt 0 ]; then
         if megabrain_chain_walk "$worktree_selector" "$repo_selector" "$branch" "$base" "$slug" "$prompt" "$label" "$tmux_choice" "$model" "$effort" "$model_explicit" "$effort_explicit" "$browser" "${agent_args[@]}"; then

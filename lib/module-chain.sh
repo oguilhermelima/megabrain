@@ -1142,7 +1142,7 @@ MEGABRAIN_CHAIN_SELECTION_DEFAULT=false
 
 megabrain_chain_select() {
   local config="$1" explicit_name="${2:-}" parent_agent="${3:-}" parent_model="${4:-}" parent_effort="${5:-}" explicit_source="${6:-name}"
-  local chain required actual matched specificity best_specificity=-1 candidates='' count=0 selection_filter selected_steps best_steps=''
+  local chain required actual matched specificity best_specificity=-1 candidates='' count=0 selection_filter selected_steps best_steps='' selector_fields=0
   MEGABRAIN_CHAIN_SELECTED_NAME=""
   MEGABRAIN_CHAIN_SELECTED_STEPS='[]'
   MEGABRAIN_CHAIN_SELECTION_REASON=""
@@ -1176,6 +1176,7 @@ megabrain_chain_select() {
         parentEffort) required="$required_effort" ;;
       esac
       [ "$required" != - ] || continue
+      selector_fields=$((selector_fields + 1))
       specificity=$((specificity + 1))
       case "$field" in
         parentAgent) actual="$parent_agent" ;;
@@ -1208,7 +1209,11 @@ megabrain_chain_select() {
     return 0
   fi
   MEGABRAIN_CHAIN_SELECTION_DEFAULT=true
-  MEGABRAIN_CHAIN_SELECTION_REASON="no selector matched; using defaultSteps"
+  if [ "$selector_fields" -gt 0 ] && [ -z "$parent_agent" ]; then
+    MEGABRAIN_CHAIN_SELECTION_REASON="parent agent is unknown; no selector matched; using defaultSteps"
+  else
+    MEGABRAIN_CHAIN_SELECTION_REASON="no selector matched; using defaultSteps"
+  fi
   MEGABRAIN_CHAIN_SELECTED_STEPS="$(printf '%s' "$config" | jq -c '.defaultSteps')"
 }
 
@@ -1454,10 +1459,14 @@ megabrain_chain_continue_refused() {
 }
 
 command_chain_run() {
-  local explicit_name="" chain_option="" selection_name="" selection_source=name parent_agent="${SUPERSET_AGENT_ID:-}" parent_model="${SUPERSET_AGENT_MODEL:-}" parent_effort="${SUPERSET_AGENT_EFFORT:-}"
+  local explicit_name="" chain_option="" selection_name="" selection_source=name parent_agent="" parent_model="" parent_effort=""
   local repo="" branch="" base="" slug="" worktree="" prompt="" label="" tmux_choice="" json=false browser=false arg config step_count index step agent model effort until_json threshold window
   local spawn_output spawn_json spawn_error error_file reason limit_reason reset_text failure_reason final_reason report_chain reasons_json spawn_succeeded dispatch_id walk_status
   local -a agent_args=()
+  megabrain_resolve_parent_context
+  parent_agent="$MEGABRAIN_PARENT_AGENT"
+  parent_model="$MEGABRAIN_PARENT_MODEL"
+  parent_effort="$MEGABRAIN_PARENT_EFFORT"
   if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
     explicit_name="$1"
     shift
