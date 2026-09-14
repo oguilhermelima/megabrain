@@ -2019,42 +2019,44 @@ megabrain_worktree_create() {
         "${MEGABRAIN_ENV_COPY_ERROR:-could not copy worktree env files}"
       return 1
     fi
-    project_record="$(megabrain_ensure_superset_project "$repo_path" --record)" || {
-      project_id="$(megabrain_project_id_for_path "$repo_path" 2>/dev/null || true)"
-      megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" unknown "" false true "could not register Superset project"
-      return 1
-    }
-    project_id="$(printf '%s' "$project_record" | jq -r '.id // empty')"
-    project_created="$(printf '%s' "$project_record" | jq -r '.created // false')"
-    workspace_existing_id="$(megabrain_workspace_id_for_target "$branch" 2>/dev/null || true)"
-    if [ "$parent_requested" = true ]; then
-      if [ -n "$pr_number" ]; then
-        workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --tag "$parent_tag" --pr "$pr_number" --record)" || workspace_record=""
-      else
-        workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --tag "$parent_tag" --record)" || workspace_record=""
+    if [ "$host" = superset ]; then
+      project_record="$(megabrain_ensure_superset_project "$repo_path" --record)" || {
+        project_id="$(megabrain_project_id_for_path "$repo_path" 2>/dev/null || true)"
+        megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" unknown "" false true "could not register Superset project"
+        return 1
+      }
+      project_id="$(printf '%s' "$project_record" | jq -r '.id // empty')"
+      project_created="$(printf '%s' "$project_record" | jq -r '.created // false')"
+      workspace_existing_id="$(megabrain_workspace_id_for_target "$branch" 2>/dev/null || true)"
+      if [ "$parent_requested" = true ]; then
+        if [ -n "$pr_number" ]; then
+          workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --tag "$parent_tag" --pr "$pr_number" --record)" || workspace_record=""
+        else
+          workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --tag "$parent_tag" --record)" || workspace_record=""
+        fi
+      elif [ -n "$pr_number" ]; then
+        workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --pr "$pr_number" --record)" || workspace_record=""
+      elif ! workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --record)"; then
+        workspace_record=""
       fi
-    elif [ -n "$pr_number" ]; then
-      workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --pr "$pr_number" --record)" || workspace_record=""
-    elif ! workspace_record="$(megabrain_workspace_create "$project_id" "$branch" "$slug" --record)"; then
-      workspace_record=""
-    fi
-    if [ -z "$workspace_record" ]; then
-      workspace_id="$(megabrain_workspace_id_for_target "$branch" 2>/dev/null || true)"
-      if [ -n "$workspace_id" ] && [ -z "$workspace_existing_id" ]; then
-        workspace_created=true
-      elif [ -n "$workspace_id" ]; then
-        workspace_created=false
-      else
-        workspace_created=unknown
+      if [ -z "$workspace_record" ]; then
+        workspace_id="$(megabrain_workspace_id_for_target "$branch" 2>/dev/null || true)"
+        if [ -n "$workspace_id" ] && [ -z "$workspace_existing_id" ]; then
+          workspace_created=true
+        elif [ -n "$workspace_id" ]; then
+          workspace_created=false
+        else
+          workspace_created=unknown
+        fi
+        megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" "$project_created" "$workspace_id" "$workspace_created" true "could not create Superset workspace"
+        return 1
       fi
-      megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" "$project_created" "$workspace_id" "$workspace_created" true "could not create Superset workspace"
-      return 1
-    fi
-    workspace_id="$(printf '%s' "$workspace_record" | jq -r '.id // empty')"
-    workspace_created="$(printf '%s' "$workspace_record" | jq -r '.created // false')"
-    if [ "$parent_requested" = true ]; then
-      grouping_set="$(printf '%s' "$workspace_record" | jq -r '.tagSet // false')"
-      grouping_error="$(printf '%s' "$workspace_record" | jq -r '.tagError // empty')"
+      workspace_id="$(printf '%s' "$workspace_record" | jq -r '.id // empty')"
+      workspace_created="$(printf '%s' "$workspace_record" | jq -r '.created // false')"
+      if [ "$parent_requested" = true ]; then
+        grouping_set="$(printf '%s' "$workspace_record" | jq -r '.tagSet // false')"
+        grouping_error="$(printf '%s' "$workspace_record" | jq -r '.tagError // empty')"
+      fi
     fi
   fi
   if [ "$parent_requested" = true ]; then
