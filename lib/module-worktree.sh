@@ -2458,6 +2458,9 @@ EOF
 
 megabrain_worktree_list() {
   local repo_selector="" arg shared_root repo_filter="" path branch parent in_superset workspaces_json json=false flat=false entry entries pr_json pr_state="" pr_number="" pr_url=""
+  local marker marker_line gitdir gitdir_parent common_dir repo_entries="" repo_known=false known_common="" known_path=""
+  local repo_output line listed_path listed_branch listed_repo worktree_entries="" current_path="" current_branch=""
+  local parent_config parent_key parent_value parent_branch parent_entries="" response normalized_path
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -2483,17 +2486,142 @@ megabrain_worktree_list() {
     printf '%-52s %-32s %s\n' PATH BRANCH IN_SUPERSET
   fi
   MEGABRAIN_WORKTREE_LIST_ENTRIES=''
+
+  # Linked worktrees identify their repository through the .git marker. Resolve that
+  # marker without asking Git so the repository-level listing below is not repeated per
+  # directory under the shared root.
   for path in "$shared_root"/*; do
     [ -d "$path" ] || continue
-    git -C "$path" rev-parse --show-toplevel >/dev/null 2>&1 || continue
-    [ -z "$repo_filter" ] || [ "$(git -C "$path" rev-parse --git-common-dir | xargs realpath 2>/dev/null || true)" = "$repo_filter" ] || continue
-    path="$(git -C "$path" rev-parse --show-toplevel)"
-    branch="$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null || printf 'detached')"
+    marker="$path/.git"
+    common_dir=""
+    if [ -d "$marker" ]; then
+      common_dir="$(cd "$marker" 2>/dev/null && pwd -P || true)"
+    elif [ -f "$marker" ]; then
+      marker_line=""
+      IFS= read -r marker_line <"$marker" || true
+      case "$marker_line" in
+        'gitdir: '*)
+          gitdir="${marker_line#gitdir: }"
+          case "$gitdir" in
+            /*) ;;
+            *) gitdir="$path/$gitdir" ;;
+          esac
+          gitdir="$(cd "$gitdir" 2>/dev/null && pwd -P || true)"
+          gitdir_parent="${gitdir%/*}"
+          if [ "${gitdir_parent##*/}" = worktrees ]; then
+            common_dir="$(cd "${gitdir_parent%/worktrees}" 2>/dev/null && pwd -P || true)"
+          else
+            common_dir="$gitdir"
+          fi
+          ;;
+      esac
+    fi
+    [ -n "$common_dir" ] || continue
+    repo_known=false
+    while IFS='|' read -r known_common known_path; do
+      [ -n "$known_common" ] || continue
+      if [ "$known_common" = "$common_dir" ]; then
+        repo_known=true
+        break
+      fi
+    done <<EOF
+$repo_entries
+EOF
+    if [ "$repo_known" = false ]; then
+      repo_entries="${repo_entries}${common_dir}|$path"$'\n'
+    fi
+  done
+
+  # Git reports all paths and branches for a repository in one porcelain stream.
+  # Keep the repository identity beside each record for the --repo filter and match
+  # the records back to the directories in glob order below.
+  while IFS='|' read -r common_dir path; do
+    [ -n "$common_dir" ] || continue
+    [ -z "$repo_filter" ] || [ "$common_dir" = "$repo_filter" ] || continue
+    repo_output="$(git -C "$path" worktree list --porcelain 2>/dev/null || true)"
+    current_path=""
+    current_branch=""
+    while IFS= read -r line; do
+      case "$line" in
+        'worktree '*)
+          if [ -n "$current_path" ]; then
+            listed_path="$(cd "$current_path" 2>/dev/null && pwd -P || true)"
+            [ -n "$listed_path" ] && worktree_entries="${worktree_entries}${listed_path}|${current_branch:-detached}|${common_dir}"$'\n'
+          fi
+          current_path="${line#worktree }"
+          current_branch=""
+          ;;
+        'branch refs/heads/'*) current_branch="${line#branch refs/heads/}" ;;
+        '')
+          if [ -n "$current_path" ]; then
+            listed_path="$(cd "$current_path" 2>/dev/null && pwd -P || true)"
+            [ -n "$listed_path" ] && worktree_entries="${worktree_entries}${listed_path}|${current_branch:-detached}|${common_dir}"$'\n'
+            current_path=""
+            current_branch=""
+          fi
+          ;;
+      esac
+    done <<EOF
+$repo_output
+EOF
+    if [ -n "$current_path" ]; then
+      listed_path="$(cd "$current_path" 2>/dev/null && pwd -P || true)"
+      [ -n "$listed_path" ] && worktree_entries="${worktree_entries}${listed_path}|${current_branch:-detached}|${common_dir}"$'\n'
+    fi
+
+    # Parent metadata is repository config, so load it once alongside the porcelain
+    # listing. An absent entry still falls through to the existing Orca source below.
+    parent_config="$(git -C "$path" config --get-regexp '^branch\..*\.megabrain-parent$' 2>/dev/null || true)"
+    while IFS=' ' read -r parent_key parent_value; do
+      case "$parent_key" in
+        branch.*.megabrain-parent)
+          parent_branch="${parent_key#branch.}"
+          parent_branch="${parent_branch%.megabrain-parent}"
+          parent_entries="${parent_entries}${common_dir}|${parent_branch}|${parent_value}"$'\n'
+          ;;
+      esac
+    done <<EOF
+$parent_config
+EOF
+  done <<EOF
+$repo_entries
+EOF
+
+  for path in "$shared_root"/*; do
+    [ -d "$path" ] || continue
+    normalized_path="$(cd "$path" 2>/dev/null && pwd -P || true)"
+    branch=""
+    listed_repo=""
+    while IFS='|' read -r listed_path listed_branch listed_repo_candidate; do
+      [ -n "$listed_path" ] || continue
+      if [ "$listed_path" = "$normalized_path" ]; then
+        branch="$listed_branch"
+        listed_repo="$listed_repo_candidate"
+        break
+      fi
+    done <<EOF
+$worktree_entries
+EOF
+    [ -n "$branch" ] || continue
+    [ -z "$repo_filter" ] || [ "$listed_repo" = "$repo_filter" ] || continue
     in_superset="no"
-    if printf '%s' "$workspaces_json" | jq -e --arg path "$path" 'any((if type == "array" then . else (.result.workspaces? // .workspaces? // .result? // []) end)[]?; (.worktreePath // .path // .worktree.path // "") == $path)' >/dev/null 2>&1; then
+    if printf '%s' "$workspaces_json" | jq -e --arg path "$normalized_path" 'any((if type == "array" then . else (.result.workspaces? // .workspaces? // .result? // []) end)[]?; (.worktreePath // .path // .worktree.path // "") == $path)' >/dev/null 2>&1; then
       in_superset="yes"
     fi
-    parent="$(megabrain_worktree_parent_branch "$path" 2>/dev/null || true)"
+    parent=""
+    while IFS='|' read -r parent_repo parent_config_branch parent_config_value; do
+      [ -n "$parent_repo" ] || continue
+      if [ "$parent_repo" = "$listed_repo" ] && [ "$parent_config_branch" = "$branch" ]; then
+        parent="$parent_config_value"
+        break
+      fi
+    done <<EOF
+$parent_entries
+EOF
+    if [ -z "$parent" ] && megabrain_require_command orca; then
+      response="$(orca worktree show --worktree "path:$normalized_path" --json 2>/dev/null || true)"
+      parent="$(printf '%s' "$response" | jq -r '.result.worktree.parentWorktree.branch // .result.worktree.parent.branch // .result.parentWorktree.branch // .parentWorktree.branch // empty' 2>/dev/null | head -n 1)"
+    fi
     pr_state=""
     pr_number=""
     pr_url=""
@@ -2503,15 +2631,15 @@ megabrain_worktree_list() {
       pr_number="$(printf '%s' "$pr_json" | jq -r '.number // empty' 2>/dev/null || true)"
       pr_url="$(printf '%s' "$pr_json" | jq -r '.url // empty' 2>/dev/null || true)"
     fi
-    MEGABRAIN_WORKTREE_LIST_ENTRIES="${MEGABRAIN_WORKTREE_LIST_ENTRIES}${path}|${branch}|${parent}|${in_superset}|${pr_state}|${pr_number}|${pr_url}"$'\n'
+    MEGABRAIN_WORKTREE_LIST_ENTRIES="${MEGABRAIN_WORKTREE_LIST_ENTRIES}${normalized_path}|${branch}|${parent}|${in_superset}|${pr_state}|${pr_number}|${pr_url}"$'\n'
     if [ "$json" = true ]; then
-      entry="$(jq -n --arg path "$path" --arg branch "$branch" --arg parent "$parent" \
+      entry="$(jq -n --arg path "$normalized_path" --arg branch "$branch" --arg parent "$parent" \
         --arg prState "$pr_state" --arg prNumber "$pr_number" --arg prUrl "$pr_url" \
         --argjson inSuperset "$(if [ "$in_superset" = yes ]; then printf true; else printf false; fi)" \
         '{path: $path, branch: $branch, parent: (if $parent|length > 0 then $parent else null end), inSuperset: $inSuperset, pullRequest: (if $prNumber|length > 0 then {number: ($prNumber|tonumber), state: $prState, url: $prUrl} else null end)}')"
       entries="${entries}${entry}"$'\n'
     elif [ "$flat" = true ]; then
-      printf '%-52s %-32s %s\n' "$path" "$branch" "$in_superset"
+      printf '%-52s %-32s %s\n' "$normalized_path" "$branch" "$in_superset"
     fi
   done
   if [ "$json" = true ]; then
