@@ -16,7 +16,7 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 write_fixture() {
   local state="$1" dispatch="$2"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
-  printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"orca\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
 }
 
 run_pair() {
@@ -41,8 +41,59 @@ run_pair() {
   printf '%s agrees between shell and binary\n' "$label"
 }
 
+run_cross_implementation() {
+  local label="$1" writer="$2" reader="$3" dispatch="$4" text="$5" writer_output reader_output
+  local state="$work_dir/cross-$dispatch"
+  write_fixture "$state" "$dispatch"
+  if [ "$writer" = shell ]; then
+    env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION=shell ORCA_TERMINAL_HANDLE=parent-terminal bash -c 'source "$MEGABRAIN_ROOT/lib/common.sh"; source "$MEGABRAIN_ROOT/lib/module-orchestrate.sh"; megabrain_dispatch_message_append "$1" parent reply "$2" parent-terminal' -- "$dispatch" "$text" >/dev/null
+  else
+    env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" ask "$text" >/dev/null
+  fi
+  if [ "$reader" = shell ]; then
+    reader_output="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION=shell ORCA_TERMINAL_HANDLE=parent-terminal "$root/megabrain" orchestrate watch "$dispatch" --timeout 0 --poll-interval 0 --wait-mode poll --json)"
+  else
+    reader_output="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" check --timeout 0 --poll-interval 0 --json)"
+  fi
+  [ "$(printf '%s' "$reader_output" | jq -r '.messages[0].text // empty')" = "$text" ] || fail "$label text differs: expected=$text got=$reader_output"
+  printf '%s crosses writer and reader implementations\n' "$label"
+}
+
+run_binary_concurrency() {
+  local dispatch=binary-concurrency writers=20
+  local state="$work_dir/$dispatch"
+  local writer_dir="$state/writers" messages_dir="$state/dispatches/$dispatch/messages"
+  write_fixture "$state" "$dispatch"
+  mkdir -p "$writer_dir"
+  for i in $(seq 1 "$writers"); do
+    (
+      if env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" ask "binary body $i" >/dev/null 2>"$writer_dir/$i.stderr"; then
+        : >"$writer_dir/$i.written"
+      else
+        : >"$writer_dir/$i.refused"
+      fi
+      : >"$writer_dir/$i.exit"
+    ) &
+  done
+  wait
+  local durable refused written unique_seqs unique_bodies
+  durable="$(find "$writer_dir" -name '*.written' | wc -l | tr -d ' ')"
+  refused="$(find "$writer_dir" -name '*.refused' | wc -l | tr -d ' ')"
+  written="$(find "$messages_dir" -maxdepth 1 -name '*.json' | wc -l | tr -d ' ')"
+  unique_seqs="$(find "$messages_dir" -maxdepth 1 -name '*.json' -exec jq -r '.seq' {} \; | sort -u | wc -l | tr -d ' ')"
+  unique_bodies="$(find "$messages_dir" -maxdepth 1 -name '*.json' -exec jq -r '.text' {} \; | sort -u | wc -l | tr -d ' ')"
+  [ $((durable + refused)) -eq "$writers" ] || fail "binary concurrency unaccounted: durable=$durable refused=$refused"
+  [ "$written" -eq "$durable" ] || fail "binary concurrency durable mismatch: durable=$durable files=$written"
+  [ "$unique_seqs" -eq "$durable" ] || fail "binary concurrency duplicate sequences: unique=$unique_seqs durable=$durable"
+  [ "$unique_bodies" -eq "$durable" ] || fail "binary concurrency duplicate bodies: unique=$unique_bodies durable=$durable"
+  printf 'binary concurrency: %s durable, %s refused\n' "$durable" "$refused"
+}
+
 mkdir -p "$work_dir/home"
 run_pair received received received
 run_pair ask ask ask 'a question'
 run_pair done done done 'finished'
+run_cross_implementation 'binary write shell read' binary shell cross-binary-shell 'cross binary body'
+run_cross_implementation 'shell write binary read' shell binary cross-shell-binary 'cross shell body'
+run_binary_concurrency
 printf 'ok: queue-write implementations agree across child verbs\n'
