@@ -19,6 +19,48 @@ write_fixture() {
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"orca\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
 }
 
+write_tmux_fixture() {
+  local state="$1" dispatch="$2" tmux_session="$3" tmux_pane="$4"
+  mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
+  printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"runtime\":\"tmux\",\"tmuxSession\":\"$tmux_session\",\"tmuxPane\":\"$tmux_pane\",\"state\":\"running\",\"processState\":\"running\"}" >"$state/dispatches/$dispatch/meta.json"
+}
+
+run_tmux_queue() {
+  local state="$1" output status
+  set +e
+  output="$(env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" TMUX=managed TMUX_PANE=%1 "$root/.build/megabrain" received 2>&1)"
+  status=$?
+  set -e
+  printf '%s\n' "$status" "$output"
+}
+
+mkdir -p "$work_dir/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'if [ "${1:-}" = list-panes ]; then printf "session-a\t%%1\n"; fi' >"$work_dir/bin/tmux"
+chmod +x "$work_dir/bin/tmux"
+
+tmux_unset_state="$work_dir/tmux-unset"
+write_tmux_fixture "$tmux_unset_state" tmux-target session-a %1
+unset_result="$(run_tmux_queue "$tmux_unset_state")"
+[ "$(printf '%s\n' "$unset_result" | sed -n '1p')" -eq 0 ] || fail "unset dispatch id leaked an invalid identifier: $(printf '%s\n' "$unset_result" | sed -n '2p')"
+[ "$(printf '%s\n' "$unset_result" | sed -n '2p')" = 'received sent: tmux-target' ] || fail "unset dispatch id chose the wrong dispatch: $(printf '%s\n' "$unset_result" | sed -n '2p')"
+printf 'tmux child without dispatch id resolves its dispatch\n'
+
+tmux_match_state="$work_dir/tmux-match"
+write_tmux_fixture "$tmux_match_state" tmux-right session-a %1
+write_tmux_fixture "$tmux_match_state" tmux-wrong session-b %2
+match_result="$(run_tmux_queue "$tmux_match_state")"
+[ "$(printf '%s\n' "$match_result" | sed -n '1p')" -eq 0 ] || fail "tmux matching selected the wrong dispatch: $(printf '%s\n' "$match_result" | sed -n '2p')"
+[ "$(printf '%s\n' "$match_result" | sed -n '2p')" = 'received sent: tmux-right' ] || fail "tmux matching selected the wrong dispatch: $(printf '%s\n' "$match_result" | sed -n '2p')"
+printf 'tmux child matches only its session and pane\n'
+
+tmux_missing_state="$work_dir/tmux-missing"
+write_tmux_fixture "$tmux_missing_state" tmux-other session-b %2
+missing_result="$(run_tmux_queue "$tmux_missing_state")"
+[ "$(printf '%s\n' "$missing_result" | sed -n '1p')" -ne 0 ] || fail 'unmatched tmux child was accepted'
+case "$missing_result" in *undefined*) fail "unmatched tmux child leaked an undefined identifier: $missing_result" ;; esac
+case "$missing_result" in *'no managed dispatch belongs to tmux session session-a pane %1'*) ;; *) fail "unmatched tmux child returned the wrong refusal: $missing_result" ;; esac
+printf 'unmatched tmux child is refused\n'
+
 run_pair() {
   local label dispatch verb text shell_state binary_state shell_output binary_output shell_status binary_status
   label="$1"; dispatch="$2"; verb="$3"; text="${4:-}"
