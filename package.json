@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build --compile src/cli/index.ts --outfile .build/megabrain"
+    "build": "bun build --compile src/cli/index.ts --outfile .build/megabrain",
+    "test": "bun test"
   }
 }
