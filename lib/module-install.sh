@@ -227,7 +227,8 @@ command_doctor() {
 }
 
 module_orchestration_doctor() {
-  local orca_status superset_status counts_suffix tmux_runtime=false
+  local orca_status=missing superset_status=missing tmux_status=missing
+  local counts_suffix usable_runtimes="" missing_runtimes=""
   megabrain_dispatch_health_counts
   counts_suffix="; uncertain dispatches: $MODULE_UNCERTAIN_DISPATCHES (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: $MODULE_RETAINED_TERMINALS; leaked dispatch sessions: $MODULE_LEAKED_DISPATCH_SESSIONS; prunable dispatches: $MODULE_PRUNABLE_DISPATCHES"
   if [ "${MODULE_UNCERTAIN_DISPATCHES:-0}" -gt 0 ]; then
@@ -240,41 +241,66 @@ module_orchestration_doctor() {
     megabrain_set_status misconfigured "dispatch state requires reconciliation$counts_suffix"
     return 1
   fi
-  if megabrain_runtime_enabled && megabrain_tmux_available; then
-    tmux_runtime=true
+  if megabrain_runtime_enabled; then
+    if megabrain_tmux_available; then
+      tmux_status=ok
+    else
+      tmux_status=misconfigured
+    fi
   fi
   if ! megabrain_require_command orca; then
-    if [ "$tmux_runtime" = true ]; then
-      orca_status=optional
-    else
-      megabrain_set_status missing "orca CLI is not on PATH$counts_suffix"
-      return 1
-    fi
+    orca_status=missing
   elif ! orca status --json >/dev/null 2>&1; then
-    megabrain_set_status misconfigured "orca status --json failed$counts_suffix"
-    return 1
+    orca_status=misconfigured
   else
     orca_status=ok
   fi
   if ! megabrain_superset_available; then
-    if [ "$tmux_runtime" = true ]; then
-      superset_status=optional
-    else
-      megabrain_set_status missing "superset CLI is not on PATH and $HOME/.superset/bin/superset is unavailable$counts_suffix"
-      return 1
-    fi
+    superset_status=missing
   elif ! megabrain_superset workspaces list --json >/dev/null 2>&1; then
-    megabrain_set_status misconfigured "superset workspaces list --json failed$counts_suffix"
-    return 1
+    superset_status=misconfigured
   else
     superset_status=ok
   fi
-  if [ "$tmux_runtime" = true ] && { [ "$orca_status" = optional ] || [ "$superset_status" = optional ]; }; then
-    megabrain_set_status ok "tmux runtime is usable; missing orchestrator CLIs are optional$counts_suffix"
+
+  if [ "$orca_status" = ok ]; then
+    usable_runtimes=orca
+  elif [ "$orca_status" = missing ]; then
+    missing_runtimes=orca
+  fi
+  if [ "$superset_status" = ok ]; then
+    if [ -n "$usable_runtimes" ]; then usable_runtimes="$usable_runtimes, "; fi
+    usable_runtimes="${usable_runtimes}superset"
+  elif [ "$superset_status" = missing ]; then
+    if [ -n "$missing_runtimes" ]; then missing_runtimes="$missing_runtimes, "; fi
+    missing_runtimes="${missing_runtimes}superset"
+  fi
+  if [ "$tmux_status" = ok ]; then
+    if [ -n "$usable_runtimes" ]; then usable_runtimes="$usable_runtimes, "; fi
+    usable_runtimes="${usable_runtimes}tmux"
+  elif [ "$tmux_status" = missing ]; then
+    if [ -n "$missing_runtimes" ]; then missing_runtimes="$missing_runtimes, "; fi
+    missing_runtimes="${missing_runtimes}tmux"
+  fi
+
+  if [ -n "$usable_runtimes" ]; then
+    megabrain_set_status ok "usable runtimes: $usable_runtimes; other runtimes are optional$counts_suffix"
     return 0
   fi
-  megabrain_set_status ok "orca and superset status checks passed$counts_suffix"
-  return 0
+  if [ "$orca_status" = misconfigured ]; then
+    megabrain_set_status misconfigured "orca status --json failed$counts_suffix"
+    return 1
+  fi
+  if [ "$superset_status" = misconfigured ]; then
+    megabrain_set_status misconfigured "superset workspaces list --json failed$counts_suffix"
+    return 1
+  fi
+  if [ "$tmux_status" = misconfigured ]; then
+    megabrain_set_status misconfigured "tmux runtime is enabled but tmux is unavailable$counts_suffix"
+    return 1
+  fi
+  megabrain_set_status missing "no orchestration runtime is available; missing runtimes: $missing_runtimes$counts_suffix"
+  return 1
 }
 
 module_orchestration_install() {

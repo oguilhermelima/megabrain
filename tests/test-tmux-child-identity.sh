@@ -13,6 +13,7 @@ tmux_pane_one=""
 tmux_pane_two=""
 dispatch_one="dispatch-one"
 dispatch_two="dispatch-two"
+dispatch_orca="dispatch-orca-parent"
 
 cleanup() {
   tmux -L "$socket_name" kill-session -t "$session_name" >/dev/null 2>&1 || true
@@ -89,6 +90,15 @@ send_child_message() {
   wait_for_message "$dispatch_id"
 }
 
+send_child_message_without_host() {
+  local pane="$1" dispatch_id="$2" text="$3" output="$4" command_text
+  command_text="env -u SUPERSET_TERMINAL_ID MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_id") $(printf '%q' "$root/megabrain") ask $(printf '%q' "$text") >$(printf '%q' "$output") 2>&1"
+  tmux_cmd send-keys -t "$pane" -l "$command_text"
+  tmux_cmd send-keys -t "$pane" Enter
+  wait_for_file "$output"
+  wait_for_message "$dispatch_id"
+}
+
 tmux_cmd new-session -d -s "$session_name" -x 120 -y 30 bash
 tmux_pane_one="$(tmux_cmd split-window -h -P -F '#{pane_id}' -t "$session_name" bash)"
 tmux_pane_two="$(tmux_cmd split-window -v -P -F '#{pane_id}' -t "$tmux_pane_one" bash)"
@@ -141,6 +151,9 @@ create_tmux_meta "$dispatch_two" "$tmux_pane_two"
 
 send_child_message "$tmux_pane_one" "$dispatch_one" child-one "$state_dir/child-one.out"
 send_child_message "$tmux_pane_two" "$dispatch_two" child-two "$state_dir/child-two.out"
+megabrain_dispatch_meta_write "$dispatch_orca" "$parent_id" orca orca "$workspace_id" host-terminal \
+  "$root" main codex label running gpt-5 true codex "$session_name" "$tmux_pane_two" tmux >/dev/null
+send_child_message_without_host "$tmux_pane_two" "$dispatch_orca" child-without-host "$state_dir/child-without-host.out"
 
 message_one="$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' -print -quit)"
 message_two="$(find "$state_dir/dispatches/$dispatch_two/messages" -name '*.json' -print -quit)"
@@ -148,6 +161,9 @@ message_two="$(find "$state_dir/dispatches/$dispatch_two/messages" -name '*.json
 [ -n "$message_two" ] || fail "dispatch two has no message"
 assert_equal "$(jq -r '.text' "$message_one")" child-one
 assert_equal "$(jq -r '.text' "$message_two")" child-two
+[ "$(find "$state_dir/dispatches/$dispatch_orca/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch without host received no message"
+message_without_host="$(find "$state_dir/dispatches/$dispatch_orca/messages" -name '*.json' -print -quit)"
+assert_equal "$(jq -r '.text' "$message_without_host")" child-without-host
 [ "$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch one received an extra message"
 [ "$(find "$state_dir/dispatches/$dispatch_two/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch two received an extra message"
 
