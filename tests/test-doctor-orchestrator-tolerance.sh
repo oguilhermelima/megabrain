@@ -26,6 +26,13 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  case "$1" in
+    *"$2"*) fail "expected '$1' not to contain '$2'" ;;
+    *) ;;
+  esac
+}
+
 export MEGABRAIN_STATE_DIR="$state_dir"
 source "$root/lib/common.sh"
 source "$root/lib/module-context.sh"
@@ -87,20 +94,105 @@ expect_doctor() {
   printf '%s\n' "$name"
 }
 
-fake_superset_available=false
-fake_tmux_runtime=true
-expect_doctor 'absent superset with tmux fallback is optional' 0 ok optional
+set_runtime_state() {
+  local runtime="$1" state="$2"
+  case "$runtime:$state" in
+    orca:ok)
+      fake_orca_available=true
+      fake_orca_healthy=true
+      ;;
+    orca:misconfigured)
+      fake_orca_available=true
+      fake_orca_healthy=false
+      ;;
+    orca:missing)
+      fake_orca_available=false
+      fake_orca_healthy=false
+      ;;
+    superset:ok)
+      fake_superset_available=true
+      fake_superset_healthy=true
+      ;;
+    superset:misconfigured)
+      fake_superset_available=true
+      fake_superset_healthy=false
+      ;;
+    superset:missing)
+      fake_superset_available=false
+      fake_superset_healthy=false
+      ;;
+    tmux:ok)
+      fake_tmux_runtime=true
+      ;;
+    tmux:missing)
+      fake_tmux_runtime=false
+      ;;
+    *) fail "unknown runtime state: $runtime $state" ;;
+  esac
+}
 
-fake_superset_available=true
-fake_superset_healthy=false
-expect_doctor 'unusable superset with tmux fallback is optional' 0 ok optional
+runtime_is_usable() {
+  [ "$2" = ok ]
+}
 
-fake_tmux_runtime=false
-expect_doctor 'unusable superset without fallback is misconfigured' 1 misconfigured failed
+assert_reason_matches_states() {
+  local orca_state="$1" superset_state="$2" tmux_state="$3" runtime state
+  for runtime in orca superset tmux; do
+    case "$runtime" in
+      orca) state="$orca_state" ;;
+      superset) state="$superset_state" ;;
+      tmux) state="$tmux_state" ;;
+    esac
+    if runtime_is_usable "$runtime" "$state"; then
+      assert_contains "$MODULE_REASON" "$runtime"
+      assert_not_contains "$MODULE_REASON" "$runtime CLI is not on PATH"
+      assert_not_contains "$MODULE_REASON" "$runtime status --json failed"
+      assert_not_contains "$MODULE_REASON" "$runtime workspaces list --json failed"
+    fi
+  done
+}
 
-fake_orca_available=true
-fake_orca_healthy=false
-fake_superset_healthy=true
-expect_doctor 'unusable orca with healthy superset is optional' 0 ok optional
+expect_scenario() {
+  local orca_state="$1" superset_state="$2" tmux_state="$3"
+  local name expected_rc expected_status expected_reason runtime
+  fake_orca_available=false
+  fake_orca_healthy=false
+  fake_superset_available=false
+  fake_superset_healthy=false
+  fake_tmux_runtime=false
+  set_runtime_state orca "$orca_state"
+  set_runtime_state superset "$superset_state"
+  set_runtime_state tmux "$tmux_state"
+
+  expected_rc=1
+  expected_status=missing
+  expected_reason=missing
+  for runtime in orca superset tmux; do
+    case "$runtime" in
+      orca) state="$orca_state" ;;
+      superset) state="$superset_state" ;;
+      tmux) state="$tmux_state" ;;
+    esac
+    if runtime_is_usable "$runtime" "$state"; then
+      expected_rc=0
+      expected_status=ok
+      expected_reason=optional
+      break
+    fi
+    [ "$state" = misconfigured ] && expected_status=misconfigured && expected_reason=failed
+  done
+
+  name="orca-${orca_state}-superset-${superset_state}-tmux-${tmux_state}"
+  expect_doctor "$name" "$expected_rc" "$expected_status" "$expected_reason"
+  assert_reason_matches_states "$orca_state" "$superset_state" "$tmux_state"
+}
+
+for orca_state in ok misconfigured missing; do
+  for superset_state in ok misconfigured missing; do
+    for tmux_state in ok missing; do
+      expect_scenario "$orca_state" "$superset_state" "$tmux_state"
+    done
+  done
+done
 
 printf 'ok: orchestration doctor tolerates an unusable alternate host\n'
