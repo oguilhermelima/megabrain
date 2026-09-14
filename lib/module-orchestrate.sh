@@ -1759,11 +1759,16 @@ megabrain_dispatch_find_child() {
   if [ -n "$direct_id" ]; then
     direct_path="$(megabrain_dispatch_meta_path "$direct_id" 2>/dev/null || true)"
     if [ -n "$direct_path" ] && [ -f "$direct_path" ]; then
+      # WHY: a tmux child is identified by its session and pane. childHost records
+      # which orchestrator owns the terminal, which is a different fact: an Orca
+      # parent writes childHost=orca while the child own session host is tmux.
+      # Matching one against the other only worked while Superset leaked its
+      # terminal id into the child environment.
       if [ "$tmux_identity" = true ]; then
         if [ -n "$tmux_session" ] && jq -e \
           --arg dispatchId "$direct_id" --arg host "$MEGABRAIN_SESSION_HOST" \
           --arg session "$tmux_session" --arg pane "$tmux_pane" \
-          '.dispatchId == $dispatchId and .childHost == $host and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane' \
+          '.dispatchId == $dispatchId and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane' \
           "$direct_path" \
           >/dev/null 2>&1; then
           MEGABRAIN_FOUND_DISPATCH="$direct_id"
@@ -1789,7 +1794,7 @@ megabrain_dispatch_find_child() {
       return 1
     }
     matches="$(jq -r --arg host "$MEGABRAIN_SESSION_HOST" --arg session "$tmux_session" --arg pane "$tmux_pane" \
-      'select(.childHost == $host and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane) | .dispatchId // empty' \
+      'select(.runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane) | .dispatchId // empty' \
       "$MEGABRAIN_DISPATCH_DIR"/*/meta.json 2>/dev/null)" || matches=""
   else
     matches="$(jq -r --arg id "$MEGABRAIN_SESSION_ID" --arg host "$MEGABRAIN_SESSION_HOST" \
