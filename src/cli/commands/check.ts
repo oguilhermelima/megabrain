@@ -2,6 +2,9 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { resolveConsumerIdentity } from "../../core/identity.js";
+import { rename, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -54,7 +57,8 @@ async function childConsumer(environment: CheckEnvironment, processAdapter: Proc
   if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
     const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
     if (result.kind !== "ok" || result.value.stdout.trim().length === 0) return undefined;
-    return `child/tmux/${result.value.stdout.trim()}/${environment.TMUX_PANE}`;
+    const host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : "tmux";
+    return `child/${host}/${result.value.stdout.trim()}/${environment.TMUX_PANE}`;
   }
   const host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined;
   const id = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
@@ -106,7 +110,8 @@ function report(dispatch: string, delivery: CheckDelivery | undefined, messages:
 }
 
 export async function executeCheck(args: readonly string[], environment: CheckEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
-  let timeout = 120; let pollInterval = 3; let full = false; let json = false; let consumer = ""; let generation = 1;
+  let timeout = 120; let pollInterval = 3; let full = false; let json = false; let consumer = "";
+  let generation = environment.MEGABRAIN_CONSUMER_GENERATION === undefined ? 1 : Number(environment.MEGABRAIN_CONSUMER_GENERATION);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--timeout") timeout = Number(args[++index]);
@@ -124,7 +129,13 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   const root = resolveStateDirectory(environment);
   const dispatch = await dispatchId(environment, root, processAdapter);
   if (dispatch === undefined) return failed(`no managed dispatch belongs to superset/${environment.SUPERSET_TERMINAL_ID ?? "unknown"}`);
-  const resolvedConsumer = consumer || await childConsumer(environment, processAdapter);
+  const resolvedConsumer = resolveConsumerIdentity({
+    environmentConsumer: environment.MEGABRAIN_CONSUMER_ID,
+    explicitConsumer: consumer,
+    sessionHost: environment.MEGABRAIN_SESSION_HOST,
+    sessionId: environment.MEGABRAIN_SESSION_ID,
+    fallbackConsumer: await childConsumer(environment, processAdapter),
+  });
   if (resolvedConsumer === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const started = Date.now();
   let selected: ReturnType<typeof selectDelivery> = { kind: "none" };
@@ -138,9 +149,17 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, pollInterval * 1000)));
   }
   if (selected.kind === "selected") {
-    if (selected.delivery.consumer === null && (environment.TMUX === undefined || environment.TMUX.length === 0)) {
-      const claimed = { ...selected.delivery, consumer: resolvedConsumer, consumerGeneration: generation };
-      await Bun.write(`${root}/dispatches/${dispatch}/deliveries/${selected.delivery.id}.json`, `${JSON.stringify(claimed)}\n`);
+    if (selected.delivery.consumer === null) {
+      const path = `${root}/dispatches/${dispatch}/deliveries/${selected.delivery.id}.json`;
+      const temporaryPath = `${path}.${randomUUID()}.tmp`;
+      const claimed = { ...selected.delivery, consumer: resolvedConsumer, consumerGeneration: generation, updatedAt: new Date().toISOString() };
+      try {
+        await Bun.write(temporaryPath, `${JSON.stringify(claimed)}\n`);
+        await rename(temporaryPath, path);
+      } catch (error: unknown) {
+        await unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
       return ok(report(dispatch, selected.delivery, messages, false, json));
     }
     return ok(report(dispatch, selected.delivery, messages, selected.replayed, json));
