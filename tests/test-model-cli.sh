@@ -4,7 +4,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-model-cli.XXXXXX")"
-trap 'rm -rf "$state_root"' EXIT
+default_state_dir="$root/.megabrain-state"
+trap 'rm -rf "$state_root" "$default_state_dir"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -26,6 +27,21 @@ compare() {
   printf '%s agrees between shell and binary\n' "$name"
 }
 
+compare_default_state_directory() {
+  local shell_output binary_output shell_status binary_status scenario_home
+  scenario_home="$state_root/home"
+  mkdir -p "$scenario_home/.megabrain"
+  cp "$root/.megabrain/models.json" "$scenario_home/.megabrain/models.json"
+  rm -rf "$default_state_dir"
+  if shell_output="$(env -u MEGABRAIN_STATE_DIR HOME="$scenario_home" MEGABRAIN_MODEL_IMPLEMENTATION=shell "$root/megabrain" model list --json 2>&1)"; then shell_status=0; else shell_status=$?; fi
+  [ ! -e "$default_state_dir" ] || fail "default-state-directory: shell created $default_state_dir"
+  if binary_output="$(env -u MEGABRAIN_STATE_DIR HOME="$scenario_home" "$root/.build/megabrain" model list --json 2>&1)"; then binary_status=0; else binary_status=$?; fi
+  [ "$shell_status" -eq "$binary_status" ] || fail "default-state-directory: shell status=$shell_status binary status=$binary_status"
+  [ "$shell_output" = "$binary_output" ] || fail "default-state-directory: shell=$shell_output binary=$binary_output"
+  [ ! -e "$default_state_dir" ] || fail "default-state-directory: binary created $default_state_dir while shell did not"
+  printf 'default-state-directory agrees between shell and binary\n'
+}
+
 # The shell side is the baseline gate before the compiled implementation exists.
 run_shell model list --json >/dev/null
 run_shell model list >/dev/null
@@ -41,6 +57,7 @@ if [ ! -x "$root/.build/megabrain" ]; then
 fi
 
 compare registry-json model list --json
+compare_default_state_directory
 compare registry-table model list
 compare model-help model --help
 compare list-help model list --help
