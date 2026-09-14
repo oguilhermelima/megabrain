@@ -529,7 +529,24 @@ export function buildBrowserConfig(browser, paths, viewport = DEFAULT_VIEWPORT) 
   throw new Error(`unknown browser: ${browser}`);
 }
 
-export function validateBrowserConfig(config, browser) {
+export function buildCaptureLaunchOptions(config, browser) {
+  validateBrowserConfig(config, browser, { requireExtensions: false, requireUserDataDir: false });
+  const launchOptions = { ...config.browser.launchOptions };
+  delete launchOptions.userDataDir;
+  if (browser === 'chromium') {
+    launchOptions.args = (launchOptions.args || []).filter(arg =>
+      !arg.startsWith('--load-extension=') && !arg.startsWith('--disable-extensions-except='));
+    if (!launchOptions.args.includes('--disable-extensions')) launchOptions.args.push('--disable-extensions');
+  } else {
+    delete launchOptions.firefoxUserPrefs;
+  }
+  return launchOptions;
+}
+
+export function validateBrowserConfig(config, browser, {
+  requireExtensions = true,
+  requireUserDataDir = true,
+} = {}) {
   const b = config?.browser;
   if (!b || b.browserName !== browser) throw new Error(`${browser} config has the wrong browserName`);
   try {
@@ -540,15 +557,15 @@ export function validateBrowserConfig(config, browser) {
   if (browser === 'chromium') {
     if (b.launchOptions?.channel !== 'chromium') throw new Error('chromium config must set launchOptions.channel to chromium');
     if (b.launchOptions?.headless !== true) throw new Error('chromium config must be headless');
-    if (!b.launchOptions.args?.some(arg => arg.startsWith('--load-extension='))) throw new Error('chromium config must load extensions');
+    if (requireExtensions && !b.launchOptions.args?.some(arg => arg.startsWith('--load-extension='))) throw new Error('chromium config must load extensions');
   } else {
     if (b.launchOptions?.headless !== true) throw new Error('firefox config must be headless');
     const prefs = b.launchOptions?.firefoxUserPrefs || {};
-    if (prefs['extensions.autoDisableScopes'] !== 0 || prefs['extensions.enabledScopes'] !== 15) {
+    if (requireExtensions && (prefs['extensions.autoDisableScopes'] !== 0 || prefs['extensions.enabledScopes'] !== 15)) {
       throw new Error('firefox config must enable installed extensions');
     }
   }
-  if (!b.userDataDir) throw new Error(`${browser} config is missing userDataDir`);
+  if (requireUserDataDir && !b.userDataDir) throw new Error(`${browser} config is missing userDataDir`);
   return { valid: true };
 }
 
@@ -1049,14 +1066,16 @@ async function resolveDeviceRequest(root, request) {
   return resolveDeviceDescriptor(request, devices, readCustomDevices());
 }
 
-async function launchBrowser(root, browser, { headless = true } = {}) {
+async function launchBrowser(root, browser, { headless = true, visual = false } = {}) {
   if (!['chromium', 'firefox'].includes(browser)) throw new Error('browser must be chromium or firefox');
   const manifest = manifestFor(root);
   const profile = manifest.profiles?.[browser];
   if (!profile) throw new Error(`no ${browser} browser profile is installed`);
   const playwright = await import(pathToFileURL(path.join(root, 'node_modules', 'playwright', 'index.mjs')).href);
   const config = readJson(profile.configPath);
-  const launchOptions = { ...(config?.browser?.launchOptions || {}), headless };
+  const launchOptions = visual
+    ? { ...buildCaptureLaunchOptions(config, browser), headless }
+    : { ...(config?.browser?.launchOptions || {}), headless };
   delete launchOptions.userDataDir;
   return playwright[browser].launch(launchOptions);
 }
@@ -1138,7 +1157,7 @@ async function runVisualScreens(root, args, { capture = true } = {}) {
     reducedMotion: 'reduce',
     ...(request.storageState ? { storageState: validateStorageStateFile(request.storageState) } : {}),
   });
-  const browser = await launchBrowser(root, request.browser);
+  const browser = await launchBrowser(root, request.browser, { visual: true });
   const context = await browser.newContext(contextOptions);
   const results = [];
   try {
