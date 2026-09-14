@@ -36,6 +36,7 @@ const REPOSITORIES = {
 
 const MCP_CONFIG_NAMES = { chromium: 'chromium.json', firefox: 'firefox.json' };
 export const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 720 });
+export const DEFAULT_IMAGE_SETTLE_TIMEOUT_MS = 5000;
 export const MAX_VIEWPORT_DIMENSION = 10000;
 // BrowserStack's 2026 screen-resolution guide (sourcing StatCounter) informs the
 // mobile, tablet, and desktop conventions. Its figures are market-share context,
@@ -312,26 +313,52 @@ export function validateStorageStateFile(file) {
   return file;
 }
 
-export async function settlePage(page) {
+export async function settlePage(page, { imageTimeout = DEFAULT_IMAGE_SETTLE_TIMEOUT_MS } = {}) {
+  if (!Number.isSafeInteger(imageTimeout) || imageTimeout < 1) {
+    throw new Error('image timeout must be a positive integer in milliseconds');
+  }
   await page.waitForLoadState('networkidle');
-  await page.evaluate(async () => {
+  return page.evaluate(async timeout => {
+    const settleWithin = promise => new Promise(resolve => {
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(false), timeout);
+      Promise.resolve(promise).then(() => finish(true), () => finish(true));
+    });
+
     if (document.fonts?.ready) await document.fonts.ready;
     const images = [...document.images];
-    await Promise.all(images.map(async image => {
-      if (!image.complete) await new Promise(resolve => {
-        image.addEventListener('load', resolve, { once: true });
-        image.addEventListener('error', resolve, { once: true });
-      });
-      if (image.decode) await image.decode().catch(() => {});
-    }));
-  });
+    return (await Promise.all(images.map(async (image, index) => {
+      let loadTimedOut = false;
+      if (!image.complete) {
+        const loaded = await settleWithin(new Promise(resolve => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        }));
+        loadTimedOut = !loaded;
+      }
+      let decodeTimedOut = false;
+      if (!loadTimedOut && image.decode) {
+        const decoded = await settleWithin(Promise.resolve().then(() => image.decode()));
+        decodeTimedOut = !decoded;
+      }
+      if (!loadTimedOut && !decodeTimedOut) return null;
+      return image.alt || image.currentSrc || image.src || `image ${index + 1}`;
+    }))).filter(Boolean);
+  }, imageTimeout);
 }
 
-export async function prepareDeterministicRendering(page, { now = '2026-01-01T00:00:00.000Z' } = {}) {
+export async function prepareDeterministicRendering(page, { now = null } = {}) {
+  await disableAnimations(page);
+  if (now == null) return;
   const timestamp = new Date(now).getTime();
   if (!Number.isFinite(timestamp)) throw new Error('freeze time must be a valid date');
   await page.clock.install({ time: timestamp });
-  await disableAnimations(page);
 }
 
 export async function disableAnimations(page) {
@@ -503,7 +530,24 @@ export function buildBrowserConfig(browser, paths, viewport = DEFAULT_VIEWPORT) 
   throw new Error(`unknown browser: ${browser}`);
 }
 
-export function validateBrowserConfig(config, browser) {
+export function buildCaptureLaunchOptions(config, browser) {
+  validateBrowserConfig(config, browser, { requireExtensions: false, requireUserDataDir: false });
+  const launchOptions = { ...config.browser.launchOptions };
+  delete launchOptions.userDataDir;
+  if (browser === 'chromium') {
+    launchOptions.args = (launchOptions.args || []).filter(arg =>
+      !arg.startsWith('--load-extension=') && !arg.startsWith('--disable-extensions-except='));
+    if (!launchOptions.args.includes('--disable-extensions')) launchOptions.args.push('--disable-extensions');
+  } else {
+    delete launchOptions.firefoxUserPrefs;
+  }
+  return launchOptions;
+}
+
+export function validateBrowserConfig(config, browser, {
+  requireExtensions = true,
+  requireUserDataDir = true,
+} = {}) {
   const b = config?.browser;
   if (!b || b.browserName !== browser) throw new Error(`${browser} config has the wrong browserName`);
   try {
@@ -514,15 +558,15 @@ export function validateBrowserConfig(config, browser) {
   if (browser === 'chromium') {
     if (b.launchOptions?.channel !== 'chromium') throw new Error('chromium config must set launchOptions.channel to chromium');
     if (b.launchOptions?.headless !== true) throw new Error('chromium config must be headless');
-    if (!b.launchOptions.args?.some(arg => arg.startsWith('--load-extension='))) throw new Error('chromium config must load extensions');
+    if (requireExtensions && !b.launchOptions.args?.some(arg => arg.startsWith('--load-extension='))) throw new Error('chromium config must load extensions');
   } else {
     if (b.launchOptions?.headless !== true) throw new Error('firefox config must be headless');
     const prefs = b.launchOptions?.firefoxUserPrefs || {};
-    if (prefs['extensions.autoDisableScopes'] !== 0 || prefs['extensions.enabledScopes'] !== 15) {
+    if (requireExtensions && (prefs['extensions.autoDisableScopes'] !== 0 || prefs['extensions.enabledScopes'] !== 15)) {
       throw new Error('firefox config must enable installed extensions');
     }
   }
-  if (!b.userDataDir) throw new Error(`${browser} config is missing userDataDir`);
+  if (requireUserDataDir && !b.userDataDir) throw new Error(`${browser} config is missing userDataDir`);
   return { valid: true };
 }
 
@@ -1023,14 +1067,16 @@ async function resolveDeviceRequest(root, request) {
   return resolveDeviceDescriptor(request, devices, readCustomDevices());
 }
 
-async function launchBrowser(root, browser, { headless = true } = {}) {
+async function launchBrowser(root, browser, { headless = true, visual = false, configPath = '' } = {}) {
   if (!['chromium', 'firefox'].includes(browser)) throw new Error('browser must be chromium or firefox');
   const manifest = manifestFor(root);
   const profile = manifest.profiles?.[browser];
   if (!profile) throw new Error(`no ${browser} browser profile is installed`);
   const playwright = await import(pathToFileURL(path.join(root, 'node_modules', 'playwright', 'index.mjs')).href);
-  const config = readJson(profile.configPath);
-  const launchOptions = { ...(config?.browser?.launchOptions || {}), headless };
+  const config = readJson(configPath || profile.configPath);
+  const launchOptions = visual
+    ? { ...buildCaptureLaunchOptions(config, browser), headless }
+    : { ...(config?.browser?.launchOptions || {}), headless };
   delete launchOptions.userDataDir;
   return playwright[browser].launch(launchOptions);
 }
@@ -1067,7 +1113,7 @@ function validateScreen(screen) {
   return { ...screen, selectors: screen.selectors || {} };
 }
 
-function captureRequestFromArgs(args) {
+export function captureRequestFromArgs(args) {
   const request = viewportRequestFromArgs(args);
   return {
     ...request,
@@ -1080,17 +1126,22 @@ function captureRequestFromArgs(args) {
     side: args.includes('--baseline') ? 'baseline' : 'candidate',
     replaceBaseline: args.includes('--replace-baseline'),
     fullPage: args.includes('--full-page'),
-    freezeTime: argumentValue(args, '--freeze-time', '2026-01-01T00:00:00.000Z'),
+    config: argumentValue(args, '--config', ''),
+    imageTimeout: parsePositiveInteger(
+      argumentValue(args, '--image-timeout', String(DEFAULT_IMAGE_SETTLE_TIMEOUT_MS)),
+      '--image-timeout',
+    ),
+    freezeTime: argumentValue(args, '--freeze-time', ''),
   };
 }
 
-async function renderScreen(context, screen, freezeTime) {
+async function renderScreen(context, screen, { freezeTime = '', imageTimeout = DEFAULT_IMAGE_SETTLE_TIMEOUT_MS } = {}) {
   const page = await context.newPage();
-  await prepareDeterministicRendering(page, { now: freezeTime });
+  await prepareDeterministicRendering(page, freezeTime ? { now: freezeTime } : {});
   await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
   await disableAnimations(page);
-  await settlePage(page);
-  return page;
+  const slowImages = await settlePage(page, { imageTimeout });
+  return { page, slowImages };
 }
 
 function refuseBaselineOverwrite(paths, replaceBaseline) {
@@ -1108,16 +1159,16 @@ async function runVisualScreens(root, args, { capture = true } = {}) {
     reducedMotion: 'reduce',
     ...(request.storageState ? { storageState: validateStorageStateFile(request.storageState) } : {}),
   });
-  const browser = await launchBrowser(root, request.browser);
+  const browser = await launchBrowser(root, request.browser, { configPath: request.config, visual: true });
   const context = await browser.newContext(contextOptions);
   const results = [];
   try {
     for (const screen of screens) {
-      const page = await renderScreen(context, screen, request.freezeTime);
+      const { page, slowImages } = await renderScreen(context, screen, request);
       try {
         const geometry = await measureSelectors(page, screen.selectors);
         if (!capture) {
-          results.push({ name: screen.name, geometry });
+          results.push({ name: screen.name, geometry, ...(slowImages.length ? { slowImages } : {}) });
           continue;
         }
         const paths = buildCapturePaths({
@@ -1140,7 +1191,7 @@ async function runVisualScreens(root, args, { capture = true } = {}) {
           fullPage: request.fullPage,
           elements: geometry,
         }, null, 2)}\n`);
-        results.push({ ...paths, name: screen.name });
+        results.push({ ...paths, name: screen.name, ...(slowImages.length ? { slowImages } : {}) });
       } finally {
         await page.close();
       }
@@ -1159,7 +1210,7 @@ async function saveSession(root, args) {
   if (existsSync(output) && !args.includes('--replace')) throw new Error(`session state already exists: ${output}; pass --replace to replace it`);
   const request = captureRequestFromArgs(args);
   const descriptor = await resolveDeviceRequest(root, request);
-  const browser = await launchBrowser(root, request.browser, { headless: false });
+  const browser = await launchBrowser(root, request.browser, { headless: false, configPath: request.config });
   const context = await browser.newContext(buildContextOptions(descriptor, { colorScheme: request.theme, reducedMotion: 'reduce' }));
   const page = await context.newPage();
   try {
@@ -1306,7 +1357,16 @@ export async function doctor(root, { currentVersions = null } = {}) {
 
 function argumentValue(args, flag, fallback) {
   const index = args.indexOf(flag);
-  return index >= 0 ? args[index + 1] : fallback;
+  if (index < 0) return fallback;
+  if (args[index + 1] == null || args[index + 1].startsWith('--')) throw new Error(`${flag} requires a value`);
+  return args[index + 1];
+}
+
+function parsePositiveInteger(value, flag) {
+  if (!/^[1-9][0-9]*$/.test(String(value))) throw new Error(`${flag} must be a positive integer in milliseconds`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${flag} must be a safe integer in milliseconds`);
+  return parsed;
 }
 
 async function main(args) {
@@ -1362,12 +1422,16 @@ async function main(args) {
     case 'device-add': addCustomDevice(args.slice(1)); return;
     case 'device-remove': removeCustomDeviceFromArgs(args.slice(1)); return;
     case 'capture': {
-      for (const item of await runVisualScreens(root, args, { capture: true })) console.log(`captured ${item.name}: ${item.image}`);
+      for (const item of await runVisualScreens(root, args, { capture: true })) {
+        const slowImages = item.slowImages?.length ? `; slow images: ${item.slowImages.join(', ')}` : '';
+        console.log(`captured ${item.name}: ${item.image}${slowImages}`);
+      }
       return;
     }
     case 'measure': {
       const results = await runVisualScreens(root, args, { capture: false });
-      console.log(JSON.stringify(results.length === 1 ? results[0].geometry : results));
+      const output = results.length === 1 && !results[0].slowImages ? results[0].geometry : results;
+      console.log(JSON.stringify(output));
       return;
     }
     case 'session-save': await saveSession(root, args); return;
