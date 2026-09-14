@@ -1816,8 +1816,8 @@ megabrain_worktree_create() {
   local parent_metadata_set=false parent_metadata_error="" lineage_set=false grouping_set=false lineage_error="" grouping_error=""
   local links_set=false links_error=""
   local model_explicit=false effort_explicit=false chain_selected=false chain_config=""
-  local arg repo_path shared_root worktree_path project_id="" workspace_id dispatch="" host runtime="" tmux_choice=auto walk_status parent_json
-  local project_record workspace_record project_created=false workspace_created=false workspace_existing_id="" worktree_created=false launch_status=0
+  local arg repo_path shared_root worktree_path project_id="" workspace_id="" dispatch="" host runtime="" tmux_choice=auto walk_status parent_json
+  local project_record="" workspace_record="" project_created=false workspace_created=false workspace_existing_id="" worktree_created=false launch_status=0
   local -a agent_args=() orca_set_args=()
   while [ "$#" -gt 0 ]; do
     arg="$1"
