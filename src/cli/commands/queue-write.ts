@@ -7,7 +7,12 @@ import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientFor
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
-type Session = { readonly host: string; readonly id: string };
+type Session = {
+  readonly host: string;
+  readonly id: string;
+  readonly tmuxSession?: string;
+  readonly tmuxPane?: string;
+};
 
 async function readJson(path: string): Promise<JsonRecord | undefined> {
   try { const value: unknown = JSON.parse(await readFile(path, "utf8")); return typeof value === "object" && value !== null ? value as JsonRecord : undefined; } catch { return undefined; }
@@ -17,7 +22,7 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
   if (environment.TMUX && environment.TMUX_PANE) {
     const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"]);
     const pane = result.kind === "ok" ? result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[1] === environment.TMUX_PANE) : undefined;
-    if (pane?.[0]) return { host: "tmux", id: `${pane[0]}:${environment.TMUX_PANE}` };
+    if (pane?.[0]) return { host: "tmux", id: `${pane[0]}:${environment.TMUX_PANE}`, tmuxSession: pane[0], tmuxPane: environment.TMUX_PANE };
     return { host: "tmux", id: "" };
   }
   if (environment.SUPERSET_TERMINAL_ID) return { host: "superset", id: environment.SUPERSET_TERMINAL_ID };
@@ -29,13 +34,17 @@ async function findChild(root: string, environment: QueueEnvironment, processAda
   const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const direct = environment.MEGABRAIN_DISPATCH_ID;
-  const directMeta = direct && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(`${root}/dispatches/${direct}/meta.json`) : undefined;
-  const dispatches = directMeta?.dispatchId === direct ? [direct] : await readdir(`${root}/dispatches`).catch(() => []);
+  const directMeta = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(`${root}/dispatches/${direct}/meta.json`) : undefined;
+  const directDispatch = direct !== undefined && directMeta?.dispatchId === direct ? direct : undefined;
+  const dispatches = directDispatch !== undefined ? [directDispatch] : await readdir(`${root}/dispatches`).catch(() => []);
   const matches: string[] = [];
   for (const dispatch of dispatches) {
     const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
     const matchesTerminal = meta?.terminalId === current.id && meta.childHost === current.host;
-    const matchesTmux = current.host === "tmux" && current.id !== "";
+    const matchesTmux = current.host === "tmux" &&
+      meta?.runtime === "tmux" &&
+      current.tmuxSession !== undefined && current.tmuxPane !== undefined &&
+      meta.tmuxSession === current.tmuxSession && meta.tmuxPane === current.tmuxPane;
     if (meta?.dispatchId === dispatch && (matchesTerminal || matchesTmux)) matches.push(dispatch);
   }
   if (matches.length > 1) return failed(`terminal identity matches multiple dispatches for ${current.host}/${current.id}: ${matches[0]}, ${matches[1]}`);
@@ -51,6 +60,13 @@ async function atomicJson(path: string, value: JsonRecord): Promise<void> {
   try { await writeFile(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
 }
 
+async function notifyParent(meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter): Promise<void> {
+  const pane = typeof meta.parentTmuxPane === "string" ? meta.parentTmuxPane : undefined;
+  if (pane === undefined) return;
+  await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", `mail: megabrain orchestrate watch ${dispatch}`]);
+  await processAdapter.run("tmux", ["send-keys", "-t", pane, "Enter"]);
+}
+
 async function acquireLock(path: string, environment: QueueEnvironment): Promise<Result<void>> {
   const waitSeconds = Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15");
   const staleSeconds = Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30");
@@ -64,7 +80,7 @@ async function acquireLock(path: string, environment: QueueEnvironment): Promise
   }
 }
 
-async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment): Promise<Result<number>> {
+async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<number>> {
   const messages = `${root}/dispatches/${dispatch}/messages`;
   const deliveries = `${root}/dispatches/${dispatch}/deliveries`;
   await mkdir(messages, { recursive: true }); await mkdir(deliveries, { recursive: true });
@@ -83,6 +99,10 @@ async function appendMessage(root: string, dispatch: string, from: string, type:
     if (recipient !== undefined) {
       const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
       await atomicJson(`${deliveries}/${deliveryId}.json`, { id: deliveryId, dispatchId: dispatch, recipient, messageSeqs: [seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
+      if (recipient === "parent") {
+        const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
+        if (meta !== undefined) await notifyParent(meta, dispatch, processAdapter);
+      }
     }
     return ok(seq);
   } finally { await rm(lock, { recursive: true, force: true }); }
@@ -110,7 +130,7 @@ export async function executeQueueWrite(type: "received" | "ask" | "done", args:
   const root = resolveStateDirectory(environment);
   const child = await findChild(root, environment, processAdapter);
   if ("kind" in child) return child;
-  const append = await appendMessage(root, child.dispatch, "child", type, parsed.value, child.session.id, environment);
+  const append = await appendMessage(root, child.dispatch, "child", type, parsed.value, child.session.id, environment, processAdapter);
   if (append.kind !== "ok") return append;
   const updated = await updateMeta(root, child.dispatch, type);
   if (updated.kind !== "ok") return updated;
