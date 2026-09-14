@@ -1066,13 +1066,13 @@ async function resolveDeviceRequest(root, request) {
   return resolveDeviceDescriptor(request, devices, readCustomDevices());
 }
 
-async function launchBrowser(root, browser, { headless = true, visual = false } = {}) {
+async function launchBrowser(root, browser, { headless = true, visual = false, configPath = '' } = {}) {
   if (!['chromium', 'firefox'].includes(browser)) throw new Error('browser must be chromium or firefox');
   const manifest = manifestFor(root);
   const profile = manifest.profiles?.[browser];
   if (!profile) throw new Error(`no ${browser} browser profile is installed`);
   const playwright = await import(pathToFileURL(path.join(root, 'node_modules', 'playwright', 'index.mjs')).href);
-  const config = readJson(profile.configPath);
+  const config = readJson(configPath || profile.configPath);
   const launchOptions = visual
     ? { ...buildCaptureLaunchOptions(config, browser), headless }
     : { ...(config?.browser?.launchOptions || {}), headless };
@@ -1112,7 +1112,7 @@ function validateScreen(screen) {
   return { ...screen, selectors: screen.selectors || {} };
 }
 
-function captureRequestFromArgs(args) {
+export function captureRequestFromArgs(args) {
   const request = viewportRequestFromArgs(args);
   return {
     ...request,
@@ -1125,6 +1125,7 @@ function captureRequestFromArgs(args) {
     side: args.includes('--baseline') ? 'baseline' : 'candidate',
     replaceBaseline: args.includes('--replace-baseline'),
     fullPage: args.includes('--full-page'),
+    config: argumentValue(args, '--config', ''),
     imageTimeout: parsePositiveInteger(
       argumentValue(args, '--image-timeout', String(DEFAULT_IMAGE_SETTLE_TIMEOUT_MS)),
       '--image-timeout',
@@ -1157,7 +1158,7 @@ async function runVisualScreens(root, args, { capture = true } = {}) {
     reducedMotion: 'reduce',
     ...(request.storageState ? { storageState: validateStorageStateFile(request.storageState) } : {}),
   });
-  const browser = await launchBrowser(root, request.browser, { visual: true });
+  const browser = await launchBrowser(root, request.browser, { configPath: request.config, visual: true });
   const context = await browser.newContext(contextOptions);
   const results = [];
   try {
@@ -1208,7 +1209,7 @@ async function saveSession(root, args) {
   if (existsSync(output) && !args.includes('--replace')) throw new Error(`session state already exists: ${output}; pass --replace to replace it`);
   const request = captureRequestFromArgs(args);
   const descriptor = await resolveDeviceRequest(root, request);
-  const browser = await launchBrowser(root, request.browser, { headless: false });
+  const browser = await launchBrowser(root, request.browser, { headless: false, configPath: request.config });
   const context = await browser.newContext(buildContextOptions(descriptor, { colorScheme: request.theme, reducedMotion: 'reduce' }));
   const page = await context.newPage();
   try {
