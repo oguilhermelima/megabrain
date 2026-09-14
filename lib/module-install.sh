@@ -227,7 +227,7 @@ command_doctor() {
 }
 
 module_orchestration_doctor() {
-  local orca_status superset_status counts_suffix tmux_runtime=false
+  local orca_status=missing superset_status=missing counts_suffix tmux_runtime=false fallback_host=""
   megabrain_dispatch_health_counts
   counts_suffix="; uncertain dispatches: $MODULE_UNCERTAIN_DISPATCHES (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: $MODULE_RETAINED_TERMINALS; leaked dispatch sessions: $MODULE_LEAKED_DISPATCH_SESSIONS; prunable dispatches: $MODULE_PRUNABLE_DISPATCHES"
   if [ "${MODULE_UNCERTAIN_DISPATCHES:-0}" -gt 0 ]; then
@@ -244,37 +244,47 @@ module_orchestration_doctor() {
     tmux_runtime=true
   fi
   if ! megabrain_require_command orca; then
-    if [ "$tmux_runtime" = true ]; then
-      orca_status=optional
-    else
-      megabrain_set_status missing "orca CLI is not on PATH$counts_suffix"
-      return 1
-    fi
+    orca_status=missing
   elif ! orca status --json >/dev/null 2>&1; then
-    megabrain_set_status misconfigured "orca status --json failed$counts_suffix"
-    return 1
+    orca_status=misconfigured
   else
     orca_status=ok
   fi
   if ! megabrain_superset_available; then
-    if [ "$tmux_runtime" = true ]; then
-      superset_status=optional
-    else
-      megabrain_set_status missing "superset CLI is not on PATH and $HOME/.superset/bin/superset is unavailable$counts_suffix"
-      return 1
-    fi
+    superset_status=missing
   elif ! megabrain_superset workspaces list --json >/dev/null 2>&1; then
-    megabrain_set_status misconfigured "superset workspaces list --json failed$counts_suffix"
-    return 1
+    superset_status=misconfigured
   else
     superset_status=ok
   fi
-  if [ "$tmux_runtime" = true ] && { [ "$orca_status" = optional ] || [ "$superset_status" = optional ]; }; then
-    megabrain_set_status ok "tmux runtime is usable; missing orchestrator CLIs are optional$counts_suffix"
+
+  # An orchestrator that is installed but unreachable is no more usable than an
+  # absent one. It is optional whenever another supported runtime is healthy.
+  if [ "$tmux_runtime" = true ]; then
+    fallback_host=tmux
+  elif [ "$orca_status" = ok ]; then
+    fallback_host=orca
+  elif [ "$superset_status" = ok ]; then
+    fallback_host=superset
+  fi
+  if [ -n "$fallback_host" ] && { [ "$orca_status" != ok ] || [ "$superset_status" != ok ]; }; then
+    megabrain_set_status ok "$fallback_host runtime is usable; unavailable orchestrator checks are optional$counts_suffix"
     return 0
   fi
-  megabrain_set_status ok "orca and superset status checks passed$counts_suffix"
-  return 0
+  if [ "$orca_status" = misconfigured ]; then
+    megabrain_set_status misconfigured "orca status --json failed$counts_suffix"
+    return 1
+  fi
+  if [ "$superset_status" = misconfigured ]; then
+    megabrain_set_status misconfigured "superset workspaces list --json failed$counts_suffix"
+    return 1
+  fi
+  if [ "$orca_status" = missing ]; then
+    megabrain_set_status missing "orca CLI is not on PATH$counts_suffix"
+    return 1
+  fi
+  megabrain_set_status missing "superset CLI is not on PATH and $HOME/.superset/bin/superset is unavailable$counts_suffix"
+  return 1
 }
 
 module_orchestration_install() {
