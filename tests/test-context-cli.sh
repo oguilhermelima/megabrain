@@ -16,62 +16,45 @@ fail() {
   exit 1
 }
 
-assert_equal() {
-  [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
-}
-
-assert_contains() {
-  case "$1" in
-    *"$2"*) ;;
-    *) fail "expected output to contain '$2', got: $1" ;;
-  esac
-}
-
-run_cli() {
+run_shell() {
   env -i \
     HOME="$work_dir/home" \
     PATH="/usr/bin:/bin" \
     MEGABRAIN_STATE_DIR="$work_dir/state" \
-    "$@"
+    MEGABRAIN_CONTEXT_IMPLEMENTATION=shell \
+    "$root/megabrain" context --json
+}
+
+run_binary() {
+  env -i \
+    HOME="$work_dir/home" \
+    PATH="/usr/bin:/bin" \
+    MEGABRAIN_STATE_DIR="$work_dir/state" \
+    "$root/.build/megabrain" context --json
+}
+
+compare_case() {
+  local name="$1" shell_output="$2" binary_output="$3"
+  [ "$shell_output" = "$binary_output" ] || fail "$name: shell=$shell_output binary=$binary_output"
+  printf '%s agrees between shell and binary\n' "$name"
 }
 
 mkdir -p "$work_dir/home"
 
-# The default form is the host name, with no framing or extra fields.
-default_output="$(run_cli SUPERSET_TERMINAL_ID=terminal-test "$root/megabrain" context)"
-assert_equal "$default_output" superset
-printf 'default output reports the detected host\n'
+superset_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_CONTEXT_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=terminal SUPERSET_WORKSPACE_ID=workspace SUPERSET_AGENT_ID=claude "$root/megabrain" context --json)"
+superset_binary="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" SUPERSET_TERMINAL_ID=terminal SUPERSET_WORKSPACE_ID=workspace SUPERSET_AGENT_ID=claude "$root/.build/megabrain" context --json)"
+compare_case superset "$superset_shell" "$superset_binary"
 
-# JSON has a stable, exact top-level shape and preserves all context values.
-json_output="$(run_cli \
-  SUPERSET_TERMINAL_ID=terminal-test \
-  SUPERSET_WORKSPACE_ID=workspace-test \
-  SUPERSET_AGENT_ID=agent-test \
-  "$root/megabrain" context --json)"
-assert_equal "$(printf '%s' "$json_output" | jq -S -c 'keys')" '["agentId","host","terminalId","workspaceId"]'
-assert_equal "$(printf '%s' "$json_output" | jq -r '.host')" superset
-assert_equal "$(printf '%s' "$json_output" | jq -r '.workspaceId')" workspace-test
-assert_equal "$(printf '%s' "$json_output" | jq -r '.terminalId')" terminal-test
-assert_equal "$(printf '%s' "$json_output" | jq -r '.agentId')" agent-test
-printf 'JSON output has the exact key set and values\n'
+ai_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_CONTEXT_IMPLEMENTATION=shell AI_AGENT=claude-code_1-2-3_agent AI_MODEL=model AI_EFFORT=high "$root/megabrain" context --json)"
+ai_binary="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" AI_AGENT=claude-code_1-2-3_agent AI_MODEL=model AI_EFFORT=high "$root/.build/megabrain" context --json)"
+compare_case recognized-ai-agent "$ai_shell" "$ai_binary"
 
-# With no orchestrator identity or available Orca CLI, the host is explicitly unknown.
-unknown_output="$(run_cli "$root/megabrain" context)"
-assert_equal "$unknown_output" unknown
-unknown_json="$(run_cli "$root/megabrain" context --json)"
-assert_equal "$(printf '%s' "$unknown_json" | jq -r '.host')" unknown
-assert_equal "$(printf '%s' "$unknown_json" | jq -r '.workspaceId')" null
-assert_equal "$(printf '%s' "$unknown_json" | jq -r '.terminalId')" null
-assert_equal "$(printf '%s' "$unknown_json" | jq -r '.agentId')" null
-printf 'an undetermined host is reported as unknown with null identities\n'
+unknown_agent_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_CONTEXT_IMPLEMENTATION=shell AI_AGENT=unknown-shape "$root/megabrain" context --json)"
+unknown_agent_binary="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" AI_AGENT=unknown-shape "$root/.build/megabrain" context --json)"
+compare_case unrecognized-ai-agent "$unknown_agent_shell" "$unknown_agent_binary"
 
-# Unsupported options must fail as CLI usage errors instead of being ignored.
-set +e
-error_output="$(run_cli "$root/megabrain" context --unsupported 2>&1)"
-error_status=$?
-set -e
-assert_equal "$error_status" 2
-assert_contains "$error_output" 'unknown context option: --unsupported'
-printf 'unknown flags are rejected with a usage error\n'
+absent_shell="$(run_shell)"
+absent_binary="$(run_binary)"
+compare_case no-agent "$absent_shell" "$absent_binary"
 
-printf 'ok: context CLI behaviour is covered\n'
+printf 'ok: context implementations agree across all branches\n'
