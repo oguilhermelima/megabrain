@@ -2349,19 +2349,24 @@ megabrain_worktree_finish() {
   [ "$json" = true ] || printf 'removed: %s\n' "$path"
   if [ "$delete_branch" = true ] && [ -n "$branch" ]; then
     [ "$json" = true ] || printf 'judged branch %s against base %s (%s)\n' "$branch" "$base" "$base_source"
-    branch_delete_output="$(git -C "$repo_path" branch -D "$branch" 2>&1)" || branch_delete_status=$?
-    if [ "$branch_delete_status" -ne 0 ]; then
-      branch_delete_error="$(megabrain_worktree_removal_reason "$branch_delete_output")"
-      if [ "$json" = true ]; then
-        megabrain_worktree_finish_json true "$branch" "$path" "$base" "$base_source" "$base_warning" false "$branch_delete_error" "" ""
-      else
-        [ -n "$branch_delete_output" ] && printf '%s\n' "$branch_delete_output"
+    if ! git -C "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
+      [ "$json" = true ] || printf 'branch already absent: %s\n' "$branch"
+      branch_deleted=false
+    else
+      branch_delete_output="$(git -C "$repo_path" branch -D "$branch" 2>&1)" || branch_delete_status=$?
+      if [ "$branch_delete_status" -ne 0 ]; then
+        branch_delete_error="$(megabrain_worktree_removal_reason "$branch_delete_output")"
+        if [ "$json" = true ]; then
+          megabrain_worktree_finish_json true "$branch" "$path" "$base" "$base_source" "$base_warning" false "$branch_delete_error" "" ""
+        else
+          [ -n "$branch_delete_output" ] && printf '%s\n' "$branch_delete_output"
+        fi
+        megabrain_error "could not delete branch: $branch: $branch_delete_error"
+        return 1
       fi
-      megabrain_error "could not delete branch: $branch: $branch_delete_error"
-      return 1
+      [ "$json" = true ] || [ -z "$branch_delete_output" ] || printf '%s\n' "$branch_delete_output"
+      branch_deleted=true
     fi
-    [ "$json" = true ] || [ -z "$branch_delete_output" ] || printf '%s\n' "$branch_delete_output"
-    branch_deleted=true
   fi
   if [ "$json" = true ]; then
     megabrain_worktree_finish_json true "$branch" "$path" "$base" "$base_source" "$base_warning" "$branch_deleted" "" "" ""
