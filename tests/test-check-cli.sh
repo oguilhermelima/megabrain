@@ -9,11 +9,19 @@ fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-check-cli.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
+assert_equal() {
+  local actual="$1" expected="$2"
+  [ "$actual" = "$expected" ] || {
+    printf 'FAIL: expected %s, got %s\n' "$expected" "$actual" >&2
+    exit 1
+  }
+}
+
 write_fixture() {
   local state_dir="$1"
   mkdir -p "$state_dir/dispatches/check/messages" "$state_dir/dispatches/check/deliveries"
   printf '%s\n' '{"dispatchId":"check","terminalId":"child-terminal","childHost":"superset","runtime":"host"}' >"$state_dir/dispatches/check/meta.json"
-  printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"hello"}' >"$state_dir/dispatches/check/messages/1.json"
+  printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"hello"}' >"$state_dir/dispatches/check/messages/0001-parent-reply.json"
   printf '%s\n' '{"id":"delivery-fixed","dispatchId":"check","recipient":"child","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding"}' >"$state_dir/dispatches/check/deliveries/delivery-fixed.json"
 }
 
@@ -44,3 +52,43 @@ shell_output="$(env -i HOME="$shell_default_home" PATH="/usr/bin:/bin" MEGABRAIN
 binary_output="$(env -i HOME="$binary_default_home" PATH="/usr/bin:/bin" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"
 [ "$shell_output" = "$binary_output" ] || { printf 'FAIL: default state directory differs\n' >&2; exit 1; }
 printf 'check default state directory agrees\n'
+
+run_claim() {
+  local implementation="$1" state_dir="$2" executable="$3"
+  if [ "$implementation" = shell ]; then
+    env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state_dir" \
+      MEGABRAIN_CHECK_IMPLEMENTATION=shell MEGABRAIN_CONSUMER_ID=shared-consumer \
+      MEGABRAIN_CONSUMER_GENERATION=7 SUPERSET_TERMINAL_ID=child-terminal \
+      "$executable" check --timeout 0 --json
+  else
+    env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state_dir" \
+      MEGABRAIN_CONSUMER_ID=shared-consumer MEGABRAIN_CONSUMER_GENERATION=7 \
+      SUPERSET_TERMINAL_ID=child-terminal "$executable" check --timeout 0 --json
+  fi
+}
+
+run_ack() {
+  local state_dir="$1" delivery_id="$2"
+  env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state_dir" \
+    MEGABRAIN_CONSUMER_ID=shared-consumer MEGABRAIN_CONSUMER_GENERATION=7 \
+    SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" ack "$delivery_id" --json
+}
+
+handoff_state="$work_dir/handoff-state"
+write_fixture "$handoff_state"
+shell_claim="$(run_claim shell "$handoff_state" "$root/megabrain")"
+shell_delivery_id="$(printf '%s' "$shell_claim" | jq -r '.deliveryId')"
+binary_replay="$(run_claim binary "$handoff_state" "$root/.build/megabrain")"
+assert_equal "$(printf '%s' "$binary_replay" | jq -r '.replayed')" true
+run_ack "$handoff_state" "$shell_delivery_id" >/dev/null
+assert_equal "$(jq -r '.status' "$handoff_state/dispatches/check/deliveries/$shell_delivery_id.json")" acknowledged
+
+handoff_state="$work_dir/handoff-state-reverse"
+write_fixture "$handoff_state"
+binary_claim="$(run_claim binary "$handoff_state" "$root/.build/megabrain")"
+binary_delivery_id="$(printf '%s' "$binary_claim" | jq -r '.deliveryId')"
+shell_replay="$(run_claim shell "$handoff_state" "$root/megabrain")"
+assert_equal "$(printf '%s' "$shell_replay" | jq -r '.replayed')" true
+run_ack "$handoff_state" "$binary_delivery_id" >/dev/null
+assert_equal "$(jq -r '.status' "$handoff_state/dispatches/check/deliveries/$binary_delivery_id.json")" acknowledged
+printf 'shell and binary claims interoperate across acknowledgements\n'
