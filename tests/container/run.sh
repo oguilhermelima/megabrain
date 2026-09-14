@@ -48,6 +48,7 @@ exec docker run --rm \
     git -C "$HOME/work" -c user.name=megabrain-test -c user.email=test@example.invalid \
       commit -qm "fixture container source"
     cd "$HOME/work"
+    bun run build
     printf "bash %s on %s\n\n" "$BASH_VERSION" "$(uname -sm)"
     selected_tests=""
     if [ "$#" -eq 0 ]; then
