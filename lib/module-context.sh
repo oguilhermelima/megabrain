@@ -20,7 +20,7 @@ megabrain_context_detect() {
 command_context() {
   local format="plain" arg host
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ]; then
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_CONTEXT_IMPLEMENTATION:-}" != shell ]; then
     "$typescript_binary" context "$@"
     return $?
   fi
