@@ -33,6 +33,11 @@ megabrain_tv_device_state() {
 }
 
 command_tv() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TV_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" tv "$@"
+    return $?
+  fi
   local operation="${1:-}" ip="" port=5555 arg serial state
   shift || true
   case "$operation" in
