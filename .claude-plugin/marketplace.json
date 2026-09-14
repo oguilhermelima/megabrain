@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "megabrain",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "source": ".",
       "description": "Shared tooling for Git worktrees, agent orchestration, native simulators, and browser testing."
     }

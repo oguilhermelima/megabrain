@@ -1,6 +1,6 @@
 {
   "name": "megabrain",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "megabrain tooling for Git worktrees, agent orchestration, native simulators, and browser testing.",
   "author": {
     "name": "oguilhermelima",
