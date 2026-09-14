@@ -39,7 +39,26 @@ megabrain_require_command() {
 }
 megabrain_superset_available() { return 1; }
 megabrain_context_detect() { printf 'unknown\n'; }
+finish_remover_mode=error
 orca() {
+  if [ "$finish_remover_mode" = deletes-branch ]; then
+    local command="" path="" branch="" arg=""
+    command="$1 $2"
+    [ "$command" = 'worktree rm' ] || return 1
+    shift 2
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --worktree) path="$(printf '%s' "$2" | sed 's/^path://')"; shift 2 ;;
+        --json|--force) shift ;;
+        *) shift ;;
+      esac
+    done
+    branch="$(command git -C "$path" symbolic-ref --quiet --short HEAD)"
+    command git -C "$path" worktree remove "$path"
+    command git -C "$work_dir/repo" branch -D "$branch"
+    printf '%s\n' '{"deleted":["external-id"],"warnings":[]}'
+    return 0
+  fi
   printf '{"ok":false,"error":"worktree has uncommitted changes"}\n'
   return 1
 }
@@ -106,6 +125,8 @@ scenario_stacked_branch_uses_recorded_parent() {
   output="$(megabrain_worktree_finish "$work_dir/shared/child" --delete-branch --json 2>&1)" ||
     fail "a child merged into its recorded parent was refused: $output"
   assert_contains "$output" '"base":"stack/base"'
+  printf '%s' "$output" | jq -e '.branchDeleted == true' >/dev/null ||
+    fail "a surviving branch was not reported as deleted: $output"
   [ ! -e "$work_dir/shared/child" ] || fail 'the merged child worktree was not removed'
   ! git -C "$work_dir/repo" branch --list stack/child | grep -q stack/child ||
     fail 'the merged child branch was not deleted'
@@ -219,6 +240,27 @@ scenario_explicit_base_overrides_recorded_parent() {
   printf 'an explicit base overrides recorded lineage\n'
 }
 
+scenario_remover_already_deleted_branch_succeeds() {
+  local output finish_rc finish_err
+  setup_root_fixture
+  finish_uses_orca=true
+  finish_remover_mode=deletes-branch
+  set +e
+  output="$(megabrain_worktree_finish "$work_dir/shared/root" --delete-branch --force --json 2>"$work_dir/already-absent.err")"
+  finish_rc=$?
+  set -e
+  finish_err="$(cat "$work_dir/already-absent.err")"
+  [ "$finish_rc" -eq 0 ] || fail "remover that deleted the branch was reported as failure: $output"
+  printf '%s' "$output" | jq -e '.deleted == true and .branchDeleted == false and .error == null and .branch == "stack/root"' >/dev/null ||
+    fail "already absent branch did not return a successful JSON outcome: $output"
+  [ -z "$finish_err" ] || fail "already absent branch wrote an error: $finish_err"
+  [ ! -e "$work_dir/shared/root" ] || fail 'the host remover did not remove the worktree'
+  ! git -C "$work_dir/repo" branch --list stack/root | grep -q stack/root ||
+    fail 'the host remover did not remove the branch'
+  finish_remover_mode=error
+  printf 'a host remover that deletes the branch is already successful\n'
+}
+
 branch_delete_mode=false
 git() {
   local arg="" saw_branch=false
@@ -267,6 +309,7 @@ scenario_unknown_option_returns_json_refusal
 scenario_root_branch_uses_repository_default
 scenario_missing_parent_falls_back_loudly
 scenario_explicit_base_overrides_recorded_parent
+scenario_remover_already_deleted_branch_succeeds
 scenario_branch_delete_failure_returns_json
 
 (

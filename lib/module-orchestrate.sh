@@ -57,10 +57,10 @@ megabrain_dispatch_transition_allowed() {
     dispatch:closed:closed|dispatch:circuit_broken:circuit_broken) return 0 ;;
     process:starting:starting|process:starting:running|process:starting:start-unproven|process:starting:failed|process:starting:stopping|process:starting:stopped|process:starting:stop-unproven|process:starting:abandoned) return 0 ;;
     process:start-unproven:start-unproven|process:start-unproven:running|process:start-unproven:failed|process:start-unproven:stopping|process:start-unproven:stopped|process:start-unproven:stop-unproven|process:start-unproven:abandoned) return 0 ;;
-    process:running:running|process:running:succeeded|process:running:failed|process:running:stopping|process:running:stopped|process:running:abandoned) return 0 ;;
+    process:running:running|process:running:succeeded|process:running:failed|process:running:stopping|process:running:stopped|process:running:abandoned|process:running:exited) return 0 ;;
     process:stopping:stopping|process:stopping:stopped|process:stopping:stop-unproven|process:stopping:running|process:stopping:failed|process:stopping:abandoned) return 0 ;;
     process:stop-unproven:stop-unproven|process:stop-unproven:failed|process:stop-unproven:stopped|process:stop-unproven:abandoned) return 0 ;;
-    process:succeeded:succeeded|process:failed:failed|process:stopped:stopped|process:abandoned:abandoned) return 0 ;;
+    process:succeeded:succeeded|process:failed:failed|process:stopped:stopped|process:abandoned:abandoned|process:exited:exited|process:exited:running|process:exited:succeeded) return 0 ;;
     terminal:owned:owned|terminal:owned:missing|terminal:owned:retained|terminal:owned:released) return 0 ;;
     terminal:retained:retained|terminal:retained:missing|terminal:retained:released) return 0 ;;
     terminal:missing:missing|terminal:missing:retained|terminal:missing:released|terminal:released:released) return 0 ;;
@@ -965,6 +965,15 @@ megabrain_dispatch_reconcile_one() {
   fi
   case "$terminal_status" in
     missing)
+      if [ "$process_state" = exited ]; then
+        MEGABRAIN_RECONCILE_OUTCOME=unchanged
+        return 0
+      fi
+      if [ "$process_state" = running ]; then
+        megabrain_dispatch_reconcile_update "$dispatch_id" __keep__ exited missing agent-exit 'agent exited without reporting' agent-exited terminal-missing __keep__ || return 1
+        MEGABRAIN_RECONCILE_OUTCOME=agent-exited
+        return 0
+      fi
       failure_count="$(printf '%s' "$meta" | jq -r '.failureCount // 0')"
       failure_count=$((failure_count + 1))
       next_state=failed
@@ -1099,9 +1108,9 @@ megabrain_dispatch_health_counts() {
     printf '%s' "$meta" | jq -e . >/dev/null 2>&1 || continue
     records="$(jq --argjson item "$meta" '. + [$item]' <<<"$records")" || continue
   done
-  MODULE_UNCERTAIN_DISPATCHES="$(printf '%s' "$records" | jq '[.[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned")] | length')"
+  MODULE_UNCERTAIN_DISPATCHES="$(printf '%s' "$records" | jq '[.[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned" or (.processState // "") == "exited")] | length')"
   MODULE_RETAINED_TERMINALS="$(printf '%s' "$records" | jq '[.[] | select((.terminalState // "") == "retained")] | length')"
-  MODULE_UNCERTAIN_REASONS="$(printf '%s' "$records" | jq '[.[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned") | {dispatchId, reason: (if .processState == "start-unproven" then "process start was not proven" elif .processState == "stop-unproven" then "process stop was not proven" else "process was abandoned without proof" end), processState, terminalState}]')"
+  MODULE_UNCERTAIN_REASONS="$(printf '%s' "$records" | jq '[.[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned" or (.processState // "") == "exited") | {dispatchId, reason: (if .processState == "start-unproven" then "process start was not proven" elif .processState == "stop-unproven" then "process stop was not proven" elif .processState == "exited" then "agent exited without reporting" else "process was abandoned without proof" end), processState, terminalState}]')"
   MODULE_RETAINED_REASONS="$(printf '%s' "$records" | jq '[.[] | select((.terminalState // "") == "retained") | {dispatchId, reason: (.terminalReason // "terminal identity remains unproven"), processState, terminalState}]')"
   for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
     [ -f "$meta_path" ] || continue
@@ -1230,7 +1239,8 @@ megabrain_dispatch_prune() {
       [ "$terminal_state" = retained ] ||
       [ "$process_state" = start-unproven ] ||
       [ "$process_state" = stop-unproven ] ||
-      [ "$process_state" = abandoned ];
+      [ "$process_state" = abandoned ] ||
+      [ "$process_state" = exited ];
     }; then
       if [ "$dry_run" = true ]; then
         MEGABRAIN_RECONCILE_DRY_RUN=true
@@ -1759,11 +1769,16 @@ megabrain_dispatch_find_child() {
   if [ -n "$direct_id" ]; then
     direct_path="$(megabrain_dispatch_meta_path "$direct_id" 2>/dev/null || true)"
     if [ -n "$direct_path" ] && [ -f "$direct_path" ]; then
+      # WHY: a tmux child is identified by its session and pane. childHost records
+      # which orchestrator owns the terminal, which is a different fact: an Orca
+      # parent writes childHost=orca while the child own session host is tmux.
+      # Matching one against the other only worked while Superset leaked its
+      # terminal id into the child environment.
       if [ "$tmux_identity" = true ]; then
         if [ -n "$tmux_session" ] && jq -e \
           --arg dispatchId "$direct_id" --arg host "$MEGABRAIN_SESSION_HOST" \
           --arg session "$tmux_session" --arg pane "$tmux_pane" \
-          '.dispatchId == $dispatchId and .childHost == $host and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane' \
+          '.dispatchId == $dispatchId and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane' \
           "$direct_path" \
           >/dev/null 2>&1; then
           MEGABRAIN_FOUND_DISPATCH="$direct_id"
@@ -1789,7 +1804,7 @@ megabrain_dispatch_find_child() {
       return 1
     }
     matches="$(jq -r --arg host "$MEGABRAIN_SESSION_HOST" --arg session "$tmux_session" --arg pane "$tmux_pane" \
-      'select(.childHost == $host and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane) | .dispatchId // empty' \
+      'select(.runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane) | .dispatchId // empty' \
       "$MEGABRAIN_DISPATCH_DIR"/*/meta.json 2>/dev/null)" || matches=""
   else
     matches="$(jq -r --arg id "$MEGABRAIN_SESSION_ID" --arg host "$MEGABRAIN_SESSION_HOST" \
