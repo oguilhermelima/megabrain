@@ -23,9 +23,50 @@ MODULE_RETAINED_TERMINALS=0
 MODULE_LEAKED_DISPATCH_SESSIONS=0
 MODULE_PRUNABLE_DISPATCHES=0
 MEGABRAIN_STATE_RECONCILIATION=""
+MEGABRAIN_PARENT_AGENT=""
+MEGABRAIN_PARENT_MODEL=""
+MEGABRAIN_PARENT_EFFORT=""
+MEGABRAIN_PARENT_REASON=""
 MEGABRAIN_DISPATCH_OPEN_STATES='spawning
 running
 waiting_for_reply'
+
+# Resolve the session's parent once for all callers. Superset exposes the complete
+# tuple directly; other hosts expose the agent descriptor through AI_AGENT and may
+# expose the remaining fields through the corresponding AI_* variables. A versioned
+# descriptor is accepted only when its provider and shape are known.
+megabrain_resolve_parent_context() {
+  local descriptor="${AI_AGENT:-}" identity=""
+  MEGABRAIN_PARENT_AGENT="${SUPERSET_AGENT_ID:-}"
+  MEGABRAIN_PARENT_MODEL="${SUPERSET_AGENT_MODEL:-}"
+  MEGABRAIN_PARENT_EFFORT="${SUPERSET_AGENT_EFFORT:-}"
+  MEGABRAIN_PARENT_REASON=""
+
+  if [ -z "$MEGABRAIN_PARENT_AGENT" ]; then
+    case "$descriptor" in
+      claude|codex|agy) identity="$descriptor" ;;
+    esac
+    if [[ "$descriptor" =~ ^claude-code_[0-9]+-[0-9]+-[0-9]+_agent$ ]]; then
+      identity=claude
+    elif [[ "$descriptor" =~ ^codex_[0-9]+-[0-9]+-[0-9]+_agent$ ]]; then
+      identity=codex
+    elif [[ "$descriptor" =~ ^agy_[0-9]+-[0-9]+-[0-9]+_agent$ ]]; then
+      identity=agy
+    elif [ -z "$descriptor" ] && [ -n "${CODEX_SESSION_ID:-}" ]; then
+      identity=codex
+    fi
+    MEGABRAIN_PARENT_AGENT="$identity"
+  fi
+  [ -n "$MEGABRAIN_PARENT_MODEL" ] || MEGABRAIN_PARENT_MODEL="${AI_MODEL:-}"
+  [ -n "$MEGABRAIN_PARENT_EFFORT" ] || MEGABRAIN_PARENT_EFFORT="${AI_EFFORT:-}"
+  if [ -n "$MEGABRAIN_PARENT_AGENT" ]; then
+    MEGABRAIN_PARENT_REASON="parent resolved as $MEGABRAIN_PARENT_AGENT"
+  elif [ -n "$descriptor" ]; then
+    MEGABRAIN_PARENT_REASON="parent agent is unknown: unrecognised AI_AGENT descriptor"
+  else
+    MEGABRAIN_PARENT_REASON="parent agent is unknown: no host identity was provided"
+  fi
+}
 
 megabrain_dispatch_state_is_open() {
   [ -n "${1:-}" ] || return 1
