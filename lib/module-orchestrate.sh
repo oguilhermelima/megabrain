@@ -1078,9 +1078,14 @@ megabrain_dispatch_reconcile() {
   fi
 }
 
+megabrain_dispatch_tmux_sessions() {
+  tmux list-sessions -F '#{session_name}' 2>/dev/null || true
+}
+
 megabrain_dispatch_health_counts() {
-  local meta_path meta records='[]' dispatch_path dispatch_name state timestamp timestamp_epoch cutoff
-  local runtime tmux_session leaked_sessions=''
+  local meta_path='' meta='' records='' dispatch_path='' dispatch_name='' cutoff=0 now=0 prune_states=''
+  local tmux_sessions='' caller_tmux_session='' uncertain_count=0 retained_count=0
+  local leaked_count=0 prunable_count=0 uncertain_reasons='[]' retained_reasons=''
   MODULE_UNCERTAIN_DISPATCHES=0
   MODULE_RETAINED_TERMINALS=0
   MODULE_LEAKED_DISPATCH_SESSIONS=0
@@ -1102,47 +1107,65 @@ megabrain_dispatch_health_counts() {
   if [ -n "$MODULE_UNTRACKED_DISPATCHES" ]; then
     megabrain_notice "dispatch directories without metadata: $MODULE_UNTRACKED_DISPATCHES"
   fi
-  for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
-    [ -f "$meta_path" ] || continue
-    meta="$(cat "$meta_path" 2>/dev/null || true)"
-    printf '%s' "$meta" | jq -e . >/dev/null 2>&1 || continue
-    records="$(jq --argjson item "$meta" '. + [$item]' <<<"$records")" || continue
-  done
-  MODULE_UNCERTAIN_DISPATCHES="$(printf '%s' "$records" | jq '[.[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned" or (.processState // "") == "exited")] | length')"
-  MODULE_RETAINED_TERMINALS="$(printf '%s' "$records" | jq '[.[] | select((.terminalState // "") == "retained")] | length')"
-  MODULE_UNCERTAIN_REASONS="$(printf '%s' "$records" | jq '[.[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned" or (.processState // "") == "exited") | {dispatchId, reason: (if .processState == "start-unproven" then "process start was not proven" elif .processState == "stop-unproven" then "process stop was not proven" elif .processState == "exited" then "agent exited without reporting" else "process was abandoned without proof" end), processState, terminalState}]')"
-  MODULE_RETAINED_REASONS="$(printf '%s' "$records" | jq '[.[] | select((.terminalState // "") == "retained") | {dispatchId, reason: (.terminalReason // "terminal identity remains unproven"), processState, terminalState}]')"
-  for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
-    [ -f "$meta_path" ] || continue
-    state="$(jq -r '.state // empty' "$meta_path" 2>/dev/null || true)"
-    megabrain_dispatch_prune_state_terminal "$state" || continue
-    meta="$(cat "$meta_path" 2>/dev/null || true)"
-    runtime="$(jq -r '.runtime // "host"' "$meta_path" 2>/dev/null || true)"
-    [ "$runtime" = tmux ] || continue
-    tmux_session="$(jq -r '.tmuxSession // empty' "$meta_path" 2>/dev/null || true)"
-    [ -n "$tmux_session" ] || continue
-    megabrain_dispatch_tmux_session_owned "$meta" || continue
-    declare -F megabrain_tmux_session_exists >/dev/null 2>&1 || continue
-    megabrain_tmux_session_exists "$tmux_session" || continue
-    if ! printf '%s\n' "$leaked_sessions" | grep -Fx "$tmux_session" >/dev/null 2>&1; then
-      if [ -n "$leaked_sessions" ]; then
-        leaked_sessions="$leaked_sessions"$'\n'"$tmux_session"
-      else
-        leaked_sessions="$tmux_session"
+  now="$(date -u +%s)"
+  cutoff=$((now - MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS * 86400))
+  prune_states="$(megabrain_dispatch_prune_states)"
+  if declare -F megabrain_tmux_session_exists >/dev/null 2>&1; then
+    tmux_sessions="$(megabrain_dispatch_tmux_sessions)"
+  fi
+  if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] &&
+    declare -F megabrain_dispatch_tmux_caller_session >/dev/null 2>&1; then
+    caller_tmux_session="$(megabrain_dispatch_tmux_caller_session 2>/dev/null || true)"
+  fi
+  records="$(
+    for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
+      [ -f "$meta_path" ] || continue
+      if meta="$(<"$meta_path")"; then
+        printf '%s\0' "$meta"
       fi
-      MODULE_LEAKED_DISPATCH_SESSIONS=$((MODULE_LEAKED_DISPATCH_SESSIONS + 1))
-    fi
-  done
-  cutoff=$(( $(date -u +%s) - MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS * 86400 ))
-  for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
-    [ -f "$meta_path" ] || continue
-    state="$(jq -r '.state // empty' "$meta_path" 2>/dev/null || true)"
-    megabrain_dispatch_prune_state_terminal "$state" || continue
-    timestamp="$(jq -r 'if has("updatedAt") and .updatedAt != null and .updatedAt != "" then .updatedAt else .createdAt // empty end' "$meta_path" 2>/dev/null || true)"
-    timestamp_epoch="$(megabrain_dispatch_timestamp_epoch "$timestamp" 2>/dev/null || true)"
-    [[ "$timestamp_epoch" =~ ^[0-9]+$ ]] && [ "$timestamp_epoch" -le "$cutoff" ] || continue
-    MODULE_PRUNABLE_DISPATCHES=$((MODULE_PRUNABLE_DISPATCHES + 1))
-  done
+    done |
+      jq -R -s -r \
+        --arg cutoff "$cutoff" \
+        --arg pruneStates "$prune_states" \
+        --arg liveSessions "$tmux_sessions" \
+        --arg callerSession "$caller_tmux_session" '
+        (split("\u0000") | map(select(length > 0) | fromjson? | select(type == "object"))) as $records
+        | ($pruneStates | split(",")) as $prune
+        | ($liveSessions | split("\n") | map(select(length > 0))) as $live
+        | {
+            uncertain: [$records[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned" or (.processState // "") == "exited")] | length,
+            retained: [$records[] | select((.terminalState // "") == "retained")] | length,
+            uncertainReasons: [$records[] | select((.processState // "") == "start-unproven" or (.processState // "") == "stop-unproven" or (.processState // "") == "abandoned" or (.processState // "") == "exited") | {dispatchId, reason: (if .processState == "start-unproven" then "process start was not proven" elif .processState == "stop-unproven" then "process stop was not proven" elif .processState == "exited" then "agent exited without reporting" else "process was abandoned without proof" end), processState, terminalState}],
+            retainedReasons: [$records[] | select((.terminalState // "") == "retained") | {dispatchId, reason: (.terminalReason // "terminal identity remains unproven"), processState, terminalState}],
+            leaked: ([$records[]
+              | select(.state as $state | ($prune | index($state)) != null)
+              | select((.runtime // "host") == "tmux")
+              | (.tmuxSession // "") as $session
+              | (.parentTmuxSession // "") as $parent
+              | select($session != "" and $session != $parent and ($callerSession == "" or $session != $callerSession))
+              | $session]
+              | unique
+              | map(. as $session | select($live | index($session) != null))
+              | length),
+            prunable: [$records[]
+              | select(.state as $state | ($prune | index($state)) != null)
+              | (if (has("updatedAt") and .updatedAt != null and .updatedAt != "") then .updatedAt else (.createdAt // "") end) as $timestamp
+              | (try ($timestamp | fromdateiso8601) catch null) as $epoch
+              | select($epoch != null and $epoch <= ($cutoff | tonumber))]
+              | length
+          }
+        | [.uncertain, .retained, .leaked, .prunable, (.uncertainReasons | tojson), (.retainedReasons | tojson)]
+        | @tsv'
+  )" || true
+  IFS=$'\t' read -r uncertain_count retained_count leaked_count prunable_count uncertain_reasons retained_reasons <<EOF
+$records
+EOF
+  MODULE_UNCERTAIN_DISPATCHES="$uncertain_count"
+  MODULE_RETAINED_TERMINALS="$retained_count"
+  MODULE_LEAKED_DISPATCH_SESSIONS="$leaked_count"
+  MODULE_PRUNABLE_DISPATCHES="$prunable_count"
+  MODULE_UNCERTAIN_REASONS="$uncertain_reasons"
+  MODULE_RETAINED_REASONS="$retained_reasons"
 }
 
 megabrain_dispatch_prune_state_terminal() {
