@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveContext, type ContextEnvironment, type ContextProbes } from "../../src/core/context.js";
+import { resolveContext, resolveParentContext, type ContextEnvironment, type ContextProbes } from "../../src/core/context.js";
 
 function environment(values: Partial<ContextEnvironment> = {}): ContextEnvironment {
   return values;
@@ -70,6 +70,31 @@ describe("resolveContext", () => {
       workspaceId: null,
       terminalId: "superset-terminal",
       agentId: null,
+    });
+  });
+});
+
+describe("resolveParentContext", () => {
+  test.each([
+    [{ supersetAgentId: "superset", supersetModel: "superset-model", supersetEffort: "low" }, { kind: "resolved", agent: "superset", model: "superset-model", effort: "low" }],
+    [{ aiAgent: "claude-code_1-2-3_agent", aiModel: "model", aiEffort: "high" }, { kind: "resolved", agent: "claude", model: "model", effort: "high" }],
+    [{ aiAgent: "not-a-known-agent" }, { kind: "unknown", reason: "unrecognised AI_AGENT descriptor", model: null, effort: null }],
+    [{}, { kind: "unknown", reason: "no host identity was provided", model: null, effort: null }],
+  ])("resolves parent context from %j", (input, expected) => {
+    expect(resolveParentContext(input)).toEqual(expected);
+  });
+
+  test("uses AI fields to fill missing Superset fields", () => {
+    expect(resolveParentContext({
+      supersetAgentId: "superset",
+      aiModel: "model",
+      aiEffort: "high",
+    })).toEqual({ kind: "resolved", agent: "superset", model: "model", effort: "high" });
+  });
+
+  test("recognizes a Codex session when only its session id is present", () => {
+    expect(resolveParentContext({ codexSessionId: "session" })).toEqual({
+      kind: "resolved", agent: "codex", model: null, effort: null,
     });
   });
 });

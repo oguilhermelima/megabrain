@@ -70,6 +70,15 @@ async function detectContext(
     tmuxPane: environment.TMUX_PANE,
     workspaceId: environment.SUPERSET_WORKSPACE_ID,
     agentId: environment.SUPERSET_AGENT_ID,
+    parent: {
+      supersetAgentId: environment.SUPERSET_AGENT_ID,
+      supersetModel: environment.SUPERSET_AGENT_MODEL,
+      supersetEffort: environment.SUPERSET_AGENT_EFFORT,
+      aiAgent: environment.AI_AGENT,
+      aiModel: environment.AI_MODEL,
+      aiEffort: environment.AI_EFFORT,
+      codexSessionId: environment.CODEX_SESSION_ID,
+    },
   };
   return ok(resolveContext(contextEnvironment, { tmuxSessionName: tmuxName, orcaWorktree }));
 }
