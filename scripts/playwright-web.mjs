@@ -353,11 +353,12 @@ export async function settlePage(page, { imageTimeout = DEFAULT_IMAGE_SETTLE_TIM
   }, imageTimeout);
 }
 
-export async function prepareDeterministicRendering(page, { now = '2026-01-01T00:00:00.000Z' } = {}) {
+export async function prepareDeterministicRendering(page, { now = null } = {}) {
+  await disableAnimations(page);
+  if (now == null) return;
   const timestamp = new Date(now).getTime();
   if (!Number.isFinite(timestamp)) throw new Error('freeze time must be a valid date');
   await page.clock.install({ time: timestamp });
-  await disableAnimations(page);
 }
 
 export async function disableAnimations(page) {
@@ -1130,7 +1131,7 @@ export function captureRequestFromArgs(args) {
       argumentValue(args, '--image-timeout', String(DEFAULT_IMAGE_SETTLE_TIMEOUT_MS)),
       '--image-timeout',
     ),
-    freezeTime: argumentValue(args, '--freeze-time', '2026-01-01T00:00:00.000Z'),
+    freezeTime: argumentValue(args, '--freeze-time', ''),
   };
 }
 
