@@ -19,6 +19,11 @@ megabrain_context_detect() {
 
 command_context() {
   local format="plain" arg host
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ]; then
+    "$typescript_binary" context "$@"
+    return $?
+  fi
   for arg in "$@"; do
     case "$arg" in
       --json) format="json" ;;
