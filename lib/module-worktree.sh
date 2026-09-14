@@ -2022,7 +2022,7 @@ megabrain_worktree_create() {
     if [ "$host" = superset ]; then
       project_record="$(megabrain_ensure_superset_project "$repo_path" --record)" || {
         project_id="$(megabrain_project_id_for_path "$repo_path" 2>/dev/null || true)"
-        megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" unknown "" false true "could not register Superset project"
+        megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" unknown "" false true "could not register Superset project on host '$host'"
         return 1
       }
       project_id="$(printf '%s' "$project_record" | jq -r '.id // empty')"
