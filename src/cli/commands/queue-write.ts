@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
+import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 
@@ -12,24 +13,36 @@ async function readJson(path: string): Promise<JsonRecord | undefined> {
   try { const value: unknown = JSON.parse(await readFile(path, "utf8")); return typeof value === "object" && value !== null ? value as JsonRecord : undefined; } catch { return undefined; }
 }
 
-function session(environment: QueueEnvironment): Session | undefined {
+async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Session | undefined> {
+  if (environment.TMUX && environment.TMUX_PANE) {
+    const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"]);
+    const pane = result.kind === "ok" ? result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[1] === environment.TMUX_PANE) : undefined;
+    if (pane?.[0]) return { host: "tmux", id: `${pane[0]}:${environment.TMUX_PANE}` };
+    return { host: "tmux", id: "" };
+  }
   if (environment.SUPERSET_TERMINAL_ID) return { host: "superset", id: environment.SUPERSET_TERMINAL_ID };
   if (environment.ORCA_TERMINAL_HANDLE) return { host: "orca", id: environment.ORCA_TERMINAL_HANDLE };
   return undefined;
 }
 
-async function findChild(root: string, environment: QueueEnvironment): Promise<{ dispatch: string; session: Session } | Result<never>> {
-  const current = session(environment);
+async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
+  const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const direct = environment.MEGABRAIN_DISPATCH_ID;
-  const dispatches = direct && /^[A-Za-z0-9._-]+$/.test(direct) ? [direct] : await readdir(`${root}/dispatches`).catch(() => []);
+  const directMeta = direct && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(`${root}/dispatches/${direct}/meta.json`) : undefined;
+  const dispatches = directMeta?.dispatchId === direct ? [direct] : await readdir(`${root}/dispatches`).catch(() => []);
   const matches: string[] = [];
   for (const dispatch of dispatches) {
     const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
-    if (meta?.dispatchId === dispatch && meta.terminalId === current.id && meta.childHost === current.host) matches.push(dispatch);
+    const matchesTerminal = meta?.terminalId === current.id && meta.childHost === current.host;
+    const matchesTmux = current.host === "tmux" && current.id !== "";
+    if (meta?.dispatchId === dispatch && (matchesTerminal || matchesTmux)) matches.push(dispatch);
   }
   if (matches.length > 1) return failed(`terminal identity matches multiple dispatches for ${current.host}/${current.id}: ${matches[0]}, ${matches[1]}`);
-  if (matches.length === 0) return failed(`no managed dispatch belongs to ${current.host}/${current.id}`);
+  if (matches.length === 0) {
+    if (current.host === "tmux") return failed(`no managed dispatch belongs to tmux session ${current.id ? current.id.split(":")[0] : "unknown"} pane ${environment.TMUX_PANE ?? "unknown"}`);
+    return failed(`no managed dispatch belongs to ${current.host}/${current.id}`);
+  }
   return { dispatch: matches[0], session: current };
 }
 
@@ -90,12 +103,12 @@ async function updateMeta(root: string, dispatch: string, type: string): Promise
   return ok(undefined);
 }
 
-export async function executeQueueWrite(type: "received" | "ask" | "done", args: readonly string[], environment: QueueEnvironment): Promise<Result<string>> {
+export async function executeQueueWrite(type: "received" | "ask" | "done", args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(`Usage: megabrain ${type}${type === "received" ? "" : type === "ask" ? ' "question"' : ' "summary"'}\n`);
   const parsed = parseChildMessage(type, args);
   if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);
-  const child = await findChild(root, environment);
+  const child = await findChild(root, environment, processAdapter);
   if ("kind" in child) return child;
   const append = await appendMessage(root, child.dispatch, "child", type, parsed.value, child.session.id, environment);
   if (append.kind !== "ok") return append;

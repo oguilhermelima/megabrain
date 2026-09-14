@@ -37,7 +37,7 @@ export function route(
     return executeTv(commandArgs, dependencies.processAdapter);
   }
   if (command === "received" || command === "ask" || command === "done") {
-    return executeQueueWrite(command, commandArgs, dependencies.environment);
+    return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   return Promise.resolve(failed(`unknown command: ${command ?? ""}`, 2));
 }
