@@ -118,6 +118,11 @@ scenario_unproven_terminal_stays_unknown() {
 }
 
 case "${1:-}" in
+  '')
+    for scenario in missing-tmux missing-superset missing-orca duplicate unproven; do
+      bash "$0" "$scenario"
+    done
+    ;;
   missing-tmux) scenario_missing_terminal_records_exit missing-tmux tmux tmux ;;
   missing-superset) scenario_missing_terminal_records_exit missing-superset superset host ;;
   missing-orca) scenario_missing_terminal_records_exit missing-orca orca host ;;
