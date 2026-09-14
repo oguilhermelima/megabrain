@@ -7,8 +7,15 @@ FROM debian:bookworm-slim
 # cheap enough to rebuild whenever a dependency question comes up.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     bash jq git tmux procps ca-certificates curl tar nodejs \
+     bash jq git tmux procps ca-certificates curl tar nodejs unzip \
   && rm -rf /var/lib/apt/lists/*
+
+# Install the pinned host-compatible Bun release so the copied checkout can
+# compile its contract-test binary inside the Linux container.
+ENV BUN_INSTALL=/opt/bun
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.14 \
+  && chmod -R a+rx "$BUN_INSTALL" \
+  && ln -s "$BUN_INSTALL/bin/bun" /usr/local/bin/bun
 
 # A non-root user, because running the suite as root hides permission mistakes that a real
 # operator would hit, and because the tests create files the host may later inspect.
