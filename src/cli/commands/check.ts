@@ -2,7 +2,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { resolveConsumerIdentity } from "../../core/identity.js";
+import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
@@ -53,16 +53,14 @@ async function dispatchId(environment: CheckEnvironment, root: string, processAd
   return undefined;
 }
 
-async function childConsumer(environment: CheckEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
+async function childIdentity(environment: CheckEnvironment, processAdapter: ProcessAdapter): Promise<Pick<ConsumerIdentityInput, "childHost" | "childSessionId" | "tmux">> {
+  const childHost = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : "tmux";
+  const childSessionId = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
   if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
     const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-    if (result.kind !== "ok" || result.value.stdout.trim().length === 0) return undefined;
-    const host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : "tmux";
-    return `child/${host}/${result.value.stdout.trim()}/${environment.TMUX_PANE}`;
+    return { childHost, tmux: { session: result.kind === "ok" ? result.value.stdout.trim() : undefined, pane: environment.TMUX_PANE } };
   }
-  const host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined;
-  const id = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-  return host !== undefined && id !== undefined ? `child/${host}/${id}` : undefined;
+  return { childHost, childSessionId };
 }
 
 async function loadMessages(directory: string): Promise<CheckMessage[]> {
@@ -129,14 +127,16 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   const root = resolveStateDirectory(environment);
   const dispatch = await dispatchId(environment, root, processAdapter);
   if (dispatch === undefined) return failed(`no managed dispatch belongs to superset/${environment.SUPERSET_TERMINAL_ID ?? "unknown"}`);
-  const resolvedConsumer = resolveConsumerIdentity({
+  const resolvedIdentity = resolveConsumerIdentity({
+    ...(await childIdentity(environment, processAdapter)),
+    mailbox: "child",
     environmentConsumer: environment.MEGABRAIN_CONSUMER_ID,
     explicitConsumer: consumer,
     sessionHost: environment.MEGABRAIN_SESSION_HOST,
     sessionId: environment.MEGABRAIN_SESSION_ID,
-    fallbackConsumer: await childConsumer(environment, processAdapter),
   });
-  if (resolvedConsumer === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  if (resolvedIdentity.kind === "unknown") return failed(resolvedIdentity.reason);
+  const resolvedConsumer = resolvedIdentity.value;
   const started = Date.now();
   let selected: ReturnType<typeof selectDelivery> = { kind: "none" };
   let messages: CheckMessage[] = [];
