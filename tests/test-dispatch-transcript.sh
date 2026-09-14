@@ -96,6 +96,10 @@ megabrain_tmux_session_exists() {
   grep -Fx "$1" "$live_sessions" >/dev/null 2>&1
 }
 
+megabrain_dispatch_tmux_sessions() {
+  cat "$live_sessions"
+}
+
 megabrain_dispatch_terminal_status() {
   MEGABRAIN_TERMINAL_STATUS=proven
 }
