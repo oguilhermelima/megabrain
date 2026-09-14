@@ -53,7 +53,7 @@ setup_fixture() {
 }
 
 megabrain_worktree_root() { printf '%s\n' "$fixture_shared_root"; }
-megabrain_context_detect() { printf 'unknown\n'; }
+megabrain_context_detect() { printf 'superset\n'; }
 megabrain_project_name_for_path() { printf 'test-project\n'; }
 
 megabrain_require_command() {
