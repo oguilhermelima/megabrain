@@ -3,6 +3,8 @@ import { failed, type Result } from "../core/result.js";
 import { executeContext, type Environment } from "./commands/context.js";
 import { executeModel } from "./commands/model.js";
 import { executeWeb } from "./commands/web.js";
+import { executeNative } from "./commands/native.js";
+import { executeTv } from "./commands/tv.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -22,6 +24,12 @@ export function route(
   }
   if (command === "web") {
     return executeWeb(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "native") {
+    return executeNative(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "tv") {
+    return executeTv(commandArgs, dependencies.processAdapter);
   }
   return Promise.resolve(failed(`unknown command: ${command ?? ""}`, 2));
 }

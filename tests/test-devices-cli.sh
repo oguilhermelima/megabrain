@@ -31,7 +31,11 @@ run_pair() {
   printf '%s agrees between shell and binary\n' "$label"
 }
 run_pair native-help native --help
-run_pair native-list native sim list phone
+if [ "$(uname -s)" = Darwin ]; then
+  run_pair native-list native sim list phone
+else
+  printf 'skip: native-list contract requires macOS because the shell implementation is macOS-only\n'
+fi
 run_pair native-invalid native sim list bad
 run_pair tv-help tv --help
 run_pair tv-connect tv connect x
