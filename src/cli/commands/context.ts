@@ -1,39 +1,15 @@
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
+import { resolveContext, type Context, type ContextEnvironment } from "../../core/context.js";
 import { failed, ok, type Result } from "../../core/result.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
-export type Context = {
-  readonly host: string;
-  readonly workspaceId: string | null;
-  readonly terminalId: string | null;
-  readonly agentId: string | null;
-};
-
-type Session = {
-  readonly host: string;
-  readonly terminalId: string;
-};
-
-function present(value: string | undefined): value is string {
-  return value !== undefined && value.length > 0;
-}
-
-function sessionFromEnvironment(environment: Environment): Session | undefined {
-  if (present(environment.SUPERSET_TERMINAL_ID)) {
-    return { host: "superset", terminalId: environment.SUPERSET_TERMINAL_ID };
-  }
-  if (present(environment.ORCA_TERMINAL_HANDLE)) {
-    return { host: "orca", terminalId: environment.ORCA_TERMINAL_HANDLE };
-  }
-  return undefined;
-}
-
-async function sessionFromTmux(
+async function tmuxSessionName(
   environment: Environment,
   processAdapter: ProcessAdapter,
-): Promise<Session | undefined> {
-  if (!present(environment.TMUX) || !present(environment.TMUX_PANE)) {
+): Promise<string | undefined> {
+  if (environment.TMUX === undefined || environment.TMUX.length === 0 ||
+      environment.TMUX_PANE === undefined || environment.TMUX_PANE.length === 0) {
     return undefined;
   }
   const result = await processAdapter.run("tmux", [
@@ -47,9 +23,7 @@ async function sessionFromTmux(
     return undefined;
   }
   const sessionName = result.value.stdout.trim();
-  return sessionName.length > 0
-    ? { host: "tmux", terminalId: `${sessionName}:${environment.TMUX_PANE}` }
-    : undefined;
+  return sessionName.length > 0 ? sessionName : undefined;
 }
 
 function isOrcaWorktreeResponse(value: unknown): boolean {
@@ -79,38 +53,25 @@ async function detectContext(
   environment: Environment,
   processAdapter: ProcessAdapter,
 ): Promise<Result<Context>> {
-  const environmentSession = sessionFromEnvironment(environment);
-  const session = environmentSession ?? await sessionFromTmux(environment, processAdapter);
-  if (session !== undefined) {
-    return ok({
-      host: session.host,
-      workspaceId: present(environment.SUPERSET_WORKSPACE_ID) ? environment.SUPERSET_WORKSPACE_ID : null,
-      terminalId: session.terminalId,
-      agentId: present(environment.SUPERSET_AGENT_ID) ? environment.SUPERSET_AGENT_ID : null,
-    });
-  }
-
+  const tmuxName = await tmuxSessionName(environment, processAdapter);
+  let orcaWorktree = false;
   const orcaResult = await processAdapter.run("orca", ["worktree", "current", "--json"]);
   if (orcaResult.kind === "ok") {
     try {
-      if (isOrcaWorktreeResponse(JSON.parse(orcaResult.value.stdout))) {
-        return ok({
-          host: "orca",
-          workspaceId: null,
-          terminalId: null,
-          agentId: null,
-        });
-      }
+      orcaWorktree = isOrcaWorktreeResponse(JSON.parse(orcaResult.value.stdout));
     } catch {
       // A malformed probe response is indistinguishable from no host.
     }
   }
-  return ok({
-    host: "unknown",
-    workspaceId: present(environment.SUPERSET_WORKSPACE_ID) ? environment.SUPERSET_WORKSPACE_ID : null,
-    terminalId: null,
-    agentId: present(environment.SUPERSET_AGENT_ID) ? environment.SUPERSET_AGENT_ID : null,
-  });
+  const contextEnvironment: ContextEnvironment = {
+    supersetTerminalId: environment.SUPERSET_TERMINAL_ID,
+    orcaTerminalHandle: environment.ORCA_TERMINAL_HANDLE,
+    tmux: environment.TMUX,
+    tmuxPane: environment.TMUX_PANE,
+    workspaceId: environment.SUPERSET_WORKSPACE_ID,
+    agentId: environment.SUPERSET_AGENT_ID,
+  };
+  return ok(resolveContext(contextEnvironment, { tmuxSessionName: tmuxName, orcaWorktree }));
 }
 
 function formatJson(context: Context): string {
