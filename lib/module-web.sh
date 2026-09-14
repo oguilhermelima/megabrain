@@ -322,6 +322,11 @@ command_web_visual() {
 }
 
 command_web() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WEB_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" web "$@"
+    return $?
+  fi
   case "${1:-}" in
     userscript) shift; command_web_userscript "$@" ;;
     viewport) shift; command_web_viewport "$@" ;;
