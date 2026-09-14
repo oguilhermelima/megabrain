@@ -503,6 +503,11 @@ megabrain_native_app_reload() {
 }
 
 command_native() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_NATIVE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" native "$@"
+    return $?
+  fi
   local family="${1:-}" operation="${2:-}" arg=''
   shift || true
   shift || true
