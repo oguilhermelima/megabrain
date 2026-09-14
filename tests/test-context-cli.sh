@@ -5,6 +5,11 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-context-cli.XXXXXX")"
 
+if [ ! -x "$root/.build/megabrain" ]; then
+  printf 'skip: compiled context binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
+  exit 0
+fi
+
 cleanup() {
   rm -rf "$work_dir"
   return 0
