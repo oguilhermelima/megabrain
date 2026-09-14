@@ -6,6 +6,7 @@ import { executeModel } from "./commands/model.js";
 import { executeWeb } from "./commands/web.js";
 import { executeNative } from "./commands/native.js";
 import { executeTv } from "./commands/tv.js";
+import { executeQueueWrite } from "./commands/queue-write.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -34,6 +35,9 @@ export function route(
   }
   if (command === "tv") {
     return executeTv(commandArgs, dependencies.processAdapter);
+  }
+  if (command === "received" || command === "ask" || command === "done") {
+    return executeQueueWrite(command, commandArgs, dependencies.environment);
   }
   return Promise.resolve(failed(`unknown command: ${command ?? ""}`, 2));
 }
