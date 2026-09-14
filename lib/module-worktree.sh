@@ -26,28 +26,39 @@ MEGABRAIN_AGENT_READY_TIMEOUT_MS="${MEGABRAIN_AGENT_READY_TIMEOUT_MS:-10000}"
 MEGABRAIN_TERMINAL_KILLED_TREE='[]'
 
 megabrain_worktree_root() {
-  local raw read_only=false
+  local raw="" read_only=false host=""
   if [ "${1:-}" = --read-only ]; then
     read_only=true
   fi
-  if ! megabrain_superset_available; then
-    megabrain_error "superset CLI is required for shared worktrees"
-    return 1
-  fi
-  raw="$(megabrain_superset settings get worktreeBaseDir 2>/dev/null || true)"
-  raw="$(printf '%s\n' "$raw" | megabrain_trim)"
-  if [ -n "$raw" ] && [ "$raw" != "null" ]; then
-    raw="$(printf '%s' "$raw" | jq -r 'if type == "object" then (.value // .result.value // .path // .result.path // empty) elif type == "string" then . else empty end' 2>/dev/null || printf '%s' "$raw")"
+  host="$(megabrain_context_detect)"
+
+  # Superset remains authoritative when it is the host in use. Do not inspect
+  # an installed but inactive host: its setting may describe another machine's
+  # workspace layout.
+  if [ "$host" = superset ] && megabrain_superset_available; then
+    raw="$(megabrain_superset settings get worktreeBaseDir 2>/dev/null || true)"
     raw="$(printf '%s\n' "$raw" | megabrain_trim)"
+    if [ -n "$raw" ] && [ "$raw" != "null" ]; then
+      raw="$(printf '%s' "$raw" | jq -r 'if type == "object" then (.value // .result.value // .path // .result.path // empty) elif type == "string" then . else empty end' 2>/dev/null || printf '%s' "$raw")"
+      raw="$(printf '%s\n' "$raw" | megabrain_trim)"
+    fi
+  fi
+
+  if [ -z "$raw" ]; then
+    raw="$(megabrain_worktree_root_state_read 2>/dev/null || true)"
   fi
   if [ -z "$raw" ]; then
     if [ "$read_only" = true ] || [ ! -t 0 ]; then
-      megabrain_error "Superset worktreeBaseDir is unset; run superset settings set worktreeBaseDir <path>"
+      megabrain_error "shared worktree root for host '$host' is unset; choose one interactively with megabrain worktree create or set $MEGABRAIN_STATE_DIR/worktree-root"
       return 1
     fi
     read -r -p "Shared worktree root: " raw
     [ -n "$raw" ] || { megabrain_error "worktree root cannot be empty"; return 1; }
-    megabrain_superset settings set worktreeBaseDir "$raw" >/dev/null || return 1
+    if [ "$host" = superset ] && megabrain_superset_available; then
+      megabrain_superset settings set worktreeBaseDir "$raw" >/dev/null || return 1
+    else
+      megabrain_worktree_root_state_write "$raw" || return 1
+    fi
   fi
   raw="${raw/#\~/$HOME}"
   if [ "${raw#/}" = "$raw" ]; then
@@ -58,6 +69,30 @@ megabrain_worktree_root() {
     MEGABRAIN_SHARED_ROOT="$raw"
   fi
   printf '%s\n' "$MEGABRAIN_SHARED_ROOT"
+}
+
+megabrain_worktree_root_state_file() {
+  printf '%s/worktree-root\n' "$MEGABRAIN_STATE_DIR"
+}
+
+megabrain_worktree_root_state_read() {
+  local state_file="" raw=""
+  state_file="$(megabrain_worktree_root_state_file)"
+  [ -f "$state_file" ] || return 0
+  IFS= read -r raw <"$state_file" || true
+  printf '%s\n' "$raw" | megabrain_trim
+}
+
+megabrain_worktree_root_state_write() {
+  local raw="$1" state_file="" temporary_file=""
+  mkdir -p "$MEGABRAIN_STATE_DIR" || return 1
+  state_file="$(megabrain_worktree_root_state_file)"
+  temporary_file="$(mktemp "$MEGABRAIN_STATE_DIR/worktree-root.XXXXXX")" || return 1
+  if ! printf '%s\n' "$raw" >"$temporary_file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  mv -f "$temporary_file" "$state_file"
 }
 
 megabrain_worktree_root_for_selector() {
