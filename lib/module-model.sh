@@ -121,6 +121,11 @@ command_model_list() {
 command_model() {
   local subcommand="${1:-}"
   shift || true
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_MODEL_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" model "$subcommand" "$@"
+    return $?
+  fi
   case "$subcommand" in
     list) command_model_list "$@" ;;
     add) command_model_add "$@" ;;
