@@ -92,3 +92,25 @@ assert_equal "$(printf '%s' "$shell_replay" | jq -r '.replayed')" true
 run_ack "$handoff_state" "$binary_delivery_id" >/dev/null
 assert_equal "$(jq -r '.status' "$handoff_state/dispatches/check/deliveries/$binary_delivery_id.json")" acknowledged
 printf 'shell and binary claims interoperate across acknowledgements\n'
+
+side_state="$work_dir/side-state"
+side_shell_state="$side_state/shell"
+side_binary_state="$side_state/binary"
+write_fixture "$side_shell_state"
+write_fixture "$side_binary_state"
+side_shell_claim="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$side_shell_state" \
+  MEGABRAIN_CHECK_IMPLEMENTATION=shell MEGABRAIN_SESSION_HOST=parent-host \
+  MEGABRAIN_SESSION_ID=parent-session SUPERSET_TERMINAL_ID=child-terminal \
+  "$root/megabrain" check --timeout 0 --json)"
+side_binary_claim="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$side_binary_state" \
+  MEGABRAIN_SESSION_HOST=parent-host MEGABRAIN_SESSION_ID=parent-session \
+  SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"
+side_shell_delivery_id="$(printf '%s' "$side_shell_claim" | jq -r '.deliveryId')"
+side_binary_delivery_id="$(printf '%s' "$side_binary_claim" | jq -r '.deliveryId')"
+side_shell_consumer="$(jq -r '.consumer' "$side_shell_state/dispatches/check/deliveries/$side_shell_delivery_id.json")"
+side_binary_consumer="$(jq -r '.consumer' "$side_binary_state/dispatches/check/deliveries/$side_binary_delivery_id.json")"
+[ "$side_shell_consumer" = "$side_binary_consumer" ] || {
+  printf 'FAIL: child mailbox consumer differs: shell=%s binary=%s\n' "$side_shell_consumer" "$side_binary_consumer" >&2
+  exit 1
+}
+printf 'child mailbox consumer agrees between shell and binary\n'
