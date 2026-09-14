@@ -28,9 +28,10 @@ command_context() {
   done
   host="$(megabrain_context_detect)"
   megabrain_session_id >/dev/null
+  megabrain_resolve_parent_context
   if [ "$format" = json ]; then
     jq -n --arg host "$host" --arg workspace "${SUPERSET_WORKSPACE_ID:-}" \
-      --arg terminal "${MEGABRAIN_SESSION_ID:-}" --arg agent "${SUPERSET_AGENT_ID:-}" \
+      --arg terminal "${MEGABRAIN_SESSION_ID:-}" --arg agent "$MEGABRAIN_PARENT_AGENT" \
       '{host: $host, workspaceId: (if $workspace|length > 0 then $workspace else null end), terminalId: (if $terminal|length > 0 then $terminal else null end), agentId: (if $agent|length > 0 then $agent else null end)}'
   else
     printf '%s\n' "$host"
