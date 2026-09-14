@@ -308,7 +308,19 @@ megabrain_dispatch_terminal_status() {
   printf '%s' "$records" | jq -e . >/dev/null 2>&1 || return 0
   if megabrain_dispatch_terminal_id_exists "$host" "$records" "$terminal_id"; then
     MEGABRAIN_TERMINAL_STATUS=proven
+  elif [ -n "$terminal_id" ]; then
+    case "$host" in
+      orca)
+        jq -e 'def terminals: if type == "array" then . else (.result.terminals // []) end; (terminals | length) == 0' <<<"$records" >/dev/null 2>&1 &&
+          MEGABRAIN_TERMINAL_STATUS=missing
+        ;;
+      superset)
+        jq -e 'def terminals: if type == "array" then . else (.sessions // .result.sessions // .result.terminals // .terminals // []) end; (terminals | length) == 0' <<<"$records" >/dev/null 2>&1 &&
+          MEGABRAIN_TERMINAL_STATUS=missing
+        ;;
+    esac
   fi
+  return 0
 }
 
 command_orchestrate_list() {
@@ -354,7 +366,7 @@ command_orchestrate_list() {
       | ($item.parentHost // "") as $parentHost
       | (($callerId != "") and ($item.parentSessionId == $callerId) and ($parentHost == $callerHost)) as $owned
       | (($item.state // "") == "orphaned") as $orphan
-      | (($item.processState // "") == "start-unproven" or ($item.processState // "") == "stop-unproven" or ($item.processState // "") == "abandoned") as $uncertainItem
+      | (($item.processState // "") == "start-unproven" or ($item.processState // "") == "stop-unproven" or ($item.processState // "") == "abandoned" or ($item.processState // "") == "exited") as $uncertainItem
       | $item + {ownedByCaller: $owned, orphan: $orphan, uncertain: $uncertainItem, reconcileResult: ($item.reconcileOutcome // "unchanged")})
     | map(select(($all or $orphans or $uncertain or .ownedByCaller) and (($orphans | not) or .orphan) and (($uncertain | not) or .uncertain)))
   ' "${meta_paths[@]}" 2>/dev/null)" || {
@@ -381,7 +393,7 @@ command_orchestrate_list() {
         | ($item.parentHost // "") as $parentHost
         | (($callerId != "") and ($item.parentSessionId == $callerId) and ($parentHost == $callerHost)) as $owned
         | (($item.state // "") == "orphaned") as $orphan
-        | (($item.processState // "") == "start-unproven" or ($item.processState // "") == "stop-unproven" or ($item.processState // "") == "abandoned") as $uncertainItem
+        | (($item.processState // "") == "start-unproven" or ($item.processState // "") == "stop-unproven" or ($item.processState // "") == "abandoned" or ($item.processState // "") == "exited") as $uncertainItem
         | $item + {ownedByCaller: $owned, orphan: $orphan, uncertain: $uncertainItem, reconcileResult: ($item.reconcileOutcome // "unchanged")})
       | map(select(($all or $orphans or $uncertain or .ownedByCaller) and (($orphans | not) or .orphan) and (($uncertain | not) or .uncertain)))
     ' "${readable[@]}")" || return 1
