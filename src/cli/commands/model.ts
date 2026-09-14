@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { addModel, formatModelList, reasoningLevels, refreshAgyModels, upgradeRegistry, validateReasoning, type Model, type ModelRegistry } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { resolveStateDirectory } from "../../core/state.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -39,7 +40,7 @@ function parseRegistry(text: string): ModelRegistry | undefined {
 
 function paths(environment: Environment): { readonly template: string; readonly state: string } {
   const root = environment.MEGABRAIN_ROOT ?? process.cwd();
-  const stateDir = environment.MEGABRAIN_STATE_DIR ?? resolve(root, ".megabrain-state");
+  const stateDir = resolveStateDirectory(environment);
   return { template: resolve(root, ".megabrain/models.json"), state: environment.MEGABRAIN_MODEL_FILE ?? resolve(stateDir, "models.json") };
 }
 
