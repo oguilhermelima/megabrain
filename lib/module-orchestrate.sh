@@ -2828,6 +2828,11 @@ megabrain_dispatch_child_message() {
 }
 
 command_ask() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" ask "$@"
+    return $?
+  fi
   # WHY: --help must not look up a child dispatch and enqueue a question.
   case "${1:-}" in
     -h|--help) megabrain_usage_show ask; return 0 ;;
@@ -2837,6 +2842,11 @@ command_ask() {
 }
 
 command_received() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" received "$@"
+    return $?
+  fi
   case "${1:-}" in
     -h|--help) megabrain_usage_show received; return 0 ;;
   esac
@@ -2845,6 +2855,11 @@ command_received() {
 }
 
 command_done() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" done "$@"
+    return $?
+  fi
   case "${1:-}" in
     -h|--help) megabrain_usage_show done; return 0 ;;
   esac
