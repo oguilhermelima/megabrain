@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
@@ -12,6 +12,11 @@ type Session = {
   readonly id: string;
   readonly tmuxSession?: string;
   readonly tmuxPane?: string;
+};
+
+type NotificationResult = {
+  readonly outcome: string;
+  readonly reason: string;
 };
 
 async function readJson(path: string): Promise<JsonRecord | undefined> {
@@ -60,11 +65,78 @@ async function atomicJson(path: string, value: JsonRecord): Promise<void> {
   try { await writeFile(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
 }
 
-async function notifyParent(meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter): Promise<void> {
+async function readParentTmuxChannel(meta: JsonRecord, processAdapter: ProcessAdapter): Promise<{ readonly session: string; readonly pane: string } | undefined> {
+  const session = typeof meta.parentTmuxSession === "string" ? meta.parentTmuxSession : undefined;
   const pane = typeof meta.parentTmuxPane === "string" ? meta.parentTmuxPane : undefined;
-  if (pane === undefined) return;
-  await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", `mail: megabrain orchestrate watch ${dispatch}`]);
-  await processAdapter.run("tmux", ["send-keys", "-t", pane, "Enter"]);
+  if (session === undefined || session === "" || pane === undefined || pane === "") return undefined;
+  const hasSession = await processAdapter.run("tmux", ["has-session", "-t", session]);
+  if (hasSession.kind !== "ok") return undefined;
+  const panes = await processAdapter.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
+  if (panes.kind !== "ok" || !panes.value.stdout.split("\n").some((value) => value === pane)) return undefined;
+  return { session, pane };
+}
+
+async function parentContextMatches(root: string, meta: JsonRecord, processAdapter: ProcessAdapter): Promise<boolean> {
+  const channel = await readParentTmuxChannel(meta, processAdapter);
+  if (channel === undefined) return true;
+  const context = await processAdapter.run("tmux", ["show-environment", "-t", channel.session, "MEGABRAIN_STATE_DIR"]);
+  if (context.kind === "ok") {
+    const value = context.value.stdout.trim().replace(/^MEGABRAIN_STATE_DIR=/, "");
+    if (value !== "") {
+      const [current, parent] = await Promise.all([realpath(root).catch(() => root), realpath(value).catch(() => value)]);
+      if (parent !== current) return false;
+    }
+  }
+  return true;
+}
+
+async function waiterIsActive(root: string, dispatch: string): Promise<boolean> {
+  const path = `${root}/dispatches/${dispatch}/waiter.json`;
+  const waiter = await readJson(path);
+  const pid = typeof waiter?.pid === "number" ? waiter.pid : typeof waiter?.pid === "string" ? Number(waiter.pid) : NaN;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { await rm(path, { force: true }); return false; }
+}
+
+async function appendNotificationOutcome(root: string, dispatch: string, pointer: string, outcome: string, reason: string): Promise<void> {
+  const directory = `${root}/dispatches/${dispatch}`;
+  const path = `${directory}/nudge.log`;
+  const lock = `${directory}/.nudge.lock`;
+  const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "unspecified";
+  while (true) {
+    try { await mkdir(lock); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+  }
+  try { await writeFile(path, `${pointer} outcome=${outcome} reason=${cleanReason}\n`, { flag: "a" }); }
+  finally { await rm(lock, { recursive: true, force: true }); }
+}
+
+async function notifyParent(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter): Promise<NotificationResult> {
+  const pointer = `mail: megabrain orchestrate watch ${dispatch}`;
+  if (!(await parentContextMatches(root, meta, processAdapter))) {
+    return { outcome: "suppressed", reason: "state-directory-mismatch" };
+  }
+  if (await waiterIsActive(root, dispatch)) {
+    return { outcome: "suppressed", reason: "active-waiter" };
+  }
+  const channel = await readParentTmuxChannel(meta, processAdapter);
+  const host = channel === undefined && typeof meta.parentHost === "string" ? meta.parentHost : channel === undefined ? "" : "tmux";
+  let result;
+  if (host === "tmux") {
+    const pane = channel?.pane ?? "";
+    const affordance = meta.parentAgent === "codex" || meta.agent === "codex" ? "Tab" : "Enter";
+    result = await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", pointer]);
+    if (result.kind === "ok") result = await processAdapter.run("tmux", ["send-keys", "-t", pane, affordance]);
+  } else if (host === "orca") {
+    const terminal = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
+    result = await processAdapter.run("orca", ["terminal", "send", "--terminal", terminal, "--text", pointer, "--enter", "--json"]);
+  } else if (host === "superset") {
+    const workspace = typeof meta.parentWorkspaceId === "string" ? meta.parentWorkspaceId : "";
+    const terminal = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
+    result = await processAdapter.run("superset", ["terminals", "send", "--workspace", workspace, "--terminal", terminal, "--text", pointer, "--json"]);
+  } else {
+    return { outcome: "failed", reason: `unsupported parent host: ${host}` };
+  }
+  return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
 }
 
 async function acquireLock(path: string, environment: QueueEnvironment): Promise<Result<void>> {
@@ -101,7 +173,17 @@ async function appendMessage(root: string, dispatch: string, from: string, type:
       await atomicJson(`${deliveries}/${deliveryId}.json`, { id: deliveryId, dispatchId: dispatch, recipient, messageSeqs: [seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
       if (recipient === "parent") {
         const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
-        if (meta !== undefined) await notifyParent(meta, dispatch, processAdapter);
+        if (meta !== undefined) {
+          try {
+            const notification = await notifyParent(root, meta, dispatch, processAdapter);
+            await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, notification.outcome, notification.reason);
+          } catch (error: unknown) {
+            const reason = error instanceof Error ? error.message : "notification failed";
+            try { await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, "failed", reason); } catch { /* notification is best effort */ }
+          }
+        } else {
+          try { await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, "skipped", "metadata-unavailable"); } catch { /* notification is best effort */ }
+        }
       }
     }
     return ok(seq);
