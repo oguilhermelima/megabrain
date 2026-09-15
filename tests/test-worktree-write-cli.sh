@@ -129,6 +129,15 @@ shell_err="$(run_pair shell worktree pr nao-existe 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr nao-existe 2>&1)"; binary_rc=$?
 set -e
 assert_equal "$shell_rc" "$binary_rc"
+assert_equal "$shell_err" "$binary_err"
+assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
+
+set +e
+shell_err="$(run_pair shell worktree finish nao-existe 2>&1)"; shell_rc=$?
+binary_err="$(run_pair binary worktree finish nao-existe 2>&1)"; binary_rc=$?
+set -e
+assert_equal "$shell_rc" "$binary_rc"
+assert_equal "$shell_err" "$binary_err"
 assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
 
 printf '%s\n' "$work/shared" >"$work/state/worktree-root"
