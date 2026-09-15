@@ -9,7 +9,7 @@ assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected '$1' to contain '$
 assert_not_contains() { case "$1" in *"$2"*) fail "expected '$1' not to contain '$2'" ;; esac; }
 run_pair() {
   local shell_impl="$1"; shift
-  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" GH_MODE="${GH_MODE:-success}" PATH="$work/bin:/usr/bin:/bin" "$root/megabrain" "$@"
+  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" REPO_LIST_PATH="$work/repo" GH_MODE="${GH_MODE:-success}" PATH="$work/bin:/usr/bin:/bin" "$root/megabrain" "$@"
 }
 run_pair_no_gh() {
   local shell_impl="$1"; shift
@@ -32,6 +32,15 @@ EOF
 printf 'orca' >>"$INVOCATION_LOG"
 printf ' %s' "$@" >>"$INVOCATION_LOG"
 printf '\n' >>"$INVOCATION_LOG"
+if [ "$1 ${2:-} ${3:-}" = 'repo list --json' ]; then
+  printf '{"result":{"repos":[{"displayName":"megabrain","path":"%s"}]}}\n' "$REPO_LIST_PATH"
+  exit 0
+fi
+if [ "$1 ${2:-}" = 'worktree rm' ]; then
+  for arg in "$@"; do
+    case "$arg" in path:*) /usr/bin/git -C "$REPO_LIST_PATH" worktree remove "${arg#path:}"; exit $? ;; esac
+  done
+fi
 exit 1
 EOF
   cat >"$work/bin/superset" <<'EOF'
@@ -56,6 +65,15 @@ EOF
   chmod +x "$work/bin/git" "$work/bin/orca" "$work/bin/superset" "$work/bin/gh"
 }
 assert_invoked() { assert_contains "$(cat "$work/$1.calls")" "$2"; }
+assert_create_json_equal() {
+  local shell_json="$1" binary_json="$2" shell_keys binary_keys shell_normalized binary_normalized
+  shell_keys="$(printf '%s' "$shell_json" | jq -c 'keys')"
+  binary_keys="$(printf '%s' "$binary_json" | jq -c 'keys')"
+  [ "$shell_keys" = "$binary_keys" ] || fail "create JSON keys differ: shell=$shell_keys binary=$binary_keys"
+  shell_normalized="$(printf '%s' "$shell_json" | jq -S 'del(.worktree, .branch)')"
+  binary_normalized="$(printf '%s' "$binary_json" | jq -S 'del(.worktree, .branch)')"
+  [ "$shell_normalized" = "$binary_normalized" ] || fail "create JSON differs: shell=$shell_normalized binary=$binary_normalized"
+}
 scenario_orchestrate_spawn_keeps_shell_path() {
   local output rc
   : >"$work/binary.calls"
@@ -78,6 +96,31 @@ scenario_orchestrate_spawn_help_uses_own_usage() {
   assert_not_contains "$output" 'Usage: megabrain worktree create'
   printf 'orchestrate spawn help uses its own usage\n'
 }
+scenario_repo_name_create() {
+  local output
+  output="$(run_pair binary worktree create --repo megabrain --branch feat/name-binary --json)" ||
+    fail "binary repo-name create failed: $output"
+  [ -d "$work/shared/feat-name-binary" ] || fail 'binary repo-name create did not create worktree'
+  printf 'repo name resolves for binary create\n'
+}
+scenario_completed_finish_deletes_branch() {
+  local output
+  git -C "$work/repo" worktree add -q "$work/shared/feat-completed-binary" -b feat/completed-binary main
+  printf merged >"$work/shared/feat-completed-binary/merged"
+  git -C "$work/shared/feat-completed-binary" add merged
+  git -C "$work/shared/feat-completed-binary" commit -qm merged
+  git -C "$work/repo" merge --ff-only -q feat/completed-binary
+  git -C "$work/repo" branch --merged main | sed 's/^..//' | grep -Fx 'feat/completed-binary' >/dev/null ||
+    fail 'fixture did not merge completed binary branch'
+  output="$(run_pair binary worktree finish "$work/shared/feat-completed-binary" --delete-branch --json)" ||
+    fail "binary completed finish failed: $output"
+  printf '%s' "$output" | jq -e '.deleted == true and .branchDeleted == true' >/dev/null ||
+    fail "binary completed finish returned unexpected JSON: $output"
+  [ ! -d "$work/shared/feat-completed-binary" ] || fail 'binary completed finish left worktree'
+  git -C "$work/repo" show-ref --verify --quiet refs/heads/feat/completed-binary &&
+    fail 'binary completed finish left branch'
+  printf 'completed binary finish removes worktree and branch\n'
+}
 mkdir -p "$work/home" "$work/state" "$work/repo" "$work/bin"
 git init -q "$work/repo"
 git -C "$work/repo" config user.email tester@example.com
@@ -98,13 +141,24 @@ export SUPERSET_TERMINAL_ID=parent-terminal
 scenario_orchestrate_spawn_keeps_shell_path
 scenario_orchestrate_spawn_help_uses_own_usage
 unset SUPERSET_TERMINAL_ID
+scenario_repo_name_create
+scenario_completed_finish_deletes_branch
 
 shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --base feat/parent --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
 [ -d "$work/shared/feat-create" ] || fail 'shell create did not create its filesystem effect'
 [ -d "$work/shared/feat-create2" ] || fail 'binary create did not create its filesystem effect'
+assert_create_json_equal "$shell_out" "$binary_out"
 assert_invoked shell 'git -C'
 assert_invoked binary 'git -C'
+
+shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create-parent --base feat/parent --parent "path:$work/repo" --json)"
+binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create-parent2 --base feat/parent --parent "path:$work/repo" --json)"
+assert_create_json_equal "$shell_out" "$binary_out"
+
+shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create-issue --base feat/parent --issue 42 --json)"
+binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create-issue2 --base feat/parent --issue 42 --json)"
+assert_create_json_equal "$shell_out" "$binary_out"
 printf change >"$work/shared/feat-create/change"
 git -C "$work/shared/feat-create" add change && git -C "$work/shared/feat-create" commit -qm change
 printf change >"$work/shared/feat-create2/change"
