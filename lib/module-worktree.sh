@@ -2458,6 +2458,11 @@ EOF
 }
 
 megabrain_worktree_list() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" worktree list "$@"
+    return $?
+  fi
   local repo_selector="" arg shared_root repo_filter="" path branch parent in_superset workspaces_json json=false flat=false entry entries pr_json pr_state="" pr_number="" pr_url=""
   local marker marker_line gitdir gitdir_parent common_dir repo_entries="" repo_known=false known_common="" known_path=""
   local repo_output line listed_path listed_branch listed_repo worktree_entries="" current_path="" current_branch=""
