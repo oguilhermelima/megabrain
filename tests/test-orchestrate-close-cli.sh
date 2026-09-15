@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+state_shell="$(mktemp -d /tmp/mbclose-shell.XXXXXX)"
+state_binary="$(mktemp -d /tmp/mbclose-binary.XXXXXX)"
+fake_dir="$(mktemp -d /tmp/mbclose-bin.XXXXXX)"
+trap 'rm -rf "$state_shell" "$state_binary" "$fake_dir"' EXIT
+cat >"$fake_dir/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${MB_CLOSE_MODE:-success}" = failure ]; then
+  printf '%s\n' '{"error":{"message":"terminal close denied by host"}}' >&2
+  exit 1
+fi
+printf '%s\n' '{"ok":true}'
+EOF
+chmod +x "$fake_dir/orca"
+
+source "$root/lib/common.sh"
+source "$root/lib/module-context.sh"
+source "$root/lib/module-orchestrate.sh"
+export PATH="$fake_dir:$PATH" MEGABRAIN_ROOT="$root" SUPERSET_TERMINAL_ID=parent-terminal
+
+orca() {
+  if [ "${MB_CLOSE_MODE:-success}" = failure ]; then
+    printf '%s\n' '{"error":{"message":"terminal close denied by host"}}' >&2
+    return 1
+  fi
+  printf '%s\n' '{"ok":true}'
+}
+
+make_meta() {
+  local state="$1" id="$2"
+  export MEGABRAIN_STATE_DIR="$state" MEGABRAIN_DISPATCH_DIR="$state/dispatches"
+  megabrain_dispatch_meta_write "$id" parent-terminal superset orca workspace-test "$id-terminal" "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
+}
+run_one() {
+  local implementation="$1" state="$2" mode="$3" id="$4" out err rc
+  make_meta "$state" "$id"
+  export MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION="$implementation" MB_CLOSE_MODE="$mode"
+  set +e
+  out="$(command_orchestrate close "$id" --json 2>"$state/err")"
+  rc=$?
+  set -e
+  err="$(cat "$state/err")"
+  printf '%s\t%s\t%s\t%s\n' "$rc" "$out" "$err" "$(jq -c '{state,terminalState,terminalReason}' "$state/dispatches/$id/meta.json")"
+}
+
+success_shell="$(run_one shell "$state_shell" success close-success)"
+success_binary="$(run_one binary "$state_binary" success close-success)"
+[ "$(printf '%s' "$success_shell" | tr -d '[:space:]')" = "$(printf '%s' "$success_binary" | tr -d '[:space:]')" ]
+[ "$(printf '%s' "$success_shell" | cut -f1)" = "0" ]
+[ "$(printf '%s' "$success_binary" | cut -f1)" = "0" ]
+[ "$(printf '%s' "$success_shell" | cut -f2)" = "$(printf '%s' "$success_binary" | cut -f2)" ]
+
+failure_shell="$(run_one shell "$state_shell" failure close-failure)"
+failure_binary="$(run_one binary "$state_binary" failure close-failure)"
+[ "$(printf '%s' "$failure_shell" | cut -f1)" = "1" ]
+[ "$(printf '%s' "$failure_binary" | cut -f1)" = "1" ]
+[ "$(printf '%s' "$failure_shell" | tr -d '[:space:]')" = "$(printf '%s' "$failure_binary" | tr -d '[:space:]')" ]
+printf '2 passed, 0 failed, 0 skipped\n'
