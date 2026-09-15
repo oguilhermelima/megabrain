@@ -30,6 +30,63 @@ git -C "$repo" worktree add -q "$shared/two" -b feature/two
 git -C "$shared/two" checkout -q --detach HEAD
 printf '%s\n' "$shared" >"$work_dir/worktree-root"
 
+write_recording_wrappers() {
+  local bin="$work_dir/bin"
+  mkdir -p "$bin"
+  cat >"$bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' gh >>"$MEGABRAIN_CALL_LOG"
+printf '%s\n' '[]'
+EOF
+  cat >"$bin/orca" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' orca >>"$MEGABRAIN_CALL_LOG"
+printf '%s\n' '[]'
+EOF
+  chmod +x "$bin/gh" "$bin/orca"
+}
+
+scenario_binary_call_count_is_independent_of_worktree_count() {
+  [ -x "$root/.build/megabrain" ] || {
+    printf 'skip: compiled worktree list binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
+    return 0
+  }
+
+  local small_shared="$work_dir/shared-small"
+  local large_shared="$work_dir/shared-large"
+  local small_state="$work_dir/state-small"
+  local large_state="$work_dir/state-large"
+  local small_log="$work_dir/small-calls.log"
+  local large_log="$work_dir/large-calls.log"
+  mkdir -p "$small_shared" "$large_shared" "$small_state" "$large_state"
+  git -C "$repo" worktree add -q "$small_shared/one" -b count/one
+  git -C "$repo" worktree add -q "$small_shared/two" -b count/two
+  git -C "$repo" worktree add -q "$large_shared/one" -b count/three
+  git -C "$repo" worktree add -q "$large_shared/two" -b count/four
+  git -C "$repo" worktree add -q "$large_shared/three" -b count/five
+  git -C "$repo" worktree add -q "$large_shared/four" -b count/six
+  printf '%s\n' "$small_shared" >"$small_state/worktree-root"
+  printf '%s\n' "$large_shared" >"$large_state/worktree-root"
+  write_recording_wrappers
+
+  env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" \
+    MEGABRAIN_STATE_DIR="$small_state" MEGABRAIN_CALL_LOG="$small_log" \
+    "$root/.build/megabrain" worktree list --json >/dev/null
+  env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" \
+    MEGABRAIN_STATE_DIR="$large_state" MEGABRAIN_CALL_LOG="$large_log" \
+    "$root/.build/megabrain" worktree list --json >/dev/null
+
+  local small_gh small_orca large_gh large_orca
+  small_gh="$(grep -c '^gh$' "$small_log")"
+  small_orca="$(grep -c '^orca$' "$small_log")"
+  large_gh="$(grep -c '^gh$' "$large_log")"
+  large_orca="$(grep -c '^orca$' "$large_log")"
+  [ "$small_gh" = "$large_gh" ] || fail "gh invocation counts differ: small=$small_gh large=$large_gh"
+  [ "$small_orca" = "$large_orca" ] || fail "orca invocation counts differ: small=$small_orca large=$large_orca"
+  printf 'binary invocation count is independent of worktree count: gh %s=%s, orca %s=%s\n' \
+    "$small_gh" "$large_gh" "$small_orca" "$large_orca"
+}
+
 run_shell() {
   env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir" \
     MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=shell "$root/megabrain" worktree list "$@"
@@ -70,6 +127,7 @@ compare_case flat --flat
 compare_case tree --tree
 compare_case repo-filter --repo "$shared/one" --json
 compare_case unknown-option --not-an-option
+scenario_binary_call_count_is_independent_of_worktree_count
 if [ ! -x "$root/.build/megabrain" ]; then
   printf 'skip: compiled worktree list binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
 fi
