@@ -358,6 +358,11 @@ megabrain_fact_command_remove() {
 command_fact() {
   local subcommand="${1:-}"
   shift || true
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_FACT_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" fact "$subcommand" "$@"
+    return $?
+  fi
   case "$subcommand" in
     list) megabrain_fact_command_list "$@" ;;
     add) megabrain_fact_command_add "$@" ;;
