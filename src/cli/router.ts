@@ -17,6 +17,7 @@ import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/o
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
+import { executeChain } from "./commands/chain.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -36,6 +37,9 @@ export function route(
   }
   if (command === "model") {
     return executeModel(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "chain") {
+    return executeChain(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "web") {
     return executeWeb(commandArgs, dependencies.environment, dependencies.processAdapter);

@@ -11,6 +11,7 @@ export type ChainConfig = Readonly<{
 export type ChainSelection =
   | { readonly kind: "selected"; readonly name: string; readonly steps: readonly ChainStep[]; readonly usedDefault: boolean; readonly reason: string }
   | { readonly kind: "ambiguous"; readonly candidates: readonly string[] }
+  | { readonly kind: "not-found"; readonly name: string }
   | { readonly kind: "default"; readonly name: "defaultSteps"; readonly steps: readonly ChainStep[]; readonly reason: string };
 
 export function selectChain(
@@ -21,7 +22,7 @@ export function selectChain(
   if (explicitName !== undefined && explicitName.length > 0) {
     const chain = config.chains[explicitName];
     if (chain !== undefined) return { kind: "selected", name: explicitName, steps: chain.steps, usedDefault: false, reason: "explicit --chain requested" };
-    return { kind: "default", name: "defaultSteps", steps: config.defaultSteps, reason: `chain not found: ${explicitName}` };
+    return { kind: "not-found", name: explicitName };
   }
   const matches = Object.entries(config.chains).filter(([, chain]) => {
     const selector = chain.when ?? {};
