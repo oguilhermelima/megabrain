@@ -21,6 +21,11 @@ source "$root/lib/module-context.sh"
 source "$root/lib/module-orchestrate.sh"
 export PATH="$fake_dir:$PATH" MEGABRAIN_ROOT="$root" SUPERSET_TERMINAL_ID=parent-terminal
 
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
 orca() {
   if [ "${MB_CLOSE_MODE:-success}" = failure ]; then
     printf '%s\n' '{"error":{"message":"terminal close denied by host"}}' >&2
@@ -48,14 +53,14 @@ run_one() {
 
 success_shell="$(run_one shell "$state_shell" success close-success)"
 success_binary="$(run_one binary "$state_binary" success close-success)"
-[ "$(printf '%s' "$success_shell" | tr -d '[:space:]')" = "$(printf '%s' "$success_binary" | tr -d '[:space:]')" ]
-[ "$(printf '%s' "$success_shell" | cut -f1)" = "0" ]
-[ "$(printf '%s' "$success_binary" | cut -f1)" = "0" ]
-[ "$(printf '%s' "$success_shell" | cut -f2)" = "$(printf '%s' "$success_binary" | cut -f2)" ]
+[ "$(printf '%s' "$success_shell" | tr -d '[:space:]')" = "$(printf '%s' "$success_binary" | tr -d '[:space:]')" ] || fail "close-success: shell=$success_shell binary=$success_binary"
+[ "$(printf '%s' "$success_shell" | cut -f1)" = "0" ] || fail "close-success-shell-status: expected=0 actual=$(printf '%s' "$success_shell" | cut -f1)"
+[ "$(printf '%s' "$success_binary" | cut -f1)" = "0" ] || fail "close-success-binary-status: expected=0 actual=$(printf '%s' "$success_binary" | cut -f1)"
+[ "$(printf '%s' "$success_shell" | cut -f2)" = "$(printf '%s' "$success_binary" | cut -f2)" ] || fail "close-success-output: shell=$(printf '%s' "$success_shell" | cut -f2) binary=$(printf '%s' "$success_binary" | cut -f2)"
 
 failure_shell="$(run_one shell "$state_shell" failure close-failure)"
 failure_binary="$(run_one binary "$state_binary" failure close-failure)"
-[ "$(printf '%s' "$failure_shell" | cut -f1)" = "1" ]
-[ "$(printf '%s' "$failure_binary" | cut -f1)" = "1" ]
-[ "$(printf '%s' "$failure_shell" | tr -d '[:space:]')" = "$(printf '%s' "$failure_binary" | tr -d '[:space:]')" ]
+[ "$(printf '%s' "$failure_shell" | cut -f1)" = "1" ] || fail "close-failure-shell-status: expected=1 actual=$(printf '%s' "$failure_shell" | cut -f1)"
+[ "$(printf '%s' "$failure_binary" | cut -f1)" = "1" ] || fail "close-failure-binary-status: expected=1 actual=$(printf '%s' "$failure_binary" | cut -f1)"
+[ "$(printf '%s' "$failure_shell" | tr -d '[:space:]')" = "$(printf '%s' "$failure_binary" | tr -d '[:space:]')" ] || fail "close-failure: shell=$failure_shell binary=$failure_binary"
 printf '2 passed, 0 failed, 0 skipped\n'
