@@ -36,4 +36,25 @@ describe("orchestrate reconcile", () => {
     expect(reconcileDecision(meta({ processState: "succeeded" }), "missing", "unknown").updates.processState).toBeUndefined();
     expect(reconcileDecision(meta({ processState: "stopped", failureCount: 2 }), "missing", "unknown").updates.state).toBe("circuit_broken");
   });
+
+  test("retains an unknown terminal when the parent is alive", () => {
+    expect(reconcileDecision(meta(), "unknown", "alive")).toEqual({
+      outcome: "identity-unproven",
+      updates: { terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" },
+    });
+  });
+
+  test("retains an unknown terminal when the parent is unknown", () => {
+    expect(reconcileDecision(meta(), "unknown", "unknown")).toEqual({
+      outcome: "identity-unproven",
+      updates: { terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" },
+    });
+  });
+
+  test("marks a starting process as start-unproven for an unknown terminal", () => {
+    expect(reconcileDecision(meta({ processState: "starting" }), "unknown", "alive")).toEqual({
+      outcome: "identity-unproven",
+      updates: { processState: "start-unproven", terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" },
+    });
+  });
 });
