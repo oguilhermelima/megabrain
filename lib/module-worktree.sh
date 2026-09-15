@@ -1816,6 +1816,11 @@ megabrain_worktree_copy_env_files() {
 }
 
 megabrain_worktree_create() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" worktree create "$@"
+    return $?
+  fi
   local repo_selector="" branch="" base="" slug="" agent="" model="" effort="" chain_name="" prompt="" label="" worktree_selector="" parent_selector="" issue="" linear_issue="" pr_number="" orchestrate=false json=false reused=false browser=false
   local parent_requested=false no_parent=false parent_path="" parent_branch="" parent_tag=""
   local parent_metadata_set=false parent_metadata_error="" lineage_set=false grouping_set=false lineage_error="" grouping_error=""
@@ -2217,6 +2222,11 @@ megabrain_worktree_finish_json() {
 }
 
 megabrain_worktree_finish() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" worktree finish "$@"
+    return $?
+  fi
   local target="" delete_branch=false force=false json=false arg="" shared_root="" path="" workspace_id="" repo_path="" branch="" base="" merged=""
   local parent_branch="" base_source="" base_warning="" branch_delete_status=0 branch_delete_output="" branch_delete_error=""
   local removal_output="" removal_status=0 removal_error="" branch_deleted="" usage_message="" refusal_message=""
@@ -2380,6 +2390,11 @@ megabrain_worktree_finish() {
 }
 
 megabrain_worktree_pr() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" worktree pr "$@"
+    return $?
+  fi
   local target="" base="" title="" body="" arg shared_root path repo_path branch parent_branch="" ahead="" response="" json=false
   while [ "$#" -gt 0 ]; do
     arg="$1"
