@@ -66,6 +66,7 @@ function codexRows(environment: ChainEnvironment): LimitRow[] {
     for (const line of readFileSync(path, "utf8").split("\n")) { try { const value = JSON.parse(line); const limits = value?.payload?.rate_limits ?? value?.rate_limits; if (limits && typeof limits === "object") snapshots.push({ limits, mtime }); } catch { /* malformed rollout lines are irrelevant */ } }
   }
   snapshots.sort((a, b) => b.mtime - a.mtime); const rows: LimitRow[] = [];
+  let incomplete = false;
   for (const window of ["5h", "weekly"]) {
     const minutes = window === "5h" ? 300 : 10080; const chosen = snapshots.find((entry) => Object.values(entry.limits).some((value: any) => value?.window_minutes === minutes)) ?? snapshots[0];
     if (!chosen) { rows.push(unknownLimit("codex", window, "rollout has no rate limit snapshot")); continue; }
@@ -75,10 +76,11 @@ function codexRows(environment: ChainEnvironment): LimitRow[] {
       if (usable.length === 1) field = usable[0]?.[0];
     }
     const value: any = field ? chosen.limits[field] : undefined;
-    if (!field || typeof value?.used_percent !== "number" || typeof value?.resets_at !== "number") { rows.push(unknownLimit("codex", window, field ? `snapshot reports ${field} ${minutes} minutes but its usage data is incomplete` : "requested window is not present")); continue; }
+    if (!field || typeof value?.used_percent !== "number" || typeof value?.resets_at !== "number") { incomplete = true; rows.push(unknownLimit("codex", window, field ? `snapshot reports ${field} ${minutes} minutes but its usage data is incomplete` : "requested window is not present")); continue; }
     if (value.resets_at <= now) { rows.push(unknownLimit("codex", window, `recorded window has already reset at ${value.resets_at} and carries no information about the current window`)); continue; }
     rows.push({ provider: "codex", window, status: "current", usedPercent: value.used_percent, resetsAt: String(value.resets_at), source: "disk", fetchedAt: chosen.mtime, reason: `codex ${window} window at ${value.used_percent.toFixed(1)} percent`, bucket: "default", reading: { kind: "floor", basis: "last-recorded-turn" } });
   }
+  if (incomplete) for (const row of rows) { row.status = "unknown"; row.usedPercent = null; row.resetsAt = null; row.source = "unknown"; row.fetchedAt = Math.floor(Date.now() / 1000); row.bucket = null; row.reading = null; }
   return rows;
 }
 function limits(environment: ChainEnvironment, asJson: boolean): string {
