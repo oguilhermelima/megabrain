@@ -596,6 +596,11 @@ megabrain_dispatch_liveness_read() {
 }
 
 megabrain_dispatch_liveness() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" orchestrate liveness "$@"
+    return $?
+  fi
   local dispatch_id="${1:-}"
   case "$dispatch_id" in
     -h|--help) megabrain_usage_show orchestrate-liveness; return 0 ;;
@@ -2150,6 +2155,11 @@ megabrain_dispatch_host_terminal_read() {
 }
 
 megabrain_dispatch_read() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" orchestrate read "$@"
+    return $?
+  fi
   local dispatch_id="${1:-}" lines=200 json=false arg meta runtime pane output source transcript_path
   local truncated=false transcript_bytes
   case "$dispatch_id" in
