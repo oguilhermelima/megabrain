@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
 
-async function readJson(path: string): Promise<JsonRecord | undefined> {
+export async function readJson(path: string): Promise<JsonRecord | undefined> {
   try {
     const value: unknown = await Bun.file(path).json();
     return typeof value === "object" && value !== null ? value as JsonRecord : undefined;
@@ -18,7 +18,7 @@ async function readJson(path: string): Promise<JsonRecord | undefined> {
 
 function number(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined; }
 
-async function files(path: string): Promise<string[]> {
+export async function files(path: string): Promise<string[]> {
   const result: string[] = [];
   for await (const entry of new Bun.Glob("**/*.json").scan({ cwd: path, absolute: true })) result.push(entry);
   return result;
@@ -63,7 +63,7 @@ async function childIdentity(environment: CheckEnvironment, processAdapter: Proc
   return { childHost, childSessionId };
 }
 
-async function loadMessages(directory: string): Promise<CheckMessage[]> {
+export async function loadMessages(directory: string): Promise<CheckMessage[]> {
   const result: CheckMessage[] = [];
   for (const path of await files(directory)) {
     const value = await readJson(path);
@@ -73,7 +73,7 @@ async function loadMessages(directory: string): Promise<CheckMessage[]> {
   return orderMessages(result);
 }
 
-async function loadDeliveries(directory: string): Promise<CheckDelivery[]> {
+export async function loadDeliveries(directory: string): Promise<CheckDelivery[]> {
   const result: CheckDelivery[] = [];
   for (const path of await files(directory)) {
     const value = await readJson(path);
@@ -84,7 +84,7 @@ async function loadDeliveries(directory: string): Promise<CheckDelivery[]> {
   return result;
 }
 
-async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[]): Promise<void> {
+export async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[]): Promise<void> {
   const directory = `${root}/dispatches/${dispatch}/deliveries`;
   for (const message of messages) {
     if (deliveries.some((delivery) => delivery.messageSeqs.includes(message.seq))) continue;
@@ -98,7 +98,7 @@ async function migrateDeliveries(root: string, dispatch: string, messages: reado
   }
 }
 
-function report(dispatch: string, delivery: CheckDelivery | undefined, messages: CheckMessage[], replayed: boolean, json: boolean): string {
+export function report(dispatch: string, delivery: CheckDelivery | undefined, messages: CheckMessage[], replayed: boolean, json: boolean): string {
   if (delivery === undefined) return json ? `${JSON.stringify({ dispatchId: dispatch, deliveryId: null, replayed: false, status: "empty", messageSeqs: [], messages: [], text: "" }, null, 2)}\n` : `dispatch: ${dispatch}\nstatus: empty\n`;
   const batch = orderMessages(messages.filter((message) => delivery.messageSeqs.includes(message.seq)));
   const outputMessages = batch.map(({ path: _path, ...message }) => message);

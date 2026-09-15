@@ -2220,6 +2220,14 @@ megabrain_dispatch_report() {
 }
 
 megabrain_dispatch_mailbox_watch() {
+  if [ "$1" = parent ]; then
+    local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+    if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_WATCH_IMPLEMENTATION:-}" != shell ]; then
+      shift
+      "$typescript_binary" orchestrate watch "$@"
+      return $?
+    fi
+  fi
   local mailbox="$1" dispatch_id timeout=120 poll_interval=3 wait_mode=nudge json=false full=false arg meta start_time now remaining
   local consumer="${MEGABRAIN_CONSUMER_ID:-}" generation="${MEGABRAIN_CONSUMER_GENERATION:-1}"
   local messages_dir deliveries_dir lock path seq from type message_seqs delivery_id outstanding_path outstanding_consumer outstanding_generation outstanding_seq candidate_seq delivery_status
@@ -2357,6 +2365,14 @@ megabrain_dispatch_child_check() {
 }
 
 megabrain_dispatch_ack_for_owner() {
+  if [ "$1" = parent ]; then
+    local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+    if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION:-}" != shell ]; then
+      shift
+      "$typescript_binary" orchestrate ack "$@"
+      return $?
+    fi
+  fi
   local owner="$1" dispatch_id="" delivery_id="" consumer="${MEGABRAIN_CONSUMER_ID:-}" generation="${MEGABRAIN_CONSUMER_GENERATION:-1}"
   local json=false arg meta path status record_consumer record_generation lock tmp now message_seqs
   shift

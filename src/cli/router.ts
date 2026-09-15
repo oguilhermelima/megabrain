@@ -9,6 +9,7 @@ import { executeTv } from "./commands/tv.js";
 import { executeQueueWrite } from "./commands/queue-write.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeFact } from "./commands/fact.js";
+import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -40,6 +41,12 @@ export function route(
   }
   if (command === "orchestrate" && commandArgs[0] === "list") {
     return executeOrchestrateList(commandArgs.slice(1), dependencies.environment);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "watch") {
+    return executeOrchestrateWatch(commandArgs.slice(1), dependencies.environment);
+  }
+  if (command === "orchestrate" && (commandArgs[0] === "ack" || commandArgs[0] === "acknowledge")) {
+    return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment);
   }
   if (command === "fact") {
     return executeFact(commandArgs, dependencies.environment, dependencies.processAdapter);
