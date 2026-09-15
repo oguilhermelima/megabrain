@@ -6,6 +6,7 @@ export type DispatchHandle = Readonly<{ dispatchId: string; directory: string }>
 export type DispatchFile = "meta" | "messages" | "deliveries" | "transcript" | "message-lock" | "nudge" | "nudge-lock" | "waiter";
 
 export function dispatchRoot(stateDirectory: string): string { return `${stateDirectory}/dispatches`; }
+export function dispatchArchiveParentDirectory(stateDirectory: string, month: string): string { return `${dispatchRoot(stateDirectory)}/archive/${month}`; }
 export function dispatchArchiveDirectory(stateDirectory: string, month: string, dispatchId: string): string { return `${dispatchRoot(stateDirectory)}/archive/${month}/${dispatchId}`; }
 export async function liveDispatchDirectories(stateDirectory: string): Promise<string[]> {
   const root = dispatchRoot(stateDirectory);

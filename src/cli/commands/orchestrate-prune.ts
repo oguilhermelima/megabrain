@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parsePruneArgs, pruneDecision, type PruneOptions } from "../../core/orchestrate-prune.js";
-import { dispatchArchiveDirectory, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
+import { dispatchArchiveDirectory, dispatchArchiveParentDirectory, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
 import { resolveStateDirectory } from "../../core/state.js";
 
 type RecordValue = Record<string, unknown>;
@@ -27,7 +27,7 @@ export async function executeOrchestratePrune(args: readonly string[], environme
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
     if (options.mode === "archive") {
       const target = dispatchArchiveDirectory(root, month, entry.id); archived.push({ dispatchId: entry.id, path: target });
-      if (!options.dryRun) { try { await mkdir(`${root}/dispatches/archive/${month}`, { recursive: true }); await rename(entry.directory, target); } catch { archived.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not archive dispatch" }); } }
+      if (!options.dryRun) { try { await mkdir(dispatchArchiveParentDirectory(root, month), { recursive: true }); await rename(entry.directory, target); } catch { archived.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not archive dispatch" }); } }
     } else { deleted.push(entry.id); if (!options.dryRun) { try { await rm(entry.directory, { recursive: true, force: true }); } catch { deleted.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not delete dispatch" }); } } }
   }
   const result = { mode: options.mode, dryRun: options.dryRun, olderThanDays: options.olderThan, archived, deleted, skipped };
