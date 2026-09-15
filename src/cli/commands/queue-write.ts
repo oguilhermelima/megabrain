@@ -4,6 +4,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
+import { dispatchPath } from "../../adapters/dispatch-store.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -39,12 +40,12 @@ async function findChild(root: string, environment: QueueEnvironment, processAda
   const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const direct = environment.MEGABRAIN_DISPATCH_ID;
-  const directMeta = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(`${root}/dispatches/${direct}/meta.json`) : undefined;
+  const directMeta = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(await dispatchPath(root, direct, "meta.json")) : undefined;
   const directDispatch = direct !== undefined && directMeta?.dispatchId === direct ? direct : undefined;
   const dispatches = directDispatch !== undefined ? [directDispatch] : await readdir(`${root}/dispatches`).catch(() => []);
   const matches: string[] = [];
   for (const dispatch of dispatches) {
-    const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
+    const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
     const matchesTerminal = meta?.terminalId === current.id && meta.childHost === current.host;
     const matchesTmux = current.host === "tmux" &&
       meta?.runtime === "tmux" &&
@@ -91,7 +92,7 @@ async function parentContextMatches(root: string, meta: JsonRecord, processAdapt
 }
 
 async function waiterIsActive(root: string, dispatch: string): Promise<boolean> {
-  const path = `${root}/dispatches/${dispatch}/waiter.json`;
+  const path = await dispatchPath(root, dispatch, "waiter.json");
   const waiter = await readJson(path);
   const pid = typeof waiter?.pid === "number" ? waiter.pid : typeof waiter?.pid === "string" ? Number(waiter.pid) : NaN;
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -99,7 +100,7 @@ async function waiterIsActive(root: string, dispatch: string): Promise<boolean> 
 }
 
 async function appendNotificationOutcome(root: string, dispatch: string, pointer: string, outcome: string, reason: string): Promise<void> {
-  const directory = `${root}/dispatches/${dispatch}`;
+  const directory = await dispatchPath(root, dispatch, "");
   const path = `${directory}/nudge.log`;
   const lock = `${directory}/.nudge.lock`;
   const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "unspecified";
@@ -178,8 +179,8 @@ export async function acquireLock(path: string, environment: QueueEnvironment): 
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
-  const messages = `${root}/dispatches/${dispatch}/messages`;
-  const deliveries = `${root}/dispatches/${dispatch}/deliveries`;
+  const messages = await dispatchPath(root, dispatch, "messages");
+  const deliveries = await dispatchPath(root, dispatch, "deliveries");
   await mkdir(messages, { recursive: true }); await mkdir(deliveries, { recursive: true });
   const lock = `${messages}/.lock`;
   const acquired = lockHeld ? ok(undefined) : await acquireLock(lock, environment);
@@ -198,7 +199,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
       const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
       await atomicJson(`${deliveries}/${deliveryId}.json`, { id: deliveryId, dispatchId: dispatch, recipient, messageSeqs: [seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
       if (recipient === "parent" && classification === "actionable") {
-        const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
+        const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
         if (meta !== undefined) {
           try {
             const notification = await notifyParent(root, meta, dispatch, processAdapter);
@@ -217,7 +218,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
 }
 
 async function updateMeta(root: string, dispatch: string, type: string): Promise<Result<void>> {
-  const path = `${root}/dispatches/${dispatch}/meta.json`;
+  const path = await dispatchPath(root, dispatch, "meta.json");
   const meta = await readJson(path);
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
   const state = typeof meta.state === "string" ? meta.state : "running";
