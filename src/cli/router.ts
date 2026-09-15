@@ -7,6 +7,7 @@ import { executeWeb } from "./commands/web.js";
 import { executeNative } from "./commands/native.js";
 import { executeTv } from "./commands/tv.js";
 import { executeQueueWrite } from "./commands/queue-write.js";
+import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -35,6 +36,9 @@ export function route(
   }
   if (command === "tv") {
     return executeTv(commandArgs, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "list") {
+    return executeOrchestrateList(commandArgs.slice(1), dependencies.environment);
   }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);

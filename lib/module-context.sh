@@ -330,6 +330,11 @@ megabrain_dispatch_terminal_status() {
 }
 
 command_orchestrate_list() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" orchestrate list "$@"
+    return $?
+  fi
   local json=false all=false orphans=false uncertain=false arg caller_id caller_host meta_path
   local entries
   local -a meta_paths
