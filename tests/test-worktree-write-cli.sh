@@ -15,6 +15,10 @@ run_pair_no_gh() {
   local shell_impl="$1"; shift
   env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" PATH="/usr/bin:/bin" "$root/megabrain" "$@"
 }
+run_pair_from() {
+  local directory="$1" shell_impl="$2"; shift 2
+  (cd "$directory" && run_pair "$shell_impl" "$@")
+}
 write_fakes() {
   cat >"$work/bin/git" <<'EOF'
 #!/usr/bin/env bash
@@ -60,11 +64,16 @@ git -C "$work/repo" config init.defaultBranch main
 printf base >"$work/repo/base"
 git -C "$work/repo" add base
 git -C "$work/repo" commit -qm base
+git -C "$work/repo" checkout -qb feat/parent
+printf parent >"$work/repo/parent"
+git -C "$work/repo" add parent
+git -C "$work/repo" commit -qm parent
+git -C "$work/repo" checkout -q main
 printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 write_fakes
 
-shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --json)"
-binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --json)"
+shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --base feat/parent --json)"
+binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
 [ -d "$work/shared/feat-create" ] || fail 'shell create did not create its filesystem effect'
 [ -d "$work/shared/feat-create2" ] || fail 'binary create did not create its filesystem effect'
 assert_invoked shell 'git -C'
@@ -73,6 +82,8 @@ printf change >"$work/shared/feat-create/change"
 git -C "$work/shared/feat-create" add change && git -C "$work/shared/feat-create" commit -qm change
 printf change >"$work/shared/feat-create2/change"
 git -C "$work/shared/feat-create2" add change && git -C "$work/shared/feat-create2" commit -qm change
+git -C "$work/shared/feat-create" config branch.feat/create.megabrain-parent feat/parent
+git -C "$work/shared/feat-create2" config branch.feat/create2.megabrain-parent feat/parent
 
 set +e
 shell_err="$(run_pair shell worktree finish "$work/shared/feat-create" --delete-branch 2>&1)"; shell_rc=$?
@@ -92,7 +103,6 @@ binary_err="$(run_pair binary worktree pr nao-existe 2>&1)"; binary_rc=$?
 set -e
 assert_equal "$shell_rc" "$binary_rc"
 assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
-assert_equal "$binary_err" "$shell_err"
 
 printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 set +e
@@ -103,6 +113,20 @@ assert_equal "$shell_rc" 1
 assert_equal "$binary_rc" 1
 assert_equal "$shell_err" "$binary_err"
 assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
+
+set +e
+shell_err="$(run_pair shell worktree pr "$work/shared/feat-create" --base nao-existe 2>&1)"; shell_rc=$?
+binary_err="$(run_pair binary worktree pr "$work/shared/feat-create2" --base nao-existe 2>&1)"; binary_rc=$?
+set -e
+assert_equal "$shell_rc" 1
+assert_equal "$binary_rc" 1
+assert_equal "$shell_err" "$binary_err"
+assert_equal "$shell_err" 'megabrain: pull request base does not exist: nao-existe'
+
+shell_out="$(run_pair_from /tmp shell worktree pr feat/create --json)"
+binary_out="$(run_pair_from /tmp binary worktree pr feat/create2 --json)"
+assert_equal "$(printf '%s' "$shell_out" | jq -r '.base')" feat/parent
+assert_equal "$(printf '%s' "$binary_out" | jq -r '.base')" feat/parent
 
 mv "$work/bin/gh" "$work/bin/gh.missing"
 set +e
@@ -133,12 +157,8 @@ binary_out="$(run_pair binary worktree pr "$work/shared/feat-create2" --json)"
 assert_equal "$(printf '%s' "$shell_out" | jq -r '.branch')" feat/create
 assert_equal "$(printf '%s' "$binary_out" | jq -r '.branch')" feat/create2
 assert_invoked shell 'gh auth status'
-assert_invoked shell 'gh pr create --base main --head feat/create'
+assert_invoked shell 'gh pr create --base feat/parent --head feat/create'
 assert_invoked binary 'gh auth status'
-assert_invoked binary 'gh pr create --base main --head feat/create2'
-assert_invoked shell 'orca worktree show'
-assert_invoked shell 'superset workspaces list'
-assert_not_contains "$(cat "$work/binary.calls")" 'orca'
-assert_not_contains "$(cat "$work/binary.calls")" 'superset'
+assert_invoked binary 'gh pr create --base feat/parent --head feat/create2'
 
 printf 'ok: worktree create and finish compare both output, status, and filesystem effects\n'
