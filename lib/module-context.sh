@@ -55,9 +55,23 @@ command_orchestrate() {
     watch) megabrain_dispatch_watch "$@" ;;
     read) megabrain_dispatch_read "$@" ;;
     ack|acknowledge) megabrain_dispatch_ack "$@" ;;
-    reply) megabrain_dispatch_reply "$@" ;;
+    reply)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION:-}" != shell ]; then
+        "$typescript_binary" orchestrate reply "$@"
+        return $?
+      fi
+      megabrain_dispatch_reply "$@"
+      ;;
     stop) megabrain_dispatch_stop "$@" ;;
-    change) megabrain_dispatch_change "$@" ;;
+    change)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION:-}" != shell ]; then
+        "$typescript_binary" orchestrate change "$@"
+        return $?
+      fi
+      megabrain_dispatch_change "$@"
+      ;;
     close) megabrain_dispatch_close "$@" ;;
     -h|--help|"")
       megabrain_usage_show orchestrate-spawn orchestrate-list orchestrate-reconcile \
