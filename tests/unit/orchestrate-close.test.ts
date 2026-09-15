@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeDecision, closeOutput, parseCloseArgs } from "../../src/core/orchestrate-close.js";
+import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../src/core/orchestrate-close.js";
 
 const meta = (values: Record<string, unknown> = {}) => ({ dispatchId: "d", state: "running", terminalState: "owned", runtime: "host", ...values });
 
@@ -14,5 +14,9 @@ describe("orchestrate close", () => {
   test("formats shared and host close output", () => {
     expect(closeOutput("d", false, "tmux", "orca", "shared-pane")).toBe("closed: d\ntmux pane removed; the shared tmux session and host terminal tab were kept.\n");
     expect(JSON.parse(closeOutput("d", true, "host", "orca", "unknown"))).toEqual({ dispatchId: "d", status: "closed" });
+  });
+  test("extracts and defaults host close reasons", () => {
+    expect(hostCloseReason('{"error":{"message":"terminal close denied"}}')).toBe("terminal close denied");
+    expect(hostCloseReason("\n\r")).toBe("the host gave no reason");
   });
 });
