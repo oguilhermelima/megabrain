@@ -56,6 +56,28 @@ EOF
   chmod +x "$work/bin/git" "$work/bin/orca" "$work/bin/superset" "$work/bin/gh"
 }
 assert_invoked() { assert_contains "$(cat "$work/$1.calls")" "$2"; }
+scenario_orchestrate_spawn_keeps_shell_path() {
+  local output rc
+  : >"$work/binary.calls"
+  set +e
+  output="$(run_pair binary orchestrate spawn --repo "$work/repo" --branch feat/orchestrate \
+    --agent codex --model gpt-5 --effort medium --prompt spawn-test --tmux false --json 2>&1)"
+  rc=$?
+  set -e
+  [ "$rc" -ne 2 ] || fail "orchestrate spawn failed during argument parsing: $output"
+  assert_invoked binary 'git -C'
+  assert_not_contains "$output" 'unknown worktree create option: --orchestrate'
+  printf 'orchestrate spawn reaches the shell create path without invoking the binary\n'
+}
+
+scenario_orchestrate_spawn_help_uses_own_usage() {
+  local output
+  output="$(run_pair binary orchestrate spawn --help 2>&1)" ||
+    fail "orchestrate spawn help failed: $output"
+  assert_contains "$output" 'Usage: megabrain orchestrate spawn'
+  assert_not_contains "$output" 'Usage: megabrain worktree create'
+  printf 'orchestrate spawn help uses its own usage\n'
+}
 mkdir -p "$work/home" "$work/state" "$work/repo" "$work/bin"
 git init -q "$work/repo"
 git -C "$work/repo" config user.email tester@example.com
@@ -71,6 +93,11 @@ git -C "$work/repo" commit -qm parent
 git -C "$work/repo" checkout -q main
 printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 write_fakes
+
+export SUPERSET_TERMINAL_ID=parent-terminal
+scenario_orchestrate_spawn_keeps_shell_path
+scenario_orchestrate_spawn_help_uses_own_usage
+unset SUPERSET_TERMINAL_ID
 
 shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --base feat/parent --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
