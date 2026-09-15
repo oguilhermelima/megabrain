@@ -1,0 +1,111 @@
+import { mkdir, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { failed, ok, type Result } from "../../core/result.js";
+import { resolveStateDirectory } from "../../core/state.js";
+import { resolveConsumerIdentity } from "../../core/identity.js";
+import { selectDelivery, type CheckDelivery } from "../../core/check.js";
+import { files, loadDeliveries, loadMessages, migrateDeliveries, readJson, report } from "./check.js";
+import { acknowledgeDelivery, parseParentAckArgs } from "../../core/parent-queue.js";
+
+export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
+type JsonRecord = Record<string, unknown>;
+
+function number(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined; }
+
+async function lock(path: string): Promise<void> {
+  while (true) {
+    try { await mkdir(path); return; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+  }
+}
+
+async function writeAtomic(path: string, value: JsonRecord): Promise<void> {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try { await Bun.write(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
+}
+
+async function requireParent(root: string, dispatch: string, environment: ParentQueueEnvironment): Promise<Result<JsonRecord>> {
+  const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
+  if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
+  const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
+  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
+  if (!sessionHost || !sessionId) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  if (meta.parentSessionId !== sessionId || meta.parentHost !== sessionHost) return failed(`dispatch ${dispatch} is owned by ${String(meta.parentHost ?? "")}/${String(meta.parentSessionId ?? "")}, not ${sessionHost}/${sessionId}`);
+  return ok(meta);
+}
+
+function parseWatchArgs(args: readonly string[]): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly json: boolean }> {
+  const dispatch = args[0] ?? "";
+  if (dispatch === "") return failed("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n", 2);
+  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = 1; let full = false; let json = false;
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--timeout") timeout = Number(args[++index]);
+    else if (arg === "--poll-interval") pollInterval = Number(args[++index]);
+    else if (arg === "--wait-mode") { const value = args[++index]; if (value !== "nudge" && value !== "poll") return failed("--wait-mode must be nudge or poll", 2); waitMode = value; }
+    else if (arg === "--poll") waitMode = "poll";
+    else if (arg === "--consumer") consumer = args[++index];
+    else if (arg === "--generation") generation = Number(args[++index]);
+    else if (arg === "--full") full = true;
+    else if (arg === "--json") json = true;
+    else return failed(`unknown orchestrate watch option: ${arg}`, 2);
+  }
+  if (!Number.isInteger(timeout) || timeout < 0) return failed("--timeout must be a non-negative number of seconds", 2);
+  if (!Number.isInteger(pollInterval) || pollInterval < 0) return failed("--poll-interval must be a non-negative number of seconds", 2);
+  if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);
+  return ok({ dispatch, timeout, pollInterval, waitMode, consumer, generation, full, json });
+}
+
+export async function executeOrchestrateWatch(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
+  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
+  const parsed = parseWatchArgs(args); if (parsed.kind !== "ok") return parsed;
+  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatch, environment); if (parent.kind !== "ok") return parent;
+  const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
+  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
+  const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
+  if (identity.kind !== "known") return failed(identity.reason);
+  const started = Date.now();
+  while (true) {
+    const messages = await loadMessages(`${root}/dispatches/${parsed.value.dispatch}/messages`);
+    const deliveries = await loadDeliveries(`${root}/dispatches/${parsed.value.dispatch}/deliveries`);
+    await migrateDeliveries(root, parsed.value.dispatch, messages, deliveries);
+    const selected = selectDelivery("parent", parsed.value.full, await loadDeliveries(`${root}/dispatches/${parsed.value.dispatch}/deliveries`), messages, identity.value, parsed.value.generation);
+    if (selected.kind === "selected") {
+      const path = `${root}/dispatches/${parsed.value.dispatch}/deliveries/${selected.delivery.id}.json`;
+      if (selected.delivery.consumer !== null && selected.delivery.consumer !== identity.value) continue;
+      if (selected.delivery.consumer !== null && selected.delivery.consumerGeneration !== parsed.value.generation) {
+        await lock(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`);
+        const current = await readJson(path); if (current !== undefined) await writeAtomic(path, { ...current, status: "fenced", fencedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        await rm(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`, { recursive: true, force: true });
+        continue;
+      }
+      if (selected.delivery.consumer === null) {
+        await lock(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`);
+        const current = await readJson(path); if (current !== undefined && current.consumer === null) await writeAtomic(path, { ...current, consumer: identity.value, consumerGeneration: parsed.value.generation, updatedAt: new Date().toISOString() });
+        await rm(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`, { recursive: true, force: true });
+      }
+      return ok(report(parsed.value.dispatch, selected.delivery, messages, selected.replayed, parsed.value.json));
+    }
+    if (selected.kind === "unknown" || Date.now() - started >= parsed.value.timeout * 1000) return ok(report(parsed.value.dispatch, undefined, [], false, parsed.value.json));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, parsed.value.pollInterval * 1000)));
+  }
+}
+
+export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
+  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--json]\n");
+  const parsed = parseParentAckArgs(args); if (parsed.kind !== "ok") return parsed;
+  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment); if (parent.kind !== "ok") return parent;
+  const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
+  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
+  const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
+  if (identity.kind !== "known") return failed(identity.reason);
+  const path = `${root}/dispatches/${parsed.value.dispatchId}/deliveries/${parsed.value.deliveryId}.json`; const delivery = await readJson(path);
+  if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
+  const status = typeof delivery.status === "string" ? delivery.status : ""; const recordConsumer = typeof delivery.consumer === "string" ? delivery.consumer : ""; const recordGeneration = number(delivery.consumerGeneration) ?? 0;
+  const decision = acknowledgeDelivery(status, recordConsumer, recordGeneration, identity.value, parsed.value.generation); if (decision.kind !== "ok") return { ...decision, error: decision.error.replace("delivery delivery", `delivery ${parsed.value.deliveryId}`) };
+  await lock(`${root}/dispatches/${parsed.value.dispatchId}/messages/.lock`);
+  const now = new Date().toISOString(); const current = await readJson(path); if (current !== undefined && decision.value.duplicate === false) await writeAtomic(path, { ...current, status: "acknowledged", acknowledgedAt: now, updatedAt: now });
+  await rm(`${root}/dispatches/${parsed.value.dispatchId}/messages/.lock`, { recursive: true, force: true });
+  const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
+  if (parsed.value.json) return ok(`${JSON.stringify({ dispatchId: parsed.value.dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: decision.value.duplicate, status: "acknowledged", messageSeqs }, null, 2)}\n`);
+  return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${decision.value.duplicate}\n`);
+}
