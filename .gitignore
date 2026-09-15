@@ -1,1 +1,15 @@
+# Compiled binary produced by bun build --compile
 .build/
+
+# Release archives produced by scripts/release.sh
+dist/
+
+# Node and Bun
+node_modules/
+*.tsbuildinfo
+
+# Test output
+coverage/
+tests/container/.results/
+
+.DS_Store
