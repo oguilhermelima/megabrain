@@ -1,5 +1,5 @@
 import { failed, ok, type Result } from "../../core/result.js";
-import { closeDecision, closeOutput, parseCloseArgs } from "../../core/orchestrate-close.js";
+import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../core/orchestrate-close.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
@@ -19,7 +19,8 @@ function caller(environment: QueueEnvironment): { host?: string; id?: string; tm
 }
 
 function errorText(result: { readonly error?: string; readonly value?: { readonly stderr: string } }): string {
-  return result.error ?? result.value?.stderr ?? "the host gave no reason";
+  const raw = result.error ?? result.value?.stderr ?? "";
+  return hostCloseReason(/^(?:orca|megabrain_superset) exited with status \d+$/.test(raw) ? "" : raw);
 }
 
 export async function executeOrchestrateClose(args: readonly string[], environment: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {

@@ -3,6 +3,25 @@ import { failed, ok, type Result } from "./result.js";
 export type CloseArguments = Readonly<{ dispatchId: string; forceRelease: boolean; json: boolean }>;
 export type CloseDecision = "close" | "duplicate" | "retained" | "caller";
 
+export function hostCloseReason(raw: string): string {
+  let extracted: unknown;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
+      const error = parsed.error;
+      if (typeof error === "object" && error !== null) {
+        if ("message" in error && typeof error.message === "string") extracted = error.message;
+        else if ("code" in error && typeof error.code === "string") extracted = error.code;
+      } else if (typeof error === "string") extracted = error;
+    }
+    if (extracted === undefined && typeof parsed === "object" && parsed !== null && "message" in parsed && typeof parsed.message === "string") extracted = parsed.message;
+  } catch {
+    // The host may return plain text instead of JSON.
+  }
+  const reason = (typeof extracted === "string" ? extracted : raw).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  return reason === "" ? "the host gave no reason" : reason;
+}
+
 export function parseCloseArgs(args: readonly string[]): Result<CloseArguments> {
   const dispatchId = args[0] ?? "";
   if (dispatchId === "") return failed("Usage: megabrain orchestrate close <dispatch-id> [--force-release] [--json]\n", 2);
