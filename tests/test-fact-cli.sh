@@ -35,6 +35,10 @@ run_pair invalid-date "$work_dir/invalid.json" fact add not-a-date --measurement
 unset MEGABRAIN_STATE_DIR
 run_pair state-default "$work_dir/state-default.json" fact list --json
 
+default_shell_out="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_FACT_IMPLEMENTATION=shell "$root/megabrain" fact list 2>&1)"
+default_binary_out="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" "$root/.build/megabrain" fact list 2>&1)"
+compare default-facts-file "$default_shell_out" 0 "$default_binary_out" 0
+
 handoff_shell="$work_dir/handoff-shell.json"
 handoff_binary="$work_dir/handoff-binary.json"
 env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_FACTS_FILE="$handoff_shell" MEGABRAIN_FACT_IMPLEMENTATION=shell "$root/megabrain" fact add shell-fact --measurement shell --who tester --when 2026-09-07T19:27:29Z --command measure >/dev/null
