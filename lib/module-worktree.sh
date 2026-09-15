@@ -1817,7 +1817,14 @@ megabrain_worktree_copy_env_files() {
 
 megabrain_worktree_create() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+  local orchestrate_requested=false orchestrate_arg=""
+  for orchestrate_arg in "$@"; do
+    if [ "$orchestrate_arg" = --orchestrate ]; then
+      orchestrate_requested=true
+      break
+    fi
+  done
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ] && [ "$orchestrate_requested" = false ]; then
     "$typescript_binary" worktree create "$@"
     return $?
   fi
