@@ -1038,6 +1038,11 @@ megabrain_dispatch_reconcile_update() {
 }
 
 megabrain_dispatch_reconcile() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_RECONCILE_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" orchestrate reconcile "$@"
+    return $?
+  fi
   local dispatch_id="" all=false json=false arg meta_path meta entries='[]' outcome
   case "${1:-}" in
     -h|--help)
@@ -2574,6 +2579,11 @@ megabrain_dispatch_reply() {
 }
 
 megabrain_dispatch_stop() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" orchestrate stop "$@"
+    return $?
+  fi
   local dispatch_id="${1:-}" json=false arg meta runtime host liveness_status liveness_reason agent pane terminal_status
   local interrupt_affordance interrupt_status attempted_text result_text interrupt_reason=''
   case "$dispatch_id" in
