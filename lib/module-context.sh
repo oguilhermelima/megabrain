@@ -49,7 +49,14 @@ command_orchestrate() {
   case "$subcommand" in
     spawn) command_worktree create --orchestrate "$@" ;;
     list) command_orchestrate_list "$@" ;;
-    prune) megabrain_dispatch_prune "$@" ;;
+    prune)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION:-}" != shell ]; then
+        "$typescript_binary" orchestrate prune "$@"
+        return $?
+      fi
+      megabrain_dispatch_prune "$@"
+      ;;
     reconcile) megabrain_dispatch_reconcile "$@" ;;
     liveness) megabrain_dispatch_liveness "$@" ;;
     watch) megabrain_dispatch_watch "$@" ;;

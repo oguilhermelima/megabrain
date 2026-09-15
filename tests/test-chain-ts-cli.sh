@@ -27,7 +27,10 @@ export MEGABRAIN_STATE_DIR="$state/empty-state"
 mkdir -p "$MEGABRAIN_STATE_DIR"
 compare "empty list" chain list --json
 compare "missing snapshot limits" chain limits --json
+compare "shell-only selection" chain select --json
 
 printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":42,"window_minutes":300,"resets_at":1}}}}' >"$HOME/.codex/sessions/rollout-stale.jsonl"
 compare "stale snapshot limits" chain limits --json
+touch -t 202001010000 "$HOME/.codex/sessions/rollout-stale.jsonl"
+cp "$root/tests/fixtures/codex-rollout-incomplete-usage.jsonl" "$HOME/.codex/sessions/rollout-incomplete-usage.jsonl"
 printf 'chain compiled contract: passed\n'

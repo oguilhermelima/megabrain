@@ -5,6 +5,14 @@ import { resolveDispatchId } from "../core/dispatch-paths.js";
 export type DispatchHandle = Readonly<{ dispatchId: string; directory: string }>;
 export type DispatchFile = "meta" | "messages" | "deliveries" | "transcript" | "message-lock" | "nudge" | "nudge-lock" | "waiter";
 
+export function dispatchRoot(stateDirectory: string): string { return `${stateDirectory}/dispatches`; }
+export function dispatchArchiveParentDirectory(stateDirectory: string, month: string): string { return `${dispatchRoot(stateDirectory)}/archive/${month}`; }
+export function dispatchArchiveDirectory(stateDirectory: string, month: string, dispatchId: string): string { return `${dispatchRoot(stateDirectory)}/archive/${month}/${dispatchId}`; }
+export async function liveDispatchDirectories(stateDirectory: string): Promise<string[]> {
+  const root = dispatchRoot(stateDirectory);
+  return (await readdir(root, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory() && entry.name !== "archive").sort((left, right) => left.name.localeCompare(right.name)).map((entry) => `${root}/${entry.name}`);
+}
+
 export async function resolveDispatchDirectory(stateDirectory: string, dispatchId: string): Promise<Result<DispatchHandle>> {
   const valid = resolveDispatchId(dispatchId);
   if (valid.kind === "invalid") return failed(`invalid dispatch id: ${dispatchId}`);

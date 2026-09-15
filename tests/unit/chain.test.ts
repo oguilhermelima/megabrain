@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { selectChain, type ChainConfig } from "../../src/core/chain.js";
 import { executeChain } from "../../src/cli/commands/chain.js";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -59,12 +59,18 @@ describe("chain command", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
-  test("serves selection through the command path", async () => {
+  test("reports an incomplete current codex snapshot as unknown", async () => {
     const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
-    writeFileSync(join(directory, "chains.json"), JSON.stringify(config));
+    const sessions = join(directory, "sessions"); mkdirSync(sessions);
+    writeFileSync(join(sessions, "rollout-incomplete-usage.jsonl"), readFileSync(join(process.cwd(), "tests/fixtures/codex-rollout-incomplete-usage.jsonl")));
     try {
-      const result = await executeChain(["select", "--parent-agent", "codex", "--parent-effort", "high", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory });
-      expect(result).toEqual({ kind: "ok", value: JSON.stringify(selectChain(config, undefined, { agent: "codex", effort: "high" })) + "\n" });
+      const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_CODEX_SESSIONS_DIR: sessions });
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const row = JSON.parse(result.value).find((entry: { provider: string; window: string }) => entry.provider === "codex" && entry.window === "5h");
+        expect(row).toMatchObject({ status: "unknown", usedPercent: null, resetsAt: null });
+      }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
+
 });
