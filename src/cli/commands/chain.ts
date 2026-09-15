@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { selectChain, type ChainConfig } from "../../core/chain.js";
+import { type ChainConfig } from "../../core/chain.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 
@@ -40,7 +40,7 @@ function validateConfig(config: ChainConfig, environment: ChainEnvironment): Res
   if (modelErrors) return error(modelErrors.trim());
   return ok(config);
 }
-function usage(kind: "chain" | "list" | "limits" | "select"): string {
+function usage(kind: "chain" | "list" | "limits"): string {
   if (kind === "chain") return "Usage: megabrain chain list|limits|add|edit|delete|run|repair ...\n";
   if (kind === "limits") return "Usage: megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>]\n";
   return `Usage: megabrain chain ${kind} [--json]\n`;
@@ -75,7 +75,7 @@ function codexRows(environment: ChainEnvironment): LimitRow[] {
       if (usable.length === 1) field = usable[0]?.[0];
     }
     const value: any = field ? chosen.limits[field] : undefined;
-    if (!field || typeof value?.used_percent !== "number" || typeof value?.resets_at !== "number") { rows.push(unknownLimit("codex", window, field ? `snapshot reports ${field} usage data is incomplete` : "requested window is not present")); continue; }
+    if (!field || typeof value?.used_percent !== "number" || typeof value?.resets_at !== "number") { rows.push(unknownLimit("codex", window, field ? `snapshot reports ${field} ${minutes} minutes but its usage data is incomplete` : "requested window is not present")); continue; }
     if (value.resets_at <= now) { rows.push(unknownLimit("codex", window, `recorded window has already reset at ${value.resets_at} and carries no information about the current window`)); continue; }
     rows.push({ provider: "codex", window, status: "current", usedPercent: value.used_percent, resetsAt: String(value.resets_at), source: "disk", fetchedAt: chosen.mtime, reason: `codex ${window} window at ${value.used_percent.toFixed(1)} percent`, bucket: "default", reading: { kind: "floor", basis: "last-recorded-turn" } });
   }
@@ -92,11 +92,6 @@ async function execute(args: readonly string[], environment: ChainEnvironment): 
   const [subcommand, ...rest] = args; let asJson = false;
   if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? ok(formatList(valid.value, asJson)) : valid; }
   if (subcommand === "limits") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("limits")); else return error(`unknown chain limits option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? ok(limits(environment, asJson)) : valid; }
-  if (subcommand === "select") {
-    let name: string | undefined; let agent: string | undefined; let model: string | undefined; let effort: string | undefined;
-    for (let index = 0; index < rest.length; index += 1) { const arg = rest[index]; if (arg === "--json") asJson = true; else if (arg === "--chain") name = rest[++index]; else if (arg === "--parent-agent") agent = rest[++index]; else if (arg === "--parent-model") model = rest[++index]; else if (arg === "--parent-effort") effort = rest[++index]; else if (arg === "-h" || arg === "--help") return ok(usage("select")); else return error(`unknown chain select option: ${arg}`, 2); }
-    const config = readConfig(environment); if (config.kind !== "ok") return config; const result = selectChain(config.value, name, { agent, model, effort }); return ok(asJson ? json(result) : `${result.name}\n`);
-  }
   if (subcommand === "-h" || subcommand === "--help" || subcommand === undefined) return ok(usage("chain")); return error(`unknown chain command: ${subcommand}`, 2);
 }
 export async function executeChain(args: readonly string[], environment: ChainEnvironment, _processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> { return execute(args, environment); }

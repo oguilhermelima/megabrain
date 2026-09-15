@@ -1560,7 +1560,7 @@ command_chain() {
   local subcommand="${1:-}"
   if [ -x "$typescript_binary" ]; then
     case "$subcommand" in
-      list|limits|select) "$typescript_binary" chain "$@"; return $? ;;
+      list|limits) "$typescript_binary" chain "$@"; return $? ;;
     esac
   fi
   shift || true
