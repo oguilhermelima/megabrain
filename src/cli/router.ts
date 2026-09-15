@@ -10,6 +10,8 @@ import { executeQueueWrite } from "./commands/queue-write.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeFact } from "./commands/fact.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
+import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
+import { executeTerminalList } from "./commands/terminal-list.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
@@ -76,6 +78,12 @@ export function route(
   }
   if (command === "fact") {
     return executeFact(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "worktree" && commandArgs[0] === "adopt") {
+    return executeWorktreeAdopt(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "terminal" && commandArgs[0] === "list") {
+    return executeTerminalList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

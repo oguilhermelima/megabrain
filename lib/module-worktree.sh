@@ -1369,6 +1369,11 @@ megabrain_terminal_host_close() {
 }
 
 megabrain_terminal_list() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TERMINAL_LIST_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" terminal list "$@"
+    return $?
+  fi
   local worktree_selector="" worktree_filter="" json=false arg path record records status host workspace_id
   local output='[]' entry
   while [ "$#" -gt 0 ]; do
@@ -2657,6 +2662,11 @@ EOF
 }
 
 megabrain_worktree_adopt() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_ADOPT_IMPLEMENTATION:-}" != shell ]; then
+    "$typescript_binary" worktree adopt "$@"
+    return $?
+  fi
   local target="" arg shared_root path repo_path branch slug project_id workspace_id json=false
   while [ "$#" -gt 0 ]; do
     arg="$1"
