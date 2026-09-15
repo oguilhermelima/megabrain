@@ -17,6 +17,7 @@ import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/o
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
+import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -72,6 +73,9 @@ export function route(
   }
   if (command === "orchestrate" && commandArgs[0] === "reconcile") {
     return executeOrchestrateReconcile(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "prune") {
+    return executeOrchestratePrune(commandArgs.slice(1), dependencies.environment);
   }
   if (command === "orchestrate" && (commandArgs[0] === "ack" || commandArgs[0] === "acknowledge")) {
     return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment);
