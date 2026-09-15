@@ -14,6 +14,8 @@ import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orche
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
+import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
+import { executeTerminalList } from "./commands/terminal-list.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -72,6 +74,12 @@ export function route(
   }
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "worktree" && commandArgs[0] === "adopt") {
+    return executeWorktreeAdopt(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "terminal" && commandArgs[0] === "list") {
+    return executeTerminalList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
