@@ -3,7 +3,6 @@ import { dirname, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { addFact, editFact, emptyStore, formatFactList, removeFact, validateStore, type Fact, type FactStore } from "../../core/facts.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { resolveStateDirectory } from "../../core/state.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 const usages: Record<string, string> = {
@@ -14,7 +13,10 @@ const usages: Record<string, string> = {
 const usage = (kind: keyof typeof usages): Result<string> => ok("Usage: megabrain " + usages[kind] + "\n");
 const error = (message: string, code = 1): Result<string> => failed(message, code);
 
-function pathFor(environment: Environment): string { return environment.MEGABRAIN_FACTS_FILE ?? resolve(resolveStateDirectory(environment), "facts.json"); }
+function pathFor(environment: Environment): string {
+  if (environment.MEGABRAIN_FACTS_FILE !== undefined) return environment.MEGABRAIN_FACTS_FILE;
+  return resolve(environment.MEGABRAIN_ROOT || process.cwd(), ".megabrain/facts.json");
+}
 async function readStore(path: string): Promise<Result<FactStore>> {
   try {
     let raw: string;
