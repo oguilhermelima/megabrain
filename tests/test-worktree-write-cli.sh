@@ -65,6 +65,15 @@ EOF
   chmod +x "$work/bin/git" "$work/bin/orca" "$work/bin/superset" "$work/bin/gh"
 }
 assert_invoked() { assert_contains "$(cat "$work/$1.calls")" "$2"; }
+assert_create_json_equal() {
+  local shell_json="$1" binary_json="$2" shell_keys binary_keys shell_normalized binary_normalized
+  shell_keys="$(printf '%s' "$shell_json" | jq -c 'keys')"
+  binary_keys="$(printf '%s' "$binary_json" | jq -c 'keys')"
+  [ "$shell_keys" = "$binary_keys" ] || fail "create JSON keys differ: shell=$shell_keys binary=$binary_keys"
+  shell_normalized="$(printf '%s' "$shell_json" | jq -S 'del(.worktree, .branch)')"
+  binary_normalized="$(printf '%s' "$binary_json" | jq -S 'del(.worktree, .branch)')"
+  [ "$shell_normalized" = "$binary_normalized" ] || fail "create JSON differs: shell=$shell_normalized binary=$binary_normalized"
+}
 scenario_orchestrate_spawn_keeps_shell_path() {
   local output rc
   : >"$work/binary.calls"
@@ -139,8 +148,17 @@ shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/cr
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
 [ -d "$work/shared/feat-create" ] || fail 'shell create did not create its filesystem effect'
 [ -d "$work/shared/feat-create2" ] || fail 'binary create did not create its filesystem effect'
+assert_create_json_equal "$shell_out" "$binary_out"
 assert_invoked shell 'git -C'
 assert_invoked binary 'git -C'
+
+shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create-parent --base feat/parent --parent "path:$work/repo" --json)"
+binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create-parent2 --base feat/parent --parent "path:$work/repo" --json)"
+assert_create_json_equal "$shell_out" "$binary_out"
+
+shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create-issue --base feat/parent --issue 42 --json)"
+binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create-issue2 --base feat/parent --issue 42 --json)"
+assert_create_json_equal "$shell_out" "$binary_out"
 printf change >"$work/shared/feat-create/change"
 git -C "$work/shared/feat-create" add change && git -C "$work/shared/feat-create" commit -qm change
 printf change >"$work/shared/feat-create2/change"
