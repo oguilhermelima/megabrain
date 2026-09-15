@@ -72,7 +72,14 @@ command_orchestrate() {
       fi
       megabrain_dispatch_change "$@"
       ;;
-    close) megabrain_dispatch_close "$@" ;;
+    close)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION:-}" != shell ]; then
+        "$typescript_binary" orchestrate close "$@"
+        return $?
+      fi
+      megabrain_dispatch_close "$@"
+      ;;
     -h|--help|"")
       megabrain_usage_show orchestrate-spawn orchestrate-list orchestrate-reconcile \
         orchestrate-prune orchestrate-watch orchestrate-read orchestrate-ack orchestrate-reply orchestrate-stop orchestrate-change orchestrate-close
