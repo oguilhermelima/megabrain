@@ -1,5 +1,5 @@
 import { type ProcessAdapter } from "../adapters/proc.js";
-import { failed, type Result } from "../core/result.js";
+import { failed, ok, type Result } from "../core/result.js";
 import { executeContext, type Environment } from "./commands/context.js";
 import { executeCheck } from "./commands/check.js";
 import { executeModel } from "./commands/model.js";
@@ -11,6 +11,7 @@ import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeFact } from "./commands/fact.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
+import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
 import { executeTerminalList } from "./commands/terminal-list.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
@@ -92,6 +93,9 @@ export function route(
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
+  if (command === "worktree" && commandArgs[0] === "create") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree create --repo <name|path> --branch <branch> [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--agent-arg <flag>] [--json]\n")); return executeWorktreeCreate(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
+  if (command === "worktree" && commandArgs[0] === "finish") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]\n")); return executeWorktreeFinish(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
+  if (command === "worktree" && (commandArgs[0] === "pr" || commandArgs[0] === "open-pr")) { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]\n")); return executeWorktreePr(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
   }
