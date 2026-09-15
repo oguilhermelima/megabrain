@@ -2,10 +2,32 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-chain-ts.XXXXXX")"
-trap 'rm -rf "$state"' EXIT
-export MEGABRAIN_STATE_DIR="$state/state"
+binary="$root/.build/megabrain"
+hidden="$binary.shell-contract"
+trap 'mv -f "$hidden" "$binary" 2>/dev/null || true; rm -rf "$state"' EXIT
 export MEGABRAIN_ROOT="$root"
-shell_output="$(MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" chain list --json)"
-ts_output="$("$root/.build/megabrain" chain list --json)"
-[ "$shell_output" = "$ts_output" ]
+export HOME="$state/home"
+mkdir -p "$HOME/.codex/sessions"
+
+compare() {
+  local label="$1"; shift
+  local shell_stdout shell_stderr binary_stdout binary_stderr shell_status binary_status
+  shell_stdout="$state/shell.stdout"; shell_stderr="$state/shell.stderr"
+  binary_stdout="$state/binary.stdout"; binary_stderr="$state/binary.stderr"
+  mv "$binary" "$hidden"
+  if "$root/megabrain" "$@" >"$shell_stdout" 2>"$shell_stderr"; then shell_status=0; else shell_status=$?; fi
+  mv "$hidden" "$binary"
+  if "$binary" "$@" >"$binary_stdout" 2>"$binary_stderr"; then binary_status=0; else binary_status=$?; fi
+  cmp -s "$shell_stdout" "$binary_stdout" || { printf '%s stdout differs\n' "$label" >&2; return 1; }
+  cmp -s "$shell_stderr" "$binary_stderr" || { printf '%s stderr differs\n' "$label" >&2; return 1; }
+  [ "$shell_status" -eq "$binary_status" ] || { printf '%s status differs\n' "$label" >&2; return 1; }
+}
+
+export MEGABRAIN_STATE_DIR="$state/empty-state"
+mkdir -p "$MEGABRAIN_STATE_DIR"
+compare "empty list" chain list --json
+compare "missing snapshot limits" chain limits --json
+
+printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":42,"window_minutes":300,"resets_at":1}}}}' >"$HOME/.codex/sessions/rollout-stale.jsonl"
+compare "stale snapshot limits" chain limits --json
 printf 'chain compiled contract: passed\n'

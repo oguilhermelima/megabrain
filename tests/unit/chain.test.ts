@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { selectChain, type ChainConfig } from "../../src/core/chain.js";
+import { executeChain } from "../../src/cli/commands/chain.js";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const step = { agent: "codex", model: "m", effort: "high" };
 const config: ChainConfig = {
@@ -23,5 +27,44 @@ describe("chain selection", () => {
   test("reports equal-specificity ambiguity", () => {
     const ambiguous: ChainConfig = { ...config, chains: { a: config.chains.parent, b: config.chains.parent } };
     expect(selectChain(ambiguous, undefined, { agent: "codex" })).toEqual({ kind: "ambiguous", candidates: ["a", "b"] });
+  });
+});
+
+describe("chain command", () => {
+  test("lists an empty config as JSON without spawning a process", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    try {
+      const result = await executeChain(["list", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory });
+      expect(result).toEqual({ kind: "ok", value: '{"chains":[],"defaultSteps":[]}\n' });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test("reports unknown codex limits when the snapshot is absent", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    try {
+      const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory });
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value).find((row: { provider: string; window: string }) => row.provider === "codex" && row.window === "5h").status).toBe("unknown");
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test("reports a stale codex snapshot as unknown", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    const sessions = join(directory, "sessions"); mkdirSync(sessions);
+    writeFileSync(join(sessions, "rollout-stale.jsonl"), JSON.stringify({ payload: { rate_limits: { primary: { used_percent: 42, window_minutes: 300, resets_at: 1 } } } }) + "\n");
+    try {
+      const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_CODEX_SESSIONS_DIR: sessions });
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value).find((row: { provider: string; window: string }) => row.provider === "codex" && row.window === "5h").status).toBe("unknown");
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test("serves selection through the command path", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    writeFileSync(join(directory, "chains.json"), JSON.stringify(config));
+    try {
+      const result = await executeChain(["select", "--parent-agent", "codex", "--parent-effort", "high", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory });
+      expect(result).toEqual({ kind: "ok", value: JSON.stringify(selectChain(config, undefined, { agent: "codex", effort: "high" })) + "\n" });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });
