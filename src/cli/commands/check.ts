@@ -5,6 +5,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { dispatchDeliveryFile, dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -27,7 +28,8 @@ export async function files(path: string): Promise<string[]> {
 async function dispatchId(environment: CheckEnvironment, root: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
   const direct = environment.MEGABRAIN_DISPATCH_ID;
   if (direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct)) {
-    const meta = await readJson(`${root}/dispatches/${direct}/meta.json`);
+    const resolved = await resolveDispatchDirectory(root, direct);
+    const meta = resolved.kind === "ok" ? await readJson(dispatchFile(resolved.value, "meta")) : undefined;
     if (meta !== undefined && meta.dispatchId === direct) return direct;
   }
   if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
@@ -85,7 +87,9 @@ export async function loadDeliveries(directory: string): Promise<CheckDelivery[]
 }
 
 export async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[]): Promise<void> {
-  const directory = `${root}/dispatches/${dispatch}/deliveries`;
+  const resolved = await resolveDispatchDirectory(root, dispatch);
+  if (resolved.kind !== "ok") return;
+  const directory = dispatchFile(resolved.value, "deliveries");
   for (const message of messages) {
     if (deliveries.some((delivery) => delivery.messageSeqs.includes(message.seq))) continue;
     const priorDone = messages.some((candidate) => candidate.from === "child" && candidate.type === "done" && candidate.seq < message.seq);
@@ -127,6 +131,9 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   const root = resolveStateDirectory(environment);
   const dispatch = await dispatchId(environment, root, processAdapter);
   if (dispatch === undefined) return failed(`no managed dispatch belongs to superset/${environment.SUPERSET_TERMINAL_ID ?? "unknown"}`);
+  const dispatchResult = await resolveDispatchDirectory(root, dispatch);
+  if (dispatchResult.kind !== "ok") return dispatchResult;
+  const dispatchHandle = dispatchResult.value;
   const resolvedIdentity = resolveConsumerIdentity({
     ...(await childIdentity(environment, processAdapter)),
     mailbox: "child",
@@ -141,16 +148,16 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   let selected: ReturnType<typeof selectDelivery> = { kind: "none" };
   let messages: CheckMessage[] = [];
   while (true) {
-    messages = await loadMessages(`${root}/dispatches/${dispatch}/messages`);
-    const deliveries = await loadDeliveries(`${root}/dispatches/${dispatch}/deliveries`);
+    messages = await loadMessages(dispatchFile(dispatchHandle, "messages"));
+    const deliveries = await loadDeliveries(dispatchFile(dispatchHandle, "deliveries"));
     await migrateDeliveries(root, dispatch, messages, deliveries);
-    selected = selectDelivery("child", full, await loadDeliveries(`${root}/dispatches/${dispatch}/deliveries`), messages, resolvedConsumer, generation);
+    selected = selectDelivery("child", full, await loadDeliveries(dispatchFile(dispatchHandle, "deliveries")), messages, resolvedConsumer, generation);
     if (selected.kind === "selected" || Date.now() - started >= timeout * 1000) break;
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, pollInterval * 1000)));
   }
   if (selected.kind === "selected") {
     if (selected.delivery.consumer === null) {
-      const path = `${root}/dispatches/${dispatch}/deliveries/${selected.delivery.id}.json`;
+      const path = dispatchDeliveryFile(dispatchHandle, selected.delivery.id);
       const temporaryPath = `${path}.${randomUUID()}.tmp`;
       const claimed = { ...selected.delivery, consumer: resolvedConsumer, consumerGeneration: generation, updatedAt: new Date().toISOString() };
       try {

@@ -4,6 +4,7 @@ import { capTranscript, formatDispatchRead } from "../../core/dispatch-read.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { readJson } from "./check.js";
+import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -11,7 +12,9 @@ const transcriptCap = 10485760;
 const stringValue = (value: unknown): string => typeof value === "string" ? value : "";
 
 async function parentMeta(id: string, environment: Environment): Promise<Result<RecordValue>> {
-  const meta = await readJson(`${resolveStateDirectory(environment)}/dispatches/${id}/meta.json`);
+  const resolved = await resolveDispatchDirectory(resolveStateDirectory(environment), id);
+  if (resolved.kind !== "ok") return resolved;
+  const meta = await readJson(dispatchFile(resolved.value, "meta"));
   if (meta === undefined) return failed(`dispatch not found: ${id}`);
   const host = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
   const session = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
@@ -58,7 +61,7 @@ export async function executeOrchestrateRead(args: readonly string[], environmen
   if (!Number.isInteger(lines) || lines < 1) return failed("--lines must be a positive number", 2);
   const metaResult = await parentMeta(id, environment); if (metaResult.kind !== "ok") return metaResult; const meta = metaResult.value; const runtime = stringValue(meta.runtime) || "host";
   let output = ""; let source: "tmux" | "file" | "host"; let truncated = false; let pane = "";
-  if (runtime === "tmux") { pane = stringValue(meta.tmuxPane); const live = await capture(pane, lines, process); if (live.kind === "ok") { output = live.value; source = "tmux"; } else { const file = await Bun.file(`${resolveStateDirectory(environment)}/dispatches/${id}/transcript`).text().catch(() => undefined); if (file === undefined) return failed(`could not read tmux pane ${pane} and no persisted transcript exists`); const capped = capTranscript(file, transcriptCap); output = capped.text; truncated = capped.truncated; source = "file"; } }
+  if (runtime === "tmux") { pane = stringValue(meta.tmuxPane); const live = await capture(pane, lines, process); if (live.kind === "ok") { output = live.value; source = "tmux"; } else { const file = await Bun.file(dispatchFile(resolved.value, "transcript")).text().catch(() => undefined); if (file === undefined) return failed(`could not read tmux pane ${pane} and no persisted transcript exists`); const capped = capTranscript(file, transcriptCap); output = capped.text; truncated = capped.truncated; source = "file"; } }
   else { const host = await hostRead(meta, process); if (host.kind !== "ok") return host; output = host.value; source = "host"; }
   return ok(formatDispatchRead({ dispatchId: id, pane, source, truncated, text: output }, json, transcriptCap));
 }

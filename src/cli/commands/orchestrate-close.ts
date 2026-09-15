@@ -3,6 +3,7 @@ import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
+import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -27,7 +28,9 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate close <dispatch-id> [--force-release] [--json]\n");
   const parsed = parseCloseArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);
-  const path = `${root}/dispatches/${parsed.value.dispatchId}/meta.json`;
+  const resolved = await resolveDispatchDirectory(root, parsed.value.dispatchId);
+  if (resolved.kind !== "ok") return { ...resolved, error: `${resolved.error}\nmegabrain: dispatch not found: ${parsed.value.dispatchId}` };
+  const path = dispatchFile(resolved.value, "meta");
   const meta = await readJson(path); if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
   const current = caller(environment);
   if (current.host === undefined || current.id === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");

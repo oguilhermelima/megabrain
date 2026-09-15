@@ -6,6 +6,7 @@ import { resolveConsumerIdentity } from "../../core/identity.js";
 import { selectDelivery, type CheckDelivery } from "../../core/check.js";
 import { files, loadDeliveries, loadMessages, migrateDeliveries, readJson, report } from "./check.js";
 import { acknowledgeDelivery, parseParentAckArgs } from "../../core/parent-queue.js";
+import { dispatchPath } from "../../adapters/dispatch-store.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -24,7 +25,7 @@ async function writeAtomic(path: string, value: JsonRecord): Promise<void> {
 }
 
 async function requireParent(root: string, dispatch: string, environment: ParentQueueEnvironment): Promise<Result<JsonRecord>> {
-  const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
+  const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
   const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
   const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
@@ -65,23 +66,23 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
   if (identity.kind !== "known") return failed(identity.reason);
   const started = Date.now();
   while (true) {
-    const messages = await loadMessages(`${root}/dispatches/${parsed.value.dispatch}/messages`);
-    const deliveries = await loadDeliveries(`${root}/dispatches/${parsed.value.dispatch}/deliveries`);
+    const messages = await loadMessages(await dispatchPath(root, parsed.value.dispatch, "messages"));
+    const deliveries = await loadDeliveries(await dispatchPath(root, parsed.value.dispatch, "deliveries"));
     await migrateDeliveries(root, parsed.value.dispatch, messages, deliveries);
-    const selected = selectDelivery("parent", parsed.value.full, await loadDeliveries(`${root}/dispatches/${parsed.value.dispatch}/deliveries`), messages, identity.value, parsed.value.generation);
+    const selected = selectDelivery("parent", parsed.value.full, await loadDeliveries(await dispatchPath(root, parsed.value.dispatch, "deliveries")), messages, identity.value, parsed.value.generation);
     if (selected.kind === "selected") {
-      const path = `${root}/dispatches/${parsed.value.dispatch}/deliveries/${selected.delivery.id}.json`;
+      const path = await dispatchPath(root, parsed.value.dispatch, `deliveries/${selected.delivery.id}.json`);
       if (selected.delivery.consumer !== null && selected.delivery.consumer !== identity.value) continue;
       if (selected.delivery.consumer !== null && selected.delivery.consumerGeneration !== parsed.value.generation) {
-        await lock(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`);
+        await lock(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"));
         const current = await readJson(path); if (current !== undefined) await writeAtomic(path, { ...current, status: "fenced", fencedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-        await rm(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`, { recursive: true, force: true });
+        await rm(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"), { recursive: true, force: true });
         continue;
       }
       if (selected.delivery.consumer === null) {
-        await lock(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`);
+        await lock(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"));
         const current = await readJson(path); if (current !== undefined && current.consumer === null) await writeAtomic(path, { ...current, consumer: identity.value, consumerGeneration: parsed.value.generation, updatedAt: new Date().toISOString() });
-        await rm(`${root}/dispatches/${parsed.value.dispatch}/messages/.lock`, { recursive: true, force: true });
+        await rm(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"), { recursive: true, force: true });
       }
       return ok(report(parsed.value.dispatch, selected.delivery, messages, selected.replayed, parsed.value.json));
     }
@@ -98,13 +99,13 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
   const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
   if (identity.kind !== "known") return failed(identity.reason);
-  const path = `${root}/dispatches/${parsed.value.dispatchId}/deliveries/${parsed.value.deliveryId}.json`; const delivery = await readJson(path);
+  const path = await dispatchPath(root, parsed.value.dispatchId, `deliveries/${parsed.value.deliveryId}.json`); const delivery = await readJson(path);
   if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
   const status = typeof delivery.status === "string" ? delivery.status : ""; const recordConsumer = typeof delivery.consumer === "string" ? delivery.consumer : ""; const recordGeneration = number(delivery.consumerGeneration) ?? 0;
   const decision = acknowledgeDelivery(status, recordConsumer, recordGeneration, identity.value, parsed.value.generation); if (decision.kind !== "ok") return { ...decision, error: decision.error.replace("delivery delivery", `delivery ${parsed.value.deliveryId}`) };
-  await lock(`${root}/dispatches/${parsed.value.dispatchId}/messages/.lock`);
+  await lock(await dispatchPath(root, parsed.value.dispatchId, "messages/.lock"));
   const now = new Date().toISOString(); const current = await readJson(path); if (current !== undefined && decision.value.duplicate === false) await writeAtomic(path, { ...current, status: "acknowledged", acknowledgedAt: now, updatedAt: now });
-  await rm(`${root}/dispatches/${parsed.value.dispatchId}/messages/.lock`, { recursive: true, force: true });
+  await rm(await dispatchPath(root, parsed.value.dispatchId, "messages/.lock"), { recursive: true, force: true });
   const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
   if (parsed.value.json) return ok(`${JSON.stringify({ dispatchId: parsed.value.dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: decision.value.duplicate, status: "acknowledged", messageSeqs }, null, 2)}\n`);
   return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${decision.value.duplicate}\n`);

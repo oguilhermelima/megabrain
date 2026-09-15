@@ -4,11 +4,12 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { addSupersedeSummary, parseParentChangeArgs, parseParentReplyArgs, replyStateError, supersedeDelivery, type SupersedeSummary } from "../../core/parent-reply.js";
 import { acquireLock, appendMessage, atomicJson, notifyChild, readJson, type QueueEnvironment } from "./queue-write.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { dispatchPath } from "../../adapters/dispatch-store.js";
 
 type JsonRecord = Record<string, unknown>;
 
 async function requireParent(root: string, dispatch: string, environment: QueueEnvironment): Promise<Result<JsonRecord>> {
-  const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
+  const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
   const host = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
   const id = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
@@ -18,15 +19,15 @@ async function requireParent(root: string, dispatch: string, environment: QueueE
 }
 
 async function updateState(root: string, dispatch: string, meta: JsonRecord, state: string): Promise<void> {
-  await atomicJson(`${root}/dispatches/${dispatch}/meta.json`, { ...meta, state, updatedAt: new Date().toISOString() });
+  await atomicJson(await dispatchPath(root, dispatch, "meta.json"), { ...meta, state, updatedAt: new Date().toISOString() });
 }
 
 async function deliveryIsReply(root: string, dispatch: string, delivery: JsonRecord): Promise<boolean> {
   const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
   if (sequences.length === 0) return false;
-  const names = await readdir(`${root}/dispatches/${dispatch}/messages`).catch(() => []);
+  const names = await readdir(await dispatchPath(root, dispatch, "messages")).catch(() => []);
   for (const name of names) {
-    const message = await readJson(`${root}/dispatches/${dispatch}/messages/${name}`);
+    const message = await readJson(await dispatchPath(root, dispatch, `messages/${name}`));
     if (message !== undefined && sequences.includes(typeof message.seq === "number" ? message.seq : -1)) {
       if (message.from !== "parent" || message.type !== "reply") return false;
     }
@@ -35,7 +36,7 @@ async function deliveryIsReply(root: string, dispatch: string, delivery: JsonRec
 }
 
 async function supersedeReplies(root: string, dispatch: string): Promise<Result<SupersedeSummary>> {
-  const directory = `${root}/dispatches/${dispatch}`;
+  const directory = await dispatchPath(root, dispatch, "");
   let total: SupersedeSummary = { queued: 0, delivered: 0, deliveredSequences: [] };
   for (const name of await readdir(`${directory}/deliveries`).catch(() => [])) {
     const path = `${directory}/deliveries/${name}`;
@@ -79,7 +80,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   let summary: SupersedeSummary = { queued: 0, delivered: 0, deliveredSequences: [] };
   let append: Result<number>;
   if (parsed.value.supersede) {
-    const lockPath = `${root}/dispatches/${parsed.value.dispatchId}/messages/.lock`;
+    const lockPath = await dispatchPath(root, parsed.value.dispatchId, "messages/.lock");
     const lock = await acquireLock(lockPath, environment); if (lock.kind !== "ok") return lock;
     try {
       const superseded = await supersedeReplies(root, parsed.value.dispatchId); if (superseded.kind !== "ok") return superseded;
