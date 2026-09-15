@@ -192,11 +192,12 @@ export async function appendMessage(root: string, dispatch: string, from: string
     const value: JsonRecord = { seq, from, type, text, createdAt: now, sessionId };
     await atomicJson(path, value);
     const priorDone = names.some((name) => name.endsWith("-child-done.json"));
+    const classification = classifyQueueMail(from, type, priorDone);
     const recipient = recipientForQueueMessage(from, type, priorDone);
     if (recipient !== undefined) {
       const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
       await atomicJson(`${deliveries}/${deliveryId}.json`, { id: deliveryId, dispatchId: dispatch, recipient, messageSeqs: [seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
-      if (recipient === "parent") {
+      if (recipient === "parent" && classification === "actionable") {
         const meta = await readJson(`${root}/dispatches/${dispatch}/meta.json`);
         if (meta !== undefined) {
           try {
