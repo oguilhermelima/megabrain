@@ -19,7 +19,7 @@ type NotificationResult = {
   readonly reason: string;
 };
 
-async function readJson(path: string): Promise<JsonRecord | undefined> {
+export async function readJson(path: string): Promise<JsonRecord | undefined> {
   try { const value: unknown = JSON.parse(await readFile(path, "utf8")); return typeof value === "object" && value !== null ? value as JsonRecord : undefined; } catch { return undefined; }
 }
 
@@ -60,7 +60,7 @@ async function findChild(root: string, environment: QueueEnvironment, processAda
   return { dispatch: matches[0], session: current };
 }
 
-async function atomicJson(path: string, value: JsonRecord): Promise<void> {
+export async function atomicJson(path: string, value: JsonRecord): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   try { await writeFile(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
 }
@@ -139,7 +139,32 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, pr
   return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
 }
 
-async function acquireLock(path: string, environment: QueueEnvironment): Promise<Result<void>> {
+export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter): Promise<NotificationResult> {
+  const pointer = `[megabrain] reply available; run megabrain check`;
+  const host = typeof meta.childHost === "string" ? meta.childHost : "";
+  const runtime = typeof meta.runtime === "string" ? meta.runtime : "host";
+  let result;
+  if (runtime === "tmux") {
+    const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
+    const session = typeof meta.tmuxSession === "string" ? meta.tmuxSession : "";
+    if (pane === "" || session === "") return { outcome: "failed", reason: "tmux dispatch metadata has no session or pane" };
+    const affordance = meta.agent === "codex" ? "Tab" : "Enter";
+    result = await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", pointer]);
+    if (result.kind === "ok") result = await processAdapter.run("tmux", ["send-keys", "-t", pane, affordance]);
+  } else if (host === "orca") {
+    const terminal = typeof meta.terminalId === "string" ? meta.terminalId : "";
+    result = await processAdapter.run("orca", ["terminal", "send", "--terminal", terminal, "--text", pointer, "--enter", "--json"]);
+  } else if (host === "superset") {
+    const workspace = typeof meta.workspaceId === "string" ? meta.workspaceId : "";
+    const terminal = typeof meta.terminalId === "string" ? meta.terminalId : "";
+    result = await processAdapter.run("superset", ["terminals", "send", "--workspace", workspace, "--terminal", terminal, "--text", pointer, "--json"]);
+  } else {
+    return { outcome: "failed", reason: `unsupported child host: ${host}` };
+  }
+  return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified" } : { outcome: "failed", reason: result.error };
+}
+
+export async function acquireLock(path: string, environment: QueueEnvironment): Promise<Result<void>> {
   const waitSeconds = Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15");
   const staleSeconds = Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30");
   const deadline = Date.now() + Math.max(0, waitSeconds) * 1000;
@@ -152,12 +177,12 @@ async function acquireLock(path: string, environment: QueueEnvironment): Promise
   }
 }
 
-async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<number>> {
+export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
   const messages = `${root}/dispatches/${dispatch}/messages`;
   const deliveries = `${root}/dispatches/${dispatch}/deliveries`;
   await mkdir(messages, { recursive: true }); await mkdir(deliveries, { recursive: true });
   const lock = `${messages}/.lock`;
-  const acquired = await acquireLock(lock, environment);
+  const acquired = lockHeld ? ok(undefined) : await acquireLock(lock, environment);
   if (acquired.kind !== "ok") return acquired;
   try {
     const names = await readdir(messages);
@@ -187,7 +212,7 @@ async function appendMessage(root: string, dispatch: string, from: string, type:
       }
     }
     return ok(seq);
-  } finally { await rm(lock, { recursive: true, force: true }); }
+  } finally { if (!lockHeld) await rm(lock, { recursive: true, force: true }); }
 }
 
 async function updateMeta(root: string, dispatch: string, type: string): Promise<Result<void>> {

@@ -11,6 +11,7 @@ import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeFact } from "./commands/fact.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
+import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -48,6 +49,12 @@ export function route(
   }
   if (command === "orchestrate" && (commandArgs[0] === "ack" || commandArgs[0] === "acknowledge")) {
     return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "reply") {
+    return executeOrchestrateReply(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "change") {
+    return executeOrchestrateChange(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "fact") {
     return executeFact(commandArgs, dependencies.environment, dependencies.processAdapter);
