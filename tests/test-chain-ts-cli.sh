@@ -18,6 +18,14 @@ compare() {
   if "$root/megabrain" "$@" >"$shell_stdout" 2>"$shell_stderr"; then shell_status=0; else shell_status=$?; fi
   mv "$hidden" "$binary"
   if "$binary" "$@" >"$binary_stdout" 2>"$binary_stderr"; then binary_status=0; else binary_status=$?; fi
+  if [ "$label" = "incomplete usage limits" ]; then
+    jq -e 'map(select(.provider == "codex") | .fetchedAt) | all(. != null)' "$shell_stdout" >/dev/null
+    jq -e 'map(select(.provider == "codex") | .fetchedAt) | all(. != null)' "$binary_stdout" >/dev/null
+    jq 'map(if .provider == "codex" then .fetchedAt = 0 else . end)' "$shell_stdout" >"$shell_stdout.normalized"
+    jq 'map(if .provider == "codex" then .fetchedAt = 0 else . end)' "$binary_stdout" >"$binary_stdout.normalized"
+    mv "$shell_stdout.normalized" "$shell_stdout"
+    mv "$binary_stdout.normalized" "$binary_stdout"
+  fi
   cmp -s "$shell_stdout" "$binary_stdout" || { printf '%s stdout differs\n' "$label" >&2; return 1; }
   cmp -s "$shell_stderr" "$binary_stderr" || { printf '%s stderr differs\n' "$label" >&2; return 1; }
   [ "$shell_status" -eq "$binary_status" ] || { printf '%s status differs\n' "$label" >&2; return 1; }
@@ -33,4 +41,5 @@ printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":42,"window_m
 compare "stale snapshot limits" chain limits --json
 touch -t 202001010000 "$HOME/.codex/sessions/rollout-stale.jsonl"
 cp "$root/tests/fixtures/codex-rollout-incomplete-usage.jsonl" "$HOME/.codex/sessions/rollout-incomplete-usage.jsonl"
+compare "incomplete usage limits" chain limits --json
 printf 'chain compiled contract: passed\n'
