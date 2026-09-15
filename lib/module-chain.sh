@@ -1557,11 +1557,12 @@ command_chain_run() {
 
 command_chain() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_CHAIN_IMPLEMENTATION:-}" != shell ]; then
-    "$typescript_binary" chain "$@"
-    return $?
-  fi
   local subcommand="${1:-}"
+  if [ -x "$typescript_binary" ]; then
+    case "$subcommand" in
+      list|limits|select) "$typescript_binary" chain "$@"; return $? ;;
+    esac
+  fi
   shift || true
   case "$subcommand" in
     list) command_chain_list "$@" ;;
