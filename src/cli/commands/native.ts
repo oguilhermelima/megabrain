@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeUsage, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeCandidate, type NativeHealth, type NativeKind } from "../../core/native.js";
+import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeUsage, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
+import { validateStore, type FactStore } from "../../core/facts.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 
@@ -9,6 +10,17 @@ export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
 
 function error(message: string, code = 1): Result<string> { return failed(message, code); }
+function refusalCode(exitCode: number): string { return exitCode === 2 ? "invalid-arguments" : "native-error"; }
+function normalizeJsonResult(result: Result<string>, json: boolean): Result<string> {
+  if (!json) return result;
+  if (result.kind === "failed") return ok(`${JSON.stringify({ refusal: { code: refusalCode(result.exitCode), message: result.error } })}\n`, result.exitCode);
+  if (result.kind !== "ok") return result;
+  try {
+    const value = JSON.parse(result.value);
+    if (typeof value === "object" && value !== null && !Array.isArray(value) && !("refusal" in value)) (value as Record<string, unknown>).refusal = null;
+    return { ...result, value: `${JSON.stringify(value)}\n` };
+  } catch { return result; }
+}
 function config(environment: Environment): Result<Config> {
   const file = resolve(environment.MEGABRAIN_NATIVE_WORKTREE ?? process.cwd(), ".megabrain/native.json");
   if (!existsSync(file)) return ok({});
@@ -33,6 +45,67 @@ function optionValue(args: readonly string[], name: string): string | undefined 
 }
 function crashReportsDirectory(environment: Environment): string {
   return environment.MEGABRAIN_NATIVE_CRASH_REPORTS_DIR ?? resolve(environment.HOME ?? process.env.HOME ?? "", "Library/Logs/DiagnosticReports");
+}
+
+function runtimePlatform(value: string): Result<NativePlatform> {
+  if (value === "ios" || value === "iOS") return ok("iOS");
+  if (value === "tvos" || value === "tvOS") return ok("tvOS");
+  return error(`expected platform iOS or tvOS, got: ${value}`, 2);
+}
+function runtimeFactPath(environment: Environment): string {
+  return environment.MEGABRAIN_FACTS_FILE ?? resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/facts.json");
+}
+function knownRuntimeVersions(environment: Environment, platform: NativePlatform): Result<string[]> {
+  const path = runtimeFactPath(environment);
+  if (!existsSync(path)) return ok([]);
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const valid = validateStore(value);
+    if (valid.kind !== "valid") return error(valid.message);
+    const prefix = `native-runtime-${platform.toLowerCase()}-`;
+    return ok((value as FactStore).facts.filter((fact) => fact.id.startsWith(prefix)).map((fact) => fact.id.slice(prefix.length).replaceAll("-", ".")));
+  } catch { return error(`could not read fact store: ${path}`); }
+}
+async function installedRuntimes(processAdapter: ProcessAdapter): Promise<Result<NativeRuntime[]>> {
+  const result = await processAdapter.run("xcrun", ["simctl", "list", "runtimes", "--json"]);
+  if (result.kind !== "ok") return error("failed to list runtimes with simctl");
+  try { return runtimesFromSimctl(JSON.parse(result.value.stdout)); } catch { return error("simctl returned invalid runtime data"); }
+}
+async function nativeRuntimeList(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("runtime-list"));
+  let installed = false, available = false, platform: NativePlatform | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--installed") installed = true;
+    else if (arg === "--available") available = true;
+    else if (arg === "--json") continue;
+    else if (!platform && !arg.startsWith("-")) { const parsed = runtimePlatform(arg); if (parsed.kind !== "ok") return parsed; platform = parsed.value; }
+    else return error(`unknown native runtime list option: ${arg}`, 2);
+  }
+  if (installed === available) return error("native runtime list requires exactly one of --installed or --available", 2);
+  const json = args.includes("--json");
+  if (installed) {
+    const result = await installedRuntimes(processAdapter); if (result.kind !== "ok") return result;
+    const runtimes = platform ? result.value.filter((runtime) => runtime.platform === platform) : result.value;
+    return ok(json ? `${JSON.stringify({ platform: platform ?? "all", runtimes, available: [] })}\n` : runtimes.map((runtime) => `${runtime.platform}\t${runtime.version}\t${runtime.build}\t${runtime.identifier}`).join("\n") + "\n");
+  }
+  const platforms: NativePlatform[] = platform ? [platform] : ["iOS", "tvOS"];
+  const versions = (await Promise.all(platforms.map(async (item) => ({ platform: item, versions: knownRuntimeVersions(environment, item) }))));
+  const bad = versions.find((entry) => entry.versions.kind !== "ok"); if (bad && bad.versions.kind !== "ok") return bad.versions;
+  const availableVersions = versions.flatMap((entry) => entry.versions.kind === "ok" ? entry.versions.value.map((version) => ({ platform: entry.platform, version })) : []);
+  return ok(json ? `${JSON.stringify({ platform: platform ?? "all", runtimes: [], available: availableVersions })}\n` : availableVersions.length === 0 ? "no known runtime versions are available for download\n" : availableVersions.map((entry) => `${entry.platform}\t${entry.version}`).join("\n") + "\n");
+}
+async function nativeRuntimeInstall(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("runtime-install"));
+  let platform: NativePlatform | undefined, version = "", json = false;
+  for (const arg of args) { if (arg === "--json") json = true; else if (!platform) { const parsed = runtimePlatform(arg); if (parsed.kind !== "ok") return parsed; platform = parsed.value; } else if (!version) version = arg; else return error(`unknown native runtime install option: ${arg}`, 2); }
+  if (!platform || !version) return error("native runtime install requires <platform> <version>", 2);
+  const download = await processAdapter.run("xcodebuild", ["-downloadPlatform", platform, "-buildVersion", version]);
+  if (download.kind !== "ok") return error(`failed to download ${platform} ${version}: ${download.error}`);
+  const installed = await installedRuntimes(processAdapter); if (installed.kind !== "ok") return installed;
+  const match = installed.value.find((runtime) => runtime.platform === platform && runtime.version === version);
+  if (!match) return error(`runtime download reported success, but simctl does not list ${platform} ${version}`);
+  return ok(json ? `${JSON.stringify({ platform, version, build: match.build, identifier: match.identifier })}\n` : `installed ${platform} ${version} (${match.build})\n`);
 }
 function nativeCrashes(args: readonly string[], environment: Environment): Result<string> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("crashes"));
@@ -242,13 +315,18 @@ async function appium(args: readonly string[], environment: Environment, process
 export async function executeNative(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
   const [family, operation, ...rest] = args;
   if (family === "-h" || family === "--help" || family === undefined) return ok(nativeUsage("native"));
-  if (family === "appium") return appium([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
-  if (family === "sim" && operation === "list") return nativeList(rest, processAdapter);
-  if (family === "sim" && operation === "ensure") return nativeEnsure(rest, environment, processAdapter);
-  if (family === "health") return nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
-  if (family === "crashes") return Promise.resolve(nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment));
-  if (family === "app" && operation === "reload") return nativeReload(rest, environment, processAdapter);
-  if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) return ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
-  if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) return ok(nativeUsage("reload"));
-  return error(`unknown native command: ${family}`, 2);
+  const json = args.includes("--json");
+  let result: Result<string>;
+  if (family === "appium") result = await appium([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "runtime" && operation === "list") result = await nativeRuntimeList(rest, environment, processAdapter);
+  else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
+  else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
+  else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter);
+  else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "crashes") result = nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment);
+  else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
+  else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
+  else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));
+  else result = error(`unknown native command: ${family}`, 2);
+  return normalizeJsonResult(result, json);
 }

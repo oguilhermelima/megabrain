@@ -246,6 +246,61 @@ megabrain_native_sim_list() {
   done <<<"$candidates"
 }
 
+megabrain_native_runtime_list() {
+  local platform='' installed=false available=false json=false arg='' raw='' prefix='' versions=''
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --installed) installed=true ;;
+      --available) available=true ;;
+      --json) json=true ;;
+      -h|--help) megabrain_usage_show native-runtime-list; return 0 ;;
+      ios|iOS) [ -z "$platform" ] || { megabrain_error "unknown native runtime list option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }; platform=iOS ;;
+      tvos|tvOS) [ -z "$platform" ] || { megabrain_error "unknown native runtime list option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }; platform=tvOS ;;
+      *) megabrain_error "unknown native runtime list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  [ "$installed" != "$available" ] || { megabrain_error 'native runtime list requires exactly one of --installed or --available'; return "$MEGABRAIN_USAGE_ERROR"; }
+  if [ "$installed" = true ]; then
+    megabrain_native_require_simctl || return 1
+    raw="$(xcrun simctl list runtimes --json 2>/dev/null)" || { megabrain_error 'failed to list runtimes with simctl'; return 1; }
+    if [ "$json" = true ]; then
+      printf '%s' "$raw" | jq -c --arg platform "${platform:-all}" '{platform:$platform,runtimes:(.runtimes // [] | map(select((.name // "") | startswith(if $platform == "all" then "" else $platform end)) | {platform:(if (.name|startswith("iOS")) then "iOS" else "tvOS" end),version,build:(.buildversion // .buildVersion),identifier}),available:[],refusal:null}'
+    else
+      printf '%s' "$raw" | jq -r --arg platform "${platform:-all}" '.runtimes // [] | .[] | select($platform == "all" or ((.name // "") | startswith($platform))) | [.name|split(" ")[0],.version,(.buildversion // .buildVersion),.identifier] | @tsv'
+    fi
+    return $?
+  fi
+  local facts="${MEGABRAIN_FACTS_FILE:-${MEGABRAIN_ROOT:-$PWD}/.megabrain/facts.json}"
+  prefix="$platform"; case "$prefix" in iOS) prefix=ios ;; tvOS) prefix=tvos ;; esac
+  [ -f "$facts" ] && versions="$(jq -r --arg prefix "native-runtime-$prefix-" '.facts // [] | .[] | select(.id | startswith($prefix)) | .id[$prefix|length:] | gsub("-"; ".")' "$facts" 2>/dev/null)" || versions=''
+  if [ "$json" = true ]; then
+    jq -n --arg platform "${platform:-all}" --arg versions "$versions" '{platform:$platform,runtimes:[],available:([$versions|split("\n")[]|select(length>0)|{platform:$platform,version:.}]),refusal:null}'
+  elif [ -n "$versions" ]; then while IFS= read -r arg; do printf '%s\t%s\n' "${platform:-unknown}" "$arg"; done <<<"$versions"; else printf 'no known runtime versions are available for download\n'; fi
+}
+
+megabrain_native_runtime_install() {
+  local platform='' version='' json=false arg='' raw=''
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --json) json=true ;;
+      ios|iOS) platform=iOS ;;
+      tvos|tvOS) platform=tvOS ;;
+      -h|--help) megabrain_usage_show native-runtime-install; return 0 ;;
+      -*) megabrain_error "unknown native runtime install option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+      *) [ -z "$version" ] || { megabrain_error "unknown native runtime install option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }; version="$arg" ;;
+    esac
+  done
+  [ -n "$platform" ] && [ -n "$version" ] || { megabrain_error 'native runtime install requires <platform> <version>'; return "$MEGABRAIN_USAGE_ERROR"; }
+  xcodebuild -downloadPlatform "$platform" -buildVersion "$version" || { megabrain_error "failed to download $platform $version"; return 1; }
+  raw="$(xcrun simctl list runtimes --json 2>/dev/null)" || { megabrain_error 'failed to list runtimes with simctl'; return 1; }
+  if ! printf '%s' "$raw" | jq -e --arg platform "$platform" --arg version "$version" '.runtimes // [] | any(.[]; ((.name // "") | startswith($platform)) and .version == $version)' >/dev/null; then
+    megabrain_error "runtime download reported success, but simctl does not list $platform $version"; return 1
+  fi
+  if [ "$json" = true ]; then printf '%s' "$raw" | jq -c --arg platform "$platform" --arg version "$version" '{platform:$platform,version:$version,runtime:([.runtimes[]|select(.version==$version and (.name|startswith($platform)))][0]),refusal:null}'; else printf 'installed %s %s\n' "$platform" "$version"; fi
+}
+
 megabrain_native_select_device() {
   local kind="$1" requested="$2" booted_only="$3" candidates='' line='' udid='' state='' name=''
   local count=0 identifier_count=0 name_count=0 selected_udid='' selected_state='' selector_type=''
@@ -641,6 +696,14 @@ command_native() {
         list) megabrain_native_sim_list "$@" ;;
         -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure ;;
         *) megabrain_error "unknown native sim operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
+      esac
+      ;;
+    runtime)
+      case "$operation" in
+        list) megabrain_native_runtime_list "$@" ;;
+        install) megabrain_native_runtime_install "$@" ;;
+        -h|--help|"") megabrain_usage_show native-runtime-list native-runtime-install ;;
+        *) megabrain_error "unknown native runtime operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
     app)
