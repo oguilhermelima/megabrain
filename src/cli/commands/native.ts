@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeUsage, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeCandidate, type NativeHealth, type NativeKind } from "../../core/native.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
@@ -29,6 +30,48 @@ function parseKind(args: readonly string[]): Result<NativeKind> { return validat
 function optionValue(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index < 0 ? undefined : args[index + 1];
+}
+function crashReportsDirectory(environment: Environment): string {
+  return environment.MEGABRAIN_NATIVE_CRASH_REPORTS_DIR ?? resolve(environment.HOME ?? process.env.HOME ?? "", "Library/Logs/DiagnosticReports");
+}
+function nativeCrashes(args: readonly string[], environment: Environment): Result<string> {
+  if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("crashes"));
+  const kind = parseKind(args); if (kind.kind !== "ok") return kind;
+  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const target = setting(loaded.value, kind.value, "bundleId");
+  if (!target) return error(`bundle id is required for ${kind.value}; pass --bundle-id in .megabrain/native.json`);
+  const lastRaw = optionValue(args, "--last") ?? "1";
+  const last = validateCrashLast(lastRaw); if (last.kind !== "ok") return last;
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") continue;
+    if (arg === "--last" && args[index + 1] !== undefined) { index += 1; continue; }
+    return error(`unknown native crashes option: ${arg}`, 2);
+  }
+  const directory = crashReportsDirectory(environment);
+  let files: string[];
+  try { files = readdirSync(directory).filter((file) => file.endsWith(".ips")); }
+  catch { return error(`cannot read crash reports directory: ${directory}`); }
+  const inputs: CrashInput[] = [];
+  const parseErrors: string[] = [];
+  for (const file of files) {
+    const path = resolve(directory, file);
+    try {
+      const contents = readFileSync(path, "utf8");
+      inputs.push({ path, contents, modifiedAt: statSync(path).mtimeMs });
+      const parsed = parseCrashReport(contents, target);
+      if (parsed.kind === "invalid") parseErrors.push(`${file}: ${parsed.reason}`);
+    } catch (cause) { parseErrors.push(`${file}: ${cause instanceof Error ? cause.message : "could not read file"}`); }
+  }
+  const selected = selectCrashReports(inputs, target, last.value);
+  const stderr = parseErrors.map((message) => `megabrain: ${message}\n`).join("");
+  if (selected.length === 0) return { kind: "ok", value: args.includes("--json") ? `${JSON.stringify({ reports: [], noReports: true })}\n` : `no crash reports found for ${target}\n`, stderr };
+  if (args.includes("--json")) return { kind: "ok", value: `${JSON.stringify({ reports: selected.map((entry) => ({ file: entry.path, ...entry.value })), noReports: false })}\n`, stderr };
+  const value = selected.map((entry) => {
+    const report = entry.value;
+    return `${entry.path}\n${report.exceptionType}${report.signal ? ` (${report.signal})` : ""}${report.termination ? `\n${report.termination}` : ""}\n${report.frames.slice(0, 5).map((frame) => `  ${frame}`).join("\n")}\n`;
+  }).join("\n");
+  return { kind: "ok", value, stderr };
 }
 function unknownProcess(reason: string): NativeHealth["process"] { return { state: "unknown", reason }; }
 function unknownMetro(reason: string): NativeHealth["metro"] { return { state: "unknown", reason }; }
@@ -203,6 +246,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   if (family === "sim" && operation === "list") return nativeList(rest, processAdapter);
   if (family === "sim" && operation === "ensure") return nativeEnsure(rest, environment, processAdapter);
   if (family === "health") return nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  if (family === "crashes") return Promise.resolve(nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment));
   if (family === "app" && operation === "reload") return nativeReload(rest, environment, processAdapter);
   if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) return ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) return ok(nativeUsage("reload"));

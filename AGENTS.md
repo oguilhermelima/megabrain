@@ -50,6 +50,7 @@
 - Run megabrain native sim list <phone|tv> [--json].
 - Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json].
 - Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json].
+- Run megabrain native crashes <phone|tv> [--last N] [--json].
 - Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json].
 - Run megabrain tv connect <ip> [--port <port>].
 - Run megabrain tv disconnect [<ip>].
