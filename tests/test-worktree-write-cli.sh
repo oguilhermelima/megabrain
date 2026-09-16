@@ -65,6 +65,40 @@ EOF
   chmod +x "$work/bin/git" "$work/bin/orca" "$work/bin/superset" "$work/bin/gh"
 }
 assert_invoked() { assert_contains "$(cat "$work/$1.calls")" "$2"; }
+assert_env_files_equal() {
+  local shell_path="$1" binary_path="$2" shell_files binary_files file
+  shell_files="$(cd "$shell_path" && find . -path './.git' -prune -o \( -type f -o -type l \) \( -name '.env' -o \( -name '.env.*' ! -name '.env.example' \) \) -print | sort)"
+  binary_files="$(cd "$binary_path" && find . -path './.git' -prune -o \( -type f -o -type l \) \( -name '.env' -o \( -name '.env.*' ! -name '.env.example' \) \) -print | sort)"
+  [ "$shell_files" = "$binary_files" ] || fail "env file sets differ: shell=$shell_files binary=$binary_files"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    cmp -s "$shell_path/$file" "$binary_path/$file" || fail "env file contents differ: $file"
+  done <<EOF
+$shell_files
+EOF
+}
+scenario_create_copies_env_files() {
+  local label="$1" branch_suffix="$2" shell_out binary_out
+  rm -f "$work/repo/.env" "$work/repo/.env.example" "$work/repo/.env.local" "$work/repo/apps/web/.env"
+  rm -rf "$work/repo/apps"
+  case "$label" in
+    root)
+      printf '%s\n' 'EXAMPLE=1' >"$work/repo/.env"
+      printf '%s\n' 'EXAMPLE=ignored' >"$work/repo/.env.example"
+      printf '%s\n' 'EXAMPLE=local' >"$work/repo/.env.local"
+      ;;
+    nested)
+      mkdir -p "$work/repo/apps/web"
+      printf '%s\n' 'EXAMPLE=1' >"$work/repo/apps/web/.env"
+      ;;
+  esac
+  shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch "feat/env-$branch_suffix-shell" --json)" ||
+    fail "$label shell create failed: $shell_out"
+  binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch "feat/env-$branch_suffix-binary" --json)" ||
+    fail "$label binary create failed: $binary_out"
+  assert_env_files_equal "$work/shared/feat-env-$branch_suffix-shell" "$work/shared/feat-env-$branch_suffix-binary"
+  printf '%s env files match between shell and binary\n' "$label"
+}
 assert_create_json_equal() {
   local shell_json="$1" binary_json="$2" shell_keys binary_keys shell_normalized binary_normalized
   shell_keys="$(printf '%s' "$shell_json" | jq -c 'keys')"
@@ -129,6 +163,9 @@ git -C "$work/repo" config init.defaultBranch main
 printf base >"$work/repo/base"
 git -C "$work/repo" add base
 git -C "$work/repo" commit -qm base
+printf '%s\n' '.env' '.env.*' '!.env.example' >"$work/repo/.gitignore"
+git -C "$work/repo" add .gitignore
+git -C "$work/repo" commit -qm 'ignore env files'
 git -C "$work/repo" checkout -qb feat/parent
 printf parent >"$work/repo/parent"
 git -C "$work/repo" add parent
@@ -143,6 +180,9 @@ scenario_orchestrate_spawn_help_uses_own_usage
 unset SUPERSET_TERMINAL_ID
 scenario_repo_name_create
 scenario_completed_finish_deletes_branch
+scenario_create_copies_env_files none no-env
+scenario_create_copies_env_files root root
+scenario_create_copies_env_files nested nested
 
 shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --base feat/parent --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
