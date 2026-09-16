@@ -147,9 +147,7 @@ mv "$binary" "$hidden"
 printf '#!/usr/bin/env bash\nexit 42\n' >"$binary"
 chmod +x "$binary"
 run_capture "$work/routed-doctor" "$root/megabrain" doctor orchestration
-run_capture "$work/routed-install" "$root/megabrain" install simulator-web
 [ "$(cat "$work/routed-doctor.status")" -eq 42 ] || fail 'operator doctor was not served by the binary'
-[ "$(cat "$work/routed-install.status")" -eq 42 ] || fail 'operator install was not served by the binary'
 rm -f "$binary"
 mv "$hidden" "$binary"
 
@@ -244,8 +242,38 @@ done
 [ "$(cat "$binary_unknown.status")" -eq 2 ] || fail 'unknown module status was not 2'
 grep -q 'unknown module: unknown-module' "$binary_unknown.stderr" || fail 'unknown module omitted its error'
 
-# Restore the real shell entrypoint for the shell side of the doctor comparison.
+# Restore the real shell entrypoint before exercising the shell installation contract.
 mv "$root/megabrain.real" "$root/megabrain"
+
+# An unhealthy hooks fixture must reach the shell installer, whose observable contract is
+# backing up and repairing the operator config. The TypeScript status-only implementation cannot
+# pass this assertion because it does not write either artifact.
+install_contract_home="$work/install-contract-home"
+mkdir -p "$install_contract_home/.claude"
+printf '%s\n' '{"hooks":{"Stop":[]}}' >"$install_contract_home/.claude/settings.json"
+cp "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
+export HOME="$install_contract_home"
+mv "$binary" "$hidden"
+run_capture "$work/shell-install-contract" "$root/megabrain" install orchestration-hooks --yes
+mv "$hidden" "$binary"
+assert_backup_matches() {
+  local path="$1" original="$2" backup
+  backup="$(find "$(dirname "$path")" -maxdepth 1 -name "$(basename "$path").megabrain-backup-*" -type f -print -quit)"
+  [ -n "$backup" ] || fail "expected backup for $path"
+  cmp -s "$original" "$backup" || fail "backup for $path differs from original"
+}
+assert_backup_matches "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
+grep -q 'megabrain-turn-end.sh' "$install_contract_home/.claude/settings.json" || fail 'shell install did not repair hooks config'
+
+binary_contract_home="$work/binary-contract-home"
+mkdir -p "$binary_contract_home/.claude"
+cp "$work/install-contract-original.json" "$binary_contract_home/.claude/settings.json"
+export HOME="$binary_contract_home"
+run_capture "$work/binary-install-contract" "$binary" install orchestration-hooks --yes
+[ ! -e "$binary_contract_home/.claude/settings.json.megabrain-backup-"* ] || fail 'status-only binary unexpectedly created an install backup'
+cmp -s "$work/install-contract-original.json" "$binary_contract_home/.claude/settings.json" || fail 'status-only binary changed the install fixture'
+printf 'install contract: shell creates backup and repair; binary leaves fixture unchanged\n'
+export HOME="$work/home"
 
 # A minimal installation record must be reconciled by both implementations, including
 # metadata that is not present in the input fixture.
