@@ -13,6 +13,7 @@ function processFor(values: Record<string, string>): ProcessAdapter {
       if (command === "which") return ok({ stdout: `/usr/bin/${args[0]}`, stderr: "", exitCode: 0 });
       return failed(`${key} unavailable`);
     },
+    async startDetached() { return failed("detached process unavailable"); },
     invocationCount: () => 0,
   };
 }

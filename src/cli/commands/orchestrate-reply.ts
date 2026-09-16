@@ -59,7 +59,7 @@ async function supersedeReplies(root: string, dispatch: string): Promise<Result<
   }
   if (total.delivered > 0) {
     const text = `withdrawn parent direction message sequence(s): ${total.deliveredSequences.join(", ")}`;
-    const withdrawal = await appendMessage(root, dispatch, "parent", "withdrawal", text, "", {}, { run: async () => failed("notification unavailable"), invocationCount: () => 0 }, true);
+    const withdrawal = await appendMessage(root, dispatch, "parent", "withdrawal", text, "", {}, { run: async () => failed("notification unavailable"), startDetached: async () => failed("notification unavailable"), invocationCount: () => 0 }, true);
     if (withdrawal.kind !== "ok") return withdrawal;
   }
   return ok(total);

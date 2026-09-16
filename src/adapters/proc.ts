@@ -8,6 +8,7 @@ export type ProcessOutput = {
 
 export type ProcessAdapter = {
   run(command: string, args: readonly string[]): Promise<Result<ProcessOutput>>;
+  startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>>;
   invocationCount(): number;
 };
 
@@ -22,6 +23,11 @@ declare const Bun: {
     readonly stdout: "pipe";
     readonly stderr: "pipe";
   }): Subprocess;
+  spawn(command: readonly string[], options: {
+    readonly stdout: "ignore";
+    readonly stderr: "ignore";
+    readonly detached: true;
+  }): Subprocess & { readonly pid: number; readonly unref: () => void };
 };
 
 export function createProcessAdapter(): ProcessAdapter {
@@ -46,8 +52,21 @@ export function createProcessAdapter(): ProcessAdapter {
     }
   }
 
+  async function startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>> {
+    count += 1;
+    try {
+      const child = Bun.spawn([command, ...args], { stdout: "ignore", stderr: "ignore", detached: true });
+      child.unref();
+      return ok({ pid: child.pid });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "process could not be started";
+      return failed(`${command}: ${message}`);
+    }
+  }
+
   return {
     run,
+    startDetached,
     invocationCount: () => count,
   };
 }
