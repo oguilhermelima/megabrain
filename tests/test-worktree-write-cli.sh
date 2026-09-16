@@ -134,6 +134,8 @@ scenario_repo_name_create() {
   local output
   output="$(run_pair binary worktree create --repo megabrain --branch feat/name-binary --json)" ||
     fail "binary repo-name create failed: $output"
+  printf '%s' "$output" | jq -e '.baseSource == "local"' >/dev/null ||
+    fail "binary repo-name create reported the wrong base source: $output"
   [ -d "$work/shared/feat-name-binary" ] || fail 'binary repo-name create did not create worktree'
   printf 'repo name resolves for binary create\n'
 }
@@ -186,6 +188,8 @@ scenario_create_copies_env_files nested nested
 
 shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --base feat/parent --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
+printf '%s' "$shell_out" | jq -e '.baseSource == "explicit"' >/dev/null || fail "shell explicit base source was not reported: $shell_out"
+printf '%s' "$binary_out" | jq -e '.baseSource == "explicit"' >/dev/null || fail "binary explicit base source was not reported: $binary_out"
 [ -d "$work/shared/feat-create" ] || fail 'shell create did not create its filesystem effect'
 [ -d "$work/shared/feat-create2" ] || fail 'binary create did not create its filesystem effect'
 assert_create_json_equal "$shell_out" "$binary_out"

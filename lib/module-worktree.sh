@@ -165,6 +165,59 @@ megabrain_repo_default_base() {
   printf '%s\n' "$base"
 }
 
+megabrain_repo_create_base() {
+  local repo="$1" requested="${2:-}" remote="" branch=""
+  MEGABRAIN_BASE_REF="$requested"
+  MEGABRAIN_BASE_COMMIT=""
+  MEGABRAIN_BASE_SOURCE="explicit"
+  if [ -z "$MEGABRAIN_BASE_REF" ]; then
+    remote="$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [ -n "$remote" ]; then
+      branch="${remote#origin/}"
+      if ! git -C "$repo" fetch origin "$branch"; then
+        megabrain_error "could not fetch default base origin/$branch"
+        return 1
+      fi
+      MEGABRAIN_BASE_REF="origin/$branch"
+      MEGABRAIN_BASE_SOURCE="remote"
+    else
+      if ! git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+        MEGABRAIN_BASE_REF="$(megabrain_repo_default_base "$repo")"
+        MEGABRAIN_BASE_SOURCE="local"
+      else
+        branch="$(git -C "$repo" ls-remote --symref origin HEAD 2>/dev/null | awk '$1 == "ref:" && $2 ~ /^refs\/heads\// && $3 == "HEAD" {sub(/^refs\/heads\//, "", $2); print $2; exit}')"
+        if [ -z "$branch" ]; then
+        remote_heads="$(git -C "$repo" ls-remote --heads origin 2>/dev/null || true)"
+        preferred="$(git -C "$repo" config --get init.defaultBranch 2>/dev/null || true)"
+        [ -n "$preferred" ] || preferred="main"
+        branch="$(printf '%s\n' "$remote_heads" | awk -v preferred="$preferred" '$2 == "refs/heads/" preferred {print preferred; exit}')"
+        if [ -z "$branch" ]; then
+          branch="$(printf '%s\n' "$remote_heads" | awk '$2 == "refs/heads/main" {print "main"; exit}')"
+        fi
+        if [ -z "$branch" ] && [ "$(printf '%s\n' "$remote_heads" | awk 'NF {count++; sub(/^.*refs\/heads\//, "", $2); branch=$2} END {if (count == 1) print branch}')" ]; then
+          branch="$(printf '%s\n' "$remote_heads" | awk 'NF {sub(/^.*refs\/heads\//, "", $2); print $2; exit}')"
+        fi
+      fi
+      if [ -z "$branch" ]; then
+        megabrain_error "could not fetch default base: origin/HEAD is missing and the remote default branch could not be resolved; run git remote set-head origin -a"
+        return 1
+      fi
+      if ! git -C "$repo" fetch origin "$branch"; then
+        megabrain_error "could not fetch default base origin/$branch"
+        return 1
+      fi
+      MEGABRAIN_BASE_REF="origin/$branch"
+      MEGABRAIN_BASE_SOURCE="remote"
+        fi
+      fi
+    fi
+  MEGABRAIN_BASE_COMMIT="$(git -C "$repo" rev-parse --verify "$MEGABRAIN_BASE_REF^{commit}" 2>/dev/null || true)"
+  if [ -z "$MEGABRAIN_BASE_COMMIT" ]; then
+    megabrain_error "base does not exist: $MEGABRAIN_BASE_REF"
+    return 1
+  fi
+}
+
 megabrain_slug_from_branch() {
   local branch="$1"
   branch="${branch//\//-}"
@@ -1828,7 +1881,7 @@ megabrain_worktree_create() {
     "$typescript_binary" worktree create "$@"
     return $?
   fi
-  local repo_selector="" branch="" base="" slug="" agent="" model="" effort="" chain_name="" prompt="" label="" worktree_selector="" parent_selector="" issue="" linear_issue="" pr_number="" orchestrate=false json=false reused=false browser=false
+  local repo_selector="" branch="" base="" from="" base_commit="" base_source="" slug="" agent="" model="" effort="" chain_name="" prompt="" label="" worktree_selector="" parent_selector="" issue="" linear_issue="" pr_number="" orchestrate=false json=false reused=false browser=false
   local parent_requested=false no_parent=false parent_path="" parent_branch="" parent_tag=""
   local parent_metadata_set=false parent_metadata_error="" lineage_set=false grouping_set=false lineage_error="" grouping_error=""
   local links_set=false links_error=""
@@ -1842,6 +1895,11 @@ megabrain_worktree_create() {
       --repo) repo_selector="${2:-}"; shift 2 ;;
       --branch) branch="${2:-}"; shift 2 ;;
       --base) base="${2:-}"; shift 2 ;;
+      --from)
+        [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { megabrain_error '--from requires a non-empty ref'; return "$MEGABRAIN_USAGE_ERROR"; }
+        from="$2"
+        shift 2
+        ;;
       --parent)
         [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { megabrain_error '--parent requires a non-empty selector'; return "$MEGABRAIN_USAGE_ERROR"; }
         [ "$no_parent" = false ] || { megabrain_error '--parent cannot be combined with --no-parent'; return "$MEGABRAIN_USAGE_ERROR"; }
@@ -2017,7 +2075,10 @@ megabrain_worktree_create() {
       parent_tag="$MEGABRAIN_PARENT_TAG"
     fi
     shared_root="$(megabrain_worktree_root)" || return 1
-    [ -n "$base" ] || base="$(megabrain_repo_default_base "$repo_path")"
+    megabrain_repo_create_base "$repo_path" "${from:-$base}" || return 1
+    base="$MEGABRAIN_BASE_REF"
+    base_commit="$MEGABRAIN_BASE_COMMIT"
+    base_source="$MEGABRAIN_BASE_SOURCE"
     [ -n "$slug" ] || slug="$(megabrain_slug_from_branch "$branch")" || { megabrain_error "branch cannot produce a safe slug"; return 1; }
     case "$slug" in
       .|..|*/*|*"$'\n'"*) megabrain_error "invalid worktree name: $slug"; return 1 ;;
@@ -2133,7 +2194,7 @@ megabrain_worktree_create() {
     [ "$links_set" = true ] || megabrain_notice "${links_error:-Orca issue links were not set}"
   fi
   if [ "$json" != true ]; then
-    printf 'worktree: %s\nbranch: %s\nworkspace: %s\nreused: %s\n' "$worktree_path" "$branch" "$workspace_id" "$reused"
+    printf 'worktree: %s\nbranch: %s\nworkspace: %s\nreused: %s\nbase: %s\nbase commit: %s\nbase source: %s\n' "$worktree_path" "$branch" "$workspace_id" "$reused" "$base" "$base_commit" "$base_source"
   fi
   if [ -n "$agent" ]; then
     launch_args=("$worktree_path" "$workspace_id" "$agent" "$model" "$effort" "$prompt" "$label")
@@ -2179,15 +2240,15 @@ megabrain_worktree_create() {
       parent_json='{"requested":false}'
     fi
     if [ -n "${dispatch:-}" ]; then
-      jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg dispatch "$dispatch" --arg reused "$reused" --arg runtime "$runtime" \
+      jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg dispatch "$dispatch" --arg reused "$reused" --arg runtime "$runtime" --arg base "$base" --arg baseCommit "$base_commit" --arg baseSource "$base_source" \
         --argjson parent "$parent_json" \
         --arg issue "$issue" --arg linearIssue "$linear_issue" --argjson linksSet "$links_set" --arg linksError "$links_error" \
-        '{worktree: $worktree, branch: $branch, workspace: (if $workspace|length > 0 then $workspace else null end), dispatch: $dispatch, reused: ($reused == "true"), runtime: $runtime, parent: $parent, links: {issue: (if $issue|length > 0 then $issue else null end), linearIssue: (if $linearIssue|length > 0 then $linearIssue else null end), set: $linksSet, error: (if $linksError|length > 0 then $linksError else null end)}}'
+        '{worktree: $worktree, branch: $branch, workspace: (if $workspace|length > 0 then $workspace else null end), dispatch: $dispatch, reused: ($reused == "true"), runtime: $runtime, base: $base, baseCommit: $baseCommit, baseSource: $baseSource, parent: $parent, links: {issue: (if $issue|length > 0 then $issue else null end), linearIssue: (if $linearIssue|length > 0 then $linearIssue else null end), set: $linksSet, error: (if $linksError|length > 0 then $linksError else null end)}}'
     else
-      jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg reused "$reused" \
+      jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg reused "$reused" --arg base "$base" --arg baseCommit "$base_commit" --arg baseSource "$base_source" \
         --argjson parent "$parent_json" \
         --arg issue "$issue" --arg linearIssue "$linear_issue" --argjson linksSet "$links_set" --arg linksError "$links_error" \
-        '{worktree: $worktree, branch: $branch, workspace: (if $workspace|length > 0 then $workspace else null end), reused: ($reused == "true"), parent: $parent, links: {issue: (if $issue|length > 0 then $issue else null end), linearIssue: (if $linearIssue|length > 0 then $linearIssue else null end), set: $linksSet, error: (if $linksError|length > 0 then $linksError else null end)}}'
+        '{worktree: $worktree, branch: $branch, workspace: (if $workspace|length > 0 then $workspace else null end), reused: ($reused == "true"), base: $base, baseCommit: $baseCommit, baseSource: $baseSource, parent: $parent, links: {issue: (if $issue|length > 0 then $issue else null end), linearIssue: (if $linearIssue|length > 0 then $linearIssue else null end), set: $linksSet, error: (if $linksError|length > 0 then $linksError else null end)}}'
     fi
   fi
   return 0

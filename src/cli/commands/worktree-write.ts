@@ -233,6 +233,72 @@ async function defaultBase(
     ? configured.value.stdout.trim()
     : "main";
 }
+async function remoteDefaultBranch(
+  process: ProcessAdapter,
+  repo: string,
+): Promise<Result<string>> {
+  const response = await run(process, "git", ["-C", repo, "ls-remote", "--symref", "origin", "HEAD"]);
+  if (response.kind === "ok") {
+    const line = response.value.stdout.split("\n").find((entry) => entry.startsWith("ref: refs/heads/") && entry.endsWith(" HEAD"));
+    if (line) return ok(line.slice("ref: refs/heads/".length, -" HEAD".length));
+  }
+  const heads = await run(process, "git", ["-C", repo, "ls-remote", "--heads", "origin"]);
+  if (heads.kind !== "ok") return failed(heads.kind === "failed" ? heads.error : "remote heads could not be queried");
+  const branches = heads.value.stdout.split("\n")
+    .map((line) => line.match(/\trefs\/heads\/(.+)$/)?.[1])
+    .filter((branch): branch is string => branch !== undefined);
+  const configured = await run(process, "git", ["-C", repo, "config", "--get", "init.defaultBranch"]);
+  const preferred = configured.kind === "ok" && configured.value.stdout.trim()
+    ? configured.value.stdout.trim()
+    : "main";
+  if (branches.includes(preferred)) return ok(preferred);
+  if (branches.includes("main")) return ok("main");
+  return branches.length === 1
+    ? ok(branches[0] as string)
+    : failed("remote did not advertise a default branch");
+}
+async function createBase(
+  process: ProcessAdapter,
+  repo: string,
+  requested: string | undefined,
+): Promise<Result<{ ref: string; commit: string }>> {
+  let ref = requested;
+  let source = requested ? "explicit" : "remote";
+  if (!ref) {
+    const remote = await run(process, "git", [
+      "-C", repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD",
+    ]);
+    if (remote.kind === "ok" && remote.value.stdout.trim()) {
+      const branch = remote.value.stdout.trim().replace(/^origin\//, "");
+      const fetched = await run(process, "git", ["-C", repo, "fetch", "origin", branch]);
+      if (fetched.kind !== "ok") return failed(`could not fetch default base origin/${branch}: ${fetched.error}`);
+      ref = `origin/${branch}`;
+    } else {
+      const origin = await run(process, "git", ["-C", repo, "remote", "get-url", "origin"]);
+      if (origin.kind !== "ok") {
+        ref = await defaultBase(process, repo);
+        source = "local";
+      }
+      const discovered = ref ? undefined : await remoteDefaultBranch(process, repo);
+      if (!ref && discovered === undefined) return failed("could not resolve default base");
+      if (discovered && discovered.kind !== "ok") {
+        return failed(
+          `could not fetch default base: origin/HEAD is missing and the remote default branch could not be resolved (${discovered.error}); run git remote set-head origin -a`,
+        );
+      }
+      if (discovered) {
+        const branch = discovered.value;
+        const fetched = await run(process, "git", ["-C", repo, "fetch", "origin", branch]);
+        if (fetched.kind !== "ok") return failed(`could not fetch default base origin/${branch}: ${fetched.error}`);
+        ref = `origin/${branch}`;
+      }
+    }
+  }
+  const resolved = await run(process, "git", ["-C", repo, "rev-parse", "--verify", `${ref}^{commit}`]);
+  return resolved.kind === "ok"
+    ? ok({ ref, commit: resolved.value.stdout.trim(), source })
+    : failed(`base does not exist: ${ref}`);
+}
 async function parentBranch(
   process: ProcessAdapter,
   repo: string,
@@ -330,7 +396,7 @@ async function resolveParent(
 function output(value: unknown, json: boolean): string {
   return json
     ? `${JSON.stringify(value, null, 2)}\n`
-    : `worktree: ${(value as { worktree: string }).worktree}\nbranch: ${(value as { branch: string }).branch}\n`;
+    : `worktree: ${(value as { worktree: string }).worktree}\nbranch: ${(value as { branch: string }).branch}\nbase: ${(value as { base: string }).base}\nbase commit: ${(value as { baseCommit: string }).baseCommit}\n`;
 }
 function isEnvFile(name: string): boolean {
   return name === ".env" || (name.startsWith(".env.") && name !== ".env.example");
@@ -384,7 +450,7 @@ export async function executeWorktreeCreate(
 ): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help"))
     return ok(
-      "Usage: megabrain worktree create --repo <name|path> --branch <branch> [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]\n",
+      "Usage: megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]\n",
     );
   const options = parseCreateOptions(args);
   if (options.kind !== "ok") return options;
@@ -394,7 +460,9 @@ export async function executeWorktreeCreate(
   const repo = await repoFromOrca(process, value.repo as string);
   if (repo.kind !== "ok") return repo;
   const branch = value.branch as string;
-  const base = value.base ?? (await defaultBase(process, repo.value));
+  const resolvedBase = await createBase(process, repo.value, value.from ?? value.base);
+  if (resolvedBase.kind !== "ok") return resolvedBase;
+  const base = resolvedBase.value.ref;
   const name = value.name ?? createName(branch);
   if (!name) return failed("branch cannot produce a safe slug");
   const path = join(shared.value, name);
@@ -495,6 +563,9 @@ export async function executeWorktreeCreate(
     branch,
     workspace: null,
     reused: false,
+    base,
+    baseCommit: resolvedBase.value.commit,
+    baseSource: resolvedBase.value.source,
     parent,
     links,
   };

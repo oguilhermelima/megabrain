@@ -4,6 +4,7 @@ export type CreateOptions = {
   readonly repo?: string;
   readonly branch?: string;
   readonly base?: string;
+  readonly from?: string;
   readonly parent?: string;
   readonly noParent?: boolean;
   readonly name?: string;
@@ -33,6 +34,7 @@ export function parseCreateOptions(
     repo?: string;
     branch?: string;
     base?: string;
+    from?: string;
     parent?: string;
     noParent?: boolean;
     name?: string;
@@ -60,6 +62,7 @@ export function parseCreateOptions(
         "--repo",
         "--branch",
         "--base",
+        "--from",
         "--name",
         "--issue",
         "--linear-issue",
@@ -73,6 +76,7 @@ export function parseCreateOptions(
           "--repo": "repo",
           "--branch": "branch",
           "--base": "base",
+          "--from": "from",
           "--name": "name",
           "--issue": "issue",
           "--linear-issue": "linearIssue",
