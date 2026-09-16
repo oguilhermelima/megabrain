@@ -50,7 +50,7 @@ create_and_assert() {
     output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
   fi
   path="$work/shared/${branch//\//-}"
-  json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip\""
+  json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip\" and .baseSource == \"remote\""
   assert_equal "$(git -C "$path" rev-parse HEAD)" "$remote_tip"
   assert_contains "$output" 'origin/main'
   assert_contains "$output" "$remote_tip"
@@ -65,13 +65,13 @@ assert_contains "$human_output" "base commit: $feature_tip"
 printf 'binary human create output: %s' "$human_output"
 
 from_output="$(run_binary worktree create --repo "$work/repo" --branch feat/from-binary --from feat/stack --json)"
-json "$from_output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\""
+json "$from_output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\" and .baseSource == \"explicit\""
 assert_equal "$(git -C "$work/shared/feat-from-binary" rev-parse HEAD)" "$feature_tip"
 assert_contains "$from_output" 'feat/stack'
 assert_contains "$from_output" "$feature_tip"
 printf 'binary --from output: %s\n' "$from_output"
 from_output="$(run_shell worktree create --repo "$work/repo" --branch feat/from-shell --from feat/stack --json)"
-json "$from_output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\""
+json "$from_output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\" and .baseSource == \"explicit\""
 assert_equal "$(git -C "$work/shared/feat-from-shell" rev-parse HEAD)" "$feature_tip"
 printf 'shell --from output: %s\n' "$from_output"
 human_output="$(run_shell worktree create --repo "$work/repo" --branch feat/human-shell --from feat/stack)"
@@ -88,7 +88,7 @@ mv "$root/megabrain" "$root/megabrain.worktree-base-shell-test.real"
 mv "$root/megabrain.worktree-base-shell-test" "$root/megabrain"
 output="$(run_binary worktree create --repo "$work/repo" --branch feat/stub-proof --from feat/stack --json 2>&1)" ||
   fail 'binary create depends on the shell entrypoint'
-json "$output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\""
+json "$output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\" and .baseSource == \"explicit\""
 assert_contains "$output" 'base'
 printf 'binary create remains independent of a failing shell entrypoint\n'
 mv "$root/megabrain.worktree-base-shell-test.real" "$root/megabrain"
@@ -106,7 +106,7 @@ create_without_origin_head() {
     output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
   fi
   path="$work/shared/${branch//\//-}"
-  json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip_without_head\""
+  json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip_without_head\" and .baseSource == \"remote\""
   assert_equal "$(git -C "$path" rev-parse HEAD)" "$remote_tip_without_head"
   printf '%s missing origin HEAD output: %s\n' "$implementation" "$output"
 }
