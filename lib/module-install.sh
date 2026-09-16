@@ -138,7 +138,18 @@ megabrain_interactive_modules() {
 }
 
 command_install() {
-  local module="" selected selected_modules rc=0 assume_yes=false revert=false browser=both arg
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) megabrain_usage_show install; return 0 ;;
+    esac
+  done
+  if [ -x "$typescript_binary" ]; then
+    "$typescript_binary" install "$@"
+    return $?
+  fi
+  local module="" selected selected_modules rc=0 assume_yes=false revert=false browser=both
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
@@ -186,7 +197,18 @@ EOF
 }
 
 command_doctor() {
-  local module="" rc=0 current json=false arg result results
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) megabrain_usage_show doctor; return 0 ;;
+    esac
+  done
+  if [ -x "$typescript_binary" ]; then
+    "$typescript_binary" doctor "$@"
+    return $?
+  fi
+  local module="" rc=0 current json=false result results
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
