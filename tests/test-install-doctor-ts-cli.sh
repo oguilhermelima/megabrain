@@ -69,6 +69,10 @@ EOF
 chmod +x "$work/bin/node"
 cat >"$work/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = -V ]; then
+  printf '%s\n' 'tmux 3.5a'
+  exit 0
+fi
 if [ "${1:-}" = list-sessions ]; then
   printf '%s\n' leaked-1 leaked-2 leaked-3 leaked-4 leaked-5 leaked-6
   exit 0
@@ -76,6 +80,41 @@ fi
 exit 1
 EOF
 chmod +x "$work/bin/tmux"
+for agent in claude codex agy cursor; do
+  cat >"$work/bin/$agent" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$work/bin/$agent"
+done
+cat >"$work/bin/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${EMPTY_DOCTOR_FIXTURE:-}" = true ]; then exit 1; fi
+if [ "${1:-}" = worktree ] && [ "${2:-}" = current ]; then
+  printf '%s\n' '{"ok":true,"result":{"worktree":{"path":"/Users/gui/Workspaces/Worktrees"}}}'
+  exit 0
+fi
+if [ "${1:-}" = status ]; then
+  printf '%s\n' '{}'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$work/bin/orca"
+cat >"$work/bin/superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "${EMPTY_DOCTOR_FIXTURE:-}" = true ]; then exit 1; fi
+if [ "${1:-}" = settings ] && [ "${2:-}" = get ] && [ "${3:-}" = worktreeBaseDir ]; then
+  printf '%s\n' '{"value":"/Users/gui/Workspaces"}'
+  exit 0
+fi
+if [ "${1:-}" = workspaces ] && [ "${2:-}" = list ]; then
+  printf '%s\n' '{}'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$work/bin/superset"
 cat >"$work/bin/date" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
@@ -85,9 +124,57 @@ esac
 EOF
 chmod +x "$work/bin/date"
 export PATH="$work/bin:$PATH"
+export SHELL=/bin/zsh
 export MEGABRAIN_TEST_NOW='2026-09-16T02:00:00Z'
+
+# Keep the absent-environment contract: inspection branches must agree when every source is absent.
+empty_home="$work/empty-home"
+empty_state_shell="$work/empty-state-shell"
+empty_state_binary="$work/empty-state-binary"
+mkdir -p "$empty_home" "$empty_state_shell" "$empty_state_binary"
+export HOME="$empty_home" MEGABRAIN_STATE_DIR="$empty_state_shell" EMPTY_DOCTOR_FIXTURE=true
+for module in orchestration-hooks worktree tmux-runtime; do
+  run_capture "$work/empty-shell-$module" "$root/megabrain" doctor "$module" --json
+  export MEGABRAIN_STATE_DIR="$empty_state_binary"
+  run_capture "$work/empty-binary-$module" "$binary" doctor "$module" --json
+  for side in stderr status; do
+    cmp -s "$work/empty-shell-$module.$side" "$work/empty-binary-$module.$side" || fail "empty environment $module $side differs"
+  done
+  cmp -s <(jq -S . "$work/empty-shell-$module.stdout") <(jq -S . "$work/empty-binary-$module.stdout") || fail "empty environment $module report differs"
+  cmp -s "$empty_state_shell/state.json" "$empty_state_binary/state.json" || fail "empty environment $module state differs"
+  export MEGABRAIN_STATE_DIR="$empty_state_shell"
+done
+
+export HOME="$work/home"
+unset EMPTY_DOCTOR_FIXTURE
 mkdir -p "$work/home/.megabrain/playwright"
 printf '%s\n' '{"profiles":{},"extensions":{}}' >"$work/home/.megabrain/playwright/manifest.json"
+mkdir -p "$work/home/.claude" "$work/home/.codex" "$work/home/.agy" "$work/home/.cursor"
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"MEGABRAIN_HOOK_AGENT=claude /repo/hooks/megabrain-turn-end.sh"}]}]}}' >"$work/home/.claude/settings.json"
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"MEGABRAIN_HOOK_AGENT=codex /repo/hooks/megabrain-turn-end.sh"}]}]}}' >"$work/home/.codex/hooks.json"
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"MEGABRAIN_HOOK_AGENT=agy /repo/hooks/megabrain-turn-end.sh"}]}]}}' >"$work/home/.agy/hooks.json"
+printf '%s\n' '{"hooks":{"afterAgentResponse":[{"command":"/repo/hooks/megabrain-turn-end.sh","timeout":10}]},"version":1}' >"$work/home/.cursor/hooks.json"
+cp "$root/zsh/megabrain-agent-tmux.zsh" "$work/home/.megabrain-agent-tmux.zsh"
+mkdir -p "$work/home/.megabrain/tmux" "$work/home/.megabrain/zsh"
+cp "$root/zsh/megabrain-agent-tmux.zsh" "$work/home/.megabrain/zsh/megabrain-agent-tmux.zsh"
+cp "$root/tmux/megabrain.tmux.conf" "$work/home/.megabrain/tmux/megabrain.tmux.conf"
+{
+  printf '%s\n' '# existing zsh settings'
+  printf '%s\n' '# >>> megabrain tmux wrapper >>>'
+  printf '%s\n' 'source ~/.megabrain/zsh/megabrain-agent-tmux.zsh'
+  printf '%s\n' '# <<< megabrain tmux wrapper <<<'
+} >"$work/home/.zshrc"
+{
+  printf '%s\n' '# existing tmux settings'
+  printf '%s\n' '# >>> megabrain tmux tuning >>>'
+  printf '%s\n' 'source-file ~/.megabrain/tmux/megabrain.tmux.conf'
+  printf '%s\n' '# <<< megabrain tmux tuning <<<'
+} >"$work/home/.tmux.conf"
+printf '%s\n' '/Users/gui/Workspaces' >"$work/home/.megabrain/worktree-root"
+printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$work/shell-state/state.json"
+cp "$work/shell-state/state.json" "$work/binary-state/state.json"
+printf '%s\n' '/Users/gui/Workspaces' >"$work/shell-state/worktree-root"
+cp "$work/shell-state/worktree-root" "$work/binary-state/worktree-root"
 
 # The shell oracle must expose both live-state failures to the contract. The binary
 # comparison below is intentionally expected to be red until the port inspects them.
