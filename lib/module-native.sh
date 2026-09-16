@@ -502,6 +502,53 @@ megabrain_native_app_reload() {
   fi
 }
 
+megabrain_native_crashes() {
+  local kind="${1:-}" last=1 arg='' directory target path header body app signing exception signal termination fault frames count=0
+  shift || true
+  [ -n "$kind" ] || { megabrain_usage_fail native-crashes; return "$MEGABRAIN_USAGE_ERROR"; }
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --last) [ "$#" -gt 0 ] || { megabrain_error 'missing value for --last'; return "$MEGABRAIN_USAGE_ERROR"; }; last="$1"; shift ;;
+      --json) megabrain_error 'native crashes --json is only available in the TypeScript implementation'; return 2 ;;
+      -h|--help) megabrain_usage_show native-crashes; return 0 ;;
+      *) megabrain_error "unknown native crashes option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  [[ "$last" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "last must be a positive integer: $last"; return "$MEGABRAIN_USAGE_ERROR"; }
+  target="$(megabrain_native_config_value "$kind" bundleId)" || return 1
+  [ -n "$target" ] || { megabrain_error "bundle id is required for $kind; pass --bundle-id in .megabrain/native.json"; return 1; }
+  directory="${MEGABRAIN_NATIVE_CRASH_REPORTS_DIR:-$HOME/Library/Logs/DiagnosticReports}"
+  [ -d "$directory" ] || { megabrain_error "cannot read crash reports directory: $directory"; return 1; }
+  local ordered_paths=''
+  ordered_paths="$(for path in "$directory"/*.ips; do
+    [ -f "$path" ] || continue
+    printf '%s %s\n' "$(megabrain_path_mtime "$path" || printf 0)" "$path"
+  done | sort -rn | cut -d' ' -f2-)"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    [ -f "$path" ] || continue
+    header="$(head -n 1 "$path" 2>/dev/null || true)"
+    body="$(tail -n +2 "$path" 2>/dev/null || true)"
+    if ! app="$(printf '%s' "$header" | jq -er '.app_name' 2>/dev/null)" || ! exception="$(printf '%s' "$body" | jq -er '.exception.type' 2>/dev/null)"; then
+      megabrain_error "$(basename "$path"): report cannot be parsed"
+      continue
+    fi
+    signing="$(printf '%s' "$body" | jq -r '.codeSigningID // empty' 2>/dev/null || true)"
+    if [[ "$target" == *.* ]]; then [ "$signing" = "$target" ] || continue; else [ "$app" = "$target" ] || continue; fi
+    fault="$(printf '%s' "$body" | jq -er '.faultingThread as $i | .threads[$i].frames' 2>/dev/null)" || { megabrain_error "$(basename "$path"): faultingThread index does not exist in threads"; continue; }
+    signal="$(printf '%s' "$body" | jq -r '.exception.signal // empty' 2>/dev/null || true)"
+    termination="$(printf '%s' "$body" | jq -r '.termination.indicator // .termination // empty' 2>/dev/null || true)"
+    frames="$(printf '%s' "$body" | jq -r '.usedImages as $images | .faultingThread as $i | .threads[$i].frames[] | if .imageIndex != null and $images[.imageIndex].name then ($images[.imageIndex].name + " + " + (.imageOffset // "unknown offset") + " (" + ($images[.imageIndex].path // "unknown path") + ")") else ("imageIndex " + ((.imageIndex // "unknown")|tostring) + " + " + ((.imageOffset // "unknown offset")|tostring)) end' 2>/dev/null || true)"
+    printf '%s\n%s%s\n%s\n' "$path" "$exception" "${signal:+ ($signal)}" "$termination"
+    printf '%s\n' "$frames" | sed 's/^/  /'
+    count=$((count + 1)); [ "$count" -ge "$last" ] && break
+  done <<EOF
+$ordered_paths
+EOF
+  [ "$count" -gt 0 ] || printf 'no crash reports found for %s\n' "$target"
+}
+
 megabrain_native_app_health() {
   local kind='' bundle_id='' device='' metro_port='' control_frame='' json=false arg='' configured_value=''
   local process_state=unknown process_reason='could not inspect simulator processes' metro_state=unknown metro_reason='Metro attachment cannot be determined'
@@ -603,8 +650,9 @@ command_native() {
         *) megabrain_error "unknown native app operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
+    crashes) megabrain_native_crashes "$operation" "$@" ;;
     health) megabrain_native_app_health "$operation" "$@" ;;
-    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-health native-appium ;;
+    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-health native-crashes native-appium ;;
     *) megabrain_error "unknown native command: $family"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }
