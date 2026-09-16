@@ -2755,10 +2755,42 @@ command_terminal() {
   local subcommand="${1:-}"
   shift || true
   case "$subcommand" in
-    create) megabrain_terminal_create "$@" ;;
+    create)
+      case "${1:-}" in
+        -h|--help)
+          megabrain_usage_show terminal-create
+          printf 'Without --command, use the worktree .superset/config.json run script.\n'
+          printf 'Superset tabs are not titled; only Orca tabs are.\n'
+          return 0
+          ;;
+      esac
+      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION:-}" != shell ]; then
+        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal create "$@"
+      else
+        megabrain_terminal_create "$@"
+      fi
+      ;;
     list) megabrain_terminal_list "$@" ;;
-    restart) megabrain_terminal_restart "$@" ;;
-    close) megabrain_terminal_close "$@" ;;
+    restart)
+      case "${1:-}" in
+        -h|--help) megabrain_usage_show terminal-restart; return 0 ;;
+      esac
+      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION:-}" != shell ]; then
+        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal restart "$@"
+      else
+        megabrain_terminal_restart "$@"
+      fi
+      ;;
+    close)
+      case "${1:-}" in
+        -h|--help) megabrain_usage_show terminal-close; return 0 ;;
+      esac
+      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION:-}" != shell ]; then
+        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal close "$@"
+      else
+        megabrain_terminal_close "$@"
+      fi
+      ;;
     -h|--help|"")
       megabrain_usage_show terminal-create
       printf 'Superset tabs are not titled; only Orca tabs are.\n'
