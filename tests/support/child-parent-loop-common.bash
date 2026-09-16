@@ -363,7 +363,7 @@ run_flow() {
   chain_output="$(command_chain_run loop --parent-agent codex --worktree "$root" --prompt chain-launch --tmux "$spawn_choice" --json)"
   assert_equal "$(printf '%s' "$chain_output" | jq -r '.step')" 1
   assert_equal "$(printf '%s' "$chain_output" | jq -r '.agent')" codex
-  dispatch_id="$(printf '%s' "$chain_output" | jq -r '.dispatch.dispatch // empty')"
+  dispatch_id="$(printf '%s' "$chain_output" | jq -r '.dispatch.dispatchId // empty')"
   [ -n "$dispatch_id" ] || fail "$runtime chain did not launch a dispatch"
   export MEGABRAIN_TEST_DISPATCH_ID="$dispatch_id"
   if [ "$runtime" = tmux ]; then

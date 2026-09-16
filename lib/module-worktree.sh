@@ -1886,7 +1886,7 @@ megabrain_worktree_create() {
   local parent_metadata_set=false parent_metadata_error="" lineage_set=false grouping_set=false lineage_error="" grouping_error=""
   local links_set=false links_error=""
   local model_explicit=false effort_explicit=false chain_selected=false chain_config=""
-  local arg repo_path shared_root worktree_path project_id="" workspace_id="" dispatch="" host runtime="" tmux_choice=auto walk_status parent_json
+  local arg repo_path shared_root worktree_path project_id="" workspace_id="" dispatch="" host runtime="" tmux_choice=auto walk_status parent_json tmux_pane_json=null
   local project_record="" workspace_record="" project_created=false workspace_created=false workspace_existing_id="" worktree_created=false launch_status=0
   local -a agent_args=() orca_set_args=()
   while [ "$#" -gt 0 ]; do
@@ -2222,6 +2222,7 @@ megabrain_worktree_create() {
     fi
     dispatch="$MEGABRAIN_LAST_DISPATCH"
     runtime="$MEGABRAIN_LAST_SPAWN_RUNTIME"
+    tmux_pane_json="$(megabrain_dispatch_meta_read "$dispatch" | jq -c '.tmuxPane // null')" || tmux_pane_json=null
     if [ -n "$dispatch" ] && [ "$json" != true ]; then
       printf 'dispatch: %s\nruntime: %s\n' "$dispatch" "$runtime"
     fi
@@ -2240,10 +2241,10 @@ megabrain_worktree_create() {
       parent_json='{"requested":false}'
     fi
     if [ -n "${dispatch:-}" ]; then
-      jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg dispatch "$dispatch" --arg reused "$reused" --arg runtime "$runtime" --arg base "$base" --arg baseCommit "$base_commit" --arg baseSource "$base_source" \
+      jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg dispatch "$dispatch" --arg reused "$reused" --arg runtime "$runtime" --arg base "$base" --arg baseCommit "$base_commit" --arg baseSource "$base_source" --argjson tmuxPane "$tmux_pane_json" \
         --argjson parent "$parent_json" \
         --arg issue "$issue" --arg linearIssue "$linear_issue" --argjson linksSet "$links_set" --arg linksError "$links_error" \
-        '{worktree: $worktree, branch: $branch, workspace: (if $workspace|length > 0 then $workspace else null end), dispatch: $dispatch, reused: ($reused == "true"), runtime: $runtime, base: $base, baseCommit: $baseCommit, baseSource: $baseSource, parent: $parent, links: {issue: (if $issue|length > 0 then $issue else null end), linearIssue: (if $linearIssue|length > 0 then $linearIssue else null end), set: $linksSet, error: (if $linksError|length > 0 then $linksError else null end)}}'
+        '{worktree: $worktree, branch: $branch, workspace: (if $workspace|length > 0 then $workspace else null end), dispatchId: $dispatch, tmuxPane: $tmuxPane, reused: ($reused == "true"), runtime: $runtime, base: $base, baseCommit: $baseCommit, baseSource: $baseSource, parent: $parent, links: {issue: (if $issue|length > 0 then $issue else null end), linearIssue: (if $linearIssue|length > 0 then $linearIssue else null end), set: $linksSet, error: (if $linksError|length > 0 then $linksError else null end)}}'
     else
       jq -n --arg worktree "$worktree_path" --arg branch "$branch" --arg workspace "$workspace_id" --arg reused "$reused" --arg base "$base" --arg baseCommit "$base_commit" --arg baseSource "$base_source" \
         --argjson parent "$parent_json" \

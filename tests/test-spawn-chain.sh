@@ -123,7 +123,7 @@ printf 'explicit agent without chains: passed\n'
 # 2. A selector supplies the agent, while explicit model and effort override their fields.
 write_config '{"chains":{"codex-path":{"when":{"parentAgent":"codex"},"steps":[{"agent":"claude","model":"claude-sonnet-5","effort":"medium"}]}},"defaultSteps":[]}'
 spawn_json="$(run_spawn --model claude-opus-5 --effort high)"
-dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatch')"
+dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatchId')"
 assert_equal "$(cut -f1 "$state_root/last-spawn")" claude
 assert_equal "$(cut -f2 "$state_root/last-spawn")" claude-opus-5
 assert_equal "$(cut -f3 "$state_root/last-spawn")" high
@@ -147,7 +147,7 @@ printf 'empty chain failure has no side effects: passed\n'
 # 4. With no selector match, defaultSteps supplies the first step.
 write_config '{"chains":{"other":{"when":{"parentAgent":"claude"},"steps":[{"agent":"claude","model":"claude-sonnet-5","effort":"medium"}]}},"defaultSteps":[{"agent":"agy","model":"gemini-3.8-flash-high"}]}'
 spawn_json="$(run_spawn)"
-dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatch')"
+dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatchId')"
 assert_equal "$(cut -f1 "$state_root/last-spawn")" agy
 assert_equal "$(jq -r '.chain.name' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" defaultSteps
 assert_equal "$(jq -r '.chain.usedDefault' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" true
@@ -162,7 +162,7 @@ printf 'fresh chain state is empty: passed\n'
 # 6. --chain bypasses a non-matching selector and records the explicit choice.
 write_config '{"chains":{"forced":{"when":{"parentAgent":"claude"},"steps":[{"agent":"claude","model":"claude-sonnet-5","effort":"medium"}]}},"defaultSteps":[{"agent":"agy","model":"gemini-3.8-flash-high"}]}'
 spawn_json="$(run_spawn --chain forced)"
-dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatch')"
+dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatchId')"
 assert_equal "$(cut -f1 "$state_root/last-spawn")" claude
 assert_equal "$(jq -r '.chain.name' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" forced
 assert_contains "$(jq -r '.chain.reason' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" 'explicit --chain'
@@ -184,7 +184,7 @@ limit_agent=codex
 limit_used=99
 limit_resets=4102444800
 spawn_json="$(run_spawn)"
-dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatch')"
+dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatchId')"
 assert_equal "$(cut -f1 "$state_root/last-spawn")" claude
 assert_equal "$(jq -r '.chain.step' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" 2
 assert_contains "$(jq -r '.chain.reason' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" 'codex 5h window at 99 percent'
@@ -195,7 +195,7 @@ clear_state
 write_config '{"chains":{"fallback":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"gpt-5.6-luna","effort":"high"},{"agent":"claude","model":"claude-sonnet-5","effort":"medium"}]}} ,"defaultSteps":[]}'
 fail_agent=codex
 spawn_json="$(run_spawn)"
-dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatch')"
+dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatchId')"
 assert_equal "$(cut -f1 "$state_root/last-spawn")" claude
 assert_equal "$(jq -r '.chain.step' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" 2
 assert_contains "$(jq -r '.chain.reason' "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/meta.json")" 'codex launch failed'
