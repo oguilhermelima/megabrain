@@ -13,6 +13,7 @@ import { executeWorktreeList } from "./commands/worktree-list.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
 import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
 import { executeTerminalList } from "./commands/terminal-list.js";
+import { executeTerminalLifecycle } from "./commands/terminal-lifecycle.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
@@ -93,6 +94,9 @@ export function route(
   }
   if (command === "terminal" && commandArgs[0] === "list") {
     return executeTerminalList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "terminal" && ["create", "restart", "close"].includes(commandArgs[0] ?? "")) {
+    return executeTerminalLifecycle(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
