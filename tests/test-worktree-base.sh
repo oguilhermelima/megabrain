@@ -93,6 +93,27 @@ assert_contains "$output" 'base'
 printf 'binary create remains independent of a failing shell entrypoint\n'
 mv "$root/megabrain.worktree-base-shell-test.real" "$root/megabrain"
 
+git -C "$work/repo" symbolic-ref --delete refs/remotes/origin/HEAD
+printf 'v3\n' >"$work/seed/version"
+git -C "$work/seed" commit -qam v3 && git -C "$work/seed" push -q
+remote_tip_without_head="$(git -C "$work/seed" rev-parse HEAD)"
+
+create_without_origin_head() {
+  local implementation="$1" branch="$2" output path
+  if [ "$implementation" = shell ]; then
+    output="$(run_shell worktree create --repo "$work/repo" --branch "$branch" --json)"
+  else
+    output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
+  fi
+  path="$work/shared/${branch//\//-}"
+  json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip_without_head\""
+  assert_equal "$(git -C "$path" rev-parse HEAD)" "$remote_tip_without_head"
+  printf '%s missing origin HEAD output: %s\n' "$implementation" "$output"
+}
+
+create_without_origin_head shell feat/missing-head-shell
+create_without_origin_head binary feat/missing-head-binary
+
 git -C "$work/repo" remote set-url origin "$work/missing-origin"
 if output="$(run_binary worktree create --repo "$work/repo" --branch feat/fetch-failure --json 2>&1)"; then
   fail 'create succeeded after the default fetch failed'
