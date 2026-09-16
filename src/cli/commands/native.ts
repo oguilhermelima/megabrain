@@ -105,8 +105,30 @@ async function appium(args: readonly string[], environment: Environment, process
     return command.includes("appium") ? ok(`appium: up (port ${port}, pid ${pid})\n`) : error(`appium: occupied (port ${port}, pid ${pid})`);
   }
   if (operation !== "start" && operation !== "stop") return error(`unknown appium operation: ${operation}`, 2);
-  if (operation === "start") return error("appium start is unavailable through the process adapter");
-  return ok("appium: already stopped\n");
+  if (operation === "start") {
+    const started = await processAdapter.startDetached("appium", ["--port", port, "--log-level", "error"]);
+    if (started.kind !== "ok") return error(`failed to start appium: ${started.error}`);
+    const timeout = validateTimeout(environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30");
+    if (timeout.kind !== "ok") return timeout;
+    for (let attempt = 0; attempt < timeout.value * 5; attempt += 1) {
+      const probe = await processAdapter.run("curl", ["-fsS", "--max-time", "1", `http://127.0.0.1:${port}/status`]);
+      if (probe.kind === "ok") {
+        const status = await appium(["status"], environment, processAdapter);
+        if (status.kind === "ok") return status;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
+    }
+    return error(`appium did not start on port ${port}; the server did not answer readiness checks`);
+  }
+  const found = await processAdapter.run("lsof", ["-tiTCP:" + port, "-sTCP:LISTEN"]);
+  const pid = found.kind === "ok" ? found.value.stdout.trim().split("\n")[0] ?? "" : "";
+  if (!pid) return ok("appium: already stopped\n");
+  const ps = await processAdapter.run("ps", ["-p", pid, "-o", "command="]);
+  const command = ps.kind === "ok" ? ps.value.stdout : "";
+  if (!command.includes("appium")) return error(`appium: occupied (port ${port}, pid ${pid})`);
+  const stopped = await processAdapter.run("kill", [pid]);
+  if (stopped.kind !== "ok") return error(`failed to stop appium (pid ${pid}): ${stopped.error}`);
+  return ok(`appium: stopped (pid ${pid})\n`);
 }
 export async function executeNative(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
   const [family, operation, ...rest] = args;
