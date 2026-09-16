@@ -138,18 +138,7 @@ megabrain_interactive_modules() {
 }
 
 command_install() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      -h|--help) megabrain_usage_show install; return 0 ;;
-    esac
-  done
-  if [ -x "$typescript_binary" ]; then
-    "$typescript_binary" install "$@"
-    return $?
-  fi
-  local module="" selected selected_modules rc=0 assume_yes=false revert=false browser=both
+  local module="" selected selected_modules rc=0 assume_yes=false revert=false browser=both arg
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
