@@ -46,7 +46,28 @@ else
 fi
 EOF
 chmod +x "$work/bin/appium"
+cat >"$work/bin/npx" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$work/bin/npx"
+cat >"$work/bin/node" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" = */scripts/playwright-web.mjs ]] && [ "${2:-}" = doctor ]; then
+  printf '%s\n' '{"status":"unknown","reason":"chromium.ublock: installed 2026.907.2003, expected 2026.914.1325"}'
+  exit 0
+fi
+exec /usr/bin/node "$@"
+EOF
+chmod +x "$work/bin/node"
 export PATH="$work/bin:$PATH"
+mkdir -p "$work/home/.megabrain/playwright"
+printf '%s\n' '{"profiles":{},"extensions":{}}' >"$work/home/.megabrain/playwright/manifest.json"
+
+# The shell oracle must expose both live-state failures to the contract. The binary
+# comparison below is intentionally expected to be red until the port inspects them.
+mkdir -p "$work/shell-state/dispatches/uncertain"
+printf '%s\n' '{"dispatchId":"uncertain","processState":"start-unproven"}' >"$work/shell-state/dispatches/uncertain/meta.json"
 
 # Reach the shell implementation by removing the compiled binary from its expected path.
 mv "$binary" "$hidden"
@@ -76,6 +97,7 @@ for module in "${modules[@]}"; do
   run_capture "$work/seed-$module" "$root/megabrain" doctor "$module" --json
 done
 cp "$work/shell-state/state.json" "$work/binary-state/state.json"
+cp -R "$work/shell-state/dispatches" "$work/binary-state/dispatches"
 
 for module in "${modules[@]}"; do
   export MEGABRAIN_STATE_DIR="$work/shell-state"
