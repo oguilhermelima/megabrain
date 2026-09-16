@@ -1386,7 +1386,7 @@ megabrain_chain_walk() {
       else
         spawn_json=null
       fi
-      dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatch // empty' 2>/dev/null)"
+      dispatch_id="$(printf '%s' "$spawn_json" | jq -r '.dispatchId // empty' 2>/dev/null)"
       if [ -n "$dispatch_id" ]; then
         megabrain_chain_usage_notice_maybe "$dispatch_id"
       fi
