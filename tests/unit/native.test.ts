@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { executeNative } from "../../src/cli/commands/native.js";
-import { candidatesFromSimctl, formatNativeList, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
+import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
@@ -28,6 +28,45 @@ describe("native planning", () => {
   test("formats plain and json lists", () => {
     expect(formatNativeList("phone", candidates, false)).toContain("Phone\tBooted\tone");
     expect(JSON.parse(formatNativeList("phone", candidates, true)).devices).toHaveLength(2);
+  });
+});
+
+describe("native health decision rules", () => {
+  const base = {
+    process: { state: "running" as const },
+    metro: { state: "attached" as const },
+    tree: { count: 3 },
+    frame: { state: "differs" as const },
+  };
+
+  test("reports rendered when all evidence supports a real screen", () => {
+    expect(evaluateNativeHealth(base)).toMatchObject({ status: "rendered", reason: "frame differs and accessibility tree exposes 3 elements" });
+  });
+
+  test("reports not-rendered when the process is stopped, before other sources", () => {
+    expect(evaluateNativeHealth({ ...base, process: { state: "not-running", reason: "process is not running" }, metro: { state: "not-attached" }, tree: { count: 0 }, frame: { state: "unknown", reason: "capture failed" } })).toMatchObject({ status: "not-rendered", reason: "process is not running" });
+  });
+
+  test("reports unknown when the process cannot be checked", () => {
+    expect(evaluateNativeHealth({ ...base, process: { state: "unknown", reason: "simctl unavailable" } })).toMatchObject({ status: "unknown", reason: "simctl unavailable" });
+  });
+
+  test("reports not-rendered when the live frame matches its control", () => {
+    expect(evaluateNativeHealth({ ...base, frame: { state: "identical", reason: "hashes match" }, tree: { count: 4 } })).toMatchObject({ status: "not-rendered", reason: "screen matches the control frame" });
+  });
+
+  test("reports loading for an empty or single-element tree", () => {
+    expect(evaluateNativeHealth({ ...base, tree: { count: 0 } })).toMatchObject({ status: "loading", reason: "accessibility tree exposes 0 elements" });
+    expect(evaluateNativeHealth({ ...base, tree: { count: 1 } })).toMatchObject({ status: "loading", reason: "accessibility tree exposes 1 element" });
+  });
+
+  test("uses Metro as supporting evidence when the tree is unavailable", () => {
+    expect(evaluateNativeHealth({ ...base, tree: { count: null, reason: "driver unavailable" } })).toMatchObject({ status: "rendered", reason: "frame differs and Metro is attached" });
+    expect(evaluateNativeHealth({ ...base, metro: { state: "not-attached" }, tree: { count: null, reason: "driver unavailable" } })).toMatchObject({ status: "unknown", reason: "accessibility tree is unavailable and Metro is not attached" });
+  });
+
+  test("keeps missing frame evidence unknown", () => {
+    expect(evaluateNativeHealth({ ...base, frame: { state: "unknown", reason: "no control frame" } })).toMatchObject({ status: "unknown", reason: "no control frame" });
   });
 });
 
