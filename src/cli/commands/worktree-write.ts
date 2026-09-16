@@ -233,6 +233,30 @@ async function defaultBase(
     ? configured.value.stdout.trim()
     : "main";
 }
+async function createBase(
+  process: ProcessAdapter,
+  repo: string,
+  requested: string | undefined,
+): Promise<Result<{ ref: string; commit: string }>> {
+  let ref = requested;
+  if (!ref) {
+    const remote = await run(process, "git", [
+      "-C", repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD",
+    ]);
+    if (remote.kind === "ok" && remote.value.stdout.trim()) {
+      const branch = remote.value.stdout.trim().replace(/^origin\//, "");
+      const fetched = await run(process, "git", ["-C", repo, "fetch", "origin", branch]);
+      if (fetched.kind !== "ok") return failed(`could not fetch default base origin/${branch}: ${fetched.error}`);
+      ref = `origin/${branch}`;
+    } else {
+      ref = await defaultBase(process, repo);
+    }
+  }
+  const resolved = await run(process, "git", ["-C", repo, "rev-parse", "--verify", `${ref}^{commit}`]);
+  return resolved.kind === "ok"
+    ? ok({ ref, commit: resolved.value.stdout.trim() })
+    : failed(`base does not exist: ${ref}`);
+}
 async function parentBranch(
   process: ProcessAdapter,
   repo: string,
@@ -330,7 +354,7 @@ async function resolveParent(
 function output(value: unknown, json: boolean): string {
   return json
     ? `${JSON.stringify(value, null, 2)}\n`
-    : `worktree: ${(value as { worktree: string }).worktree}\nbranch: ${(value as { branch: string }).branch}\n`;
+    : `worktree: ${(value as { worktree: string }).worktree}\nbranch: ${(value as { branch: string }).branch}\nbase: ${(value as { base: string }).base}\nbase commit: ${(value as { baseCommit: string }).baseCommit}\n`;
 }
 function isEnvFile(name: string): boolean {
   return name === ".env" || (name.startsWith(".env.") && name !== ".env.example");
@@ -384,7 +408,7 @@ export async function executeWorktreeCreate(
 ): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help"))
     return ok(
-      "Usage: megabrain worktree create --repo <name|path> --branch <branch> [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]\n",
+      "Usage: megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]\n",
     );
   const options = parseCreateOptions(args);
   if (options.kind !== "ok") return options;
@@ -394,7 +418,9 @@ export async function executeWorktreeCreate(
   const repo = await repoFromOrca(process, value.repo as string);
   if (repo.kind !== "ok") return repo;
   const branch = value.branch as string;
-  const base = value.base ?? (await defaultBase(process, repo.value));
+  const resolvedBase = await createBase(process, repo.value, value.from ?? value.base);
+  if (resolvedBase.kind !== "ok") return resolvedBase;
+  const base = resolvedBase.value.ref;
   const name = value.name ?? createName(branch);
   if (!name) return failed("branch cannot produce a safe slug");
   const path = join(shared.value, name);
@@ -495,6 +521,8 @@ export async function executeWorktreeCreate(
     branch,
     workspace: null,
     reused: false,
+    base,
+    baseCommit: resolvedBase.value.commit,
     parent,
     links,
   };
