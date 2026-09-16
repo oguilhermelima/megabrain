@@ -141,6 +141,18 @@ export PATH="$work/bin:$PATH"
 export SHELL=/bin/zsh
 export MEGABRAIN_TEST_NOW='2026-09-16T02:00:00Z'
 
+# The operator-facing shell entrypoint must route these verbs to the compiled
+# implementation. A failing binary makes an accidental shell fallback visible.
+mv "$binary" "$hidden"
+printf '#!/usr/bin/env bash\nexit 42\n' >"$binary"
+chmod +x "$binary"
+run_capture "$work/routed-doctor" "$root/megabrain" doctor orchestration
+run_capture "$work/routed-install" "$root/megabrain" install simulator-web
+[ "$(cat "$work/routed-doctor.status")" -eq 42 ] || fail 'operator doctor was not served by the binary'
+[ "$(cat "$work/routed-install.status")" -eq 42 ] || fail 'operator install was not served by the binary'
+rm -f "$binary"
+mv "$hidden" "$binary"
+
 # Keep the absent-environment contract: inspection branches must agree when every source is absent.
 empty_home="$work/empty-home"
 empty_state_shell="$work/empty-state-shell"
