@@ -327,6 +327,7 @@ megabrain_usage_line() {
     native-sim-list) printf 'native sim list <phone|tv> [--json]' ;;
     native-sim-ensure) printf 'native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]' ;;
     native-app-reload) printf 'native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]' ;;
+    native-health) printf 'native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]' ;;
     tv-connect) printf 'tv connect <ip> [--port <port>]' ;;
     tv-disconnect) printf 'tv disconnect [<ip>]' ;;
     tmux-tune) printf 'tmux tune [--yes] [--dry-run] [--revert] [--json]' ;;

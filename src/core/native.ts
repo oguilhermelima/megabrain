@@ -3,13 +3,40 @@ import { failed, ok, type Result } from "./result.js";
 export type NativeKind = "phone" | "tv";
 export type NativeCandidate = { readonly udid: string; readonly state: string; readonly name: string };
 
-export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium"): string {
+export type NativeHealth = {
+  readonly process: { readonly state: "running" | "not-running" | "unknown"; readonly reason?: string };
+  readonly metro: { readonly state: "attached" | "not-attached" | "unknown"; readonly reason?: string };
+  readonly tree: { readonly count: number | null; readonly reason?: string };
+  readonly frame: { readonly state: "differs" | "identical" | "unknown"; readonly reason?: string };
+};
+
+export type NativeHealthResult = NativeHealth & {
+  readonly status: "rendered" | "not-rendered" | "loading" | "unknown";
+  readonly reason: string;
+};
+
+export function evaluateNativeHealth(readings: NativeHealth): NativeHealthResult {
+  if (readings.process.state === "not-running") return { ...readings, status: "not-rendered", reason: readings.process.reason ?? "process is not running" };
+  if (readings.process.state === "unknown") return { ...readings, status: "unknown", reason: readings.process.reason ?? "process state is unavailable" };
+  if (readings.frame.state === "identical") return { ...readings, status: "not-rendered", reason: "screen matches the control frame" };
+  if (readings.frame.state === "unknown") return { ...readings, status: "unknown", reason: readings.frame.reason ?? "frame comparison is unavailable" };
+  if (readings.tree.count !== null && readings.tree.count <= 1) {
+    const noun = readings.tree.count === 1 ? "element" : "elements";
+    return { ...readings, status: "loading", reason: `accessibility tree exposes ${readings.tree.count} ${noun}` };
+  }
+  if (readings.tree.count !== null) return { ...readings, status: "rendered", reason: `frame differs and accessibility tree exposes ${readings.tree.count} elements` };
+  if (readings.metro.state === "attached") return { ...readings, status: "rendered", reason: "frame differs and Metro is attached" };
+  return { ...readings, status: "unknown", reason: "accessibility tree is unavailable and Metro is not attached" };
+}
+
+export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health"): string {
   const lines = {
-    native: "Usage: megabrain native sim list <phone|tv> [--json]\n       megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n       megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native appium start|stop|status\n",
+    native: "Usage: megabrain native sim list <phone|tv> [--json]\n       megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n       megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n       megabrain native appium start|stop|status\n",
     list: "Usage: megabrain native sim list <phone|tv> [--json]\n",
     ensure: "Usage: megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n",
     reload: "Usage: megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n",
     appium: "Usage: megabrain native appium start|stop|status\n",
+    health: "Usage: megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n",
   } as const;
   return lines[topic];
 }
