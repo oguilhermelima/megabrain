@@ -18,8 +18,8 @@ export type Unknown = {
 
 export type Result<T> = Ok<T> | Failed | Unknown;
 
-export function ok<T>(value: T): Ok<T> {
-  return { kind: "ok", value };
+export function ok<T>(value: T, exitCode?: number): Ok<T> {
+  return exitCode === undefined ? { kind: "ok", value } : { kind: "ok", value, exitCode };
 }
 
 export function failed(error: string, exitCode = 1): Failed {

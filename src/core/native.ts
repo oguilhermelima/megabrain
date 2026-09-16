@@ -1,5 +1,28 @@
 import { failed, ok, type Result } from "./result.js";
 
+export type NativePlatform = "iOS" | "tvOS";
+export type NativeRuntime = { readonly platform: NativePlatform; readonly version: string; readonly build: string; readonly identifier: string };
+
+export function runtimesFromSimctl(value: unknown): Result<NativeRuntime[]> {
+  if (typeof value !== "object" || value === null || !Array.isArray((value as { runtimes?: unknown }).runtimes)) return failed("simctl returned invalid runtime data");
+  const runtimes: NativeRuntime[] = [];
+  for (const entry of (value as { runtimes: unknown[] }).runtimes) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const item = entry as Record<string, unknown>;
+    const identifier = typeof item.identifier === "string" ? item.identifier : "";
+    const name = typeof item.name === "string" ? item.name : "";
+    const version = typeof item.version === "string" ? item.version : "";
+    const build = typeof item.buildversion === "string" ? item.buildversion : typeof item.buildVersion === "string" ? item.buildVersion : "";
+    const platform = name.startsWith("iOS") || identifier.includes("iOS") ? "iOS" : name.startsWith("tvOS") || identifier.includes("tvOS") ? "tvOS" : undefined;
+    if (platform && version && build && identifier) runtimes.push({ platform, version, build, identifier });
+  }
+  return ok(runtimes);
+}
+
+export function runtimeFactId(platform: NativePlatform, version: string): string {
+  return `native-runtime-${platform.toLowerCase()}-${version.replaceAll(".", "-")}`;
+}
+
 export type NativeKind = "phone" | "tv";
 export type NativeCandidate = { readonly udid: string; readonly state: string; readonly name: string };
 
@@ -29,7 +52,7 @@ export function evaluateNativeHealth(readings: NativeHealth): NativeHealthResult
   return { ...readings, status: "unknown", reason: "accessibility tree is unavailable and Metro is not attached" };
 }
 
-export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health" | "crashes"): string {
+export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health" | "crashes" | "runtime-list" | "runtime-install"): string {
   const lines = {
     native: "Usage: megabrain native sim list <phone|tv> [--json]\n       megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n       megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n       megabrain native crashes <phone|tv> [--last N] [--json]\n       megabrain native appium start|stop|status\n",
     list: "Usage: megabrain native sim list <phone|tv> [--json]\n",
@@ -38,6 +61,8 @@ export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "ap
     appium: "Usage: megabrain native appium start|stop|status\n",
     health: "Usage: megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n",
     crashes: "Usage: megabrain native crashes <phone|tv> [--last N] [--json]\n",
+    "runtime-list": "Usage: megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]\n",
+    "runtime-install": "Usage: megabrain native runtime install <ios|tvos> <version> [--json]\n",
   } as const;
   return lines[topic];
 }
