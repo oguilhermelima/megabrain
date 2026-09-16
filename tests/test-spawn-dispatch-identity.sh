@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Scenarios written before implementation: a tmux spawn reports the durable dispatch id and
-# pane from metadata, and a host spawn reports an explicit null pane.
+# Scenarios written before implementation: a tmux spawn reports the durable dispatchId and
+# pane from metadata without the legacy dispatch key, and a host spawn reports an explicit
+# null pane.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-spawn-identity.XXXXXX")"
 trap 'rm -rf "$state"' EXIT
@@ -42,12 +43,14 @@ megabrain_launch_agent() {
 
 tmux_json="$(command_orchestrate spawn --worktree "$root" --agent codex --model gpt-5 --effort medium \
   --prompt identity-test --tmux true --json)"
-[ "$(printf '%s' "$tmux_json" | jq -r '.dispatch')" = dispatch-identity-test ] || fail 'spawn omitted dispatch id'
+[ "$(printf '%s' "$tmux_json" | jq -r '.dispatchId')" = dispatch-identity-test ] || fail 'spawn omitted dispatch id'
+[ "$(printf '%s' "$tmux_json" | jq -e 'has("dispatch") | not')" = true ] || fail 'spawn retained legacy dispatch key'
 [ "$(printf '%s' "$tmux_json" | jq -r '.tmuxPane')" = '%42' ] || fail 'spawn omitted tmux pane'
 printf 'tmux spawn reports dispatch id and pane\n'
 
 host_json="$(command_orchestrate spawn --worktree "$root" --agent codex --model gpt-5 --effort medium \
   --prompt identity-test --tmux false --json)"
-[ "$(printf '%s' "$host_json" | jq -r '.dispatch')" = dispatch-identity-test ] || fail 'host spawn omitted dispatch id'
+[ "$(printf '%s' "$host_json" | jq -r '.dispatchId')" = dispatch-identity-test ] || fail 'host spawn omitted dispatch id'
+[ "$(printf '%s' "$host_json" | jq -e 'has("dispatch") | not')" = true ] || fail 'host spawn retained legacy dispatch key'
 [ "$(printf '%s' "$host_json" | jq -r '.tmuxPane')" = null ] || fail 'host spawn did not report null tmux pane'
 printf 'host spawn reports explicit null pane\n'
