@@ -62,6 +62,7 @@ compare_case duplicate chain add existing --when '{"parentAgent":"codex"}' --ste
 compare_case missing chain edit absent --json
 compare_case missing chain delete absent --json
 compare_case invalid chain add invalid --when '{"parentAgent":"codex"}' --steps '[{"agent":"codex"}]'
+compare_case unknown-model chain add invalid-model --when '{"parentAgent":"codex"}' --steps '[{"agent":"codex","model":"not-registered","effort":"medium"}]'
 compare_case valid chain repair existing --step 1 --model gpt-5.6-luna --effort medium --json
 compare_case malformed chain repair existing --step 1 --model gpt-5.6-luna --effort medium --json
 
