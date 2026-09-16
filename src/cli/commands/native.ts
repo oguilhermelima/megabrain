@@ -34,6 +34,10 @@ function unknownProcess(reason: string): NativeHealth["process"] { return { stat
 function unknownMetro(reason: string): NativeHealth["metro"] { return { state: "unknown", reason }; }
 function unknownTree(reason: string): NativeHealth["tree"] { return { count: null, reason }; }
 function unknownFrame(reason: string): NativeHealth["frame"] { return { state: "unknown", reason }; }
+const APPIUM_SESSION_DEFAULTS = { "appium:isHeadless": true } as const;
+function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean> {
+  return { platformName: "iOS", ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
+}
 async function nativeHealth(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("health"));
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
@@ -67,7 +71,7 @@ async function nativeHealth(args: readonly string[], environment: Environment, p
   }
 
   let tree: NativeHealth["tree"] = unknownTree("accessibility tree could not be consulted");
-  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: { platformName: "iOS", "appium:udid": udid, "appium:bundleId": bundleId } } })]);
+  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(udid, bundleId) } })]);
   if (session.kind === "ok") {
     try {
       const value = JSON.parse(session.value.stdout) as { sessionId?: string; value?: { sessionId?: string } };
