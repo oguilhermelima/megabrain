@@ -1161,11 +1161,6 @@ megabrain_terminal_record_write() {
 }
 
 megabrain_terminal_create() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION:-}" != shell ]; then
-    "$typescript_binary" terminal create "$@"
-    return $?
-  fi
   local worktree_selector="" command_text="" title="" port="" json=false arg worktree_path host workspace_id response
   local terminal_id pid_json port_json root_pid_json identity_token marker launch_command
   while [ "$#" -gt 0 ]; do
@@ -1527,11 +1522,6 @@ megabrain_terminal_resolve_selector() {
 }
 
 megabrain_terminal_close() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION:-}" != shell ]; then
-    "$typescript_binary" terminal close "$@"
-    return $?
-  fi
   local selector="" json=false arg record old_path terminal_id host workspace_id records identity terminal_status
   while [ "$#" -gt 0 ]; do
     arg="$1"
@@ -1648,11 +1638,6 @@ megabrain_terminal_recreate() {
 }
 
 megabrain_terminal_restart() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION:-}" != shell ]; then
-    "$typescript_binary" terminal restart "$@"
-    return $?
-  fi
   local selector="" command_override="" wait_port="" timeout=30 json=false arg
   local record old_path kind value root_pid target_pid target_port waited_port reported_port
   local killed_pid_json='null' port_json='null' listening_after_ms=0 started now
@@ -2770,10 +2755,42 @@ command_terminal() {
   local subcommand="${1:-}"
   shift || true
   case "$subcommand" in
-    create) megabrain_terminal_create "$@" ;;
+    create)
+      case "${1:-}" in
+        -h|--help)
+          megabrain_usage_show terminal-create
+          printf 'Without --command, use the worktree .superset/config.json run script.\n'
+          printf 'Superset tabs are not titled; only Orca tabs are.\n'
+          return 0
+          ;;
+      esac
+      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION:-}" != shell ]; then
+        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal create "$@"
+      else
+        megabrain_terminal_create "$@"
+      fi
+      ;;
     list) megabrain_terminal_list "$@" ;;
-    restart) megabrain_terminal_restart "$@" ;;
-    close) megabrain_terminal_close "$@" ;;
+    restart)
+      case "${1:-}" in
+        -h|--help) megabrain_usage_show terminal-restart; return 0 ;;
+      esac
+      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION:-}" != shell ]; then
+        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal restart "$@"
+      else
+        megabrain_terminal_restart "$@"
+      fi
+      ;;
+    close)
+      case "${1:-}" in
+        -h|--help) megabrain_usage_show terminal-close; return 0 ;;
+      esac
+      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION:-}" != shell ]; then
+        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal close "$@"
+      else
+        megabrain_terminal_close "$@"
+      fi
+      ;;
     -h|--help|"")
       megabrain_usage_show terminal-create
       printf 'Superset tabs are not titled; only Orca tabs are.\n'
