@@ -7,7 +7,7 @@ export type ProcessOutput = {
 };
 
 export type ProcessAdapter = {
-  run(command: string, args: readonly string[]): Promise<Result<ProcessOutput>>;
+  run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<ProcessOutput>>;
   startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>>;
   invocationCount(): number;
 };
@@ -33,10 +33,10 @@ declare const Bun: {
 export function createProcessAdapter(): ProcessAdapter {
   let count = 0;
 
-  async function run(command: string, args: readonly string[]): Promise<Result<ProcessOutput>> {
+  async function run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<ProcessOutput>> {
     count += 1;
     try {
-      const child = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe" });
+      const child = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe", ...(options?.cwd ? { cwd: options.cwd } : {}), ...(options?.env ? { env: { ...process.env, ...options.env } } : {}) } as never);
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
