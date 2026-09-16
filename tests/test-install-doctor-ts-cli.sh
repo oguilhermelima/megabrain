@@ -58,6 +58,20 @@ cat >"$work/bin/npx" <<'EOF'
 exit 0
 EOF
 chmod +x "$work/bin/npx"
+cat >"$work/bin/npm" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$work/bin/npm"
+cat >"$work/bin/adb" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = version ]; then
+  printf '%s\n' 'Android Debug Bridge version 1.0.41'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$work/bin/adb"
 cat >"$work/bin/node" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" = */scripts/playwright-web.mjs ]] && [ "${2:-}" = doctor ]; then
@@ -176,6 +190,16 @@ cp "$work/shell-state/state.json" "$work/binary-state/state.json"
 printf '%s\n' '/Users/gui/Workspaces' >"$work/shell-state/worktree-root"
 cp "$work/shell-state/worktree-root" "$work/binary-state/worktree-root"
 
+# Populate the two registered skill copies consumed by the shell inspection. The
+# TypeScript implementation must read the same targets, rather than reporting the
+# absence of copies from an empty fixture.
+for skill_target in \
+  "$work/home/.claude/plugins/cache/megabrain-local/megabrain/fixture/skills/megabrain/SKILL.md" \
+  "$work/home/.codex/plugins/cache/megabrain-local/megabrain/fixture/skills/megabrain/SKILL.md"; do
+  mkdir -p "$(dirname "$skill_target")"
+  cp "$root/skills/megabrain/SKILL.md" "$skill_target"
+done
+
 # The shell oracle must expose both live-state failures to the contract. The binary
 # comparison below is intentionally expected to be red until the port inspects them.
 mkdir -p "$work/shell-state/dispatches/uncertain"
@@ -240,6 +264,9 @@ for module in "${modules[@]}"; do
   export MEGABRAIN_STATE_DIR="$work/binary-state"
   run_capture "$work/binary-$module" "$binary" doctor "$module" --json
   compare_capture "$module"
+  if [ "$module" = skill-sync ]; then
+    jq -e '.status == "ok" and .reason == "skill copies current: 2"' "$work/shell-$module.stdout" >/dev/null || fail 'shell skill-sync fixture did not report two current copies'
+  fi
   printf 'module=%s shell=%s binary=%s\n' "$module" \
     "$(jq -r '.status' "$work/shell-$module.stdout")" \
     "$(jq -r '.status' "$work/binary-$module.stdout")"
