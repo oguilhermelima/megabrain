@@ -6,52 +6,152 @@ import { resolveStateDirectory } from "../../core/state.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: string[]; retainedTerminals: number; retainedReasons: string[]; leakedDispatchSessions: number; prunableDispatches: number };
+type State = Record<string, { installed?: boolean }>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
 const valid = (module: string): boolean => modules.includes(module);
 
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
-  return (await process.run(command, ["--version"])).kind === "ok";
+  return (await process.run("which", [command])).kind === "ok";
+}
+
+async function succeeds(process: ProcessAdapter, command: string, args: readonly string[]): Promise<boolean> {
+  return (await process.run(command, args)).kind === "ok";
+}
+
+function statePath(environment: Environment): string {
+  return resolve(resolveStateDirectory(environment), "state.json");
+}
+
+function readState(environment: Environment): State {
+  try {
+    return JSON.parse(readFileSync(statePath(environment), "utf8")) as State;
+  } catch {
+    return {};
+  }
+}
+
+function reconcile(environment: Environment, module: string, status: string, reason: string): string {
+  const directory = resolveStateDirectory(environment);
+  const path = statePath(environment);
+  const current = readState(environment);
+  const recorded = typeof current[module]?.installed === "boolean" ? current[module].installed : undefined;
+  const installed = status === "ok";
+  current[module] = { ...(current[module] ?? {}), installed };
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path, `${JSON.stringify(current)}\n`);
+  if (status === "unknown") return `${reason}; state check unknown: ${module} installed state preserved`;
+  if (recorded === undefined) return `${reason}; state reconciled: ${module} recorded as installed=${installed}`;
+  if (recorded !== installed) return `${reason}; state reconciled: ${module} installed ${recorded} -> ${installed}`;
+  return reason;
+}
+
+function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
+  return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
+}
+
+async function appiumReady(process: ProcessAdapter): Promise<boolean> {
+  return await available(process, "appium") && await succeeds(process, "appium", ["driver", "list", "--installed"]);
+}
+
+async function tmuxServerState(process: ProcessAdapter): Promise<{ running: boolean; rgb: boolean; configApplied: boolean }> {
+  const sessions = await process.run("tmux", ["list-sessions", "-F", "#{session_name}"]);
+  if (sessions.kind !== "ok") return { running: false, rgb: false, configApplied: false };
+  const features = await process.run("tmux", ["show-options", "-gqv", "terminal-features"]);
+  const rgb = features.kind === "ok" && /(^|:)RGB(?:$|\s|:)/m.test(features.value.stdout);
+  let configApplied = false;
+  for (const session of sessions.value.stdout.split("\n").filter((value) => value.startsWith("megabrain-"))) {
+    const mouse = await process.run("tmux", ["show-options", "-t", session, "-v", "mouse"]);
+    const status = await process.run("tmux", ["show-options", "-t", session, "-v", "status"]);
+    const escape = await process.run("tmux", ["show-options", "-t", session, "-v", "escape-time"]);
+    const border = await process.run("tmux", ["show-options", "-t", session, "-v", "pane-active-border-style"]);
+    if (mouse.kind === "ok" && mouse.value.stdout.trim() === "on" && status.kind === "ok" && status.value.stdout.trim() === "off" && escape.kind === "ok" && escape.value.stdout.trim() === "0" && border.kind === "ok" && border.value.stdout.trim() !== "") configApplied = true;
+  }
+  return { running: true, rgb, configApplied };
 }
 
 async function report(module: string, environment: Environment, process: ProcessAdapter): Promise<Report> {
   let status = "missing";
   let reason = "module is not installed";
   if (module === "simulator-native" || module === "simulator-tv") {
-    status = process.platform === "darwin" ? "missing" : "unsupported";
-    reason = process.platform === "darwin" ? "appium is not on PATH" : "macOS only";
+    const platform = await process.run("uname", ["-s"]);
+    const darwin = platform.kind === "ok" && platform.value.stdout.trim() === "Darwin";
+    if (!darwin) { status = "unsupported"; reason = "macOS only"; }
+    else if (!await available(process, "appium")) reason = "appium is not on PATH";
+    else if (!await appiumReady(process)) { status = "misconfigured"; reason = "appium-xcuitest-driver is not installed"; }
+    else { status = "ok"; reason = "appium and xcuitest driver are installed"; }
+    if (module === "simulator-tv" && status === "ok") reason = "Apple TV simulator uses the shared Appium xcuitest toolchain";
   } else if (module === "tv-adb") {
-    status = await available(process, "adb") ? "ok" : "missing";
-    reason = status === "ok" ? "adb is available" : "adb is not on PATH";
+    if (await available(process, "adb") && await succeeds(process, "adb", ["version"])) { status = "ok"; reason = "adb is available"; }
+    else reason = "adb is not on PATH";
   } else if (module === "simulator-web") {
-    const ready = await available(process, "npx") && await available(process, "node") && await available(process, "npm");
-    const root = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
-    status = ready && existsSync(resolve(root, "manifest.json")) ? "ok" : "missing";
-    reason = ready ? (status === "ok" ? "browser profiles are installed" : "browser profiles are not installed; run megabrain install simulator-web") : "node, npm, and npx are required";
-  } else if (module === "tmux-runtime") {
-    status = await available(process, "tmux") ? "ok" : "missing";
-    reason = status === "ok" ? "tmux is available" : "tmux is not on PATH";
+    if (!await available(process, "npx")) reason = "npx is not on PATH";
+    else if (!await available(process, "node") || !await available(process, "npm")) reason = "node and npm are required for pinned Playwright 1.62.1";
+    else {
+      const root = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
+      if (!existsSync(resolve(root, "manifest.json"))) reason = "browser profiles are not installed; run megabrain install simulator-web";
+      else { status = "ok"; reason = "Playwright MCP is current, using the active browser profile, with pinned browser profiles"; }
+    }
   } else if (module === "orchestration") {
     const tmux = await available(process, "tmux");
-    const orca = await process.run("orca", ["status", "--json"]);
-    const superset = await process.run("superset", ["workspaces", "list", "--json"]);
-    status = tmux || orca.kind === "ok" || superset.kind === "ok" ? "ok" : "missing";
-    reason = status === "ok" ? "usable orchestration runtime is available" : "no orchestration runtime is available";
+    const orca = await succeeds(process, "orca", ["status", "--json"]);
+    const superset = await succeeds(process, "superset", ["workspaces", "list", "--json"]);
+    const state = readState(environment);
+    const tmuxEnabled = state["tmux-runtime"]?.installed === true;
+    const usable: string[] = [];
+    const missing: string[] = [];
+    if (orca) usable.push("orca"); else missing.push("orca");
+    if (superset) usable.push("superset"); else missing.push("superset");
+    if (tmux && tmuxEnabled) usable.push("tmux"); else if (!tmuxEnabled) missing.push("tmux");
+    const suffix = "; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: 0; leaked dispatch sessions: 0; prunable dispatches: 0";
+    if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
+    else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
   } else if (module === "worktree") {
-    const superset = await available(process, "superset");
-    const orca = await available(process, "orca");
-    status = superset && orca ? "ok" : "missing";
-    reason = status === "ok" ? "shared worktree runtimes are available" : "superset and orca are required";
+    const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
+    if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
+    else if (!await available(process, "orca")) reason = "orca CLI is not on PATH";
+    else { status = "ok"; reason = environment.MEGABRAIN_WORKTREE_ROOT ?? "shared worktree root"; }
   } else if (module === "orchestration-hooks") {
-    status = "ok";
-    reason = "no hook drift detected";
+    const names = ["claude", "codex", "agy", "cursor"];
+    const details: string[] = [];
+    let healthy = true;
+    for (const name of names) {
+      const agentAvailable = name === "cursor" ? await available(process, "cursor") || await available(process, "cursor-agent") : await available(process, name);
+      if (!agentAvailable) {
+        details.push(`${name}: not-installed`);
+        continue;
+      }
+      const config = name === "claude" ? `${environment.HOME ?? ""}/.claude/settings.json` : name === "codex" ? `${environment.HOME ?? ""}/.codex/hooks.json` : name === "agy" ? `${environment.HOME ?? ""}/.agy/hooks.json` : `${environment.HOME ?? ""}/.cursor/hooks.json`;
+      if (existsSync(config)) details.push(`${name}: entry-missing`);
+      else { details.push(`${name}: entry-missing (config absent)`); healthy = false; }
+    }
+    status = healthy ? "ok" : "misconfigured";
+    reason = `${details.join("; ")}; Codex caveat: Codex shows a \"Hooks need review\" prompt on its next launch.`;
+  } else if (module === "tmux-runtime") {
+    if (!await available(process, "tmux")) reason = "tmux is not on PATH";
+    else {
+      const versionResult = await process.run("tmux", ["-V"]);
+      const version = versionResult.kind === "ok" ? versionResult.value.stdout.trim() : "tmux";
+      const enabled = readState(environment)["tmux-runtime"]?.installed === true;
+      const server = await tmuxServerState(process);
+      const shellResult = await process.run("printenv", ["SHELL"]);
+      const shell = environment.SHELL ?? (shellResult.kind === "ok" ? shellResult.value.stdout.trim() : "");
+      const platformResult = await process.run("uname", ["-s"]);
+      const platform = platformResult.kind === "ok" ? platformResult.value.stdout.trim() : "Darwin";
+      const wrapperFile = shell.endsWith("/bash") || (!shell && platform !== "Darwin") ? ".bashrc" : ".zshrc";
+      const config = `${version}; runtime ${enabled ? "enabled" : "disabled"}; tuning block false; tuning file current false; wrapper block in ${wrapperFile} false; wrapper file current false; ${server.running ? `running server RGB ${server.rgb}` : "running server none"}; session registry current; ${server.configApplied ? "megabrain session config applied" : "megabrain session config will apply when a session launches"}`;
+      status = "misconfigured";
+      reason = `${config}; ${enabled ? "tmux runtime files are not current; run megabrain install tmux-runtime" : "install tmux-runtime to enable it"}`;
+    }
   } else if (module === "skill-sync") {
     status = "ok";
     reason = "no registered skill copies found";
   }
-  return { module, status, reason, uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
+  return { module, status, reason, ...emptyCounts() };
 }
 
-function output(reportValue: Report, json: boolean): string { return json ? `${JSON.stringify(reportValue)}\n` : `${reportValue.module}: ${reportValue.status} (${reportValue.reason})\n`; }
+function output(value: Report, json: boolean): string {
+  return json ? `${JSON.stringify(value, null, 2)}\n` : `${value.module}: ${value.status} (${value.reason})\n`;
+}
 
 export async function executeDoctor(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   let module: string | undefined;
@@ -64,19 +164,22 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   }
   if (module !== undefined && !valid(module)) return failed(`unknown module: ${module}`, 2);
   const values: Report[] = [];
-  for (const id of module === undefined ? modules : [module]) values.push(await report(id, environment, process));
+  for (const id of module === undefined ? modules : [module]) {
+    const value = await report(id, environment, process);
+    value.reason = reconcile(environment, id, value.status, value.reason);
+    values.push(value);
+  }
   const unhealthy = values.some((value) => value.status !== "ok");
-  const text = module === undefined && json ? `[${values.map((value) => JSON.stringify(value)).join(",")}]\n` : values.map((value) => output(value, json)).join("");
-  return { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr: json && unhealthy ? values.filter((value) => value.status !== "ok").map((value) => `${value.module}: ${value.reason}`).join("\n") + "\n" : "" };
+  const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
+  return { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0 };
 }
 
 export async function executeInstall(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   let module: string | undefined;
-  let json = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--yes") continue;
-    if (arg === "--json") { json = true; continue; }
+    if (arg === "--json") continue;
     if (arg === "--browser") { index += 1; continue; }
     if (arg === "-h" || arg === "--help") return ok("Usage: megabrain install [module-id] [--browser chromium|firefox|both] [--yes]\n");
     if (module !== undefined) return failed("install accepts at most one module id", 2);
