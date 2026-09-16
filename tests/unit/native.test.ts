@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { executeNative } from "../../src/cli/commands/native.js";
-import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
+import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
@@ -92,6 +92,37 @@ describe("native runtime commands", () => {
   test("returns a structured refusal for JSON usage errors", async () => {
     const result = await executeNative(["runtime", "list", "--available", "--json", "--bad"], {}, process);
     expect(result).toEqual({ kind: "ok", value: JSON.stringify({ refusal: { code: "invalid-arguments", message: "unknown native runtime list option: --bad" } }) + "\n", exitCode: 2 });
+  });
+});
+
+describe("native build planning", () => {
+  test("builds the working simulator xcodebuild arguments", () => {
+    expect(buildXcodebuildArgs("tvOS", "ios/canto.xcworkspace", "canto", "26.5", "tv-1", "ios/build")).toEqual([
+      "-workspace", "ios/canto.xcworkspace", "-scheme", "canto", "-sdk", "appletvsimulator",
+      "-destination", "platform=tvOS Simulator,id=tv-1", "-derivedDataPath", "ios/build", "CODE_SIGNING_ALLOWED=NO", "build",
+    ]);
+  });
+
+  test("stops at the first failed build step", () => {
+    const outcomes = { prebuild: { ok: true }, pods: { ok: true }, build: { ok: false, error: "xcodebuild failed" }, install: { ok: false }, launch: { ok: false } } as const;
+    expect(nativeBuildStepFailure(outcomes)).toBe("build");
+    expect(nativeBuildStepFailure({ prebuild: { ok: true }, pods: { ok: true }, build: { ok: true }, install: { ok: true }, launch: { ok: true } })).toBeUndefined();
+  });
+
+  test("resolves a device from kind and runtime rather than a stored udid", () => {
+    expect(candidatesForRuntimeFromSimctl({ devices: {
+      "tvOS-26-5": [{ udid: "tv-old", state: "Booted", name: "Apple TV", isAvailable: true }],
+      "tvOS-27-0": [{ udid: "tv-new", state: "Booted", name: "Apple TV", isAvailable: true }],
+    } }, "tv", "26.5")).toEqual({ kind: "ok", value: [{ udid: "tv-old", state: "Booted", name: "Apple TV" }] });
+  });
+
+  test("refuses a build when its app path is not configured", async () => {
+    const result = await executeNative(["build", "tv"], {}, {
+      async run() { return failed("must not run a process"); },
+      async startDetached() { return failed("must not start a process"); },
+      invocationCount() { return 0; },
+    });
+    expect(result).toEqual({ kind: "failed", error: "app path is required for tv; pass surfaces.tv.appPath in .megabrain/native.json", exitCode: 1 });
   });
 });
 

@@ -100,6 +100,7 @@ run_help native sim list --help
 run_help native sim ensure --help
 run_help native app --help
 run_help native app reload --help
+run_help native build --help
 run_help tv --help
 run_help tv connect --help
 run_help tv disconnect --help
