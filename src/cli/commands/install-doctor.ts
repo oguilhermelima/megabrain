@@ -30,6 +30,100 @@ function readState(environment: Environment): State {
   }
 }
 
+function fileText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function hookEntryPresent(agent: string, path: string): boolean {
+  try {
+    const value = JSON.parse(fileText(path) ?? "") as Record<string, unknown>;
+    const hooks = value.hooks;
+    if (agent === "cursor") {
+      const entries = (hooks as Record<string, unknown> | undefined)?.afterAgentResponse;
+      return Array.isArray(entries) && entries.some((entry) =>
+        typeof entry === "object" && entry !== null &&
+        /(^|\/)megabrain-turn-end\.sh($|\s)/.test(String((entry as Record<string, unknown>).command ?? "")));
+    }
+    const groups = (hooks as Record<string, unknown> | undefined)?.Stop;
+    return Array.isArray(groups) && groups.some((group) => {
+      if (typeof group !== "object" || group === null) return false;
+      const entries = (group as Record<string, unknown>).hooks;
+      return Array.isArray(entries) && entries.some((entry) =>
+        typeof entry === "object" && entry !== null &&
+        /(^|\/)megabrain-turn-end\.sh($|\s)/.test(String((entry as Record<string, unknown>).command ?? "")));
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hookConfig(environment: Environment, agent: string): string {
+  const home = environment.HOME ?? "";
+  return agent === "claude" ? `${home}/.claude/settings.json`
+    : agent === "codex" ? `${home}/.codex/hooks.json`
+      : agent === "agy" ? `${home}/.agy/hooks.json` : `${home}/.cursor/hooks.json`;
+}
+
+function configuredWorktreeRoot(environment: Environment, raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("~/")) return `${environment.HOME ?? ""}/${trimmed.slice(2)}`;
+  if (trimmed.startsWith("/")) return trimmed;
+  return resolve(trimmed);
+}
+
+async function worktreeRoot(environment: Environment, process: ProcessAdapter): Promise<string | undefined> {
+  const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
+  if (!superset || !await available(process, "orca")) return undefined;
+  const current = await process.run("orca", ["worktree", "current", "--json"]);
+  const currentValue = current.kind === "ok" ? (() => {
+    try { return JSON.parse(current.value.stdout) as Record<string, unknown>; } catch { return undefined; }
+  })() : undefined;
+  const worktree = currentValue?.result as Record<string, unknown> | undefined;
+  const currentPath = (worktree?.worktree as Record<string, unknown> | undefined)?.path;
+  if (currentValue?.ok !== true || typeof currentPath !== "string") return undefined;
+  const settings = await process.run("superset", ["settings", "get", "worktreeBaseDir"]);
+  if (settings.kind === "ok") {
+    try {
+      const parsed = JSON.parse(settings.value.stdout) as Record<string, unknown>;
+      const value = parsed.value ?? (parsed.result as Record<string, unknown> | undefined)?.value;
+      if (typeof value === "string" && value.trim() !== "" && value !== "null") return configuredWorktreeRoot(environment, value);
+    } catch {
+      const value = settings.value.stdout.trim();
+      if (value !== "" && value !== "null") return configuredWorktreeRoot(environment, value);
+    }
+  }
+  const stateRoot = fileText(resolve(resolveStateDirectory(environment), "worktree-root"))?.trim();
+  return stateRoot ? configuredWorktreeRoot(environment, stateRoot) : undefined;
+}
+
+function tmuxFileState(environment: Environment): { tuningBlock: boolean; tuningFile: boolean; wrapperBlock: boolean; wrapperFile: boolean; wrapperConfig: string } {
+  const home = environment.HOME ?? "";
+  const shell = environment.SHELL ?? "";
+  const bash = shell.endsWith("/bash") || (!shell && (environment as Record<string, string | undefined>).PLATFORM !== "Darwin");
+  const wrapperConfig = `${home}/${bash ? ".bashrc" : ".zshrc"}`;
+  const wrapperSource = bash ? "source ~/.megabrain/bash/megabrain-agent-tmux.bash" : "source ~/.megabrain/zsh/megabrain-agent-tmux.zsh";
+  const tuning = fileText(`${home}/.tmux.conf`) ?? "";
+  const wrapper = fileText(wrapperConfig) ?? "";
+  const repo = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const tuningInstalled = fileText(`${home}/.megabrain/tmux/megabrain.tmux.conf`);
+  const wrapperInstalled = fileText(`${home}/.megabrain/${bash ? "bash/megabrain-agent-tmux.bash" : "zsh/megabrain-agent-tmux.zsh"}`);
+  const block = (text: string, start: string, end: string, source: string) =>
+    text.split("\n").filter((line) => line === start).length === 1 &&
+    text.split("\n").filter((line) => line === end).length === 1 &&
+    text.split("\n").filter((line) => line === source).length === 1;
+  return {
+    tuningBlock: block(tuning, "# >>> megabrain tmux tuning >>>", "# <<< megabrain tmux tuning <<<", "source-file ~/.megabrain/tmux/megabrain.tmux.conf"),
+    tuningFile: tuningInstalled !== undefined && fileText(`${repo}/tmux/megabrain.tmux.conf`) === tuningInstalled,
+    wrapperBlock: block(wrapper, "# >>> megabrain tmux wrapper >>>", "# <<< megabrain tmux wrapper <<<", wrapperSource),
+    wrapperFile: wrapperInstalled !== undefined && fileText(`${repo}/${bash ? "bash/megabrain-agent-tmux.bash" : "zsh/megabrain-agent-tmux.zsh"}`) === wrapperInstalled,
+    wrapperConfig,
+  };
+}
+
 function now(environment: Environment): string {
   return environment.MEGABRAIN_TEST_NOW ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -192,7 +286,11 @@ async function report(module: string, environment: Environment, process: Process
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
     else if (!await available(process, "orca")) reason = "orca CLI is not on PATH";
-    else { status = "ok"; reason = environment.MEGABRAIN_WORKTREE_ROOT ?? "shared worktree root"; }
+    else {
+      const root = await worktreeRoot(environment, process);
+      if (root === undefined) { status = "misconfigured"; reason = "Superset worktreeBaseDir is unset or unreadable"; }
+      else { status = "ok"; reason = root; }
+    }
   } else if (module === "orchestration-hooks") {
     const names = ["claude", "codex", "agy", "cursor"];
     const details: string[] = [];
@@ -204,8 +302,9 @@ async function report(module: string, environment: Environment, process: Process
         continue;
       }
       const config = name === "claude" ? `${environment.HOME ?? ""}/.claude/settings.json` : name === "codex" ? `${environment.HOME ?? ""}/.codex/hooks.json` : name === "agy" ? `${environment.HOME ?? ""}/.agy/hooks.json` : `${environment.HOME ?? ""}/.cursor/hooks.json`;
-      if (existsSync(config)) details.push(`${name}: entry-missing`);
-      else { details.push(`${name}: entry-missing (config absent)`); healthy = false; }
+      if (!existsSync(config)) { details.push(`${name}: entry-missing (config absent)`); healthy = false; }
+      else if (hookEntryPresent(name, config)) details.push(`${name}: entry-present`);
+      else { details.push(`${name}: entry-missing`); healthy = false; }
     }
     status = healthy ? "ok" : "misconfigured";
     reason = `${details.join("; ")}; Codex caveat: Codex shows a \"Hooks need review\" prompt on its next launch.`;
@@ -221,9 +320,15 @@ async function report(module: string, environment: Environment, process: Process
       const platformResult = await process.run("uname", ["-s"]);
       const platform = platformResult.kind === "ok" ? platformResult.value.stdout.trim() : "Darwin";
       const wrapperFile = shell.endsWith("/bash") || (!shell && platform !== "Darwin") ? ".bashrc" : ".zshrc";
-      const config = `${version}; runtime ${enabled ? "enabled" : "disabled"}; tuning block false; tuning file current false; wrapper block in ${wrapperFile} false; wrapper file current false; ${server.running ? `running server RGB ${server.rgb}` : "running server none"}; session registry current; ${server.configApplied ? "megabrain session config applied" : "megabrain session config will apply when a session launches"}`;
-      status = "misconfigured";
-      reason = `${config}; ${enabled ? "tmux runtime files are not current; run megabrain install tmux-runtime" : "install tmux-runtime to enable it"}`;
+      const files = tmuxFileState(environment);
+      const config = `${version}; runtime ${enabled ? "enabled" : "disabled"}; tuning block ${files.tuningBlock}; tuning file current ${files.tuningFile}; wrapper block in ${wrapperFile} ${files.wrapperBlock}; wrapper file current ${files.wrapperFile}; ${server.running ? `running server RGB ${server.rgb}` : "running server none"}; session registry current; ${server.configApplied ? "megabrain session config applied" : "megabrain session config will apply when a session launches"}`;
+      if (enabled && files.tuningBlock && files.tuningFile && files.wrapperBlock && files.wrapperFile) {
+        status = "ok";
+        reason = config;
+      } else {
+        status = "misconfigured";
+        reason = `${config}; ${enabled ? "tmux runtime files are not current; run megabrain install tmux-runtime" : "install tmux-runtime to enable it"}`;
+      }
     }
   } else if (module === "skill-sync") {
     status = "ok";
@@ -254,7 +359,13 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   }
   const unhealthy = values.some((value) => value.status !== "ok");
   const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
-  return { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0 };
+  const hook = values.find((value) => value.module === "orchestration-hooks");
+  const stderr = hook?.reason.includes("codex: entry-present")
+    ? "\nCODEX ACTION REQUIRED: the megabrain hook needs one-time trust in Codex.\nOpen a plain terminal, run codex, and choose \"Trust all and continue\".\nOpening Codex through Superset will not complete this step because Superset passes --dangerously-bypass-hook-trust.\n"
+    : undefined;
+  return stderr === undefined
+    ? { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0 }
+    : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr };
 }
 
 export async function executeInstall(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
