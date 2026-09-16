@@ -23,15 +23,22 @@ run_capture() {
 }
 
 compare_capture() {
-  local module="$1" side
+  local module="$1" side mismatch=0
   for side in stdout stderr status; do
     cmp -s "$work/shell-$module.$side" "$work/binary-$module.$side" || {
       printf 'comparison red: %s %s differs\n' "$module" "$side" >&2
       printf 'shell: '; tr '\n' ' ' <"$work/shell-$module.$side"; printf '\n'
       printf 'binary: '; tr '\n' ' ' <"$work/binary-$module.$side"; printf '\n'
-      return 1
+      mismatch=1
     }
   done
+  cmp -s "$work/shell-state/state.json" "$work/binary-state/state.json" || {
+    printf 'comparison red: %s state.json differs\n' "$module" >&2
+    printf 'shell state: '; tr '\n' ' ' <"$work/shell-state/state.json"; printf '\n'
+    printf 'binary state: '; tr '\n' ' ' <"$work/binary-state/state.json"; printf '\n'
+    mismatch=1
+  }
+  return "$mismatch"
 }
 
 mkdir -p "$work/home" "$work/shell-state" "$work/binary-state"
@@ -60,14 +67,41 @@ fi
 exec /usr/bin/node "$@"
 EOF
 chmod +x "$work/bin/node"
+cat >"$work/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = list-sessions ]; then
+  printf '%s\n' leaked-1 leaked-2 leaked-3 leaked-4 leaked-5 leaked-6
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$work/bin/tmux"
+cat >"$work/bin/date" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *+%s*) printf '%s\n' 1789516800 ;;
+  *) printf '%s\n' '2026-09-16T02:00:00Z' ;;
+esac
+EOF
+chmod +x "$work/bin/date"
 export PATH="$work/bin:$PATH"
+export MEGABRAIN_TEST_NOW='2026-09-16T02:00:00Z'
 mkdir -p "$work/home/.megabrain/playwright"
 printf '%s\n' '{"profiles":{},"extensions":{}}' >"$work/home/.megabrain/playwright/manifest.json"
 
 # The shell oracle must expose both live-state failures to the contract. The binary
 # comparison below is intentionally expected to be red until the port inspects them.
 mkdir -p "$work/shell-state/dispatches/uncertain"
+mkdir -p "$work/binary-state/dispatches"
 printf '%s\n' '{"dispatchId":"uncertain","processState":"start-unproven"}' >"$work/shell-state/dispatches/uncertain/meta.json"
+mkdir -p "$work/binary-state/dispatches/uncertain"
+printf '%s\n' '{"dispatchId":"uncertain","processState":"start-unproven"}' >"$work/binary-state/dispatches/uncertain/meta.json"
+for index in 1 2 3 4 5 6; do
+  mkdir -p "$work/shell-state/dispatches/leaked-$index"
+  mkdir -p "$work/binary-state/dispatches/leaked-$index"
+  printf '%s\n' "{\"dispatchId\":\"leaked-$index\",\"state\":\"done\",\"processState\":\"succeeded\",\"terminalState\":\"owned\",\"runtime\":\"tmux\",\"tmuxSession\":\"leaked-$index\",\"parentTmuxSession\":\"parent\"}" >"$work/shell-state/dispatches/leaked-$index/meta.json"
+  printf '%s\n' "{\"dispatchId\":\"leaked-$index\",\"state\":\"done\",\"processState\":\"succeeded\",\"terminalState\":\"owned\",\"runtime\":\"tmux\",\"tmuxSession\":\"leaked-$index\",\"parentTmuxSession\":\"parent\"}" >"$work/binary-state/dispatches/leaked-$index/meta.json"
+done
 
 # Reach the shell implementation by removing the compiled binary from its expected path.
 mv "$binary" "$hidden"
@@ -89,6 +123,20 @@ grep -q 'unknown module: unknown-module' "$binary_unknown.stderr" || fail 'unkno
 
 # Restore the real shell entrypoint for the shell side of the doctor comparison.
 mv "$root/megabrain.real" "$root/megabrain"
+
+# A minimal installation record must be reconciled by both implementations, including
+# metadata that is not present in the input fixture.
+write_shell_state="$work/write-shell"
+write_binary_state="$work/write-binary"
+mkdir -p "$write_shell_state" "$write_binary_state"
+printf '%s\n' '{"orchestration":{"installed":true}}' >"$write_shell_state/state.json"
+cp "$write_shell_state/state.json" "$write_binary_state/state.json"
+export MEGABRAIN_STATE_DIR="$write_shell_state"
+run_capture "$work/write-shell-run" "$root/megabrain" doctor orchestration --json
+export MEGABRAIN_STATE_DIR="$write_binary_state"
+run_capture "$work/write-binary-run" "$binary" doctor orchestration --json
+cmp -s "$write_shell_state/state.json" "$write_binary_state/state.json" || fail 'doctor state reconciliation differs for a minimal fixture'
+jq -e '._meta.kind == "installation-record" and .orchestration.checkedAt != null and .orchestration.statusSource == "megabrain doctor"' "$write_binary_state/state.json" >/dev/null || fail 'doctor did not write the complete installation record'
 
 # Establish a state record once, then compare both implementations from the same recorded state.
 # This keeps state reconciliation deterministic while still comparing the complete process result.
