@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -122,6 +123,51 @@ function tmuxFileState(environment: Environment): { tuningBlock: boolean; tuning
     wrapperFile: wrapperInstalled !== undefined && fileText(`${repo}/${bash ? "bash/megabrain-agent-tmux.bash" : "zsh/megabrain-agent-tmux.zsh"}`) === wrapperInstalled,
     wrapperConfig,
   };
+}
+
+function skillTargetPaths(environment: Environment): string[] {
+  const home = environment.HOME ?? "";
+  const targets: string[] = [];
+  for (const agent of [".claude", ".codex"]) {
+    const cache = `${home}/${agent}/plugins/cache/megabrain-local/megabrain`;
+    try {
+      for (const entry of readdirSync(cache, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const target = `${cache}/${entry.name}/skills/megabrain/SKILL.md`;
+        if (existsSync(target)) targets.push(target);
+      }
+    } catch {
+      // An absent agent cache has no registered copies.
+    }
+  }
+  const localTarget = resolve(".claude/skills/megabrain/SKILL.md");
+  if (existsSync(localTarget)) targets.push(localTarget);
+  return targets;
+}
+
+function skillSyncState(environment: Environment): { status: string; reason: string } {
+  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const source = `${root}/skills/megabrain/SKILL.md`;
+  if (!existsSync(source)) return { status: "misconfigured", reason: `skill synchronization failed: installed skill source is missing: ${source}` };
+  const targets = skillTargetPaths(environment);
+  if (targets.length === 0) return { status: "ok", reason: "no registered skill copies found" };
+  let sourceHash: string;
+  try {
+    sourceHash = createHash("sha256").update(readFileSync(source)).digest("hex");
+  } catch {
+    return { status: "misconfigured", reason: `skill synchronization failed: could not hash installed skill source: ${source}` };
+  }
+  let drift = 0;
+  for (const target of targets) {
+    try {
+      const targetHash = createHash("sha256").update(readFileSync(target)).digest("hex");
+      if (targetHash !== sourceHash) drift += 1;
+    } catch {
+      return { status: "misconfigured", reason: `skill synchronization failed: could not hash skill target: ${target}` };
+    }
+  }
+  if (drift > 0) return { status: "misconfigured", reason: `skill drift detected in ${drift} target(s)` };
+  return { status: "ok", reason: `skill copies current: ${targets.length}` };
 }
 
 function now(environment: Environment): string {
@@ -331,8 +377,7 @@ async function report(module: string, environment: Environment, process: Process
       }
     }
   } else if (module === "skill-sync") {
-    status = "ok";
-    reason = "no registered skill copies found";
+    ({ status, reason } = skillSyncState(environment));
   }
   return { module, status, reason, ...emptyCounts() };
 }
