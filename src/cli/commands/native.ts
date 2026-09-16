@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { candidatesFromSimctl, formatNativeList, nativeUsage, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeCandidate, type NativeKind } from "../../core/native.js";
+import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeUsage, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeCandidate, type NativeHealth, type NativeKind } from "../../core/native.js";
 import { failed, ok, type Result } from "../../core/result.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -29,6 +29,72 @@ function parseKind(args: readonly string[]): Result<NativeKind> { return validat
 function optionValue(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index < 0 ? undefined : args[index + 1];
+}
+function unknownProcess(reason: string): NativeHealth["process"] { return { state: "unknown", reason }; }
+function unknownMetro(reason: string): NativeHealth["metro"] { return { state: "unknown", reason }; }
+function unknownTree(reason: string): NativeHealth["tree"] { return { count: null, reason }; }
+function unknownFrame(reason: string): NativeHealth["frame"] { return { state: "unknown", reason }; }
+const APPIUM_SESSION_DEFAULTS = { "appium:isHeadless": true } as const;
+function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean> {
+  return { platformName: "iOS", ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
+}
+async function nativeHealth(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("health"));
+  const kind = parseKind(args); if (kind.kind !== "ok") return kind;
+  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const bundleId = optionValue(args, "--bundle-id") ?? setting(loaded.value, kind.value, "bundleId");
+  const requested = optionValue(args, "--device") ?? setting(loaded.value, kind.value, "device");
+  const metroPort = optionValue(args, "--metro-port") ?? setting(loaded.value, kind.value, "metroPort");
+  const controlFrame = optionValue(args, "--control-frame") ?? setting(loaded.value, kind.value, "controlFrame");
+  if (!bundleId) return error(`bundle id is required for ${kind.value}; pass --bundle-id`);
+  const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
+  const selected = selectDevice(kind.value, candidates.value, requested, true); if (selected.kind !== "ok") return selected;
+  const udid = selected.value.udid;
+
+  let process: NativeHealth["process"];
+  const processResult = await processAdapter.run("xcrun", ["simctl", "spawn", udid, "launchctl", "list"]);
+  if (processResult.kind !== "ok") process = unknownProcess("could not inspect simulator processes");
+  else process = processResult.value.stdout.includes(bundleId) ? { state: "running" } : { state: "not-running", reason: "process is not running" };
+
+  let metro: NativeHealth["metro"];
+  if (!metroPort || metroPort === "none") metro = unknownMetro("Metro port was not configured; attachment cannot be determined");
+  else {
+    const metroResult = await processAdapter.run("curl", ["-fsS", "--max-time", "2", `http://127.0.0.1:${metroPort}/json/list`]);
+    if (metroResult.kind !== "ok") metro = unknownMetro(`Metro /json/list was unavailable on port ${metroPort}`);
+    else {
+      try {
+        const targets: unknown = JSON.parse(metroResult.value.stdout);
+        const attached = Array.isArray(targets) && targets.some((target) => typeof target === "object" && target !== null && Object.values(target as Record<string, unknown>).some((value) => typeof value === "string" && value.includes(bundleId)));
+        metro = attached ? { state: "attached" } : { state: "not-attached", reason: "Metro has no target for this app" };
+      } catch { metro = unknownMetro("Metro /json/list returned invalid data"); }
+    }
+  }
+
+  let tree: NativeHealth["tree"] = unknownTree("accessibility tree could not be consulted");
+  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(udid, bundleId) } })]);
+  if (session.kind === "ok") {
+    try {
+      const value = JSON.parse(session.value.stdout) as { sessionId?: string; value?: { sessionId?: string } };
+      const sessionId = value.sessionId ?? value.value?.sessionId;
+      if (sessionId) {
+        const source = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${sessionId}/source`]);
+        if (source.kind === "ok") tree = { count: (source.value.stdout.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? []).length };
+        await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${sessionId}`]);
+      }
+    } catch { tree = unknownTree("Appium returned invalid session data"); }
+  }
+
+  let frame: NativeHealth["frame"] = unknownFrame(controlFrame ? `control frame could not be read: ${controlFrame}` : "no control frame configured");
+  if (controlFrame) {
+    const controlHash = await processAdapter.run("shasum", ["-a", "256", controlFrame]);
+    const capturePath = `/tmp/megabrain-native-health-${Date.now()}.png`;
+    const capture = await processAdapter.run("xcrun", ["simctl", "io", udid, "screenshot", capturePath]);
+    const liveHash = await processAdapter.run("shasum", ["-a", "256", capturePath]);
+    if (controlHash.kind === "ok" && capture.kind === "ok" && liveHash.kind === "ok") frame = { state: liveHash.value.stdout.split(/\s+/)[0] === controlHash.value.stdout.split(/\s+/)[0] ? "identical" : "differs", reason: "screenshot hashes compared" };
+    else frame = unknownFrame("screenshot or control frame hash could not be obtained");
+  }
+  const result = evaluateNativeHealth({ process, metro, tree, frame });
+  return args.includes("--json") ? ok(`${JSON.stringify(result)}\n`) : ok(`${result.status}: ${result.reason}\nprocess=${result.process.state}; metro=${result.metro.state}; tree=${result.tree.count ?? "unknown"}; frame=${result.frame.state}\n`);
 }
 async function nativeList(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("list"));
@@ -136,6 +202,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   if (family === "appium") return appium([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   if (family === "sim" && operation === "list") return nativeList(rest, processAdapter);
   if (family === "sim" && operation === "ensure") return nativeEnsure(rest, environment, processAdapter);
+  if (family === "health") return nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   if (family === "app" && operation === "reload") return nativeReload(rest, environment, processAdapter);
   if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) return ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) return ok(nativeUsage("reload"));

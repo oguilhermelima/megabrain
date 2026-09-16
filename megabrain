@@ -65,6 +65,7 @@ Commands:
   native appium start|stop|status      Manage the shared Appium server
   native sim ensure <phone|tv> ...     Boot a requested Apple simulator
   native app reload <phone|tv> ...     Terminate and deep-link an app
+  native health <phone|tv> ...         Check whether an app is rendering
   tv connect <ip> [--port <port>]      Connect an Android TV over adb
   tv disconnect [<ip>]                 Disconnect an Android TV
   tmux tune [--yes|--dry-run|--revert] Tune global tmux configuration

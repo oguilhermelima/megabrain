@@ -502,6 +502,69 @@ megabrain_native_app_reload() {
   fi
 }
 
+megabrain_native_app_health() {
+  local kind='' bundle_id='' device='' metro_port='' control_frame='' json=false arg='' configured_value=''
+  local process_state=unknown process_reason='could not inspect simulator processes' metro_state=unknown metro_reason='Metro attachment cannot be determined'
+  local tree_count='' tree_reason='accessibility tree could not be consulted' frame_state=unknown frame_reason='no control frame configured'
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --bundle-id|--device|--metro-port|--control-frame)
+        [ "$#" -ge 2 ] || { megabrain_usage_fail native-health; return "$MEGABRAIN_USAGE_ERROR"; }
+        case "$arg" in --bundle-id) bundle_id="$2";; --device) device="$2";; --metro-port) metro_port="$2";; --control-frame) control_frame="$2";; esac
+        shift 2 ;;
+      --json) json=true; shift ;;
+      -h|--help) megabrain_usage_show native-health; return 0 ;;
+      -*) megabrain_error "unknown native health option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+      *) [ -z "$kind" ] || { megabrain_usage_fail native-health; return "$MEGABRAIN_USAGE_ERROR"; }; kind="$arg"; shift ;;
+    esac
+  done
+  [ -n "$kind" ] || { megabrain_usage_fail native-health; return "$MEGABRAIN_USAGE_ERROR"; }
+  megabrain_native_validate_kind "$kind" || return $?
+  megabrain_native_config_validate || return 1
+  [ -n "$bundle_id" ] || { configured_value="$(megabrain_native_config_value "$kind" bundleId)"; bundle_id="$configured_value"; }
+  [ -n "$device" ] || { configured_value="$(megabrain_native_config_value "$kind" device)"; device="$configured_value"; }
+  [ -n "$metro_port" ] || { configured_value="$(megabrain_native_config_value "$kind" metroPort)"; metro_port="$configured_value"; }
+  [ -n "$control_frame" ] || { configured_value="$(megabrain_native_config_value "$kind" controlFrame)"; control_frame="$configured_value"; }
+  [ -n "$bundle_id" ] || { megabrain_error "bundle id is required for $kind; pass --bundle-id"; return 1; }
+  megabrain_native_require_simctl || return 1
+  megabrain_native_select_device "$kind" "$device" true || return 1
+  local process_output='' process_rc=0 metro_output='' source_output='' session_id='' capture_path='' control_hash='' live_hash=''
+  process_output="$(xcrun simctl spawn "$MEGABRAIN_NATIVE_SELECTED_UDID" launchctl list 2>/dev/null)" || process_rc=$?
+  if [ "$process_rc" -ne 0 ]; then process_state=unknown; process_reason='could not inspect simulator processes'
+  elif printf '%s\n' "$process_output" | grep -Fq "$bundle_id"; then process_state=running; process_reason=''
+  else process_state=not-running; process_reason='process is not running'; fi
+  if [ -n "$metro_port" ] && [ "$metro_port" != none ]; then
+    if metro_output="$(curl -fsS --max-time 2 "http://127.0.0.1:$metro_port/json/list" 2>/dev/null)"; then
+      if printf '%s' "$metro_output" | jq -e --arg id "$bundle_id" 'any(.[]?; tostring | contains($id))' >/dev/null 2>&1; then metro_state=attached; metro_reason=''; else metro_state=not-attached; metro_reason='Metro has no target for this app'; fi
+    else metro_reason="Metro /json/list was unavailable on port $metro_port"; fi
+  fi
+  source_output="$(curl -fsS -X POST http://127.0.0.1:4723/session -H 'Content-Type: application/json' -d "{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"iOS\",\"appium:udid\":\"$MEGABRAIN_NATIVE_SELECTED_UDID\",\"appium:bundleId\":\"$bundle_id\"}}}" 2>/dev/null || true)"
+  session_id="$(printf '%s' "$source_output" | jq -r '.sessionId // .value.sessionId // empty' 2>/dev/null || true)"
+  if [ -n "$session_id" ]; then
+    source_output="$(curl -fsS "http://127.0.0.1:4723/session/$session_id/source" 2>/dev/null || true)"
+    tree_count="$(printf '%s' "$source_output" | grep -Eo '<XCUIElementType[A-Za-z0-9]+' | wc -l | tr -d ' ')"
+    curl -fsS -X DELETE "http://127.0.0.1:4723/session/$session_id" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$control_frame" ] && [ -f "$control_frame" ]; then
+    capture_path="${TMPDIR:-/tmp}/megabrain-native-health-$$.png"
+    if xcrun simctl io "$MEGABRAIN_NATIVE_SELECTED_UDID" screenshot "$capture_path" >/dev/null 2>&1 && control_hash="$(shasum -a 256 "$control_frame" | awk '{print $1}')" && live_hash="$(shasum -a 256 "$capture_path" | awk '{print $1}')"; then
+      [ "$control_hash" = "$live_hash" ] && frame_state=identical || frame_state=differs
+      frame_reason='screenshot hashes compared'
+    fi
+    rm -f "$capture_path"
+  fi
+  local status=unknown reason='accessibility tree is unavailable and Metro is not attached'
+  if [ "$process_state" = not-running ]; then status=not-rendered; reason="$process_reason"
+  elif [ "$process_state" = unknown ]; then reason="$process_reason"
+  elif [ "$frame_state" = identical ]; then status=not-rendered; reason='screen matches the control frame'
+  elif [ "$frame_state" = unknown ]; then reason="$frame_reason"
+  elif [ -n "$tree_count" ] && [ "$tree_count" -le 1 ]; then status=loading; reason="accessibility tree exposes $tree_count element$([ "$tree_count" -eq 1 ] || printf s)"
+  elif [ -n "$tree_count" ]; then status=rendered; reason="frame differs and accessibility tree exposes $tree_count elements"
+  elif [ "$metro_state" = attached ]; then status=rendered; reason='frame differs and Metro is attached'; fi
+  if [ "$json" = true ]; then jq -n --arg status "$status" --arg reason "$reason" --arg ps "$process_state" --arg ms "$metro_state" --arg ts "${tree_count:-}" --arg fs "$frame_state" '{status:$status,reason:$reason,process:{state:$ps},metro:{state:$ms},tree:{count:(if $ts == "" then null else ($ts|tonumber) end)},frame:{state:$fs}}'; else printf '%s: %s\nprocess=%s; metro=%s; tree=%s; frame=%s\n' "$status" "$reason" "$process_state" "$metro_state" "${tree_count:-unknown}" "$frame_state"; fi
+}
+
 command_native() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_NATIVE_IMPLEMENTATION:-}" != shell ]; then
@@ -540,7 +603,8 @@ command_native() {
         *) megabrain_error "unknown native app operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
-    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-appium ;;
+    health) megabrain_native_app_health "$operation" "$@" ;;
+    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-health native-appium ;;
     *) megabrain_error "unknown native command: $family"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }

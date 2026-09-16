@@ -236,6 +236,7 @@ megabrain native appium start|stop|status
 megabrain native sim list <phone|tv> [--json]
 megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]
 megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]
+megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]
 megabrain tv connect <ip> [--port <port>]
 megabrain tv disconnect [<ip>]
 megabrain doctor simulator-native      iOS and tvOS simulators, macOS only
