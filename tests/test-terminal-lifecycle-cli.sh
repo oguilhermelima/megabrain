@@ -4,9 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal-lifecycle.XXXXXX")"
+binary="$root/.build/megabrain"
 trap 'rm -rf "$work"' EXIT
 
-[ -x "$root/.build/megabrain" ] || { printf 'skip: compiled terminal binary is missing; run bun run build\n'; exit 0; }
+[ -x "$binary" ] || { printf 'skip: compiled terminal binary is missing; run bun run build\n'; exit 0; }
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 mkdir -p "$work/bin" "$work/state/terminals" "$work/worktree"
@@ -49,11 +50,6 @@ exit 0
 EOF
 chmod +x "$work/bin/"*
 
-cat >"$work/state/terminals/old-terminal.json" <<EOF
-{"terminalId":"old-terminal","host":"superset","workspaceId":"workspace","worktree":"$work/worktree","title":"DEV old","command":"run old","createdAt":"now","pid":123,"rootPid":123,"port":4000,"status":"active"}
-EOF
-
-export MEGABRAIN_CALL_LOG="$work/calls"
 export MEGABRAIN_STATE_DIR="$work/state"
 export MEGABRAIN_ROOT="$root"
 export SUPERSET_WORKSPACE_ID=workspace
@@ -61,29 +57,63 @@ export SUPERSET_TERMINAL_ID=parent
 export MEGABRAIN_SESSION_ID=parent
 export MEGABRAIN_SESSION_HOST=superset
 export MEGABRAIN_TEST_WORKTREE="$(cd "$work/worktree" && pwd -P)"
+export MEGABRAIN_CALL_LOG="$work/calls"
 export PATH="$work/bin:/usr/bin:/bin"
-: >"$MEGABRAIN_CALL_LOG"
 
-MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION=shell "$root/megabrain" terminal create --worktree "$work/worktree" --command 'run new' --title 'DEV new' --json >/dev/null
-binary_create="$($root/.build/megabrain terminal create --worktree "$work/worktree" --command 'run new' --title 'DEV new' --json)"
-printf '%s' "$binary_create" | jq -e '.terminalId == "new-terminal"' >/dev/null || fail 'binary create did not return host identity'
-tab="$(printf '\t')"
-grep -F "superset${tab}terminals${tab}create${tab}--workspace${tab}workspace${tab}--command" "$MEGABRAIN_CALL_LOG" >/dev/null || fail 'create host invocation was not recorded'
-
-cat >"$work/state/terminals/restart-terminal.json" <<EOF
-{"terminalId":"restart-terminal","host":"superset","workspaceId":"workspace","worktree":"$work/worktree","title":"DEV restart","command":"run restart","createdAt":"now","pid":123,"rootPid":123,"port":4000,"status":"active"}
+reset_record() {
+  rm -f "$work/state/terminals/"*.json
+  cat >"$work/state/terminals/old-terminal.json" <<EOF
+{"terminalId":"old-terminal","host":"superset","workspaceId":"workspace","worktree":"$MEGABRAIN_TEST_WORKTREE","title":"DEV old","command":"run old","createdAt":"now","pid":123,"rootPid":123,"port":4000,"status":"active"}
 EOF
-binary_restart="$($root/.build/megabrain terminal restart id:restart-terminal --timeout 0 --json)"
-printf '%s' "$binary_restart" | jq -e '.recreated == true' >/dev/null || fail 'binary restart did not recreate terminal'
-grep -F 'kill'"$(printf '\t')"'-TERM' "$MEGABRAIN_CALL_LOG" >/dev/null || fail 'restart kill invocation was not recorded'
+  : >"$MEGABRAIN_CALL_LOG"
+}
 
-MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION=shell "$root/megabrain" terminal close id:old-terminal --json >/dev/null || true
-cat >"$work/state/terminals/old-terminal.json" <<EOF
-{"terminalId":"old-terminal","host":"superset","workspaceId":"workspace","worktree":"$work/worktree","title":"DEV old","command":"run old","createdAt":"now","pid":123,"rootPid":123,"port":4000,"status":"active"}
-EOF
-binary_close="$($root/.build/megabrain terminal close id:old-terminal --json 2>&1 || true)"
-printf '%s' "$binary_close" | jq -e '.status == "closed"' >/dev/null || fail 'binary close did not close managed terminal'
-tab="$(printf '\t')"
-grep -F "superset${tab}terminals${tab}close${tab}--workspace${tab}workspace${tab}--terminal${tab}old-terminal${tab}--json" "$MEGABRAIN_CALL_LOG" >/dev/null || fail 'close host invocation was not recorded'
+reset_unowned_record() {
+  reset_record
+  jq '.pid = null | .rootPid = null' "$work/state/terminals/old-terminal.json" >"$work/state/terminals/unowned.json"
+  rm "$work/state/terminals/old-terminal.json"
+}
 
-printf 'ok: terminal lifecycle host effects were recorded\n'
+run_shell() {
+  local saved="$binary.shell-saved" status=0
+  mv "$binary" "$saved"
+  MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION=shell MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION=shell MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION=shell "$root/megabrain" "$@" >"$work/shell.stdout" 2>"$work/shell.stderr" || status=$?
+  mv "$saved" "$binary"
+  printf '%s\n' "$status"
+}
+
+run_binary() {
+  local status=0
+  "$binary" "$@" >"$work/binary.stdout" 2>"$work/binary.stderr" || status=$?
+  printf '%s\n' "$status"
+}
+
+compare() {
+  local operation="$1" selector="$2" shell_status binary_status
+  local -a options=(--json)
+  [ "$operation" = restart ] && options+=(--timeout 0)
+  if [ "$operation" = restart ]; then reset_unowned_record; else reset_record; fi
+  shell_status="$(run_shell terminal "$operation" "$selector" "${options[@]}")"
+  if [ "$operation" = restart ]; then reset_unowned_record; else reset_record; fi
+  binary_status="$(run_binary terminal "$operation" "$selector" "${options[@]}")"
+  if ! cmp -s "$work/shell.stdout" "$work/binary.stdout" || ! cmp -s "$work/shell.stderr" "$work/binary.stderr" || [ "$shell_status" != "$binary_status" ]; then
+    printf 'RED %s %s\n' "$operation" "$selector"
+    printf 'shell status=%s stdout=%s stderr=%s\n' "$shell_status" "$(<"$work/shell.stdout")" "$(<"$work/shell.stderr")"
+    printf 'binary status=%s stdout=%s stderr=%s\n' "$binary_status" "$(<"$work/binary.stdout")" "$(<"$work/binary.stderr")"
+    return 1
+  fi
+}
+
+failures=0
+for selector in id:old-terminal 'title:DEV old' port:4000 "worktree:$MEGABRAIN_TEST_WORKTREE"; do
+  compare close "$selector" || failures=$((failures + 1))
+  compare restart "$selector" || failures=$((failures + 1))
+done
+
+for selector in id:missing id:megabrain-created; do
+  compare close "$selector" || failures=$((failures + 1))
+  compare restart "$selector" || failures=$((failures + 1))
+done
+
+[ "$failures" -eq 0 ] || fail "$failures contract comparisons differed"
+printf 'ok: terminal lifecycle contract matches shell and binary\n'
