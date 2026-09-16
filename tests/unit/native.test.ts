@@ -70,6 +70,31 @@ describe("native health decision rules", () => {
   });
 });
 
+describe("native health Appium session", () => {
+  test("requests a headless driver session", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
+        if (command === "curl" && args[3] === "http://127.0.0.1:4723/session") return ok({ stdout: JSON.stringify({ value: { sessionId: "session-1" } }), stderr: "", exitCode: 0 });
+        if (command === "curl" && args[0] === "-fsS" && args[1]?.includes("/source")) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>", stderr: "", exitCode: 0 });
+        if (command === "curl" && args[0] === "-fsS" && args[1] === "-X") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => calls.length,
+    };
+
+    const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], {}, process);
+    expect(result.kind).toBe("ok");
+    const sessionRequest = calls.find((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    expect(sessionRequest).toBeDefined();
+    expect(JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch["appium:isHeadless"]).toBe(true);
+  });
+});
+
 describe("native appium lifecycle", () => {
   test("starts detached, waits for port readiness, and leaves status up", async () => {
     const calls: string[] = [];
