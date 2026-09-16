@@ -3,7 +3,7 @@ import { createName, finishJson, parseCreateOptions, parseFinishOptions, parsePu
 
 describe("worktree write option contracts", () => {
   test("parses create values and rejects unknown options", () => {
-    expect(parseCreateOptions(["--repo", "/repo", "--branch", "feat/x", "--json"])).toEqual({ kind: "ok", value: { repo: "/repo", branch: "feat/x", json: true } });
+    expect(parseCreateOptions(["--repo", "/repo", "--branch", "feat/x", "--from", "feat/base", "--json"])).toEqual({ kind: "ok", value: { repo: "/repo", branch: "feat/x", from: "feat/base", json: true } });
     expect(parseCreateOptions(["--repo", "/repo", "--branch", "feat/x", "--wat"])).toEqual({ kind: "failed", error: "unknown worktree create option: --wat", exitCode: 2 });
   });
 
