@@ -361,6 +361,7 @@ megabrain install simulator-web --browser chromium
 megabrain native appium start|status|stop   # one shared Appium server, not one per project
 megabrain native sim list phone             # list available iOS simulators
 megabrain native sim ensure phone --device <name-or-udid>  # boot and wait for an iOS simulator
+megabrain native build tv --runtime <version>  # prebuild, pod install, build, install and launch
 megabrain native app reload phone --route <route> --bundle-id <id>  # terminate and open a deep link
 megabrain tv connect 192.168.1.50           # pair an Android TV
 megabrain tv disconnect
@@ -384,6 +385,13 @@ and `canto:///{route}`. A surface's optional `device` value in `.megabrain/nativ
 the default name or identifier for both simulator commands. `native app reload` checks Metro when a port is configured, terminates
 the app (a stopped app is harmless), and opens the URL; it reports no claim about the app's
 rendered screen.
+
+`native build` reads `surfaces.<kind>.appPath` from `.megabrain/native.json`; a missing key refuses the
+command with the key to set. The app path must contain an Expo `app.json`; its `expo.scheme` and
+`expo.ios.bundleIdentifier` are required and are read from there. The generated Xcode workspace is
+discovered after prebuild, so no generated project path is configured. `--runtime` selects the
+installed simulator runtime; without it, the newest matching runtime is used. Non-Expo projects are
+refused clearly because they have no supported prebuild path.
 
 The two simulator modules need the Xcode Simulator, Appium and the XCUITest driver, so they exist
 only on macOS; asked for elsewhere they report `unsupported: macOS only` rather than half

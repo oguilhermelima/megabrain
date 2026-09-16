@@ -25,6 +25,8 @@ export function runtimeFactId(platform: NativePlatform, version: string): string
 
 export type NativeKind = "phone" | "tv";
 export type NativeCandidate = { readonly udid: string; readonly state: string; readonly name: string };
+export type NativeBuildStep = "prebuild" | "pods" | "build" | "install" | "launch";
+export type NativeBuildOutcome = { readonly ok: boolean; readonly error?: string };
 
 export type NativeHealth = {
   readonly process: { readonly state: "running" | "not-running" | "unknown"; readonly reason?: string };
@@ -52,9 +54,9 @@ export function evaluateNativeHealth(readings: NativeHealth): NativeHealthResult
   return { ...readings, status: "unknown", reason: "accessibility tree is unavailable and Metro is not attached" };
 }
 
-export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health" | "crashes" | "runtime-list" | "runtime-install"): string {
+export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health" | "crashes" | "runtime-list" | "runtime-install" | "build"): string {
   const lines = {
-    native: "Usage: megabrain native sim list <phone|tv> [--json]\n       megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n       megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n       megabrain native crashes <phone|tv> [--last N] [--json]\n       megabrain native appium start|stop|status\n",
+    native: "Usage: megabrain native sim list <phone|tv> [--json]\n       megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n       megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n       megabrain native crashes <phone|tv> [--last N] [--json]\n       megabrain native build <phone|tv> [--runtime <version>] [--json]\n       megabrain native appium start|stop|status\n",
     list: "Usage: megabrain native sim list <phone|tv> [--json]\n",
     ensure: "Usage: megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n",
     reload: "Usage: megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n",
@@ -63,6 +65,7 @@ export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "ap
     crashes: "Usage: megabrain native crashes <phone|tv> [--last N] [--json]\n",
     "runtime-list": "Usage: megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]\n",
     "runtime-install": "Usage: megabrain native runtime install <ios|tvos> <version> [--json]\n",
+    build: "Usage: megabrain native build <phone|tv> [--runtime <version>] [--json]\n",
   } as const;
   return lines[topic];
 }
@@ -101,6 +104,22 @@ export function candidatesFromSimctl(value: unknown, kind: NativeKind): Result<N
   return ok(result);
 }
 
+export function candidatesForRuntimeFromSimctl(value: unknown, kind: NativeKind, version: string): Result<NativeCandidate[]> {
+  if (typeof value !== "object" || value === null) return failed("simctl returned invalid device data");
+  const devices = (value as { devices?: unknown }).devices;
+  if (typeof devices !== "object" || devices === null) return ok([]);
+  const result: NativeCandidate[] = [];
+  for (const [runtime, entries] of Object.entries(devices)) {
+    if (!runtime.includes(kind === "phone" ? "iOS" : "tvOS") || !runtime.includes(version.replaceAll(".", "-")) || !Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const item = entry as Record<string, unknown>;
+      if (item.isAvailable === true && typeof item.udid === "string" && typeof item.state === "string" && typeof item.name === "string") result.push({ udid: item.udid, state: item.state, name: item.name });
+    }
+  }
+  return ok(result);
+}
+
 export function selectDevice(kind: NativeKind, candidates: readonly NativeCandidate[], requested: string, bootedOnly: boolean): Result<NativeCandidate> {
   const filtered = candidates.filter((candidate) => !bootedOnly || candidate.state === "Booted");
   const matches = requested.length === 0 ? filtered : filtered.filter((candidate) => candidate.udid === requested || candidate.name === requested);
@@ -122,4 +141,16 @@ export function renderNativeUrl(template: string, route: string, metroPort: stri
 export function formatNativeList(kind: NativeKind, candidates: readonly NativeCandidate[], json: boolean): string {
   if (json) return `${JSON.stringify({ kind, devices: candidates })}\n`;
   return candidates.map((candidate) => `${candidate.name}\t${candidate.state}\t${candidate.udid}\n`).join("");
+}
+
+export function nativeBuildStepFailure(outcomes: Readonly<Record<NativeBuildStep, NativeBuildOutcome>>): NativeBuildStep | undefined {
+  for (const step of ["prebuild", "pods", "build", "install", "launch"] as const) {
+    if (!outcomes[step].ok) return step;
+  }
+  return undefined;
+}
+
+export function buildXcodebuildArgs(platform: NativePlatform, workspace: string, scheme: string, runtime: string, udid: string, derivedDataPath: string): string[] {
+  const sdk = platform === "tvOS" ? "appletvsimulator" : "iphonesimulator";
+  return ["-workspace", workspace, "-scheme", scheme, "-sdk", sdk, "-destination", `platform=${platform} Simulator,id=${udid}`, "-derivedDataPath", derivedDataPath, "CODE_SIGNING_ALLOWED=NO", "build"];
 }

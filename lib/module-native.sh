@@ -667,6 +667,50 @@ megabrain_native_app_health() {
   if [ "$json" = true ]; then jq -n --arg status "$status" --arg reason "$reason" --arg ps "$process_state" --arg ms "$metro_state" --arg ts "${tree_count:-}" --arg fs "$frame_state" '{status:$status,reason:$reason,process:{state:$ps},metro:{state:$ms},tree:{count:(if $ts == "" then null else ($ts|tonumber) end)},frame:{state:$fs}}'; else printf '%s: %s\nprocess=%s; metro=%s; tree=%s; frame=%s\n' "$status" "$reason" "$process_state" "$metro_state" "${tree_count:-unknown}" "$frame_state"; fi
 }
 
+megabrain_native_build() {
+  local kind="$1" arg runtime="" app_path app_json scheme bundle_id platform runtime_json device_json udid ios_path workspace derived sdk app_bundle
+  shift || true
+  case "$kind" in phone) platform=iOS ;; tv) platform=tvOS ;; *) megabrain_error "expected simulator kind phone or tv, got: $kind"; return "$MEGABRAIN_USAGE_ERROR" ;; esac
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --runtime) [ "$#" -gt 0 ] || { megabrain_error 'native build --runtime requires a version'; return "$MEGABRAIN_USAGE_ERROR"; }; runtime="$1"; shift ;;
+      --json) ;;
+      -h|--help) megabrain_usage_show native-build; return 0 ;;
+      *) megabrain_error "unknown native build option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  app_path="$(megabrain_native_config_value "$kind" appPath)"
+  [ -n "$app_path" ] || { megabrain_error "app path is required for $kind; pass surfaces.$kind.appPath in .megabrain/native.json"; return 1; }
+  app_path="$(cd "${MEGABRAIN_NATIVE_WORKTREE:-$PWD}/$app_path" 2>/dev/null && pwd -P)" || { megabrain_error "configured app path does not exist for $kind: $app_path"; return 1; }
+  app_json="$app_path/app.json"
+  [ -f "$app_json" ] || { megabrain_error "Expo app.json is required at $app_json"; return 1; }
+  scheme="$(jq -r '.expo.scheme // empty' "$app_json")"; bundle_id="$(jq -r '.expo.ios.bundleIdentifier // empty' "$app_json")"
+  [ -n "$scheme" ] || { megabrain_error "scheme is required in $app_json"; return 1; }
+  [ -n "$bundle_id" ] || { megabrain_error "ios.bundleIdentifier is required in $app_json"; return 1; }
+  runtime_json="$(xcrun simctl list runtimes --json 2>/dev/null)" || { megabrain_error 'failed to list runtimes with simctl'; return 1; }
+  runtime="$(printf '%s' "$runtime_json" | jq -r --arg p "$platform" --arg v "$runtime" '[.runtimes[] | select((.name | startswith($p)) and ($v == "" or .version == $v))] | sort_by(.version) | last.version // empty')"
+  [ -n "$runtime" ] || { megabrain_error "no installed $platform runtime is available"; return 1; }
+  device_json="$(xcrun simctl list devices --json 2>/dev/null)" || { megabrain_error 'failed to list simulators with simctl'; return 1; }
+  udid="$(printf '%s' "$device_json" | jq -r --arg p "$platform" --arg v "${runtime//./-}" '[.devices | to_entries[] | select(.key | contains($p) and contains($v)) | .value[] | select(.isAvailable == true)] | if length == 1 then .[0].udid else empty end')"
+  [ -n "$udid" ] || { megabrain_error "expected exactly one $platform simulator for runtime $runtime"; return 1; }
+  xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+  if [ "$kind" = tv ]; then
+    (cd "$app_path" && EXPO_TV=1 REACT_NATIVE_NODE_MODULES_DIR="$app_path/node_modules" pnpm exec expo prebuild)
+  else
+    (cd "$app_path" && REACT_NATIVE_NODE_MODULES_DIR="$app_path/node_modules" pnpm exec expo prebuild)
+  fi || { megabrain_error 'native build failed at prebuild'; return 1; }
+  ios_path="$app_path/ios"; workspace="$(find "$ios_path" -maxdepth 1 -name '*.xcworkspace' -print -quit)"; [ -n "$workspace" ] || workspace="$(find "$ios_path" -maxdepth 1 -name '*.xcodeproj' -print -quit)"
+  [ -n "$workspace" ] || { megabrain_error "prebuild did not produce an Xcode project in $ios_path"; return 1; }
+  (cd "$ios_path" && pod install) || { megabrain_error 'native build failed at pods'; return 1; }
+  derived="$ios_path/build"; sdk=$([ "$platform" = tvOS ] && printf appletvsimulator || printf iphonesimulator)
+  xcodebuild -workspace "$workspace" -scheme "$scheme" -sdk "$sdk" -destination "platform=$platform Simulator,id=$udid" -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO build || { megabrain_error 'native build failed at build'; return 1; }
+  app_bundle="$derived/Build/Products/Debug-$sdk/$scheme.app"
+  xcrun simctl install "$udid" "$app_bundle" || { megabrain_error 'native build failed at install'; return 1; }
+  xcrun simctl launch "$udid" "$bundle_id" || { megabrain_error 'native build failed at launch'; return 1; }
+  printf 'built, installed, and launched %s on simulator %s\n' "$bundle_id" "$udid"
+}
+
 command_native() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_NATIVE_IMPLEMENTATION:-}" != shell ]; then
@@ -713,9 +757,12 @@ command_native() {
         *) megabrain_error "unknown native app operation: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
       esac
       ;;
+    build)
+      megabrain_native_build "$operation" "$@"
+      ;;
     crashes) megabrain_native_crashes "$operation" "$@" ;;
     health) megabrain_native_app_health "$operation" "$@" ;;
-    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-health native-crashes native-appium ;;
+    -h|--help|"") megabrain_usage_show native-sim-list native-sim-ensure native-app-reload native-health native-crashes native-build native-appium ;;
     *) megabrain_error "unknown native command: $family"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }

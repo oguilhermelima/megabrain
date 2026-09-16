@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeUsage, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
+import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
 import { validateStore, type FactStore } from "../../core/facts.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
+type ExpoApp = { readonly expo?: { readonly scheme?: unknown; readonly ios?: { readonly bundleIdentifier?: unknown } } };
 
 function error(message: string, code = 1): Result<string> { return failed(message, code); }
 function refusalCode(exitCode: number): string { return exitCode === 2 ? "invalid-arguments" : "native-error"; }
@@ -70,6 +71,82 @@ async function installedRuntimes(processAdapter: ProcessAdapter): Promise<Result
   const result = await processAdapter.run("xcrun", ["simctl", "list", "runtimes", "--json"]);
   if (result.kind !== "ok") return error("failed to list runtimes with simctl");
   try { return runtimesFromSimctl(JSON.parse(result.value.stdout)); } catch { return error("simctl returned invalid runtime data"); }
+}
+
+function nativeBuildUsage(): string { return "Usage: megabrain native build <phone|tv> [--runtime <version>] [--json]\n"; }
+function buildConfigError(kind: NativeKind): Result<string> {
+  return error(`app path is required for ${kind}; pass surfaces.${kind}.appPath in .megabrain/native.json`);
+}
+function readExpoApp(appPath: string): Result<{ scheme: string; bundleId: string }> {
+  const file = resolve(appPath, "app.json");
+  if (!existsSync(file)) return error(`Expo app.json is required at ${file}`);
+  try {
+    const value = JSON.parse(readFileSync(file, "utf8")) as ExpoApp;
+    const scheme = typeof value.expo?.scheme === "string" ? value.expo.scheme : "";
+    const bundleId = typeof value.expo?.ios?.bundleIdentifier === "string" ? value.expo.ios.bundleIdentifier : "";
+    if (!scheme) return error(`scheme is required in ${file}`);
+    if (!bundleId) return error(`ios.bundleIdentifier is required in ${file}`);
+    return ok({ scheme, bundleId });
+  } catch { return error(`invalid Expo app.json: ${file}`); }
+}
+function generatedWorkspace(appPath: string): Result<{ path: string; relative: string; iosPath: string }> {
+  const iosPath = resolve(appPath, "ios");
+  if (!existsSync(iosPath)) return error(`prebuild did not produce an ios directory at ${iosPath}`);
+  const entries = readdirSync(iosPath);
+  const workspace = entries.find((entry) => entry.endsWith(".xcworkspace"));
+  if (workspace) return ok({ path: resolve(iosPath, workspace), relative: `ios/${workspace}`, iosPath });
+  const project = entries.find((entry) => entry.endsWith(".xcodeproj"));
+  if (project) return ok({ path: resolve(iosPath, project), relative: `ios/${project}`, iosPath });
+  return error(`prebuild did not produce an Xcode project in ${iosPath}`);
+}
+async function nativeBuild(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(nativeBuildUsage());
+  const kind = parseKind(args); if (kind.kind !== "ok") return kind;
+  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const appSetting = setting(loaded.value, kind.value, "appPath"); if (!appSetting) return buildConfigError(kind.value);
+  let runtime = "";
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") continue;
+    if (arg === "--runtime" && args[index + 1]) { runtime = args[++index] as string; continue; }
+    return error(`unknown native build option: ${arg}`, 2);
+  }
+  const appPath = resolve(environment.MEGABRAIN_NATIVE_WORKTREE ?? process.cwd(), appSetting);
+  const app = readExpoApp(appPath); if (app.kind !== "ok") return app;
+  const runtimes = await installedRuntimes(processAdapter); if (runtimes.kind !== "ok") return runtimes;
+  const platform: NativePlatform = kind.value === "tv" ? "tvOS" : "iOS";
+  const matchingRuntimes = runtimes.value.filter((item) => item.platform === platform && (!runtime || item.version === runtime));
+  if (matchingRuntimes.length === 0) return error(runtime ? `no installed ${platform} runtime matches ${runtime}` : `no installed ${platform} runtime is available`);
+  matchingRuntimes.sort((left, right) => right.version.localeCompare(left.version, undefined, { numeric: true }));
+  const selectedRuntime = matchingRuntimes[0] as NativeRuntime;
+  const devices = await processAdapter.run("xcrun", ["simctl", "list", "devices", "--json"]); if (devices.kind !== "ok") return error("failed to list simulators with simctl");
+  let candidates: Result<NativeCandidate[]>;
+  try { candidates = candidatesForRuntimeFromSimctl(JSON.parse(devices.value.stdout), kind.value, selectedRuntime.version); } catch { return error("simctl returned invalid device data"); }
+  if (candidates.kind !== "ok") return candidates;
+  const selected = selectDevice(kind.value, candidates.value, "", false); if (selected.kind !== "ok") return selected;
+  const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
+  if (boot.kind !== "ok" && !/already booted/i.test(boot.error)) return error(`failed to boot simulator ${selected.value.udid}: ${boot.error}`);
+  const outcomes = {} as Record<NativeBuildStep, { ok: boolean; error?: string }>;
+  const prebuild = await processAdapter.run("pnpm", ["exec", "expo", "prebuild"], { cwd: appPath, env: { ...(kind.value === "tv" ? { EXPO_TV: "1" } : {}), REACT_NATIVE_NODE_MODULES_DIR: resolve(appPath, "node_modules") } });
+  outcomes.prebuild = prebuild.kind === "ok" ? { ok: true } : { ok: false, error: prebuild.error };
+  if (!outcomes.prebuild.ok) return error(`native build failed at prebuild: ${outcomes.prebuild.error}`);
+  const generated = generatedWorkspace(appPath); if (generated.kind !== "ok") return generated;
+  const pods = await processAdapter.run("pod", ["install"], { cwd: generated.value.iosPath });
+  outcomes.pods = pods.kind === "ok" ? { ok: true } : { ok: false, error: pods.error };
+  if (!outcomes.pods.ok) return error(`native build failed at pods: ${outcomes.pods.error}`);
+  const derivedDataPath = resolve(generated.value.iosPath, "build");
+  const xcode = await processAdapter.run("xcodebuild", buildXcodebuildArgs(platform, generated.value.path, app.value.scheme, selectedRuntime.version, selected.value.udid, derivedDataPath), { cwd: appPath });
+  outcomes.build = xcode.kind === "ok" ? { ok: true } : { ok: false, error: xcode.error };
+  if (!outcomes.build.ok) return error(`native build failed at build: ${outcomes.build.error}`);
+  const sdk = platform === "tvOS" ? "appletvsimulator" : "iphonesimulator";
+  const appBundle = resolve(derivedDataPath, `Build/Products/Debug-${sdk}/${app.value.scheme}.app`);
+  const install = await processAdapter.run("xcrun", ["simctl", "install", selected.value.udid, appBundle]);
+  outcomes.install = install.kind === "ok" ? { ok: true } : { ok: false, error: install.error };
+  if (!outcomes.install.ok) return error(`native build failed at install: ${outcomes.install.error}`);
+  const launch = await processAdapter.run("xcrun", ["simctl", "launch", selected.value.udid, app.value.bundleId]);
+  outcomes.launch = launch.kind === "ok" ? { ok: true } : { ok: false, error: launch.error };
+  if (!outcomes.launch.ok) return error(`native build failed at launch: ${outcomes.launch.error}`);
+  return ok(JSON.stringify({ ok: true, kind: kind.value, runtime: selectedRuntime.version, device: selected.value.udid, bundleId: app.value.bundleId, installed: true, launched: true }) + "\n");
 }
 async function nativeRuntimeList(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("runtime-list"));
@@ -318,6 +395,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   const json = args.includes("--json");
   let result: Result<string>;
   if (family === "appium") result = await appium([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "build") result = await nativeBuild([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "runtime" && operation === "list") result = await nativeRuntimeList(rest, environment, processAdapter);
   else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
   else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
