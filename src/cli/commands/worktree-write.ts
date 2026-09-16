@@ -1,4 +1,15 @@
-import { mkdir, realpath, readFile, readdir } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  symlink,
+  utimes,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   createProcessAdapter,
@@ -321,6 +332,51 @@ function output(value: unknown, json: boolean): string {
     ? `${JSON.stringify(value, null, 2)}\n`
     : `worktree: ${(value as { worktree: string }).worktree}\nbranch: ${(value as { branch: string }).branch}\n`;
 }
+function isEnvFile(name: string): boolean {
+  return name === ".env" || (name.startsWith(".env.") && name !== ".env.example");
+}
+async function copyEnvFiles(
+  sourceRoot: string,
+  destinationRoot: string,
+): Promise<Result<null>> {
+  async function walk(relativeDirectory: string): Promise<Result<null>> {
+    const sourceDirectory = join(sourceRoot, relativeDirectory);
+    let entries;
+    try {
+      entries = await readdir(sourceDirectory, { withFileTypes: true });
+    } catch {
+      return failed(`could not read directory for ${relativeDirectory || "."}`);
+    }
+    for (const entry of entries) {
+      const relativePath = join(relativeDirectory, entry.name);
+      if (relativeDirectory === "" && entry.name === ".git") continue;
+      if (entry.isDirectory()) {
+        const nested = await walk(relativePath);
+        if (nested.kind !== "ok") return nested;
+        continue;
+      }
+      if (!isEnvFile(entry.name) || (!entry.isFile() && !entry.isSymbolicLink()))
+        continue;
+      const sourceFile = join(sourceRoot, relativePath);
+      const destinationFile = join(destinationRoot, relativePath);
+      try {
+        await mkdir(dirname(destinationFile), { recursive: true });
+        const metadata = await lstat(sourceFile);
+        if (metadata.isSymbolicLink()) {
+          await symlink(await readlink(sourceFile), destinationFile);
+        } else {
+          await copyFile(sourceFile, destinationFile);
+          await chmod(destinationFile, metadata.mode);
+          await utimes(destinationFile, metadata.atime, metadata.mtime);
+        }
+      } catch {
+        return failed(`could not copy ${relativePath}`);
+      }
+    }
+    return ok(null);
+  }
+  return walk("");
+}
 export async function executeWorktreeCreate(
   args: readonly string[],
   environment: Environment,
@@ -354,6 +410,8 @@ export async function executeWorktreeCreate(
     base,
   ]);
   if (added.kind !== "ok") return failed("could not create git worktree");
+  const copied = await copyEnvFiles(repo.value, path);
+  if (copied.kind !== "ok") return copied;
   let parent: {
     requested: boolean;
     selector?: string;
