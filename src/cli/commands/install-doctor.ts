@@ -6,7 +6,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
-type State = Record<string, { installed?: boolean }>;
+type State = Record<string, Record<string, unknown>>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
 const valid = (module: string): boolean => modules.includes(module);
 
@@ -30,15 +30,30 @@ function readState(environment: Environment): State {
   }
 }
 
+function now(environment: Environment): string {
+  return environment.MEGABRAIN_TEST_NOW ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 function reconcile(environment: Environment, module: string, status: string, reason: string): string {
   const directory = resolveStateDirectory(environment);
   const path = statePath(environment);
   const current = readState(environment);
-  const recorded = typeof current[module]?.installed === "boolean" ? current[module].installed : undefined;
+  const recorded = typeof current[module]?.installed === "boolean" ? current[module].installed as boolean : undefined;
   const installed = status === "ok";
-  current[module] = { ...(current[module] ?? {}), installed };
+  const checkedAt = now(environment);
+  if (current._meta === undefined) {
+    current._meta = { kind: "installation-record", recordedAt: checkedAt, source: "megabrain doctor", liveStatusCommand: "megabrain doctor" };
+  }
+  current[module] = {
+    ...(current[module] ?? {}),
+    ...(status === "unknown" ? {} : { installed }),
+    checkedAt,
+    status,
+    statusSource: "megabrain doctor",
+    details: reason,
+  };
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path, `${JSON.stringify(current)}\n`);
+  writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`);
   if (status === "unknown") return `${reason}; state check unknown: ${module} installed state preserved`;
   if (recorded === undefined) return `${reason}; state reconciled: ${module} recorded as installed=${installed}`;
   if (recorded !== installed) return `${reason}; state reconciled: ${module} installed ${recorded} -> ${installed}`;
@@ -49,14 +64,17 @@ function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
   return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
-function dispatchHealth(environment: Environment): Omit<Report, "module" | "status" | "reason"> {
+async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<Omit<Report, "module" | "status" | "reason">> {
   const result = emptyCounts();
   const directory = resolve(resolveStateDirectory(environment), "dispatches");
   if (!existsSync(directory)) return result;
+  const pruneStates = new Set(["closed", "done", "failed", "orphaned", "circuit_broken"]);
+  const records: Array<Record<string, unknown>> = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "archive") continue;
     try {
       const record = JSON.parse(readFileSync(resolve(directory, entry.name, "meta.json"), "utf8")) as Record<string, unknown>;
+      records.push(record);
       const processState = typeof record.processState === "string" ? record.processState : "";
       const reason = processState === "start-unproven" ? "process start was not proven"
         : processState === "stop-unproven" ? "process stop was not proven"
@@ -75,6 +93,22 @@ function dispatchHealth(environment: Environment): Omit<Report, "module" | "stat
       // Match the shell scan: malformed metadata is not a health record.
     }
   }
+  const sessions = await process.run("tmux", ["list-sessions", "-F", "#{session_name}"]);
+  const liveSessions = new Set(sessions.kind === "ok" ? sessions.value.stdout.split("\n").filter(Boolean) : []);
+  let callerSession = "";
+  if (environment.TMUX && environment.TMUX_PANE) {
+    const caller = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
+    if (caller.kind === "ok") callerSession = caller.value.stdout.trim();
+  }
+  const leaked = new Set<string>();
+  for (const record of records) {
+    if (!pruneStates.has(typeof record.state === "string" ? record.state : "")) continue;
+    if (record.runtime !== "tmux") continue;
+    const session = typeof record.tmuxSession === "string" ? record.tmuxSession : "";
+    const parent = typeof record.parentTmuxSession === "string" ? record.parentTmuxSession : "";
+    if (session && session !== parent && (!callerSession || session !== callerSession) && liveSessions.has(session)) leaked.add(session);
+  }
+  result.leakedDispatchSessions = leaked.size;
   return result;
 }
 
@@ -138,7 +172,7 @@ async function report(module: string, environment: Environment, process: Process
     const orca = await succeeds(process, "orca", ["status", "--json"]);
     const superset = await succeeds(process, "superset", ["workspaces", "list", "--json"]);
     const state = readState(environment);
-    const health = dispatchHealth(environment);
+    const health = await dispatchHealth(environment, process);
     const tmuxEnabled = state["tmux-runtime"]?.installed === true;
     const usable: string[] = [];
     const missing: string[] = [];
@@ -179,7 +213,7 @@ async function report(module: string, environment: Environment, process: Process
     if (!await available(process, "tmux")) reason = "tmux is not on PATH";
     else {
       const versionResult = await process.run("tmux", ["-V"]);
-      const version = versionResult.kind === "ok" ? versionResult.value.stdout.trim() : "tmux";
+      const version = versionResult.kind === "ok" ? versionResult.value.stdout.trim() : "";
       const enabled = readState(environment)["tmux-runtime"]?.installed === true;
       const server = await tmuxServerState(process);
       const shellResult = await process.run("printenv", ["SHELL"]);
