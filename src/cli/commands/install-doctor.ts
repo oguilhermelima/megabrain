@@ -1,11 +1,11 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
-type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: string[]; retainedTerminals: number; retainedReasons: string[]; leakedDispatchSessions: number; prunableDispatches: number };
+type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
 type State = Record<string, { installed?: boolean }>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
 const valid = (module: string): boolean => modules.includes(module);
@@ -49,6 +49,35 @@ function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
   return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
+function dispatchHealth(environment: Environment): Omit<Report, "module" | "status" | "reason"> {
+  const result = emptyCounts();
+  const directory = resolve(resolveStateDirectory(environment), "dispatches");
+  if (!existsSync(directory)) return result;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "archive") continue;
+    try {
+      const record = JSON.parse(readFileSync(resolve(directory, entry.name, "meta.json"), "utf8")) as Record<string, unknown>;
+      const processState = typeof record.processState === "string" ? record.processState : "";
+      const reason = processState === "start-unproven" ? "process start was not proven"
+        : processState === "stop-unproven" ? "process stop was not proven"
+          : processState === "exited" ? "agent exited without reporting"
+            : processState === "abandoned" ? "process was abandoned without proof" : undefined;
+      const dispatchId = record.dispatchId ?? entry.name;
+      if (reason !== undefined) {
+        result.uncertainDispatches += 1;
+        result.uncertainReasons.push({ dispatchId, reason, processState, terminalState: record.terminalState ?? null });
+      }
+      if (record.terminalState === "retained") {
+        result.retainedTerminals += 1;
+        result.retainedReasons.push({ dispatchId, reason: record.terminalReason ?? "terminal identity remains unproven", processState, terminalState: "retained" });
+      }
+    } catch {
+      // Match the shell scan: malformed metadata is not a health record.
+    }
+  }
+  return result;
+}
+
 async function appiumReady(process: ProcessAdapter): Promise<boolean> {
   return await available(process, "appium") && await succeeds(process, "appium", ["driver", "list", "--installed"]);
 }
@@ -89,22 +118,42 @@ async function report(module: string, environment: Environment, process: Process
     else {
       const root = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
       if (!existsSync(resolve(root, "manifest.json"))) reason = "browser profiles are not installed; run megabrain install simulator-web";
-      else { status = "ok"; reason = "Playwright MCP is current, using the active browser profile, with pinned browser profiles"; }
+      else {
+        const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? (environment.MEGABRAIN_ROOT ? `${environment.MEGABRAIN_ROOT}/scripts/playwright-web.mjs` : "scripts/playwright-web.mjs");
+        const checked = await process.run("node", [script, "doctor", "--root", root]);
+        if (checked.kind !== "ok") reason = "browser profile doctor could not read its manifest";
+        else {
+          try {
+            const browserReport = JSON.parse(checked.value.stdout) as { status?: string; reason?: string };
+            status = browserReport.status ?? "unknown";
+            reason = browserReport.reason ?? "browser profile status is unknown";
+          } catch {
+            reason = "browser profile doctor could not read its manifest";
+          }
+        }
+      }
     }
   } else if (module === "orchestration") {
     const tmux = await available(process, "tmux");
     const orca = await succeeds(process, "orca", ["status", "--json"]);
     const superset = await succeeds(process, "superset", ["workspaces", "list", "--json"]);
     const state = readState(environment);
+    const health = dispatchHealth(environment);
     const tmuxEnabled = state["tmux-runtime"]?.installed === true;
     const usable: string[] = [];
     const missing: string[] = [];
     if (orca) usable.push("orca"); else missing.push("orca");
     if (superset) usable.push("superset"); else missing.push("superset");
     if (tmux && tmuxEnabled) usable.push("tmux"); else if (!tmuxEnabled) missing.push("tmux");
-    const suffix = "; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: 0; leaked dispatch sessions: 0; prunable dispatches: 0";
-    if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
+    let suffix = `; uncertain dispatches: ${health.uncertainDispatches} (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: ${health.retainedTerminals}; leaked dispatch sessions: ${health.leakedDispatchSessions}; prunable dispatches: ${health.prunableDispatches}`;
+    if (health.uncertainDispatches > 0) suffix += `; unresolved reasons: ${[...new Set(health.uncertainReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
+    if (health.retainedTerminals > 0) suffix += `; retained reasons: ${[...new Set(health.retainedReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
+    if (health.uncertainDispatches > 0 || health.retainedTerminals > 0) {
+      status = "misconfigured";
+      reason = `dispatch state requires reconciliation${suffix}`;
+    } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
+    return { module, status, reason, ...health };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
