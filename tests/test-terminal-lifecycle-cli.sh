@@ -104,7 +104,24 @@ compare() {
   fi
 }
 
+compare_help() {
+  local operation="$1" shell_status binary_status
+  shell_status="$(run_shell terminal "$operation" --help)"
+  binary_status="$(run_binary terminal "$operation" --help)"
+  if ! cmp -s "$work/shell.stdout" "$work/binary.stdout" || ! cmp -s "$work/shell.stderr" "$work/binary.stderr" || [ "$shell_status" != "$binary_status" ]; then
+    printf 'RED %s --help\n' "$operation"
+    printf 'shell status=%s stdout=%s stderr=%s\n' "$shell_status" "$(<"$work/shell.stdout")" "$(<"$work/shell.stderr")"
+    printf 'binary status=%s stdout=%s stderr=%s\n' "$binary_status" "$(<"$work/binary.stdout")" "$(<"$work/binary.stderr")"
+    return 1
+  fi
+  printf 'GREEN %s --help\n' "$operation"
+}
+
 failures=0
+for operation in create close restart; do
+  compare_help "$operation" || failures=$((failures + 1))
+done
+
 for selector in id:old-terminal 'title:DEV old' port:4000 "worktree:$MEGABRAIN_TEST_WORKTREE"; do
   compare close "$selector" || failures=$((failures + 1))
   compare restart "$selector" || failures=$((failures + 1))
