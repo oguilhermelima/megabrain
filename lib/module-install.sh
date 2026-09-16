@@ -186,7 +186,18 @@ EOF
 }
 
 command_doctor() {
-  local module="" rc=0 current json=false arg result results
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) megabrain_usage_show doctor; return 0 ;;
+    esac
+  done
+  if [ -x "$typescript_binary" ]; then
+    "$typescript_binary" doctor "$@"
+    return $?
+  fi
+  local module="" rc=0 current json=false result results
   while [ "$#" -gt 0 ]; do
     arg="$1"
     case "$arg" in
