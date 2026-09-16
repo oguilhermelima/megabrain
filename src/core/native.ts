@@ -1,5 +1,28 @@
 import { failed, ok, type Result } from "./result.js";
 
+export type NativePlatform = "iOS" | "tvOS";
+export type NativeRuntime = { readonly platform: NativePlatform; readonly version: string; readonly build: string; readonly identifier: string };
+
+export function runtimesFromSimctl(value: unknown): Result<NativeRuntime[]> {
+  if (typeof value !== "object" || value === null || !Array.isArray((value as { runtimes?: unknown }).runtimes)) return failed("simctl returned invalid runtime data");
+  const runtimes: NativeRuntime[] = [];
+  for (const entry of (value as { runtimes: unknown[] }).runtimes) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const item = entry as Record<string, unknown>;
+    const identifier = typeof item.identifier === "string" ? item.identifier : "";
+    const name = typeof item.name === "string" ? item.name : "";
+    const version = typeof item.version === "string" ? item.version : "";
+    const build = typeof item.buildversion === "string" ? item.buildversion : typeof item.buildVersion === "string" ? item.buildVersion : "";
+    const platform = name.startsWith("iOS") || identifier.includes("iOS") ? "iOS" : name.startsWith("tvOS") || identifier.includes("tvOS") ? "tvOS" : undefined;
+    if (platform && version && build && identifier) runtimes.push({ platform, version, build, identifier });
+  }
+  return ok(runtimes);
+}
+
+export function runtimeFactId(platform: NativePlatform, version: string): string {
+  return `native-runtime-${platform.toLowerCase()}-${version.replaceAll(".", "-")}`;
+}
+
 export type NativeKind = "phone" | "tv";
 export type NativeCandidate = { readonly udid: string; readonly state: string; readonly name: string };
 

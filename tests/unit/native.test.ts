@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { executeNative } from "../../src/cli/commands/native.js";
-import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, renderNativeUrl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
+import { candidatesFromSimctl, evaluateNativeHealth, formatNativeList, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
 const candidates = [{ udid: "one", state: "Booted", name: "Phone" }, { udid: "two", state: "Shutdown", name: "Other" }];
 describe("native planning", () => {
+  test("parses installed runtimes from simctl", () => {
+    expect(runtimesFromSimctl({ runtimes: [{ name: "tvOS 26.5", version: "26.5", buildversion: "23J98", identifier: "com.apple.CoreSimulator.SimRuntime.tvOS-26-5", isAvailable: true }] })).toEqual({ kind: "ok", value: [{ platform: "tvOS", version: "26.5", build: "23J98", identifier: "com.apple.CoreSimulator.SimRuntime.tvOS-26-5" }] });
+    expect(runtimeFactId("tvOS", "26.5")).toBe("native-runtime-tvos-26-5");
+  });
   test("validates kind, timeout and metro port", () => {
     expect(validateKind("tv")).toEqual({ kind: "ok", value: "tv" });
     expect(validateKind("bad")).toEqual({ kind: "failed", error: "expected simulator kind phone or tv, got: bad", exitCode: 2 });
@@ -67,6 +71,27 @@ describe("native health decision rules", () => {
 
   test("keeps missing frame evidence unknown", () => {
     expect(evaluateNativeHealth({ ...base, frame: { state: "unknown", reason: "no control frame" } })).toMatchObject({ status: "unknown", reason: "no control frame" });
+  });
+});
+
+describe("native runtime commands", () => {
+  const process: ProcessAdapter = {
+    async run(command, args) {
+      if (command === "xcrun" && args.join(" ") === "simctl list runtimes --json") return ok({ stdout: JSON.stringify({ runtimes: [{ name: "iOS 27.0", version: "27.0", buildversion: "24A1", identifier: "com.apple.CoreSimulator.SimRuntime.iOS-27-0" }] }), stderr: "", exitCode: 0 });
+      return failed(`${command} unavailable`);
+    },
+    async startDetached() { return failed("not used"); },
+    invocationCount: () => 1,
+  };
+
+  test("lists installed runtimes from a simctl fixture", async () => {
+    const result = await executeNative(["runtime", "list", "--installed", "--json"], {}, process);
+    expect(result).toEqual({ kind: "ok", value: JSON.stringify({ platform: "all", runtimes: [{ platform: "iOS", version: "27.0", build: "24A1", identifier: "com.apple.CoreSimulator.SimRuntime.iOS-27-0" }], available: [], refusal: null }) + "\n" });
+  });
+
+  test("returns a structured refusal for JSON usage errors", async () => {
+    const result = await executeNative(["runtime", "list", "--available", "--json", "--bad"], {}, process);
+    expect(result).toEqual({ kind: "ok", value: JSON.stringify({ refusal: { code: "invalid-arguments", message: "unknown native runtime list option: --bad" } }) + "\n", exitCode: 2 });
   });
 });
 
