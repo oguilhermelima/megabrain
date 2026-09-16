@@ -8,6 +8,8 @@ const result = await route(process.argv.slice(2), {
 
 if (result.kind === "ok") {
   process.stdout.write(result.value);
+  if (result.stderr !== undefined && result.stderr.length > 0) process.stderr.write(result.stderr);
+  if (result.exitCode !== undefined) process.exitCode = result.exitCode;
 } else if (result.kind === "failed") {
   process.stderr.write(`${result.error.startsWith("megabrain ") ? result.error : `megabrain: ${result.error}`}\n`);
   process.exitCode = result.exitCode;

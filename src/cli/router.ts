@@ -20,6 +20,7 @@ import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
 import { executeChain } from "./commands/chain.js";
 import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
+import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -33,6 +34,12 @@ export function route(
   const [command, ...commandArgs] = args;
   if (command === "context") {
     return executeContext(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "doctor") {
+    return executeDoctor(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "install") {
+    return executeInstall(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "check") {
     return executeCheck(commandArgs, dependencies.environment, dependencies.processAdapter);

@@ -1,6 +1,8 @@
 export type Ok<T> = {
   readonly kind: "ok";
   readonly value: T;
+  readonly exitCode?: number;
+  readonly stderr?: string;
 };
 
 export type Failed = {
