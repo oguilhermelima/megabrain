@@ -17,11 +17,12 @@ fail() {
 }
 
 make_dispatch() {
-  local state="$1"
+  local state="$1" with_strays="${2:-true}"
   mkdir -p "$state/dispatches/queue/messages" "$state/dispatches/queue/deliveries"
   printf '%s\n' '{"dispatchId":"queue","parentSessionId":"parent-terminal","parentHost":"superset","state":"running"}' >"$state/dispatches/queue/meta.json"
   printf '%s\n' '{"seq":3,"from":"child","type":"ask","text":"question"}' >"$state/dispatches/queue/messages/0003-child-ask.json"
   printf '%s\n' '{"seq":7,"from":"parent","type":"reply","text":"old"}' >"$state/dispatches/queue/messages/0007-parent-reply.json"
+  [ "$with_strays" = true ] || return 0
   printf '%s\n' 'editor backup' >"$state/dispatches/queue/messages/editor-backup.json"
   printf '%s\n' 'copied fixture' >"$state/dispatches/queue/messages/copy-0042-parent-reply.json"
   printf '%s\n' 'unformatted fixture' >"$state/dispatches/queue/messages/9999.json"
@@ -59,11 +60,29 @@ binary_output="$(run_reply binary "$binary_state" "$root/.build/megabrain")" || 
 [ ! -e "$binary_state/dispatches/queue/messages/0042-parent-reply.json" ] || fail 'binary treated the nonnumeric prefix as a sequence'
 printf 'queue allocation agrees beside unrecognised message names\n'
 
-# Falsification for visibility: without the diagnostic, neither doctor output names the stray file.
+# Falsification for visibility: clean dispatches must not report a stray file.
+clean_shell_state="$work_dir/clean-shell-state"
+clean_binary_state="$work_dir/clean-binary-state"
+make_dispatch "$clean_shell_state" false
+make_dispatch "$clean_binary_state" false
+clean_doctor_shell="$work_dir/clean-doctor-shell.output"
+clean_doctor_binary="$work_dir/clean-doctor-binary.output"
+env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$clean_shell_state" \
+  bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; source "$1/lib/module-tmux-runtime.sh"; source "$1/lib/module-install.sh"; megabrain_require_command() { return 1; }; megabrain_superset_available() { return 1; }; megabrain_runtime_enabled() { return 0; }; megabrain_doctor_one orchestration' -- "$root" >"$clean_doctor_shell" 2>&1 || true
+env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$clean_binary_state" \
+  "$root/.build/megabrain" doctor orchestration >"$clean_doctor_binary" 2>&1 || true
+case "$(cat "$clean_doctor_shell")" in
+  *editor-backup.json*) fail 'shell doctor reported a stray file in a clean dispatch' ;;
+esac
+case "$(cat "$clean_doctor_binary")" in
+  *editor-backup.json*) fail 'binary doctor reported a stray file in a clean dispatch' ;;
+esac
+
+# The populated fixture must be reportable through the doctor entry point on both paths.
 doctor_shell="$work_dir/doctor-shell.output"
 doctor_binary="$work_dir/doctor-binary.output"
 if env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$shell_state" \
-  bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; source "$1/lib/module-tmux-runtime.sh"; source "$1/lib/module-install.sh"; megabrain_require_command() { return 1; }; megabrain_superset_available() { return 1; }; megabrain_runtime_enabled() { return 0; }; module_orchestration_doctor' -- "$root" >"$doctor_shell" 2>&1; then
+  bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; source "$1/lib/module-tmux-runtime.sh"; source "$1/lib/module-install.sh"; megabrain_require_command() { return 1; }; megabrain_superset_available() { return 1; }; megabrain_runtime_enabled() { return 0; }; megabrain_doctor_one orchestration' -- "$root" >"$doctor_shell" 2>&1; then
   :
 else
   :
