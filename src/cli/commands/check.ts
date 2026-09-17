@@ -21,7 +21,11 @@ function number(value: unknown): number | undefined { return typeof value === "n
 
 export async function files(path: string): Promise<string[]> {
   const result: string[] = [];
-  for await (const entry of new Bun.Glob("**/*.json").scan({ cwd: path, absolute: true })) result.push(entry);
+  try {
+    for await (const entry of new Bun.Glob("**/*.json").scan({ cwd: path, absolute: true })) result.push(entry);
+  } catch {
+    return [];
+  }
   return result;
 }
 
