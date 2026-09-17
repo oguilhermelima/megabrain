@@ -150,7 +150,7 @@ sleeps, and the answer has to survive all of it. Every message is written to an 
 ```sh
 megabrain orchestrate watch <id> --json         # blocks until there is mail
 megabrain orchestrate reply <id> --text "..."   # answer a question
-megabrain orchestrate ack <id> <delivery-id>    # mark it consumed
+megabrain orchestrate ack <id> <delivery-id> [--close] # mark it consumed and optionally release the terminal
 megabrain orchestrate read <id>                 # what the agent actually did
 megabrain orchestrate reconcile <id>            # settle its state against reality
 megabrain orchestrate close <id>                # take the pane back

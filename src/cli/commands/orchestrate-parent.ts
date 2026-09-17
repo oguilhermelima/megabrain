@@ -5,7 +5,9 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity } from "../../core/identity.js";
 import { selectDelivery, type CheckDelivery } from "../../core/check.js";
 import { files, loadDeliveries, loadMessages, migrateDeliveries, readJson, report } from "./check.js";
-import { acknowledgeDelivery, parseParentAckArgs } from "../../core/parent-queue.js";
+import { acknowledgeDelivery, ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
+import { executeOrchestrateClose } from "./orchestrate-close.js";
+import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
@@ -91,10 +93,11 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
   }
 }
 
-export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--json]\n");
+export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
+  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]\n");
   const parsed = parseParentAckArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment); if (parent.kind !== "ok") return parent;
+  if (parsed.value.close === true && parent.value.state !== "done" && parent.value.state !== "closed") return ackCloseRefusal(parsed.value.dispatchId, typeof parent.value.state === "string" ? parent.value.state : "", parsed.value.json);
   const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
   const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
   const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
@@ -107,6 +110,20 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   const now = new Date().toISOString(); const current = await readJson(path); if (current !== undefined && decision.value.duplicate === false) await writeAtomic(path, { ...current, status: "acknowledged", acknowledgedAt: now, updatedAt: now });
   await rm(await dispatchPath(root, parsed.value.dispatchId, "messages/.lock"), { recursive: true, force: true });
   const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
-  if (parsed.value.json) return ok(`${JSON.stringify({ dispatchId: parsed.value.dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: decision.value.duplicate, status: "acknowledged", messageSeqs }, null, 2)}\n`);
-  return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${decision.value.duplicate}\n`);
+  const acknowledgment = { dispatchId: parsed.value.dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: decision.value.duplicate, status: "acknowledged", messageSeqs };
+  if (parsed.value.close !== true) {
+    if (parsed.value.json) return ok(`${JSON.stringify(acknowledgment, null, 2)}\n`);
+    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${decision.value.duplicate}\n`);
+  }
+  const closed = await executeOrchestrateClose([parsed.value.dispatchId, ...(parsed.value.json ? ["--json"] : [])], environment, process);
+  if (closed.kind !== "ok") return failed(`delivery ${parsed.value.deliveryId} acknowledged; ${closed.error}`, closed.exitCode);
+  if (parsed.value.json) {
+    try {
+      const close = JSON.parse(closed.value) as Record<string, unknown>;
+      return ok(`${JSON.stringify({ ...acknowledgment, close }, null, 2)}\n`);
+    } catch {
+      return failed(`delivery ${parsed.value.deliveryId} acknowledged; close returned invalid JSON`);
+    }
+  }
+  return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${decision.value.duplicate}\n${closed.value}`);
 }

@@ -74,14 +74,26 @@ megabrain_parent_notify_context_matches() {
 }
 
 megabrain_parent_notify_pointer() {
-  local dispatch_id="$1"
+  local dispatch_id="$1" action="${2:-mail}"
   # The pointer keeps message content in the durable queue and delivery path.
-  printf 'mail: megabrain orchestrate watch %s\n' "$dispatch_id"
+  if [ "$action" = close ]; then
+    printf 'dispatch %s finished but still owns its terminal; run megabrain orchestrate close %s\n' "$dispatch_id" "$dispatch_id"
+  else
+    printf 'mail: megabrain orchestrate watch %s\n' "$dispatch_id"
+  fi
 }
 
 megabrain_parent_notify_pointer_many() {
-  local count="$1"
-  printf '%s mails: run megabrain orchestrate list\n' "$count"
+  local count="$1" dispatch_ids="${2:-}" action="${3:-mail}"
+  if [ "$action" = close ]; then
+    if [ "$count" -eq 1 ]; then
+      printf 'dispatch %s finished but still owns its terminal; run megabrain orchestrate close %s\n' "$dispatch_ids" "$dispatch_ids"
+    else
+      printf '%s finished dispatches still own terminals: %s; run megabrain orchestrate close <id> for each\n' "$count" "$dispatch_ids"
+    fi
+  else
+    printf '%s mails: run megabrain orchestrate list\n' "$count"
+  fi
 }
 
 megabrain_parent_notify_wake_path() {

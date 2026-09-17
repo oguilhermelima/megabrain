@@ -2297,6 +2297,7 @@ megabrain_dispatch_mailbox_watch() {
   [[ "$MEGABRAIN_DISPATCH_DELIVERY_BATCH_CAP" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "delivery batch cap is invalid"; return 1; }
   if [ "$mailbox" = parent ]; then
     meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
+    megabrain_session_id >/dev/null
     [ -n "$consumer" ] || consumer="$MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID"
   else
     meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
@@ -2389,7 +2390,7 @@ megabrain_dispatch_ack_for_owner() {
     fi
   fi
   local owner="$1" dispatch_id="" delivery_id="" consumer="${MEGABRAIN_CONSUMER_ID:-}" generation="${MEGABRAIN_CONSUMER_GENERATION:-1}"
-  local json=false arg meta path status record_consumer record_generation lock tmp now message_seqs
+  local json=false close=false arg meta path status record_consumer record_generation lock tmp now message_seqs close_output
   shift
   case "${1:-}" in
     -h|--help)
@@ -2418,6 +2419,11 @@ megabrain_dispatch_ack_for_owner() {
     case "$arg" in
       --consumer) consumer="${2:-}"; shift 2 ;;
       --generation) generation="${2:-}"; shift 2 ;;
+      --close)
+        [ "$owner" = parent ] || { megabrain_error "unknown orchestrate ack option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }
+        close=true
+        shift
+        ;;
       --json) json=true; shift ;;
       -h|--help) megabrain_usage_show orchestrate-ack; return 0 ;;
       *) megabrain_error "unknown orchestrate ack option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
@@ -2426,9 +2432,26 @@ megabrain_dispatch_ack_for_owner() {
   [[ "$generation" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "--generation must be a positive number"; return "$MEGABRAIN_USAGE_ERROR"; }
   if [ "$owner" = parent ]; then
     meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
+    megabrain_session_id >/dev/null
     [ -n "$consumer" ] || consumer="$MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID"
   else
     meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
+  fi
+  if [ "$close" = true ]; then
+    status="$(printf '%s' "$meta" | jq -r '.state // empty')"
+    case "$status" in
+      done|closed) ;;
+      *)
+        if [ "$json" = true ]; then
+          jq -n --arg message "dispatch $dispatch_id is ${status:-unknown}; refusing to acknowledge delivery with --close; dispatch must be done or closed" \
+            '{refusal: {code: "dispatch-not-done", message: $message}}'
+          megabrain_error "dispatch-not-done: dispatch $dispatch_id is ${status:-unknown}; refusing to acknowledge delivery with --close; dispatch must be done or closed"
+        else
+          megabrain_error "dispatch-not-done: dispatch $dispatch_id is ${status:-unknown}; refusing to acknowledge delivery with --close; dispatch must be done or closed"
+        fi
+        return 1
+        ;;
+    esac
   fi
   [ -n "$consumer" ] || { megabrain_error "consumer identity is empty"; return 1; }
   path="$(megabrain_dispatch_delivery_path "$dispatch_id" "$delivery_id")" || return 1
@@ -2448,6 +2471,24 @@ megabrain_dispatch_ack_for_owner() {
         }
       fi
       rmdir "$lock"
+      if [ "$close" = true ]; then
+        if [ "$json" = true ]; then
+          close_output="$(megabrain_dispatch_close "$dispatch_id" --json 2>&1)" || {
+            megabrain_error "delivery $delivery_id acknowledged; $close_output"
+            return 1
+          }
+          jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" --argjson close "$close_output" \
+            '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: true, status: "acknowledged", messageSeqs: $messageSeqs, close: $close}'
+        else
+          printf 'acknowledged: %s\nduplicate: true\n' "$delivery_id"
+          close_output="$(megabrain_dispatch_close "$dispatch_id" 2>&1)" || {
+            megabrain_error "delivery $delivery_id acknowledged; $close_output"
+            return 1
+          }
+          printf '%s\n' "$close_output"
+        fi
+        return 0
+      fi
       if [ "$json" = true ]; then
         jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" \
           '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: true, status: "acknowledged", messageSeqs: $messageSeqs}'
@@ -2495,10 +2536,26 @@ megabrain_dispatch_ack_for_owner() {
   message_seqs="$(jq -c '.messageSeqs // []' "$path")"
   rmdir "$lock"
   if [ "$json" = true ]; then
-    jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" \
-      '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: false, status: "acknowledged", messageSeqs: $messageSeqs}'
+    if [ "$close" = true ]; then
+      close_output="$(megabrain_dispatch_close "$dispatch_id" --json 2>&1)" || {
+        megabrain_error "delivery $delivery_id acknowledged; $close_output"
+        return 1
+      }
+      jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" --argjson close "$close_output" \
+        '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: false, status: "acknowledged", messageSeqs: $messageSeqs, close: $close}'
+    else
+      jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" \
+        '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: false, status: "acknowledged", messageSeqs: $messageSeqs}'
+    fi
   else
     printf 'acknowledged: %s\nduplicate: false\n' "$delivery_id"
+    if [ "$close" = true ]; then
+      close_output="$(megabrain_dispatch_close "$dispatch_id" 2>&1)" || {
+        megabrain_error "delivery $delivery_id acknowledged; $close_output"
+        return 1
+      }
+      printf '%s\n' "$close_output"
+    fi
   fi
 }
 

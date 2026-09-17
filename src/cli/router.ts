@@ -91,7 +91,7 @@ export function route(
     return executeOrchestratePrune(commandArgs.slice(1), dependencies.environment);
   }
   if (command === "orchestrate" && (commandArgs[0] === "ack" || commandArgs[0] === "acknowledge")) {
-    return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment);
+    return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "fact") {
     return executeFact(commandArgs, dependencies.environment, dependencies.processAdapter);

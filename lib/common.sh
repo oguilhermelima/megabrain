@@ -296,7 +296,7 @@ megabrain_usage_line() {
     orchestrate-liveness) printf 'orchestrate liveness <dispatch-id> [--json]' ;;
     orchestrate-watch) printf 'orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]' ;;
     orchestrate-read) printf 'orchestrate read <dispatch-id> [--lines <count>] [--json]' ;;
-    orchestrate-ack) printf 'orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--json]' ;;
+    orchestrate-ack) printf 'orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]' ;;
     orchestrate-reply) printf 'orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]' ;;
     orchestrate-stop) printf 'orchestrate stop <dispatch-id> [--json]' ;;
     orchestrate-change) printf 'orchestrate change <dispatch-id> --text <text> [--json]' ;;
