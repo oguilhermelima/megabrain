@@ -3,6 +3,12 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+if [ ! -x "$root/.build/megabrain" ]; then
+  printf 'skip: compiled ack-close binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
+  exit 0
+fi
+
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-ack-close.XXXXXX")"
 fake_dir="$work_dir/bin"
 mkdir -p "$fake_dir" "$work_dir/home"
