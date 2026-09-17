@@ -35,6 +35,36 @@ run_side() {
 }
 
 mkdir -p "$work_dir/home"
+
+# Scenario written before implementation: an absent dispatch directory must produce the
+# same actionable answer on both implementations, without exposing Bun's filesystem error.
+capture_absent() {
+  local implementation="$1" state_dir="$2" executable="$3" output_file="$4" status_file="$5" status
+  if run_side "$implementation" "$state_dir" "$executable" >"$output_file" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s\n' "$status" >"$status_file"
+}
+
+absent_shell_output="$work_dir/absent-shell.output"
+absent_binary_output="$work_dir/absent-binary.output"
+capture_absent shell "$work_dir/absent-shell-state" "$root/megabrain" "$absent_shell_output" "$work_dir/absent-shell.status"
+capture_absent binary "$work_dir/absent-binary-state" "$root/.build/megabrain" "$absent_binary_output" "$work_dir/absent-binary.status"
+[ "$(cat "$absent_shell_output")" = "$(cat "$absent_binary_output")" ] || {
+  printf 'FAIL: absent dispatch check output differs\n' >&2
+  exit 1
+}
+[ "$(cat "$absent_shell_output")" = 'megabrain: no managed dispatch belongs to superset/child-terminal' ] || {
+  printf 'FAIL: absent dispatch check did not preserve the actionable answer\n' >&2
+  exit 1
+}
+case "$(cat "$absent_binary_output")" in
+  *ENOENT*|*syscall*) printf 'FAIL: absent binary check exposed filesystem internals\n' >&2; exit 1 ;;
+esac
+printf 'check absent dispatch directory agrees without filesystem error\n'
+
 shell_state="$work_dir/shell-state"
 binary_state="$work_dir/binary-state"
 write_fixture "$shell_state"
