@@ -323,7 +323,7 @@ command_web_visual() {
 
 command_web() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WEB_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_WEB_IMPLEMENTATION:-}"; then
     "$typescript_binary" web "$@"
     return $?
   fi

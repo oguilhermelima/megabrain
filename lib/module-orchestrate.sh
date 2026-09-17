@@ -597,7 +597,7 @@ megabrain_dispatch_liveness_read() {
 
 megabrain_dispatch_liveness() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION:-}"; then
     "$typescript_binary" orchestrate liveness "$@"
     return $?
   fi
@@ -1039,7 +1039,7 @@ megabrain_dispatch_reconcile_update() {
 
 megabrain_dispatch_reconcile() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_RECONCILE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_RECONCILE_IMPLEMENTATION:-}"; then
     "$typescript_binary" orchestrate reconcile "$@"
     return $?
   fi
@@ -2187,7 +2187,7 @@ megabrain_dispatch_host_terminal_read() {
 
 megabrain_dispatch_read() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION:-}"; then
     "$typescript_binary" orchestrate read "$@"
     return $?
   fi
@@ -2263,7 +2263,7 @@ megabrain_dispatch_report() {
 megabrain_dispatch_mailbox_watch() {
   if [ "$1" = parent ]; then
     local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-    if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_WATCH_IMPLEMENTATION:-}" != shell ]; then
+    if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_WATCH_IMPLEMENTATION:-}"; then
       shift
       "$typescript_binary" orchestrate watch "$@"
       return $?
@@ -2409,7 +2409,7 @@ megabrain_dispatch_child_check() {
 megabrain_dispatch_ack_for_owner() {
   if [ "$1" = parent ]; then
     local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-    if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION:-}" != shell ]; then
+    if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION:-}"; then
       shift
       "$typescript_binary" orchestrate ack "$@"
       return $?
@@ -2663,7 +2663,7 @@ megabrain_dispatch_reply() {
 
 megabrain_dispatch_stop() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION:-}"; then
     "$typescript_binary" orchestrate stop "$@"
     return $?
   fi
@@ -2948,7 +2948,7 @@ megabrain_dispatch_child_message() {
 
 command_ask() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" ask "$@"
     return $?
   fi
@@ -2962,7 +2962,7 @@ command_ask() {
 
 command_received() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" received "$@"
     return $?
   fi
@@ -2975,7 +2975,7 @@ command_received() {
 
 command_done() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" done "$@"
     return $?
   fi
@@ -2988,7 +2988,7 @@ command_done() {
 
 command_check() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_CHECK_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_CHECK_IMPLEMENTATION:-}"; then
     "$typescript_binary" check "$@"
     return $?
   fi

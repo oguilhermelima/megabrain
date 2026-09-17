@@ -1423,7 +1423,7 @@ megabrain_terminal_host_close() {
 
 megabrain_terminal_list() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TERMINAL_LIST_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_TERMINAL_LIST_IMPLEMENTATION:-}"; then
     "$typescript_binary" terminal list "$@"
     return $?
   fi
@@ -1877,7 +1877,7 @@ megabrain_worktree_create() {
       break
     fi
   done
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ] && [ "$orchestrate_requested" = false ]; then
+  if [ "$orchestrate_requested" = false ] && megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" worktree create "$@"
     return $?
   fi
@@ -2292,7 +2292,7 @@ megabrain_worktree_finish_json() {
 
 megabrain_worktree_finish() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" worktree finish "$@"
     return $?
   fi
@@ -2460,7 +2460,7 @@ megabrain_worktree_finish() {
 
 megabrain_worktree_pr() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" worktree pr "$@"
     return $?
   fi
@@ -2548,7 +2548,7 @@ EOF
 
 megabrain_worktree_list() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION:-}"; then
     "$typescript_binary" worktree list "$@"
     return $?
   fi
@@ -2747,7 +2747,7 @@ EOF
 
 megabrain_worktree_adopt() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_WORKTREE_ADOPT_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_ADOPT_IMPLEMENTATION:-}"; then
     "$typescript_binary" worktree adopt "$@"
     return $?
   fi
@@ -2815,6 +2815,7 @@ command_worktree() {
 
 command_terminal() {
   local subcommand="${1:-}"
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   shift || true
   case "$subcommand" in
     create)
@@ -2826,8 +2827,8 @@ command_terminal() {
           return 0
           ;;
       esac
-      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION:-}" != shell ]; then
-        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal create "$@"
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION:-}"; then
+        "$typescript_binary" terminal create "$@"
       else
         megabrain_terminal_create "$@"
       fi
@@ -2837,8 +2838,8 @@ command_terminal() {
       case "${1:-}" in
         -h|--help) megabrain_usage_show terminal-restart; return 0 ;;
       esac
-      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION:-}" != shell ]; then
-        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal restart "$@"
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION:-}"; then
+        "$typescript_binary" terminal restart "$@"
       else
         megabrain_terminal_restart "$@"
       fi
@@ -2847,8 +2848,8 @@ command_terminal() {
       case "${1:-}" in
         -h|--help) megabrain_usage_show terminal-close; return 0 ;;
       esac
-      if [ -x "${MEGABRAIN_ROOT:-}/.build/megabrain" ] && [ "${MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION:-}" != shell ]; then
-        "${MEGABRAIN_ROOT:-}/.build/megabrain" terminal close "$@"
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION:-}"; then
+        "$typescript_binary" terminal close "$@"
       else
         megabrain_terminal_close "$@"
       fi

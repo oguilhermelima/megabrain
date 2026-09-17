@@ -34,7 +34,7 @@ megabrain_tv_device_state() {
 
 command_tv() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_TV_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_TV_IMPLEMENTATION:-}"; then
     "$typescript_binary" tv "$@"
     return $?
   fi

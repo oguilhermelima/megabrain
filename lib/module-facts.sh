@@ -359,7 +359,7 @@ command_fact() {
   local subcommand="${1:-}"
   shift || true
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_FACT_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_FACT_IMPLEMENTATION:-}"; then
     "$typescript_binary" fact "$subcommand" "$@"
     return $?
   fi

@@ -20,7 +20,7 @@ megabrain_context_detect() {
 command_context() {
   local format="plain" arg host
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_CONTEXT_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_CONTEXT_IMPLEMENTATION:-}"; then
     "$typescript_binary" context "$@"
     return $?
   fi
@@ -51,7 +51,7 @@ command_orchestrate() {
     list) command_orchestrate_list "$@" ;;
     prune)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION:-}" != shell ]; then
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION:-}"; then
         "$typescript_binary" orchestrate prune "$@"
         return $?
       fi
@@ -64,7 +64,7 @@ command_orchestrate() {
     ack|acknowledge) megabrain_dispatch_ack "$@" ;;
     reply)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION:-}" != shell ]; then
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION:-}"; then
         "$typescript_binary" orchestrate reply "$@"
         return $?
       fi
@@ -73,7 +73,7 @@ command_orchestrate() {
     stop) megabrain_dispatch_stop "$@" ;;
     change)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION:-}" != shell ]; then
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION:-}"; then
         "$typescript_binary" orchestrate change "$@"
         return $?
       fi
@@ -81,7 +81,7 @@ command_orchestrate() {
       ;;
     close)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION:-}" != shell ]; then
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION:-}"; then
         "$typescript_binary" orchestrate close "$@"
         return $?
       fi
@@ -359,7 +359,7 @@ megabrain_dispatch_terminal_status() {
 
 command_orchestrate_list() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION:-}"; then
     "$typescript_binary" orchestrate list "$@"
     return $?
   fi

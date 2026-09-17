@@ -193,7 +193,7 @@ command_doctor() {
       -h|--help) megabrain_usage_show doctor; return 0 ;;
     esac
   done
-  if [ -x "$typescript_binary" ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_INSTALL_IMPLEMENTATION:-}"; then
     "$typescript_binary" doctor "$@"
     return $?
   fi
