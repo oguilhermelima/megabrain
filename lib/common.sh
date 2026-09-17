@@ -91,6 +91,25 @@ megabrain_notice() {
   printf '%s\n' "$*" >&2
 }
 
+MEGABRAIN_BINARY_FRESHNESS_WARNING_SHOWN=false
+
+megabrain_should_use_typescript_binary() {
+  local implementation="${1:-}" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  local source_directory="${MEGABRAIN_ROOT:-}/src" newer_source=''
+  [ -x "$typescript_binary" ] || return 1
+  [ "$implementation" != shell ] || return 1
+  if [ "${MEGABRAIN_SKIP_BINARY_FRESHNESS_CHECK:-false}" != true ] &&
+    [ "${MEGABRAIN_BINARY_FRESHNESS_WARNING_SHOWN:-false}" != true ] &&
+    [ -d "$source_directory" ]; then
+    newer_source="$(find "$source_directory" -name '*.ts' -newer "$typescript_binary" -print -quit 2>/dev/null || true)"
+    if [ -n "$newer_source" ]; then
+      megabrain_notice "compiled binary is stale; newer source: $newer_source; run bun run build"
+      MEGABRAIN_BINARY_FRESHNESS_WARNING_SHOWN=true
+    fi
+  fi
+  return 0
+}
+
 megabrain_require_command() {
   command -v "$1" >/dev/null 2>&1
 }

@@ -122,7 +122,7 @@ command_model() {
   local subcommand="${1:-}"
   shift || true
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_MODEL_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_MODEL_IMPLEMENTATION:-}"; then
     "$typescript_binary" model "$subcommand" "$@"
     return $?
   fi

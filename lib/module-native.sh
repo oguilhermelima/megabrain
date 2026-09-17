@@ -713,7 +713,7 @@ megabrain_native_build() {
 
 command_native() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if [ -x "$typescript_binary" ] && [ "${MEGABRAIN_NATIVE_IMPLEMENTATION:-}" != shell ]; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_NATIVE_IMPLEMENTATION:-}"; then
     "$typescript_binary" native "$@"
     return $?
   fi
