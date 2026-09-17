@@ -204,14 +204,27 @@ function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
   return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
-async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<Omit<Report, "module" | "status" | "reason">> {
-  const result = emptyCounts();
+type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecognisedMessageFiles: string[] };
+
+function messageFiles(directory: string): string[] {
+  try {
+    return readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && !/^\d{4}-[^-]+-.+\.json$/.test(entry.name))
+      .map((entry) => resolve(directory, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<DispatchHealth> {
+  const result: DispatchHealth = { ...emptyCounts(), unrecognisedMessageFiles: [] };
   const directory = resolve(resolveStateDirectory(environment), "dispatches");
   if (!existsSync(directory)) return result;
   const pruneStates = new Set(["closed", "done", "failed", "orphaned", "circuit_broken"]);
   const records: Array<Record<string, unknown>> = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "archive") continue;
+    result.unrecognisedMessageFiles.push(...messageFiles(resolve(directory, entry.name, "messages")));
     try {
       const record = JSON.parse(readFileSync(resolve(directory, entry.name, "meta.json"), "utf8")) as Record<string, unknown>;
       records.push(record);
@@ -322,12 +335,14 @@ async function report(module: string, environment: Environment, process: Process
     let suffix = `; uncertain dispatches: ${health.uncertainDispatches} (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: ${health.retainedTerminals}; leaked dispatch sessions: ${health.leakedDispatchSessions}; prunable dispatches: ${health.prunableDispatches}`;
     if (health.uncertainDispatches > 0) suffix += `; unresolved reasons: ${[...new Set(health.uncertainReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
     if (health.retainedTerminals > 0) suffix += `; retained reasons: ${[...new Set(health.retainedReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
+    if (health.unrecognisedMessageFiles.length > 0) suffix += `; unrecognised message files: ${health.unrecognisedMessageFiles.join(", ")}`;
     if (health.uncertainDispatches > 0 || health.retainedTerminals > 0) {
       status = "misconfigured";
       reason = `dispatch state requires reconciliation${suffix}`;
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
-    return { module, status, reason, ...health };
+    const { unrecognisedMessageFiles: _unrecognisedMessageFiles, ...counts } = health;
+    return { module, status, reason, ...counts };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;

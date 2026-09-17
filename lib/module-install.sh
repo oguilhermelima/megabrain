@@ -248,6 +248,9 @@ module_orchestration_doctor() {
   if [ "${MODULE_RETAINED_TERMINALS:-0}" -gt 0 ]; then
     counts_suffix="$counts_suffix; retained reasons: $(printf '%s' "${MODULE_RETAINED_REASONS:-[]}" | jq -r '[.[].reason] | unique | join(", ")')"
   fi
+  if [ -n "${MODULE_UNRECOGNISED_MESSAGE_FILES:-}" ]; then
+    counts_suffix="$counts_suffix; unrecognised message files: $MODULE_UNRECOGNISED_MESSAGE_FILES"
+  fi
   if [ "${MODULE_UNCERTAIN_DISPATCHES:-0}" -gt 0 ] || [ "${MODULE_RETAINED_TERMINALS:-0}" -gt 0 ]; then
     megabrain_set_status misconfigured "dispatch state requires reconciliation$counts_suffix"
     return 1

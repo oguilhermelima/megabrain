@@ -26,7 +26,7 @@ export function recipientForQueueMessage(from: string, type: string, hasPriorDon
 export function nextMessageSequence(names: readonly string[]): number {
   let highest = 0;
   for (const name of names) {
-    const match = /^(\d+)-.*\.json$/.exec(name);
+    const match = /^(\d{4})-[^-]+-.+\.json$/.exec(name);
     if (match !== null) highest = Math.max(highest, Number(match[1]));
   }
   return highest + 1;

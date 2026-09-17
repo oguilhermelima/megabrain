@@ -1093,7 +1093,7 @@ megabrain_dispatch_tmux_sessions() {
 }
 
 megabrain_dispatch_health_counts() {
-  local meta_path='' meta='' records='' dispatch_path='' dispatch_name='' cutoff=0 now=0 prune_states=''
+  local meta_path='' meta='' records='' dispatch_path='' dispatch_name='' message_path='' message_name='' cutoff=0 now=0 prune_states=''
   local tmux_sessions='' caller_tmux_session='' uncertain_count=0 retained_count=0
   local leaked_count=0 prunable_count=0 uncertain_reasons='[]' retained_reasons=''
   MODULE_UNCERTAIN_DISPATCHES=0
@@ -1103,6 +1103,23 @@ megabrain_dispatch_health_counts() {
   MODULE_UNCERTAIN_REASONS='[]'
   MODULE_RETAINED_REASONS='[]'
   MODULE_UNTRACKED_DISPATCHES=""
+  MODULE_UNRECOGNISED_MESSAGE_FILES=""
+  for dispatch_path in "$MEGABRAIN_DISPATCH_DIR"/*; do
+    [ -d "$dispatch_path" ] || continue
+    dispatch_name="${dispatch_path##*/}"
+    [ "$dispatch_name" = archive ] && continue
+    for message_path in "$dispatch_path/messages"/*; do
+      [ -f "$message_path" ] || continue
+      message_name="${message_path##*/}"
+      if ! [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9]-[^-]+-.+\.json$ ]]; then
+        if [ -n "$MODULE_UNRECOGNISED_MESSAGE_FILES" ]; then
+          MODULE_UNRECOGNISED_MESSAGE_FILES="$MODULE_UNRECOGNISED_MESSAGE_FILES, $message_path"
+        else
+          MODULE_UNRECOGNISED_MESSAGE_FILES="$message_path"
+        fi
+      fi
+    done
+  done
   for dispatch_path in "$MEGABRAIN_DISPATCH_DIR"/*; do
     [ -d "$dispatch_path" ] || continue
     dispatch_name="${dispatch_path##*/}"
@@ -1441,9 +1458,18 @@ megabrain_dispatch_path_age_seconds() {
 megabrain_dispatch_message_append_locked() {
   local dispatch_id="$1" from="$2" type="$3" text="$4" session_id="$5"
   local supersedes_json="${6:-null}"
-  local messages_dir path tmp seq file_name recipient meta notify=false class
+  local messages_dir path tmp seq file_name recipient meta notify=false class message_path message_name
   messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
-  seq="$(find "$messages_dir" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sed 's|.*/||; s|-.*||' | sort -n | tail -n 1)"
+  # WHY: the messages directory is ordinary filesystem state; only queue-shaped names may set the next sequence.
+  seq="$(
+    for message_path in "$messages_dir"/*.json; do
+      [ -f "$message_path" ] || continue
+      message_name="${message_path##*/}"
+      if [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9]-[^-]+-.+\.json$ ]]; then
+        printf '%s\n' "${message_name%%-*}"
+      fi
+    done | sort -n | tail -n 1
+  )"
   [ -n "$seq" ] || seq=0
   seq=$((10#$seq + 1))
   file_name="$(printf '%04d-%s-%s.json' "$seq" "$from" "$type")"
