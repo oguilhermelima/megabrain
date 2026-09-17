@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
@@ -9,7 +9,47 @@ export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
 type State = Record<string, Record<string, unknown>>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
-const valid = (module: string): boolean => modules.includes(module);
+const diagnosticModules = ["compiled-binary"];
+const valid = (module: string): boolean => modules.includes(module) || diagnosticModules.includes(module);
+
+function newerSource(directory: string, binaryMtime: number): string | undefined {
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+  } catch {
+    return undefined;
+  }
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      const nested = newerSource(path, binaryMtime);
+      if (nested !== undefined) return nested;
+    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+      try {
+        if (statSync(path).mtimeMs > binaryMtime) return path;
+      } catch {
+        // A source that disappears during the scan cannot establish staleness.
+      }
+    }
+  }
+  return undefined;
+}
+
+function compiledBinaryHealth(environment: Environment): { status: string; reason: string } {
+  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const binary = resolve(root, ".build/megabrain");
+  const source = resolve(root, "src");
+  if (!existsSync(binary)) return { status: "ok", reason: "compiled binary is not present" };
+  if (!existsSync(source)) return { status: "ok", reason: "source tree is absent; compiled binary freshness is unknown" };
+  try {
+    const newer = newerSource(source, statSync(binary).mtimeMs);
+    return newer === undefined
+      ? { status: "ok", reason: "compiled binary is current" }
+      : { status: "misconfigured", reason: `compiled binary is stale; newer source: ${newer}; run bun run build` };
+  } catch {
+    return { status: "ok", reason: "compiled binary freshness could not be checked" };
+  }
+}
 
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
@@ -275,7 +315,9 @@ async function tmuxServerState(process: ProcessAdapter): Promise<{ running: bool
 async function report(module: string, environment: Environment, process: ProcessAdapter): Promise<Report> {
   let status = "missing";
   let reason = "module is not installed";
-  if (module === "simulator-native" || module === "simulator-tv") {
+  if (module === "compiled-binary") {
+    ({ status, reason } = compiledBinaryHealth(environment));
+  } else if (module === "simulator-native" || module === "simulator-tv") {
     const platform = await process.run("uname", ["-s"]);
     const darwin = platform.kind === "ok" && platform.value.stdout.trim() === "Darwin";
     if (!darwin) { status = "unsupported"; reason = "macOS only"; }
@@ -402,6 +444,13 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
     value.reason = reconcile(environment, id, value.status, value.reason);
     values.push(value);
   }
+  if (module === undefined) {
+    const binary = await report("compiled-binary", environment, process);
+    if (binary.status !== "ok") {
+      binary.reason = reconcile(environment, binary.module, binary.status, binary.reason);
+      values.push(binary);
+    }
+  }
   const unhealthy = values.some((value) => value.status !== "ok");
   const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
   const hook = values.find((value) => value.module === "orchestration-hooks");
@@ -426,6 +475,7 @@ export async function executeInstall(args: readonly string[], environment: Envir
   }
   if (module === undefined) return failed("install without a module id requires an interactive terminal");
   if (!valid(module)) return failed(`unknown module: ${module}`, 2);
+  if (diagnosticModules.includes(module)) return failed(`${module} is a doctor-only diagnostic`, 2);
   const current = await report(module, environment, process);
   if (current.status === "unsupported") return failed(`${module}: ${current.reason}`);
   if (current.status === "ok") return ok(`${module}: already installed\n`);
