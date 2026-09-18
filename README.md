@@ -532,9 +532,14 @@ that may wake a participant; the message it points at is already durable.
 ## Testing
 
 ```sh
+bun run build                            # the build gate: confirms the CLI compiles
+bun test                                 # the unit gate: exercises TypeScript behavior directly
+bun run typecheck                        # catches identifiers that exist in no scope, invisible to a bundler and tests that skip the branch; issue #35 shipped this crash
 for t in tests/*.sh; do bash "$t"; done   # the authority: macOS, bash 3.2
 bash tests/container/run.sh               # the safety net: nothing of yours to damage
 ```
+
+Run bun install before the typecheck gate to install its development dependencies.
 
 The container mounts the checkout read-only and copies it in, so a test cannot reach the host
 tree, your tmux server or your agent configuration. It runs bash 5 on Linux, which catches
