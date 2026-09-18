@@ -1860,6 +1860,22 @@ megabrain_worktree_registration_failure() {
   return 1
 }
 
+megabrain_worktree_branch_exists() {
+  local repo_path="$1" branch="$2" status
+  MEGABRAIN_WORKTREE_BRANCH_EXISTS=false
+  MEGABRAIN_WORKTREE_BRANCH_ERROR=""
+  if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
+    MEGABRAIN_WORKTREE_BRANCH_EXISTS=true
+    return 0
+  fi
+  status="$?"
+  if [ "$status" -eq 1 ]; then
+    return 0
+  fi
+  MEGABRAIN_WORKTREE_BRANCH_ERROR="could not check whether branch exists: $branch"
+  return "$status"
+}
+
 megabrain_worktree_copy_env_files() {
   local source_root="$1" destination_root="$2" source_file="" relative_path="" destination_file=""
   MEGABRAIN_ENV_COPY_ERROR=""
@@ -1897,7 +1913,7 @@ megabrain_worktree_create() {
   local parent_metadata_set=false parent_metadata_error="" lineage_set=false grouping_set=false lineage_error="" grouping_error=""
   local links_set=false links_error=""
   local model_explicit=false effort_explicit=false chain_selected=false chain_config=""
-  local arg repo_path shared_root worktree_path project_id="" workspace_id="" dispatch="" host runtime="" tmux_choice=auto walk_status parent_json tmux_pane_json=null
+  local arg repo_path shared_root worktree_path project_id="" workspace_id="" dispatch="" host runtime="" tmux_choice=auto walk_status parent_json tmux_pane_json=null branch_existed_before=false add_status=0
   local project_record="" workspace_record="" project_created=false workspace_created=false workspace_existing_id="" worktree_created=false launch_status=0
   local -a agent_args=() orca_set_args=()
   while [ "$#" -gt 0 ]; do
@@ -2096,10 +2112,30 @@ megabrain_worktree_create() {
     esac
     worktree_path="$shared_root/$slug"
     [ ! -e "$worktree_path" ] || { megabrain_error "worktree path already exists: $worktree_path"; return 1; }
+    # WHY: only a branch absent before this invocation may be removed on add failure.
+    if ! megabrain_worktree_branch_exists "$repo_path" "$branch"; then
+      megabrain_error "$MEGABRAIN_WORKTREE_BRANCH_ERROR"
+      return 1
+    fi
+    branch_existed_before="$MEGABRAIN_WORKTREE_BRANCH_EXISTS"
     mkdir -p "$shared_root" || return 1
+    add_status=0
     if [ "$json" = true ]; then
-      git -C "$repo_path" worktree add "$worktree_path" -b "$branch" "$base" >/dev/null || { megabrain_error "could not create git worktree"; return 1; }
-    elif ! git -C "$repo_path" worktree add "$worktree_path" -b "$branch" "$base"; then
+      git -C "$repo_path" worktree add "$worktree_path" -b "$branch" "$base" >/dev/null || add_status="$?"
+    else
+      git -C "$repo_path" worktree add "$worktree_path" -b "$branch" "$base" || add_status="$?"
+    fi
+    if [ "$add_status" -ne 0 ]; then
+      if [ "$branch_existed_before" = false ]; then
+        if ! megabrain_worktree_branch_exists "$repo_path" "$branch"; then
+          megabrain_error "could not create git worktree; $MEGABRAIN_WORKTREE_BRANCH_ERROR"
+          return 1
+        fi
+        if [ "$MEGABRAIN_WORKTREE_BRANCH_EXISTS" = true ] && ! git -C "$repo_path" branch -D "$branch" >/dev/null 2>&1; then
+          megabrain_error "could not create git worktree; could not remove branch $branch after worktree creation failed"
+          return 1
+        fi
+      fi
       megabrain_error "could not create git worktree"
       return 1
     fi
