@@ -3,8 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-chain-ts.XXXXXX")"
 binary="$root/.build/megabrain"
-hidden="$binary.shell-contract"
-trap 'mv -f "$hidden" "$binary" 2>/dev/null || true; rm -rf "$state"' EXIT
+trap 'rm -rf "$state"' EXIT
 export MEGABRAIN_ROOT="$root"
 export HOME="$state/home"
 mkdir -p "$HOME/.codex/sessions"
@@ -14,9 +13,7 @@ compare() {
   local shell_stdout shell_stderr binary_stdout binary_stderr shell_status binary_status
   shell_stdout="$state/shell.stdout"; shell_stderr="$state/shell.stderr"
   binary_stdout="$state/binary.stdout"; binary_stderr="$state/binary.stderr"
-  mv "$binary" "$hidden"
-  if "$root/megabrain" "$@" >"$shell_stdout" 2>"$shell_stderr"; then shell_status=0; else shell_status=$?; fi
-  mv "$hidden" "$binary"
+  if MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" "$@" >"$shell_stdout" 2>"$shell_stderr"; then shell_status=0; else shell_status=$?; fi
   if "$binary" "$@" >"$binary_stdout" 2>"$binary_stderr"; then binary_status=0; else binary_status=$?; fi
   if [ "$label" = "incomplete usage limits" ]; then
     jq -e 'map(select(.provider == "codex") | .fetchedAt) | all(. != null)' "$shell_stdout" >/dev/null

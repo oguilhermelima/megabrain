@@ -10,9 +10,9 @@ fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-chain-writes.XXXXXX")"
 binary="$root/.build/megabrain"
-hidden="$binary.shell-contract"
-trap 'mv -f "$hidden" "$binary" 2>/dev/null || true; rm -rf "$work"' EXIT
+trap 'rm -rf "$work"' EXIT
 export MEGABRAIN_ROOT="$root"
+source "$root/tests/fixtures/entrypoint-routing.sh"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -30,9 +30,7 @@ run_capture() {
   local side="$1" state="$2" out="$3" err="$4"; shift 4
   local status
   if [ "$side" = shell ]; then
-    mv "$binary" "$hidden"
-    if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" "$root/megabrain" "$@" >"$out" 2>"$err"; then status=0; else status=$?; fi
-    mv "$hidden" "$binary"
+    if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" "$@" >"$out" 2>"$err"; then status=0; else status=$?; fi
   else
     if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" "$binary" "$@" >"$out" 2>"$err"; then status=0; else status=$?; fi
   fi
@@ -73,17 +71,18 @@ printf '%s\n' '#!/usr/bin/env bash' 'tmp="$1.tmp"' 'jq '\''.chains.existing.step
 chmod +x "$editor"
 for side in shell binary; do
   state="$work/success-$side"; make_fixture "$state"
-  env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR="$editor" "$([ "$side" = shell ] && printf '%s' "$root/megabrain" || printf '%s' "$binary")" chain edit existing --json >"$work/$side.out" 2>"$work/$side.err"
+  if [ "$side" = shell ]; then
+    env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR="$editor" MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" chain edit existing --json >"$work/$side.out" 2>"$work/$side.err"
+  else
+    env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR="$editor" "$binary" chain edit existing --json >"$work/$side.out" 2>"$work/$side.err"
+  fi
 done
 cmp -s "$work/shell.out" "$work/binary.out" || fail 'successful edit: stdout differs'
 cmp -s "$work/shell.err" "$work/binary.err" || fail 'successful edit: stderr differs'
 cmp -s "$work/success-shell/chains.json" "$work/success-binary/chains.json" || fail 'successful edit: config differs'
 
-stub="$work/stub-megabrain"
-printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$stub"
-chmod +x "$stub"
-mv "$root/megabrain" "$root/megabrain.real"
-cp "$stub" "$root/megabrain"
+routing_fixture="$work/routing-fixture"
+make_entrypoint_routing_fixture "$root" "$routing_fixture" 97
 for verb in add edit delete repair; do
   state="$work/stub-$verb"; make_fixture "$state"
   case "$verb" in
@@ -92,10 +91,11 @@ for verb in add edit delete repair; do
     delete) args=(chain delete existing --json) ;;
     repair) args=(chain repair existing --step 1 --model gpt-5.6-luna --effort medium --json) ;;
   esac
-  if ! env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR=true "$binary" "${args[@]}" >"$work/stub-$verb.out" 2>"$work/stub-$verb.err"; then
-    mv "$root/megabrain.real" "$root/megabrain"
-    fail "binary depended on shell entrypoint for $verb"
+  if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR=true "$routing_fixture/megabrain" "${args[@]}" >"$work/stub-$verb.out" 2>"$work/stub-$verb.err"; then
+    fail "operator chain entrypoint bypassed the compiled implementation for $verb"
+  else
+    status=$?
   fi
+  [ "$status" -eq 97 ] || fail "operator chain entrypoint returned status $status for $verb"
 done
-mv "$root/megabrain.real" "$root/megabrain"
-printf 'binary remains independent of shell entrypoint: passed\n'
+printf 'operator chain entrypoint reaches the compiled implementation: passed\n'

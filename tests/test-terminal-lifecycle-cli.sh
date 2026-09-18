@@ -75,10 +75,8 @@ reset_unowned_record() {
 }
 
 run_shell() {
-  local saved="$binary.shell-saved" status=0
-  mv "$binary" "$saved"
+  local status=0
   MEGABRAIN_TERMINAL_CREATE_IMPLEMENTATION=shell MEGABRAIN_TERMINAL_RESTART_IMPLEMENTATION=shell MEGABRAIN_TERMINAL_CLOSE_IMPLEMENTATION=shell "$root/megabrain" "$@" >"$work/shell.stdout" 2>"$work/shell.stderr" || status=$?
-  mv "$saved" "$binary"
   printf '%s\n' "$status"
 }
 
