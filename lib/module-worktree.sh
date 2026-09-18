@@ -113,7 +113,7 @@ megabrain_worktree_root_for_selector() {
 
 megabrain_repo_from_orca() {
   local selector="$1"
-  local selector_lower path display_name display_lower base_name git_root common_dir canonical_root
+  local selector_lower path display_name display_lower base_name git_root common_dir canonical_root registry_output registry_status=0
   selector_lower="$(megabrain_lower "$selector")"
   if [ -d "$selector" ] && git -C "$selector" rev-parse --show-toplevel >/dev/null 2>&1; then
     git_root="$(git -C "$selector" rev-parse --show-toplevel)"
@@ -138,6 +138,11 @@ megabrain_repo_from_orca() {
     megabrain_error "repo must be a git path when orca is not installed"
     return 1
   fi
+  registry_output="$(orca repo list --json 2>/dev/null)" || registry_status=$?
+  if [ "$registry_status" -ne 0 ]; then
+    megabrain_error "could not resolve repo selector '$selector': orca did not respond; pass a Git path instead"
+    return 1
+  fi
   while IFS=$'\t' read -r display_name path; do
     [ -n "$path" ] || continue
     display_lower="$(megabrain_lower "$display_name")"
@@ -146,7 +151,7 @@ megabrain_repo_from_orca() {
       printf '%s\n' "$path"
       return 0
     fi
-  done < <(orca repo list --json 2>/dev/null | jq -r '.result.repos[]? | [(.displayName // ""), (.path // "")] | @tsv' 2>/dev/null)
+  done < <(printf '%s\n' "$registry_output" | jq -r '.result.repos[]? | [(.displayName // ""), (.path // "")] | @tsv' 2>/dev/null)
   megabrain_error "repo not found: $selector"
   return 1
 }
@@ -1849,6 +1854,12 @@ megabrain_worktree_create_rollback() {
   return 1
 }
 
+megabrain_worktree_registration_failure() {
+  local reason="$1" worktree_path="$2" branch="$3" project_status="$4" workspace_status="$5"
+  megabrain_error "$reason; kept Git worktree $worktree_path and branch $branch; Superset project: $project_status; Superset workspace: $workspace_status; register later with megabrain worktree adopt $worktree_path"
+  return 1
+}
+
 megabrain_worktree_copy_env_files() {
   local source_root="$1" destination_root="$2" source_file="" relative_path="" destination_file=""
   MEGABRAIN_ENV_COPY_ERROR=""
@@ -2101,7 +2112,9 @@ megabrain_worktree_create() {
     if [ "$host" = superset ]; then
       project_record="$(megabrain_ensure_superset_project "$repo_path" --record)" || {
         project_id="$(megabrain_project_id_for_path "$repo_path" 2>/dev/null || true)"
-        megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" unknown "" false true "could not register Superset project on host '$host'"
+        project_status="not registered"
+        [ -n "$project_id" ] && project_status="registration status unknown (project $project_id may exist)"
+        megabrain_worktree_registration_failure "could not register Superset project on host '$host'" "$worktree_path" "$branch" "$project_status" "not attempted"
         return 1
       }
       project_id="$(printf '%s' "$project_record" | jq -r '.id // empty')"
@@ -2127,7 +2140,17 @@ megabrain_worktree_create() {
         else
           workspace_created=unknown
         fi
-        megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" "$project_created" "$workspace_id" "$workspace_created" true "could not create Superset workspace"
+        case "$project_created" in
+          true) project_status="registered" ;;
+          false) project_status="already registered ($project_id)" ;;
+          *) project_status="registration status unknown" ;;
+        esac
+        case "$workspace_created" in
+          true) workspace_status="registration status unknown (workspace $workspace_id may exist)" ;;
+          false) workspace_status="already registered ($workspace_id)" ;;
+          *) workspace_status="not registered" ;;
+        esac
+        megabrain_worktree_registration_failure "could not create Superset workspace" "$worktree_path" "$branch" "$project_status" "$workspace_status"
         return 1
       fi
       workspace_id="$(printf '%s' "$workspace_record" | jq -r '.id // empty')"

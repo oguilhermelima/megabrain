@@ -129,7 +129,7 @@ scenario_superset_registers_project_and_workspace() {
   printf 'Superset creates the project and workspace\n'
 }
 
-scenario_superset_registration_failure_rolls_back() {
+scenario_superset_registration_failure_keeps_git_work() {
   local output
   reset_fixture
   fixture_host=superset
@@ -139,12 +139,11 @@ scenario_superset_registration_failure_rolls_back() {
     fail 'Superset registration failure unexpectedly succeeded'
   fi
   assert_contains "$output" "could not register Superset project on host 'superset'"
-  assert_contains "$output" 'rolled back:'
-  [ ! -e "$work_dir/shared/fix-failure" ] || fail 'failed worktree was not rolled back'
-  if git -C "$work_dir/repo" branch --list fix/failure | grep -q fix/failure; then
-    fail 'failed branch was not rolled back'
-  fi
-  printf 'Superset registration failure rolls back Git changes\n'
+  assert_contains "$output" 'kept Git worktree'
+  assert_not_contains "$output" 'rolled back:'
+  [ -d "$work_dir/shared/fix-failure" ] || fail 'failed worktree was removed'
+  git -C "$work_dir/repo" branch --list fix/failure | grep -q fix/failure || fail 'failed branch was removed'
+  printf 'Superset registration failure keeps Git changes\n'
 }
 
 scenario_registration_failure_names_current_host() {
@@ -163,12 +162,12 @@ scenario_registration_failure_names_current_host() {
 case "${1:-all}" in
   orca) scenario_orca_without_superset_creates_git_worktree ;;
   superset) scenario_superset_registers_project_and_workspace ;;
-  rollback) scenario_superset_registration_failure_rolls_back ;;
+  rollback) scenario_superset_registration_failure_keeps_git_work ;;
   host-error) scenario_registration_failure_names_current_host ;;
   all)
     scenario_orca_without_superset_creates_git_worktree
     scenario_superset_registers_project_and_workspace
-    scenario_superset_registration_failure_rolls_back
+    scenario_superset_registration_failure_keeps_git_work
     scenario_registration_failure_names_current_host
     printf 'ok: worktree creation is host-aware\n'
     ;;

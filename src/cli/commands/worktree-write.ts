@@ -93,9 +93,13 @@ async function repoFromOrca(
     }
     return ok(direct.value.stdout.trim());
   }
+  // WHY: a failed registry call is an unknown orchestrator state, not proof that Orca is absent.
+  const command = await run(process, "sh", ["-c", "command -v orca"]);
+  if (command.kind !== "ok")
+    return failed("repo must be a git path when orca is not installed");
   const listed = await run(process, "orca", ["repo", "list", "--json"]);
   if (listed.kind !== "ok")
-    return failed("repo must be a git path when orca is not installed");
+    return failed(`could not resolve repo selector '${selector}': orca did not respond; pass a Git path instead`);
   try {
     const payload = JSON.parse(listed.value.stdout) as {
       result?: { repos?: Array<{ displayName?: string; path?: string }> };
