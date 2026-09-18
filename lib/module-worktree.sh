@@ -1426,61 +1426,6 @@ megabrain_terminal_host_close() {
   esac
 }
 
-megabrain_terminal_list() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_TERMINAL_LIST_IMPLEMENTATION:-}"; then
-    "$typescript_binary" terminal list "$@"
-    return $?
-  fi
-  local worktree_selector="" worktree_filter="" json=false arg path record records status host workspace_id
-  local output='[]' entry
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --worktree) worktree_selector="${2:-}"; shift 2 ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show terminal-list; return 0 ;;
-      *) megabrain_error "unknown terminal list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  if [ -n "$worktree_selector" ]; then
-    if [ -d "$worktree_selector" ]; then
-      worktree_filter="$(megabrain_worktree_root_for_selector "$worktree_selector")" || return 1
-    else
-      megabrain_error "worktree path is not a Git directory: $worktree_selector"
-      return 1
-    fi
-    [ -n "$worktree_filter" ] || { megabrain_error "could not resolve Git worktree: $worktree_selector"; return 1; }
-  fi
-  for path in "$MEGABRAIN_TERMINAL_DIR"/*.json; do
-    [ -f "$path" ] || continue
-    record="$(cat "$path" 2>/dev/null || true)"
-    printf '%s' "$record" | jq -e . >/dev/null 2>&1 || continue
-    [ -z "$worktree_filter" ] || [ "$(printf '%s' "$record" | jq -r '.worktree // empty')" = "$worktree_filter" ] || continue
-    host="$(printf '%s' "$record" | jq -r '.host // empty')"
-    workspace_id="$(printf '%s' "$record" | jq -r '.workspaceId // empty')"
-    status=unknown
-    records="$(megabrain_terminal_host_records "$host" "$workspace_id" 2>/dev/null || true)"
-    if printf '%s' "$records" | jq -e . >/dev/null 2>&1; then
-      if megabrain_terminal_host_has_id "$records" "$(printf '%s' "$record" | jq -r '.terminalId')"; then
-        status="$(megabrain_terminal_host_process_status "$records" "$(printf '%s' "$record" | jq -r '.terminalId')" "$record")"
-      else
-        status=stale
-      fi
-    fi
-    entry="$(printf '%s' "$record" | jq --arg status "$status" '.status = $status')"
-    output="$(printf '%s' "$output" | jq --argjson item "$entry" '. + [$item]')"
-  done
-  if [ "$json" = true ]; then
-    printf '%s\n' "$output"
-  else
-    printf '%s\n' "$output" | jq -r '.[] | [.terminalId, .status, .host, .worktree, (.title // "-"), .command, .createdAt, (.pid // "-"), (.port // "-")] | @tsv' |
-      while IFS=$'\t' read -r terminal_id status host worktree title command_text created_at pid port; do
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$terminal_id" "$status" "$host" "$worktree" "$title" "$command_text" "$created_at" "$pid" "$port"
-      done
-  fi
-}
-
 megabrain_terminal_listener_pid() {
   local port="$1"
   lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -n 1
@@ -2518,76 +2463,6 @@ megabrain_worktree_finish() {
   fi
 }
 
-megabrain_worktree_pr() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then
-    "$typescript_binary" worktree pr "$@"
-    return $?
-  fi
-  local target="" base="" title="" body="" arg shared_root path repo_path branch parent_branch="" ahead="" response="" json=false
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --base) base="${2:-}"; shift 2 ;;
-      --title) title="${2:-}"; shift 2 ;;
-      --body) body="${2:-}"; shift 2 ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show worktree-pr; return 0 ;;
-      *)
-        [ -z "$target" ] || { megabrain_error "unknown worktree pr option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }
-        target="$arg"
-        shift
-        ;;
-    esac
-  done
-  [ -n "$target" ] || { megabrain_usage_fail worktree-pr; return "$MEGABRAIN_USAGE_ERROR"; }
-  if [ -d "$target" ]; then
-    megabrain_worktree_root_for_selector "$target" >/dev/null || return 1
-  fi
-  shared_root="$(megabrain_worktree_root --read-only 2>/dev/null || true)"
-  path="$(megabrain_worktree_target_path "$target" "$shared_root" || true)"
-  [ -n "$path" ] || { megabrain_error "worktree not found: $target"; return 1; }
-  repo_path="$(git -C "$path" rev-parse --show-toplevel)"
-  branch="$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-  [ -n "$branch" ] || { megabrain_error "cannot open a pull request from detached worktree: $path"; return 1; }
-  [ -n "$title" ] || title="$branch"
-  if [ -z "$base" ]; then
-    parent_branch="$(megabrain_worktree_parent_branch "$path" 2>/dev/null || true)"
-    if [ -n "$parent_branch" ]; then
-      base="$parent_branch"
-    else
-      base="$(megabrain_repo_default_base "$repo_path")"
-    fi
-  fi
-  if ! megabrain_require_command gh; then
-    megabrain_error "gh CLI is not installed"
-    return 1
-  fi
-  if ! gh auth status >/dev/null 2>&1; then
-    megabrain_error "gh CLI is not authenticated"
-    return 1
-  fi
-  if ! git -C "$path" rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
-    megabrain_error "pull request base does not exist: $base"
-    return 1
-  fi
-  ahead="$(git -C "$path" rev-list --count "$base..$branch" 2>/dev/null || printf '0')"
-  if [ "$ahead" -eq 0 ]; then
-    megabrain_error "refusing to open a pull request: no commits ahead of base $base"
-    return 1
-  fi
-  response="$(gh pr create --base "$base" --head "$branch" --title "$title" --body "$body" 2>&1)" || {
-    megabrain_error "could not open pull request: $response"
-    return 1
-  }
-  if [ "$json" = true ]; then
-    jq -n --arg path "$path" --arg branch "$branch" --arg base "$base" --arg title "$title" --arg body "$body" --arg url "$response" \
-      '{worktree: $path, branch: $branch, base: $base, title: $title, body: $body, url: $url}'
-  else
-    printf '%s\n' "$response"
-  fi
-}
-
 megabrain_worktree_list_tree_node() {
   local wanted_parent="$1" indent="$2" line path branch parent in_superset pr_state pr_number pr_url
   while IFS='|' read -r path branch parent in_superset pr_state pr_number pr_url; do
@@ -2805,67 +2680,22 @@ EOF
   fi
 }
 
-megabrain_worktree_adopt() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_ADOPT_IMPLEMENTATION:-}"; then
-    "$typescript_binary" worktree adopt "$@"
-    return $?
-  fi
-  local target="" arg shared_root path repo_path branch slug project_id workspace_id json=false
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show worktree-adopt; return 0 ;;
-      *)
-        [ -z "$target" ] || { megabrain_error "unknown worktree adopt option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }
-        target="$arg"
-        shift
-        ;;
-    esac
-  done
-  [ -n "$target" ] || { megabrain_usage_fail worktree-adopt; return "$MEGABRAIN_USAGE_ERROR"; }
-  if [ -d "$target" ]; then
-    megabrain_worktree_root_for_selector "$target" >/dev/null || return 1
-  fi
-  shared_root="$(megabrain_worktree_root)" || return 1
-  if [ -d "$target" ]; then
-    path="$(megabrain_worktree_root_for_selector "$target")" || return 1
-  else
-    path="$(megabrain_find_worktree_path "$target" "$shared_root" 2>/dev/null || true)"
-  fi
-  [ -n "$path" ] || { megabrain_error "physical worktree not found: $target"; return 1; }
-  case "$path" in
-    "$shared_root"/*) ;;
-    *) megabrain_error "worktree is outside Superset's shared root: $path"; return 1 ;;
-  esac
-  repo_path="$(megabrain_repo_from_orca "$path")" || return 1
-  branch="$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-  [ -n "$branch" ] || { megabrain_error "cannot adopt detached worktree: $path"; return 1; }
-  if [ -n "$(megabrain_workspace_id_for_target "$path")" ]; then
-    megabrain_error "worktree is already registered in Superset: $path"
-    return 1
-  fi
-  slug="$(basename "$path")"
-  project_id="$(megabrain_ensure_superset_project "$repo_path")" || return 1
-  workspace_id="$(megabrain_workspace_create "$project_id" "$branch" "$slug")" || return 1
-  if [ "$json" = true ]; then
-    jq -n --arg worktree "$path" --arg branch "$branch" --arg workspace "$workspace_id" \
-      '{worktree: $worktree, branch: $branch, workspace: $workspace}'
-  else
-    printf 'worktree: %s\nbranch: %s\nworkspace: %s\n' "$path" "$branch" "$workspace_id"
-  fi
-}
-
 command_worktree() {
   local subcommand="${1:-}"
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   shift || true
   case "$subcommand" in
     create) megabrain_worktree_create "$@" ;;
-    pr|open-pr) megabrain_worktree_pr "$@" ;;
+    pr|open-pr)
+      [ -x "$typescript_binary" ] || { megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"; return 1; }
+      "$typescript_binary" worktree pr "$@"
+      ;;
     finish) megabrain_worktree_finish "$@" ;;
     list) megabrain_worktree_list "$@" ;;
-    adopt) megabrain_worktree_adopt "$@" ;;
+    adopt)
+      [ -x "$typescript_binary" ] || { megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"; return 1; }
+      "$typescript_binary" worktree adopt "$@"
+      ;;
     -h|--help|"")
       megabrain_usage_show worktree
       ;;
@@ -2893,7 +2723,10 @@ command_terminal() {
         megabrain_terminal_create "$@"
       fi
       ;;
-    list) megabrain_terminal_list "$@" ;;
+    list)
+      [ -x "$typescript_binary" ] || { megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"; return 1; }
+      "$typescript_binary" terminal list "$@"
+      ;;
     restart)
       case "${1:-}" in
         -h|--help) megabrain_usage_show terminal-restart; return 0 ;;
