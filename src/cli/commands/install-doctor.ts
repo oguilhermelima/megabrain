@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
@@ -208,36 +208,6 @@ function skillSyncState(environment: Environment): { status: string; reason: str
   }
   if (drift > 0) return { status: "misconfigured", reason: `skill drift detected in ${drift} target(s)` };
   return { status: "ok", reason: `skill copies current: ${targets.length}` };
-}
-
-function now(environment: Environment): string {
-  return environment.MEGABRAIN_TEST_NOW ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-}
-
-function reconcile(environment: Environment, module: string, status: string, reason: string): string {
-  const directory = resolveStateDirectory(environment);
-  const path = statePath(environment);
-  const current = readState(environment);
-  const recorded = typeof current[module]?.installed === "boolean" ? current[module].installed as boolean : undefined;
-  const installed = status === "ok";
-  const checkedAt = now(environment);
-  if (current._meta === undefined) {
-    current._meta = { kind: "installation-record", recordedAt: checkedAt, source: "megabrain doctor", liveStatusCommand: "megabrain doctor" };
-  }
-  current[module] = {
-    ...(current[module] ?? {}),
-    ...(status === "unknown" ? {} : { installed }),
-    checkedAt,
-    status,
-    statusSource: "megabrain doctor",
-    details: reason,
-  };
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`);
-  if (status === "unknown") return `${reason}; state check unknown: ${module} installed state preserved`;
-  if (recorded === undefined) return `${reason}; state reconciled: ${module} recorded as installed=${installed}`;
-  if (recorded !== installed) return `${reason}; state reconciled: ${module} installed ${recorded} -> ${installed}`;
-  return reason;
 }
 
 function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
@@ -455,16 +425,11 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   if (module !== undefined && !valid(module)) return failed(`unknown module: ${module}`, 2);
   const values: Report[] = [];
   for (const id of module === undefined ? modules : [module]) {
-    const value = await report(id, environment, process);
-    value.reason = reconcile(environment, id, value.status, value.reason);
-    values.push(value);
+    values.push(await report(id, environment, process));
   }
   if (module === undefined) {
     const binary = await report("compiled-binary", environment, process);
-    if (binary.status !== "ok") {
-      binary.reason = reconcile(environment, binary.module, binary.status, binary.reason);
-      values.push(binary);
-    }
+    if (binary.status !== "ok") values.push(binary);
   }
   // An absent compiled binary is an unknown freshness result, not a finding in a fresh clone.
   const unhealthy = values.some((value) => value.status !== "ok" && !(value.module === "compiled-binary" && value.status === "unknown"));
