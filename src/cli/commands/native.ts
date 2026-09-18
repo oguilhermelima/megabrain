@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
@@ -26,18 +25,16 @@ function normalizeJsonResult(result: Result<string>, json: boolean): Result<stri
   } catch { return result; }
 }
 // WHY: native config and app paths must not change when the command starts in a subdirectory.
-function nativeWorktreeRoot(environment: Environment): string {
+async function nativeWorktreeRoot(environment: Environment, processAdapter: ProcessAdapter): Promise<string> {
   const path = environment.MEGABRAIN_NATIVE_WORKTREE ?? process.cwd();
-  try {
-    const root = execFileSync("git", ["-C", path, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return root.length > 0 ? root : path;
-  } catch {
-    return path;
-  }
+  const result = await processAdapter.run("git", ["-C", path, "rev-parse", "--show-toplevel"]);
+  if (result.kind !== "ok") return path;
+  const root = result.value.stdout.trim();
+  return root.length > 0 ? root : path;
 }
-function nativeConfigFile(environment: Environment): string { return resolve(nativeWorktreeRoot(environment), ".megabrain/native.json"); }
-function config(environment: Environment): Result<Config> {
-  const file = nativeConfigFile(environment);
+function nativeConfigFile(root: string): string { return resolve(root, ".megabrain/native.json"); }
+function config(root: string): Result<Config> {
+  const file = nativeConfigFile(root);
   if (!existsSync(file)) return ok({});
   try {
     const value: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -116,8 +113,6 @@ function generatedWorkspace(appPath: string): Result<{ path: string; relative: s
 async function nativeBuild(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeBuildUsage());
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
-  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
-  const appSetting = setting(loaded.value, kind.value, "appPath"); if (!appSetting) return buildConfigError(kind.value);
   let runtime = "";
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
@@ -125,7 +120,10 @@ async function nativeBuild(args: readonly string[], environment: Environment, pr
     if (arg === "--runtime" && args[index + 1]) { runtime = args[++index] as string; continue; }
     return error(`unknown native build option: ${arg}`, 2);
   }
-  const appPath = resolve(nativeWorktreeRoot(environment), appSetting);
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
+  const appSetting = setting(loaded.value, kind.value, "appPath"); if (!appSetting) return buildConfigError(kind.value);
+  const appPath = resolve(root, appSetting);
   const app = readExpoApp(appPath); if (app.kind !== "ok") return app;
   const runtimes = await installedRuntimes(processAdapter); if (runtimes.kind !== "ok") return runtimes;
   const platform: NativePlatform = kind.value === "tv" ? "tvOS" : "iOS";
@@ -198,10 +196,11 @@ async function nativeRuntimeInstall(args: readonly string[], processAdapter: Pro
   if (!match) return error(`runtime download reported success, but simctl does not list ${platform} ${version}`);
   return ok(json ? `${JSON.stringify({ platform, version, build: match.build, identifier: match.identifier })}\n` : `installed ${platform} ${version} (${match.build})\n`);
 }
-function nativeCrashes(args: readonly string[], environment: Environment): Result<string> {
+async function nativeCrashes(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("crashes"));
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
-  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
   const target = setting(loaded.value, kind.value, "bundleId");
   if (!target) return error(`bundle id is required for ${kind.value}; pass --bundle-id in .megabrain/native.json`);
   const lastRaw = optionValue(args, "--last") ?? "1";
@@ -284,7 +283,8 @@ async function appiumSession(environment: Environment, processAdapter: ProcessAd
 async function nativeHealth(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("health"));
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
-  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
   const bundleId = optionValue(args, "--bundle-id") ?? setting(loaded.value, kind.value, "bundleId");
   const requested = optionValue(args, "--device") ?? setting(loaded.value, kind.value, "device");
   const metroPort = optionValue(args, "--metro-port") ?? setting(loaded.value, kind.value, "metroPort");
@@ -346,7 +346,8 @@ async function nativeEnsure(args: readonly string[], environment: Environment, p
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
   const timeout = validateTimeout(timeoutRaw); if (timeout.kind !== "ok") return timeout;
-  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
   const device = optionValue(args, "--device") ?? setting(loaded.value, kind.value, "device");
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   const selected = selectDevice(kind.value, candidates.value, device, false); if (selected.kind !== "ok") return selected;
@@ -367,7 +368,8 @@ async function nativeReload(args: readonly string[], environment: Environment, p
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
   const timeout = validateTimeout(timeoutRaw); if (timeout.kind !== "ok") return timeout;
-  const loaded = config(environment); if (loaded.kind !== "ok") return loaded;
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
   const route = optionValue(args, "--route") ?? "";
   const bundleId = optionValue(args, "--bundle-id") ?? setting(loaded.value, kind.value, "bundleId");
   let metroPort = optionValue(args, "--metro-port") ?? setting(loaded.value, kind.value, "metroPort");
@@ -445,7 +447,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
   else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter);
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
-  else if (family === "crashes") result = nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment);
+  else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
   else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));
