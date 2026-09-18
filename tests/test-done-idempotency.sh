@@ -4,6 +4,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-done-idempotency.XXXXXX")"
+bin_dir="$state_dir/bin"
+mkdir -p "$bin_dir"
+cat >"$bin_dir/superset" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$bin_dir/superset"
 
 cleanup() {
   local rc=$?
@@ -51,6 +58,7 @@ create_dispatch() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export PATH="$bin_dir:/usr/bin:/bin"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
@@ -58,17 +66,29 @@ source "$root/lib/common.sh"
 source "$root/lib/module-orchestrate.sh"
 source "$root/lib/module-parent-notify.sh"
 
-parent_nudges=0
-megabrain_parent_notify_dispatch() {
-  parent_nudges=$((parent_nudges + 1))
+run_child_message() {
+  local dispatch_id="$1" type="$2" text="${3:-}"
+  if [ "$type" = received ]; then
+    env -i HOME="$state_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+      MEGABRAIN_DISPATCH_ID="$dispatch_id" SUPERSET_TERMINAL_ID="child-$dispatch_id" \
+      "$root/.build/megabrain" "$type"
+  else
+    env -i HOME="$state_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+      MEGABRAIN_DISPATCH_ID="$dispatch_id" SUPERSET_TERMINAL_ID="child-$dispatch_id" \
+      "$root/.build/megabrain" "$type" "$text"
+  fi
+}
+
+nudge_count() {
+  find "$state_dir/dispatches" -name nudge.log -type f | wc -l | tr -d ' '
 }
 
 # A second completion is durable protocol mail, not a second actionable outcome.
 create_dispatch repeated-done
 export SUPERSET_TERMINAL_ID=child-repeated-done
-megabrain_dispatch_child_message done 'first completion' >/dev/null
-megabrain_dispatch_child_message done 'retried completion' >/dev/null
-assert_equal "$parent_nudges" 1
+run_child_message repeated-done done 'first completion' >/dev/null
+run_child_message repeated-done done 'retried completion' >/dev/null
+assert_equal "$(nudge_count)" 1
 assert_equal "$(message_count repeated-done)" 2
 assert_equal "$(delivery_count repeated-done)" 2
 
@@ -92,12 +112,12 @@ create_dispatch different-outcome
 export SUPERSET_TERMINAL_ID=child-different-outcome
 megabrain_dispatch_meta_update_state different-outcome failed >/dev/null
 different_output_path="$state_dir/different-output"
-if megabrain_dispatch_child_message done 'completion after failure' >"$different_output_path" 2>&1; then
+if run_child_message different-outcome done 'completion after failure' >"$different_output_path" 2>&1; then
   fail 'done after failed dispatch was accepted'
 fi
 different_output="$(cat "$different_output_path")"
 assert_contains "$different_output" 'illegal dispatch state transition: failed -> done'
-assert_equal "$parent_nudges" 2
+assert_equal "$(nudge_count)" 2
 assert_equal "$(message_count different-outcome)" 1
 assert_equal "$(delivery_count different-outcome)" 1
 export SUPERSET_TERMINAL_ID=parent-terminal

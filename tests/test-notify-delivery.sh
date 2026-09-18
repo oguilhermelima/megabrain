@@ -132,7 +132,16 @@ megabrain_parent_notify_dispatch() {
 export ORCA_TERMINAL_HANDLE=child-terminal
 unset TMUX TMUX_PANE
 megabrain_dispatch_meta_write queue-safety parent-terminal orca orca "" child-terminal "$root" main codex label running gpt-5 true codex "" "" host ide >/dev/null
-if ! child_output="$(megabrain_dispatch_child_message ask 'queue survives notify failure')"; then
+notify_bin="$state_dir/notify-bin"
+mkdir -p "$notify_bin"
+cat >"$notify_bin/orca" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$notify_bin/orca"
+if ! child_output="$(env -i HOME="$state_dir/home" PATH="$notify_bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+  MEGABRAIN_DISPATCH_ID=queue-safety ORCA_TERMINAL_HANDLE=child-terminal \
+  "$root/.build/megabrain" ask 'queue survives notify failure')"; then
   fail 'child message failed when notify failed'
 fi
 assert_contains "$child_output" 'ask sent: queue-safety'

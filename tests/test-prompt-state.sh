@@ -115,7 +115,11 @@ run_child_message() (
   export ORCA_TERMINAL_HANDLE=child-terminal
   unset SUPERSET_TERMINAL_ID TMUX TMUX_PANE
   export MEGABRAIN_DISPATCH_ID="$dispatch_id"
-  megabrain_dispatch_child_message "$type" "$text"
+  if [ "$type" = received ]; then
+    "$root/.build/megabrain" "$type"
+  else
+    "$root/.build/megabrain" "$type" "$text"
+  fi
 )
 
 reset_fixture
