@@ -49,7 +49,9 @@ run_binary() {
 }
 
 scenario_route_reaches_binary() {
-  local verb="$1" fixture="$work_dir/route-$verb" state="$work_dir/route-$verb-state" status
+  local verb="$1" fixture state status
+  fixture="$work_dir/route-$verb"
+  state="$work_dir/route-$verb-state"
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   mkdir -p "$state"
   set +e
