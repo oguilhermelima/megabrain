@@ -24,13 +24,25 @@ cat >"$work/bin/tmux" <<'EOF'
 set -eu
 printf '%s\n' "$*" >>"$MEGABRAIN_TMUX_CALLS"
 case "${1:-}" in
-  list-sessions) exit 1 ;;
+  list-sessions)
+    [ "${MEGABRAIN_TMUX_SERVER:-absent}" = running ] && exit 0
+    exit 1
+    ;;
+  show-options)
+    [ "${MEGABRAIN_TMUX_SERVER:-absent}" = running ] || exit 1
+    printf 'xterm-256color:RGB\n'
+    ;;
+  source-file)
+    [ "${MEGABRAIN_TMUX_SERVER:-absent}" = running ] && exit 0
+    exit 1
+    ;;
   *) exit 1 ;;
 esac
 EOF
 chmod +x "$work/bin/date" "$work/bin/tmux"
 
 fixture="$work/fixture"
+tmux_server_mode=absent
 shell_stdout="$work/shell.stdout"
 shell_stderr="$work/shell.stderr"
 binary_stdout="$work/binary.stdout"
@@ -41,13 +53,15 @@ prepare_fixture() {
   mkdir -p "$fixture/home" "$fixture/state"
   printf '# operator config\nset -g status on\n' >"$fixture/home/.tmux.conf"
   printf '# operator rc\nalias ll="ls -la"\n' >"$fixture/home/.zshrc"
-  printf '' >"$fixture/tmux.calls"
+  printf '' >"$work/tmux.calls"
 }
 
-snapshot() {
-  find "$fixture" -type f -print | sort | while IFS= read -r path; do
-    shasum -a 256 "$path"
-  done
+snapshot_paths() {
+  find "$fixture" -print | sort
+}
+
+config_path() {
+  [ "$1" = tune ] && printf '%s\n' "$fixture/home/.tmux.conf" || printf '%s\n' "$fixture/home/.zshrc"
 }
 
 run_side() {
@@ -60,7 +74,8 @@ run_side() {
     PATH="$work/bin:$PATH" \
     MEGABRAIN_ROOT="$root" \
     MEGABRAIN_STATE_DIR="$fixture/state" \
-    MEGABRAIN_TMUX_CALLS="$fixture/tmux.calls" \
+    MEGABRAIN_TMUX_CALLS="$work/tmux.calls" \
+    MEGABRAIN_TMUX_SERVER="$tmux_server_mode" \
     SHELL=/bin/zsh \
     ${implementation:+"$implementation"} \
     "$executable" tmux "$verb" "$@"
@@ -92,16 +107,22 @@ compare_capture() {
 compare_fresh_fixture() {
   local label="$1" verb="$2"; shift 2
   prepare_fixture
-  local before after_shell after_binary shell_status binary_status
-  before="$(snapshot)"
+  local before_paths after_shell_paths after_binary_paths before_hash after_shell_hash after_binary_hash shell_status binary_status
+  before_paths="$(snapshot_paths)"
+  before_hash="$(shasum -a 256 "$(config_path "$verb")")"
   shell_status="$(run_capture shell "$verb" "$@")"
-  after_shell="$(snapshot)"
-  [ "$before" = "$after_shell" ] || fail "$label: shell changed the fixture"
+  after_shell_paths="$(snapshot_paths)"
+  after_shell_hash="$(shasum -a 256 "$(config_path "$verb")")"
+  [ "$before_hash" = "$after_shell_hash" ] || fail "$label: shell changed the config"
+  [ "$before_paths" = "$after_shell_paths" ] || fail "$label: shell changed fixture paths"
   prepare_fixture
-  before="$(snapshot)"
+  before_paths="$(snapshot_paths)"
+  before_hash="$(shasum -a 256 "$(config_path "$verb")")"
   binary_status="$(run_capture binary "$verb" "$@")"
-  after_binary="$(snapshot)"
-  [ "$before" = "$after_binary" ] || fail "$label: binary changed the fixture"
+  after_binary_paths="$(snapshot_paths)"
+  after_binary_hash="$(shasum -a 256 "$(config_path "$verb")")"
+  [ "$before_hash" = "$after_binary_hash" ] || fail "$label: binary changed the config"
+  [ "$before_paths" = "$after_binary_paths" ] || fail "$label: binary changed fixture paths"
   [ "$shell_status" = "$binary_status" ] || fail "$label: status differs"
   cmp -s "$shell_stdout" "$binary_stdout" || fail "$label: stdout differs"
   cmp -s "$shell_stderr" "$binary_stderr" || fail "$label: stderr differs"
@@ -128,10 +149,20 @@ case "$(find "$fixture/home" -name '.tmux.conf.megabrain-backup-*' -type f | wc 
   1) ;;
   *) fail 'tune apply did not create exactly one backup' ;;
 esac
-case "$(cat "$fixture/tmux.calls")" in
+case "$(cat "$work/tmux.calls")" in
   list-sessions) ;;
   *) fail 'tune test reached an unexpected tmux operation' ;;
 esac
+
+tmux_server_mode=running
+compare_capture tune-running-server tune --yes --json
+case "$(cat "$work/tmux.calls")" in
+  *'list-sessions
+show-options -gqv terminal-features
+source-file '*) ;;
+  *) fail 'tune running-server scenario did not query RGB and source the file' ;;
+esac
+tmux_server_mode=absent
 
 compare_capture wrapper-apply wrapper --yes --json
 case "$(grep -Fxc '# >>> megabrain tmux wrapper >>>' "$fixture/home/.zshrc")" in
