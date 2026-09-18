@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/entrypoint-routing.sh"
 if [ ! -x "$root/.build/megabrain" ]; then
   printf 'skip: compiled devices binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
   exit 0
@@ -20,17 +21,6 @@ case "${1:-}" in version) exit 0;; connect) exit 0;; devices) printf 'List of de
 exit 1
 EOF
 chmod +x "$work_dir/bin/xcrun" "$work_dir/bin/adb"
-run_pair() {
-  local label="$1"; shift
-  local shell_out binary_out shell_rc binary_rc
-  set +e
-  shell_out="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_TV_IMPLEMENTATION=shell "$root/megabrain" "$@" 2>&1)"; shell_rc=$?
-  binary_out="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" "$root/.build/megabrain" "$@" 2>&1)"; binary_rc=$?
-  set -e
-  [ "$shell_rc" -eq "$binary_rc" ] || { printf 'FAIL: %s status shell=%s binary=%s\n' "$label" "$shell_rc" "$binary_rc"; exit 1; }
-  [ "$shell_out" = "$binary_out" ] || { printf 'FAIL: %s output differs\nshell=%s\nbinary=%s\n' "$label" "$shell_out" "$binary_out"; exit 1; }
-  printf '%s agrees between shell and binary\n' "$label"
-}
 run_binary() {
   local label="$1"; shift
   local output status
@@ -50,7 +40,21 @@ case "$output" in
   *'expected simulator kind phone or tv, got: bad'*) printf 'native-invalid refuses an invalid simulator kind\n' ;;
   *) printf 'FAIL: native-invalid output was unexpected: %s\n' "$output" >&2; exit 1 ;;
 esac
-run_pair tv-help tv --help
-run_pair tv-connect tv connect x
-run_pair tv-disconnect tv disconnect
-printf 'ok: native and tv implementations agree\n'
+run_binary tv-help tv --help
+run_binary tv-connect tv connect x
+run_binary tv-disconnect tv disconnect
+
+routing_fixture="$work_dir/routing-fixture"
+make_entrypoint_routing_fixture "$root" "$routing_fixture" 42
+set +e
+env PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/routing-state" \
+  "$routing_fixture/megabrain" tv connect x >"$work_dir/routed-tv.out" 2>&1
+routing_status=$?
+set -e
+[ "$routing_status" -eq 42 ] || {
+  printf 'FAIL: tv entrypoint did not route to the compiled binary (status=%s, output=%s)\n' \
+    "$routing_status" "$(cat "$work_dir/routed-tv.out")" >&2
+  exit 1
+}
+printf 'tv entrypoint routing marker: %s\n' "$routing_status"
+printf 'ok: compiled native and tv commands run directly\n'
