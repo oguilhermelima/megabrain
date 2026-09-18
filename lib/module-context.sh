@@ -18,12 +18,29 @@ megabrain_context_detect() {
 }
 
 command_context() {
+  local format="plain" arg host
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  [ -x "$typescript_binary" ] || {
-    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
-    return 1
-  }
-  "$typescript_binary" context "$@"
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_CONTEXT_IMPLEMENTATION:-}"; then
+    "$typescript_binary" context "$@"
+    return $?
+  fi
+  for arg in "$@"; do
+    case "$arg" in
+      --json) format="json" ;;
+      -h|--help) megabrain_usage_show context; return 0 ;;
+      *) megabrain_error "unknown context option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
+    esac
+  done
+  host="$(megabrain_context_detect)"
+  megabrain_session_id >/dev/null
+  megabrain_resolve_parent_context
+  if [ "$format" = json ]; then
+    jq -n --arg host "$host" --arg workspace "${SUPERSET_WORKSPACE_ID:-}" \
+      --arg terminal "${MEGABRAIN_SESSION_ID:-}" --arg agent "$MEGABRAIN_PARENT_AGENT" \
+      '{host: $host, workspaceId: (if $workspace|length > 0 then $workspace else null end), terminalId: (if $terminal|length > 0 then $terminal else null end), agentId: (if $agent|length > 0 then $agent else null end)}'
+  else
+    printf '%s\n' "$host"
+  fi
 }
 
 command_orchestrate() {
