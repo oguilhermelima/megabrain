@@ -241,8 +241,11 @@ function unknownProcess(reason: string): NativeHealth["process"] { return { stat
 function unknownMetro(reason: string): NativeHealth["metro"] { return { state: "unknown", reason }; }
 function unknownTree(reason: string): NativeHealth["tree"] { return { count: null, reason }; }
 function unknownFrame(reason: string): NativeHealth["frame"] { return { state: "unknown", reason }; }
-const APPIUM_SESSION_DEFAULTS = { "appium:isHeadless": true } as const;
-function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean> {
+const APPIUM_SESSION_DEFAULTS = {
+  "appium:isHeadless": true,
+  "appium:newCommandTimeout": 60,
+} as const;
+function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean | number> {
   return { platformName: "iOS", ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
 }
 type AppiumSession = Readonly<{ sessionId: string; stored: boolean }>;

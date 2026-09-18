@@ -641,7 +641,7 @@ megabrain_native_app_health() {
       if printf '%s' "$metro_output" | jq -e --arg id "$bundle_id" 'any(.[]?; tostring | contains($id))' >/dev/null 2>&1; then metro_state=attached; metro_reason=''; else metro_state=not-attached; metro_reason='Metro has no target for this app'; fi
     else metro_reason="Metro /json/list was unavailable on port $metro_port"; fi
   fi
-  source_output="$(curl -fsS -X POST http://127.0.0.1:4723/session -H 'Content-Type: application/json' -d "{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"iOS\",\"appium:udid\":\"$MEGABRAIN_NATIVE_SELECTED_UDID\",\"appium:bundleId\":\"$bundle_id\"}}}" 2>/dev/null || true)"
+  source_output="$(curl -fsS -X POST http://127.0.0.1:4723/session -H 'Content-Type: application/json' -d "{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"iOS\",\"appium:isHeadless\":true,\"appium:newCommandTimeout\":60,\"appium:udid\":\"$MEGABRAIN_NATIVE_SELECTED_UDID\",\"appium:bundleId\":\"$bundle_id\"}}}" 2>/dev/null || true)"
   session_id="$(printf '%s' "$source_output" | jq -r '.sessionId // .value.sessionId // empty' 2>/dev/null || true)"
   if [ -n "$session_id" ]; then
     source_output="$(curl -fsS "http://127.0.0.1:4723/session/$session_id/source" 2>/dev/null || true)"
