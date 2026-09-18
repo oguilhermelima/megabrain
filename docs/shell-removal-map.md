@@ -54,23 +54,44 @@ deletion unit.
 
 | subverb | TypeScript file and function | port complete | lines deletable | helpers that must stay and why |
 |---|---|---:|---:|---|
-| `context` (guard at line 23) | `src/cli/commands/context.ts` — `executeContext` | yes | 25 | `megabrain_context_detect`, `megabrain_session_id`, and `megabrain_resolve_parent_context` are called by spawn and parent/lifecycle setup. |
+| `context` (guard at line 23) | `src/cli/commands/context.ts` — `executeContext` | yes | **0, do not remove** | `megabrain_context_detect`, `megabrain_session_id`, and `megabrain_resolve_parent_context` are called by spawn and parent/lifecycle setup. The body itself also stays: `tests/test-clean-install.sh` requires `megabrain context --json` to answer in a release that has no compiled binary, because `context` reports which host the session is in and that has to work before anything else does. Port completeness is not the only criterion; availability without the binary is a separate, deliberate decision per verb. A removal attempt on 2026-09-18 was caught by that contract and reverted. |
 | `orchestrate prune` (guard at line 54) | `src/cli/commands/orchestrate-prune.ts` — `executeOrchestratePrune` | no | 0 | TypeScript filters and moves/deletes records but does not perform the shell's reconcile-before-prune flow or release/retain terminal identity safely. Keep the full shell body and its release helpers. |
 | `orchestrate reply` (guard at line 67) | `src/cli/commands/orchestrate-reply.ts` — `executeOrchestrateReply` | yes | 67 | Parent/session validation, queue locks, append/delivery notification, superseding, and metadata state updates are shared with `change`, child queue operations, or spawn. |
 | `orchestrate change` (guard at line 76) | `src/cli/commands/orchestrate-reply.ts` — `executeOrchestrateChange` | no | 0 | TypeScript hard-codes the non-interrupted result after queuing the replacement and does not reproduce the shell's call to the real stop path and its host-specific interrupt behavior. |
 | `orchestrate close` (guard at line 84) | `src/cli/commands/orchestrate-close.ts` — `executeOrchestrateClose` | no | 0 | TypeScript closes the dispatch metadata but does not reproduce the shell's process-state transition and all transcript/native-close outcome handling. Retained-terminal and host release helpers must remain. |
 | `orchestrate list` (guard at line 362) | `src/cli/commands/orchestrate-list.ts` — `executeOrchestrateList` | no | 0 | Shell derives ownership through `megabrain_session_id`, including tmux/generic `MEGABRAIN_SESSION_*`; TypeScript only derives caller identity from Superset/Orca terminal variables. That changes default owned filtering for tmux and generic managed sessions. |
 
+## What has already been removed
+
+Lanes 1 through 5 below were executed on 2026-09-18, except where noted. `terminal list`,
+`worktree adopt`, `worktree pr`, `worktree list` with its private tree formatter, `ask`, `received`,
+`done`, `check`, `orchestrate reply` and the liveness wrapper body are gone. `context` was attempted
+and reverted, for the reason in its row.
+
+Two things a later reader needs, because both were learned by getting them wrong here:
+
+- `worktree list` was blocked until issue #38 closed. Its row said the port was complete when it was
+  not: `--repo` by name was refused by the binary and worked in the shell, and no contract exercised
+  `--repo` at all. Check a verb against every form of invocation it accepts, not only the forms the
+  existing contracts happen to cover.
+- A thin wrapper must call `megabrain_warn_if_typescript_binary_stale` after its missing-binary
+  refusal. Eight migrations dropped that notice silently before anyone noticed, which was issue #39.
+  `tests/test-binary-freshness.sh` now derives its subject list by scanning `lib/module-*.sh`, so a
+  new wrapper without the call turns it red on its own.
+
 ## Proposed removal lanes
 
 Only the `yes` rows are candidates. The following order keeps shared helper decisions explicit:
 
-1. Remove the isolated `context` dispatcher body, `terminal list`, `worktree adopt`, and
-   `worktree pr` bodies. Keep all helpers named in their rows.
+1. Remove `terminal list`, `worktree adopt`, and `worktree pr` bodies. Keep all helpers named in
+   their rows. The `context` body was in this lane and must not be: see its row.
 2. Remove `worktree list` and then its private recursive `megabrain_worktree_list_tree_node` helper.
 3. Remove `ask`, `received`, and `done` together. Remove their three wrappers and the shared
    `megabrain_dispatch_child_message` body once; retain `find_child`, queue writers, metadata
-   helpers, and prompt-receipt helpers.
+   helpers, and prompt-receipt helpers. Note six test files called
+   `megabrain_dispatch_child_message` directly as a fixture; they were migrated to drive the
+   compiled CLI instead. The claim below that it had no caller outside the three wrappers was about
+   *production* callers and was true as written, which did not help the person deleting it.
 4. Remove only the `command_check` dispatch body. Leave `megabrain_dispatch_child_check` and
    `megabrain_dispatch_mailbox_watch` because the turn-end hook calls them directly.
 5. Remove `orchestrate reply` and the liveness wrapper body. Retain reply/queue helpers and
