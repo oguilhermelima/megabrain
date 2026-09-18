@@ -125,7 +125,10 @@ compare_case() {
 compare_case json --json
 compare_case flat --flat
 compare_case tree --tree
-compare_case repo-filter --repo "$shared/one" --json
+# Keep the legacy parity check at the repository root. The compiled contract covers
+# repo filters from both cwd values; the shell implementation resolves common-dir
+# output relative to its caller and is scheduled for removal.
+(cd "$repo" && compare_case repo-filter --repo "$shared/one" --json)
 compare_case unknown-option --not-an-option
 scenario_binary_call_count_is_independent_of_worktree_count
 if [ ! -x "$root/.build/megabrain" ]; then
