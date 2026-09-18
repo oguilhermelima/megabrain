@@ -5,6 +5,8 @@ import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimc
 import { validateStore, type FactStore } from "../../core/facts.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
+import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
+import { createNativeSessionStore } from "../../adapters/native-session-store.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
@@ -231,6 +233,39 @@ const APPIUM_SESSION_DEFAULTS = { "appium:isHeadless": true } as const;
 function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean> {
   return { platformName: "iOS", ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
 }
+type AppiumSession = Readonly<{ sessionId: string; stored: boolean }>;
+async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey): Promise<string | undefined> {
+  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(key.udid, key.bundleId) } })]);
+  if (session.kind !== "ok") return undefined;
+  try {
+    const value = JSON.parse(session.value.stdout) as { sessionId?: string; value?: { sessionId?: string } };
+    const sessionId = value.sessionId ?? value.value?.sessionId;
+    return sessionId === "" ? undefined : sessionId;
+  } catch {
+    return undefined;
+  }
+}
+// WHY: the TypeScript path reuses verified sessions; the unchanged shell path keeps its
+// create/read/destroy behavior because both paths return identical health output.
+async function appiumSession(environment: Environment, processAdapter: ProcessAdapter, key: NativeSessionKey): Promise<Result<AppiumSession | undefined>> {
+  const store = createNativeSessionStore(environment);
+  if (!store.available) {
+    const sessionId = await createAppiumSession(processAdapter, key);
+    return ok(sessionId === undefined ? undefined : { sessionId, stored: false });
+  }
+  return store.update(async (sessions) => {
+    const recorded = nativeSessionFor(sessions, key);
+    let current = sessions;
+    if (recorded !== undefined) {
+      const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${recorded.sessionId}`]);
+      if (probe.kind === "ok") return { sessions, value: { sessionId: recorded.sessionId, stored: true } };
+      current = removeNativeSession(sessions, key);
+    }
+    const sessionId = await createAppiumSession(processAdapter, key);
+    if (sessionId === undefined) return { sessions: current, value: undefined };
+    return { sessions: replaceNativeSession(current, { ...key, sessionId }), value: { sessionId, stored: true } };
+  });
+}
 async function nativeHealth(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("health"));
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
@@ -264,17 +299,11 @@ async function nativeHealth(args: readonly string[], environment: Environment, p
   }
 
   let tree: NativeHealth["tree"] = unknownTree("accessibility tree could not be consulted");
-  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(udid, bundleId) } })]);
-  if (session.kind === "ok") {
-    try {
-      const value = JSON.parse(session.value.stdout) as { sessionId?: string; value?: { sessionId?: string } };
-      const sessionId = value.sessionId ?? value.value?.sessionId;
-      if (sessionId) {
-        const source = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${sessionId}/source`]);
-        if (source.kind === "ok") tree = { count: (source.value.stdout.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? []).length };
-        await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${sessionId}`]);
-      }
-    } catch { tree = unknownTree("Appium returned invalid session data"); }
+  const session = await appiumSession(environment, processAdapter, { udid, bundleId });
+  if (session.kind === "ok" && session.value !== undefined) {
+    const source = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${session.value.sessionId}/source`]);
+    if (source.kind === "ok") tree = { count: (source.value.stdout.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? []).length };
+    if (!session.value.stored) await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${session.value.sessionId}`]);
   }
 
   let frame: NativeHealth["frame"] = unknownFrame(controlFrame ? `control frame could not be read: ${controlFrame}` : "no control frame configured");
