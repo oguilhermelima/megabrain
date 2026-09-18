@@ -113,7 +113,7 @@ megabrain_worktree_root_for_selector() {
 
 megabrain_repo_from_orca() {
   local selector="$1"
-  local selector_lower path display_name display_lower base_name git_root common_dir canonical_root
+  local selector_lower path display_name display_lower base_name git_root common_dir canonical_root registry_output registry_status=0
   selector_lower="$(megabrain_lower "$selector")"
   if [ -d "$selector" ] && git -C "$selector" rev-parse --show-toplevel >/dev/null 2>&1; then
     git_root="$(git -C "$selector" rev-parse --show-toplevel)"
@@ -138,6 +138,11 @@ megabrain_repo_from_orca() {
     megabrain_error "repo must be a git path when orca is not installed"
     return 1
   fi
+  registry_output="$(orca repo list --json 2>/dev/null)" || registry_status=$?
+  if [ "$registry_status" -ne 0 ]; then
+    megabrain_error "could not resolve repo selector '$selector': orca did not respond; pass a Git path instead"
+    return 1
+  fi
   while IFS=$'\t' read -r display_name path; do
     [ -n "$path" ] || continue
     display_lower="$(megabrain_lower "$display_name")"
@@ -146,7 +151,7 @@ megabrain_repo_from_orca() {
       printf '%s\n' "$path"
       return 0
     fi
-  done < <(orca repo list --json 2>/dev/null | jq -r '.result.repos[]? | [(.displayName // ""), (.path // "")] | @tsv' 2>/dev/null)
+  done < <(printf '%s\n' "$registry_output" | jq -r '.result.repos[]? | [(.displayName // ""), (.path // "")] | @tsv' 2>/dev/null)
   megabrain_error "repo not found: $selector"
   return 1
 }
