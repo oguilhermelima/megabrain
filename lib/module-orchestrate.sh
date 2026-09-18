@@ -601,6 +601,13 @@ megabrain_dispatch_liveness() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+    if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
+    fi
+  fi
   "$typescript_binary" orchestrate liveness "$@"
 }
 
