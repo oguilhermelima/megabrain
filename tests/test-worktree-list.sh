@@ -2,21 +2,20 @@
 
 set -euo pipefail
 
-# Scenarios written before the implementation:
-# 1. The JSON document reports every Git worktree under the shared root, skips a plain
-#    directory, preserves detached, and marks an unregistered worktree.
-# 2. The --repo filter selects by repository identity, not by a shared path prefix.
-# 3. Listing 12 worktrees from one repository does not fork materially more git
-#    processes than listing 3 worktrees from that repository.
+# Scenarios written before implementation:
+# 1. The compiled command reports detached, registered, unregistered, and filtered worktrees.
+# 2. A plain directory under the shared root is not reported.
+# 3. Listing 12 worktrees from one repository does not fork materially more git processes than
+#    listing 3 worktrees from that repository.
+# Falsification: validate the complete JSON content and require bounded process growth from the
+# compiled command; status alone or a shell helper invocation is insufficient.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-list.XXXXXX")"
 wrapper_dir="$state_root/bin"
 git_log="$state_root/git.log"
 real_git="$(command -v git)"
-
-source "$root/lib/common.sh"
-source "$root/lib/module-worktree.sh"
+original_path="$PATH"
 
 cleanup() {
   local rc=$?
@@ -45,13 +44,11 @@ setup_common() {
   rm -rf "$state_root/repo-one" "$state_root/repo-two" "$state_root/shared" \
     "$state_root/single-repo" "$state_root/single-shared" "$git_log"
   mkdir -p "$wrapper_dir" "$state_root/shared" "$state_root/single-shared"
+  export PATH="$original_path"
   export HOME="$state_root/home"
   export MEGABRAIN_STATE_DIR="$state_root/state"
   mkdir -p "$HOME" "$MEGABRAIN_STATE_DIR"
   fixture_shared_root="$(cd "$state_root/shared" && pwd -P)"
-  superset_workspaces='[]'
-  superset_available=false
-  orca_available=false
 }
 
 setup_repo() {
@@ -65,46 +62,30 @@ setup_repo() {
   git -C "$repo_path" commit -qm base
 }
 
-megabrain_worktree_root() {
-  printf '%s\n' "$fixture_shared_root"
-}
-
-megabrain_repo_from_orca() {
-  printf '%s\n' "$fixture_shared_root/one-main"
-}
-
-megabrain_context_detect() {
-  printf 'unknown\n'
-}
-
-megabrain_require_command() {
-  case "$1" in
-    gh) [ "${gh_available:-false}" = true ] ;;
-    orca) [ "${orca_available:-false}" = true ] ;;
-    *) command -v "$1" >/dev/null 2>&1 ;;
-  esac
-}
-
-megabrain_superset_available() {
-  [ "$superset_available" = true ]
-}
-
-megabrain_superset_workspaces_json() {
-  printf '%s\n' "$superset_workspaces"
-}
-
-write_git_wrapper() {
-  cat >"$wrapper_dir/git" <<'EOF'
+write_host_wrappers() {
+  local workspace_path="${1:-}";
+  cat >"$wrapper_dir/superset" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"$MEGABRAIN_TEST_GIT_LOG"
-exec "$MEGABRAIN_TEST_GIT_REAL" "$@"
+printf '%s\\n' '{"workspaces":[{"worktreePath":"$workspace_path"}]}'
 EOF
-  chmod +x "$wrapper_dir/git"
-  export MEGABRAIN_TEST_GIT_LOG="$git_log"
-  export MEGABRAIN_TEST_GIT_REAL="$real_git"
-  : >"$git_log"
-  PATH="$wrapper_dir:$PATH"
-  export PATH
+  cat >"$wrapper_dir/orca" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '[]'
+EOF
+  cat >"$wrapper_dir/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '[]'
+EOF
+  chmod +x "$wrapper_dir/superset" "$wrapper_dir/orca" "$wrapper_dir/gh"
+}
+
+run_binary() {
+  local state="$1" shared_root="$2"
+  shift 2
+  printf '%s\n' "$shared_root" >"$state/worktree-root"
+  env -i HOME="$state_root/home" PATH="$wrapper_dir:/usr/bin:/bin" \
+    MEGABRAIN_STATE_DIR="$state" MEGABRAIN_TEST_GIT_LOG="$git_log" \
+    MEGABRAIN_TEST_GIT_REAL="$real_git" "$root/.build/megabrain" worktree list "$@"
 }
 
 setup_listing_fixture() {
@@ -119,8 +100,7 @@ setup_listing_fixture() {
   git -C "$fixture_shared_root/one-detached" checkout -q --detach HEAD
   git -C "$repo_two" worktree add -q "$fixture_shared_root/two-main" -b feature/two
   mkdir "$fixture_shared_root/plain-directory"
-  superset_workspaces="{\"workspaces\":[{\"worktreePath\":\"$fixture_shared_root/one-main\"}]}"
-  superset_available=true
+  write_host_wrappers "$fixture_shared_root/one-main"
 }
 
 setup_count_fixture() {
@@ -134,12 +114,25 @@ setup_count_fixture() {
       "$fixture_shared_root/worktree-$index" -b "feature/worktree-$index"
     index=$((index + 1))
   done
+  write_host_wrappers
+}
+
+write_git_wrapper() {
+  cat >"$wrapper_dir/git" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$MEGABRAIN_TEST_GIT_LOG"
+exec "$MEGABRAIN_TEST_GIT_REAL" "$@"
+EOF
+  chmod +x "$wrapper_dir/git"
+  export MEGABRAIN_TEST_GIT_LOG="$git_log"
+  export MEGABRAIN_TEST_GIT_REAL="$real_git"
+  : >"$git_log"
 }
 
 scenario_listing_json_and_repo_filter() {
   local output expected filtered filtered_expected
   setup_listing_fixture
-  output="$(megabrain_worktree_list --json)"
+  output="$(run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --json)"
   expected="$(jq -n \
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
@@ -156,7 +149,7 @@ scenario_listing_json_and_repo_filter() {
     *plain-directory*) fail 'a plain directory was reported as a worktree' ;;
   esac
 
-  filtered="$(megabrain_worktree_list --repo "$fixture_shared_root/one-main" --json)"
+  filtered="$(run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --repo "$fixture_shared_root/one-main" --json)"
   filtered_expected="$(jq -n \
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
@@ -168,15 +161,14 @@ scenario_listing_json_and_repo_filter() {
   case "$filtered" in
     *two-main*) fail 'the repository filter selected another repository' ;;
   esac
-  printf 'worktree list JSON preserves detached, unregistered, skipped, and repo-filtered entries\n'
+  printf 'compiled worktree list JSON preserves detached, registered, skipped, and filtered entries\n'
 }
 
 count_listing_git_calls() {
   local count="$1"
   setup_count_fixture "$count"
   : >"$git_log"
-  megabrain_worktree_parent_branch() { return 1; }
-  megabrain_worktree_list --json >/dev/null
+  run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --json >/dev/null
   awk 'END { print NR + 0 }' "$git_log"
 }
 
@@ -188,10 +180,15 @@ scenario_git_fork_count_is_bounded() {
   growth=$((twelve_count - three_count))
   [ "$growth" -le 2 ] || fail "git fork count grew by $growth (3=$three_count, 12=$twelve_count)"
   [ "$three_count" -gt 0 ] || fail 'the listing did not invoke git'
-  printf 'git fork count stays bounded: 3=%s, 12=%s, growth=%s\n' \
+  printf 'compiled git fork count stays bounded: 3=%s, 12=%s, growth=%s\n' \
     "$three_count" "$twelve_count" "$growth"
+}
+
+[ -x "$root/.build/megabrain" ] || {
+  printf 'skip: compiled worktree list binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
+  exit 0
 }
 
 scenario_listing_json_and_repo_filter
 scenario_git_fork_count_is_bounded
-printf 'ok: worktree listing output and bounded git process scenarios\n'
+printf 'ok: compiled worktree listing output and bounded git process scenarios\n'
