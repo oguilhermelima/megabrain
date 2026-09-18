@@ -240,11 +240,14 @@ scenario_launch_failure_rolls_back_owned_objects() {
   branch='feat/no-workspace-id'
   worktree_path="$shared_root/feat-no-workspace-id"
   output="$(megabrain_worktree_create --repo "$repo_dir" --branch "$branch" --agent codex --model gpt-5 --effort medium --prompt test --tmux false --orchestrate --json 2>&1 || true)"
-  assert_contains "$output" 'project-created'
-  assert_contains "$output" 'workspace identity unavailable'
-  assert_missing "$worktree_path"
-  git -C "$repo_dir" branch --list "$branch" | grep -q "$branch" && fail 'branch survived unidentified workspace rollback'
-  assert_missing "$state_root/superset/project.json"
+  assert_contains "$output" 'could not create Superset workspace'
+  assert_contains "$output" 'kept Git worktree'
+  assert_contains "$output" 'Superset project: registered'
+  assert_contains "$output" 'Superset workspace: not registered'
+  [ -d "$worktree_path" ] || fail 'worktree was removed after workspace registration failed'
+  git -C "$repo_dir" branch --list "$branch" | grep -q "$branch" || fail 'branch was removed after workspace registration failed'
+  [ -f "$state_root/superset/project.json" ] || fail 'registered project was removed after workspace registration failed'
+  assert_missing "$state_root/superset/workspace.json"
   printf 'failed launch removes only objects created by this invocation\n'
 }
 
