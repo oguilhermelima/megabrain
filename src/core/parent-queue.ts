@@ -1,5 +1,7 @@
 import { failed, ok, type Result } from "./result.js";
 
+export { acknowledgeDelivery } from "./ack.js";
+
 export type ParentAckArguments = Readonly<{
   readonly dispatchId: string;
   readonly deliveryId: string;
@@ -33,12 +35,4 @@ export function ackCloseRefusal(dispatchId: string, state: string, json: boolean
   const message = `dispatch ${dispatchId} is ${state ?? "unknown"}; refusing to acknowledge delivery with --close; dispatch must be done or closed`;
   if (json) return { kind: "ok", value: `${JSON.stringify({ refusal: { code: "dispatch-not-done", message } }, null, 2)}\n`, exitCode: 1, stderr: `dispatch-not-done: ${message}\n` };
   return failed(`dispatch-not-done: ${message}`);
-}
-
-export function acknowledgeDelivery(status: string, recordConsumer: string, recordGeneration: number, consumer: string, generation: number): Result<{ readonly duplicate: boolean }> {
-  if (status === "acknowledged") return ok({ duplicate: true });
-  if (status === "fenced") return failed("delivery delivery refused: delivery is fenced");
-  if (status !== "outstanding" && status !== "superseded") return failed(`delivery delivery refused: status is invalid (${status})`);
-  if (recordConsumer !== consumer || recordGeneration !== generation) return failed(`delivery delivery refused: outstanding delivery belongs to consumer ${recordConsumer} generation ${recordGeneration}`);
-  return ok({ duplicate: false });
 }

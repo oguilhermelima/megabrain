@@ -2407,11 +2407,15 @@ megabrain_dispatch_child_check() {
 }
 
 megabrain_dispatch_ack_for_owner() {
-  if [ "$1" = parent ]; then
-    local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  if [ "$1" = parent ] || [ "$1" = child ]; then
+    local owner="$1" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
     if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION:-}"; then
       shift
-      "$typescript_binary" orchestrate ack "$@"
+      if [ "$owner" = parent ]; then
+        "$typescript_binary" orchestrate ack "$@"
+      else
+        "$typescript_binary" ack "$@"
+      fi
       return $?
     fi
   fi
