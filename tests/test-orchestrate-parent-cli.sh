@@ -100,6 +100,7 @@ scenario_ack_generation() {
 scenario_nudge_wakes_without_polling() {
   local state="$work_dir/nudge" output elapsed
   write_dispatch "$state" nudge-watch nudge-delivery 1
+  rm -f "$state/dispatches/nudge-watch/messages/0001-child-ask.json" "$state/dispatches/nudge-watch/deliveries/nudge-delivery.json"
   (env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$state" \
     SUPERSET_TERMINAL_ID=parent-terminal "$root/.build/megabrain" orchestrate watch nudge-watch \
     --timeout 6 --poll-interval 5 --wait-mode nudge --json >"$state.output") &
@@ -110,6 +111,8 @@ scenario_nudge_wakes_without_polling() {
   done
   [ -f "$state/dispatches/nudge-watch/waiter.json" ] || fail 'nudge watch did not register a waiter'
   SECONDS=0
+  printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"content answer","sessionId":"child-terminal"}' >"$state/dispatches/nudge-watch/messages/0001-child-ask.json"
+  printf '%s\n' '{"id":"nudge-delivery","dispatchId":"nudge-watch","recipient":"parent","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding","acknowledgedAt":null}' >"$state/dispatches/nudge-watch/deliveries/nudge-delivery.json"
   printf '%s\n' 'nudge pointer' >>"$state/dispatches/nudge-watch/nudge.log"
   wait "$watcher_pid"
   elapsed=$SECONDS
