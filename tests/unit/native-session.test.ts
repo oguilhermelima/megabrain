@@ -105,4 +105,17 @@ describe("native Appium session store", () => {
     const stored = JSON.parse(await readFile(join(directory, "native-sessions.json"), "utf8")) as { readonly sessions: readonly unknown[] };
     expect(stored.sessions).toHaveLength(1);
   });
+
+  test("creates and cleans up without reuse when no state directory is resolvable", async () => {
+    const directory = await fixture();
+    const stateful = processStub();
+    const stateless = processStub();
+    const statefulResult = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], { MEGABRAIN_STATE_DIR: directory }, stateful);
+    const statelessResult = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], {}, stateless);
+
+    expect(statelessResult).toEqual(statefulResult);
+    expect(stateless.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session")).toHaveLength(1);
+    expect(stateless.calls.some((call) => call.command === "curl" && call.args[1] === "-X" && call.args[2] === "DELETE")).toBe(true);
+    await expect(readFile("/.megabrain/native-sessions.json", "utf8")).rejects.toBeDefined();
+  });
 });
