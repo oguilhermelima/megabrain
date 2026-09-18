@@ -40,6 +40,19 @@ case "${1:-}:${2:-}" in
 esac
 EOF
 chmod +x "$work/bin/superset"
+cat >"$work/bin/lsof" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$work/bin/pgrep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$work/bin/kill" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$work/bin/"{lsof,pgrep,kill}
 
 export MEGABRAIN_STATE_DIR="$work/state"
 export SUPERSET_WORKSPACE_ID=workspace
