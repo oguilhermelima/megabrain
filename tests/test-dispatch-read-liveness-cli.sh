@@ -78,3 +78,25 @@ set -e
 [ "$missing_shell_status" -eq "$missing_binary_status" ] || fail 'missing dispatch status differs'
 [ "$missing_shell" = "$missing_binary" ] || fail 'missing dispatch output differs'
 printf 'missing dispatch agrees between shell and binary\n'
+
+# Regression scenario: a tmux dispatch whose pane capture fails must refuse cleanly
+# when no persisted transcript exists, instead of raising ReferenceError.
+fallback_state="$work/tmux-fallback"
+mkdir -p "$fallback_state/dispatches/fallback/messages"
+printf '%s\n' '{"dispatchId":"fallback","parentSessionId":"parent","parentHost":"tmux","runtime":"tmux","tmuxSession":"missing-session","tmuxPane":"%99","state":"running"}' >"$fallback_state/dispatches/fallback/meta.json"
+cat >"$work/bin/tmux" <<'EOF'
+#!/bin/sh
+case "$1" in
+  capture-pane) exit 1 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$work/bin/tmux"
+set +e
+fallback_output="$(env -i HOME="$work/home" PATH="$work/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$fallback_state" MEGABRAIN_SESSION_HOST=tmux MEGABRAIN_SESSION_ID=parent "$root/.build/megabrain" orchestrate read fallback --json 2>&1)"
+fallback_status=$?
+set -e
+expected_fallback='megabrain: could not read tmux pane %99 and no persisted transcript exists'
+[ "$fallback_output" = "$expected_fallback" ] || fail "tmux transcript fallback output was: $fallback_output"
+[ "$fallback_status" -ne 0 ] || fail 'tmux transcript fallback unexpectedly succeeded'
+printf 'tmux transcript fallback refuses without a transcript\n'
