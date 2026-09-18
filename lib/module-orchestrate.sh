@@ -2402,13 +2402,15 @@ megabrain_dispatch_mailbox_watch() {
 }
 
 megabrain_dispatch_watch() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  local module_root typescript_binary
+  module_root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  typescript_binary="${MEGABRAIN_ROOT:-$module_root}/.build/megabrain"
   [ -x "$typescript_binary" ] || {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
   # WHY: parent watch is fully ported; the shared mailbox helper remains for child check and hooks.
-  megabrain_warn_if_typescript_binary_stale
+  MEGABRAIN_ROOT="$module_root" megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" orchestrate watch "$@"
 }
 
@@ -2600,13 +2602,15 @@ megabrain_dispatch_ack_for_owner() {
 }
 
 megabrain_dispatch_ack() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  local module_root typescript_binary
+  module_root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  typescript_binary="${MEGABRAIN_ROOT:-$module_root}/.build/megabrain"
   [ -x "$typescript_binary" ] || {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
   # WHY: parent ack is fully ported; the shared owner helper remains for child ack and hooks.
-  megabrain_warn_if_typescript_binary_stale
+  MEGABRAIN_ROOT="$module_root" megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" orchestrate ack "$@"
 }
 

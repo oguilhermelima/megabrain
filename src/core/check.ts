@@ -42,8 +42,8 @@ function matchesMailbox(mailbox: "parent" | "child", full: boolean, delivery: Ch
   if (delivery.recipient !== undefined && delivery.recipient !== null && delivery.recipient !== mailbox) return false;
   const ordered = messageFor(delivery, messages);
   if (ordered.length === 0) return false;
-  let priorDone = false;
   for (const message of ordered) {
+    const priorDone = messages.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
     if (mailbox === "parent" && (message.from === "child" || message.from === "megabrain")) {
       const classification = classifyMail(message.from, message.type, priorDone);
       if (full ? (typeof classification === "string" || classification.kind !== "unknown") : classification === "actionable") return true;
@@ -51,7 +51,6 @@ function matchesMailbox(mailbox: "parent" | "child", full: boolean, delivery: Ch
     if (mailbox === "child" && message.from === "parent") {
       if (full ? ["reply", "withdrawal", "received", "ack", "ask", "done", "stalled", "interrupt", "interrupt-result"].includes(message.type) : ["reply", "withdrawal"].includes(message.type)) return true;
     }
-    if (message.from === "child" && message.type === "done") priorDone = true;
   }
   return false;
 }
