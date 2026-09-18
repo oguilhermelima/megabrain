@@ -5,7 +5,7 @@ import { dispatchPath, liveDispatchDirectories } from "../../adapters/dispatch-s
 import { atomicJson, appendMessage, readJson, type QueueEnvironment } from "./queue-write.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { acknowledgeChildDelivery } from "../../core/child-ack.js";
+import { acknowledgeDelivery } from "../../core/ack.js";
 
 type JsonRecord = Record<string, unknown>;
 type ChildArguments = Readonly<{ deliveryId: string; consumer?: string; generation: number; json: boolean }>;
@@ -122,7 +122,7 @@ export async function executeChildAck(args: readonly string[], environment: Queu
   if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
   const status = text(delivery.status);
   const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
-  const decision = acknowledgeChildDelivery(status, text(delivery.consumer), integer(delivery.consumerGeneration) === undefined ? "" : String(integer(delivery.consumerGeneration)), consumer, parsed.value.generation, parsed.value.deliveryId);
+  const decision = acknowledgeDelivery(status, text(delivery.consumer), integer(delivery.consumerGeneration) === undefined ? "" : String(integer(delivery.consumerGeneration)), consumer, parsed.value.generation, parsed.value.deliveryId);
   if (decision.kind !== "ok") return decision;
   const duplicate = decision.value.duplicate;
   const lockPath = await dispatchPath(root, child.value.id, "messages/.lock");

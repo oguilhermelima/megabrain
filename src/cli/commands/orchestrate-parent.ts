@@ -105,7 +105,7 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   const path = await dispatchPath(root, parsed.value.dispatchId, `deliveries/${parsed.value.deliveryId}.json`); const delivery = await readJson(path);
   if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
   const status = typeof delivery.status === "string" ? delivery.status : ""; const recordConsumer = typeof delivery.consumer === "string" ? delivery.consumer : ""; const recordGeneration = number(delivery.consumerGeneration) ?? 0;
-  const decision = acknowledgeDelivery(status, recordConsumer, recordGeneration, identity.value, parsed.value.generation); if (decision.kind !== "ok") return { ...decision, error: decision.error.replace("delivery delivery", `delivery ${parsed.value.deliveryId}`) };
+  const decision = acknowledgeDelivery(status, recordConsumer, recordGeneration, identity.value, parsed.value.generation, parsed.value.deliveryId); if (decision.kind !== "ok") return decision;
   await lock(await dispatchPath(root, parsed.value.dispatchId, "messages/.lock"));
   const now = new Date().toISOString(); const current = await readJson(path); if (current !== undefined && decision.value.duplicate === false) await writeAtomic(path, { ...current, status: "acknowledged", acknowledgedAt: now, updatedAt: now });
   await rm(await dispatchPath(root, parsed.value.dispatchId, "messages/.lock"), { recursive: true, force: true });
