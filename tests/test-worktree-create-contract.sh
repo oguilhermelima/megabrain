@@ -193,7 +193,8 @@ scenario_compiled_registration_failure_keeps_git_work() {
 refusal_output() {
   local implementation="$1" mode="$2" state output status
   state="$work_dir/refusal-$implementation-$mode/state"
-  mkdir -p "$state"
+  mkdir -p "$state" "$work_dir/refusal-$implementation-$mode/shared"
+  printf '%s\n' "$work_dir/refusal-$implementation-$mode/shared" >"$state/worktree-root"
   set +e
   output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" ORCA_MODE="$mode" PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo selector-that-does-not-match --branch "feat/refusal-$implementation-$mode" --json 2>&1)"
   status=$?
@@ -206,6 +207,8 @@ scenario_repo_selector_refusal_causes() {
   local implementation absent unresponsive unmatched
   write_orchestrator_stubs
   for implementation in shell binary; do
+    mkdir -p "$work_dir/absent-$implementation/state" "$work_dir/absent-$implementation/shared"
+    printf '%s\n' "$work_dir/absent-$implementation/shared" >"$work_dir/absent-$implementation/state/worktree-root"
     absent="$(env HOME="$work_dir/absent-$implementation/home" MEGABRAIN_STATE_DIR="$work_dir/absent-$implementation/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" PATH=/usr/bin:/bin "$root/megabrain" worktree create --repo selector-that-does-not-match --branch feat/refusal-absent --json 2>&1 || true)"
     unresponsive="$(refusal_output "$implementation" unavailable)"
     unmatched="$(refusal_output "$implementation" registry)"
