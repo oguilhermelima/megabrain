@@ -10,6 +10,14 @@ const emptyConfig: ChainConfig = { chains: {}, defaultSteps: [] };
 function error(message: string, exitCode = 1): Result<string> { return failed(message, exitCode); }
 function json(value: unknown): string { return JSON.stringify(value) + "\n"; }
 function chainPath(environment: ChainEnvironment): string { return environment.MEGABRAIN_CHAIN_FILE ?? resolve(resolveStateDirectory(environment), "chains.json"); }
+function preserveStderr<T>(result: Result<T>, stderr: string | undefined): Result<T> {
+  if (result.kind !== "ok" || stderr === undefined) return result;
+  return { ...result, stderr };
+}
+function validatedOutput(valid: Result<ChainConfig>, value: string): Result<string> {
+  if (valid.kind !== "ok") return valid;
+  return preserveStderr(ok(value), valid.stderr);
+}
 function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
   const path = chainPath(environment); if (!existsSync(path)) return ok(emptyConfig);
   try {
@@ -27,8 +35,14 @@ function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
 }
 function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
   const modelsPath = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json"); let models: Set<string> | undefined; let modelIds: ReadonlyArray<{ agent: string; model: string }> = []; let modelEntries: ReadonlyArray<any> = [];
-  let modelErrors = "";
-  try { if (existsSync(modelsPath)) { const registry = JSON.parse(readFileSync(modelsPath, "utf8")); modelEntries = registry.models ?? []; modelIds = modelEntries.map((entry: any) => ({ agent: entry.agent, model: entry.model })); models = new Set(modelIds.map((entry) => `${entry.agent}/${entry.model}`)); } } catch { return error(`model registry is not valid JSON: ${modelsPath}`); }
+  let modelErrors = ""; let registryNotice: string | undefined;
+  try {
+    if (existsSync(modelsPath)) {
+      const registry = JSON.parse(readFileSync(modelsPath, "utf8")); modelEntries = registry.models ?? []; modelIds = modelEntries.map((entry: any) => ({ agent: entry.agent, model: entry.model })); models = new Set(modelIds.map((entry) => `${entry.agent}/${entry.model}`));
+    } else {
+      registryNotice = `megabrain: model registry not found at ${modelsPath}; model validation was skipped.\n`;
+    }
+  } catch { return error(`model registry is not valid JSON: ${modelsPath}`); }
   for (const [name, chain] of Object.entries(config.chains)) {
     if (typeof chain !== "object" || chain === null || typeof chain.steps !== "object" || !Array.isArray(chain.steps) || chain.steps.length === 0) return error(`invalid chain ${name}: steps must be a non-empty array`);
     for (const [index, step] of chain.steps.entries()) {
@@ -55,7 +69,7 @@ function validateConfig(config: ChainConfig, environment: ChainEnvironment): Res
     }
   }
   if (modelErrors) return error(modelErrors.trim());
-  return ok(config);
+  return preserveStderr(ok(config), registryNotice);
 }
 type ChainWrite = { readonly name: string; readonly definition?: Record<string, unknown>; readonly changed?: boolean };
 function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: string[] } }>> {
@@ -91,7 +105,7 @@ function addChain(args: readonly string[], environment: ChainEnvironment): Resul
   if (allowUnknown) definition = { ...definition, steps: steps.map((step: any) => ({ ...step, unvalidated: true })) };
   const valid = validateWriteConfig({ ...read.value, chains: { ...read.value.chains, [name]: definition } }, environment); if (valid.kind !== "ok") return valid;
   const written = writeConfig({ ...read.value, chains: { ...read.value.chains, [name]: definition } }, chainPath(environment)); if (written.kind !== "ok") return written;
-  return ok(asJson ? json({ ...definition, name }) : `chain added: ${name}\n`);
+  return preserveStderr(ok(asJson ? json({ ...definition, name }) : `chain added: ${name}\n`), valid.stderr);
 }
 function editChain(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return Promise.resolve(ok(usage("edit")));
@@ -100,18 +114,18 @@ function editChain(args: readonly string[], environment: ChainEnvironment, proce
   const read = readConfig(environment); if (read.kind !== "ok") return Promise.resolve(read); if (!chainExists(read.value, name)) return Promise.resolve(error(`chain not found: ${name}`));
   const path = chainPath(environment); const temp = resolve(mkdtempSync(resolve(path, "..")), "chains-edit.json"); writeFileSync(temp, readFileSync(path));
   const editor = environment.EDITOR ?? "vi";
-  return processAdapter.run(editor, [temp]).then((result) => { if (result.kind !== "ok") return error(`editor failed while editing chain ${name}`); let edited: ChainConfig; try { edited = JSON.parse(readFileSync(temp, "utf8")); } catch { return error(`chain file is not valid JSON: ${path}`); } if (JSON.stringify(edited) === JSON.stringify(read.value)) return ok(asJson ? json({ changed: false, name }) : `chain unchanged: ${name}\n`); const valid = validateWriteConfig(edited, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(edited, path); if (written.kind !== "ok") return written; return ok(asJson ? json({ ...edited.chains[name], name, changed: true }) : `chain edited: ${name}\n`); });
+  return processAdapter.run(editor, [temp]).then((result) => { if (result.kind !== "ok") return error(`editor failed while editing chain ${name}`); let edited: ChainConfig; try { edited = JSON.parse(readFileSync(temp, "utf8")); } catch { return error(`chain file is not valid JSON: ${path}`); } if (JSON.stringify(edited) === JSON.stringify(read.value)) return ok(asJson ? json({ changed: false, name }) : `chain unchanged: ${name}\n`); const valid = validateWriteConfig(edited, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(edited, path); if (written.kind !== "ok") return written; return preserveStderr(ok(asJson ? json({ ...edited.chains[name], name, changed: true }) : `chain edited: ${name}\n`), valid.stderr); });
 }
 function deleteChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usage("delete"));
   const name = args[0]; if (!name) return error("Usage: megabrain chain delete <name> [--json]", 2); const asJson = args.includes("--json"); if (args.slice(1).some((arg) => arg !== "--json")) return error(`unknown chain delete option: ${args.find((arg) => arg !== "--json")}`, 2);
-  const read = readConfig(environment); if (read.kind !== "ok") return read; if (!chainExists(read.value, name)) return error(`chain not found: ${name}; available chains: ${Object.keys(read.value.chains).join(", ")}`); const config = { ...read.value, chains: Object.fromEntries(Object.entries(read.value.chains).filter(([key]) => key !== name)) }; const valid = validateWriteConfig(config, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(config, chainPath(environment)); if (written.kind !== "ok") return written; return ok(asJson ? json({ deleted: true, name }) : `chain deleted: ${name}\n`);
+  const read = readConfig(environment); if (read.kind !== "ok") return read; if (!chainExists(read.value, name)) return error(`chain not found: ${name}; available chains: ${Object.keys(read.value.chains).join(", ")}`); const config = { ...read.value, chains: Object.fromEntries(Object.entries(read.value.chains).filter(([key]) => key !== name)) }; const valid = validateWriteConfig(config, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(config, chainPath(environment)); if (written.kind !== "ok") return written; return preserveStderr(ok(asJson ? json({ deleted: true, name }) : `chain deleted: ${name}\n`), valid.stderr);
 }
 function repairChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usage("repair"));
   const name = args[0]; if (!name) return error("Usage: megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json]", 2); let step = 0; let model = ""; let effort: string | undefined; let hasEffort = false; let asJson = false;
   for (let i = 1; i < args.length; i += 1) { const arg = args[i]; if (arg === "--json") asJson = true; else if (["--step", "--model", "--effort"].includes(arg)) { const value = args[++i]; if (!value) return error(`${arg} requires a value`, 2); if (arg === "--step") step = Number(value); else if (arg === "--model") model = value; else { effort = value; hasEffort = true; } } else return error(`unknown chain repair option: ${arg}`, 2); }
-  if (!Number.isInteger(step) || step <= 0) return error("chain repair requires a positive --step number", 2); if (!model) return error("--model is required for chain repair", 2); const read = readConfig(environment); if (read.kind !== "ok") return read; const current: any = read.value.chains[name]?.steps?.[step - 1]; if (!current) return error(`chain step not found: ${name} step ${step}`); const replacement: any = { ...current, model }; if (hasEffort) replacement.effort = effort; else delete replacement.effort; const config: any = { ...read.value, chains: { ...read.value.chains, [name]: { ...read.value.chains[name], steps: read.value.chains[name].steps.map((entry, index) => index === step - 1 ? replacement : entry) } } }; const valid = validateWriteConfig({ ...config, chains: { [name]: { ...config.chains[name], steps: [replacement] } } }, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(config, chainPath(environment)); if (written.kind !== "ok") return written; return ok(asJson ? json({ repaired: true, chain: name, step, value: replacement }) : `chain repaired: ${name} step ${step}\n`);
+  if (!Number.isInteger(step) || step <= 0) return error("chain repair requires a positive --step number", 2); if (!model) return error("--model is required for chain repair", 2); const read = readConfig(environment); if (read.kind !== "ok") return read; const current: any = read.value.chains[name]?.steps?.[step - 1]; if (!current) return error(`chain step not found: ${name} step ${step}`); const replacement: any = { ...current, model }; if (hasEffort) replacement.effort = effort; else delete replacement.effort; const config: any = { ...read.value, chains: { ...read.value.chains, [name]: { ...read.value.chains[name], steps: read.value.chains[name].steps.map((entry, index) => index === step - 1 ? replacement : entry) } } }; const valid = validateWriteConfig({ ...config, chains: { [name]: { ...config.chains[name], steps: [replacement] } } }, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(config, chainPath(environment)); if (written.kind !== "ok") return written; return preserveStderr(ok(asJson ? json({ repaired: true, chain: name, step, value: replacement }) : `chain repaired: ${name} step ${step}\n`), valid.stderr);
 }
 function usage(kind: "chain" | "list" | "limits" | "add" | "edit" | "delete" | "repair"): string {
   if (kind === "chain") return "Usage: megabrain chain list|limits|add|edit|delete|run|repair ...\n";
@@ -169,8 +183,8 @@ function limits(environment: ChainEnvironment, asJson: boolean): string {
 }
 async function execute(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const [subcommand, ...rest] = args; let asJson = false;
-  if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? ok(formatList(valid.value, asJson)) : valid; }
-  if (subcommand === "limits") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("limits")); else return error(`unknown chain limits option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? ok(limits(environment, asJson)) : valid; }
+  if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, formatList(valid.value, asJson)) : valid; }
+  if (subcommand === "limits") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("limits")); else return error(`unknown chain limits option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, limits(environment, asJson)) : valid; }
   if (subcommand === "add") return Promise.resolve(addChain(rest, environment));
   if (subcommand === "edit") return editChain(rest, environment, processAdapter);
   if (subcommand === "delete") return Promise.resolve(deleteChain(rest, environment));
