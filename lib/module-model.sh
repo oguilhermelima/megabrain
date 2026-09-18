@@ -94,43 +94,12 @@ megabrain_model_known() {
   [ -n "$(megabrain_model_entry "$1" "$2")" ]
 }
 
-command_model_list() {
-  local json=false arg registry
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show model-list; return 0 ;;
-      *) megabrain_error "unknown model list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  registry="$(megabrain_model_read)" || return 1
-  if [ "$json" = true ]; then
-    printf '%s\n' "$registry"
-  else
-    printf '%-10s %-38s %-16s %-11s %-18s %s\n' AGENT MODEL REASONING STATUS MODEL-PROVENANCE EFFORT-PROVENANCE
-    # WHY: Model ids and effort spellings have independent evidence.
-    printf '%s' "$registry" | jq -r '.models[] | [.agent, .model, (.reasoning.levels | join(",")), (.status // "active"), ((.provenance.kind // "unknown") + " (" + (.provenance.fetchedAt // .provenance.obtainedAt // "undated") + ")"), (.reasoning.provenance.kind // "unknown")] | @tsv' |
-      while IFS=$'\t' read -r agent model levels status model_provenance effort_provenance; do
-        printf '%-10s %-38s %-16s %-11s %-18s %s\n' "$agent" "$model" "$levels" "$status" "$model_provenance" "$effort_provenance"
-      done
-  fi
-}
-
-# WHY: One dispatcher prevents module load-order shadowing across model features.
+# WHY: The wrapper remains a useful installed entrypoint even before its compiled payload is built.
 command_model() {
-  local subcommand="${1:-}"
-  shift || true
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_MODEL_IMPLEMENTATION:-}"; then
-    "$typescript_binary" model "$subcommand" "$@"
-    return $?
-  fi
-  case "$subcommand" in
-    list) command_model_list "$@" ;;
-    add) command_model_add "$@" ;;
-    refresh) command_model_refresh "$@" ;;
-    -h|--help|"") megabrain_usage_show model ;;
-    *) megabrain_error "unknown model command: $subcommand"; return "$MEGABRAIN_USAGE_ERROR" ;;
-  esac
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" model "$@"
 }
