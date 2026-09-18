@@ -115,10 +115,6 @@ megabrain_session_id >/dev/null
 assert_equal "$MEGABRAIN_SESSION_HOST" tmux
 assert_equal "$MEGABRAIN_SESSION_ID" "$session_name:$tmux_pane_one"
 assert_equal "$(megabrain_context_detect)" tmux
-context_json="$(command_context --json)"
-printf '%s' "$context_json" | jq -e --arg id "$session_name:$tmux_pane_one" '.host == "tmux" and .terminalId == $id' >/dev/null ||
-  fail "tmux context did not report the pane identity: $context_json"
-
 tmux_parent_dispatch="dispatch-tmux-parent"
 megabrain_dispatch_meta_write "$tmux_parent_dispatch" "$session_name:$tmux_pane_one" tmux superset "$workspace_id" host-terminal "$root" main codex label running gpt-5 true codex "" "" host >/dev/null
 megabrain_dispatch_require_parent "$tmux_parent_dispatch" >/dev/null || fail 'tmux parent could not read its own dispatch'

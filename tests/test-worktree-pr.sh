@@ -43,6 +43,7 @@ setup_fixture() {
   mkdir -p "$work_dir/shared" "$work_dir/state" "$work_dir/bin"
   repo_dir="$work_dir/repo"
   fixture_shared_root="$work_dir/shared"
+  printf '%s\n' "$fixture_shared_root" >"$work_dir/state/worktree-root"
   git init -q "$repo_dir"
   git -C "$repo_dir" config user.email tester@example.com
   git -C "$repo_dir" config user.name tester
@@ -97,6 +98,11 @@ megabrain_superset() {
   esac
 }
 
+run_binary() {
+  env HOME="$work_dir/home" MEGABRAIN_STATE_DIR="$work_dir/state" \
+    PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
+}
+
 write_gh() {
   cat >"$work_dir/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -142,11 +148,11 @@ scenario_parent_and_default_bases() {
   git -C "$repo_dir" add root.txt
   git -C "$repo_dir" commit -qm root
   write_gh
-  output="$(megabrain_worktree_pr "$fixture_shared_root/child" --json)"
+  output="$(run_binary worktree pr "$fixture_shared_root/child" --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.base')" stack/base
   assert_contains "$(cat "$GH_LOG")" '--base stack/base'
   assert_contains "$(cat "$GH_LOG")" '--title stack/child --body '
-  output="$(megabrain_worktree_pr "$repo_dir" --json)"
+  output="$(run_binary worktree pr "$repo_dir" --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.base')" main
   assert_contains "$(cat "$GH_LOG")" '--base main'
   printf 'stacked PRs use their parent and root PRs use the repository default\n'
@@ -158,7 +164,7 @@ scenario_explicit_base_wins() {
   make_stacked_worktrees
   git -C "$repo_dir" branch release
   write_gh
-  output="$(megabrain_worktree_pr "$fixture_shared_root/child" --base release --title custom --body details --json)"
+  output="$(run_binary worktree pr "$fixture_shared_root/child" --base release --title custom --body details --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.base')" release
   assert_contains "$(cat "$GH_LOG")" '--base release'
   assert_contains "$(cat "$GH_LOG")" '--title custom --body details'
@@ -173,14 +179,14 @@ scenario_gh_failures_are_distinct() {
   rm -f "$work_dir/bin/gh"
   PATH="/usr/bin:/bin"
   export PATH
-  if output="$(megabrain_worktree_pr "$fixture_shared_root/child" 2>&1)"; then
+  if output="$(run_binary worktree pr "$fixture_shared_root/child" 2>&1)"; then
     fail 'missing gh unexpectedly opened a pull request'
   fi
   assert_contains "$output" 'gh CLI is not installed'
   write_gh
   GH_AUTH=no
   export GH_AUTH
-  if output="$(megabrain_worktree_pr "$fixture_shared_root/child" 2>&1)"; then
+  if output="$(run_binary worktree pr "$fixture_shared_root/child" 2>&1)"; then
     fail 'unauthenticated gh unexpectedly opened a pull request'
   fi
   assert_contains "$output" 'gh CLI is not authenticated'
@@ -192,7 +198,7 @@ scenario_no_commits_ahead_is_refused() {
   local output
   setup_fixture
   write_gh
-  if output="$(megabrain_worktree_pr "$repo_dir" --base main 2>&1)"; then
+  if output="$(run_binary worktree pr "$repo_dir" --base main 2>&1)"; then
     fail 'a branch with no commits ahead unexpectedly opened a pull request'
   fi
   assert_contains "$output" 'no commits ahead of base main'
@@ -232,10 +238,10 @@ scenario_tree_listing_has_no_orchestrator_dependency() {
   make_stacked_worktrees
   superset_available=false
   orca_available=false
-  output="$(megabrain_worktree_list)"
+  output="$(run_binary worktree list)"
   assert_contains "$output" 'stack/base'
   assert_contains "$output" '  stack/child'
-  json="$(megabrain_worktree_list --json)"
+  json="$(run_binary worktree list --json)"
   assert_equal "$(printf '%s' "$json" | jq -r '.[] | select(.branch == "stack/child") | .parent')" stack/base
   printf 'the stack is visible without gh, Orca, or Superset\n'
 }

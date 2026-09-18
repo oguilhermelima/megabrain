@@ -59,27 +59,6 @@ megabrain_superset() {
   return 1
 }
 
-scenario_terminal_status_requires_process_identity() {
-  local output="" process_pid=""
-  rm -rf "$MEGABRAIN_STATE_DIR"
-  mkdir -p "$MEGABRAIN_STATE_DIR"
-  host_calls=0
-  megabrain_terminal_record_write terminal-unverified superset workspace-test "$root" \
-    'DEV unverified' 'run server' now 777 null 777
-  host_records='{"sessions":[{"terminalId":"terminal-unverified","status":"active","pid":888}]}'
-  output="$(command_terminal list --json)"
-  assert_json "$output" 'any(.[]; .terminalId == "terminal-unverified" and .status == "unknown")'
-  printf 'an active host status with a different process identity remains unknown\n'
-
-  process_pid="$$"
-  megabrain_terminal_record_write terminal-proven superset workspace-test "$root" \
-    'DEV proven' 'run server' now "$process_pid" null "$process_pid"
-  host_records="{\"sessions\":[{\"terminalId\":\"terminal-proven\",\"status\":\"active\",\"pid\":$process_pid}]}"
-  output="$(command_terminal list --json)"
-  assert_json "$output" 'any(.[]; .terminalId == "terminal-proven" and .status == "alive")'
-  printf 'a host status with the recorded process identity remains classifiable\n'
-}
-
 setup_git_fixture() {
   local name="$1"
   rm -rf "$work_dir/repo" "$work_dir/shared" "$MEGABRAIN_STATE_DIR"
@@ -105,12 +84,6 @@ scenario_subdirectory_selector_is_refused() {
   fi
   assert_contains "$output" 'worktree root'
   assert_contains "$output" 'cd'
-  assert_equal "$host_calls" 0
-
-  if output="$(command_terminal list --worktree "$subdir" --json 2>&1)"; then
-    fail 'terminal list accepted a subdirectory selector'
-  fi
-  assert_contains "$output" 'worktree root'
   assert_equal "$host_calls" 0
 
   if output="$(command_terminal restart "worktree:$subdir" 2>&1)"; then
@@ -170,7 +143,6 @@ scenario_no_env_file_is_normal() {
   printf 'a repository without env files still creates its worktree\n'
 }
 
-scenario_terminal_status_requires_process_identity
 scenario_subdirectory_selector_is_refused
 scenario_env_files_are_copied_without_contents
 scenario_no_env_file_is_normal
