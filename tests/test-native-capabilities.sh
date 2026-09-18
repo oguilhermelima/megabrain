@@ -18,12 +18,9 @@ assert_field() {
   assert_equal "$actual" "$expected"
 }
 
+state="$work/state"
 bin_dir="$work/bin"
 mkdir -p "$bin_dir"
-cat >"$bin_dir/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'Darwin\n'
-EOF
 cat >"$bin_dir/xcrun" <<'EOF'
 #!/usr/bin/env bash
 set -u
@@ -55,43 +52,26 @@ else
   exit 1
 fi
 EOF
-chmod +x "$bin_dir/uname" "$bin_dir/xcrun" "$bin_dir/curl"
+chmod +x "$bin_dir/xcrun" "$bin_dir/curl"
 
-run_health() {
-  local implementation="$1" state="$2" log="$3"
-  if [ "$implementation" = shell ]; then
-    env PATH="$bin_dir:$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
-      MEGABRAIN_NATIVE_IMPLEMENTATION=shell NATIVE_CAPABILITY_LOG="$log" \
-      "$root/megabrain" native health phone --bundle-id com.example.app --device one >/dev/null
-  else
-    env PATH="$bin_dir:$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
-      NATIVE_CAPABILITY_LOG="$log" "$root/.build/megabrain" native health phone \
-      --bundle-id com.example.app --device one >/dev/null
-  fi
+run_binary() {
+  local log="$1"
+  env PATH="$bin_dir:$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
+    NATIVE_CAPABILITY_LOG="$log" "$root/.build/megabrain" native health phone \
+    --bundle-id com.example.app --device one >/dev/null
 }
 
-shell_state="$work/shell-state"
-binary_state="$work/binary-state"
-mkdir -p "$shell_state" "$binary_state"
-shell_log="$work/shell-body.log"
+mkdir -p "$state"
 binary_log="$work/binary-body.log"
-run_health shell "$shell_state" "$shell_log"
-run_health binary "$binary_state" "$binary_log"
+run_binary "$binary_log"
 
-shell_body="$(sed -n '1p' "$shell_log")"
 binary_body="$(sed -n '1p' "$binary_log")"
-[ -n "$shell_body" ] || fail 'shell implementation did not create an Appium request'
 [ -n "$binary_body" ] || fail 'binary implementation did not create an Appium request'
-assert_equal "$(printf '%s' "$shell_body" | jq -S -c .)" "$(printf '%s' "$binary_body" | jq -S -c .)"
-for field in platformName 'appium:isHeadless' 'appium:newCommandTimeout' 'appium:udid' 'appium:bundleId'; do
-  shell_field="$(printf '%s' "$shell_body" | jq -c --arg field "$field" '.capabilities.alwaysMatch[$field]')"
-  binary_field="$(printf '%s' "$binary_body" | jq -c --arg field "$field" '.capabilities.alwaysMatch[$field]')"
-  assert_equal "$shell_field" "$binary_field"
-done
-assert_field "$shell_body" platformName '"iOS"'
-assert_field "$shell_body" 'appium:isHeadless' true
-assert_field "$shell_body" 'appium:newCommandTimeout' 60
-assert_field "$shell_body" 'appium:udid' '"one"'
-assert_field "$shell_body" 'appium:bundleId' '"com.example.app"'
+assert_equal "$(printf '%s' "$binary_body" | jq -r '.capabilities.alwaysMatch | keys | sort | join(",")')" 'appium:bundleId,appium:isHeadless,appium:newCommandTimeout,appium:udid,platformName'
+assert_field "$binary_body" platformName '"iOS"'
+assert_field "$binary_body" 'appium:isHeadless' true
+assert_field "$binary_body" 'appium:newCommandTimeout' 60
+assert_field "$binary_body" 'appium:udid' '"one"'
+assert_field "$binary_body" 'appium:bundleId' '"com.example.app"'
 
-printf 'ok: shell and binary send the same complete headless capability set\n'
+printf 'ok: compiled native health sends the complete headless capability set\n'

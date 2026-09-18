@@ -3,13 +3,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-if [ "$(uname -s 2>/dev/null || printf unknown)" != Darwin ] || ! command -v xcrun >/dev/null 2>&1; then
-  printf 'skip: native session implementation parity requires macOS and xcrun\n'
-  exit 0
-fi
 if [ ! -x "$root/.build/megabrain" ]; then
-  printf 'skip: compiled native session binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
-  exit 0
+  printf 'FAIL: compiled native session binary is missing at %s; run bun run build\n' "$root/.build/megabrain" >&2
+  exit 1
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-native-session.XXXXXX")"
@@ -60,31 +56,24 @@ EOF
 chmod +x "$bin_dir/curl"
 
 run_health() {
-  local implementation="$1" state="$2" log="$3" count="$4"
+  local state="$1" log="$2" count="$3"
   env PATH="$bin_dir:$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_NATIVE_IMPLEMENTATION="$implementation" NATIVE_SESSION_CURL_LOG="$log" \
-    NATIVE_SESSION_POST_COUNT="$count" "$root/megabrain" native health phone \
+    NATIVE_SESSION_CURL_LOG="$log" \
+    NATIVE_SESSION_POST_COUNT="$count" "$root/.build/megabrain" native health phone \
     --bundle-id com.example.app --device one
 }
 
-shell_state="$work_dir/shell-state"
 binary_state="$work_dir/binary-state"
-mkdir -p "$shell_state" "$binary_state"
-shell_log="$work_dir/shell-curl.log"
-shell_count="$work_dir/shell-posts"
+mkdir -p "$binary_state"
 binary_log="$work_dir/binary-curl.log"
 binary_count="$work_dir/binary-posts"
 
-shell_first="$(run_health shell "$shell_state" "$shell_log" "$shell_count")"
-shell_second="$(run_health shell "$shell_state" "$shell_log" "$shell_count")"
-binary_first="$(run_health binary "$binary_state" "$binary_log" "$binary_count")"
-binary_second="$(run_health binary "$binary_state" "$binary_log" "$binary_count")"
+binary_first="$(run_health "$binary_state" "$binary_log" "$binary_count")"
+binary_second="$(run_health "$binary_state" "$binary_log" "$binary_count")"
 
-[ "$shell_first" = "$binary_first" ] || fail "shell and binary first health output differ"
-[ "$shell_second" = "$binary_second" ] || fail "shell and binary reused health output differ"
-[ "$(cat "$shell_count")" -eq 2 ] || fail "shell path should create one session per call"
+[ -n "$binary_first" ] || fail 'compiled health returned no output'
+[ "$binary_first" = "$binary_second" ] || fail "compiled health output changed when reusing the session"
 [ "$(cat "$binary_count")" -eq 1 ] || fail "binary path should create one session for two calls"
-[ "$(grep -c -- '-X POST' "$shell_log")" -eq 2 ] || fail "shell POST count was not 2"
 [ "$(grep -c -- '-X POST' "$binary_log")" -eq 1 ] || fail "binary POST count was not 1"
 
-printf 'ok: shell creates twice, binary reuses once; outputs remain identical\n'
+printf 'ok: compiled native health reuses one verified session\n'

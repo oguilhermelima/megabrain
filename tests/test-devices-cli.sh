@@ -8,6 +8,7 @@ fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-devices-cli.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 mkdir -p "$work_dir/bin"
+mkdir -p "$work_dir/state"
 cat >"$work_dir/bin/xcrun" <<'EOF'
 #!/usr/bin/env bash
 if [ "$*" = "simctl list devices --json" ]; then printf '%s\n' '{"devices":{"iOS-1":[{"udid":"p","state":"Booted","name":"Phone","isAvailable":true}]}}'; exit 0; fi
@@ -23,20 +24,32 @@ run_pair() {
   local label="$1"; shift
   local shell_out binary_out shell_rc binary_rc
   set +e
-  shell_out="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_NATIVE_IMPLEMENTATION=shell MEGABRAIN_TV_IMPLEMENTATION=shell "$root/megabrain" "$@" 2>&1)"; shell_rc=$?
+  shell_out="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_TV_IMPLEMENTATION=shell "$root/megabrain" "$@" 2>&1)"; shell_rc=$?
   binary_out="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" "$root/.build/megabrain" "$@" 2>&1)"; binary_rc=$?
   set -e
   [ "$shell_rc" -eq "$binary_rc" ] || { printf 'FAIL: %s status shell=%s binary=%s\n' "$label" "$shell_rc" "$binary_rc"; exit 1; }
   [ "$shell_out" = "$binary_out" ] || { printf 'FAIL: %s output differs\nshell=%s\nbinary=%s\n' "$label" "$shell_out" "$binary_out"; exit 1; }
   printf '%s agrees between shell and binary\n' "$label"
 }
-run_pair native-help native --help
-if [ "$(uname -s)" = Darwin ]; then
-  run_pair native-list native sim list phone
-else
-  printf 'skip: native-list contract requires macOS because the shell implementation is macOS-only\n'
+run_binary() {
+  local label="$1"; shift
+  local output status
+  set +e
+  output="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" "$root/.build/megabrain" "$@" 2>&1)"; status=$?
+  set -e
+  [ "$status" -eq 0 ] || { printf 'FAIL: %s status=%s output=%s\n' "$label" "$status" "$output"; exit 1; }
+  printf '%s runs through the compiled CLI\n' "$label"
+}
+run_binary native-help native --help
+run_binary native-list native sim list phone
+if output="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" "$root/.build/megabrain" native sim list bad 2>&1)"; then
+  printf 'FAIL: native-invalid unexpectedly succeeded\n' >&2
+  exit 1
 fi
-run_pair native-invalid native sim list bad
+case "$output" in
+  *'expected simulator kind phone or tv, got: bad'*) printf 'native-invalid refuses an invalid simulator kind\n' ;;
+  *) printf 'FAIL: native-invalid output was unexpected: %s\n' "$output" >&2; exit 1 ;;
+esac
 run_pair tv-help tv --help
 run_pair tv-connect tv connect x
 run_pair tv-disconnect tv disconnect

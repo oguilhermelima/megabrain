@@ -32,68 +32,53 @@ write_config() {
   printf '{"version":1,"surfaces":{"tv":{"appPath":"%s"}}}\n' "$1" >"$fixture/.megabrain/native.json"
 }
 
-run_build() {
-  local implementation="$1" directory="$2" output_file="$3" status
+run_binary() {
+  local directory="$1" output_file="$2" status
   set +e
-  if [ "$implementation" = shell ]; then
-    (cd "$directory" && MEGABRAIN_NATIVE_IMPLEMENTATION=shell MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/megabrain" native build tv) >"$output_file" 2>&1
-  else
-    (cd "$directory" && MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/.build/megabrain" native build tv) >"$output_file" 2>&1
-  fi
+  (cd "$directory" && MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/.build/megabrain" native build tv) >"$output_file" 2>&1
   status=$?
   set -e
   printf '%s\n' "$status"
 }
 
 check_found_app_from_both_directories() {
-  local implementation="$1" output_root output_app root_status app_status expected="$fixture/apps/tv/app.json"
-  output_root="$work/$implementation-root.out"
-  output_app="$work/$implementation-app.out"
-  root_status="$(run_build "$implementation" "$fixture" "$output_root")"
-  app_status="$(run_build "$implementation" "$fixture/apps/tv" "$output_app")"
+  local output_root="$work/binary-root.out" output_app="$work/binary-app.out" root_status app_status expected="$fixture/apps/tv/app.json"
+  root_status="$(run_binary "$fixture" "$output_root")"
+  app_status="$(run_binary "$fixture/apps/tv" "$output_app")"
   assert_status_and_path "$(cat "$output_root")" "$root_status" "$expected"
   assert_status_and_path "$(cat "$output_app")" "$app_status" "$expected"
   assert_contains "$(cat "$output_root")" 'scheme is required in'
   assert_contains "$(cat "$output_app")" 'scheme is required in'
-  [ "$(cat "$output_root")" = "$(cat "$output_app")" ] || fail "$implementation answer differs between repository root and app directory"
-  printf '%s resolves a relative app path from both directories\n' "$implementation"
+  [ "$(cat "$output_root")" = "$(cat "$output_app")" ] || fail 'binary answer differs between repository root and app directory'
+  printf 'binary resolves a relative app path from both directories\n'
 }
 
 write_config 'apps/tv'
-check_found_app_from_both_directories shell
-check_found_app_from_both_directories binary
+check_found_app_from_both_directories
 
 write_config "$fixture/apps/tv"
-check_found_app_from_both_directories shell
-check_found_app_from_both_directories binary
+check_found_app_from_both_directories
 
 write_config 'apps/missing'
-for implementation in shell binary; do
-  for directory in "$fixture" "$fixture/apps/tv"; do
-    output="$work/missing-$implementation-$(basename "$directory").out"
-    status="$(run_build "$implementation" "$directory" "$output")"
-    assert_status_and_path "$(cat "$output")" "$status" 'apps/missing'
-  done
+for directory in "$fixture" "$fixture/apps/tv"; do
+  output="$work/missing-$(basename "$directory").out"
+  status="$(run_binary "$directory" "$output")"
+  assert_status_and_path "$(cat "$output")" "$status" 'apps/missing'
 done
 
 external="$work/external"
 mkdir -p "$external/.megabrain"
 printf '{"version":1,"surfaces":{"tv":{"appPath":"%s"}}}\n' "$fixture/apps/tv" >"$external/.megabrain/native.json"
-for implementation in shell binary; do
-  output="$work/external-$implementation.out"
-  set +e
-  if [ "$implementation" = shell ]; then
-    (cd "$external" && MEGABRAIN_NATIVE_IMPLEMENTATION=shell MEGABRAIN_NATIVE_WORKTREE="$external" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/megabrain" native build tv) >"$output" 2>&1
-  else
-    (cd "$external" && MEGABRAIN_NATIVE_WORKTREE="$external" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/.build/megabrain" native build tv) >"$output" 2>&1
-  fi
-  status=$?
-  set -e
-  assert_status_and_path "$(cat "$output")" "$status" "$fixture/apps/tv/app.json"
-done
+output="$work/external-binary.out"
+set +e
+(cd "$external" && MEGABRAIN_NATIVE_WORKTREE="$external" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/.build/megabrain" native build tv) >"$output" 2>&1
+status=$?
+set -e
+assert_status_and_path "$(cat "$output")" "$status" "$fixture/apps/tv/app.json"
 
 routing_fixture="$work/routing-fixture"
 make_entrypoint_routing_fixture "$root" "$routing_fixture" 99
+routing_root="$(cd "$routing_fixture" && pwd -P)"
 if MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" MEGABRAIN_NATIVE_WORKTREE="$work" "$routing_fixture/megabrain" native build tv >"$work/routed-output" 2>&1; then
   binary_status=0
 else
@@ -101,4 +86,10 @@ else
 fi
 [ "$binary_status" -eq 99 ] || { printf 'native operator entrypoint returned status %s\n' "$binary_status" >&2; exit 1; }
 
-printf 'native build resolves config and app paths in both implementations\n'
+rm -f "$routing_fixture/.build/megabrain"
+if missing_binary_output="$(MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" MEGABRAIN_NATIVE_WORKTREE="$work" "$routing_fixture/megabrain" native build tv 2>&1)"; then
+  fail 'native command unexpectedly ran without the compiled binary'
+fi
+assert_contains "$missing_binary_output" "compiled binary is missing: $routing_root/.build/megabrain; run bun run build"
+
+printf 'ok: compiled native build scenarios resolve paths and refuse a missing binary\n'
