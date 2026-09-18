@@ -146,6 +146,53 @@ fs.writeFileSync(path.join(doctorRoot, 'manifest.json'), JSON.stringify({
 }));
 const doctorReport = await doctor(doctorRoot, { currentVersions: { chromium: { ublock: 'one', violentmonkey: 'two' } } });
 assert.equal(doctorReport.status, 'ok', 'doctor must accept a configured non-default viewport');
+
+const networkDoctorRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'megabrain-web-doctor-network-'));
+const networkProfilePath = path.join(networkDoctorRoot, 'profiles', 'chromium');
+const networkConfigPath = path.join(networkDoctorRoot, 'chromium.json');
+fs.mkdirSync(networkProfilePath, { recursive: true });
+fs.mkdirSync(path.join(networkDoctorRoot, 'node_modules', 'playwright'), { recursive: true });
+fs.writeFileSync(path.join(networkDoctorRoot, 'node_modules', 'playwright', 'package.json'), JSON.stringify({ version: '1.62.1' }));
+fs.writeFileSync(networkConfigPath, JSON.stringify(buildBrowserConfig('chromium', {
+  root: networkDoctorRoot,
+  profile: networkProfilePath,
+  extensions: {
+    ublock: path.join(networkDoctorRoot, 'extensions', 'chromium', 'ublock-origin-lite'),
+    violentmonkey: path.join(networkDoctorRoot, 'extensions', 'chromium', 'violentmonkey'),
+  },
+})));
+fs.writeFileSync(path.join(networkDoctorRoot, 'manifest.json'), JSON.stringify({
+  playwrightVersion: '1.62.1',
+  profiles: { chromium: { configPath: networkConfigPath, userDataDir: networkProfilePath } },
+  extensions: { chromium: { ublock: 'fixture', violentmonkey: 'fixture' } },
+}));
+
+const repositories = ['uBlockOrigin/uBOL-home', 'violentmonkey/violentmonkey', 'gorhill/uBlock'];
+const delays = [
+  { 'uBlockOrigin/uBOL-home': 1, 'violentmonkey/violentmonkey': 3, 'gorhill/uBlock': 5 },
+  { 'uBlockOrigin/uBOL-home': 5, 'violentmonkey/violentmonkey': 1, 'gorhill/uBlock': 3 },
+  { 'uBlockOrigin/uBOL-home': 3, 'violentmonkey/violentmonkey': 5, 'gorhill/uBlock': 1 },
+];
+let networkRound = 0;
+const previousFetch = globalThis.fetch;
+globalThis.fetch = async url => {
+  const repository = repositories.find(candidate => url.includes(candidate));
+  const round = delays[networkRound % delays.length];
+  networkRound += 1;
+  await new Promise(resolve => setTimeout(resolve, (repository === undefined ? 7 : round[repository]) * 2));
+  if (repository !== undefined) throw new Error('GitHub latest release failed for ' + repository + ': HTTP 403');
+  throw new Error('AMO latest Violentmonkey failed: HTTP 403');
+};
+const networkReports = [];
+for (let index = 0; index < 4; index += 1) networkReports.push(await doctor(networkDoctorRoot));
+globalThis.fetch = previousFetch;
+assert.equal(new Set(networkReports.map(reportValue => reportValue.reason)).size, 1, 'network refusal must have one stable reason');
+assert.equal(networkReports.every(reportValue => reportValue.status === 'unknown'), true, 'network refusal must remain unknown');
+assert.equal(
+  networkReports[0].reason,
+  'latest extension versions unavailable: GitHub latest release failed for uBlockOrigin/uBOL-home: HTTP 403; GitHub latest release failed for violentmonkey/violentmonkey: HTTP 403; GitHub latest release failed for gorhill/uBlock: HTTP 403; AMO latest Violentmonkey failed: HTTP 403',
+  'network refusal must report all failures in stable request order',
+);
 NODE
 
 viewport_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-web-viewport.XXXXXX")"
