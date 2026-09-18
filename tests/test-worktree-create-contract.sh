@@ -210,6 +210,36 @@ run_failed_create() {
   printf '%s failed create output: %s\n' "$implementation" "$output"
 }
 
+write_unreadable_branch_check_git() {
+  mkdir -p "$work_dir/unreadable-bin"
+  cat >"$work_dir/unreadable-bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "$#" -ge 3 ] && [ "$1" = -C ] && [ "$3" = show-ref ] && [ ! -e "$MEGABRAIN_SHOW_REF_MARKER" ]; then
+  : >"$MEGABRAIN_SHOW_REF_MARKER"
+  exit 128
+fi
+exec "$MEGABRAIN_REAL_GIT" "$@"
+EOF
+  chmod +x "$work_dir/unreadable-bin/git"
+}
+
+run_unreadable_branch_check() {
+  local implementation="$1" state="$2" repo="$3" branch="$4" marker="$5" output status command real_git
+  if [ "$implementation" = binary ]; then
+    command="$root/.build/megabrain"
+  else
+    command="$root/megabrain"
+  fi
+  real_git="$(command -v git)"
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" MEGABRAIN_REAL_GIT="$real_git" MEGABRAIN_SHOW_REF_MARKER="$marker" PATH="$work_dir/unreadable-bin:/usr/bin:/bin" "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "$implementation accepted an unreadable branch check: $output"
+  UNREADABLE_BRANCH_CHECK_OUTPUT="$output"
+  printf '%s unreadable branch check output: %s\n' "$implementation" "$UNREADABLE_BRANCH_CHECK_OUTPUT"
+}
+
 scenario_failed_create_removes_only_new_branch() {
   local implementation state repo shared branch before after
   for implementation in shell binary; do
@@ -250,6 +280,28 @@ scenario_existing_branch_survives_failed_create() {
     assert_equal "$before" "$after"
   done
   printf 'failed creates preserve pre-existing branches\n'
+}
+
+scenario_unreadable_branch_check_preserves_existing_branch() {
+  local implementation state repo shared branch marker before after
+  write_unreadable_branch_check_git
+  for implementation in shell binary; do
+    state="$work_dir/unreadable-$implementation/state"
+    repo="$work_dir/unreadable-$implementation/repo"
+    shared="$work_dir/unreadable-$implementation/shared"
+    branch="probe/unreadable-$implementation"
+    marker="$work_dir/unreadable-$implementation/show-ref-called"
+    mkdir -p "$state" "$shared"
+    make_repo "$repo"
+    git -C "$repo" branch "$branch"
+    printf '%s\n' "$shared" >"$state/worktree-root"
+    before="$(git -C "$repo" branch --list)"
+    run_unreadable_branch_check "$implementation" "$state" "$repo" "$branch" "$marker"
+    after="$(git -C "$repo" branch --list)"
+    assert_equal "$after" "$before"
+    assert_contains "$UNREADABLE_BRANCH_CHECK_OUTPUT" "could not check whether branch exists: $branch"
+    printf '%s preserved the branch when show-ref was unreadable\n' "$implementation"
+  done
 }
 
 scenario_worktree_create_routes_binary() {
@@ -346,6 +398,7 @@ scenario_superset_workspace_failure_keeps_git_work
 scenario_compiled_registration_failure_keeps_git_work
 scenario_failed_create_removes_only_new_branch
 scenario_existing_branch_survives_failed_create
+scenario_unreadable_branch_check_preserves_existing_branch
 scenario_worktree_create_routes_binary
 scenario_repo_selector_refusal_causes
 scenario_routing_deleted_and_restored
