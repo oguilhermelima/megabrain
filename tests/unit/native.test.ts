@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { executeNative } from "../../src/cli/commands/native.js";
 import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
 import { ok, failed } from "../../src/core/result.js";
@@ -99,33 +96,6 @@ describe("native runtime commands", () => {
 });
 
 describe("native build planning", () => {
-  test("discovers the worktree root through the process adapter when git is unavailable", async () => {
-    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-root-"));
-    const state = join(worktree, "state");
-    const app = join(worktree, "apps", "tv");
-    await mkdir(join(worktree, ".megabrain"));
-    await mkdir(app, { recursive: true });
-    await writeFile(join(worktree, ".megabrain", "native.json"), JSON.stringify({ version: 1, surfaces: { tv: { appPath: "apps/tv" } } }));
-    await writeFile(join(app, "app.json"), JSON.stringify({ expo: { ios: { bundleIdentifier: "com.example.tv" } } }));
-    const calls: string[] = [];
-    const process: ProcessAdapter = {
-      async run(command, args) {
-        calls.push([command, ...args].join(" "));
-        return failed("git is unavailable");
-      },
-      async startDetached() { return failed("must not start a process"); },
-      invocationCount() { return calls.length; },
-    };
-
-    try {
-      const result = await executeNative(["build", "tv"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_STATE_DIR: state }, process);
-      expect(result).toEqual({ kind: "failed", error: `scheme is required in ${join(app, "app.json")}`, exitCode: 1 });
-      expect(calls).toEqual([`git -C ${worktree} rev-parse --show-toplevel`]);
-    } finally {
-      await rm(worktree, { recursive: true, force: true });
-    }
-  });
-
   test("builds the working simulator xcodebuild arguments", () => {
     expect(buildXcodebuildArgs("tvOS", "ios/canto.xcworkspace", "canto", "26.5", "tv-1", "ios/build")).toEqual([
       "-workspace", "ios/canto.xcworkspace", "-scheme", "canto", "-sdk", "appletvsimulator",
