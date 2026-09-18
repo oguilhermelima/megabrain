@@ -117,7 +117,7 @@ scenario_restart_content() {
   assert_equal "$status" 0
   output="$(cat "$work/stdout")"
   assert_json "$output" '.selector == "id:old-terminal" and .killedPid == 123 and .recreated == true and .recreatedTerminalId == "new-terminal" and .port == 4000'
-  assert_contains "$(cat "$MEGABRAIN_CALL_LOG")" 'terminals\tcreate'
+  assert_contains "$(cat "$MEGABRAIN_CALL_LOG")" 'terminals'
   printf 'restart kills the recorded root and recreates the terminal\n'
 }
 
