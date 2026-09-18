@@ -11,7 +11,9 @@ while [ -h "$MEGABRAIN_SOURCE" ]; do
     *) MEGABRAIN_SOURCE="$MEGABRAIN_SOURCE_DIR/$MEGABRAIN_SOURCE" ;;
   esac
 done
-MEGABRAIN_ROOT="$(cd -P "$(dirname "$MEGABRAIN_SOURCE")" && pwd)"
+# WHY: the compiled binary is a child process and needs the wrapper's checkout root for paths
+# that are resolved beside the executable rather than against the caller's working directory.
+export MEGABRAIN_ROOT="$(cd -P "$(dirname "$MEGABRAIN_SOURCE")" && pwd)"
 MEGABRAIN_EXECUTABLE="$MEGABRAIN_SOURCE"
 MEGABRAIN_LIB_DIR="$MEGABRAIN_ROOT/lib"
 
