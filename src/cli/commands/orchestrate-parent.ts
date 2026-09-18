@@ -1,4 +1,5 @@
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { watch as watchFile } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -26,6 +27,52 @@ async function writeAtomic(path: string, value: JsonRecord): Promise<void> {
   try { await Bun.write(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
 }
 
+async function registerWaiter(root: string, dispatch: string, parent: JsonRecord): Promise<void> {
+  const directory = await dispatchPath(root, dispatch, "");
+  const waiter = `${directory}/waiter.json`;
+  const wake = `${directory}/nudge.log`;
+  const waiterLock = `${directory}/.waiter.lock`;
+  await lock(waiterLock);
+  try {
+    await writeAtomic(waiter, {
+      pid: process.pid,
+      parentSessionId: parent.parentSessionId,
+      parentHost: parent.parentHost,
+      createdAt: new Date().toISOString(),
+    });
+    await writeFile(wake, "", { flag: "a" });
+  } finally {
+    await rm(waiterLock, { recursive: true, force: true });
+  }
+}
+
+async function unregisterWaiter(root: string, dispatch: string): Promise<void> {
+  await rm(await dispatchPath(root, dispatch, "waiter.json"), { force: true });
+}
+
+async function wakeSize(path: string): Promise<number> {
+  try { return (await stat(path)).size; } catch { return 0; }
+}
+
+async function waitForWake(path: string, initialSize: number, timeoutMilliseconds: number): Promise<void> {
+  if (await wakeSize(path) !== initialSize) return;
+  await new Promise<void>((resolve) => {
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watcher = watchFile(path, () => finish());
+    const finish = (): void => {
+      if (finished) return;
+      finished = true;
+      watcher.close();
+      if (timer !== undefined) clearTimeout(timer);
+      resolve();
+    };
+    watcher.on("error", finish);
+    timer = setTimeout(finish, Math.max(0, timeoutMilliseconds));
+    void wakeSize(path).then((size) => { if (size !== initialSize) finish(); });
+  });
+}
+
 async function requireParent(root: string, dispatch: string, environment: ParentQueueEnvironment): Promise<Result<JsonRecord>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
@@ -36,10 +83,10 @@ async function requireParent(root: string, dispatch: string, environment: Parent
   return ok(meta);
 }
 
-function parseWatchArgs(args: readonly string[]): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly json: boolean }> {
+function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly json: boolean }> {
   const dispatch = args[0] ?? "";
   if (dispatch === "") return failed("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n", 2);
-  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = 1; let full = false; let json = false;
+  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = Number(environmentGeneration); let full = false; let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--timeout") timeout = Number(args[++index]);
@@ -60,42 +107,54 @@ function parseWatchArgs(args: readonly string[]): Result<{ readonly dispatch: st
 
 export async function executeOrchestrateWatch(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
-  const parsed = parseWatchArgs(args); if (parsed.kind !== "ok") return parsed;
+  const parsed = parseWatchArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatch, environment); if (parent.kind !== "ok") return parent;
   const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
   const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
   const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
   if (identity.kind !== "known") return failed(identity.reason);
   const started = Date.now();
-  while (true) {
-    const messages = await loadMessages(await dispatchPath(root, parsed.value.dispatch, "messages"));
-    const deliveries = await loadDeliveries(await dispatchPath(root, parsed.value.dispatch, "deliveries"));
-    await migrateDeliveries(root, parsed.value.dispatch, messages, deliveries);
-    const selected = selectDelivery("parent", parsed.value.full, await loadDeliveries(await dispatchPath(root, parsed.value.dispatch, "deliveries")), messages, identity.value, parsed.value.generation);
-    if (selected.kind === "selected") {
-      const path = await dispatchPath(root, parsed.value.dispatch, `deliveries/${selected.delivery.id}.json`);
-      if (selected.delivery.consumer !== null && selected.delivery.consumer !== identity.value) continue;
-      if (selected.delivery.consumer !== null && selected.delivery.consumerGeneration !== parsed.value.generation) {
-        await lock(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"));
-        const current = await readJson(path); if (current !== undefined) await writeAtomic(path, { ...current, status: "fenced", fencedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-        await rm(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"), { recursive: true, force: true });
-        continue;
+  const wakePath = await dispatchPath(root, parsed.value.dispatch, "nudge.log");
+  await registerWaiter(root, parsed.value.dispatch, parent.value);
+  try {
+    while (true) {
+      const initialWakeSize = await wakeSize(wakePath);
+      const messages = await loadMessages(await dispatchPath(root, parsed.value.dispatch, "messages"));
+      const deliveries = await loadDeliveries(await dispatchPath(root, parsed.value.dispatch, "deliveries"));
+      await migrateDeliveries(root, parsed.value.dispatch, messages, deliveries);
+      const selected = selectDelivery("parent", parsed.value.full, await loadDeliveries(await dispatchPath(root, parsed.value.dispatch, "deliveries")), messages, identity.value, parsed.value.generation);
+      if (selected.kind === "selected") {
+        const path = await dispatchPath(root, parsed.value.dispatch, `deliveries/${selected.delivery.id}.json`);
+        if (selected.delivery.consumer !== null && selected.delivery.consumer !== identity.value) continue;
+        if (selected.delivery.consumer !== null && selected.delivery.consumerGeneration !== parsed.value.generation) {
+          await lock(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"));
+          const current = await readJson(path); if (current !== undefined) await writeAtomic(path, { ...current, status: "fenced", fencedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+          await rm(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"), { recursive: true, force: true });
+          continue;
+        }
+        if (selected.delivery.consumer === null) {
+          await lock(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"));
+          const current = await readJson(path); if (current !== undefined && current.consumer === null) await writeAtomic(path, { ...current, consumer: identity.value, consumerGeneration: parsed.value.generation, updatedAt: new Date().toISOString() });
+          await rm(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"), { recursive: true, force: true });
+        }
+        return ok(report(parsed.value.dispatch, selected.delivery, messages, selected.replayed, parsed.value.json));
       }
-      if (selected.delivery.consumer === null) {
-        await lock(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"));
-        const current = await readJson(path); if (current !== undefined && current.consumer === null) await writeAtomic(path, { ...current, consumer: identity.value, consumerGeneration: parsed.value.generation, updatedAt: new Date().toISOString() });
-        await rm(await dispatchPath(root, parsed.value.dispatch, "messages/.lock"), { recursive: true, force: true });
+      if (selected.kind === "unknown" || Date.now() - started >= parsed.value.timeout * 1000) return ok(report(parsed.value.dispatch, undefined, [], false, parsed.value.json));
+      if (parsed.value.waitMode === "nudge") {
+        const remaining = parsed.value.timeout * 1000 - (Date.now() - started);
+        await waitForWake(wakePath, initialWakeSize, remaining);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, parsed.value.pollInterval * 1000)));
       }
-      return ok(report(parsed.value.dispatch, selected.delivery, messages, selected.replayed, parsed.value.json));
     }
-    if (selected.kind === "unknown" || Date.now() - started >= parsed.value.timeout * 1000) return ok(report(parsed.value.dispatch, undefined, [], false, parsed.value.json));
-    await new Promise((resolve) => setTimeout(resolve, Math.max(0, parsed.value.pollInterval * 1000)));
+  } finally {
+    await unregisterWaiter(root, parsed.value.dispatch);
   }
 }
 
 export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]\n");
-  const parsed = parseParentAckArgs(args); if (parsed.kind !== "ok") return parsed;
+  const parsed = parseParentAckArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment); if (parent.kind !== "ok") return parent;
   if (parsed.value.close === true && parent.value.state !== "done" && parent.value.state !== "closed") return ackCloseRefusal(parsed.value.dispatchId, typeof parent.value.state === "string" ? parent.value.state : "", parsed.value.json);
   const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);

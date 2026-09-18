@@ -2402,7 +2402,14 @@ megabrain_dispatch_mailbox_watch() {
 }
 
 megabrain_dispatch_watch() {
-  megabrain_dispatch_mailbox_watch parent "$@"
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: parent watch is fully ported; the shared mailbox helper remains for child check and hooks.
+  megabrain_warn_if_typescript_binary_stale
+  "$typescript_binary" orchestrate watch "$@"
 }
 
 megabrain_dispatch_child_check() {
@@ -2593,7 +2600,14 @@ megabrain_dispatch_ack_for_owner() {
 }
 
 megabrain_dispatch_ack() {
-  megabrain_dispatch_ack_for_owner parent "$@"
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: parent ack is fully ported; the shared owner helper remains for child ack and hooks.
+  megabrain_warn_if_typescript_binary_stale
+  "$typescript_binary" orchestrate ack "$@"
 }
 
 megabrain_dispatch_child_ack() {
