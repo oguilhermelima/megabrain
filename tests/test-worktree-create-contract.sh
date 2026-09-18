@@ -168,8 +168,8 @@ scenario_superset_workspace_failure_keeps_git_work() {
     fi
     assert_contains "$output" 'could not create Superset workspace'
     assert_contains "$output" 'kept Git worktree'
-    assert_contains "$output" 'Superset project registered'
-    assert_contains "$output" 'Superset workspace not registered'
+    assert_contains "$output" 'Superset project: registered'
+    assert_contains "$output" 'Superset workspace: not registered'
     [ -d "$shared/${branch//\//-}" ] || fail "$implementation removed the worktree after workspace registration failed"
     git -C "$repo" branch --list "$branch" | grep -q "$branch" || fail "$implementation removed the branch after workspace registration failed"
   done
@@ -181,9 +181,9 @@ scenario_compiled_registration_failure_keeps_git_work() {
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
-  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE=set-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --parent "path:$repo" --json 2>&1)"; then
-    fail 'compiled implementation accepted a failed registration call'
-  fi
+  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE=set-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --parent "path:$repo" --json)" ||
+    fail 'compiled implementation did not keep a worktree after registration failed'
+  assert_equal "$(printf '%s' "$output" | jq -r '.parent.lineage.set')" false
   assert_contains "$output" 'Orca parent lineage was not set'
   [ -d "$shared/${branch//\//-}" ] || fail 'compiled implementation removed the worktree after registration failed'
   git -C "$repo" branch --list "$branch" | grep -q "$branch" || fail 'compiled implementation removed the branch after registration failed'
@@ -191,7 +191,8 @@ scenario_compiled_registration_failure_keeps_git_work() {
 }
 
 refusal_output() {
-  local implementation="$1" mode="$2" state="$work_dir/refusal-$implementation-$mode/state" output status
+  local implementation="$1" mode="$2" state output status
+  state="$work_dir/refusal-$implementation-$mode/state"
   mkdir -p "$state"
   set +e
   output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" ORCA_MODE="$mode" PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo selector-that-does-not-match --branch "feat/refusal-$implementation-$mode" --json 2>&1)"
@@ -258,6 +259,7 @@ scenario_routing_deleted_and_restored() {
   printf 'routing restored: status=%s output=%s\n' "$status" "$output"
 }
 
+write_orchestrator_stubs
 scenario_orchestrator_free_create_and_list
 scenario_superset_project_failure_keeps_git_work
 scenario_superset_workspace_failure_keeps_git_work
