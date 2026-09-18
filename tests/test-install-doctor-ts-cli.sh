@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-install-doctor.XXXXXX")"
 binary="$root/.build/megabrain"
 modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync)
-trap 'if [ -f "$root/megabrain.real" ]; then mv -f "$root/megabrain.real" "$root/megabrain"; fi; rm -rf "$work"' EXIT
+trap 'rm -rf "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -42,6 +42,7 @@ compare_capture() {
 
 mkdir -p "$work/home" "$work/shell-state" "$work/binary-state"
 export HOME="$work/home" MEGABRAIN_ROOT="$root"
+source "$root/tests/fixtures/entrypoint-routing.sh"
 mkdir -p "$work/bin"
 cat >"$work/bin/appium" <<'EOF'
 #!/usr/bin/env bash
@@ -143,11 +144,7 @@ export MEGABRAIN_TEST_NOW='2026-09-16T02:00:00Z'
 # The operator-facing shell entrypoint must route these verbs to the compiled
 # implementation. A failing binary makes an accidental shell fallback visible.
 routing_fixture="$work/routing-fixture"
-mkdir -p "$routing_fixture/.build"
-cp "$root/megabrain" "$routing_fixture/megabrain"
-cp -R "$root/lib" "$routing_fixture/lib"
-printf '#!/usr/bin/env bash\nexit 42\n' >"$routing_fixture/.build/megabrain"
-chmod +x "$routing_fixture/megabrain" "$routing_fixture/.build/megabrain"
+make_entrypoint_routing_fixture "$root" "$routing_fixture" 42
 run_capture "$work/routed-doctor" env MEGABRAIN_STATE_DIR="$work/routed-state" "$routing_fixture/megabrain" doctor orchestration
 [ "$(cat "$work/routed-doctor.status")" -eq 42 ] || fail 'operator doctor was not served by the binary'
 
@@ -227,10 +224,6 @@ done
 shell_unknown="$work/shell-unknown"
 run_capture "$shell_unknown" env MEGABRAIN_INSTALL_IMPLEMENTATION=shell "$root/megabrain" install unknown-module
 
-# The binary remains functional even when the user-facing shell entrypoint is a failing stub.
-mv "$root/megabrain" "$root/megabrain.real"
-printf '#!/usr/bin/env bash\nexit 99\n' >"$root/megabrain"
-chmod +x "$root/megabrain"
 binary_unknown="$work/binary-unknown"
 run_capture "$binary_unknown" "$binary" install unknown-module
 for side in stdout stderr status; do
@@ -238,9 +231,6 @@ for side in stdout stderr status; do
 done
 [ "$(cat "$binary_unknown.status")" -eq 2 ] || fail 'unknown module status was not 2'
 grep -q 'unknown module: unknown-module' "$binary_unknown.stderr" || fail 'unknown module omitted its error'
-
-# Restore the real shell entrypoint before exercising the shell installation contract.
-mv "$root/megabrain.real" "$root/megabrain"
 
 # An unhealthy hooks fixture must reach the shell installer, whose observable contract is
 # backing up and repairing the operator config. The TypeScript status-only implementation cannot
