@@ -65,7 +65,7 @@ compare() {
   printf '%s agrees between shell and binary\n' "$label"
 }
 
-compare first-ack '--json'
+compare first-ack 'delivery-fixed --json'
 assert_equal "$(jq -r '.status' "$work_dir/first-ack-shell/dispatches/first-ack/deliveries/delivery-fixed.json")" acknowledged
 assert_equal "$(jq -r '.status' "$work_dir/first-ack-binary/dispatches/first-ack/deliveries/delivery-fixed.json")" acknowledged
 
@@ -73,16 +73,16 @@ for implementation in shell binary; do
   state="$work_dir/duplicate-$implementation"
   make_dispatch "$state" duplicate-$implementation
   if [ "$implementation" = shell ]; then
-    run_shell "$state" '--json'
+    run_shell "$state" 'delivery-fixed --json'
   else
-    run_binary "$state" '--json'
+    run_binary "$state" 'delivery-fixed --json'
   fi
   assert_equal "$status" 0
   first_output="$output"
   if [ "$implementation" = shell ]; then
-    run_shell "$state" '--json'
+    run_shell "$state" 'delivery-fixed --json'
   else
-    run_binary "$state" '--json'
+    run_binary "$state" 'delivery-fixed --json'
   fi
   assert_equal "$status" 0
   assert_equal "$(printf '%s' "$output" | jq -r '.duplicate')" true
@@ -108,9 +108,9 @@ for implementation in shell binary; do
   state="$work_dir/close-$implementation"
   make_dispatch "$state" close-$implementation
   if [ "$implementation" = shell ]; then
-    run_shell "$state" '--close'
+    run_shell "$state" 'delivery-fixed --close'
   else
-    run_binary "$state" '--close'
+    run_binary "$state" 'delivery-fixed --close'
   fi
   assert_equal "$status" 2
   assert_equal "$output" ''
