@@ -54,9 +54,16 @@ case "$version_output" in
 esac
 context_json="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" "$release_root/megabrain" context --json)"
 printf '%s' "$context_json" | jq -e '.host == "unknown"' >/dev/null || fail 'clean install context failed'
-env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" \
-  "$release_root/megabrain" model list >/dev/null || fail 'clean install model list failed'
+if missing_binary_output="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" \
+  "$release_root/megabrain" model list 2>&1)"; then
+  fail 'clean install unexpectedly ran model list without the compiled binary'
+fi
+case "$missing_binary_output" in
+  *'compiled binary is missing'*'run bun run build'*) ;;
+  *) fail "clean install did not explain the missing binary: $missing_binary_output" ;;
+esac
 
 printf 'scenario 1: no-host clean install has a sane context result\n'
 printf 'scenario 2: release tarball commands run from a non-git, read-only root\n'
+printf 'scenario 3: ported model command refuses a missing compiled binary\n'
 printf 'ok: clean install scenarios\n'
