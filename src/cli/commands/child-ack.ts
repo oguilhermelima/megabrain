@@ -28,7 +28,6 @@ function parseArgs(args: readonly string[], environment: QueueEnvironment): Resu
     if (arg === "--consumer") consumer = args[++index] ?? "";
     else if (arg === "--generation") generation = Number(args[++index]);
     else if (arg === "--json") json = true;
-    else if (arg === "-h" || arg === "--help") return ok(usage);
     else return failed(`unknown orchestrate ack option: ${arg}`, 2);
   }
   if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);

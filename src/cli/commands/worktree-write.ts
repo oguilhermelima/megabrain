@@ -309,7 +309,7 @@ async function createBase(
   process: ProcessAdapter,
   repo: string,
   requested: string | undefined,
-): Promise<Result<{ ref: string; commit: string }>> {
+): Promise<Result<{ ref: string; commit: string; source: string }>> {
   let ref = requested;
   let source = requested ? "explicit" : "remote";
   if (!ref) {
@@ -342,6 +342,7 @@ async function createBase(
       }
     }
   }
+  if (ref === undefined) return failed("could not resolve default base");
   const resolved = await run(process, "git", ["-C", repo, "rev-parse", "--verify", `${ref}^{commit}`]);
   return resolved.kind === "ok"
     ? ok({ ref, commit: resolved.value.stdout.trim(), source })
@@ -737,10 +738,10 @@ export async function executeWorktreeFinish(
       "-D",
       branch,
     ]);
-    branchDeleted = deleted.kind === "ok";
-    if (!branchDeleted && deleted.error.includes("not found"))
+    if (deleted.kind === "ok") branchDeleted = true;
+    else if (deleted.error.includes("not found"))
       branchDeleted = false;
-    else if (!branchDeleted)
+    else
       return value.json
         ? ok(
             finishJson({

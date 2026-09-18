@@ -14,6 +14,8 @@ export type Failed = {
 export type Unknown = {
   readonly kind: "unknown";
   readonly reason: string;
+  readonly error: string;
+  readonly exitCode: number;
 };
 
 export type Result<T> = Ok<T> | Failed | Unknown;
@@ -27,5 +29,5 @@ export function failed(error: string, exitCode = 1): Failed {
 }
 
 export function unknown(reason: string): Unknown {
-  return { kind: "unknown", reason };
+  return { kind: "unknown", reason, error: reason, exitCode: 1 };
 }
