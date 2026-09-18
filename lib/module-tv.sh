@@ -27,62 +27,12 @@ module_tv_adb_install() {
   return 1
 }
 
-megabrain_tv_device_state() {
-  local serial="$1"
-  adb devices | awk -v serial="$serial" '$1 == serial {print $2; exit}'
-}
-
+# WHY: the wrapper remains a useful installed entrypoint even before its compiled payload is built.
 command_tv() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_TV_IMPLEMENTATION:-}"; then
-    "$typescript_binary" tv "$@"
-    return $?
-  fi
-  local operation="${1:-}" ip="" port=5555 arg serial state
-  shift || true
-  case "$operation" in
-    connect)
-      case "${1:-}" in
-        -h|--help) megabrain_usage_show tv-connect; return 0 ;;
-      esac
-      ip="${1:-}"
-      [ -n "$ip" ] || { megabrain_usage_fail tv-connect; return "$MEGABRAIN_USAGE_ERROR"; }
-      shift
-      while [ "$#" -gt 0 ]; do
-        arg="$1"
-        case "$arg" in
-          --port) port="${2:-}"; shift 2 ;;
-          -h|--help) megabrain_usage_show tv-connect; return 0 ;;
-          *) megabrain_error "unknown tv connect option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-        esac
-      done
-      module_tv_adb_doctor >/dev/null || return 1
-      serial="$ip:$port"
-      adb connect "$serial" >/dev/null 2>&1 || true
-      state="$(megabrain_tv_device_state "$serial")"
-      if [ "$state" = device ]; then
-        printf 'tv: connected (%s)\n' "$serial"
-        return 0
-      fi
-      printf 'tv: not ready (%s: %s)\n' "$serial" "${state:-not listed}"
-      return 1
-      ;;
-    disconnect)
-      case "${1:-}" in
-        -h|--help) megabrain_usage_show tv-disconnect; return 0 ;;
-      esac
-      ip="${1:-}"
-      if [ "$#" -gt 0 ]; then
-        shift
-        [ "$#" -eq 0 ] || { megabrain_usage_fail tv-disconnect; return "$MEGABRAIN_USAGE_ERROR"; }
-        module_tv_adb_doctor >/dev/null || return 1
-        adb disconnect "$ip"
-      else
-        module_tv_adb_doctor >/dev/null || return 1
-        adb disconnect
-      fi
-      ;;
-    -h|--help|"") megabrain_usage_show tv-connect tv-disconnect ;;
-    *) megabrain_error "unknown tv command: $operation"; return "$MEGABRAIN_USAGE_ERROR" ;;
-  esac
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" tv "$@"
 }
