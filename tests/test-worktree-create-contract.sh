@@ -190,6 +190,83 @@ scenario_compiled_registration_failure_keeps_git_work() {
   printf 'compiled registration failure keeps Git work\n'
 }
 
+run_failed_create() {
+  local implementation="$1" state="$2" repo="$3" shared="$4" branch="$5" output status command slug
+  slug="${branch//\//-}"
+  if [ "$implementation" = binary ]; then
+    touch "$shared/$slug"
+    command="$root/.build/megabrain"
+  else
+    # WHY: the shell checks -e before Git; a dangling symlink is the failure shape
+    # that lets git worktree add create the branch before rejecting the target.
+    ln -s "$shared/missing-target" "$shared/$slug"
+    command="$root/megabrain"
+  fi
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" PATH=/usr/bin:/bin "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "$implementation accepted a failed Git create: $output"
+  printf '%s failed create output: %s\n' "$implementation" "$output"
+}
+
+scenario_failed_create_removes_only_new_branch() {
+  local implementation state repo shared branch before after
+  for implementation in shell binary; do
+    state="$work_dir/orphan-$implementation/state"
+    repo="$work_dir/orphan-$implementation/repo"
+    shared="$work_dir/orphan-$implementation/shared"
+    branch="probe/orphan-$implementation"
+    mkdir -p "$state" "$shared"
+    make_repo "$repo"
+    printf '%s\n' "$shared" >"$state/worktree-root"
+    before="$(git -C "$repo" branch --list)"
+    run_failed_create "$implementation" "$state" "$repo" "$shared" "$branch"
+    after="$(git -C "$repo" branch --list)"
+    printf '%s branches before:\n%s\n' "$implementation" "$before"
+    printf '%s branches after:\n%s\n' "$implementation" "$after"
+    # Falsification: without rollback, the after listing contains the new branch.
+    assert_equal "$before" "$after"
+  done
+  printf 'failed creates remove branches created by that invocation\n'
+}
+
+scenario_existing_branch_survives_failed_create() {
+  local implementation state repo shared branch before after
+  for implementation in shell binary; do
+    state="$work_dir/existing-branch-$implementation/state"
+    repo="$work_dir/existing-branch-$implementation/repo"
+    shared="$work_dir/existing-branch-$implementation/shared"
+    branch="probe/existing-$implementation"
+    mkdir -p "$state" "$shared"
+    make_repo "$repo"
+    git -C "$repo" branch "$branch"
+    printf '%s\n' "$shared" >"$state/worktree-root"
+    before="$(git -C "$repo" branch --list)"
+    run_failed_create "$implementation" "$state" "$repo" "$shared" "$branch"
+    after="$(git -C "$repo" branch --list)"
+    printf '%s pre-existing branch listings before:\n%s\n' "$implementation" "$before"
+    printf '%s pre-existing branch listings after:\n%s\n' "$implementation" "$after"
+    assert_equal "$before" "$after"
+  done
+  printf 'failed creates preserve pre-existing branches\n'
+}
+
+scenario_worktree_create_routes_binary() {
+  local fixture="$work_dir/orphan-routing" state="$work_dir/orphan-routing-state" repo="$work_dir/orphan-routing-repo" shared="$work_dir/orphan-routing-shared" output status
+  source "$root/tests/fixtures/entrypoint-routing.sh"
+  make_entrypoint_routing_fixture "$root" "$fixture" 97
+  mkdir -p "$state" "$shared"
+  make_repo "$repo"
+  printf '%s\n' "$shared" >"$state/worktree-root"
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/megabrain" worktree create --repo "$repo" --branch feat/orphan-routing --base main --json 2>&1)"
+  status=$?
+  set -e
+  assert_equal "$status" 97
+  printf 'worktree create binary route reaches the compiled entrypoint\n'
+}
+
 refusal_output() {
   local implementation="$1" mode="$2" state output status
   state="$work_dir/refusal-$implementation-$mode/state"
@@ -267,6 +344,9 @@ scenario_orchestrator_free_create_and_list
 scenario_superset_project_failure_keeps_git_work
 scenario_superset_workspace_failure_keeps_git_work
 scenario_compiled_registration_failure_keeps_git_work
+scenario_failed_create_removes_only_new_branch
+scenario_existing_branch_survives_failed_create
+scenario_worktree_create_routes_binary
 scenario_repo_selector_refusal_causes
 scenario_routing_deleted_and_restored
 printf 'ok: worktree create contract scenarios\n'
