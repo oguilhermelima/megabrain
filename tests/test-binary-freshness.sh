@@ -95,6 +95,21 @@ printf 'stale binary warns and preserves JSON output\n'
 
 # Scenario: every binary-only wrapper warns when its artifact is stale.
 # Falsification: a wrapper that calls the binary directly without the freshness check stays silent.
+binary_wrapper_subjects() {
+  awk '
+    /compiled binary is missing/ { guard = 1; next }
+    guard && /\$typescript_binary"/ {
+      line = $0
+      sub(/^.*"\$typescript_binary"[[:space:]]*/, "", line)
+      sub(/[[:space:]]+"\$@".*/, "", line)
+      if (line != "") {
+        print line
+        guard = 0
+      }
+    }
+  ' "$fixture_root"/lib/module-*.sh
+}
+
 assert_migrated_verb_warns() {
   local name="$1" stderr_file status
   shift
@@ -109,14 +124,12 @@ assert_migrated_verb_warns() {
   return 0
 }
 
-assert_migrated_verb_warns model model list --json
-assert_migrated_verb_warns web web devices list
-assert_migrated_verb_warns tv tv --help
-assert_migrated_verb_warns native native sim list phone
-assert_migrated_verb_warns doctor doctor compiled-binary --json
-assert_migrated_verb_warns worktree-pr worktree pr --help
-assert_migrated_verb_warns worktree-adopt worktree adopt --help
-assert_migrated_verb_warns terminal-list terminal list --help
+wrapper_subjects="$work_dir/wrapper-subjects"
+binary_wrapper_subjects >"$wrapper_subjects"
+[ -s "$wrapper_subjects" ] || fail 'freshness contract found no binary-only wrappers'
+while IFS= read -r subject; do
+  assert_migrated_verb_warns "${subject// /-}" $subject --help
+done <"$wrapper_subjects"
 
 # Scenario: rebuilding removes the warning and leaves the fresh binary usable.
 # Falsification: a warning that always fires remains visible after the build.
