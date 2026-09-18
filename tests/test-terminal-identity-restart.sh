@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal.XXXXXX")"
+fake_bin="$state_dir/bin"
 fake_port_state="$state_dir/fake-port-state"
 fake_port_recreated_file="$state_dir/fake-port-recreated"
 fake_port_wait_observed_file="$state_dir/fake-port-wait-observed"
@@ -15,6 +16,13 @@ fake_identity_read=true
 fake_port_stuck=false
 fake_port_recreate_listens=true
 
+export MEGABRAIN_ROOT="$root"
+export MEGABRAIN_TEST_WORKTREE="$root"
+export fake_bin fake_port_state fake_port_recreated_file fake_port_wait_observed_file fake_tree_state
+export fake_create_command_file fake_status_probe_file fake_close_called_file
+export fake_host_live fake_process_alive fake_create_returns_identity fake_identity_read fake_port_stuck fake_port_recreate_listens
+export fake_id fake_pid fake_port fake_title
+
 printf 'listening\n' >"$fake_port_state"
 printf 'no\n' >"$fake_port_recreated_file"
 printf 'no\n' >"$fake_port_wait_observed_file"
@@ -24,6 +32,93 @@ fake_status_probe_file="$state_dir/fake-status-probe"
 fake_close_called_file="$state_dir/fake-close-called"
 printf 'no\n' >"$fake_status_probe_file"
 printf 'no\n' >"$fake_close_called_file"
+
+mkdir -p "$fake_bin"
+cat >"$fake_bin/superset" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+case "${1:-}:${2:-}" in
+  terminals:create)
+    command=''
+    previous=''
+    for arg in "$@"; do
+      if [ "$previous" = --command ]; then command="$arg"; fi
+      previous="$arg"
+    done
+    printf '%s\n' "$command" >"$fake_create_command_file"
+    marker="$(printf '%s' "$command" | sed -n 's/.*MEGABRAIN_TERMINAL_PID_\([^=]*\)=.*/\1/p')"
+    printf '%s\n' "$marker" >"$fake_bin/identity-marker"
+    if [ "$(cat "$fake_port_state")" = free ] && [ "$fake_port_stuck" = false ] && [ "$fake_port_recreate_listens" = true ]; then
+      printf 'listening\n' >"$fake_port_state"
+      printf 'yes\n' >"$fake_port_recreated_file"
+    fi
+    if [ "$fake_create_returns_identity" = true ]; then
+      printf '{"terminalId":"%s","pid":%s,"port":%s}\n' "$fake_id" "$fake_pid" "$fake_port"
+    else
+      printf '{"terminalId":"%s"}\n' "$fake_id"
+    fi
+    ;;
+  terminals:read)
+    if [ "$fake_identity_read" = true ]; then
+      printf '{"output":"MEGABRAIN_TERMINAL_PID_%s=%s"}\n' "$(cat "$fake_bin/identity-marker")" "$fake_pid"
+    else
+      printf '{"output":"terminal started"}\n'
+    fi
+    ;;
+  terminals:list)
+    printf 'yes\n' >"$fake_status_probe_file"
+    if [ "$fake_host_live" = true ]; then
+      if [ "$fake_process_alive" = true ]; then
+        printf '{"terminals":[{"terminalId":"%s","pid":%s,"port":%s,"exited":false}]}\n' "$fake_id" "$fake_pid" "$fake_port"
+      else
+        printf '{"terminals":[{"terminalId":"%s","pid":%s,"port":%s,"exited":true}]}\n' "$fake_id" "$fake_pid" "$fake_port"
+      fi
+    else
+      printf '{"terminals":[]}\n'
+    fi
+    ;;
+  terminals:close)
+    printf 'yes\n' >"$fake_close_called_file"
+    printf '{"terminalId":"%s","status":"disposed"}\n' "$fake_id"
+    ;;
+  workspaces:list)
+    printf '{"workspaces":[{"id":"workspace-test","worktreePath":"%s"}]}\n' "$MEGABRAIN_TEST_WORKTREE"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$fake_bin/lsof" <<'EOF'
+#!/usr/bin/env bash
+if [ "$(cat "$fake_port_state")" = listening ]; then
+  if [ "$(cat "$fake_port_recreated_file")" = yes ]; then printf 'yes\n' >"$fake_port_wait_observed_file"; fi
+  printf '101\n'
+fi
+EOF
+cat >"$fake_bin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = -o ] && [ "${2:-}" = ppid= ]; then
+  case "${4:-}" in
+    100) printf '1\n' ;;
+    101) printf '100\n' ;;
+    *) printf '1\n' ;;
+  esac
+fi
+EOF
+cat >"$fake_bin/pgrep" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = -P ] && [ "${2:-}" = 100 ]; then printf '101\n'; fi
+EOF
+cat >"$fake_bin/kill" <<'EOF'
+#!/usr/bin/env bash
+pid="${2:-${1:-}}"
+if [ "$pid" = 100 ]; then
+  printf 'gone\n' >"$fake_tree_state"
+  if [ "$fake_port_stuck" = false ]; then printf 'free\n' >"$fake_port_state"; fi
+fi
+exit 0
+EOF
+chmod +x "$fake_bin"/*
+export PATH="$fake_bin:$PATH"
 
 fake_port_set_listening() {
   printf '%s\n' "$1" >"$fake_port_state"
