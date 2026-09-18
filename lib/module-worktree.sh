@@ -2688,12 +2688,16 @@ command_worktree() {
     create) megabrain_worktree_create "$@" ;;
     pr|open-pr)
       [ -x "$typescript_binary" ] || { megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"; return 1; }
+      # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+      megabrain_warn_if_typescript_binary_stale
       "$typescript_binary" worktree pr "$@"
       ;;
     finish) megabrain_worktree_finish "$@" ;;
     list) megabrain_worktree_list "$@" ;;
     adopt)
       [ -x "$typescript_binary" ] || { megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"; return 1; }
+      # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+      megabrain_warn_if_typescript_binary_stale
       "$typescript_binary" worktree adopt "$@"
       ;;
     -h|--help|"")
@@ -2725,6 +2729,8 @@ command_terminal() {
       ;;
     list)
       [ -x "$typescript_binary" ] || { megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"; return 1; }
+      # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+      megabrain_warn_if_typescript_binary_stale
       "$typescript_binary" terminal list "$@"
       ;;
     restart)

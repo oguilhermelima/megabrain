@@ -203,5 +203,7 @@ command_web() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" web "$@"
 }

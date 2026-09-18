@@ -93,20 +93,27 @@ megabrain_notice() {
 
 MEGABRAIN_BINARY_FRESHNESS_WARNING_SHOWN=false
 
-megabrain_should_use_typescript_binary() {
-  local implementation="${1:-}" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+megabrain_warn_if_typescript_binary_stale() {
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   local source_directory="${MEGABRAIN_ROOT:-}/src" newer_source=''
-  [ -x "$typescript_binary" ] || return 1
-  [ "$implementation" != shell ] || return 1
+  # WHY: binary-only wrappers call this after their missing-binary refusal; keeping freshness
+  # separate from routing preserves the notice when a migrated verb has no shell fallback.
   if [ "${MEGABRAIN_SKIP_BINARY_FRESHNESS_CHECK:-false}" != true ] &&
     [ "${MEGABRAIN_BINARY_FRESHNESS_WARNING_SHOWN:-false}" != true ] &&
-    [ -d "$source_directory" ]; then
+    [ -x "$typescript_binary" ] && [ -d "$source_directory" ]; then
     newer_source="$(find "$source_directory" -name '*.ts' -newer "$typescript_binary" -print -quit 2>/dev/null || true)"
     if [ -n "$newer_source" ]; then
       megabrain_notice "compiled binary is stale; newer source: $newer_source; run bun run build"
       MEGABRAIN_BINARY_FRESHNESS_WARNING_SHOWN=true
     fi
   fi
+}
+
+megabrain_should_use_typescript_binary() {
+  local implementation="${1:-}" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  [ -x "$typescript_binary" ] || return 1
+  [ "$implementation" != shell ] || return 1
+  megabrain_warn_if_typescript_binary_stale
   return 0
 }
 
