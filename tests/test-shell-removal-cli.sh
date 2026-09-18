@@ -169,6 +169,21 @@ scenario_falsification_rejects_broken_content() {
   printf 'falsification output: BROKEN is rejected despite a successful route\n'
 }
 
+scenario_falsification_is_red_for_each_route() {
+  local name="$1" expected="$2" fixture="$work/falsification-$1" output status
+  shift 2
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  write_fixture_binary "$fixture" BROKEN
+  set +e
+  output="$(MEGABRAIN_STATE_DIR="$work/falsification-state-$name" "$fixture/megabrain" "$@" 2>"$work/falsification-$name.err")"
+  status=$?
+  set -e
+  assert_equal "$status" 73
+  [ "$output" != "$expected" ] || fail "$name contract stayed green with a broken compiled implementation"
+  assert_equal "$output" BROKEN
+  printf '%s falsification is RED: compiled output BROKEN is rejected\n' "$name"
+}
+
 scenario_route_markers
 scenario_context_content
 scenario_worktree_pr_content
@@ -176,4 +191,8 @@ scenario_worktree_adopt_content
 scenario_terminal_list_content
 scenario_terminal_list_identity_and_stale_content
 scenario_falsification_rejects_broken_content
+scenario_falsification_is_red_for_each_route context '{"host":"unknown"}' context --json
+scenario_falsification_is_red_for_each_route worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
+scenario_falsification_is_red_for_each_route worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
+scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-list"}' terminal list --json
 printf 'ok: compiled routes and content contracts cover all removal verbs\n'
