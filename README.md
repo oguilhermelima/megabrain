@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/oguilhermelima/megabrain/main/insta
 It downloads the rest itself, asks what to configure, and links `megabrain` into
 `~/.local/bin`. Pass the answers to skip the questions:
 
+The installer requires Bun to compile the CLI after downloading the release archive.
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/oguilhermelima/megabrain/main/install.sh \
   | bash -s -- --agents codex --skill global --agents-md global --yes

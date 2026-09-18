@@ -72,6 +72,7 @@ Build a release archive and render the Homebrew formula.
 The script prints the commands for the operator to run. It does not tag,
 push, or create a GitHub release itself.
 The rendered formula commit must be the last commit before tagging.
+The archive intentionally excludes the compiled binary; install.sh builds it with Bun after extraction.
 EOF
 }
 
@@ -171,6 +172,7 @@ fi
 
 printf 'release archive: %s\n' "$output"
 printf 'rendered formula: %s\n' "$formula_output"
+printf 'compiled binary: install.sh builds it with Bun after extraction (not included in the archive)\n'
 printf 'git tag -a %s -m "Release %s"\n' "$tag" "$version"
 printf 'git push origin %s\n' "$tag"
 printf 'gh release create %s %s --title "Release %s" --generate-notes\n' "$tag" "$output" "$version"
