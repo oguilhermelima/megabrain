@@ -135,7 +135,7 @@ describe("native Appium session store", () => {
 
     const post = processAdapter.calls.find((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
     expect(post).toBeDefined();
-    expect(JSON.parse(post?.args.at(-1) ?? "{}")).toEqual({ capabilities: { alwaysMatch: { platformName: "iOS", "appium:isHeadless": true, "appium:udid": "one", "appium:bundleId": "com.example.app" } } });
+    expect(JSON.parse(post?.args.at(-1) ?? "{}")).toEqual({ capabilities: { alwaysMatch: { platformName: "iOS", "appium:isHeadless": true, "appium:newCommandTimeout": 60, "appium:udid": "one", "appium:bundleId": "com.example.app" } } });
   });
 
   test("serializes concurrent writers so one live session is shared", async () => {

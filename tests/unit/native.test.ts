@@ -148,6 +148,7 @@ describe("native health Appium session", () => {
     const sessionRequest = calls.find((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
     expect(sessionRequest).toBeDefined();
     expect(JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch["appium:isHeadless"]).toBe(true);
+    expect(JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch["appium:newCommandTimeout"]).toBe(60);
   });
 });
 
