@@ -138,7 +138,7 @@ export HOME="$empty_home" MEGABRAIN_STATE_DIR="$empty_state_shell" EMPTY_DOCTOR_
 for module in orchestration-hooks worktree tmux-runtime; do
   export MEGABRAIN_STATE_DIR="$empty_state_binary"
   run_capture "$work/empty-binary-$module" "$binary" doctor "$module" --json
-  jq -e --arg module "$module" '.module == $module and (.reason | type) == "string"' \
+  jq -e --arg moduleName "$module" '.module == $moduleName and (.reason | type) == "string"' \
     "$work/empty-binary-$module.stdout" >/dev/null || fail "empty environment $module report was incomplete"
 done
 
@@ -255,7 +255,7 @@ done
 for module in "${modules[@]}"; do
   export MEGABRAIN_STATE_DIR="$work/shell-state"
   run_capture "$work/binary-$module" "$binary" doctor "$module" --json
-  jq -e --arg module "$module" '.module == $module and (.status | type) == "string" and (.reason | type) == "string"' \
+  jq -e --arg moduleName "$module" '.module == $moduleName and (.status | type) == "string" and (.reason | type) == "string"' \
     "$work/binary-$module.stdout" >/dev/null || fail "compiled doctor report was incomplete for $module"
   if [ "$module" = skill-sync ]; then
     jq -e '.status == "ok" and .reason == "skill copies current: 2"' "$work/binary-$module.stdout" >/dev/null || fail 'compiled skill-sync fixture did not report two current copies'
