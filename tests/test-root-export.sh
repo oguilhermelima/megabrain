@@ -110,6 +110,27 @@ if grep -F 'compiled binary is not present' "$doctor_output" >/dev/null; then
 fi
 printf 'doctor assesses checkout binary outside the repository\n'
 
+# Scenario: doctor reports unknown freshness without an artifact and does not fail a fresh clone.
+# Falsification: treating absence as ok hides the unknown state, while treating it as a finding
+# returns non-zero for a checkout that has not been built yet.
+absent_root="$work/absent-repo"
+mkdir -p "$absent_root/src"
+absent_output="$work/absent-doctor.out"
+if env -i \
+  HOME="$work/home" \
+  PATH="$work/bin:/usr/bin:/bin" \
+  MEGABRAIN_ROOT="$absent_root" \
+  MEGABRAIN_STATE_DIR="$state/absent" \
+  "$fixture/.build/megabrain" doctor compiled-binary --json >"$absent_output" 2>&1; then
+  absent_status=0
+else
+  absent_status=$?
+fi
+[ "$absent_status" -eq 0 ] || fail "doctor failed an absent-binary check: $(cat "$absent_output")"
+jq -e '.module == "compiled-binary" and .status == "unknown" and (.reason | contains("freshness cannot be determined"))' "$absent_output" >/dev/null ||
+  fail "doctor did not report unknown freshness: $(cat "$absent_output")"
+printf 'doctor reports unknown freshness without an artifact\n'
+
 # Scenario: chain state remains isolated in the test fixture while running outside the repository.
 # Falsification: an ambient home or cwd state source changes the fixture result.
 chain_output="$work/chain.out"
