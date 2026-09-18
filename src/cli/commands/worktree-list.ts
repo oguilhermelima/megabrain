@@ -29,20 +29,19 @@ async function sharedRoot(environment: WorktreeListEnvironment): Promise<Result<
 }
 
 async function repositoryForDirectory(process: ProcessAdapter, path: string): Promise<Repository | undefined> {
-  const top = await runGit(process, path, ["rev-parse", "--show-toplevel"]);
+  const top = await runGit(process, path, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
   if (top === undefined) return undefined;
   const initialTop = await canonical(top.trim());
   if (initialTop === undefined) return undefined;
-  const initialCommon = await runGit(process, initialTop, ["rev-parse", "--git-common-dir"]);
-  if (initialCommon === undefined) return undefined;
-  const topPath = initialCommon.trim().endsWith("/.git")
-    ? await canonical(initialCommon.trim().slice(0, -"/.git".length))
+  const common = await runGit(process, initialTop, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (common === undefined) return undefined;
+  const commonPath = await canonical(common.trim());
+  if (commonPath === undefined) return undefined;
+  const topPath = commonPath.endsWith("/.git")
+    ? await canonical(commonPath.slice(0, -"/.git".length))
     : initialTop;
   if (topPath === undefined) return undefined;
-  const common = await runGit(process, topPath, ["rev-parse", "--git-common-dir"]);
-  if (common === undefined) return undefined;
-  const commonPath = await canonical(resolve(common.trim()));
-  return commonPath === undefined ? undefined : { common: commonPath, path: topPath };
+  return { common: commonPath, path: topPath };
 }
 
 async function runGit(process: ProcessAdapter, path: string, args: readonly string[]): Promise<string | undefined> {
