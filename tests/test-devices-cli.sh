@@ -30,6 +30,16 @@ run_binary() {
   [ "$status" -eq 0 ] || { printf 'FAIL: %s status=%s output=%s\n' "$label" "$status" "$output"; exit 1; }
   printf '%s runs through the compiled CLI\n' "$label"
 }
+run_binary_output() {
+  local label="$1" expected="$2"; shift 2
+  local output status
+  set +e
+  output="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" "$root/.build/megabrain" "$@" 2>&1)"; status=$?
+  set -e
+  [ "$status" -eq 0 ] || { printf 'FAIL: %s status=%s output=%s\n' "$label" "$status" "$output"; exit 1; }
+  [ "$output" = "$expected" ] || { printf 'FAIL: %s output=%s expected=%s\n' "$label" "$output" "$expected"; exit 1; }
+  printf '%s emits the expected compiled CLI output\n' "$label"
+}
 run_binary native-help native --help
 run_binary native-list native sim list phone
 if output="$(env MEGABRAIN_ROOT="$root" PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/state" "$root/.build/megabrain" native sim list bad 2>&1)"; then
@@ -40,9 +50,9 @@ case "$output" in
   *'expected simulator kind phone or tv, got: bad'*) printf 'native-invalid refuses an invalid simulator kind\n' ;;
   *) printf 'FAIL: native-invalid output was unexpected: %s\n' "$output" >&2; exit 1 ;;
 esac
-run_binary tv-help tv --help
-run_binary tv-connect tv connect x
-run_binary tv-disconnect tv disconnect
+run_binary_output tv-help $'Usage: megabrain tv connect <ip> [--port <port>]\n       megabrain tv disconnect [<ip>]' tv --help
+run_binary_output tv-connect 'tv: connected (x:5555)' tv connect x
+run_binary_output tv-disconnect 'disconnected' tv disconnect
 
 routing_fixture="$work_dir/routing-fixture"
 make_entrypoint_routing_fixture "$root" "$routing_fixture" 42
