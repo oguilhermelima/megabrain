@@ -38,6 +38,50 @@ async function run(
     ? ok(result.value)
     : failed(result.error, result.exitCode);
 }
+async function localBranchExists(
+  process: ProcessAdapter,
+  repo: string,
+  branch: string,
+): Promise<Result<boolean>> {
+  const result = await run(process, "git", [
+    "-C",
+    repo,
+    "show-ref",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}`,
+  ]);
+  if (result.kind === "ok") return ok(true);
+  if (result.kind === "failed" && result.exitCode === 1) return ok(false);
+  return failed(
+    result.kind === "failed" ? result.error : result.reason,
+    result.kind === "failed" ? result.exitCode : 1,
+  );
+}
+async function removeCreatedBranch(
+  process: ProcessAdapter,
+  repo: string,
+  branch: string,
+  existedBefore: boolean,
+): Promise<Result<null>> {
+  if (existedBefore) return ok(null);
+  const existsAfter = await localBranchExists(process, repo, branch);
+  if (existsAfter.kind !== "ok")
+    return failed(
+      `could not check branch ${branch} after worktree creation failed`,
+    );
+  if (!existsAfter.value) return ok(null);
+  const removed = await run(process, "git", [
+    "-C",
+    repo,
+    "branch",
+    "-D",
+    branch,
+  ]);
+  return removed.kind === "ok"
+    ? ok(null)
+    : failed(`could not remove branch ${branch} after worktree creation failed`);
+}
 async function root(
   environment: Environment,
   tolerateMissing = false,
@@ -470,6 +514,10 @@ export async function executeWorktreeCreate(
   const name = value.name ?? createName(branch);
   if (!name) return failed("branch cannot produce a safe slug");
   const path = join(shared.value, name);
+  // WHY: only a branch absent before this invocation may be removed on add failure.
+  const branchBefore = await localBranchExists(process, repo.value, branch);
+  if (branchBefore.kind !== "ok")
+    return failed(`could not check whether branch exists: ${branch}`);
   await mkdir(shared.value, { recursive: true });
   const added = await run(process, "git", [
     "-C",
@@ -481,7 +529,17 @@ export async function executeWorktreeCreate(
     branch,
     base,
   ]);
-  if (added.kind !== "ok") return failed("could not create git worktree");
+  if (added.kind !== "ok") {
+    const removed = await removeCreatedBranch(
+      process,
+      repo.value,
+      branch,
+      branchBefore.value,
+    );
+    return removed.kind === "ok"
+      ? failed("could not create git worktree")
+      : failed(`could not create git worktree; ${removed.error}`);
+  }
   const copied = await copyEnvFiles(repo.value, path);
   if (copied.kind !== "ok") return copied;
   let parent: {
