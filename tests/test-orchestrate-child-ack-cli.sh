@@ -50,7 +50,9 @@ run_binary() {
 }
 
 compare() {
-  local label="$1" args="$2" shell_state="$work_dir/$label-shell" binary_state="$work_dir/$label-binary"
+  local label="$1" args="$2" shell_state binary_state
+  shell_state="$work_dir/$label-shell"
+  binary_state="$work_dir/$label-binary"
   make_dispatch "$shell_state" "$label"
   make_dispatch "$binary_state" "$label"
   run_shell "$shell_state" "$args"
