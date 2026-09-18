@@ -72,7 +72,7 @@ Commands:
   tv connect <ip> [--port <port>]      Connect an Android TV over adb
   tv disconnect [<ip>]                 Disconnect an Android TV
   tmux tune [--yes|--dry-run|--revert] Tune global tmux configuration
-  tmux wrapper [--yes|--dry-run|--revert] Install the zsh agent tmux wrapper
+  tmux wrapper [--yes|--dry-run|--revert] Install the agent tmux wrapper
 EOF
 }
 

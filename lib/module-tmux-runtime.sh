@@ -1238,11 +1238,23 @@ megabrain_tmux_wrapper() {
 }
 
 command_tmux() {
-  local subcommand="${1:-}"
+  local subcommand="${1:-}" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   shift || true
   case "$subcommand" in
-    tune) megabrain_tmux_tune "$@" ;;
-    wrapper) megabrain_tmux_wrapper "$@" ;;
+    tune)
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_TMUX_TUNE_IMPLEMENTATION:-}"; then
+        "$typescript_binary" tmux tune "$@"
+        return $?
+      fi
+      megabrain_tmux_tune "$@"
+      ;;
+    wrapper)
+      if megabrain_should_use_typescript_binary "${MEGABRAIN_TMUX_WRAPPER_IMPLEMENTATION:-}"; then
+        "$typescript_binary" tmux wrapper "$@"
+        return $?
+      fi
+      megabrain_tmux_wrapper "$@"
+      ;;
     -h|--help|"")
       megabrain_usage_show tmux-tune tmux-wrapper
       ;;

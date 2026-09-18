@@ -22,6 +22,7 @@ import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/
 import { executeChain } from "./commands/chain.js";
 import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
 import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
+import { executeTmux } from "./commands/tmux.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -59,6 +60,9 @@ export function route(
   }
   if (command === "tv") {
     return executeTv(commandArgs, dependencies.processAdapter);
+  }
+  if (command === "tmux") {
+    return executeTmux(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "list") {
     return executeOrchestrateList(commandArgs.slice(1), dependencies.environment);
