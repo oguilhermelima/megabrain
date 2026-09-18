@@ -3,7 +3,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-root-export.XXXXXX")"
+# WHY: the wrapper canonicalizes its source with pwd -P, so the fixture expectation must use the
+# same real path while leaving command output untouched for comparison.
+work="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/megabrain-root-export.XXXXXX")" && pwd -P)"
 fixture="$work/repo"
 state="$work/state"
 unrelated="$work/unrelated"
