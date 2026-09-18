@@ -80,7 +80,7 @@ export function parseCrashReport(contents: string, target: string): CrashParse {
       incidentId: text(header.incident_id),
       timestamp: text(header.timestamp),
       exceptionType,
-      signal: text(exception.signal),
+      signal: text(exception?.signal),
       termination: text(termination?.indicator) ?? text(body.termination),
       frames: thread.frames.map((frame) => frameText(frame, images)),
     },

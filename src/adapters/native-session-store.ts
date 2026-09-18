@@ -29,7 +29,7 @@ export function createNativeSessionStore(environment: QueueEnvironment): NativeS
   return {
     available: path !== undefined,
     path,
-    async update<T>(operation) {
+    async update<T>(operation: (sessions: readonly NativeSession[]) => Promise<Update<T>>) {
       if (path === undefined || lockPath === undefined) return failed("native session store has no resolvable state directory");
       try {
         await mkdir(dirname(path), { recursive: true });

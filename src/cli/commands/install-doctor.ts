@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
@@ -13,9 +13,9 @@ const diagnosticModules = ["compiled-binary"];
 const valid = (module: string): boolean => modules.includes(module) || diagnosticModules.includes(module);
 
 function newerSource(directory: string, binaryMtime: number): string | undefined {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Dirent<string>[];
   try {
-    entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    entries = readdirSync(directory, { withFileTypes: true, encoding: "utf8" }).sort((left, right) => left.name.localeCompare(right.name));
   } catch {
     return undefined;
   }

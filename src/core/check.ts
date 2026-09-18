@@ -46,7 +46,7 @@ function matchesMailbox(mailbox: "parent" | "child", full: boolean, delivery: Ch
   for (const message of ordered) {
     if (mailbox === "parent" && (message.from === "child" || message.from === "megabrain")) {
       const classification = classifyMail(message.from, message.type, priorDone);
-      if (full ? classification !== "unknown" : classification === "actionable") return true;
+      if (full ? (typeof classification === "string" || classification.kind !== "unknown") : classification === "actionable") return true;
     }
     if (mailbox === "child" && message.from === "parent") {
       if (full ? ["reply", "withdrawal", "received", "ack", "ask", "done", "stalled", "interrupt", "interrupt-result"].includes(message.type) : ["reply", "withdrawal"].includes(message.type)) return true;
