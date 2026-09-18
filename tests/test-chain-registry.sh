@@ -94,5 +94,3 @@ jq -e '.chains | length == 1' "$absent_output" >/dev/null || fail 'missing regis
 assert_contains "$(cat "$absent_error")" 'model registry'
 assert_contains "$(cat "$absent_error")" 'validation was skipped'
 printf 'registry absent: command succeeds with an explicit validation notice\n'
-{"content_type":"terminal","tokens_before":1218,"tokens_after":1218,"token_count_basis":"o200k_base","ratio":0,"basis":"inferred"}
-
