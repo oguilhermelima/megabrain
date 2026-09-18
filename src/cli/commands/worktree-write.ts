@@ -26,6 +26,7 @@ import {
   type FinishOptions,
   type PullRequestOptions,
 } from "../../core/worktree-write.js";
+import { repoFromOrca } from "./repository-selector.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 async function run(
@@ -106,60 +107,6 @@ async function root(
           `shared worktree root for host 'unknown' is unset; choose one interactively with megabrain worktree create or set ${state}/worktree-root`,
         );
   return ok((await realpath(resolve(raw))) || resolve(raw));
-}
-async function repoFromOrca(
-  process: ProcessAdapter,
-  selector: string,
-): Promise<Result<string>> {
-  const direct = await run(process, "git", [
-    "-C",
-    selector,
-    "rev-parse",
-    "--show-toplevel",
-  ]);
-  if (direct.kind === "ok") {
-    const common = await run(process, "git", [
-      "-C",
-      selector,
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-common-dir",
-    ]);
-    const commonPath = common.kind === "ok" ? common.value.stdout.trim() : "";
-    if (commonPath.endsWith("/.git")) {
-      const canonical = await run(process, "git", [
-        "-C",
-        commonPath.slice(0, -5),
-        "rev-parse",
-        "--show-toplevel",
-      ]);
-      if (canonical.kind === "ok") return ok(canonical.value.stdout.trim());
-    }
-    return ok(direct.value.stdout.trim());
-  }
-  // WHY: a failed registry call is an unknown orchestrator state, not proof that Orca is absent.
-  const command = await run(process, "sh", ["-c", "command -v orca"]);
-  if (command.kind !== "ok")
-    return failed("repo must be a git path when orca is not installed");
-  const listed = await run(process, "orca", ["repo", "list", "--json"]);
-  if (listed.kind !== "ok")
-    return failed(`could not resolve repo selector '${selector}': orca did not respond; pass a Git path instead`);
-  try {
-    const payload = JSON.parse(listed.value.stdout) as {
-      result?: { repos?: Array<{ displayName?: string; path?: string }> };
-    };
-    const wanted = selector.toLocaleLowerCase();
-    const match = (payload.result?.repos ?? []).find((repo) => {
-      const path = repo.path ?? "";
-      return (
-        wanted === (repo.displayName ?? "").toLocaleLowerCase() ||
-        wanted === basename(path).toLocaleLowerCase()
-      );
-    });
-    return match?.path ? ok(match.path) : failed(`repo not found: ${selector}`);
-  } catch {
-    return failed(`repo not found: ${selector}`);
-  }
 }
 async function repositoryRoot(
   process: ProcessAdapter,
