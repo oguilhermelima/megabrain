@@ -8,6 +8,8 @@ if [ ! -x "$root/.build/megabrain" ]; then
   exit 0
 fi
 
+source "$root/tests/fixtures/entrypoint-routing.sh"
+
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-child-ack.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
@@ -19,6 +21,19 @@ fail() {
 assert_equal() {
   [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
 }
+
+routing_fixture="$work_dir/routing-fixture"
+routing_state="$work_dir/routing-state"
+make_entrypoint_routing_fixture "$root" "$routing_fixture" 73
+mkdir -p "$routing_state"
+set +e
+env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$routing_state" \
+  SUPERSET_TERMINAL_ID=child-terminal "$routing_fixture/megabrain" ack delivery-fixed --json \
+  >"$routing_state.stdout" 2>"$routing_state.stderr"
+routing_status=$?
+set -e
+assert_equal "$routing_status" 73
+printf 'child mailbox route reaches the compiled binary\n'
 
 make_dispatch() {
   local state="$1" dispatch="$2"
