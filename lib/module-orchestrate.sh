@@ -601,6 +601,8 @@ megabrain_dispatch_liveness() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
   if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
     if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
       export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
@@ -2921,6 +2923,8 @@ command_ask() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" ask "$@"
 }
 
@@ -2930,6 +2934,8 @@ command_received() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" received "$@"
 }
 
@@ -2939,6 +2945,8 @@ command_done() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" done "$@"
 }
 
@@ -2948,6 +2956,8 @@ command_check() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" check "$@"
 }
 
