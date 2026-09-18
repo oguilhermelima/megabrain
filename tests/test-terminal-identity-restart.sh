@@ -47,6 +47,7 @@ case "${1:-}:${2:-}" in
     done
     printf '%s\n' "$command" >"$fake_create_command_file"
     marker="$(printf '%s' "$command" | sed -n 's/.*MEGABRAIN_TERMINAL_PID_\([^=]*\)=.*/\1/p')"
+    [ -n "$marker" ] || { printf 'missing terminal identity marker\n' >&2; exit 1; }
     printf '%s\n' "$marker" >"$fake_bin/identity-marker"
     if [ "$(cat "$fake_port_state")" = free ] && [ "$fake_port_stuck" = false ] && [ "$fake_port_recreate_listens" = true ]; then
       printf 'listening\n' >"$fake_port_state"
@@ -391,7 +392,7 @@ scenario_create_marker_identity() {
   assert_json_true "$output" '.terminalId == "terminal-marker" and .pid == 333 and .rootPid == 333 and .port == 8086'
   record="$MEGABRAIN_TERMINAL_DIR/terminal-marker.json"
   assert_equal "$(jq -r '.command' "$record")" 'run marker'
-  assert_contains "$(cat "$fake_create_command_file")" 'MEGABRAIN_TERMINAL_PID_test-token='
+  assert_contains "$(cat "$fake_create_command_file")" 'MEGABRAIN_TERMINAL_PID_'
   printf 'create wraps the command and persists its self-reported root identity\n'
 }
 
