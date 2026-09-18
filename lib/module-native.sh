@@ -668,7 +668,7 @@ megabrain_native_app_health() {
 }
 
 megabrain_native_build() {
-  local kind="$1" arg runtime="" app_path app_json scheme bundle_id platform runtime_json device_json udid ios_path workspace derived sdk app_bundle
+  local kind="$1" arg runtime="" app_path configured_app_path app_json scheme bundle_id platform runtime_json device_json udid ios_path workspace derived sdk app_bundle
   shift || true
   case "$kind" in phone) platform=iOS ;; tv) platform=tvOS ;; *) megabrain_error "expected simulator kind phone or tv, got: $kind"; return "$MEGABRAIN_USAGE_ERROR" ;; esac
   while [ "$#" -gt 0 ]; do
@@ -680,9 +680,14 @@ megabrain_native_build() {
       *) megabrain_error "unknown native build option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
     esac
   done
-  app_path="$(megabrain_native_config_value "$kind" appPath)"
-  [ -n "$app_path" ] || { megabrain_error "app path is required for $kind; pass surfaces.$kind.appPath in .megabrain/native.json"; return 1; }
-  app_path="$(cd "${MEGABRAIN_NATIVE_WORKTREE:-$PWD}/$app_path" 2>/dev/null && pwd -P)" || { megabrain_error "configured app path does not exist for $kind: $app_path"; return 1; }
+  configured_app_path="$(megabrain_native_config_value "$kind" appPath)"
+  [ -n "$configured_app_path" ] || { megabrain_error "app path is required for $kind; pass surfaces.$kind.appPath in .megabrain/native.json"; return 1; }
+  if [[ "$configured_app_path" = /* ]]; then
+    app_path="$configured_app_path"
+  else
+    app_path="$(megabrain_native_worktree_root)/$configured_app_path"
+  fi
+  app_path="$(cd "$app_path" 2>/dev/null && pwd -P)" || { megabrain_error "configured app path does not exist for $kind: $configured_app_path"; return 1; }
   app_json="$app_path/app.json"
   [ -f "$app_json" ] || { megabrain_error "Expo app.json is required at $app_json"; return 1; }
   scheme="$(jq -r '.expo.scheme // empty' "$app_json")"; bundle_id="$(jq -r '.expo.ios.bundleIdentifier // empty' "$app_json")"

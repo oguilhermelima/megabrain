@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
@@ -24,8 +25,19 @@ function normalizeJsonResult(result: Result<string>, json: boolean): Result<stri
     return { ...result, value: `${JSON.stringify(value)}\n` };
   } catch { return result; }
 }
+// WHY: native config and app paths must not change when the command starts in a subdirectory.
+function nativeWorktreeRoot(environment: Environment): string {
+  const path = environment.MEGABRAIN_NATIVE_WORKTREE ?? process.cwd();
+  try {
+    const root = execFileSync("git", ["-C", path, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return root.length > 0 ? root : path;
+  } catch {
+    return path;
+  }
+}
+function nativeConfigFile(environment: Environment): string { return resolve(nativeWorktreeRoot(environment), ".megabrain/native.json"); }
 function config(environment: Environment): Result<Config> {
-  const file = resolve(environment.MEGABRAIN_NATIVE_WORKTREE ?? process.cwd(), ".megabrain/native.json");
+  const file = nativeConfigFile(environment);
   if (!existsSync(file)) return ok({});
   try {
     const value: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -113,7 +125,7 @@ async function nativeBuild(args: readonly string[], environment: Environment, pr
     if (arg === "--runtime" && args[index + 1]) { runtime = args[++index] as string; continue; }
     return error(`unknown native build option: ${arg}`, 2);
   }
-  const appPath = resolve(environment.MEGABRAIN_NATIVE_WORKTREE ?? process.cwd(), appSetting);
+  const appPath = resolve(nativeWorktreeRoot(environment), appSetting);
   const app = readExpoApp(appPath); if (app.kind !== "ok") return app;
   const runtimes = await installedRuntimes(processAdapter); if (runtimes.kind !== "ok") return runtimes;
   const platform: NativePlatform = kind.value === "tv" ? "tvOS" : "iOS";
