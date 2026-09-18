@@ -145,6 +145,20 @@ EOF
   printf 'terminal list content distinguishes identity mismatch, dead, and stale terminals\n'
 }
 
+scenario_terminal_list_rejects_subdirectory_selector() {
+  local repo="$work/terminal-selector-repo" subdir="$work/terminal-selector-repo/apps/web" state="$work/terminal-selector-state" output status
+  mkdir -p "$subdir" "$state"
+  setup_repo "$repo"
+  set +e
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+    "$root/.build/megabrain" terminal list --worktree "$subdir" --json 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'terminal list accepted a subdirectory selector'
+  assert_contains "$output" 'worktree selector points to subdirectory'
+  printf 'terminal list rejects a subdirectory selector with an actionable hint\n'
+}
+
 scenario_falsification_is_red_for_each_route() {
   local name="$1" expected="$2" fixture="$work/falsification-$1" output status
   shift 2
@@ -165,6 +179,7 @@ scenario_worktree_pr_content
 scenario_worktree_adopt_content
 scenario_terminal_list_content
 scenario_terminal_list_identity_and_stale_content
+scenario_terminal_list_rejects_subdirectory_selector
 scenario_falsification_is_red_for_each_route worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
 scenario_falsification_is_red_for_each_route worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
 scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-list"}' terminal list --json
