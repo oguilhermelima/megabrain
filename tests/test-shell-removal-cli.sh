@@ -20,12 +20,12 @@ write_fixture_binary() {
 }
 
 scenario_route_reaches_compiled_binary() {
-  local name="$1" content="$2" fixture="$work/route-$1" output status
-  shift 2
+  local name="$1" content="$2" implementation_name="$3" fixture="$work/route-$1" output status
+  shift 3
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" "$content"
   set +e
-  output="$(MEGABRAIN_STATE_DIR="$work/state-$name" "$fixture/megabrain" "$@" 2>"$work/state-$name.err")"
+  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$implementation_name=shell" "$fixture/megabrain" "$@" 2>"$work/state-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -34,9 +34,92 @@ scenario_route_reaches_compiled_binary() {
 }
 
 scenario_route_markers() {
-  scenario_route_reaches_compiled_binary worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
-  scenario_route_reaches_compiled_binary worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
-  scenario_route_reaches_compiled_binary terminal-list '{"verb":"terminal-list"}' terminal list --json
+  scenario_route_reaches_compiled_binary queue-ask '{"verb":"ask"}' MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION ask route-question
+  scenario_route_reaches_compiled_binary queue-received '{"verb":"received"}' MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION received
+  scenario_route_reaches_compiled_binary queue-done '{"verb":"done"}' MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION done route-summary
+  scenario_route_reaches_compiled_binary check '{"verb":"check"}' MEGABRAIN_CHECK_IMPLEMENTATION check --timeout 0 --json
+  scenario_route_reaches_compiled_binary reply '{"verb":"reply"}' MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION orchestrate reply route-dispatch --text route-answer --json
+  scenario_route_reaches_compiled_binary liveness '{"verb":"liveness"}' MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION orchestrate liveness route-dispatch --json
+}
+
+write_dispatch_fixture() {
+  local state="$1" dispatch="$2" parent_host="${3:-unknown}" runtime="${4:-host}"
+  mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
+  printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"workspaceId\":\"workspace\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"$parent_host\",\"runtime\":\"$runtime\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+}
+
+run_binary_content() {
+  local state="$1" dispatch="$2" verb="$3" output
+  shift 3
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb" "$@")"
+  printf '%s' "$output"
+}
+
+scenario_compiled_content_contracts() {
+  local state output
+
+  state="$work/content-ask"
+  write_dispatch_fixture "$state" ask
+  output="$(run_binary_content "$state" ask ask 'question content')"
+  assert_equal "$output" 'ask sent: ask'
+  assert_equal "$(jq -r '.state' "$state/dispatches/ask/meta.json")" waiting_for_reply
+  printf 'ask content is produced by the compiled command\n'
+
+  state="$work/content-received"
+  write_dispatch_fixture "$state" received
+  output="$(run_binary_content "$state" received received)"
+  assert_equal "$output" 'received sent: received'
+  assert_equal "$(jq -r '.promptReceipt' "$state/dispatches/received/meta.json")" received
+  printf 'received content is produced by the compiled command\n'
+
+  state="$work/content-done"
+  write_dispatch_fixture "$state" done
+  output="$(run_binary_content "$state" done done 'summary content')"
+  assert_equal "$output" 'done sent: done'
+  assert_equal "$(jq -r '.state' "$state/dispatches/done/meta.json")" done
+  printf 'done content is produced by the compiled command\n'
+
+  state="$work/content-check"
+  write_dispatch_fixture "$state" check
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --poll-interval 0 --consumer content --generation 2 --full --json)"
+  assert_json "$output" '.dispatchId == "check" and .status == "empty" and .messages == []'
+  printf 'check content includes the compiled empty-mailbox result\n'
+
+  state="$work/content-reply"
+  write_dispatch_fixture "$state" reply unknown
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate reply reply --text 'reply content' --json)"
+  assert_json "$output" '.dispatchId == "reply" and .status == "queued" and .nudge == "not-typed"'
+  assert_equal "$(jq -r '.text' "$state/dispatches/reply/messages"/*.json)" 'reply content'
+  printf 'reply content includes the queued response and status\n'
+
+  state="$work/content-liveness"
+  write_dispatch_fixture "$state" liveness unknown
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate liveness liveness --json)"
+  assert_json "$output" '.dispatchId == "liveness" and .dispatchState == "running" and .terminalLiveness == "unknown" and .source == "unknown"'
+  printf 'liveness content includes the compiled state result\n'
+}
+
+scenario_compiled_argument_forms() {
+  local output status
+  output="$($root/.build/megabrain ask --help)"
+  assert_contains "$output" 'Usage: megabrain ask'
+  output="$($root/.build/megabrain received --help)"
+  assert_contains "$output" 'Usage: megabrain received'
+  output="$($root/.build/megabrain done --help)"
+  assert_contains "$output" 'Usage: megabrain done'
+  output="$($root/.build/megabrain check --help)"
+  assert_contains "$output" 'Usage: megabrain check'
+  output="$($root/.build/megabrain orchestrate reply --help)"
+  assert_contains "$output" 'Usage: megabrain orchestrate reply'
+  output="$($root/.build/megabrain orchestrate liveness --help)"
+  assert_contains "$output" 'Usage: megabrain orchestrate liveness'
+
+  set +e
+  "$root/.build/megabrain" received unexpected >"$work/received-invalid" 2>&1; status=$?
+  set -e
+  assert_equal "$status" 2
+  assert_contains "$(cat "$work/received-invalid")" 'Usage: megabrain received'
+  printf 'compiled commands preserve help and invalid-argument forms\n'
 }
 
 setup_repo() {
@@ -174,6 +257,21 @@ scenario_falsification_is_red_for_each_route() {
   printf '%s falsification is RED: compiled output BROKEN is rejected\n' "$name"
 }
 
+scenario_removed_route_falsification() {
+  local name="$1" implementation_name="$2" expected="$3" fixture="$work/falsification-removed-$1" output status
+  shift 3
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  write_fixture_binary "$fixture" BROKEN
+  set +e
+  output="$(env "$implementation_name=shell" MEGABRAIN_STATE_DIR="$work/falsification-removed-state-$name" "$fixture/megabrain" "$@" 2>"$work/falsification-removed-$name.err")"
+  status=$?
+  set -e
+  assert_equal "$status" 73
+  assert_equal "$output" BROKEN
+  [ "$output" != "$expected" ] || fail "$name contract stayed green with a broken compiled implementation"
+  printf '%s falsification remains RED after shell deletion\n' "$name"
+}
+
 scenario_route_markers
 scenario_worktree_pr_content
 scenario_worktree_adopt_content
@@ -183,4 +281,12 @@ scenario_terminal_list_rejects_subdirectory_selector
 scenario_falsification_is_red_for_each_route worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
 scenario_falsification_is_red_for_each_route worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
 scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-list"}' terminal list --json
+scenario_removed_route_falsification queue-ask MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"ask"}' ask route-question
+scenario_removed_route_falsification queue-received MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"received"}' received
+scenario_removed_route_falsification queue-done MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"done"}' done route-summary
+scenario_removed_route_falsification check MEGABRAIN_CHECK_IMPLEMENTATION '{"verb":"check"}' check --timeout 0 --json
+scenario_removed_route_falsification reply MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION '{"verb":"reply"}' orchestrate reply route-dispatch --text route-answer --json
+scenario_removed_route_falsification liveness MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION '{"verb":"liveness"}' orchestrate liveness route-dispatch --json
+scenario_compiled_content_contracts
+scenario_compiled_argument_forms
 printf 'ok: compiled routes and content contracts cover all removal verbs\n'
