@@ -45,6 +45,39 @@ function processStub(options: { readonly dead?: ReadonlySet<string>; readonly po
   };
 }
 
+function statefulServerProcessStub(): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[] }[] } {
+  const calls: Array<{ readonly command: string; readonly args: readonly string[] }> = [];
+  const live = new Set<string>();
+  let created = 0;
+  return {
+    calls,
+    async run(command, args) {
+      calls.push({ command, args: [...args] });
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+      if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
+      if (command === "curl" && args[3] === "http://127.0.0.1:4723/session") {
+        created += 1;
+        const sessionId = `created-${created}`;
+        live.add(sessionId);
+        return ok({ stdout: JSON.stringify({ value: { sessionId } }), stderr: "", exitCode: 0 });
+      }
+      if (command === "curl" && args[1] === "-X" && args[2] === "DELETE") {
+        const sessionId = args[3]?.slice("http://127.0.0.1:4723/session/".length);
+        if (sessionId !== undefined) live.delete(sessionId);
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      if (command === "curl" && args[0] === "-fsS" && args[1]?.startsWith("http://127.0.0.1:4723/session/") && !args[1].endsWith("/source")) {
+        const sessionId = args[1].slice("http://127.0.0.1:4723/session/".length);
+        return live.has(sessionId) ? ok({ stdout: JSON.stringify({ value: { id: sessionId } }), stderr: "", exitCode: 0 }) : failed("404 invalid session id");
+      }
+      if (command === "curl" && args[1]?.endsWith("/source")) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>", stderr: "", exitCode: 0 });
+      return failed(`${command} unavailable`);
+    },
+    async startDetached() { return failed("not used"); },
+    invocationCount: () => calls.length,
+  };
+}
+
 async function health(directory: string, processAdapter: ProcessAdapter): Promise<void> {
   const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], { MEGABRAIN_STATE_DIR: directory }, processAdapter);
   expect(result.kind).toBe("ok");
@@ -81,6 +114,17 @@ describe("native Appium session store", () => {
     expect(posts).toHaveLength(1);
     const stored = JSON.parse(await readFile(join(directory, "native-sessions.json"), "utf8")) as { readonly sessions: readonly { readonly sessionId: string }[] };
     expect(stored.sessions).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
+  });
+
+  test("reuses the session produced by the previous health call", async () => {
+    const directory = await fixture();
+    const processAdapter = statefulServerProcessStub();
+
+    await health(directory, processAdapter);
+    await health(directory, processAdapter);
+
+    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    expect(posts).toHaveLength(1);
   });
 
   test("sends the complete headless capability set for every new session", async () => {
