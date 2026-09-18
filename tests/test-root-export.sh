@@ -133,13 +133,14 @@ jq -e '.module == "compiled-binary" and .status == "unknown" and (.reason | cont
   fail "doctor did not report unknown freshness: $(cat "$absent_output")"
 printf 'doctor reports unknown freshness without an artifact\n'
 
-# Scenario: chain state remains isolated in the test fixture while running outside the repository.
-# Falsification: an ambient home or cwd state source changes the fixture result.
+# Scenario: chain validation reads the checkout model registry outside the repository.
+# Falsification: without the exported root, the invalid model is accepted because validation is
+# silently skipped when models.json is resolved against the unrelated directory.
 chain_output="$work/chain.out"
 chain_status="$(run_from_unrelated "$chain_output" chain list)"
-[ "$chain_status" -eq 0 ] || fail "chain list returned $chain_status: $(cat "$chain_output")"
-grep -F 'fixture' "$chain_output" >/dev/null ||
-  fail "chain list did not read the fixture state: $(cat "$chain_output")"
-printf 'chain list remains isolated outside the repository\n'
+[ "$chain_status" -eq 1 ] || fail "chain list accepted an invalid model: $(cat "$chain_output")"
+grep -F "unknown model 'fixture'" "$chain_output" >/dev/null ||
+  fail "chain list did not validate against the checkout registry: $(cat "$chain_output")"
+printf 'chain list validates checkout models outside the repository\n'
 
 printf 'ok: checkout file resolution from an unrelated directory\n'
