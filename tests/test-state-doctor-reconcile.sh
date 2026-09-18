@@ -68,13 +68,13 @@ write_state() {
 write_state false
 first_output="$("$binary" doctor simulator-native 2>&1)" ||
   fail 'compiled doctor did not accept an installed native simulator'
-[ "$(jq -r '."simulator-native".installed' "$MEGABRAIN_STATE_FILE")" = true ] ||
-  fail 'doctor left a false state after observing the driver'
+[ "$(jq -r '."simulator-native".installed' "$MEGABRAIN_STATE_FILE")" = false ] ||
+  fail 'doctor changed a false state after observing the driver'
 case "$first_output" in
-  *'state reconciled'*) ;;
-  *) fail 'doctor did not report its state reconciliation' ;;
+  *'state reconciled'*) fail 'doctor reported a state reconciliation' ;;
+  *) ;;
 esac
-printf 'stale false state is reconciled to an installed native simulator\n'
+printf 'stale false state is reported without mutation\n'
 
 appium_driver_installed=false
 export APPIUM_DRIVER_INSTALLED=false
@@ -82,9 +82,9 @@ write_state true
 if "$binary" doctor simulator-native >/dev/null 2>&1; then
   fail 'doctor accepted a missing native simulator driver'
 fi
-[ "$(jq -r '."simulator-native".installed' "$MEGABRAIN_STATE_FILE")" = false ] ||
-  fail 'doctor left a true state after observing the missing driver'
-printf 'stale true state is reconciled to a missing native simulator\n'
+[ "$(jq -r '."simulator-native".installed' "$MEGABRAIN_STATE_FILE")" = true ] ||
+  fail 'doctor changed a true state after observing the missing driver'
+printf 'stale true state is reported without mutation\n'
 
 write_state true simulator-web
 export MEGABRAIN_PLAYWRIGHT_ROOT="$state_root/playwright"
@@ -94,7 +94,7 @@ if "$binary" doctor simulator-web >/dev/null 2>&1; then
   fail 'doctor accepted an unknown web simulator status'
 fi
 [ "$(jq -r '."simulator-web".installed' "$MEGABRAIN_STATE_FILE")" = true ] ||
-  fail 'doctor downgraded an installed web simulator after an unknown check'
-printf 'unknown web simulator status preserves the installed state\n'
+  fail 'doctor changed an installed web simulator after an unknown check'
+printf 'unknown web simulator status preserves the installed state without mutation\n'
 
 printf 'ok: doctor does not stay silent when state.json disagrees with reality\n'

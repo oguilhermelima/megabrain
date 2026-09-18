@@ -1018,15 +1018,31 @@ async function e2eProof(root) {
 }
 
 async function latestVersions() {
-  const [ubol, vm, ublock] = await Promise.all([
-    githubRelease(REPOSITORIES.ubol), githubRelease(REPOSITORIES.violentmonkey), githubRelease(REPOSITORIES.ublock),
+  // WHY: every remote lookup must settle before doctor reports unknown, otherwise Promise.all
+  // exposes whichever rate-limited request rejects first.
+  const results = await Promise.allSettled([
+    githubRelease(REPOSITORIES.ubol),
+    githubRelease(REPOSITORIES.violentmonkey),
+    githubRelease(REPOSITORIES.ublock),
+    fetch('https://addons.mozilla.org/firefox/downloads/latest/violentmonkey/latest.xpi', { headers: { 'user-agent': 'megabrain' } }).then(async response => {
+      if (!response.ok) throw new Error('AMO latest Violentmonkey failed: HTTP ' + response.status);
+      const temp = path.join(os.tmpdir(), 'megabrain-vm-' + process.pid + '.xpi');
+      writeFileSync(temp, Buffer.from(await response.arrayBuffer()));
+      try {
+        return JSON.parse(execFileSync('unzip', ['-p', temp, 'manifest.json'], { encoding: 'utf8' }));
+      } finally {
+        rmSync(temp, { force: true });
+      }
+    }),
   ]);
-  const response = await fetch('https://addons.mozilla.org/firefox/downloads/latest/violentmonkey/latest.xpi', { headers: { 'user-agent': 'megabrain' } });
-  if (!response.ok) throw new Error(`AMO latest Violentmonkey failed: HTTP ${response.status}`);
-  const temp = path.join(os.tmpdir(), `megabrain-vm-${process.pid}.xpi`);
-  writeFileSync(temp, Buffer.from(await response.arrayBuffer()));
-  const vmManifest = JSON.parse(execFileSync('unzip', ['-p', temp, 'manifest.json'], { encoding: 'utf8' }));
-  rmSync(temp, { force: true });
+  const failures = results
+    .filter(result => result.status === 'rejected')
+    .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason));
+  if (failures.length) throw new Error(failures.join('; '));
+  const ubol = results[0].value;
+  const vm = results[1].value;
+  const ublock = results[2].value;
+  const vmManifest = results[3].value;
   return {
     chromium: { ublock: ubol.tag_name.replace(/^v/, ''), violentmonkey: vm.tag_name.replace(/^v/, '') },
     firefox: { ublock: ublock.tag_name.replace(/^v/, ''), violentmonkey: vmManifest.version },

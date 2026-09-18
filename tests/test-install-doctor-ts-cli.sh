@@ -235,16 +235,22 @@ cmp -s "$work/install-contract-original.json" "$binary_contract_home/.claude/set
 printf 'install contract: shell creates backup and repair; binary leaves fixture unchanged\n'
 export HOME="$work/home"
 
-# A minimal installation record must be reconciled by the compiled doctor, including metadata
-# that is not present in the input fixture.
-write_shell_state="$work/write-shell"
-write_binary_state="$work/write-binary"
-mkdir -p "$write_shell_state" "$write_binary_state"
-printf '%s\n' '{"orchestration":{"installed":true}}' >"$write_shell_state/state.json"
-export MEGABRAIN_STATE_DIR="$write_binary_state"
-cp "$write_shell_state/state.json" "$write_binary_state/state.json"
-run_capture "$work/write-binary-run" "$binary" doctor orchestration --json
-jq -e '._meta.kind == "installation-record" and .orchestration.checkedAt != null and .orchestration.statusSource == "megabrain doctor"' "$write_binary_state/state.json" >/dev/null || fail 'doctor did not write the complete installation record'
+# A minimal installation record is input to the compiled doctor, which must report content
+# without changing the state of record.
+read_only_state="$work/read-only-state"
+mkdir -p "$read_only_state"
+printf '%s\n' '{"orchestration":{"installed":true}}' >"$read_only_state/state.json"
+read_only_before="$work/read-only-before.json"
+cp "$read_only_state/state.json" "$read_only_before"
+export MEGABRAIN_STATE_DIR="$read_only_state"
+run_capture "$work/read-only-run" "$binary" doctor orchestration --json
+cmp -s "$read_only_before" "$read_only_state/state.json" || fail 'doctor changed the installation state'
+jq -e '.module == "orchestration" and (.status | type) == "string" and (.reason | type) == "string"' \
+  "$work/read-only-run.stdout" >/dev/null || fail 'doctor did not report module content'
+if grep -F 'state reconciled' "$work/read-only-run.stdout" >/dev/null; then
+  fail 'doctor still reported a state reconciliation'
+fi
+printf 'doctor contract: compiled report preserves the state of record\n'
 
 # Establish a state record once, then exercise every module through the compiled doctor.
 export MEGABRAIN_STATE_DIR="$work/shell-state"
