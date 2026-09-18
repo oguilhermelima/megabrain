@@ -19,6 +19,7 @@ SOURCE_FROM_CHECKOUT=false
 INSTALL_ACTION="reconfigure"
 INSTALL_MANIFEST=""
 INSTALL_FRESH=false
+BINARY_BUILT=false
 SUMMARY_LINES=()
 INSTALLER_MENU_OPTIONS=()
 INSTALLER_MENU_SELECTED=()
@@ -440,6 +441,32 @@ installer_source_root() {
   INSTALL_FRESH=true
 }
 
+installer_require_bun() {
+  command -v bun >/dev/null 2>&1 || {
+    installer_error "bun is required to install megabrain; install it from https://bun.sh/docs/installation"
+    return 1
+  }
+}
+
+installer_build_binary() {
+  installer_require_bun || return 1
+  [ -f "$SOURCE_ROOT/package.json" ] || {
+    installer_error "megabrain package manifest is missing: $SOURCE_ROOT/package.json"
+    return 1
+  }
+  # WHY: build through package.json so the installer and release checks use the same command.
+  if ! (cd "$SOURCE_ROOT" && bun run build); then
+    installer_error "could not compile the megabrain binary with bun run build"
+    return 1
+  fi
+  [ -x "$SOURCE_ROOT/.build/megabrain" ] || {
+    installer_error "bun run build did not produce $SOURCE_ROOT/.build/megabrain"
+    return 1
+  }
+  BINARY_BUILT=true
+  installer_summary "compiled megabrain binary at $SOURCE_ROOT/.build/megabrain"
+}
+
 installer_manifest_path() {
   INSTALL_MANIFEST="$INSTALL_ROOT/install-manifest.json"
 }
@@ -499,6 +526,9 @@ installer_update_from_tarball() {
   payload="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
   [ -n "$payload" ] || { rm -rf "$temp_dir"; installer_error "downloaded archive has no top-level directory"; return 1; }
   cp -R "$payload/." "$staging/" || { rm -rf "$temp_dir"; installer_error "could not stage the downloaded archive"; return 1; }
+  SOURCE_ROOT="$staging"
+  SOURCE_FROM_CHECKOUT=false
+  installer_build_binary || { rm -rf "$temp_dir"; return 1; }
   backup="$temp_dir/previous"
   if [ -e "$INSTALL_ROOT" ]; then
     mv "$INSTALL_ROOT" "$backup" || { rm -rf "$temp_dir"; installer_error "could not preserve the previous installation"; return 1; }
@@ -995,6 +1025,7 @@ installer_main() {
   installer_parse_args "$@" || return $?
   installer_resolve_input_source
   installer_init_style
+  installer_require_bun || return 1
   installer_source_root || return 1
   [ -x "$SOURCE_ROOT/megabrain" ] && [ -d "$SOURCE_ROOT/lib" ] || { installer_error "megabrain checkout is incomplete: $SOURCE_ROOT"; return 1; }
   [ -f "$SOURCE_ROOT/skills/megabrain/SKILL.md" ] || { installer_error "megabrain skill is missing from $SOURCE_ROOT"; return 1; }
@@ -1009,6 +1040,7 @@ installer_main() {
       installer_update_from_tarball || return 1
     fi
   fi
+  [ "$BINARY_BUILT" = true ] || installer_build_binary || return 1
   installer_link_megabrain || return 1
   installer_detect_agents
   installer_select_agents || return $?

@@ -2,9 +2,6 @@
   "name": "megabrain",
   "private": true,
   "type": "module",
-  "bin": {
-    "megabrain": ".build/megabrain"
-  },
   "scripts": {
     "build": "bun build --compile src/cli/index.ts --outfile .build/megabrain",
     "test": "bun test",
