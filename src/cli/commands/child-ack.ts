@@ -17,11 +17,11 @@ const usage = "Usage: megabrain ack <delivery-id> [--consumer <id>] [--generatio
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
 function integer(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) ? value : undefined; }
 
-function parseArgs(args: readonly string[]): Result<ChildArguments> {
+function parseArgs(args: readonly string[], environment: QueueEnvironment): Result<ChildArguments> {
   const deliveryId = args[0] ?? "";
   if (deliveryId === "") return failed(usage, 2);
   let consumer: string | undefined;
-  let generation = 1;
+  let generation = Number(environment.MEGABRAIN_CONSUMER_GENERATION ?? "1");
   let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
@@ -39,7 +39,8 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
   if (environment.TMUX && environment.TMUX_PANE) {
     const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
     if (result.kind !== "ok" || result.value.stdout.trim() === "") return failed("tmux session could not be resolved");
-    return ok({ host: "tmux", id: `${result.value.stdout.trim()}:${environment.TMUX_PANE}`, tmuxSession: result.value.stdout.trim(), tmuxPane: environment.TMUX_PANE });
+    const host = environment.SUPERSET_TERMINAL_ID ? "superset" : environment.ORCA_TERMINAL_HANDLE ? "orca" : "tmux";
+    return ok({ host, id: `${result.value.stdout.trim()}:${environment.TMUX_PANE}`, tmuxSession: result.value.stdout.trim(), tmuxPane: environment.TMUX_PANE });
   }
   if (environment.SUPERSET_TERMINAL_ID) return ok({ host: "superset", id: environment.SUPERSET_TERMINAL_ID });
   if (environment.ORCA_TERMINAL_HANDLE) return ok({ host: "orca", id: environment.ORCA_TERMINAL_HANDLE });
@@ -47,7 +48,7 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
 }
 
 function matches(sessionValue: ChildSession, meta: JsonRecord): boolean {
-  if (sessionValue.host === "tmux") return meta.runtime === "tmux" && meta.tmuxSession === sessionValue.tmuxSession && meta.tmuxPane === sessionValue.tmuxPane;
+  if (sessionValue.tmuxSession && sessionValue.tmuxPane) return meta.runtime === "tmux" && meta.tmuxSession === sessionValue.tmuxSession && meta.tmuxPane === sessionValue.tmuxPane;
   return meta.terminalId === sessionValue.id && meta.childHost === sessionValue.host;
 }
 
@@ -65,12 +66,12 @@ async function findChild(root: string, environment: QueueEnvironment, processAda
     if (meta?.dispatchId && matches(current.value, meta)) found.push(meta.dispatchId as string);
   }
   if (found.length > 1) {
-    if (current.value.host === "tmux") return failed(`tmux identity matches multiple dispatches for session ${current.value.tmuxSession ?? "unknown"} pane ${current.value.tmuxPane ?? "unknown"}: ${found[0]}, ${found[1]}`);
+    if (current.value.tmuxSession && current.value.tmuxPane) return failed(`tmux identity matches multiple dispatches for session ${current.value.tmuxSession} pane ${current.value.tmuxPane}: ${found[0]}, ${found[1]}`);
     return failed(`terminal identity matches multiple dispatches for ${current.value.host}/${current.value.id}: ${found[0]}, ${found[1]}`);
   }
   const dispatch = found[0];
   if (dispatch) return ok({ id: dispatch, session: current.value });
-  if (current.value.host === "tmux") return failed(`no managed dispatch belongs to tmux session ${current.value.tmuxSession ?? "unknown"} pane ${current.value.tmuxPane ?? "unknown"}`);
+  if (current.value.tmuxSession && current.value.tmuxPane) return failed(`no managed dispatch belongs to tmux session ${current.value.tmuxSession} pane ${current.value.tmuxPane}`);
   return failed(`no managed dispatch belongs to ${current.value.host}/${current.value.id}`);
 }
 
@@ -107,12 +108,12 @@ function output(dispatchId: string, deliveryId: string, duplicate: boolean, mess
 
 export async function executeChildAck(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usage);
-  const parsed = parseArgs(args);
+  const parsed = parseArgs(args, environment);
   if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);
   const child = await findChild(root, environment, processAdapter);
   if (child.kind !== "ok") return child;
-  const consumer = parsed.value.consumer ?? (child.value.session.tmuxSession && child.value.session.tmuxPane
+  const consumer = parsed.value.consumer ?? environment.MEGABRAIN_CONSUMER_ID ?? (child.value.session.tmuxSession && child.value.session.tmuxPane
     ? `child/${child.value.session.host}/${child.value.session.tmuxSession}/${child.value.session.tmuxPane}`
     : `child/${child.value.session.host}/${child.value.session.id}`);
   if (consumer === "") return failed("consumer identity is empty");
