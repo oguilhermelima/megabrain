@@ -12,7 +12,7 @@ export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
 type ExpoApp = { readonly expo?: { readonly scheme?: unknown; readonly ios?: { readonly bundleIdentifier?: unknown } } };
 
-function error(message: string, code = 1): Result<string> { return failed(message, code); }
+function error<T = string>(message: string, code = 1): Result<T> { return failed(message, code); }
 function refusalCode(exitCode: number): string { return exitCode === 2 ? "invalid-arguments" : "native-error"; }
 function normalizeJsonResult(result: Result<string>, json: boolean): Result<string> {
   if (!json) return result;

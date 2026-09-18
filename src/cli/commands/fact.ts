@@ -11,7 +11,7 @@ const usages: Record<string, string> = {
   edit: "fact edit <id> [--json]", remove: "fact remove <id> [--json]",
 };
 const usage = (kind: keyof typeof usages): Result<string> => ok("Usage: megabrain " + usages[kind] + "\n");
-const error = (message: string, code = 1): Result<string> => failed(message, code);
+const error = <T = string>(message: string, code = 1): Result<T> => failed(message, code);
 
 function pathFor(environment: Environment): string {
   if (environment.MEGABRAIN_FACTS_FILE !== undefined) return environment.MEGABRAIN_FACTS_FILE;
@@ -83,7 +83,7 @@ async function edit(args: readonly string[], environment: Environment, processAd
   let asJson = false; for (const arg of args.slice(1)) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return usage("edit"); else return error("unknown fact edit option: " + arg, 2); }
   const path = pathFor(environment); const current = await readStore(path); if (current.kind !== "ok") return current; if (!current.value.facts.some((entry) => entry.id === id)) return error("fact not found: " + id);
   const temporary = path + ".edit-" + process.pid; await mkdir(dirname(path), { recursive: true }); await writeFile(temporary, JSON.stringify(current.value, null, 2) + "\n");
-  const editor = environment.EDITOR ?? "vi"; const edited = await processAdapter.run(editor, [temporary]); const raw = await readFile(temporary).catch(() => ""); await rm(temporary, { force: true });
+  const editor = environment.EDITOR ?? "vi"; const edited = await processAdapter.run(editor, [temporary]); const raw = await readFile(temporary, "utf8").catch(() => ""); await rm(temporary, { force: true });
   if (edited.kind !== "ok") return error("editor failed while editing fact " + id);
   let value: unknown; try { value = JSON.parse(raw); } catch { return error("invalid fact store: expected version 1 and a facts array"); }
   const valid = validateStore(value); if (valid.kind !== "valid") return error(valid.message);

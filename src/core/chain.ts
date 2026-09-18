@@ -6,6 +6,12 @@ export type ChainDefinition = Readonly<{
 export type ChainConfig = Readonly<{
   readonly chains: Readonly<Record<string, ChainDefinition>>;
   readonly defaultSteps: readonly ChainStep[];
+  readonly usageLimits?: Readonly<{
+    readonly liveProviders?: readonly string[];
+    readonly cacheTtlSeconds?: number;
+    readonly timeoutSeconds?: number;
+    readonly notice?: Readonly<{ readonly enabled?: boolean; readonly intervalSeconds?: number }>;
+  }>;
 }>;
 
 export type ChainSelection =

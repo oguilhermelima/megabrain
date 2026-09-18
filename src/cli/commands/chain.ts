@@ -7,7 +7,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 
 export type ChainEnvironment = Readonly<Record<string, string | undefined>>;
 const emptyConfig: ChainConfig = { chains: {}, defaultSteps: [] };
-function error(message: string, exitCode = 1): Result<string> { return failed(message, exitCode); }
+function error<T = string>(message: string, exitCode = 1): Result<T> { return failed(message, exitCode); }
 function json(value: unknown): string { return JSON.stringify(value) + "\n"; }
 function chainPath(environment: ChainEnvironment): string { return environment.MEGABRAIN_CHAIN_FILE ?? resolve(resolveStateDirectory(environment), "chains.json"); }
 function preserveStderr<T>(result: Result<T>, stderr: string | undefined): Result<T> {
@@ -23,12 +23,13 @@ function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (typeof value !== "object" || value === null) return error(`chain file is not valid JSON: ${path}`);
-    const config = value as Record<string, unknown>;
-    if (typeof config.chains !== "object" || config.chains === null || !Array.isArray(config.defaultSteps)) return error(`chain file is not valid: ${path}`);
-    if (config.usageLimits !== undefined && (typeof config.usageLimits !== "object" || config.usageLimits === null || Array.isArray(config.usageLimits))) return ok(value as ChainConfig);
+    const raw = value as Record<string, unknown>;
+    if (typeof raw.chains !== "object" || raw.chains === null || !Array.isArray(raw.defaultSteps)) return error(`chain file is not valid: ${path}`);
+    const config = value as ChainConfig;
+    if (config.usageLimits !== undefined && (typeof config.usageLimits !== "object" || config.usageLimits === null || Array.isArray(config.usageLimits))) return ok(config);
     const usage = config.usageLimits as Record<string, unknown> | undefined ?? {};
     const notice = (usage.notice && typeof usage.notice === "object" && !Array.isArray(usage.notice)) ? usage.notice as Record<string, unknown> : {};
-    const normalized = { ...config, usageLimits: { liveProviders: [], cacheTtlSeconds: 30, timeoutSeconds: 5, notice: { enabled: false, intervalSeconds: 3600 }, ...usage, notice: { enabled: false, intervalSeconds: 3600, ...notice } } } as ChainConfig;
+    const normalized: ChainConfig = { ...config, usageLimits: { liveProviders: [], cacheTtlSeconds: 30, timeoutSeconds: 5, ...usage, notice: { enabled: false, intervalSeconds: 3600, ...notice } } };
     if (JSON.stringify(normalized) !== JSON.stringify(value)) writeFileSync(path, JSON.stringify(normalized, null, 2) + "\n");
     return ok(normalized);
   } catch { return error(`chain file is not valid JSON: ${path}`); }
