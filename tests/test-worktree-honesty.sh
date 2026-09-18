@@ -3,7 +3,6 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-export MEGABRAIN_ROOT="$root"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-honesty.XXXXXX")"
 
 cleanup() {
@@ -80,14 +79,14 @@ scenario_subdirectory_selector_is_refused() {
   mkdir -p "$work_dir/repo/apps/web"
   subdir="$work_dir/repo/apps/web"
   host_calls=0
-  if output="$(command_terminal create --worktree "$subdir" --command 'run server' 2>&1)"; then
+  if output="$(MEGABRAIN_ROOT="$root" command_terminal create --worktree "$subdir" --command 'run server' 2>&1)"; then
     fail 'terminal create accepted a subdirectory selector'
   fi
   assert_contains "$output" 'worktree root'
   assert_contains "$output" 'cd'
   assert_equal "$host_calls" 0
 
-  if output="$(command_terminal restart "worktree:$subdir" 2>&1)"; then
+  if output="$(MEGABRAIN_ROOT="$root" command_terminal restart "worktree:$subdir" 2>&1)"; then
     fail 'terminal restart accepted a subdirectory selector'
   fi
   assert_contains "$output" 'worktree root'
