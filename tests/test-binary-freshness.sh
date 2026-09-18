@@ -51,6 +51,9 @@ root_source_mtime="$(path_mtime "$root/src/cli/index.ts")"
 mkdir -p "$fixture_root"
 cp -R "$root/src" "$fixture_root/src"
 cp -R "$root/lib" "$fixture_root/lib"
+cp -R "$root/.megabrain" "$fixture_root/.megabrain"
+cp -R "$root/scripts" "$fixture_root/scripts"
+cp -R "$root/skills" "$fixture_root/skills"
 cp "$root/megabrain" "$fixture_root/megabrain"
 cp "$root/package.json" "$fixture_root/package.json"
 chmod +x "$fixture_root/megabrain"
@@ -59,6 +62,14 @@ chmod +x "$fixture_root/megabrain"
 fixture_source_mtime="$(path_mtime "$source_file")"
 fixture_binary_mtime="$(path_mtime "$binary")"
 export MEGABRAIN_ROOT="$fixture_root"
+
+fixture_bin="$work_dir/bin"
+mkdir -p "$fixture_bin"
+cat >"$fixture_bin/xcrun" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"devices":{}}'
+EOF
+chmod +x "$fixture_bin/xcrun"
 
 # Scenario: a source newer than the compiled binary warns, but the binary still serves JSON.
 # Falsification: a silent guard or a shell fallback produces no stale notice.
@@ -81,6 +92,31 @@ assert_contains "$stale_notice" 'newer source'
 assert_contains "$stale_notice" 'src/cli/index.ts'
 assert_contains "$stale_notice" 'bun run build'
 printf 'stale binary warns and preserves JSON output\n'
+
+# Scenario: every binary-only wrapper warns when its artifact is stale.
+# Falsification: a wrapper that calls the binary directly without the freshness check stays silent.
+assert_migrated_verb_warns() {
+  local name="$1" stderr_file status
+  shift
+  stderr_file="$work_dir/$name.stderr"
+  set +e
+  MEGABRAIN_STATE_DIR="$work_dir/$name-state" PATH="$fixture_bin:$PATH" \
+    "$fixture_root/megabrain" "$@" >"$work_dir/$name.stdout" 2>"$stderr_file"
+  status=$?
+  set -e
+  assert_contains "$(cat "$stderr_file")" 'compiled binary is stale'
+  printf '%s stale notice count: %s\n' "$name" "$(grep -c 'compiled binary is stale' "$stderr_file")"
+  return 0
+}
+
+assert_migrated_verb_warns model model list --json
+assert_migrated_verb_warns web web devices list
+assert_migrated_verb_warns tv tv --help
+assert_migrated_verb_warns native native sim list phone
+assert_migrated_verb_warns doctor doctor compiled-binary --json
+assert_migrated_verb_warns worktree-pr worktree pr --help
+assert_migrated_verb_warns worktree-adopt worktree adopt --help
+assert_migrated_verb_warns terminal-list terminal list --help
 
 # Scenario: rebuilding removes the warning and leaves the fresh binary usable.
 # Falsification: a warning that always fires remains visible after the build.
