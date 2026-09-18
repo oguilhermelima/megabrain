@@ -34,7 +34,6 @@ scenario_route_reaches_compiled_binary() {
 }
 
 scenario_route_markers() {
-  scenario_route_reaches_compiled_binary context '{"host":"unknown"}' context --json
   scenario_route_reaches_compiled_binary worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
   scenario_route_reaches_compiled_binary worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
   scenario_route_reaches_compiled_binary terminal-list '{"verb":"terminal-list"}' terminal list --json
@@ -49,15 +48,6 @@ setup_repo() {
   printf 'base\n' >"$repo/base.txt"
   git -C "$repo" add base.txt
   git -C "$repo" commit -qm base
-}
-
-scenario_context_content() {
-  local output
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work/context-state" \
-    SUPERSET_TERMINAL_ID=terminal SUPERSET_WORKSPACE_ID=workspace SUPERSET_AGENT_ID=claude \
-    "$root/.build/megabrain" context --json)"
-  assert_json "$output" '.host == "superset" and .workspaceId == "workspace" and .terminalId == "terminal" and .agentId == "claude"'
-  printf 'context content identifies the Superset session\n'
 }
 
 scenario_worktree_pr_content() {
@@ -155,20 +145,6 @@ EOF
   printf 'terminal list content distinguishes identity mismatch, dead, and stale terminals\n'
 }
 
-scenario_falsification_rejects_broken_content() {
-  local fixture="$work/route-falsification" output status
-  make_entrypoint_routing_fixture "$root" "$fixture" 73
-  write_fixture_binary "$fixture" BROKEN
-  set +e
-  output="$(MEGABRAIN_STATE_DIR="$work/falsification-state" "$fixture/megabrain" context --json 2>"$work/falsification.err")"
-  status=$?
-  set -e
-  [ "$status" -eq 73 ] || fail "falsification fixture did not route: status=$status output=$output"
-  [ "$output" != '{"host":"unknown"}' ] || fail 'broken binary unexpectedly satisfied the content contract'
-  assert_equal "$output" BROKEN
-  printf 'falsification output: BROKEN is rejected despite a successful route\n'
-}
-
 scenario_falsification_is_red_for_each_route() {
   local name="$1" expected="$2" fixture="$work/falsification-$1" output status
   shift 2
@@ -185,13 +161,10 @@ scenario_falsification_is_red_for_each_route() {
 }
 
 scenario_route_markers
-scenario_context_content
 scenario_worktree_pr_content
 scenario_worktree_adopt_content
 scenario_terminal_list_content
 scenario_terminal_list_identity_and_stale_content
-scenario_falsification_rejects_broken_content
-scenario_falsification_is_red_for_each_route context '{"host":"unknown"}' context --json
 scenario_falsification_is_red_for_each_route worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
 scenario_falsification_is_red_for_each_route worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
 scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-list"}' terminal list --json

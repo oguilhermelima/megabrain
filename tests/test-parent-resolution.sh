@@ -74,10 +74,10 @@ printf 'unknown parent does not match and states why\n'
 
 export AI_AGENT=claude-code_2-1-270_agent
 megabrain_resolve_parent_context
-context_json="$(MEGABRAIN_ROOT="$root" "$root/.build/megabrain" context --json)"
+context_json="$(command_context --json)"
 assert_equal "$(printf '%s' "$context_json" | jq -r '.agentId')" claude
 unset AI_AGENT
-context_json="$(MEGABRAIN_ROOT="$root" "$root/.build/megabrain" context --json)"
+context_json="$(command_context --json)"
 assert_equal "$(printf '%s' "$context_json" | jq -r '.agentId')" null
 printf 'context reports known parent and preserves unknown\n'
 
