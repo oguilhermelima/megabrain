@@ -42,6 +42,19 @@ scenario_route_markers() {
   scenario_route_reaches_compiled_binary liveness '{"verb":"liveness"}' MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION orchestrate liveness route-dispatch --json
 }
 
+scenario_worktree_list_route_marker() {
+  local fixture="$work/route-worktree-list" output status
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  set +e
+  output="$(env MEGABRAIN_STATE_DIR="$work/route-worktree-list-state" \
+    MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary "$fixture/megabrain" worktree list --json 2>"$work/route-worktree-list.err")"
+  status=$?
+  set -e
+  assert_equal "$status" 73
+  assert_equal "$output" ''
+  printf 'worktree-list route reaches the compiled binary and preserves its marker status\n'
+}
+
 write_dispatch_fixture() {
   local state="$1" dispatch="$2" parent_host="${3:-unknown}" runtime="${4:-host}"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
@@ -149,6 +162,21 @@ scenario_worktree_pr_content() {
     "$root/.build/megabrain" worktree pr "$shared/feature" --json)"
   assert_json "$output" '.branch == "feature/pr" and .base == "main" and .url == "https://example.test/pull/7"'
   printf 'worktree pr content reports the created pull request\n'
+}
+
+scenario_worktree_list_content() {
+  local repo="$work/list-repo" shared="$work/list-shared" state="$work/list-state" output
+  mkdir -p "$shared" "$state"
+  shared="$(cd "$shared" && pwd -P)"
+  setup_repo "$repo"
+  git -C "$repo" worktree add -q "$shared/feature" -b feature/list
+  printf '%s\n' "$shared" >"$state/worktree-root"
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+    "$root/.build/megabrain" worktree list --json)"
+  printf '%s' "$output" | jq -e --arg path "$shared/feature" \
+    'length == 1 and .[0].path == $path and .[0].branch == "feature/list" and .[0].pullRequest == null' >/dev/null ||
+    fail "compiled worktree list content was not preserved: $output"
+  printf 'worktree list content reports the fixture worktree\n'
 }
 
 write_superset_fixture() {
@@ -272,6 +300,21 @@ scenario_removed_route_falsification() {
   printf '%s falsification remains RED after shell deletion\n' "$name"
 }
 
+scenario_worktree_list_falsification() {
+  local fixture="$work/falsification-removed-worktree-list" output status
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  write_fixture_binary "$fixture" BROKEN
+  set +e
+  output="$(env MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary \
+    MEGABRAIN_STATE_DIR="$work/falsification-removed-worktree-list-state" \
+    "$fixture/megabrain" worktree list --json 2>"$work/falsification-removed-worktree-list.err")"
+  status=$?
+  set -e
+  assert_equal "$status" 73
+  assert_equal "$output" BROKEN
+  printf 'worktree-list falsification remains RED after shell deletion\n'
+}
+
 scenario_route_markers
 scenario_worktree_pr_content
 scenario_worktree_adopt_content
@@ -281,12 +324,15 @@ scenario_terminal_list_rejects_subdirectory_selector
 scenario_falsification_is_red_for_each_route worktree-pr '{"verb":"worktree-pr"}' worktree pr fixture --json
 scenario_falsification_is_red_for_each_route worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
 scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-list"}' terminal list --json
+scenario_worktree_list_route_marker
 scenario_removed_route_falsification queue-ask MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"ask"}' ask route-question
 scenario_removed_route_falsification queue-received MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"received"}' received
 scenario_removed_route_falsification queue-done MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"done"}' done route-summary
 scenario_removed_route_falsification check MEGABRAIN_CHECK_IMPLEMENTATION '{"verb":"check"}' check --timeout 0 --json
 scenario_removed_route_falsification reply MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION '{"verb":"reply"}' orchestrate reply route-dispatch --text route-answer --json
 scenario_removed_route_falsification liveness MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION '{"verb":"liveness"}' orchestrate liveness route-dispatch --json
+scenario_worktree_list_falsification
 scenario_compiled_content_contracts
 scenario_compiled_argument_forms
+scenario_worktree_list_content
 printf 'ok: compiled routes and content contracts cover all removal verbs\n'
