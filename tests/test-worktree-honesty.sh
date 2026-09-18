@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+export MEGABRAIN_ROOT="$root"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-honesty.XXXXXX")"
 
 cleanup() {
