@@ -1867,8 +1867,9 @@ megabrain_worktree_branch_exists() {
   if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
     MEGABRAIN_WORKTREE_BRANCH_EXISTS=true
     return 0
+  else
+    status="$?"
   fi
-  status="$?"
   if [ "$status" -eq 1 ]; then
     return 0
   fi
