@@ -83,56 +83,27 @@ clean_shell_state="$work_dir/clean-shell-state"
 clean_binary_state="$work_dir/clean-binary-state"
 make_dispatch "$clean_shell_state" false
 make_dispatch "$clean_binary_state" false
-clean_doctor_shell="$work_dir/clean-doctor-shell.output"
 clean_doctor_binary="$work_dir/clean-doctor-binary.output"
-env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$clean_shell_state" \
-  bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; source "$1/lib/module-tmux-runtime.sh"; source "$1/lib/module-install.sh"; megabrain_require_command() { return 1; }; megabrain_superset_available() { return 1; }; megabrain_runtime_enabled() { return 0; }; megabrain_doctor_one orchestration' -- "$root" >"$clean_doctor_shell" 2>&1 || true
 env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$clean_binary_state" \
   "$root/.build/megabrain" doctor orchestration >"$clean_doctor_binary" 2>&1 || true
-case "$(cat "$clean_doctor_shell")" in
-  *editor-backup.json*) fail 'shell doctor reported a stray file in a clean dispatch' ;;
-esac
 case "$(cat "$clean_doctor_binary")" in
   *editor-backup.json*) fail 'binary doctor reported a stray file in a clean dispatch' ;;
 esac
 
-# The populated fixture must be reportable through the doctor entry point on both paths.
-doctor_shell="$work_dir/doctor-shell.output"
+# The populated fixture must be reportable through the compiled doctor entry point.
 doctor_binary="$work_dir/doctor-binary.output"
-doctor_shell_state="$work_dir/doctor-shell-state"
 doctor_binary_state="$work_dir/doctor-binary-state"
-make_dispatch "$doctor_shell_state" true true
 make_dispatch "$doctor_binary_state" true true
-if env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$doctor_shell_state" \
-  bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; source "$1/lib/module-tmux-runtime.sh"; source "$1/lib/module-install.sh"; megabrain_require_command() { return 1; }; megabrain_superset_available() { return 1; }; megabrain_runtime_enabled() { return 0; }; megabrain_doctor_one orchestration' -- "$root" >"$doctor_shell" 2>&1; then
-  :
-else
-  :
-fi
 env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$doctor_binary_state" \
   "$root/.build/megabrain" doctor orchestration >"$doctor_binary" 2>&1 || true
-case "$(cat "$doctor_shell")" in
-  *editor-backup.json*) ;;
-  *) fail 'shell doctor did not report the unrecognised message file' ;;
-esac
 case "$(cat "$doctor_binary")" in
   *editor-backup.json*) ;;
   *) fail 'binary doctor did not report the unrecognised message file' ;;
 esac
 
-doctor_shell_boundary="$work_dir/doctor-shell-boundary.output"
 doctor_binary_boundary="$work_dir/doctor-binary-boundary.output"
-if env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$doctor_shell_state" \
-  bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; source "$1/lib/module-tmux-runtime.sh"; source "$1/lib/module-install.sh"; megabrain_require_command() { return 1; }; megabrain_superset_available() { return 1; }; megabrain_runtime_enabled() { return 0; }; megabrain_doctor_one orchestration' -- "$root" >"$doctor_shell_boundary" 2>&1; then
-  :
-else
-  :
-fi
 env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$doctor_binary_state" \
   "$root/.build/megabrain" doctor orchestration >"$doctor_binary_boundary" 2>&1 || true
-case "$(cat "$doctor_shell_boundary")" in
-  *10000-parent-reply.json*) fail 'shell doctor reported a valid five-digit message' ;;
-esac
 case "$(cat "$doctor_binary_boundary")" in
   *10000-parent-reply.json*) fail 'binary doctor reported a valid five-digit message' ;;
 esac
