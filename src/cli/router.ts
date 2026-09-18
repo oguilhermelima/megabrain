@@ -23,6 +23,7 @@ import { executeChain } from "./commands/chain.js";
 import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
 import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
 import { executeTmux } from "./commands/tmux.js";
+import { executeChildAck } from "./commands/child-ack.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -96,6 +97,9 @@ export function route(
   }
   if (command === "orchestrate" && (commandArgs[0] === "ack" || commandArgs[0] === "acknowledge")) {
     return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "ack" || command === "acknowledge") {
+    return executeChildAck(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "fact") {
     return executeFact(commandArgs, dependencies.environment, dependencies.processAdapter);
