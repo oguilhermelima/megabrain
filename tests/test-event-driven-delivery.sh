@@ -4,6 +4,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-event-delivery.XXXXXX")"
+bin_dir="$state_dir/bin"
+mkdir -p "$bin_dir"
+cat >"$bin_dir/superset" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$bin_dir/superset"
 
 cleanup() {
   local rc=$?
@@ -39,6 +46,7 @@ create_dispatch() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export PATH="$bin_dir:/usr/bin:/bin"
 export SUPERSET_TERMINAL_ID=child-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
@@ -50,11 +58,24 @@ declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1 || \
   fail 'module-orchestrate did not load the terminal identity helper'
 printf 'module-orchestrate loads the terminal identity helper\n'
 
-parent_nudges=0
-child_nudges=0
-megabrain_parent_notify() {
-  parent_nudges=$((parent_nudges + 1))
+run_child_message() {
+  local dispatch_id="$1" type="$2" text="${3:-}"
+  if [ "$type" = received ]; then
+    env -i HOME="$state_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+      MEGABRAIN_DISPATCH_ID="$dispatch_id" SUPERSET_TERMINAL_ID="child-$dispatch_id" \
+      "$root/.build/megabrain" "$type"
+  else
+    env -i HOME="$state_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+      MEGABRAIN_DISPATCH_ID="$dispatch_id" SUPERSET_TERMINAL_ID="child-$dispatch_id" \
+      "$root/.build/megabrain" "$type" "$text"
+  fi
 }
+
+nudge_count() {
+  find "$state_dir/dispatches" -name nudge.log -type f | wc -l | tr -d ' '
+}
+
+child_nudges=0
 megabrain_dispatch_native_send() {
   child_nudges=$((child_nudges + 1))
 }
@@ -62,35 +83,35 @@ megabrain_dispatch_native_send() {
 # A child ask is an event: append alone creates its parent delivery and one nudge.
 create_dispatch child-ask
 export SUPERSET_TERMINAL_ID=child-child-ask
-megabrain_dispatch_child_message ask 'needs a decision' >/dev/null
+run_child_message child-ask ask 'needs a decision' >/dev/null
 assert_equal "$(delivery_count child-ask)" 1
-assert_equal "$parent_nudges" 1
+assert_equal "$(nudge_count)" 1
 assert_equal "$(jq -r '.recipient' "$state_dir/dispatches/child-ask/deliveries"/*.json)" parent
 printf 'child ask creates one parent delivery and one nudge\n'
 
 # A child done has the same event-driven behavior.
 create_dispatch child-done
 export SUPERSET_TERMINAL_ID=child-child-done
-megabrain_dispatch_child_message done 'finished successfully' >/dev/null
+run_child_message child-done done 'finished successfully' >/dev/null
 assert_equal "$(delivery_count child-done)" 1
-assert_equal "$parent_nudges" 2
+assert_equal "$(nudge_count)" 2
 printf 'child done creates one parent delivery and one nudge\n'
 
 create_dispatch child-stalled
 megabrain_dispatch_message_append child-stalled child stalled 'needs intervention' child-terminal >/dev/null
 assert_equal "$(delivery_count child-stalled)" 1
-assert_equal "$parent_nudges" 3
+assert_equal "$(nudge_count)" 3
 printf 'child stalled creates one parent delivery and one nudge\n'
 
 # Protocol evidence remains durable without creating an actionable nudge.
 create_dispatch protocol-only
 export SUPERSET_TERMINAL_ID=child-protocol-only
-megabrain_dispatch_child_message received 'prompt received' >/dev/null
+run_child_message protocol-only received 'prompt received' >/dev/null
 assert_equal "$(delivery_count protocol-only)" 1
-assert_equal "$parent_nudges" 3
+assert_equal "$(nudge_count)" 3
 megabrain_dispatch_message_append protocol-only child ack delivery-id child-terminal >/dev/null
 assert_equal "$(delivery_count protocol-only)" 2
-assert_equal "$parent_nudges" 3
+assert_equal "$(nudge_count)" 3
 printf 'received and ack remain protocol-only\n'
 
 # A parent reply creates the child's delivery before the child checks.

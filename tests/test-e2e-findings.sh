@@ -144,12 +144,14 @@ assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/stalled-done/meta.json")
 printf 'done is accepted from the open dispatch contract\n'
 
 megabrain_dispatch_meta_write stalled-ask parent-terminal superset superset workspace-test stalled-ask-terminal "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
-TMUX= TMUX_PANE= SUPERSET_TERMINAL_ID=stalled-ask-terminal megabrain_dispatch_child_message ask 'question after stall' >/dev/null
+TMUX= TMUX_PANE= SUPERSET_TERMINAL_ID=stalled-ask-terminal MEGABRAIN_DISPATCH_ID=stalled-ask \
+  "$root/.build/megabrain" ask 'question after stall' >/dev/null
 assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/stalled-ask/meta.json")" waiting_for_reply
 printf 'ask is accepted from the open dispatch contract\n'
 
 megabrain_dispatch_meta_write orphaned-ask parent-terminal superset superset workspace-test orphaned-ask-terminal "$root" main codex label orphaned gpt-5 true codex '' '' host ide >/dev/null
-TMUX= TMUX_PANE= SUPERSET_TERMINAL_ID=orphaned-ask-terminal megabrain_dispatch_child_message ask 'question after orphaning' >/dev/null
+TMUX= TMUX_PANE= SUPERSET_TERMINAL_ID=orphaned-ask-terminal MEGABRAIN_DISPATCH_ID=orphaned-ask \
+  "$root/.build/megabrain" ask 'question after orphaning' >/dev/null
 assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/orphaned-ask/meta.json")" waiting_for_reply
 printf 'ask is accepted from orphaned\n'
 

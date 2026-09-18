@@ -227,8 +227,22 @@ create_meta tmux-failure "$parent_pane"
 (
   unset TMUX TMUX_PANE
   export SUPERSET_TERMINAL_ID=tmux-failure-child
-  megabrain_parent_notify_dispatch() { return 1; }
-  megabrain_dispatch_child_message ask 'failure body retained'
+  unset ORCA_TERMINAL_HANDLE
+  fake_bin="$state_dir/fake-bin"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  has-session) exit 0 ;;
+  list-panes) printf '%s\n' "${MEGABRAIN_TEST_PARENT_PANE:-}" ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$fake_bin/tmux"
+  env -i HOME="$state_dir/home" PATH="$fake_bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+    MEGABRAIN_TEST_PARENT_PANE="$parent_pane" \
+    MEGABRAIN_DISPATCH_ID=tmux-failure SUPERSET_TERMINAL_ID=tmux-failure-child \
+    "$root/.build/megabrain" ask 'failure body retained'
 ) >/dev/null
 assert_equal "$(find "$state_dir/dispatches/tmux-failure/messages" -name '*.json' | wc -l | tr -d ' ')" 1
 assert_equal "$(jq -r '.text' "$state_dir/dispatches/tmux-failure/messages"/*.json)" 'failure body retained'
