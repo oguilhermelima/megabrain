@@ -233,7 +233,7 @@ const APPIUM_SESSION_DEFAULTS = { "appium:isHeadless": true } as const;
 function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean> {
   return { platformName: "iOS", ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
 }
-type AppiumSession = Readonly<{ sessionId: string; reused: boolean }>;
+type AppiumSession = Readonly<{ sessionId: string; stored: boolean }>;
 async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey): Promise<string | undefined> {
   const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(key.udid, key.bundleId) } })]);
   if (session.kind !== "ok") return undefined;
@@ -251,19 +251,19 @@ async function appiumSession(environment: Environment, processAdapter: ProcessAd
   const store = createNativeSessionStore(environment);
   if (!store.available) {
     const sessionId = await createAppiumSession(processAdapter, key);
-    return ok(sessionId === undefined ? undefined : { sessionId, reused: false });
+    return ok(sessionId === undefined ? undefined : { sessionId, stored: false });
   }
   return store.update(async (sessions) => {
     const recorded = nativeSessionFor(sessions, key);
     let current = sessions;
     if (recorded !== undefined) {
       const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${recorded.sessionId}`]);
-      if (probe.kind === "ok") return { sessions, value: { sessionId: recorded.sessionId, reused: true } };
+      if (probe.kind === "ok") return { sessions, value: { sessionId: recorded.sessionId, stored: true } };
       current = removeNativeSession(sessions, key);
     }
     const sessionId = await createAppiumSession(processAdapter, key);
     if (sessionId === undefined) return { sessions: current, value: undefined };
-    return { sessions: replaceNativeSession(current, { ...key, sessionId }), value: { sessionId, reused: false } };
+    return { sessions: replaceNativeSession(current, { ...key, sessionId }), value: { sessionId, stored: true } };
   });
 }
 async function nativeHealth(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -303,7 +303,7 @@ async function nativeHealth(args: readonly string[], environment: Environment, p
   if (session.kind === "ok" && session.value !== undefined) {
     const source = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${session.value.sessionId}/source`]);
     if (source.kind === "ok") tree = { count: (source.value.stdout.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? []).length };
-    if (!session.value.reused) await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${session.value.sessionId}`]);
+    if (!session.value.stored) await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${session.value.sessionId}`]);
   }
 
   let frame: NativeHealth["frame"] = unknownFrame(controlFrame ? `control frame could not be read: ${controlFrame}` : "no control frame configured");
