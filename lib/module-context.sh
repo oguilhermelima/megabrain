@@ -64,11 +64,11 @@ command_orchestrate() {
     ack|acknowledge) megabrain_dispatch_ack "$@" ;;
     reply)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION:-}"; then
-        "$typescript_binary" orchestrate reply "$@"
-        return $?
-      fi
-      megabrain_dispatch_reply "$@"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      "$typescript_binary" orchestrate reply "$@"
       ;;
     stop) megabrain_dispatch_stop "$@" ;;
     change)

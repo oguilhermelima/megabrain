@@ -597,17 +597,11 @@ megabrain_dispatch_liveness_read() {
 
 megabrain_dispatch_liveness() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION:-}"; then
-    "$typescript_binary" orchestrate liveness "$@"
-    return $?
-  fi
-  local dispatch_id="${1:-}"
-  case "$dispatch_id" in
-    -h|--help) megabrain_usage_show orchestrate-liveness; return 0 ;;
-  esac
-  [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-liveness; return "$MEGABRAIN_USAGE_ERROR"; }
-  shift
-  megabrain_dispatch_liveness_read "$dispatch_id" "$@"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" orchestrate liveness "$@"
 }
 
 megabrain_dispatch_start_transcript() {
@@ -2914,89 +2908,40 @@ megabrain_dispatch_close() {
   fi
 }
 
-megabrain_dispatch_child_message() {
-  local type="$1" text="$2" dispatch_id meta process_state state
-  case "$type" in
-    received|ask|done) ;;
-    *) megabrain_error "unsupported child message type: $type"; return "$MEGABRAIN_USAGE_ERROR" ;;
-  esac
-  megabrain_dispatch_find_child || return 1
-  dispatch_id="$MEGABRAIN_FOUND_DISPATCH"
-  megabrain_dispatch_message_append "$dispatch_id" child "$type" "$text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-  process_state="$(printf '%s' "$meta" | jq -r '.processState // empty')"
-  case "$process_state" in
-    starting|start-unproven) megabrain_dispatch_meta_update_process_state "$dispatch_id" running || return 1 ;;
-  esac
-  if [ "$type" = received ]; then
-    # WHY: received is the authoritative prompt-delivery fact. Honor it in the child
-    # writer so a receipt that arrives after the parent's bounded wait is not stranded
-    # until a human runs reconcile. Terminal dispatches retain their terminal state.
-    megabrain_dispatch_sync_prompt_receipt "$dispatch_id" || return 1
-    meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-    state="$(printf '%s' "$meta" | jq -r '.state // empty')"
-    if [ "$state" = spawning ]; then
-      megabrain_dispatch_meta_update_state "$dispatch_id" running || return 1
-    fi
-    printf '%s sent: %s\n' "$type" "$dispatch_id"
-    return 0
-  elif [ "$type" = ask ]; then
-    megabrain_dispatch_meta_update_state "$dispatch_id" waiting_for_reply || return 1
-    megabrain_dispatch_meta_update_process_state "$dispatch_id" running || return 1
-  else
-    megabrain_dispatch_meta_update_process_state "$dispatch_id" succeeded || return 1
-    megabrain_dispatch_meta_update_state "$dispatch_id" done || return 1
-  fi
-  printf '%s sent: %s\n' "$type" "$dispatch_id"
-}
-
 command_ask() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}"; then
-    "$typescript_binary" ask "$@"
-    return $?
-  fi
-  # WHY: --help must not look up a child dispatch and enqueue a question.
-  case "${1:-}" in
-    -h|--help) megabrain_usage_show ask; return 0 ;;
-  esac
-  [ "$#" -eq 1 ] && [ -n "$1" ] || { megabrain_usage_fail ask; return "$MEGABRAIN_USAGE_ERROR"; }
-  megabrain_dispatch_child_message ask "$1"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" ask "$@"
 }
 
 command_received() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}"; then
-    "$typescript_binary" received "$@"
-    return $?
-  fi
-  case "${1:-}" in
-    -h|--help) megabrain_usage_show received; return 0 ;;
-  esac
-  [ "$#" -eq 0 ] || { megabrain_usage_fail received; return "$MEGABRAIN_USAGE_ERROR"; }
-  megabrain_dispatch_child_message received 'prompt received'
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" received "$@"
 }
 
 command_done() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION:-}"; then
-    "$typescript_binary" done "$@"
-    return $?
-  fi
-  case "${1:-}" in
-    -h|--help) megabrain_usage_show done; return 0 ;;
-  esac
-  [ "$#" -eq 1 ] && [ -n "$1" ] || { megabrain_usage_fail done; return "$MEGABRAIN_USAGE_ERROR"; }
-  megabrain_dispatch_child_message done "$1"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" done "$@"
 }
 
 command_check() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_CHECK_IMPLEMENTATION:-}"; then
-    "$typescript_binary" check "$@"
-    return $?
-  fi
-  megabrain_dispatch_child_check "$@"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" check "$@"
 }
 
 command_ack() {
