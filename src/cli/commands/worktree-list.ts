@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { formatWorktreeList, parseGitWorktrees, parseParentConfig, parsePullRequests, parseWorkspacePaths, type GitWorktree, type ParentConfig, type WorktreeListEntry } from "../../core/worktree-list.js";
+import { repoFromOrca } from "./repository-selector.js";
 
 export type WorktreeListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -27,33 +28,28 @@ async function sharedRoot(environment: WorktreeListEnvironment): Promise<Result<
   return ok((await canonical(resolve(expanded))) ?? resolve(expanded));
 }
 
-async function repositoryForDirectory(path: string): Promise<Repository | undefined> {
-  const top = await runGit(path, ["rev-parse", "--show-toplevel"]);
+async function repositoryForDirectory(process: ProcessAdapter, path: string): Promise<Repository | undefined> {
+  const top = await runGit(process, path, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
   if (top === undefined) return undefined;
   const initialTop = await canonical(top.trim());
   if (initialTop === undefined) return undefined;
-  const initialCommon = await runGit(initialTop, ["rev-parse", "--git-common-dir"]);
-  if (initialCommon === undefined) return undefined;
-  const topPath = initialCommon.trim().endsWith("/.git")
-    ? await canonical(initialCommon.trim().slice(0, -"/.git".length))
+  const common = await runGit(process, initialTop, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (common === undefined) return undefined;
+  const commonPath = await canonical(common.trim());
+  if (commonPath === undefined) return undefined;
+  const topPath = commonPath.endsWith("/.git")
+    ? await canonical(commonPath.slice(0, -"/.git".length))
     : initialTop;
   if (topPath === undefined) return undefined;
-  const common = await runGit(topPath, ["rev-parse", "--git-common-dir"]);
-  if (common === undefined) return undefined;
-  // Preserve the shell verb's realpath resolution of Git's relative common-dir
-  // output from the caller's working directory.
-  const commonPath = await canonical(resolve(process.cwd(), common.trim()));
-  return commonPath === undefined ? undefined : { common: commonPath, path: topPath };
+  return { common: commonPath, path: topPath };
 }
 
-let defaultProcessAdapter: ProcessAdapter | undefined;
-async function runGit(path: string, args: readonly string[]): Promise<string | undefined> {
-  defaultProcessAdapter ??= createProcessAdapter();
-  const result = await defaultProcessAdapter.run("git", ["-C", path, ...args]);
+async function runGit(process: ProcessAdapter, path: string, args: readonly string[]): Promise<string | undefined> {
+  const result = await process.run("git", ["-C", path, ...args]);
   return result.kind === "ok" ? result.value.stdout : undefined;
 }
 
-async function repositories(root: string): Promise<Repository[]> {
+async function repositories(root: string, process: ProcessAdapter): Promise<Repository[]> {
   const result: Repository[] = [];
   const children = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name));
   for (const child of children) {
@@ -116,10 +112,12 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]\n");
   const root = await sharedRoot(environment);
   if (root.kind !== "ok") return root;
-  const repos = await repositories(root.value);
+  const repos = await repositories(root.value, process);
   let filter: string | undefined;
   if (options.value.repo !== undefined) {
-    const selected = await repositoryForDirectory(options.value.repo);
+    const selector = await repoFromOrca(process, options.value.repo);
+    if (selector.kind !== "ok") return selector;
+    const selected = await repositoryForDirectory(process, selector.value);
     if (selected === undefined) return failed(`repo not found: ${options.value.repo}`);
     filter = selected.common;
   }
@@ -127,9 +125,9 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   const parents: ParentConfig[] = [];
   for (const repository of repos) {
     if (filter !== undefined && repository.common !== filter) continue;
-    const output = await runGit(repository.path, ["worktree", "list", "--porcelain"]);
+    const output = await runGit(process, repository.path, ["worktree", "list", "--porcelain"]);
     if (output !== undefined) gitRecords.push(...parseGitWorktrees(output, repository.common));
-    const config = await runGit(repository.path, ["config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]);
+    const config = await runGit(process, repository.path, ["config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]);
     if (config !== undefined) parents.push(...parseParentConfig(config, repository.common));
   }
   const workspaces = parseWorkspacePaths(await batchJson(process, "superset", ["workspaces", "list", "--json"]));
