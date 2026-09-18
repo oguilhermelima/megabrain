@@ -2409,6 +2409,7 @@ megabrain_dispatch_watch() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  [ -z "${MEGABRAIN_STATE_DIR:-}" ] || export MEGABRAIN_STATE_DIR
   # WHY: parent watch is fully ported; the shared mailbox helper remains for child check and hooks.
   MEGABRAIN_ROOT="$module_root" megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" orchestrate watch "$@"
@@ -2609,6 +2610,7 @@ megabrain_dispatch_ack() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
+  [ -z "${MEGABRAIN_STATE_DIR:-}" ] || export MEGABRAIN_STATE_DIR
   # WHY: parent ack is fully ported; the shared owner helper remains for child ack and hooks.
   MEGABRAIN_ROOT="$module_root" megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" orchestrate ack "$@"
