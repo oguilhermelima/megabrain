@@ -75,6 +75,10 @@ have unread child mail, once per message. That is what makes a missed pointer re
 instead of being lost, and it is why a notice can appear immediately after you finish
 speaking. It stays quiet for a dispatch you already have a `watch` open on.
 
+The same notice flags a dispatch in state `done` whose terminal is still retained. Use
+`megabrain orchestrate ack <dispatch-id> <delivery-id> --close` when appropriate: it acknowledges
+the delivery and releases the finished dispatch in one call.
+
 Nothing removes a finished dispatch on its own. `prune` archives terminal ones past an
 age threshold, and archives rather than deletes by default because a dispatch's message
 queue is the record of what actually happened. It never touches a dispatch that is still
@@ -224,12 +228,26 @@ The installable module ids include `tv-adb` and `skill-sync`. During normal comm
 and `doctor` skip that runtime repair. A per-target stamp makes unchanged copies nearly free.
 `megabrain doctor skill-sync` reports drift as `skill-sync`.
 
+`megabrain doctor` adds `compiled-binary` automatically when `.build/megabrain` is stale compared
+with `src`; it is a diagnostic rather than an installable module, so a healthy binary is omitted
+from the no-argument report. Ask for `megabrain doctor compiled-binary` to check it explicitly.
+
 `doctor` also counts `leakedDispatchSessions`: tmux sessions still held by finished dispatches.
 `orchestrate prune` can release those sessions while archiving or deleting eligible dispatch
 records. A split dispatch that shares the coordinator's tmux session does not own that session, so
 it is never counted or released.
 
 ## Devices and browsers
+
+Native simulator commands read the optional project config at the repository root,
+`.megabrain/native.json`. They find it by walking up to the Git root, so they work from any
+subdirectory; relative `appPath` values resolve against that root, while absolute values are used
+as given. Set `MEGABRAIN_NATIVE_WORKTREE` to point the lookup at another directory. The file must
+have `"version": 1` and `surfaces.phone` and/or `surfaces.tv`; a surface can define `appPath`,
+`bundleId`, `urlTemplate`, `metroPort`, `device`, and `controlFrame`. `native build` reads
+`appPath`; `sim ensure` reads `device`; `app reload` reads `bundleId`, `urlTemplate`, `metroPort`,
+and `device`; `health` reads `bundleId`, `device`, `metroPort`, and `controlFrame`; `crashes` reads
+`bundleId`. This repository's `.megabrain/native.json` is a short example.
 
 ```
 megabrain native appium start|stop|status
@@ -260,6 +278,10 @@ megabrain web userscript install <file.user.js>
 megabrain web userscript list
 megabrain web userscript remove <file.user.js>
 ```
+
+`native health` may reuse a still-live Appium session from an earlier call, so a session can outlive
+the call that created it. Appium expires an idle session after 60 seconds; that expiry releases the
+reusable session.
 
 `simulator-web` uses pinned Playwright 1.62.1 and keeps separate persistent Chromium and Firefox profiles under
 `~/.megabrain/playwright`, with a configurable viewport and extension versions pinned at
