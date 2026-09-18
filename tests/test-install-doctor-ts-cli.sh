@@ -4,9 +4,8 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-install-doctor.XXXXXX")"
 binary="$root/.build/megabrain"
-hidden="$binary.shell-contract"
 modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync)
-trap 'if [ -f "$root/megabrain.real" ]; then mv -f "$root/megabrain.real" "$root/megabrain"; fi; mv -f "$hidden" "$binary" 2>/dev/null || true; rm -rf "$work"' EXIT
+trap 'if [ -f "$root/megabrain.real" ]; then mv -f "$root/megabrain.real" "$root/megabrain"; fi; rm -rf "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -143,13 +142,14 @@ export MEGABRAIN_TEST_NOW='2026-09-16T02:00:00Z'
 
 # The operator-facing shell entrypoint must route these verbs to the compiled
 # implementation. A failing binary makes an accidental shell fallback visible.
-mv "$binary" "$hidden"
-printf '#!/usr/bin/env bash\nexit 42\n' >"$binary"
-chmod +x "$binary"
-run_capture "$work/routed-doctor" "$root/megabrain" doctor orchestration
+routing_fixture="$work/routing-fixture"
+mkdir -p "$routing_fixture/.build"
+cp "$root/megabrain" "$routing_fixture/megabrain"
+cp -R "$root/lib" "$routing_fixture/lib"
+printf '#!/usr/bin/env bash\nexit 42\n' >"$routing_fixture/.build/megabrain"
+chmod +x "$routing_fixture/megabrain" "$routing_fixture/.build/megabrain"
+run_capture "$work/routed-doctor" env MEGABRAIN_STATE_DIR="$work/routed-state" "$routing_fixture/megabrain" doctor orchestration
 [ "$(cat "$work/routed-doctor.status")" -eq 42 ] || fail 'operator doctor was not served by the binary'
-rm -f "$binary"
-mv "$hidden" "$binary"
 
 # Keep the absent-environment contract: inspection branches must agree when every source is absent.
 empty_home="$work/empty-home"
@@ -224,11 +224,8 @@ for index in 1 2 3 4 5 6; do
   printf '%s\n' "{\"dispatchId\":\"leaked-$index\",\"state\":\"done\",\"processState\":\"succeeded\",\"terminalState\":\"owned\",\"runtime\":\"tmux\",\"tmuxSession\":\"leaked-$index\",\"parentTmuxSession\":\"parent\"}" >"$work/binary-state/dispatches/leaked-$index/meta.json"
 done
 
-# Reach the shell implementation by removing the compiled binary from its expected path.
-mv "$binary" "$hidden"
 shell_unknown="$work/shell-unknown"
-run_capture "$shell_unknown" "$root/megabrain" install unknown-module
-mv "$hidden" "$binary"
+run_capture "$shell_unknown" env MEGABRAIN_INSTALL_IMPLEMENTATION=shell "$root/megabrain" install unknown-module
 
 # The binary remains functional even when the user-facing shell entrypoint is a failing stub.
 mv "$root/megabrain" "$root/megabrain.real"
@@ -253,9 +250,7 @@ mkdir -p "$install_contract_home/.claude"
 printf '%s\n' '{"hooks":{"Stop":[]}}' >"$install_contract_home/.claude/settings.json"
 cp "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
 export HOME="$install_contract_home"
-mv "$binary" "$hidden"
-run_capture "$work/shell-install-contract" "$root/megabrain" install orchestration-hooks --yes
-mv "$hidden" "$binary"
+run_capture "$work/shell-install-contract" env MEGABRAIN_INSTALL_IMPLEMENTATION=shell "$root/megabrain" install orchestration-hooks --yes
 assert_backup_matches() {
   local path="$1" original="$2" backup
   backup="$(find "$(dirname "$path")" -maxdepth 1 -name "$(basename "$path").megabrain-backup-*" -type f -print -quit)"
