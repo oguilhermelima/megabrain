@@ -34,11 +34,18 @@ fi
 source "$root/tests/fixtures/entrypoint-routing.sh"
 
 write_dispatch() {
-  local state="$1" dispatch="$2" delivery="$3" generation="$4"
+  local state="$1" dispatch="$2" delivery="$3" generation="$4" consumer="${5:-null}" consumer_json consumer_generation
+  if [ "$consumer" = null ]; then
+    consumer_json=null
+    consumer_generation=null
+  else
+    consumer_json="\"$consumer\""
+    consumer_generation="$generation"
+  fi
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
   printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"content answer","sessionId":"child-terminal"}' >"$state/dispatches/$dispatch/messages/0001-child-ask.json"
-  printf '%s\n' "{\"id\":\"$delivery\",\"dispatchId\":\"$dispatch\",\"recipient\":\"parent\",\"consumer\":\"superset/parent-terminal\",\"consumerGeneration\":$generation,\"messageSeqs\":[1],\"status\":\"outstanding\",\"acknowledgedAt\":null}" >"$state/dispatches/$dispatch/deliveries/$delivery.json"
+  printf '%s\n' "{\"id\":\"$delivery\",\"dispatchId\":\"$dispatch\",\"recipient\":\"parent\",\"consumer\":$consumer_json,\"consumerGeneration\":$consumer_generation,\"messageSeqs\":[1],\"status\":\"outstanding\",\"acknowledgedAt\":null}" >"$state/dispatches/$dispatch/deliveries/$delivery.json"
 }
 
 run_binary() {
@@ -81,7 +88,7 @@ scenario_watch_generation() {
 
 scenario_ack_generation() {
   local state="$work_dir/ack-generation" output
-  write_dispatch "$state" generation-ack generation-delivery 2
+  write_dispatch "$state" generation-ack generation-delivery 2 superset/parent-terminal
   output="$(env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_CONSUMER_GENERATION=2 SUPERSET_TERMINAL_ID=parent-terminal \
     "$root/.build/megabrain" orchestrate ack generation-ack generation-delivery --json)"
