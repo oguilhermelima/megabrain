@@ -3,7 +3,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-base.XXXXXX")"
-trap 'rm -rf "$work"; mv -f "$root/megabrain.worktree-base-shell-test.real" "$root/megabrain" 2>/dev/null || true' EXIT
+trap 'rm -rf "$work"' EXIT
+export MEGABRAIN_STATE_DIR="$work/state"
+source "$root/tests/fixtures/entrypoint-routing.sh"
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_equal() { [ "$1" = "$2" ] || fail "expected '$2', got '$1'"; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected '$1' to contain '$2'" ;; esac; }
@@ -79,19 +81,14 @@ assert_contains "$human_output" 'base: feat/stack'
 assert_contains "$human_output" "base commit: $feature_tip"
 printf 'human create output: %s' "$human_output"
 
-cat >"$root/megabrain.worktree-base-shell-test" <<'EOF'
-#!/usr/bin/env bash
-exit 97
-EOF
-chmod +x "$root/megabrain.worktree-base-shell-test"
-mv "$root/megabrain" "$root/megabrain.worktree-base-shell-test.real"
-mv "$root/megabrain.worktree-base-shell-test" "$root/megabrain"
-output="$(run_binary worktree create --repo "$work/repo" --branch feat/stub-proof --from feat/stack --json 2>&1)" ||
+isolation_fixture="$work/isolation-fixture"
+make_binary_isolation_fixture "$root" "$isolation_fixture" 97
+output="$(MEGABRAIN_ROOT="$isolation_fixture" HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" \
+  "$isolation_fixture/.build/megabrain" worktree create --repo "$work/repo" --branch feat/stub-proof --from feat/stack --json 2>&1)" ||
   fail 'binary create depends on the shell entrypoint'
 json "$output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\" and .baseSource == \"explicit\""
 assert_contains "$output" 'base'
 printf 'binary create remains independent of a failing shell entrypoint\n'
-mv "$root/megabrain.worktree-base-shell-test.real" "$root/megabrain"
 
 git -C "$work/repo" symbolic-ref --delete refs/remotes/origin/HEAD
 printf 'v3\n' >"$work/seed/version"
