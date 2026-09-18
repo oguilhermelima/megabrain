@@ -249,7 +249,7 @@ type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecogni
 function messageFiles(directory: string): string[] {
   try {
     return readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && !/^\d{4}-[^-]+-.+\.json$/.test(entry.name))
+      .filter((entry) => entry.isFile() && !/^\d{4,}-[^-]+-.+\.json$/.test(entry.name))
       .map((entry) => resolve(directory, entry.name));
   } catch {
     return [];

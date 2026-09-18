@@ -1111,7 +1111,7 @@ megabrain_dispatch_health_counts() {
     for message_path in "$dispatch_path/messages"/*; do
       [ -f "$message_path" ] || continue
       message_name="${message_path##*/}"
-      if ! [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9]-[^-]+-.+\.json$ ]]; then
+      if ! [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9][0-9]*-[^-]+-.+\.json$ ]]; then
         if [ -n "$MODULE_UNRECOGNISED_MESSAGE_FILES" ]; then
           MODULE_UNRECOGNISED_MESSAGE_FILES="$MODULE_UNRECOGNISED_MESSAGE_FILES, $message_path"
         else
@@ -1465,7 +1465,7 @@ megabrain_dispatch_message_append_locked() {
     for message_path in "$messages_dir"/*.json; do
       [ -f "$message_path" ] || continue
       message_name="${message_path##*/}"
-      if [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9]-[^-]+-.+\.json$ ]]; then
+      if [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9][0-9]*-[^-]+-.+\.json$ ]]; then
         printf '%s\n' "${message_name%%-*}"
       fi
     done | sort -n | tail -n 1
