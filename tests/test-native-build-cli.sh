@@ -4,7 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-native-build-cli.XXXXXX")"
-trap 'rm -rf "$work"; [ -e "$root/megabrain.native-build-shell" ] && mv "$root/megabrain.native-build-shell" "$root/megabrain"' EXIT
+trap 'rm -rf "$work"' EXIT
+export MEGABRAIN_STATE_DIR="$work/state"
+mkdir -p "$MEGABRAIN_STATE_DIR"
+source "$root/tests/fixtures/entrypoint-routing.sh"
 
 shell_output="$(MEGABRAIN_NATIVE_IMPLEMENTATION=shell MEGABRAIN_NATIVE_WORKTREE="$work" "$root/megabrain" native build tv 2>&1)" || shell_status=$?
 shell_status="${shell_status:-0}"
@@ -14,18 +17,13 @@ case "$shell_output" in
   *) printf 'shell native build refusal was not explicit: %s\n' "$shell_output" >&2; exit 1 ;;
 esac
 
-mv "$root/megabrain" "$root/megabrain.native-build-shell"
-cat >"$root/megabrain" <<'EOF'
-#!/usr/bin/env bash
-exit 99
-EOF
-chmod +x "$root/megabrain"
-binary_output="$(MEGABRAIN_NATIVE_WORKTREE="$work" "$root/.build/megabrain" native build tv 2>&1)" || binary_status=$?
-binary_status="${binary_status:-0}"
-[ "$binary_status" -eq 1 ] || { printf 'binary native build status was %s\n' "$binary_status" >&2; exit 1; }
-case "$binary_output" in
-  *"app path is required for tv; pass surfaces.tv.appPath in .megabrain/native.json"*) ;;
-  *) printf 'binary native build refusal was not explicit: %s\n' "$binary_output" >&2; exit 1 ;;
-esac
+routing_fixture="$work/routing-fixture"
+make_entrypoint_routing_fixture "$root" "$routing_fixture" 99
+if MEGABRAIN_NATIVE_WORKTREE="$work" "$routing_fixture/megabrain" native build tv >"$work/routed-output" 2>&1; then
+  binary_status=0
+else
+  binary_status=$?
+fi
+[ "$binary_status" -eq 99 ] || { printf 'native operator entrypoint returned status %s\n' "$binary_status" >&2; exit 1; }
 
-printf 'native build reaches shell and binary independently\n'
+printf 'native build reaches shell and compiled implementation independently\n'
