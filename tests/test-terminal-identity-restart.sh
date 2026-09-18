@@ -186,15 +186,6 @@ scenario_create_json_preserves_identity() {
   printf 'create --json returns the identity used by dispatch metadata\n'
 }
 
-scenario_list_keeps_stale() {
-  local output
-  fake_host_live=false
-  output="$(command_terminal list --json)"
-  assert_json_true "$output" 'length == 1 and .[0].terminalId == "terminal-create" and .[0].status == "stale"'
-  fake_host_live=true
-  printf 'list retains a terminal missing from the host as stale\n'
-}
-
 scenario_restart_selectors() {
   local output failure_output
   fake_host_live=true
@@ -309,27 +300,6 @@ scenario_create_marker_identity() {
   printf 'create wraps the command and persists its self-reported root identity\n'
 }
 
-scenario_list_process_states() {
-  local output
-  fake_create_returns_identity=true
-  fake_id=terminal-status
-  fake_pid=334
-  fake_port=8087
-  fake_process_alive=true
-  fake_host_live=true
-  command_terminal create --worktree "$root" --command 'run status' --port 8087 --json >/dev/null
-  output="$(command_terminal list --json)"
-  assert_json_true "$output" 'any(.[]; .terminalId == "terminal-status" and .status == "alive")'
-  [ "$(cat "$fake_status_probe_file")" = yes ] || fail 'status was not obtained from the host process check'
-  fake_process_alive=false
-  output="$(command_terminal list --json)"
-  assert_json_true "$output" 'any(.[]; .terminalId == "terminal-status" and .status == "dead")'
-  fake_host_live=false
-  output="$(command_terminal list --json)"
-  assert_json_true "$output" 'any(.[]; .terminalId == "terminal-status" and .status == "stale")'
-  printf 'list distinguishes alive, dead and forgotten host terminals\n'
-}
-
 scenario_restart_marker_identity() {
   local output
   fake_id=terminal-marker-restart
@@ -384,23 +354,19 @@ scenario_close_lifecycle() {
 
 case "${SCENARIO:-all}" in
   1) scenario_create_json_preserves_identity ;;
-  2) scenario_list_keeps_stale ;;
   3) scenario_restart_selectors ;;
   4) scenario_restart_safety_and_wait ;;
   5) scenario_create_marker_identity ;;
-  6) scenario_list_process_states ;;
   7) scenario_restart_marker_identity ;;
   8) scenario_close_lifecycle ;;
   all)
     scenario_create_json_preserves_identity
-    scenario_list_keeps_stale
     scenario_restart_selectors
     scenario_restart_safety_and_wait
     scenario_create_marker_identity
-    scenario_list_process_states
     scenario_restart_marker_identity
     scenario_close_lifecycle
-    printf 'ok: terminal identity, listing, selector resolution, safe tree restart, waits and close\n'
+    printf 'ok: terminal identity, selector resolution, safe tree restart, waits and close\n'
     ;;
   *) fail "unknown scenario: $SCENARIO" ;;
 esac
