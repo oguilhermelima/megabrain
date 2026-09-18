@@ -64,42 +64,6 @@ megabrain_install_one() {
   return 1
 }
 
-megabrain_doctor_one() {
-  local module="$1"
-  local json="${2:-false}"
-  MODULE_UNCERTAIN_DISPATCHES=0
-  MODULE_RETAINED_TERMINALS=0
-  MODULE_LEAKED_DISPATCH_SESSIONS=0
-  MODULE_PRUNABLE_DISPATCHES=0
-  MODULE_UNCERTAIN_REASONS='[]'
-  MODULE_RETAINED_REASONS='[]'
-  megabrain_module_doctor "$module"
-  local rc=$?
-  if [ -z "$MODULE_STATUS" ]; then
-    MODULE_STATUS=unknown
-  fi
-  if ! megabrain_state_reconcile "$module" "$MODULE_STATUS" "$MODULE_DETAILS"; then
-    MODULE_REASON="$MODULE_REASON; state reconciliation failed"
-    MODULE_DETAILS="$MODULE_REASON"
-    rc=1
-  elif [ -n "$MEGABRAIN_STATE_RECONCILIATION" ]; then
-    MODULE_REASON="$MODULE_REASON; $MEGABRAIN_STATE_RECONCILIATION"
-  fi
-  if [ "$json" = true ]; then
-    jq -n --arg moduleName "$module" --arg status "$MODULE_STATUS" --arg reason "$MODULE_REASON" \
-      --argjson uncertainDispatches "${MODULE_UNCERTAIN_DISPATCHES:-0}" \
-      --argjson retainedTerminals "${MODULE_RETAINED_TERMINALS:-0}" \
-      --argjson leakedDispatchSessions "${MODULE_LEAKED_DISPATCH_SESSIONS:-0}" \
-      --argjson prunableDispatches "${MODULE_PRUNABLE_DISPATCHES:-0}" \
-      --argjson uncertainReasons "${MODULE_UNCERTAIN_REASONS:-[]}" \
-      --argjson retainedReasons "${MODULE_RETAINED_REASONS:-[]}" \
-      '{module: $moduleName, status: $status, reason: $reason, uncertainDispatches: $uncertainDispatches, uncertainReasons: $uncertainReasons, retainedTerminals: $retainedTerminals, retainedReasons: $retainedReasons, leakedDispatchSessions: $leakedDispatchSessions, prunableDispatches: $prunableDispatches}'
-  else
-    megabrain_status_line "$module" "$MODULE_STATUS" "$MODULE_REASON"
-  fi
-  return "$rc"
-}
-
 megabrain_interactive_modules() {
   local index module selected
   local -a ids
@@ -185,56 +149,14 @@ EOF
   return "$rc"
 }
 
+# WHY: the wrapper remains a useful installed entrypoint even before its compiled payload is built.
 command_doctor() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      -h|--help) megabrain_usage_show doctor; return 0 ;;
-    esac
-  done
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_INSTALL_IMPLEMENTATION:-}"; then
-    "$typescript_binary" doctor "$@"
-    return $?
-  fi
-  local module="" rc=0 current json=false result results
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help)
-        megabrain_usage_show doctor
-        return 0
-        ;;
-      *)
-        if [ -n "$module" ]; then
-          megabrain_error "doctor accepts at most one module id"
-          return "$MEGABRAIN_USAGE_ERROR"
-        fi
-        module="$arg"
-        shift
-        ;;
-    esac
-  done
-  if [ -n "$module" ]; then
-    megabrain_validate_module "$module" || { megabrain_error "unknown module: $module"; return "$MEGABRAIN_USAGE_ERROR"; }
-    megabrain_doctor_one "$module" "$json"
-    return $?
-  fi
-  results=''
-  while IFS= read -r current; do
-    if [ "$json" = true ]; then
-      result="$(megabrain_doctor_one "$current" true)" || rc=1
-      results="${results}${result}
-"
-    else
-      megabrain_doctor_one "$current" || rc=1
-    fi
-  done < <(megabrain_module_ids)
-  if [ "$json" = true ]; then
-    printf '%s' "$results" | jq -s .
-  fi
-  return "$rc"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  "$typescript_binary" doctor "$@"
 }
 
 module_orchestration_doctor() {
