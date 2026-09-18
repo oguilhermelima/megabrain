@@ -23,7 +23,26 @@ archive="$work/release.tar.gz"
 install_root="$work/install"
 home="$work/home"
 formula="$work/megabrain.rb"
+installer="$work/install.sh"
+fake_bin="$work/bin"
 mkdir -p "$install_root" "$home"
+mkdir -p "$fake_bin"
+
+cp "$release_source_root/install.sh" "$installer"
+cat >"$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$output" ] || { printf 'fake curl: missing output path\n' >&2; exit 1; }
+cp "$MEGABRAIN_TEST_ARCHIVE" "$output"
+EOF
+chmod +x "$fake_bin/curl"
 
 before_git_status="$(git -C "$release_source_root" status --porcelain=v1 --untracked-files=all)"
 before_formula_identity="$(ls -di "$release_source_root/Formula/megabrain.rb" | awk '{print $1}')"
@@ -40,6 +59,7 @@ tar -xzf "$archive" -C "$install_root"
 release_root="$install_root/megabrain-$version"
 [ -x "$release_root/megabrain" ] || fail 'release tarball did not produce an executable install'
 [ ! -d "$release_root/.git" ] || fail 'clean release install unexpectedly contains a git directory'
+[ ! -e "$release_root/.build/megabrain" ] || fail 'release tarball unexpectedly contains the compiled binary'
 
 chmod -R a-w "$release_root"
 [ ! -w "$release_root" ] || fail 'clean release install root is writable'
@@ -54,16 +74,35 @@ case "$version_output" in
 esac
 context_json="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" "$release_root/megabrain" context --json)"
 printf '%s' "$context_json" | jq -e '.host == "unknown"' >/dev/null || fail 'clean install context failed'
-if missing_binary_output="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" \
-  "$release_root/megabrain" model list 2>&1)"; then
-  fail 'clean install unexpectedly ran model list without the compiled binary'
-fi
-case "$missing_binary_output" in
-  *'compiled binary is missing'*'run bun run build'*) ;;
-  *) fail "clean install did not explain the missing binary: $missing_binary_output" ;;
+
+installer_output="$(env -i HOME="$home" PATH="$fake_bin:$clean_path" \
+  MEGABRAIN_STATE_DIR="$home/.megabrain" MEGABRAIN_TEST_ARCHIVE="$archive" \
+  bash "$installer" --agents none --skill none --agents-md none --modules none --yes 2>&1)" ||
+  fail "clean installer failed: $installer_output"
+[ -x "$home/.megabrain-local/.build/megabrain" ] ||
+  fail 'clean installer did not produce the compiled binary'
+model_output="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" \
+  "$home/.local/bin/megabrain" model list --json 2>&1)" ||
+  fail "clean installer compiled binary could not answer model list: $model_output"
+case "$model_output" in
+  *'compiled binary is missing'*) fail "clean installer still refused model list: $model_output" ;;
 esac
+
+missing_home="$work/missing-bun-home"
+mkdir -p "$missing_home"
+if missing_bun_output="$(env -i HOME="$missing_home" PATH="$fake_bin:/usr/bin:/bin" \
+  MEGABRAIN_STATE_DIR="$missing_home/.megabrain" MEGABRAIN_TEST_ARCHIVE="$archive" \
+  bash "$installer" --agents none --skill none --agents-md none --modules none --yes 2>&1)"; then
+  fail 'installer succeeded without Bun'
+fi
+case "$missing_bun_output" in
+  *'bun is required'*'https://bun.sh'*) ;;
+  *) fail "missing Bun error was not actionable: $missing_bun_output" ;;
+esac
+[ ! -e "$missing_home/.megabrain-local" ] || fail 'missing Bun created a partial install'
 
 printf 'scenario 1: no-host clean install has a sane context result\n'
 printf 'scenario 2: release tarball commands run from a non-git, read-only root\n'
-printf 'scenario 3: ported model command refuses a missing compiled binary\n'
+printf 'scenario 3: clean installer compiles and runs a ported model command\n'
+printf 'scenario 4: installer refuses before writing when Bun is missing\n'
 printf 'ok: clean install scenarios\n'

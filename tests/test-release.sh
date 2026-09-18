@@ -43,6 +43,10 @@ case "$help_output" in
   *'prints the commands for the operator to run'*|*'does not tag or push'*) ;;
   *) fail "--help did not explain operator commands: $help_output" ;;
 esac
+case "$help_output" in
+  *'compiled binary'*'install.sh'*'Bun'*) ;;
+  *) fail "--help did not explain how the compiled binary is delivered: $help_output" ;;
+esac
 printf 'scenario 1: release help describes arguments and operator commands\n'
 
 mismatch_tag="v$version-mismatch"
@@ -72,6 +76,9 @@ case "$matching_output" in
 esac
 tar -tzf "$archive" | grep -F "megabrain-$version/megabrain" >/dev/null ||
   fail 'release tarball does not contain the megabrain entrypoint'
+if tar -tzf "$archive" | grep -F '/.build/megabrain' >/dev/null; then
+  fail 'release tarball unexpectedly contains the compiled binary'
+fi
 grep -F "releases/download/v$version/megabrain-$version.tar.gz" "$formula" >/dev/null || fail 'rendered formula has the wrong version'
 grep -Eq '^  sha256 "[0-9a-f]{64}"$' "$formula" || fail 'rendered formula has no concrete sha256'
 grep -F '__VERSION__' "$formula" >/dev/null && fail 'rendered formula retained a version placeholder'
@@ -79,6 +86,10 @@ tracked_formula_hash_after="$(shasum -a 256 "$root/Formula/megabrain.rb" | awk '
 [ "$tracked_formula_hash_before" = "$tracked_formula_hash_after" ] ||
   fail 'release test changed the tracked formula'
 printf 'scenario 3: matching release tag creates the formula tarball and instructions\n'
+
+jq -e '(.private == true) and (.files == null) and (has("bin") | not)' "$root/package.json" >/dev/null ||
+  fail 'package metadata implies an npm binary package even though distribution is private'
+printf 'scenario 4: private package metadata does not claim an npm binary\n'
 
 committed_root="$work/formula-change"
 git clone -q "$root" "$committed_root" || fail 'could not clone the release tree'
@@ -109,7 +120,7 @@ case "$archive_help_output" in
       committed_hash="$(shasum -a 256 "$formula_archive" | awk '{print $1}')"
       [ "$formula_hash" = "$committed_hash" ] ||
         fail "committed formula hash $formula_hash does not match $formula_release_tag archive $committed_hash"
-      printf 'scenario 4: committed formula hash matches its tagged release archive\n'
+      printf 'scenario 5: committed formula hash matches its tagged release archive\n'
     fi
     ;;
   *)
@@ -140,7 +151,7 @@ changed_entries="$(tar -tzf "$changed_archive")" ||
 if printf '%s\n' "$changed_entries" | grep -F '/Formula/' >/dev/null; then
   fail 'release archive includes Formula files'
 fi
-printf 'scenario 5: Formula-only commit preserves the release.sh archive\n'
+printf 'scenario 6: Formula-only commit preserves the release.sh archive\n'
 
 manifest_mismatch_root="$work/manifest-mismatch"
 git clone -q "$root" "$manifest_mismatch_root" || fail 'could not clone the manifest tree'
@@ -157,6 +168,6 @@ case "$mismatch_output" in
   *'version mismatch'*'.claude-plugin/marketplace.json'*) ;;
   *) fail "version mismatch error was not actionable: $mismatch_output" ;;
 esac
-printf 'scenario 6: release refuses mismatched JSON release versions\n'
+printf 'scenario 7: release refuses mismatched JSON release versions\n'
 
 printf 'ok: release guard scenarios\n'
