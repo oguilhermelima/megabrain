@@ -37,7 +37,8 @@ while IFS= read -r file; do
     */test-shared-build-isolation.sh|*/container/run.sh) continue ;;
   esac
 
-  build_vars=''
+  root_vars=''
+  artifact_vars=''
   line_number=0
   while IFS= read -r line || [ -n "$line" ]; do
     line_number=$((line_number + 1))
@@ -52,16 +53,27 @@ while IFS= read -r file; do
     fi
     if [ -n "$assignment" ]; then
       case "$line" in
-        *'.build'*)
-          case " $build_vars " in
+        *'BASH_SOURCE[0]'*'pwd -P'*)
+          case " $root_vars " in
             *" $assignment "*) ;;
-            *) build_vars="$build_vars $assignment" ;;
+            *) root_vars="$root_vars $assignment" ;;
           esac
           ;;
         *)
-          for variable in $build_vars; do
-            if [[ "$line" =~ \$${variable}([^A-Za-z0-9_]|$) ]]; then
-              build_vars="$build_vars $assignment"
+          case "$line" in
+            *'.build'*)
+              case " $artifact_vars " in
+                *" $assignment "*) ;;
+                *) artifact_vars="$artifact_vars $assignment" ;;
+              esac
+              ;;
+          esac
+          for variable in $root_vars; do
+            if [[ "$line" =~ \$${variable}/(\.build/)?megabrain([^A-Za-z0-9_]|$) ]]; then
+              case " $artifact_vars " in
+                *" $assignment "*) ;;
+                *) artifact_vars="$artifact_vars $assignment" ;;
+              esac
               break
             fi
           done
@@ -69,9 +81,18 @@ while IFS= read -r file; do
       esac
     fi
 
-    for variable in $build_vars; do
+    # The guard covers the two process-shared entry artifacts, while scratch fixtures such as
+    # $root/.megabrain-state remain intentionally outside its scope.
+    for variable in $root_vars; do
+      if [[ "$line" =~ \$${variable}/(\.build/)?megabrain([^A-Za-z0-9_]|$) ]] && is_write_line "$line" "$variable"; then
+        printf '%s:%s: writes the shared megabrain entrypoint through $%s\n' \
+          "$file" "$line_number" "$variable" >>"$violations"
+        break
+      fi
+    done
+    for variable in $artifact_vars; do
       if [[ "$line" =~ \$${variable}([^A-Za-z0-9_]|$) ]] && is_write_line "$line" "$variable"; then
-        printf '%s:%s: writes the checkout build directory through $%s\n' \
+        printf '%s:%s: writes the shared megabrain entrypoint through $%s\n' \
           "$file" "$line_number" "$variable" >>"$violations"
         break
       fi
@@ -86,4 +107,4 @@ if [ -s "$violations" ]; then
   exit 1
 fi
 
-printf 'shared build directory has no contract writers\n'
+printf 'shared megabrain entrypoints have no contract writers\n'
