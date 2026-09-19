@@ -19,8 +19,9 @@ async function caller(environment: QueueEnvironment, process: ProcessAdapter): P
     }
     return { ...identity, tmuxPane: environment.TMUX_PANE };
   }
-  if (environment.MEGABRAIN_SESSION_ID || environment.SUPERSET_TERMINAL_ID) return { host: environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : "orca"), id: environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID };
+  if (environment.SUPERSET_TERMINAL_ID) return { host: "superset", id: environment.SUPERSET_TERMINAL_ID };
   if (environment.ORCA_TERMINAL_HANDLE) return { host: "orca", id: environment.ORCA_TERMINAL_HANDLE };
+  if (environment.MEGABRAIN_SESSION_ID) return { host: environment.MEGABRAIN_SESSION_HOST ?? "unknown", id: environment.MEGABRAIN_SESSION_ID };
   return {};
 }
 
