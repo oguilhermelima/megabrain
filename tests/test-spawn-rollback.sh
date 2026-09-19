@@ -168,8 +168,8 @@ scenario_metadata_read_failure_closes_host() {
   meta="$state/dispatches/$dispatch_id/meta.json"
   grep -Fx 'child-terminal' "$close_log" >/dev/null || fail 'metadata read failure left the host terminal open'
   [ "$(jq -r '.state' "$meta")" = failed ] || fail 'metadata read failure did not fail the dispatch'
-  [ "$(jq -r '.reason' "$meta")" = prompt-delivery ] || fail 'metadata read failure did not record a failure reason'
-  [ "$(jq -r '.promptDeliveryReason' "$meta")" = metadata-read-failed ] || fail 'metadata read failure recorded the wrong reason'
+  [ "$(jq -r '.stage' "$meta")" = prompt-delivery ] || fail 'metadata read failure did not record its failure stage'
+  [ "$(jq -r '.reason' "$meta")" = metadata-read-failed ] || fail 'metadata read failure did not record its failure reason'
   printf 'metadata read failure closes the host and records its reason\n'
 }
 
