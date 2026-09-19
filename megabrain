@@ -56,7 +56,6 @@ Commands:
   orchestrate close <dispatch-id> ...  Close a Superset dispatch terminal
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
-  fact list|add|edit|remove ...             Manage versioned environment facts
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
   ask "question"                       Ask the direct coordinator from a child dispatch
   done "summary"                        Mark a child dispatch done
@@ -91,7 +90,6 @@ megabrain_main() {
     orchestrate) command_orchestrate "$@" ;;
     chain) command_chain "$@" ;;
     model|models) command_model "$@" ;;
-    fact) command_fact "$@" ;;
     web) command_web "$@" ;;
     ask) command_ask "$@" ;;
     received) command_received "$@" ;;

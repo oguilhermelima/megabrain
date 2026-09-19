@@ -28,7 +28,7 @@ assert_contains() {
 
 # Group commands list their subcommands instead of documenting one invocation, and
 # AGENTS.md spells the appium verbs out one per line, so neither has a doc entry.
-no_doc_entry=' worktree chain model fact native-appium '
+no_doc_entry=' worktree chain model native-appium '
 
 usage_keys() {
   awk '/^megabrain_usage_line\(\) \{/ { inside = 1; next }

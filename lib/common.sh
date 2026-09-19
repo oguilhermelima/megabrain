@@ -344,11 +344,6 @@ megabrain_usage_line() {
     model-list) printf 'model list [--json]' ;;
     model-add) printf 'model add <agent> <model> --reasoning <levels>' ;;
     model-refresh) printf 'model refresh <agent>' ;;
-    fact) printf 'fact list|add|edit|remove ...' ;;
-    fact-list) printf 'fact list [--json]' ;;
-    fact-add) printf 'fact add <id> --measurement <text> --who <name> --when <timestamp> --command <command> [--scope global|repository] [--repository <id>] [--json]' ;;
-    fact-edit) printf 'fact edit <id> [--json]' ;;
-    fact-remove) printf 'fact remove <id> [--json]' ;;
     native-appium) printf 'native appium start|stop|status' ;;
     native-sim-list) printf 'native sim list <phone|tv> [--json]' ;;
     native-runtime-list) printf 'native runtime list [<ios|tvos>] (--installed|--available) [--json]' ;;

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeNative } from "../../src/cli/commands/native.js";
-import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
+import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout } from "../../src/core/native.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
@@ -11,7 +11,6 @@ const candidates = [{ udid: "one", state: "Booted", name: "Phone" }, { udid: "tw
 describe("native planning", () => {
   test("parses installed runtimes from simctl", () => {
     expect(runtimesFromSimctl({ runtimes: [{ name: "tvOS 26.5", version: "26.5", buildversion: "23J98", identifier: "com.apple.CoreSimulator.SimRuntime.tvOS-26-5", isAvailable: true }] })).toEqual({ kind: "ok", value: [{ platform: "tvOS", version: "26.5", build: "23J98", identifier: "com.apple.CoreSimulator.SimRuntime.tvOS-26-5" }] });
-    expect(runtimeFactId("tvOS", "26.5")).toBe("native-runtime-tvos-26-5");
   });
   test("validates kind, timeout and metro port", () => {
     expect(validateKind("tv")).toEqual({ kind: "ok", value: "tv" });

@@ -19,10 +19,6 @@ export function runtimesFromSimctl(value: unknown): Result<NativeRuntime[]> {
   return ok(runtimes);
 }
 
-export function runtimeFactId(platform: NativePlatform, version: string): string {
-  return `native-runtime-${platform.toLowerCase()}-${version.replaceAll(".", "-")}`;
-}
-
 export type NativeKind = "phone" | "tv";
 export type NativeCandidate = { readonly udid: string; readonly state: string; readonly name: string };
 export type NativeBuildStep = "prebuild" | "pods" | "build" | "install" | "launch";

@@ -33,7 +33,6 @@ validate_release_versions() {
   local file='' declarations='' declaration_path='' declaration_value=''
   while IFS= read -r file; do
     case "$file" in
-      .megabrain/facts.json) continue ;; # facts.json version 1 is the facts schema, not a release version.
       .megabrain/models.json) continue ;; # models.json version 1 is the models schema, not a release version.
       .megabrain/native.json) continue ;; # native.json version 1 is the native schema, not a release version.
     esac

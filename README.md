@@ -502,12 +502,6 @@ megabrain orchestrate prune --dry-run --json
 megabrain orchestrate prune --older-than 7
 ```
 
-```sh
-# Record a measurement so the next session does not re-derive it
-megabrain fact add bash-version --measurement 'macOS ships bash 3.2.57' \
-  --who tester --when 2026-09-08T12:00:00Z --command 'bash --version'
-```
-
 ## How it works
 
 The queue is the product. Panes and tabs are launch and notification surfaces around it.
@@ -551,11 +545,6 @@ set MEGABRAIN_TEST_JOBS to override it. Each run preserves per-test output in a 
 directory under
 ${MEGABRAIN_TEST_OUTPUT_DIR:-/tmp/megabrain-suite-results}; failures.log names every failing test
 and contains its complete output, so failure evidence survives piping the command's stdout.
-
-> [!WARNING]
-> A run is only fully isolated with all three of `HOME`, `MEGABRAIN_STATE_DIR` and
-> `MEGABRAIN_FACTS_FILE`. The state directory alone does not cover the fact store, which lives in
-> the installation root. `tests/test-sandbox-isolation.sh` proves the three are enough.
 
 ## Limits
 

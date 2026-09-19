@@ -64,10 +64,6 @@ scenario_route_markers() {
   scenario_route_reaches_compiled_binary_default chain-edit '{"verb":"chain-edit"}' chain edit route --json
   scenario_route_reaches_compiled_binary_default chain-delete '{"verb":"chain-delete"}' chain delete route --json
   scenario_route_reaches_compiled_binary_default chain-repair '{"verb":"chain-repair"}' chain repair route --json
-  scenario_route_reaches_compiled_binary_default fact-list '{"verb":"fact-list"}' fact list --json
-  scenario_route_reaches_compiled_binary_default fact-add '{"verb":"fact-add"}' fact add route --json
-  scenario_route_reaches_compiled_binary_default fact-edit '{"verb":"fact-edit"}' fact edit route --json
-  scenario_route_reaches_compiled_binary_default fact-remove '{"verb":"fact-remove"}' fact remove route --json
 }
 
 scenario_worktree_list_route_marker() {
@@ -247,12 +243,6 @@ scenario_worktree_adopt_content() {
   printf 'worktree adopt content registers the fixture worktree\n'
 }
 
-write_fact_fixture() {
-  local path="$1" id="${2:-route}" measurement="${3:-measured}"
-  mkdir -p "$(dirname "$path")"
-  printf '%s\n' "{\"version\":1,\"facts\":[{\"id\":\"$id\",\"measurement\":\"$measurement\",\"scope\":{\"type\":\"global\"},\"provenance\":{\"who\":\"tester\",\"when\":\"2026-09-07T19:27:29Z\",\"command\":\"measure\"}}]}" >"$path"
-}
-
 write_json_editor() {
   local path="$1" expression="$2"
   printf '#!/usr/bin/env bash\ntmp="$1.tmp"\njq %q "$1" >"$tmp"\nmv "$tmp" "$1"\n' "$expression" >"$path"
@@ -298,31 +288,6 @@ scenario_chain_content_contracts() {
   assert_json "$output" '.deleted == true and .name == "added"'
   assert_json "$(cat "$state/chains.json")" '.chains | length == 0'
   printf 'chain delete content is produced by the compiled command\n'
-}
-
-scenario_fact_content_contracts() {
-  local state="$work/fact-content-state" facts="$work/fact-content-state/facts.json" output editor
-  mkdir -p "$state" "$work/unrelated-fact"
-  write_fact_fixture "$facts" existing measured
-
-  output="$(run_from_unrelated_directory "$work/unrelated-fact" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_FACTS_FILE="$facts" "$root/.build/megabrain" fact list --json)"
-  assert_json "$output" 'length == 1 and .[0].id == "existing" and .[0].measurement == "measured"'
-  printf 'fact list content is produced by the compiled command\n'
-
-  output="$(run_from_unrelated_directory "$work/unrelated-fact" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_FACTS_FILE="$facts" "$root/.build/megabrain" fact add added --measurement added --who tester --when 2026-09-07T19:27:29Z --command measure --repo repo-fixture --json)"
-  assert_json "$output" '.id == "added" and .scope.type == "repository" and .scope.repository == "repo-fixture"'
-  printf 'fact add content preserves explicit repository scope\n'
-
-  editor="$work/fact-editor"
-  write_json_editor "$editor" '.facts |= map(if .id == "added" then .measurement = "edited" else . end)'
-  output="$(run_from_unrelated_directory "$work/unrelated-fact" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_FACTS_FILE="$facts" EDITOR="$editor" "$root/.build/megabrain" fact edit added --json)"
-  assert_json "$output" '.id == "added" and .measurement == "edited"'
-  printf 'fact edit content is produced by the compiled command\n'
-
-  output="$(run_from_unrelated_directory "$work/unrelated-fact" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_FACTS_FILE="$facts" "$root/.build/megabrain" fact remove added --json)"
-  assert_json "$output" '.removed == true and .id == "added"'
-  assert_json "$(cat "$facts")" '.facts | length == 1 and .[0].id == "existing"'
-  printf 'fact remove content is produced by the compiled command\n'
 }
 
 scenario_terminal_list_content() {
@@ -457,15 +422,10 @@ scenario_falsification_is_red_for_each_route chain-add '{"verb":"chain-add"}' ch
 scenario_falsification_is_red_for_each_route chain-edit '{"verb":"chain-edit"}' chain edit route --json
 scenario_falsification_is_red_for_each_route chain-delete '{"verb":"chain-delete"}' chain delete route --json
 scenario_falsification_is_red_for_each_route chain-repair '{"verb":"chain-repair"}' chain repair route --json
-scenario_falsification_is_red_for_each_route fact-list '{"verb":"fact-list"}' fact list --json
-scenario_falsification_is_red_for_each_route fact-add '{"verb":"fact-add"}' fact add route --json
-scenario_falsification_is_red_for_each_route fact-edit '{"verb":"fact-edit"}' fact edit route --json
-scenario_falsification_is_red_for_each_route fact-remove '{"verb":"fact-remove"}' fact remove route --json
 scenario_worktree_list_falsification
 scenario_compiled_content_contracts
 scenario_compiled_argument_forms
 scenario_change_reports_actual_interrupt_outcome
 scenario_worktree_list_content
 scenario_chain_content_contracts
-scenario_fact_content_contracts
-printf 'ok: compiled routes and content contracts cover all removal verbs\n'
+printf 'ok: compiled routes and content contracts cover the active verbs\n'

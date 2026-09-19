@@ -31,10 +31,41 @@ megabrain_dispatch_prune_states() {
   printf 'closed,done,failed,orphaned,circuit_broken\n'
 }
 
-if ! declare -F megabrain_dispatch_preamble >/dev/null 2>&1; then
-  # shellcheck source=local/megabrain/lib/module-facts.sh
-  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-facts.sh"
-fi
+megabrain_dispatch_command_path() {
+  local path root
+  path="$(type -P megabrain 2>/dev/null || true)"
+  if [ -n "$path" ] && [ "${path#/}" != "$path" ]; then
+    printf 'megabrain\n'
+    return 0
+  fi
+  # WHY: Children run in arbitrary repositories, so the preamble cannot depend on the checkout as its working directory.
+  root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+  if [ -n "${MEGABRAIN_EXECUTABLE:-}" ] && [ -x "$MEGABRAIN_EXECUTABLE" ]; then
+    printf '%q\n' "$MEGABRAIN_EXECUTABLE"
+  elif [ -x "$root/megabrain" ]; then
+    printf '%q\n' "$root/megabrain"
+  else
+    return 1
+  fi
+}
+
+megabrain_dispatch_protocol() {
+  local command_path
+  command_path="$(megabrain_dispatch_command_path 2>/dev/null || true)"
+  if [ -n "$command_path" ]; then
+    printf 'This is a managed megabrain dispatch. Before starting work, run %s received to confirm that you received this prompt. If you need coordinator input, run %s ask "your question"; wait with %s check until a reply arrives, then run %s ack <delivery-id> to confirm it. When the requested work is complete, run %s done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n' "$command_path" "$command_path" "$command_path" "$command_path" "$command_path"
+  else
+    printf 'This is a managed megabrain dispatch. The megabrain command could not be resolved through PATH or an absolute executable path, so receipt, coordinator questions, replies, and completion cannot be recorded. Do not print protocol markers and do not continue past an unanswered question.\n'
+  fi
+}
+
+# Keep this name for the worktree spawn contract. It now renders only the dispatch
+# protocol; the former validation and injection path has been removed.
+megabrain_dispatch_preamble() {
+  local _worktree_path="${1:-.}"
+  : "$_worktree_path"
+  printf '%s' "${MEGABRAIN_SUPERSET_PROTOCOL:-$(megabrain_dispatch_protocol)}"
+}
 
 if ! declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1; then
   # shellcheck source=local/megabrain/lib/module-context.sh
@@ -945,7 +976,7 @@ megabrain_dispatch_sync_prompt_receipt() {
   if [ "$delivery" = pending ] || [ "$delivery" = delivered ]; then
     megabrain_dispatch_meta_update_prompt "$dispatch_id" true delivered
   else
-    # A legacy not-delivered value is retained as history; the receipt fact is still
+    # A legacy not-delivered value is retained as history; the receipt evidence is still
     # recorded independently rather than rewriting what the old field meant.
     megabrain_dispatch_meta_update_prompt_layers "$dispatch_id" __keep__ __keep__ received confirmed __keep__
   fi
@@ -1647,7 +1678,7 @@ megabrain_dispatch_find_child() {
     direct_path="$(megabrain_dispatch_meta_path "$direct_id" 2>/dev/null || true)"
     if [ -n "$direct_path" ] && [ -f "$direct_path" ]; then
       # WHY: a tmux child is identified by its session and pane. childHost records
-      # which orchestrator owns the terminal, which is a different fact: an Orca
+      # which orchestrator owns the terminal, which is a different condition: an Orca
       # parent writes childHost=orca while the child own session host is tmux.
       # Matching one against the other only worked while Superset leaked its
       # terminal id into the child environment.
