@@ -84,12 +84,23 @@ case "${1:-}" in
   list-panes)
     [ "${MEGABRAIN_FAKE_TMUX_UNPROVEN_SESSION:-}" = "$target" ] && exit 1
     if grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1; then
-      printf '%s\n' '%99'
+      if [ "${MEGABRAIN_FAKE_TMUX_MULTI_PANE_SESSION:-}" = "$target" ]; then
+        printf '%s\n' '%99' '%100'
+      else
+        printf '%s\n' '%99'
+      fi
     fi
     ;;
+  display-message)
+    printf '%s\n' "${MEGABRAIN_FAKE_TMUX_CALLER_SESSION:?}"
+    ;;
   kill-session)
+    printf 'session:%s\n' "$target" >>"${MEGABRAIN_FAKE_TMUX_RELEASE_LOG:?}"
     grep -Fvx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >"${MEGABRAIN_FAKE_TMUX_SESSIONS}.tmp" || true
     mv -f "${MEGABRAIN_FAKE_TMUX_SESSIONS}.tmp" "${MEGABRAIN_FAKE_TMUX_SESSIONS}"
+    ;;
+  kill-pane)
+    printf 'pane:%s\n' "$target" >>"${MEGABRAIN_FAKE_TMUX_RELEASE_LOG:?}"
     ;;
   capture-pane)
     [ "${CAPTURE_AVAILABLE:-false}" = true ] || exit 1
@@ -108,6 +119,7 @@ exit 1
 EOF
 chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
 export MEGABRAIN_FAKE_TMUX_SESSIONS="$live_sessions"
+export MEGABRAIN_FAKE_TMUX_RELEASE_LOG="$release_log"
 export CAPTURE_PATH="$capture_state" CAPTURE_AVAILABLE=true
 # Read scenarios exercise the compiled command; the shell implementation is gone.
 run_compiled_read() {
@@ -496,6 +508,7 @@ assert_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
 printf 'doctor reports zero terminal dispatch session leaks when released\n'
 
 printf '%s\n' 'shared-session' >"$live_sessions"
+unset MEGABRAIN_FAKE_TMUX_CALLER_SESSION MEGABRAIN_FAKE_TMUX_MULTI_PANE_SESSION
 regression_failures=0
 assert_regression_equal() {
   if [ "$1" != "$2" ]; then
@@ -507,8 +520,7 @@ assert_regression_equal() {
 megabrain_dispatch_meta_write shared-session parent-terminal superset superset workspace-test child-terminal \
   "$root" main codex label done gpt-5 true codex shared-session %98 tmux tmux shared-session %0 workspace-test >/dev/null
 set_old_timestamp shared-session
-jq '.terminalState = "released"' "$MEGABRAIN_DISPATCH_DIR/shared-session/meta.json" >"$state_dir/shared-meta.json"
-mv -f "$state_dir/shared-meta.json" "$MEGABRAIN_DISPATCH_DIR/shared-session/meta.json"
+: >"$release_log"
 module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a shared tmux setup'
 assert_regression_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
 shared_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
@@ -518,24 +530,19 @@ if ! grep -Fx 'shared-session' "$live_sessions" >/dev/null 2>&1; then
   printf 'REGRESSION FAIL: prune released the parent-owned tmux session\n' >&2
   regression_failures=$((regression_failures + 1))
 fi
-if grep -Fx 'shared-session' "$release_log" >/dev/null 2>&1; then
+if grep -Fx 'session:shared-session' "$release_log" >/dev/null 2>&1; then
   printf 'REGRESSION FAIL: prune invoked release for the parent-owned tmux session\n' >&2
   regression_failures=$((regression_failures + 1))
 fi
-printf 'shared parent tmux sessions are not counted or released\n'
+printf 'parent tmux sessions are never killed\n'
 
 printf '%s\n' 'caller-session' >"$live_sessions"
-megabrain_dispatch_tmux_caller_session() {
-  printf '%s\n' 'caller-session'
-}
+: >"$release_log"
+export MEGABRAIN_FAKE_TMUX_CALLER_SESSION=caller-session
 export TMUX=caller-server TMUX_PANE=%0
 megabrain_dispatch_meta_write caller-session-record parent-terminal superset superset workspace-test child-terminal \
   "$root" main codex label done gpt-5 true codex caller-session %99 tmux tmux other-session %1 workspace-test >/dev/null
 set_old_timestamp caller-session-record
-jq '.terminalState = "released"' "$MEGABRAIN_DISPATCH_DIR/caller-session-record/meta.json" >"$state_dir/caller-meta.json"
-mv -f "$state_dir/caller-meta.json" "$MEGABRAIN_DISPATCH_DIR/caller-session-record/meta.json"
-module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a caller session setup'
-assert_regression_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
 caller_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_regression_equal "$(printf '%s' "$caller_result" | jq -r '.archived')" 1
 assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/caller-session-record/meta.json"
@@ -543,11 +550,35 @@ if ! grep -Fx 'caller-session' "$live_sessions" >/dev/null 2>&1; then
   printf 'REGRESSION FAIL: prune released the caller tmux session\n' >&2
   regression_failures=$((regression_failures + 1))
 fi
-if grep -Fx 'caller-session' "$release_log" >/dev/null 2>&1; then
+if grep -Fx 'session:caller-session' "$release_log" >/dev/null 2>&1; then
   printf 'REGRESSION FAIL: prune invoked release for the caller tmux session\n' >&2
   regression_failures=$((regression_failures + 1))
 fi
-printf 'caller tmux sessions are never counted or released\n'
+printf 'caller tmux sessions are never killed\n'
+
+unset TMUX TMUX_PANE MEGABRAIN_FAKE_TMUX_CALLER_SESSION
+printf '%s\n' 'multi-pane-session' >"$live_sessions"
+: >"$release_log"
+export MEGABRAIN_FAKE_TMUX_MULTI_PANE_SESSION=multi-pane-session
+megabrain_dispatch_meta_write multi-pane-record parent-terminal superset superset workspace-test child-terminal \
+  "$root" main codex label done gpt-5 true codex multi-pane-session %99 tmux tmux other-session %1 workspace-test >/dev/null
+set_old_timestamp multi-pane-record
+multi_pane_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+assert_regression_equal "$(printf '%s' "$multi_pane_result" | jq -r '.archived')" 1
+assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/multi-pane-record/meta.json"
+if ! grep -Fx 'multi-pane-session' "$live_sessions" >/dev/null 2>&1; then
+  printf 'REGRESSION FAIL: prune killed a multi-pane tmux session\n' >&2
+  regression_failures=$((regression_failures + 1))
+fi
+if ! grep -Fx 'pane:%99' "$release_log" >/dev/null 2>&1; then
+  printf 'REGRESSION FAIL: prune did not kill the dispatch pane in a multi-pane session\n' >&2
+  regression_failures=$((regression_failures + 1))
+fi
+if grep -Fx 'session:multi-pane-session' "$release_log" >/dev/null 2>&1; then
+  printf 'REGRESSION FAIL: prune killed the multi-pane tmux session instead of its pane\n' >&2
+  regression_failures=$((regression_failures + 1))
+fi
+printf 'multi-pane tmux sessions lose only the dispatch pane\n'
 [ "$regression_failures" -eq 0 ] || fail 'session ownership regressions detected'
 
 capture_output='prune transcript'
