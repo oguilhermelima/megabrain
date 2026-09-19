@@ -48,3 +48,10 @@ assert_equal "$(jq -r '.state' "$reconcile_state/dispatches/uncertain/meta.json"
 assert_path "$reconcile_state/dispatches/uncertain/meta.json" true 'reconcile keeps the freshly updated dispatch'
 printf '%s' "$reconciled" | jq -e '.skippedDispatches | any(.[]; .dispatchId == "uncertain" and (.reason | contains("younger")))' >/dev/null || fail 'reconciled dispatch was not reported as skipped safely'
 printf 'prune reconciles uncertain dispatches before applying age policy\n'
+
+timeout_state="$work/timeout/state"
+mkdir -p "$timeout_state/dispatches/legacy-timeout"
+printf '%s\n' '{"dispatchId":"legacy-timeout","state":"timeout","createdAt":"2020-01-01T00:00:00Z"}' >"$timeout_state/dispatches/legacy-timeout/meta.json"
+PATH="$fake_bin:$PATH" MEGABRAIN_STATE_DIR="$timeout_state" "$root/.build/megabrain" orchestrate prune --dry-run --json >/dev/null
+assert_equal "$(jq -r '.state' "$timeout_state/dispatches/legacy-timeout/meta.json")" running 'legacy timeout is normalized to an open state'
+printf 'prune normalizes legacy timeout records without archiving them\n'

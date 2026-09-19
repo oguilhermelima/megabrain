@@ -76,6 +76,7 @@ scenario_text_doctor_has_leaked_counter_default() {
 
 export HOME="$state_root/home"
 export MEGABRAIN_STATE_DIR="$state_root/state"
+export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE
 

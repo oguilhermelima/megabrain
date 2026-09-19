@@ -24,6 +24,7 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export MEGABRAIN_ROOT="$root"
 outside_tmux_before="$(find "$default_tmux_dir" -mindepth 1 -maxdepth 1 -type s -print 2>/dev/null | sort || true)"
 
 source "$root/lib/common.sh"
@@ -55,6 +56,51 @@ assert_failure_contains() {
   fi
   printf '%s\n' "$output"
   assert_contains "$output" "$expected"
+}
+
+fake_bin="$state_dir/bin"
+mkdir -p "$fake_bin"
+cat >"$fake_bin/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminal ] && [ "${2:-}" = close ]; then
+  printf 'close:%s\n' "${4:-}" >>"${MB_CLOSE_LOG:?}"
+  case "${MB_CLOSE_MODE:-success}" in
+    absent)
+      printf '%s\n' '{"error":{"code":"WORKSPACE_NOT_FOUND","message":"workspace not found"}}' >&2
+      exit 1
+      ;;
+    failure)
+      printf '%s\n' '{"error":{"code":"PERMISSION_DENIED","message":"terminal close denied by host"}}' >&2
+      exit 1
+      ;;
+    *) printf '%s\n' '{"ok":true}' ; exit 0 ;;
+  esac
+fi
+exit 1
+EOF
+cat >"$fake_bin/megabrain_superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminals ] && [ "${2:-}" = close ]; then
+  case "${MB_CLOSE_MODE:-success}" in
+    absent)
+      printf '%s\n' '{"error":{"code":"WORKSPACE_NOT_FOUND","message":"workspace not found"}}' >&2
+      exit 1
+      ;;
+    failure)
+      printf '%s\n' '{"error":{"code":"PERMISSION_DENIED","message":"terminal close denied by host"}}' >&2
+      exit 1
+      ;;
+    *) printf '%s\n' '{"ok":true}' ; exit 0 ;;
+  esac
+fi
+exit 1
+EOF
+chmod +x "$fake_bin/orca" "$fake_bin/megabrain_superset"
+export PATH="$fake_bin:$PATH"
+export MB_CLOSE_LOG="$close_log"
+
+compiled_close() {
+  "$root/.build/megabrain" orchestrate close "$@"
 }
 
 tmux_cmd() {
@@ -117,14 +163,14 @@ export TMUX="$parent_tmux" TMUX_PANE="$parent_pane" ORCA_TERMINAL_HANDLE=parent-
 unset SUPERSET_TERMINAL_ID
 
 create_meta self-close "$session_name" "$parent_pane" "$session_name" "$parent_pane"
-assert_failure_contains 'refusing to close dispatch self-close' megabrain_dispatch_close self-close --json
+assert_failure_contains 'refusing to close dispatch self-close' compiled_close self-close --json
 assert_pane_alive "$parent_pane"
 assert_session_alive "$session_name"
 printf 'caller pane is protected from normal close\n'
 
 create_meta force-self-close "$session_name" "$parent_pane" "$session_name" "$parent_pane"
 megabrain_dispatch_meta_update_terminal_state force-self-close retained
-assert_failure_contains 'refusing to close dispatch force-self-close' megabrain_dispatch_close force-self-close --force-release --json
+assert_failure_contains 'refusing to close dispatch force-self-close' compiled_close force-self-close --force-release --json
 assert_pane_alive "$parent_pane"
 assert_session_alive "$session_name"
 printf 'caller pane protection cannot be bypassed by force-release\n'
@@ -132,7 +178,7 @@ printf 'caller pane protection cannot be bypassed by force-release\n'
 shared_pane="$(tmux_cmd split-window -v -t "$parent_pane" -P -F '#{pane_id}' bash)"
 create_meta shared-child "$session_name" "$shared_pane" "$session_name" "$parent_pane"
 before_panes="$(tmux_cmd list-panes -t "$session_name" | wc -l | tr -d ' ')"
-megabrain_dispatch_close shared-child --json >/dev/null
+compiled_close shared-child --json >/dev/null
 after_panes="$(tmux_cmd list-panes -t "$session_name" | wc -l | tr -d ' ')"
 assert_equal "$before_panes" 2
 assert_equal "$after_panes" 1
@@ -145,7 +191,7 @@ printf 'shared-session child close removes only the child pane\n'
 tmux_cmd new-session -d -s "$dedicated_session_name" bash
 dedicated_pane="$(tmux_cmd display-message -p -t "$dedicated_session_name" '#{pane_id}')"
 create_meta dedicated-child "$dedicated_session_name" "$dedicated_pane" "$session_name" "$parent_pane"
-megabrain_dispatch_close dedicated-child --json >/dev/null
+compiled_close dedicated-child --json >/dev/null
 if tmux_cmd has-session -t "$dedicated_session_name" >/dev/null 2>&1; then
   fail 'dedicated dispatch session is still alive'
 fi
@@ -215,7 +261,7 @@ create_host_meta() {
 
 host_close_mode=absent
 create_host_meta host-terminal-absent
-if absent_output="$(megabrain_dispatch_close host-terminal-absent --json 2>&1)"; then
+if absent_output="$(MB_CLOSE_MODE=absent compiled_close host-terminal-absent --json 2>&1)"; then
   :
 else
   fail "a missing host terminal was treated as a close failure: $absent_output"
@@ -226,7 +272,7 @@ printf 'host terminal already absent is an idempotent close\n'
 
 host_close_mode=failure
 create_host_meta host-terminal-failure
-if failure_output="$(megabrain_dispatch_close host-terminal-failure --json 2>&1)"; then
+if failure_output="$(MB_CLOSE_MODE=failure compiled_close host-terminal-failure --json 2>&1)"; then
   fail 'a genuine host close failure unexpectedly succeeded'
 fi
 assert_contains "$failure_output" 'terminal close denied by host'

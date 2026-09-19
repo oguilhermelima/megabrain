@@ -58,9 +58,53 @@ assert_missing() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
+export MEGABRAIN_ROOT="$root"
+export MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE
 touch "$capture_log" "$pipe_log" "$release_log"
+
+fake_bin="$state_dir/bin"
+mkdir -p "$fake_bin"
+cat >"$fake_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+target=""
+for arg in "$@"; do
+  if [ "$target" = -t ]; then
+    target="$arg"
+    break
+  fi
+  [ "$arg" = -t ] && target=-t
+done
+case "${1:-}" in
+  has-session)
+    grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1
+    ;;
+  list-panes)
+    if grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1; then
+      printf '%s\n' '%99'
+    fi
+    ;;
+  kill-session)
+    grep -Fvx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >"${MEGABRAIN_FAKE_TMUX_SESSIONS}.tmp" || true
+    mv -f "${MEGABRAIN_FAKE_TMUX_SESSIONS}.tmp" "${MEGABRAIN_FAKE_TMUX_SESSIONS}"
+    ;;
+  capture-pane)
+    printf '%s\n' 'captured dispatch transcript'
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$fake_bin/megabrain_superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminals ] && [ "${2:-}" = close ]; then
+  printf '%s\n' '{"ok":true}'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
+export MEGABRAIN_FAKE_TMUX_SESSIONS="$live_sessions"
 
 source "$root/lib/common.sh"
 source "$root/lib/module-context.sh"
@@ -181,11 +225,11 @@ printf '%s\n' 'close-session' >"$live_sessions"
 capture_output='final output before close'
 write_dispatch close-session done close-session
 megabrain_dispatch_start_transcript close-session %99
-megabrain_dispatch_close close-session --json >/dev/null
+PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate close close-session --json >/dev/null
 assert_contains "$(cat "$(transcript_path close-session)")" 'final output before close'
 assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/close-session/meta.json")" closed
-assert_contains "$(cat "$pipe_log")" 'stop'
-printf 'close stops the persisted transcript stream before releasing tmux\n'
+assert_equal "$(grep -c '^stop' "$pipe_log" || true)" 0
+printf 'compiled close preserves the persisted transcript while releasing tmux\n'
 
 capture_available=false
 write_dispatch read-fallback done read-fallback
@@ -442,9 +486,11 @@ assert_regression_equal() {
 megabrain_dispatch_meta_write shared-session parent-terminal superset superset workspace-test child-terminal \
   "$root" main codex label done gpt-5 true codex shared-session %98 tmux tmux shared-session %0 workspace-test >/dev/null
 set_old_timestamp shared-session
+jq '.terminalState = "released"' "$MEGABRAIN_DISPATCH_DIR/shared-session/meta.json" >"$state_dir/shared-meta.json"
+mv -f "$state_dir/shared-meta.json" "$MEGABRAIN_DISPATCH_DIR/shared-session/meta.json"
 module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a shared tmux setup'
 assert_regression_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
-shared_result="$(command_orchestrate prune --json)"
+shared_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_regression_equal "$(printf '%s' "$shared_result" | jq -r '.archived')" 1
 assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/shared-session/meta.json"
 if ! grep -Fx 'shared-session' "$live_sessions" >/dev/null 2>&1; then
@@ -465,9 +511,11 @@ export TMUX=caller-server TMUX_PANE=%0
 megabrain_dispatch_meta_write caller-session-record parent-terminal superset superset workspace-test child-terminal \
   "$root" main codex label done gpt-5 true codex caller-session %99 tmux tmux other-session %1 workspace-test >/dev/null
 set_old_timestamp caller-session-record
+jq '.terminalState = "released"' "$MEGABRAIN_DISPATCH_DIR/caller-session-record/meta.json" >"$state_dir/caller-meta.json"
+mv -f "$state_dir/caller-meta.json" "$MEGABRAIN_DISPATCH_DIR/caller-session-record/meta.json"
 module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a caller session setup'
 assert_regression_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
-caller_result="$(command_orchestrate prune --json)"
+caller_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_regression_equal "$(printf '%s' "$caller_result" | jq -r '.archived')" 1
 assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/caller-session-record/meta.json"
 if ! grep -Fx 'caller-session' "$live_sessions" >/dev/null 2>&1; then
@@ -486,20 +534,19 @@ printf '%s\n' 'prune-session' >"$live_sessions"
 write_dispatch prune-session done prune-session
 megabrain_dispatch_start_transcript prune-session %99
 set_old_timestamp prune-session
-prune_result="$(command_orchestrate prune --json)"
+jq '.terminalState = "released"' "$MEGABRAIN_DISPATCH_DIR/prune-session/meta.json" >"$state_dir/prune-meta.json"
+mv -f "$state_dir/prune-meta.json" "$MEGABRAIN_DISPATCH_DIR/prune-session/meta.json"
+prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 1
 assert_missing "$MEGABRAIN_DISPATCH_DIR/prune-session"
-assert_equal "$(grep -c '^prune-session$' "$release_log")" 1
-assert_contains "$(cat "$pipe_log")" 'stop'
-if grep -Fx 'prune-session' "$live_sessions" >/dev/null 2>&1; then
-  fail 'prune left the released tmux session alive'
-fi
-printf 'prune releases the tmux session after persisting its transcript\n'
+assert_equal "$(grep -c '^prune-session$' "$release_log" || true)" 0
+assert_contains "$(cat "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/prune-session/transcript")" 'prune transcript'
+printf 'compiled prune archives the persisted transcript without a second release\n'
 
 printf '%s\n' 'open-session' >"$live_sessions"
 write_dispatch open-session running open-session
 set_old_timestamp open-session
-prune_result="$(command_orchestrate prune --json)"
+prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "open-session") | .state')" running
 assert_file "$MEGABRAIN_DISPATCH_DIR/open-session/meta.json"
 assert_equal "$(grep -c '^open-session$' "$live_sessions")" 1
@@ -512,7 +559,7 @@ set_old_timestamp unproven-session
 megabrain_dispatch_terminal_status() {
   MEGABRAIN_TERMINAL_STATUS=unknown
 }
-unproven_prune_result="$(command_orchestrate prune --json)"
+unproven_prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.archived')" 0
 assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unproven-session") | .reason')" 'terminal identity is unproven'
 assert_file "$MEGABRAIN_DISPATCH_DIR/unproven-session/meta.json"

@@ -27,6 +27,19 @@ export MEGABRAIN_STATE_DIR="$state_dir"
 export ORCA_TERMINAL_HANDLE=parent-terminal
 unset SUPERSET_TERMINAL_ID
 
+fake_bin="$state_dir/bin"
+mkdir -p "$fake_bin"
+cat >"$fake_bin/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminal ] && [ "${2:-}" = close ]; then
+  printf '%s\n' '{"ok":true}'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$fake_bin/orca"
+export PATH="$fake_bin:$PATH"
+
 source "$root/lib/common.sh"
 source "$root/lib/module-tmux-runtime.sh"
 source "$root/lib/module-orchestrate.sh"
@@ -61,6 +74,10 @@ assert_not_contains() {
 
 tmux_cmd() {
   tmux -L "$socket_name" "$@"
+}
+
+compiled_close() {
+  MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate close "$@"
 }
 
 create_meta() {
@@ -153,7 +170,7 @@ export ORCA_TERMINAL_HANDLE=parent-terminal
 tmux_cmd split-window -v -t "$parent_pane" -P -F '#{pane_id}' bash >/dev/null
 shared_pane="$(tmux_cmd list-panes -t "$parent_session" -F '#{pane_id}' | tail -n 1)"
 create_meta shared-close "$parent_session" "$shared_pane"
-shared_close="$(megabrain_dispatch_close shared-close --json)"
+shared_close="$(compiled_close shared-close --json)"
 assert_equal "$(printf '%s' "$shared_close" | jq -r '.message')" \
   'tmux pane removed; the shared tmux session and host terminal tab were kept.'
 printf 'shared close reports that session and host tab were kept\n'
@@ -168,7 +185,7 @@ orca() {
   fi
   return 1
 }
-exclusive_close="$(megabrain_dispatch_close exclusive-close --json)"
+exclusive_close="$(compiled_close exclusive-close --json)"
 assert_equal "$(printf '%s' "$exclusive_close" | jq -r '.message')" \
   'last tmux pane removed; the exclusive tmux session and host terminal tab were closed.'
 printf 'exclusive close reports that session and host tab were closed\n'

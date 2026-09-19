@@ -106,6 +106,10 @@ tmux_cmd() {
   tmux -L "$socket_name" "$@"
 }
 
+compiled_close() {
+  MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate close "$@"
+}
+
 set_state_dir() {
   cleanup_tmux_server "$state_dir"
   [ -n "$state_dir" ] && rm -rf "$state_dir"
@@ -130,6 +134,14 @@ set_state_dir() {
     '  printf '\''{"ok":true}\n'\''' \
     'fi' >"$state_dir/bin/superset"
   chmod +x "$state_dir/bin/superset"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [ "${1:-}" = terminal ] && [ "${2:-}" = close ]; then' \
+    '  printf '\''{"ok":true}\n'\''' \
+    '  exit 0' \
+    'fi' \
+    'exit 1' >"$state_dir/bin/orca"
+  chmod +x "$state_dir/bin/orca"
   export PATH="$state_dir/bin:$PATH"
   jq -n '{chains:{loop:{when:{parentAgent:"codex"},steps:[{agent:"codex",model:"gpt-5.6-luna",effort:"low"}]}},defaultSteps:[]}' >"$MEGABRAIN_CHAIN_FILE"
 }
@@ -474,10 +486,10 @@ run_flow() {
   assert_contains "$queue_types" 'child/done'
   if [ "$runtime" = tmux ]; then
     tmux_cmd kill-pane -t "$(printf '%s' "$dispatch_meta" | jq -r '.tmuxPane')"
-    megabrain_dispatch_close "$dispatch_id" --json >/dev/null
+    compiled_close "$dispatch_id" --json >/dev/null
     assert_equal "$(tmux_cmd has-session -t "$child_session" >/dev/null 2>&1; printf '%s' "$?")" 1
   else
-    megabrain_dispatch_close "$dispatch_id" --json >/dev/null
+    compiled_close "$dispatch_id" --json >/dev/null
   fi
   timing_mark 'done and close'
   assert_equal "$(jq -r '.state' "$state_dir/dispatches/$dispatch_id/meta.json")" closed

@@ -30,6 +30,8 @@ assert_missing() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export MEGABRAIN_ROOT="$root"
+export MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
@@ -205,7 +207,7 @@ jq --arg old "$old" '.createdAt = $old | .updatedAt = $old' \
 mv -f "$state_dir/old-meta.json" "$state_dir/dispatches/host-unproven/meta.json"
 prune_result="$(command_orchestrate prune --json)"
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 0
-assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "host-unproven") | .reason')" 'host terminal identity is unproven; dispatch terminal was retained'
+assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "host-unproven") | .reason')" 'terminal identity is unproven'
 assert_file "$state_dir/dispatches/host-unproven/meta.json"
 printf 'prune keeps a host dispatch whose terminal identity is unproven\n'
 
