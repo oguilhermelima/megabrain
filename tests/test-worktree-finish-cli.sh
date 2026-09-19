@@ -160,6 +160,47 @@ scenario_branch_selector_without_delete() {
   printf 'branch selector from another cwd preserves null finish metadata\n'
 }
 
+scenario_explicit_base_is_reported() {
+  local repo="$work/explicit-repo" shared="$work/explicit-shared" state="$work/explicit-state"
+  local child output error status message
+  setup_repo "$repo" "$shared" "$state"
+  child="$shared/explicit"
+  git -C "$repo" worktree add -q "$child" -b feat/explicit main
+  printf 'explicit\n' >"$child/explicit.txt"
+  git -C "$child" add explicit.txt
+  git -C "$child" commit -qm explicit
+  message='refusing to delete unmerged branch: feat/explicit against base main (use --force to override)'
+  set +e
+  output="$(run_binary "$state" worktree finish "$child" --delete-branch --base main --json 2>"$work/explicit.err")"
+  status=$?
+  set -e
+  error="$(cat "$work/explicit.err")"
+  assert_equal "$status" 1
+  printf '%s' "$output" | jq -e --arg path "$child" --arg message "$message" \
+    '.deleted == false and .branch == "feat/explicit" and .path == $path and .base == "main" and .baseSource == "explicit" and .baseWarning == null and .refusal.code == "unmerged-branch" and .refusal.message == $message' >/dev/null ||
+    fail "explicit-base JSON was not exact: $output"
+  assert_equal "$error" "megabrain: $message"
+  printf 'explicit base reports the explicit source\n'
+}
+
+scenario_invalid_json_refusal() {
+  local state="$work/invalid-state" output error status message
+  mkdir -p "$state/home"
+  message='unknown worktree finish option: --unexpected'
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" PATH="/usr/bin:/bin" \
+    "$root/.build/megabrain" worktree finish --json --unexpected 2>"$work/invalid.err")"
+  status=$?
+  set -e
+  error="$(cat "$work/invalid.err")"
+  assert_equal "$status" 2
+  printf '%s' "$output" | jq -e --arg message "$message" \
+    '.deleted == false and .branch == null and .path == null and .base == null and .baseSource == null and .baseWarning == null and .branchDeleted == null and .error == null and .refusal.code == "invalid-arguments" and .refusal.message == $message' >/dev/null ||
+    fail "invalid-arguments JSON was not exact: $output"
+  assert_equal "$error" "megabrain: $message"
+  printf 'invalid arguments preserve structured JSON and stderr\n'
+}
+
 scenario_orca_removal_is_used() {
   local repo="$work/orca-repo" shared="$work/orca-shared" state="$work/orca-state" bin="$work/orca-bin"
   local child output calls
@@ -199,5 +240,7 @@ scenario_recorded_parent_controls_base
 scenario_unmerged_refusal_and_force
 scenario_missing_parent_warns_and_refuses
 scenario_branch_selector_without_delete
+scenario_explicit_base_is_reported
+scenario_invalid_json_refusal
 scenario_orca_removal_is_used
 printf 'ok: compiled worktree finish contract scenarios\n'
