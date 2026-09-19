@@ -127,6 +127,9 @@ run_compiled_read() {
     "$root/.build/megabrain" orchestrate read "$@"
 }
 sync_capture() { printf '%s\n' "$capture_output" >"$capture_state"; }
+run_compiled_prune() {
+  env PATH="$fake_bin:$PATH" MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate prune "$@"
+}
 
 source "$root/lib/common.sh"
 source "$root/lib/module-context.sh"
@@ -518,12 +521,12 @@ assert_regression_equal() {
 }
 
 megabrain_dispatch_meta_write shared-session parent-terminal superset superset workspace-test child-terminal \
-  "$root" main codex label done gpt-5 true codex shared-session %98 tmux tmux shared-session %0 workspace-test >/dev/null
+  "$root" main codex label done gpt-5 true codex shared-session %99 tmux tmux shared-session %0 workspace-test >/dev/null
 set_old_timestamp shared-session
 : >"$release_log"
 module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a shared tmux setup'
 assert_regression_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
-shared_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+shared_result="$(run_compiled_prune --json)"
 assert_regression_equal "$(printf '%s' "$shared_result" | jq -r '.archived')" 1
 assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/shared-session/meta.json"
 if ! grep -Fx 'shared-session' "$live_sessions" >/dev/null 2>&1; then
@@ -543,7 +546,7 @@ export TMUX=caller-server TMUX_PANE=%0
 megabrain_dispatch_meta_write caller-session-record parent-terminal superset superset workspace-test child-terminal \
   "$root" main codex label done gpt-5 true codex caller-session %99 tmux tmux other-session %1 workspace-test >/dev/null
 set_old_timestamp caller-session-record
-caller_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+caller_result="$(run_compiled_prune --json)"
 assert_regression_equal "$(printf '%s' "$caller_result" | jq -r '.archived')" 1
 assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/caller-session-record/meta.json"
 if ! grep -Fx 'caller-session' "$live_sessions" >/dev/null 2>&1; then
@@ -563,7 +566,7 @@ export MEGABRAIN_FAKE_TMUX_MULTI_PANE_SESSION=multi-pane-session
 megabrain_dispatch_meta_write multi-pane-record parent-terminal superset superset workspace-test child-terminal \
   "$root" main codex label done gpt-5 true codex multi-pane-session %99 tmux tmux other-session %1 workspace-test >/dev/null
 set_old_timestamp multi-pane-record
-multi_pane_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+multi_pane_result="$(run_compiled_prune --json)"
 assert_regression_equal "$(printf '%s' "$multi_pane_result" | jq -r '.archived')" 1
 assert_file "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/multi-pane-record/meta.json"
 if ! grep -Fx 'multi-pane-session' "$live_sessions" >/dev/null 2>&1; then
@@ -587,7 +590,7 @@ printf '%s\n' 'prune-session' >"$live_sessions"
 write_dispatch prune-session done prune-session
 megabrain_dispatch_start_transcript prune-session %99
 set_old_timestamp prune-session
-prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+prune_result="$(run_compiled_prune --json)"
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 1
 assert_missing "$MEGABRAIN_DISPATCH_DIR/prune-session"
 assert_missing_session="$(grep -Fx 'prune-session' "$live_sessions" >/dev/null 2>&1; printf '%s' "$?")"
@@ -598,7 +601,7 @@ printf 'compiled prune archives the persisted transcript and releases tmux\n'
 printf '%s\n' 'open-session' >"$live_sessions"
 write_dispatch open-session running open-session
 set_old_timestamp open-session
-prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+prune_result="$(run_compiled_prune --json)"
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "open-session") | .state')" running
 assert_file "$MEGABRAIN_DISPATCH_DIR/open-session/meta.json"
 assert_equal "$(grep -c '^open-session$' "$live_sessions")" 1
@@ -611,7 +614,7 @@ set_old_timestamp unproven-session
 megabrain_dispatch_terminal_status() {
   MEGABRAIN_TERMINAL_STATUS=unknown
 }
-unproven_prune_result="$(MEGABRAIN_FAKE_TMUX_UNPROVEN_SESSION=unproven-session PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+unproven_prune_result="$(env MEGABRAIN_FAKE_TMUX_UNPROVEN_SESSION=unproven-session PATH="$fake_bin:$PATH" MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate prune --json)"
 assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.archived')" 0
 assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unproven-session") | .reason')" 'terminal identity is unproven'
 assert_file "$MEGABRAIN_DISPATCH_DIR/unproven-session/meta.json"
