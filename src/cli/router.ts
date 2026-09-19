@@ -8,7 +8,6 @@ import { executeNative } from "./commands/native.js";
 import { executeTv } from "./commands/tv.js";
 import { executeQueueWrite } from "./commands/queue-write.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
-import { executeFact } from "./commands/fact.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
 import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
@@ -100,9 +99,6 @@ export function route(
   }
   if (command === "ack" || command === "acknowledge") {
     return executeChildAck(commandArgs, dependencies.environment, dependencies.processAdapter);
-  }
-  if (command === "fact") {
-    return executeFact(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "worktree" && commandArgs[0] === "adopt") {
     return executeWorktreeAdopt(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

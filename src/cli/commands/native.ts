@@ -1,8 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimeFactId, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
-import { validateStore, type FactStore } from "../../core/facts.js";
+import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
@@ -63,20 +62,6 @@ function runtimePlatform(value: string): Result<NativePlatform> {
   if (value === "ios" || value === "iOS") return ok("iOS");
   if (value === "tvos" || value === "tvOS") return ok("tvOS");
   return error(`expected platform iOS or tvOS, got: ${value}`, 2);
-}
-function runtimeFactPath(environment: Environment): string {
-  return environment.MEGABRAIN_FACTS_FILE ?? resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/facts.json");
-}
-function knownRuntimeVersions(environment: Environment, platform: NativePlatform): Result<string[]> {
-  const path = runtimeFactPath(environment);
-  if (!existsSync(path)) return ok([]);
-  try {
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-    const valid = validateStore(value);
-    if (valid.kind !== "valid") return error(valid.message);
-    const prefix = `native-runtime-${platform.toLowerCase()}-`;
-    return ok((value as FactStore).facts.filter((fact) => fact.id.startsWith(prefix)).map((fact) => fact.id.slice(prefix.length).replaceAll("-", ".")));
-  } catch { return error(`could not read fact store: ${path}`); }
 }
 async function installedRuntimes(processAdapter: ProcessAdapter): Promise<Result<NativeRuntime[]>> {
   const result = await processAdapter.run("xcrun", ["simctl", "list", "runtimes", "--json"]);
@@ -160,7 +145,7 @@ async function nativeBuild(args: readonly string[], environment: Environment, pr
   if (!outcomes.launch.ok) return error(`native build failed at launch: ${outcomes.launch.error}`);
   return ok(JSON.stringify({ ok: true, kind: kind.value, runtime: selectedRuntime.version, device: selected.value.udid, bundleId: app.value.bundleId, installed: true, launched: true }) + "\n");
 }
-async function nativeRuntimeList(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+async function nativeRuntimeList(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("runtime-list"));
   let installed = false, available = false, platform: NativePlatform | undefined;
   for (let index = 0; index < args.length; index += 1) {
@@ -178,10 +163,7 @@ async function nativeRuntimeList(args: readonly string[], environment: Environme
     const runtimes = platform ? result.value.filter((runtime) => runtime.platform === platform) : result.value;
     return ok(json ? `${JSON.stringify({ platform: platform ?? "all", runtimes, available: [] })}\n` : runtimes.map((runtime) => `${runtime.platform}\t${runtime.version}\t${runtime.build}\t${runtime.identifier}`).join("\n") + "\n");
   }
-  const platforms: NativePlatform[] = platform ? [platform] : ["iOS", "tvOS"];
-  const versions = (await Promise.all(platforms.map(async (item) => ({ platform: item, versions: knownRuntimeVersions(environment, item) }))));
-  const bad = versions.find((entry) => entry.versions.kind !== "ok"); if (bad && bad.versions.kind !== "ok") return bad.versions;
-  const availableVersions = versions.flatMap((entry) => entry.versions.kind === "ok" ? entry.versions.value.map((version) => ({ platform: entry.platform, version })) : []);
+  const availableVersions: { platform: NativePlatform; version: string }[] = [];
   return ok(json ? `${JSON.stringify({ platform: platform ?? "all", runtimes: [], available: availableVersions })}\n` : availableVersions.length === 0 ? "no known runtime versions are available for download\n" : availableVersions.map((entry) => `${entry.platform}\t${entry.version}`).join("\n") + "\n");
 }
 async function nativeRuntimeInstall(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -442,7 +424,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   let result: Result<string>;
   if (family === "appium") result = await appium([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "build") result = await nativeBuild([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
-  else if (family === "runtime" && operation === "list") result = await nativeRuntimeList(rest, environment, processAdapter);
+  else if (family === "runtime" && operation === "list") result = await nativeRuntimeList(rest, processAdapter);
   else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
   else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
   else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter);
