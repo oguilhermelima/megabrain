@@ -162,7 +162,7 @@ run_chain_edit_cleanup_case() {
   local case_name="$1" expected_status="$2"
   local case_home="$state_dir/chain-edit-$case_name-home"
   local case_state="$case_home/.megabrain"
-  local case_tmp="$case_home/tmp"
+  local case_tmp="$state_dir/chain-edit-$case_name-tmp"
   local case_editor="$case_home/editor.sh"
   mkdir -p "$case_state" "$case_tmp"
   printf '%s\n' '{"chains":{"demo":{"when":{},"steps":[{"agent":"codex","model":"gpt-5.6-luna","effort":"low"}]}},"defaultSteps":[]}' >"$case_state/chains.json"
