@@ -65,17 +65,18 @@ touch "$capture_log" "$pipe_log" "$release_log"
 compiled_bin_dir="$state_dir/bin"
 mkdir -p "$compiled_bin_dir"
 capture_state="$state_dir/capture-output"
+real_tmux="$(command -v tmux)"
 cat >"$compiled_bin_dir/tmux" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = capture-pane ]; then
   [ "${CAPTURE_AVAILABLE:-false}" = true ] || exit 1
   cat "$CAPTURE_PATH"
 else
-  exec /opt/homebrew/bin/tmux "$@"
+  exec "$REAL_TMUX" "$@"
 fi
 EOF
 chmod +x "$compiled_bin_dir/tmux"
-export CAPTURE_PATH="$capture_state" CAPTURE_AVAILABLE=true
+export CAPTURE_PATH="$capture_state" CAPTURE_AVAILABLE=true REAL_TMUX="$real_tmux"
 export PATH="$compiled_bin_dir:$PATH"
 run_compiled_read() {
   env MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
