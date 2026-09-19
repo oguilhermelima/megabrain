@@ -1063,7 +1063,12 @@ ${prompt}"
   else
     command_text="cd $(printf '%q' "$worktree_path") && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR=$(printf '%q' "$MEGABRAIN_STATE_DIR") SUPERSET_TERMINAL_ID=$(printf '%q' "$session_id") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_id") $command_text"
   fi
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
+  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || {
+    megabrain_host_cleanup_launch "$context" "$workspace_id" "$session_id"
+    megabrain_spawn_mark_prompt_failed "$dispatch_id" metadata-read-failed
+    megabrain_dispatch_failure_error "$dispatch_id" "could not read dispatch metadata: $dispatch_id"
+    return 1
+  }
   if ! megabrain_dispatch_native_send "$meta" "$command_text"; then
     megabrain_host_cleanup_launch "$context" "$workspace_id" "$session_id"
     megabrain_spawn_mark_prompt_failed "$dispatch_id" command-not-submitted
@@ -1083,7 +1088,12 @@ ${prompt}"
     megabrain_dispatch_failure_error "$dispatch_id" "Superset terminal $session_id did not become ready"
     return 1
   fi
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
+  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || {
+    megabrain_host_cleanup_launch "$context" "$workspace_id" "$session_id"
+    megabrain_spawn_mark_prompt_failed "$dispatch_id" metadata-read-failed
+    megabrain_dispatch_failure_error "$dispatch_id" "could not read dispatch metadata: $dispatch_id"
+    return 1
+  }
   megabrain_dispatch_send_prompt_with_receipt "$dispatch_id" "$final_prompt"
   prompt_status=$?
   if [ "$prompt_status" -eq "$MEGABRAIN_PROMPT_RECEIPT_WAITING_STATUS" ]; then
