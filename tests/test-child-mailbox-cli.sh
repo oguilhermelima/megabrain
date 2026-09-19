@@ -68,7 +68,7 @@ scenario_check_content_honors_nonblocking_poll() {
   printf '%s\n' '{"id":"delivery-fixed","dispatchId":"check","recipient":"child","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding"}' >"$state/dispatches/check/deliveries/delivery-fixed.json"
   output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal \
     "$root/.build/megabrain" check --timeout 0 --poll-interval 0 --wait-mode poll --json)"
-  assert_json "$output" '.dispatchId == "check" and .messages[0].text == "compiled reply" and .status == "actionable"'
+  assert_json "$output" '.dispatchId == "check" and .messages[0].from == "parent" and .messages[0].type == "reply" and .messages[0].text == "compiled reply" and .status == "reply"'
   printf 'compiled check returns content in one nonblocking poll\n'
 }
 
@@ -78,7 +78,10 @@ scenario_hook_uses_compiled_check() {
   cp "$root/hooks/megabrain-turn-end.sh" "$fixture/hooks/megabrain-turn-end.sh"
   cp "$root/megabrain" "$fixture/megabrain"
   cp -R "$root/lib" "$fixture/lib"
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >"$MEGABRAIN_TEST_BINARY_LOG"\nprintf %%s\\n '\''{"messages":[{"text":"compiled hook reply"}]}\''\n' >"$fixture/.build/megabrain"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'printf "%s\n" "$*" >"$MEGABRAIN_TEST_BINARY_LOG"' \
+    'printf "%s\n" "{\"messages\":[{\"text\":\"compiled hook reply\"}]}"' >"$fixture/.build/megabrain"
   chmod +x "$fixture/hooks/megabrain-turn-end.sh" "$fixture/megabrain" "$fixture/.build/megabrain"
   printf '%s\n' '{"dispatchId":"hook","terminalId":"child-terminal","childHost":"superset","runtime":"host","state":"waiting_for_reply"}' >"$state/dispatches/hook/meta.json"
   output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
