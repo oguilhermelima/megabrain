@@ -41,6 +41,7 @@ assert_not_contains() {
 
 export MEGABRAIN_STATE_DIR="$state_dir"
 export MEGABRAIN_ROOT="$root"
+export MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
