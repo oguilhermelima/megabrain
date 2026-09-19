@@ -11,6 +11,11 @@ set -euo pipefail
 # 5. An explicit base is reported as explicit, while a finish without --delete-branch reports
 #    null base metadata and accepts a branch selector from another working directory.
 # 6. An available Orca remover owns host-specific worktree removal.
+# 7. A host remover that deletes the branch is already a successful finish.
+# 8. A branch deletion failure reports a partial JSON outcome after removing the worktree.
+# 9. A successful finish owns its human-readable output.
+# 10. Work that is not committed is refused by the compiled remover.
+# 11. A refused removal leaves the worktree and branch alone.
 # Falsification: invoke the compiled binary directly for content and assert stdout, stderr,
 # exit status, filesystem effects, branch effects, and the host-remover call.
 
@@ -290,6 +295,122 @@ EOF
   printf 'Superset owns removal when its workspace is registered\n'
 }
 
+scenario_host_remover_deletes_branch_successfully() {
+  local repo="$work/host-branch-repo" shared="$work/host-branch-shared" state="$work/host-branch-state" bin="$work/host-branch-bin"
+  local child output
+  setup_repo "$repo" "$shared" "$state"
+  mkdir -p "$bin"
+  cat >"$bin/orca" <<'EOF'
+#!/usr/bin/env bash
+path=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --worktree) path="${2#path:}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+/usr/bin/git -C "$ORCA_REPO" worktree remove "$path"
+/usr/bin/git -C "$ORCA_REPO" branch -D "$ORCA_BRANCH"
+printf '%s\n' '{"deleted":["fixture"],"warnings":[]}'
+EOF
+  chmod +x "$bin/orca"
+  child="$shared/host-branch"
+  git -C "$repo" worktree add -q "$child" -b feat/host-branch main
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" ORCA_REPO="$repo" ORCA_BRANCH=feat/host-branch PATH="$bin:/usr/bin:/bin" \
+    "$root/.build/megabrain" worktree finish "$child" --delete-branch --force --json 2>"$work/host-branch.err")" ||
+    fail "host remover that deleted the branch was reported as failure: $output"
+  printf '%s' "$output" | jq -e '.deleted == true and .branch == "feat/host-branch" and .branchDeleted == false and .error == null and .refusal == null' >/dev/null ||
+    fail "host remover branch deletion was not a successful JSON outcome: $output"
+  [ ! -e "$child" ] || fail 'host remover left the worktree'
+  git -C "$repo" show-ref --verify --quiet refs/heads/feat/host-branch &&
+    fail 'host remover left the branch'
+  [ ! -s "$work/host-branch.err" ] || fail "successful host removal wrote an error: $(cat "$work/host-branch.err")"
+  printf 'host remover that deletes the branch is already successful\n'
+}
+
+scenario_branch_deletion_failure_returns_partial_json() {
+  local repo="$work/branch-failure-repo" shared="$work/branch-failure-shared" state="$work/branch-failure-state" bin="$work/branch-failure-bin"
+  local child output error rc
+  setup_repo "$repo" "$shared" "$state"
+  mkdir -p "$bin"
+  cat >"$bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = '-C' ] && [ "${2:-}" = "$FAIL_GIT_REPO" ] &&
+  [ "${3:-}" = branch ] && [ "${4:-}" = -D ] && [ "${5:-}" = "$FAIL_GIT_BRANCH" ]; then
+  printf '%s\n' 'fatal: simulated branch deletion refusal' >&2
+  exit 1
+fi
+exec /usr/bin/git "$@"
+EOF
+  chmod +x "$bin/git"
+  child="$shared/branch-failure"
+  git -C "$repo" worktree add -q "$child" -b feat/branch-failure main
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" FAIL_GIT_REPO="$repo" FAIL_GIT_BRANCH=feat/branch-failure PATH="$bin:/usr/bin:/bin" \
+    "$root/.build/megabrain" worktree finish "$child" --delete-branch --force --json 2>"$work/branch-failure.err")"
+  rc=$?
+  set -e
+  error="$(cat "$work/branch-failure.err")"
+  assert_equal "$rc" 1
+  printf '%s' "$output" | jq -e '.deleted == true and .branch == "feat/branch-failure" and .branchDeleted == false and (.error | contains("simulated branch deletion refusal")) and .refusal == null' >/dev/null ||
+    fail "branch deletion failure did not return a partial JSON outcome: $output"
+  assert_contains "$error" 'could not delete branch: feat/branch-failure'
+  [ ! -e "$child" ] || fail 'branch deletion failure left the worktree'
+  git -C "$repo" show-ref --verify --quiet refs/heads/feat/branch-failure ||
+    fail 'branch deletion failure removed the branch'
+  printf 'branch deletion failure returns a partial JSON outcome\n'
+}
+
+scenario_successful_finish_owns_human_output() {
+  local repo="$work/human-repo" shared="$work/human-shared" state="$work/human-state"
+  local child output
+  setup_repo "$repo" "$shared" "$state"
+  child="$shared/human"
+  git -C "$repo" worktree add -q "$child" -b feat/human main
+  output="$(run_binary "$state" worktree finish "$child")" ||
+    fail "successful human-readable finish failed: $output"
+  assert_equal "$output" "removed: $child"
+  [ ! -e "$child" ] || fail 'human-readable finish left the worktree'
+  printf 'successful finish owns its human-readable output\n'
+}
+
+scenario_uncommitted_work_is_refused() {
+  local repo="$work/uncommitted-repo" shared="$work/uncommitted-shared" state="$work/uncommitted-state"
+  local child output error rc
+  setup_repo "$repo" "$shared" "$state"
+  child="$shared/uncommitted"
+  git -C "$repo" worktree add -q "$child" -b feat/uncommitted main
+  printf 'work that is not committed\n' >"$child/uncommitted.txt"
+  set +e
+  output="$(run_binary "$state" worktree finish "$child" --json 2>"$work/uncommitted.err")"
+  rc=$?
+  set -e
+  error="$(cat "$work/uncommitted.err")"
+  [ "$rc" -ne 0 ] || fail 'work that is not committed was removed successfully'
+  printf '%s' "$output" | jq -e '.deleted == false and (.error | contains("modified or untracked files"))' >/dev/null ||
+    fail "uncommitted work did not return a refusal outcome: $output"
+  assert_contains "$error" 'contains modified or untracked files'
+  printf 'work that is not committed is refused by the compiled remover\n'
+}
+
+scenario_refused_removal_preserves_worktree_and_branch() {
+  local repo="$work/preserve-repo" shared="$work/preserve-shared" state="$work/preserve-state"
+  local child output rc
+  setup_repo "$repo" "$shared" "$state"
+  child="$shared/preserve"
+  git -C "$repo" worktree add -q "$child" -b feat/preserve main
+  printf 'work that is not committed\n' >"$child/uncommitted.txt"
+  set +e
+  output="$(run_binary "$state" worktree finish "$child" --json 2>"$work/preserve.err")"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail 'a refused removal returned success'
+  [ -f "$child/uncommitted.txt" ] || fail 'a refused removal removed the worktree'
+  git -C "$repo" show-ref --verify --quiet refs/heads/feat/preserve ||
+    fail 'a refused removal deleted the branch'
+  printf 'a refused removal leaves the worktree and branch alone\n'
+}
+
 [ -x "$root/.build/megabrain" ] || { printf 'skip: compiled finish binary is missing at %s; run bun run build\n' "$root/.build/megabrain"; exit 0; }
 scenario_routes_finish_to_binary
 scenario_recorded_parent_controls_base
@@ -300,4 +421,9 @@ scenario_explicit_base_is_reported
 scenario_invalid_json_refusal
 scenario_orca_removal_is_used
 scenario_superset_removal_is_used
+scenario_host_remover_deletes_branch_successfully
+scenario_branch_deletion_failure_returns_partial_json
+scenario_successful_finish_owns_human_output
+scenario_uncommitted_work_is_refused
+scenario_refused_removal_preserves_worktree_and_branch
 printf 'ok: compiled worktree finish contract scenarios\n'
