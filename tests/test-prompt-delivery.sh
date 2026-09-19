@@ -54,6 +54,7 @@ assert_contains "$preamble" 'check until a reply arrives'
 assert_contains "$preamble" 'ack <delivery-id>'
 assert_contains "$preamble" 'done "short outcome summary"'
 assert_not_contains "$preamble" 'Facts in scope'
+assert_not_contains "$preamble" 'Facts in scope'
 
 no_path_root="$state_dir/no-path"
 mkdir -p "$no_path_root/lib"
@@ -61,7 +62,15 @@ cp "$root/lib/common.sh" "$root/lib/module-context.sh" "$root/lib/module-orchest
 no_path_preamble="$(PATH=/usr/bin:/bin MEGABRAIN_ROOT="$no_path_root" MEGABRAIN_EXECUTABLE="$no_path_root/megabrain" bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; megabrain_dispatch_preamble "$1"' _ "$no_path_root")"
 assert_contains "$no_path_preamble" 'could not be resolved through PATH or an absolute executable path'
 assert_not_contains "$no_path_preamble" 'run ./megabrain'
+assert_not_contains "$no_path_preamble" 'run ./megabrain'
 printf 'dispatch preamble contains only the protocol and handles an unavailable executable\n'
+
+outside="$state_dir/outside-repository"
+mkdir -p "$outside"
+megabrain_dispatch_meta_write outside-repository parent-terminal superset superset workspace-test outside-terminal "$outside" main codex label spawning gpt-5 true codex '' '' host ide >/dev/null
+(cd "$outside" && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/megabrain" received >/dev/null)
+assert_equal "$(find "$state_dir/dispatches/outside-repository/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
+printf 'dispatch receipt works from a non-checkout directory\n'
 
 create_dispatch stalled-report spawning
 megabrain_dispatch_message_append stalled-report child stalled 'child could not run the dispatch command' child-terminal >/dev/null
