@@ -59,7 +59,6 @@ assert_missing() {
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 export MEGABRAIN_ROOT="$root"
-export MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE
 touch "$capture_log" "$pipe_log" "$release_log"
@@ -110,6 +109,7 @@ chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
 export MEGABRAIN_FAKE_TMUX_SESSIONS="$live_sessions"
 export CAPTURE_PATH="$capture_state" CAPTURE_AVAILABLE=true
 export PATH="$compiled_bin_dir:$PATH"
+# Read scenarios exercise the compiled command; the shell implementation is gone.
 run_compiled_read() {
   env MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
     "$root/.build/megabrain" orchestrate read "$@"
