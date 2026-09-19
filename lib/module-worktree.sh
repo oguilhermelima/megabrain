@@ -819,6 +819,7 @@ megabrain_launch_agent() {
   fi
   [ "$#" -eq 0 ] || passthrough_args=("$@")
   MEGABRAIN_LAST_DISPATCH=""
+  MEGABRAIN_LAUNCH_AGENT_STARTED=false
   megabrain_session_id >/dev/null
   parent_id="$MEGABRAIN_SESSION_ID"
   parent_host="$MEGABRAIN_SESSION_HOST"
@@ -956,6 +957,7 @@ ${prompt}"
       megabrain_spawn_mark_prompt_failed "$dispatch_id" command-not-submitted
       return 1
     fi
+    MEGABRAIN_LAUNCH_AGENT_STARTED=true
     substitution_report="$(megabrain_tmux_model_substitution_report "$tmux_pane" 2>/dev/null || true)"
     if [ -n "$substitution_report" ]; then
       megabrain_dispatch_meta_update_model_substitution "$dispatch_id" "$substitution_report" || {
@@ -1075,6 +1077,7 @@ ${prompt}"
     megabrain_dispatch_failure_error "$dispatch_id" "could not start agent in $child_host terminal $session_id"
     return 1
   fi
+  MEGABRAIN_LAUNCH_AGENT_STARTED=true
   if [ "$child_host" = orca ]; then
     if ! orca terminal wait --terminal "$session_id" --for tui-idle --timeout-ms "$MEGABRAIN_AGENT_READY_TIMEOUT_MS" >/dev/null; then
       megabrain_host_cleanup_launch "$context" "$workspace_id" "$session_id"
@@ -1920,8 +1923,12 @@ megabrain_worktree_create() {
       fi
     fi
     if [ "${launch_status:-0}" -ne 0 ]; then
-      megabrain_worktree_launch_failure "agent launch failed" "$worktree_path" "$branch" "${MEGABRAIN_LAST_DISPATCH:-unavailable}"
-      return $?
+      if [ "${MEGABRAIN_LAUNCH_AGENT_STARTED:-false}" = true ]; then
+        megabrain_worktree_launch_failure "agent launch failed" "$worktree_path" "$branch" "${MEGABRAIN_LAST_DISPATCH:-unavailable}"
+        return $?
+      fi
+      megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" "$project_created" "$workspace_id" "$workspace_created" "$worktree_created" "agent launch failed"
+      return 1
     fi
     dispatch="$MEGABRAIN_LAST_DISPATCH"
     runtime="$MEGABRAIN_LAST_SPAWN_RUNTIME"
