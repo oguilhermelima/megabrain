@@ -131,7 +131,11 @@ printf 'agent hooks: repair resolved the moved checkout dynamically\n'
 
 install_home="$work/install-home"
 mkdir -p "$install_home/.megabrain-local"
-HOME="$install_home" "$root/install.sh" --agents none --skill none --agents-md none --modules none --yes >/dev/null
+shared_binary_inode_before="$(ls -di "$root/.build/megabrain" | awk '{print $1}')"
+HOME="$install_home" MEGABRAIN_STATE_DIR="$install_home/state" \
+  "$root/install.sh" --agents none --skill none --agents-md none --modules none --yes >/dev/null
+shared_binary_inode_after="$(ls -di "$root/.build/megabrain" | awk '{print $1}')"
+assert_equal "$shared_binary_inode_after" "$shared_binary_inode_before"
 assert_symlink_target "$install_home/.local/bin/megabrain" "$root/megabrain"
 printf 'installer: megabrain command link is present\n'
 
