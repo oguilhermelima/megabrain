@@ -79,6 +79,9 @@ if [ "$1" = -p ]; then
   printf 'pts/1\n'
 elif [ "${PS_IDENTITY:-missing}" = proven ]; then
   printf '999 1 worker MEGABRAIN_DISPATCH_ID=%s\n' "${MEGABRAIN_TEST_DISPATCH:-dispatch}"
+elif [ "${PS_IDENTITY:-missing}" = unrelated ]; then
+  printf '999 1 unrelated-worker\n'
+  printf '1000 1 other-worker MEGABRAIN_DISPATCH_ID=%s\n' "${MEGABRAIN_TEST_DISPATCH:-dispatch}"
 else
   printf '999 1 unrelated-worker\n'
 fi
@@ -100,6 +103,21 @@ scenario_stop_requires_identity_proof() {
   assert_equal "$(wc -l <"$work/tmux.calls" | tr -d ' ')" 0
   assert_equal "$(find "$state/dispatches/stop-identity/messages" -type f | wc -l | tr -d ' ')" 0
   printf 'stop refuses an unproven tmux identity before sending Escape\n'
+}
+
+scenario_stop_rejects_unrelated_identity_proof() {
+  local state="$work/stop-unrelated-identity" output status
+  write_tmux_fixture
+  write_meta "$state" stop-unrelated-identity '{"dispatchId":"stop-unrelated-identity","parentSessionId":"parent","parentHost":"orca","runtime":"tmux","agent":"codex","tmuxSession":"session","tmuxPane":"%1","state":"running","processState":"running","terminalState":"owned"}'
+  : >"$work/tmux.calls"
+  set +e
+  output="$(TMUX_CALLS="$work/tmux.calls" MEGABRAIN_TEST_DISPATCH=stop-unrelated-identity PS_IDENTITY=unrelated run_binary "$state" orchestrate stop stop-unrelated-identity --json 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'stop trusted an identity marker from an unrelated process tree'
+  assert_contains "$output" 'terminal identity is unproven'
+  assert_equal "$(wc -l <"$work/tmux.calls" | tr -d ' ')" 0
+  printf 'stop rejects a marker that belongs to an unrelated process tree\n'
 }
 
 scenario_stop_interrupts_proven_working_agent() {
@@ -181,6 +199,7 @@ fi
 
 mkdir -p "$work/home" "$work/bin"
 scenario_stop_requires_identity_proof
+scenario_stop_rejects_unrelated_identity_proof
 scenario_stop_interrupts_proven_working_agent
 scenario_read_preserves_host_content
 scenario_read_renders_transcript_fallback
