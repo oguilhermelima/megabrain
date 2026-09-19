@@ -14,7 +14,6 @@ trap cleanup EXIT
 
 export HOME="$state_root/home"
 export MEGABRAIN_STATE_DIR="$state_root/state"
-export MEGABRAIN_FACTS_FILE="$state_root/facts.json"
 mkdir -p "$HOME" "$MEGABRAIN_STATE_DIR"
 
 template="$root/.megabrain/models.json"

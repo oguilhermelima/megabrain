@@ -35,10 +35,33 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  case "$1" in
+    *"$2"*) fail "expected '$1' not to contain '$2'" ;;
+    *) ;;
+  esac
+}
+
 create_dispatch() {
   local dispatch_id="$1" state="$2" terminal_id="${3:-child-terminal}"
   megabrain_dispatch_meta_write "$dispatch_id" parent-terminal orca orca "" "$terminal_id" "$root" fix/prompt-delivery-proof codex label "$state" gpt-5 true codex "" "" host ide >/dev/null
 }
+
+preamble="$(MEGABRAIN_ROOT="$root" MEGABRAIN_EXECUTABLE="$root/megabrain" megabrain_dispatch_preamble "$root")"
+assert_contains "$preamble" 'received to confirm that you received this prompt'
+assert_contains "$preamble" 'ask "your question"'
+assert_contains "$preamble" 'check until a reply arrives'
+assert_contains "$preamble" 'ack <delivery-id>'
+assert_contains "$preamble" 'done "short outcome summary"'
+assert_not_contains "$preamble" 'Facts in scope'
+
+no_path_root="$state_dir/no-path"
+mkdir -p "$no_path_root/lib"
+cp "$root/lib/common.sh" "$root/lib/module-context.sh" "$root/lib/module-orchestrate.sh" "$no_path_root/lib/"
+no_path_preamble="$(PATH=/usr/bin:/bin MEGABRAIN_ROOT="$no_path_root" MEGABRAIN_EXECUTABLE="$no_path_root/megabrain" bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; megabrain_dispatch_preamble "$1"' _ "$no_path_root")"
+assert_contains "$no_path_preamble" 'could not be resolved through PATH or an absolute executable path'
+assert_not_contains "$no_path_preamble" 'run ./megabrain'
+printf 'dispatch preamble contains only the protocol and handles an unavailable executable\n'
 
 create_dispatch stalled-report spawning
 megabrain_dispatch_message_append stalled-report child stalled 'child could not run the dispatch command' child-terminal >/dev/null

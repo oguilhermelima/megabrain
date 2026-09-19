@@ -56,7 +56,6 @@ prepare_state() {
   mkdir -p "$case_dir/home" "$case_dir/state"
   export HOME="$case_dir/home"
   export MEGABRAIN_STATE_DIR="$case_dir/state"
-  export MEGABRAIN_FACTS_FILE="$case_dir/facts.json"
   PATH="$path_without_wrapper" "$root/megabrain" model list --json >/dev/null
   printf '%s\n' "$config" >"$MEGABRAIN_STATE_DIR/chains.json"
 }

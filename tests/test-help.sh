@@ -13,6 +13,8 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -27,6 +29,13 @@ assert_contains() {
   case "$1" in
     *"$2"*) ;;
     *) fail "expected '$1' to contain '$2'" ;;
+  esac
+}
+
+assert_not_contains() {
+  case "$1" in
+    *"$2"*) fail "expected '$1' not to contain '$2'" ;;
+    *) ;;
   esac
 }
 
@@ -87,11 +96,6 @@ run_help model --help
 run_help model list --help
 run_help model add --help
 run_help model refresh --help
-run_help fact --help
-run_help fact list --help
-run_help fact add --help
-run_help fact edit --help
-run_help fact remove --help
 run_help native --help
 run_help native appium --help
 run_help native appium start --help
@@ -109,6 +113,17 @@ run_help tv disconnect --help
 run_help tmux --help
 run_help tmux tune --help
 run_help tmux wrapper --help
+
+top_help="$($root/megabrain --help 2>&1)"
+assert_not_contains "$top_help" 'fact'
+
+if fact_output="$($root/megabrain fact 2>&1)"; then
+  fail 'removed fact command unexpectedly succeeded'
+else
+  fact_status=$?
+fi
+assert_equal "$fact_status" 2
+assert_contains "$fact_output" 'unknown command: fact'
 
 install_output="$("$installer_fixture" --help 2>&1)"
 assert_contains "$install_output" 'Usage:'

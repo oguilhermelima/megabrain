@@ -90,15 +90,6 @@ jq -e '.version == 1 and (.models | length > 0)' "$model_output" >/dev/null ||
   fail "model list did not read the checkout registry: $(cat "$model_output")"
 printf 'model reads checkout registry outside the repository\n'
 
-# Scenario: fact list returns the checkout fact instead of a plausible empty table.
-# Falsification: an unexported root returns [] with exit code 0.
-fact_output="$work/fact.out"
-fact_status="$(run_from_unrelated "$fact_output" fact list --json)"
-[ "$fact_status" -eq 0 ] || fail "fact list returned $fact_status: $(cat "$fact_output")"
-jq -e 'any(.[]; .id == "bash-version")' "$fact_output" >/dev/null ||
-  fail "fact list silently returned no checkout facts: $(cat "$fact_output")"
-printf 'fact list reads checkout facts outside the repository\n'
-
 # Scenario: doctor assesses the compiled artifact at the checkout root.
 # Falsification: an unexported root reports an absent artifact and still exits 0.
 doctor_output="$work/doctor.out"

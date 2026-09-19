@@ -16,26 +16,20 @@ fail() {
   exit 1
 }
 
-# WHY: three variables are what it takes to run megabrain without touching anything the
+# WHY: two variables are what it takes to run megabrain without touching anything the
 # operator owns, and getting one of them wrong is silent. HOME covers the agent configs,
 # the shell files and the install manifest; MEGABRAIN_STATE_DIR covers dispatches, chains
-# and module state; MEGABRAIN_FACTS_FILE covers the fact store, which otherwise lives in
-# the installation root and is a file people commit. Two probes written by hand today set
-# only the state directory and wrote into the repository and into the operator's own
-# dispatch directory, so the completeness of this set is worth pinning rather than
-# remembering.
+# and module state.
 mkdir -p "$sandbox/home" "$sandbox/state"
 run_sandboxed() {
   env HOME="$sandbox/home" \
     MEGABRAIN_STATE_DIR="$sandbox/state" \
-    MEGABRAIN_FACTS_FILE="$sandbox/facts.json" \
     "$root/megabrain" "$@"
 }
 
 # Everything outside the sandbox that megabrain is known to write to. A command that
 # escapes shows up as a changed digest, whatever the mechanism was.
 outside_paths=(
-  "$root/.megabrain/facts.json"
   "$root/.megabrain/models.json"
   "$HOME/.megabrain"
   "$HOME/.megabrain-local"
@@ -66,16 +60,13 @@ digest_outside() {
 
 before="$(digest_outside)"
 
-# Reads first, then the writes that actually create state. fact add and model add are here
-# by name: those are the two that escaped a hand-written sandbox today.
+# Reads first, then the writes that actually create state. model add is here by name
+# because it escaped a hand-written sandbox today.
 run_sandboxed context --json >/dev/null 2>&1 || true
 run_sandboxed orchestrate list --json >/dev/null 2>&1 || true
 run_sandboxed orchestrate prune --dry-run --json >/dev/null 2>&1 || true
 run_sandboxed chain list --json >/dev/null 2>&1 || true
 run_sandboxed model list --json >/dev/null 2>&1 || true
-run_sandboxed fact list --json >/dev/null 2>&1 || true
-run_sandboxed fact add sandbox-probe --measurement 'written inside the sandbox' \
-  --who tester --when '2026-09-08T12:00:00Z' --command 'echo' >/dev/null 2>&1 || true
 run_sandboxed model add codex sandbox-model --reasoning low >/dev/null 2>&1 || true
 # WHY this one specifically: nothing above writes under HOME, so without it the test
 # passed just as well with HOME left pointing at the operator's own directory, and the
@@ -94,9 +85,7 @@ printf 'a sandboxed run leaves every operator-owned path untouched\n'
 
 # The other half: the writes have to have landed somewhere, or this test would pass just
 # as well against a megabrain that does nothing at all.
-[ -f "$sandbox/facts.json" ] || fail 'the sandboxed fact was not written inside the sandbox'
-grep -q sandbox-probe "$sandbox/facts.json" || fail 'the sandboxed fact store has no fact'
 [ -d "$sandbox/state" ] || fail 'the sandboxed state directory was not created'
 printf 'and the writes it was asked for landed inside it\n'
 
-printf 'ok: HOME, MEGABRAIN_STATE_DIR and MEGABRAIN_FACTS_FILE isolate a run completely\n'
+printf 'ok: HOME and MEGABRAIN_STATE_DIR isolate a run completely\n'
