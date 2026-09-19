@@ -1063,12 +1063,7 @@ ${prompt}"
   else
     command_text="cd $(printf '%q' "$worktree_path") && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR=$(printf '%q' "$MEGABRAIN_STATE_DIR") SUPERSET_TERMINAL_ID=$(printf '%q' "$session_id") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_id") $command_text"
   fi
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || {
-    megabrain_host_cleanup_launch "$context" "$workspace_id" "$session_id"
-    megabrain_spawn_mark_prompt_failed "$dispatch_id" metadata-read-failed
-    megabrain_dispatch_failure_error "$dispatch_id" "could not read dispatch metadata: $dispatch_id"
-    return 1
-  }
+  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
   if ! megabrain_dispatch_native_send "$meta" "$command_text"; then
     megabrain_host_cleanup_launch "$context" "$workspace_id" "$session_id"
     megabrain_spawn_mark_prompt_failed "$dispatch_id" command-not-submitted
@@ -1492,6 +1487,12 @@ megabrain_worktree_registration_failure() {
   return 1
 }
 
+megabrain_worktree_launch_failure() {
+  local reason="$1" worktree_path="$2" branch="$3" dispatch="${4:-${MEGABRAIN_LAST_DISPATCH:-unavailable}}"
+  megabrain_error "$reason; kept Git worktree $worktree_path and branch $branch; dispatch $dispatch failed; recover with megabrain worktree adopt $worktree_path"
+  return 1
+}
+
 megabrain_worktree_branch_exists() {
   local repo_path="$1" branch="$2" status
   MEGABRAIN_WORKTREE_BRANCH_EXISTS=false
@@ -1909,8 +1910,8 @@ megabrain_worktree_create() {
       fi
     fi
     if [ "${launch_status:-0}" -ne 0 ]; then
-      megabrain_worktree_create_rollback "$repo_path" "$worktree_path" "$branch" "$project_id" "$project_created" "$workspace_id" "$workspace_created" "$worktree_created" "agent launch failed"
-      return 1
+      megabrain_worktree_launch_failure "agent launch failed" "$worktree_path" "$branch" "${MEGABRAIN_LAST_DISPATCH:-unavailable}"
+      return $?
     fi
     dispatch="$MEGABRAIN_LAST_DISPATCH"
     runtime="$MEGABRAIN_LAST_SPAWN_RUNTIME"
