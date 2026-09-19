@@ -71,4 +71,8 @@ failure_binary="$(run_one "$state_binary" failure close-failure)"
 empty_binary="$(run_one "$state_binary" empty close-empty)"
 [ "$(printf '%s' "$empty_binary" | cut -f1)" = "1" ] || fail "close-empty-status: expected=1 actual=$(printf '%s' "$empty_binary" | cut -f1)"
 [ "$(printf '%s' "$empty_binary" | cut -f3)" = 'megabrain: could not close dispatch close-empty: the host gave no reason' ] || fail "close-empty-reason: $(printf '%s' "$empty_binary" | cut -f3)"
-printf '3 passed, 0 failed, 0 skipped\n'
+
+make_meta "$state_binary" close-precedence
+precedence_output="$(MEGABRAIN_STATE_DIR="$state_binary" MEGABRAIN_SESSION_ID=wrong-session SUPERSET_TERMINAL_ID=parent-terminal ORCA_TERMINAL_HANDLE=other-terminal "$root/.build/megabrain" orchestrate close close-precedence --json)"
+[ "$(printf '%s' "$precedence_output" | jq -r '.status')" = closed ] || fail "Superset identity did not win caller precedence: $precedence_output"
+printf '4 passed, 0 failed, 0 skipped\n'
