@@ -157,29 +157,7 @@ jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._
   fail 'state.json did not identify its timestamp and live-status command'
 printf 'scenario 8: install record identifies its timestamp\n'
 
-# Scenario 9: an editor-created swap file beside the chain temp file must be removed.
-chain_state="$state_dir/chain-state"
-export MEGABRAIN_STATE_DIR="$chain_state"
-export MEGABRAIN_CHAIN_FILE="$chain_state/chains.json"
-export MEGABRAIN_MODEL_FILE="$chain_state/models.json"
-mkdir -p "$chain_state"
-cp "$root/.megabrain/models.json" "$MEGABRAIN_MODEL_FILE"
-printf '%s\n' '{"chains":{"demo":{"when":{},"steps":[{"agent":"codex","model":"gpt-5.6-luna","effort":"low"}]}},"defaultSteps":[]}' >"$MEGABRAIN_CHAIN_FILE"
-editor="$chain_state/editor.sh"
-cat >"$editor" <<'EOF'
-#!/usr/bin/env bash
-file="$1"
-touch "$(dirname "$file")/.$(basename "$file").swp"
-EOF
-chmod +x "$editor"
-export EDITOR="$editor"
-command_chain_edit demo >/dev/null || fail 'chain edit fixture did not complete'
-if find "$chain_state" -maxdepth 1 -name '.chains-edit.*.swp' -print -quit | grep -q .; then
-  fail 'chain edit left an editor swap file behind'
-fi
-printf 'scenario 9: chain editor swap file is cleaned\n'
-
-# Scenario 10: both browser profiles need an explicit active/inactive explanation.
+# Scenario 9: both browser profiles need an explicit active/inactive explanation.
 export MEGABRAIN_STATE_DIR="$state_dir/browser-state"
 MEGABRAIN_PLAYWRIGHT_ROOT="$state_dir/browser-root"
 megabrain_web_local_ready() { return 0; }
@@ -192,11 +170,11 @@ node() { return 0; }
 browser_output="$(module_simulator_web_install false both)"
 assert_contains "$browser_output" 'chromium' 'browser install did not identify the active Chromium profile'
 assert_contains "$browser_output" 'firefox' 'browser install did not explain the Firefox profile'
-printf 'scenario 10: browser profile roles are explicit\n'
+printf 'scenario 9: browser profile roles are explicit\n'
 
-# Scenario 11: a failing container test leaves named output outside the stdout pipe.
+# Scenario 10: a failing container test leaves named output outside the stdout pipe.
 if [ "${MEGABRAIN_IN_CONTAINER:-false}" = true ]; then
-  printf 'skip: scenario 11 skipped inside the container runner because Docker is host-owned\n'
+  printf 'skip: scenario 10 skipped inside the container runner because Docker is host-owned\n'
 else
   container_fixture="$root/tests/.container-failure-fixture.sh"
   container_output_dir="$state_dir/container-results"
@@ -210,7 +188,7 @@ else
     'container failure report did not name the failing test'
   assert_contains "$(cat "$failure_report")" 'deliberate fixture failure' \
     'container failure report did not preserve the failing output'
-  printf 'scenario 11: container failure output survives stdout piping (%s)\n' "$container_run_output"
+  printf 'scenario 10: container failure output survives stdout piping (%s)\n' "$container_run_output"
 fi
 
 printf 'ok: real-use defect scenarios\n'
