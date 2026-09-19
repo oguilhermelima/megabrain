@@ -85,7 +85,8 @@ printf 'a sandboxed run leaves every operator-owned path untouched\n'
 
 # The other half: the writes have to have landed somewhere, or this test would pass just
 # as well against a megabrain that does nothing at all.
-[ -d "$sandbox/state" ] || fail 'the sandboxed state directory was not created'
+[ -f "$sandbox/state/models.json" ] || fail 'the sandboxed model registry was not written inside the sandbox'
+grep -q sandbox-model "$sandbox/state/models.json" || fail 'the sandboxed model registry has no requested model'
 printf 'and the writes it was asked for landed inside it\n'
 
 printf 'ok: HOME and MEGABRAIN_STATE_DIR isolate a run completely\n'
