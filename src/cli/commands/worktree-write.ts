@@ -338,6 +338,194 @@ async function parentBranch(
     return undefined;
   }
 }
+type FinishBase = {
+  readonly ref: string;
+  readonly source: string;
+  readonly warning?: string;
+};
+type Workspace = {
+  readonly id?: string;
+  readonly path: string;
+};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+function workspaceRecords(value: unknown): readonly Record<string, unknown>[] {
+  if (Array.isArray(value))
+    return value.filter((entry): entry is Record<string, unknown> => isRecord(entry));
+  if (!isRecord(value)) return [];
+  const workspaces = value.workspaces;
+  if (Array.isArray(workspaces)) return workspaceRecords(workspaces);
+  if (isRecord(workspaces)) return workspaceRecords(workspaces);
+  return workspaceRecords(value.result);
+}
+function stringField(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    let value: unknown = record;
+    for (const part of key.split(".")) {
+      if (!isRecord(value)) {
+        value = undefined;
+        break;
+      }
+      value = value[part];
+    }
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+async function hasCommand(
+  process: ProcessAdapter,
+  command: string,
+): Promise<boolean> {
+  const result = await run(process, "sh", ["-c", "command -v " + command]);
+  return result.kind === "ok";
+}
+async function workspaceForTarget(
+  process: ProcessAdapter,
+  target: string,
+): Promise<Result<Workspace | undefined>> {
+  if (!(await hasCommand(process, "superset"))) return ok(undefined);
+  const listed = await run(process, "superset", [
+    "workspaces",
+    "list",
+    "--local",
+    "--json",
+  ]);
+  if (listed.kind !== "ok") return ok(undefined);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(listed.value.stdout);
+  } catch {
+    return ok(undefined);
+  }
+  for (const record of workspaceRecords(payload)) {
+    const branch = stringField(record, ["branch", "git.branch"])?.replace(
+      /^refs\/heads\//,
+      "",
+    );
+    const path = stringField(record, [
+      "worktreePath",
+      "path",
+      "worktree.path",
+    ]);
+    const name = stringField(record, ["name"]);
+    if (target !== branch && target !== path && target !== name) continue;
+    if (path === undefined) return ok(undefined);
+    return ok({
+      path,
+      id: stringField(record, ["id", "workspaceId", "workspace.id"]),
+    });
+  }
+  return ok(undefined);
+}
+function removalReason(error: string): string {
+  const compact = error.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  try {
+    const parsed: unknown = JSON.parse(error);
+    if (isRecord(parsed)) {
+      const nested = parsed.error;
+      if (typeof nested === "string" && nested.length > 0) return nested;
+      if (isRecord(nested)) {
+        const message = stringField(nested, ["message", "code"]);
+        if (message !== undefined) return message;
+      }
+      const message = stringField(parsed, ["message", "code"]);
+      if (message !== undefined) return message;
+    }
+  } catch {
+    // The host remover may return plain text instead of JSON.
+  }
+  return compact.length > 0 ? compact : "the remover gave no reason";
+}
+async function resolveFinishBase(
+  process: ProcessAdapter,
+  repo: string,
+  path: string,
+  branch: string,
+  value: FinishOptions,
+): Promise<Result<FinishBase>> {
+  if (value.base !== undefined)
+    return ok({ ref: value.base, source: "explicit" });
+  if (!value.deleteBranch || branch.length === 0)
+    return ok({ ref: "", source: "" });
+  const parent = await parentBranch(process, path, branch);
+  const fallback = await defaultBase(process, repo);
+  if (parent !== undefined) {
+    const exists = await localBranchExists(process, repo, parent);
+    if (exists.kind === "ok" && exists.value)
+      return ok({ ref: parent, source: "recorded-parent" });
+    return ok({
+      ref: fallback,
+      source: "repository-default",
+      warning:
+        "recorded parent branch no longer exists: " +
+        parent +
+        "; judging against repository default base " +
+        fallback,
+    });
+  }
+  return ok({ ref: fallback, source: "repository-default" });
+}
+function finishRefusal(
+  json: boolean,
+  message: string,
+  code: string,
+  exitCode = 1,
+): Result<string> {
+  if (!json) return failed(message, exitCode);
+  return {
+    kind: "ok",
+    value: finishJson({
+      deleted: false,
+      refusal: { code, message },
+    }),
+    exitCode,
+    stderr: "megabrain: " + message + "\n",
+  };
+}
+async function removeFinishWorktree(
+  process: ProcessAdapter,
+  repo: string,
+  path: string,
+  force: boolean,
+  workspace: Workspace | undefined,
+): Promise<Result<null>> {
+  if (workspace?.id !== undefined) {
+    const removed = await run(process, "superset", [
+      "workspaces",
+      "delete",
+      workspace.id,
+      "--local",
+      "--json",
+    ]);
+    return removed.kind === "ok"
+      ? ok(null)
+      : failed(removalReason(removed.error), removed.exitCode);
+  }
+  if (await hasCommand(process, "orca")) {
+    const args = ["worktree", "rm", "--worktree", "path:" + path];
+    if (force) args.push("--force");
+    args.push("--json");
+    const removed = await run(process, "orca", args);
+    return removed.kind === "ok"
+      ? ok(null)
+      : failed(removalReason(removed.error), removed.exitCode);
+  }
+  const removed = await run(process, "git", [
+    "-C",
+    repo,
+    "worktree",
+    "remove",
+    ...(force ? ["--force"] : []),
+    path,
+  ]);
+  return removed.kind === "ok"
+    ? ok(null)
+    : failed(removalReason(removed.error), removed.exitCode);
+}
 async function resolveParent(
   process: ProcessAdapter,
   repo: string,
@@ -587,36 +775,28 @@ export async function executeWorktreeFinish(
   process = createProcessAdapter(),
 ): Promise<Result<string>> {
   const parsed = parseFinishOptions(args);
-  if (parsed.kind !== "ok") return parsed;
+  if (parsed.kind !== "ok")
+    return args.includes("--json")
+      ? finishRefusal(true, parsed.error, "invalid-arguments", parsed.exitCode)
+      : parsed;
   const value: FinishOptions = parsed.value;
   if (!value.target)
-    return value.json
-      ? ok(
-          finishJson({
-            deleted: false,
-            refusal: {
-              code: "invalid-arguments",
-              message:
-                "Usage: megabrain worktree finish <path|branch|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
-            },
-          }),
-        )
-      : failed(
-          "Usage: megabrain worktree finish <path|branch|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
-          2,
-        );
+    return finishRefusal(
+      value.json,
+      "Usage: megabrain worktree finish <path|branch|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
+      "invalid-arguments",
+      2,
+    );
   const shared = await root(environment, true);
   if (shared.kind !== "ok") return shared;
-  const found = await pathFor(process, value.target, shared.value);
+  const workspace = await workspaceForTarget(process, value.target);
+  if (workspace.kind !== "ok") return workspace;
+  const found =
+    workspace.value?.path !== undefined
+      ? ok(workspace.value.path)
+      : await pathFor(process, value.target, shared.value);
   if (found.kind !== "ok")
-    return value.json
-      ? ok(
-          finishJson({
-            deleted: false,
-            refusal: { code: "worktree-not-found", message: found.error },
-          }),
-        )
-      : found;
+    return finishRefusal(value.json, found.error, "worktree-not-found");
   const path = found.value;
   const repo = await repositoryRoot(process, path);
   if (repo.kind !== "ok") return repo;
@@ -630,14 +810,25 @@ export async function executeWorktreeFinish(
   ]);
   const branch =
     branchResult.kind === "ok" ? branchResult.value.stdout.trim() : "";
-  const base = value.base ?? (await defaultBase(process, repo.value));
+  const base = await resolveFinishBase(
+    process,
+    repo.value,
+    path,
+    branch,
+    value,
+  );
+  if (base.kind !== "ok") return base;
+  const baseRef = base.value.ref;
+  const baseSource = base.value.source;
+  const baseWarning = base.value.warning;
+  const warning = baseWarning === undefined ? "" : baseWarning + "\n";
   if (value.deleteBranch && branch && !value.force) {
     const merged = await run(process, "git", [
       "-C",
       repo.value,
       "branch",
       "--merged",
-      base,
+      baseRef,
     ]);
     if (
       merged.kind !== "ok" ||
@@ -649,62 +840,135 @@ export async function executeWorktreeFinish(
             .trim() === branch,
       )
     ) {
-      const message = `refusing to delete unmerged branch: ${branch} against base ${base} (use --force to override)`;
-      return value.json
-        ? ok(
-            finishJson({
-              deleted: false,
-              branch,
-              path,
-              base,
-              baseSource: "repository-default",
-              refusal: { code: "unmerged-branch", message },
-            }),
-          )
-        : failed(message);
+      const message =
+        "refusing to delete unmerged branch: " +
+        branch +
+        " against base " +
+        baseRef +
+        " (use --force to override)";
+      if (value.json) {
+        return {
+          kind: "ok",
+          value: finishJson({
+            deleted: false,
+            branch,
+            path,
+            base: baseRef,
+            baseSource,
+            baseWarning,
+            refusal: { code: "unmerged-branch", message },
+          }),
+          exitCode: 1,
+          stderr: warning + "megabrain: " + message + "\n",
+        };
+      }
+      if (warning.length > 0)
+        return {
+          kind: "ok",
+          value: "",
+          exitCode: 1,
+          stderr: warning + "megabrain: " + message + "\n",
+        };
+      return failed(message);
     }
   }
-  const removed = await run(process, "git", [
-    "-C",
+  const removed = await removeFinishWorktree(
+    process,
     repo.value,
-    "worktree",
-    "remove",
-    ...(value.force ? ["--force"] : []),
     path,
-  ]);
-  if (removed.kind !== "ok")
+    value.force,
+    workspace.value,
+  );
+  if (removed.kind !== "ok") {
+    const reason = removalReason(removed.error);
+    const message = "could not remove worktree " + path + ": " + reason;
     return value.json
-      ? ok(finishJson({ deleted: false, branch, path, error: removed.error }))
-      : failed(`could not remove worktree ${path}: ${removed.error}`);
-  let branchDeleted: boolean | undefined;
-  if (value.deleteBranch && branch) {
-    const deleted = await run(process, "git", [
-      "-C",
-      repo.value,
-      "branch",
-      "-D",
-      branch,
-    ]);
-    if (deleted.kind === "ok") branchDeleted = true;
-    else if (deleted.error.includes("not found"))
-      branchDeleted = false;
-    else
-      return value.json
-        ? ok(
-            finishJson({
-              deleted: true,
-              branch,
-              path,
-              base,
-              branchDeleted: false,
-              error: deleted.error,
-            }),
-          )
-        : failed(`could not delete branch: ${branch}: ${deleted.error}`);
+      ? {
+          kind: "ok",
+          value: finishJson({
+            deleted: false,
+            branch,
+            path,
+            base: baseRef || undefined,
+            baseSource: baseSource || undefined,
+            baseWarning,
+            error: reason,
+          }),
+          exitCode: removed.exitCode,
+          stderr: warning + "megabrain: " + message + "\n",
+        }
+      : failed(message, removed.exitCode);
   }
-  return value.json
-    ? ok(finishJson({ deleted: true, branch, path, base, branchDeleted }))
-    : ok(`removed: ${path}\n`);
+  let branchDeleted: boolean | undefined;
+  let branchOutput = "";
+  if (value.deleteBranch && branch) {
+    const exists = await localBranchExists(process, repo.value, branch);
+    if (exists.kind === "ok" && exists.value) {
+      const deleted = await run(process, "git", [
+        "-C",
+        repo.value,
+        "branch",
+        "-D",
+        branch,
+      ]);
+      if (deleted.kind === "ok") {
+        branchDeleted = true;
+        branchOutput = deleted.value.stdout.trim();
+      } else {
+        const reason = removalReason(deleted.error);
+        const message =
+          "could not delete branch: " + branch + ": " + reason;
+        return value.json
+          ? {
+              kind: "ok",
+              value: finishJson({
+                deleted: true,
+                branch,
+                path,
+                base: baseRef || undefined,
+                baseSource: baseSource || undefined,
+                baseWarning,
+                branchDeleted: false,
+                error: reason,
+              }),
+              exitCode: deleted.exitCode,
+              stderr: warning + "megabrain: " + message + "\n",
+            }
+          : failed(message, deleted.exitCode);
+      }
+    } else {
+      branchDeleted = false;
+    }
+  }
+  if (value.json)
+    return {
+      kind: "ok",
+      value: finishJson({
+        deleted: true,
+        branch,
+        path,
+        base: baseRef || undefined,
+        baseSource: baseSource || undefined,
+        baseWarning,
+        branchDeleted,
+      }),
+      stderr: warning.length > 0 ? warning : undefined,
+    };
+  let human = "removed: " + path + "\n";
+  if (value.deleteBranch && branch) {
+    human +=
+      "judged branch " +
+      branch +
+      " against base " +
+      baseRef +
+      " (" +
+      baseSource +
+      ")\n";
+    if (branchDeleted === false)
+      human += "branch already absent: " + branch + "\n";
+    else if (branchOutput.length > 0) human += branchOutput + "\n";
+  }
+  return ok(human);
 }
 export async function executeWorktreePr(
   args: readonly string[],

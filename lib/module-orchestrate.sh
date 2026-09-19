@@ -1041,54 +1041,22 @@ megabrain_dispatch_reconcile_update() {
 }
 
 megabrain_dispatch_reconcile() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_RECONCILE_IMPLEMENTATION:-}"; then
-    "$typescript_binary" orchestrate reconcile "$@"
-    return $?
+  local megabrain_root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)}"
+  local typescript_binary="$megabrain_root/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
+  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+    if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
+    fi
   fi
-  local dispatch_id="" all=false json=false arg meta_path meta entries='[]' outcome
-  case "${1:-}" in
-    -h|--help)
-      megabrain_usage_show orchestrate-reconcile
-      return 0
-      ;;
-  esac
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --all) all=true; shift ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show orchestrate-reconcile; return 0 ;;
-      *)
-        [ -z "$dispatch_id" ] || { megabrain_error "unknown reconcile option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }
-        dispatch_id="$arg"
-        shift
-        ;;
-    esac
-  done
-  if [ "$all" = true ]; then
-    for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
-      [ -f "$meta_path" ] || continue
-      dispatch_id="$(jq -r '.dispatchId' "$meta_path")"
-      megabrain_dispatch_reconcile_one "$dispatch_id" || return 1
-      meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-      outcome="${MEGABRAIN_RECONCILE_OUTCOME:-unchanged}"
-      entries="$(jq --argjson item "$meta" --arg outcome "$outcome" '. + [$item + {reconcileResult: $outcome}]' <<<"$entries")" || return 1
-    done
-  else
-    [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-reconcile; return "$MEGABRAIN_USAGE_ERROR"; }
-    megabrain_dispatch_reconcile_one "$dispatch_id" || return 1
-    meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-    outcome="${MEGABRAIN_RECONCILE_OUTCOME:-unchanged}"
-    entries="$(jq --argjson item "$meta" --arg outcome "$outcome" '. + [$item + {reconcileResult: $outcome}]' <<<"$entries")" || return 1
-  fi
-  if [ "$json" = true ]; then
-    printf '%s\n' "$entries" | jq 'if length == 1 then .[0] else . end'
-  else
-    printf '%s\n' "$entries" | jq -r '.[] | [.dispatchId, .reconcileResult, .state, .processState, .terminalState] | @tsv' | while IFS=$'\t' read -r dispatch outcome state process terminal; do
-      printf 'dispatch: %s\nresult: %s\nstate: %s\nprocess: %s\nterminal: %s\n' "$dispatch" "$outcome" "$state" "$process" "$terminal"
-    done
-  fi
+  "$typescript_binary" orchestrate reconcile "$@"
 }
 
 megabrain_dispatch_tmux_sessions() {
@@ -2036,69 +2004,22 @@ megabrain_dispatch_host_terminal_read() {
 }
 
 megabrain_dispatch_read() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION:-}"; then
-    "$typescript_binary" orchestrate read "$@"
-    return $?
-  fi
-  local dispatch_id="${1:-}" lines=200 json=false arg meta runtime pane output source transcript_path
-  local truncated=false transcript_bytes
-  case "$dispatch_id" in
-    -h|--help) megabrain_usage_show orchestrate-read; return 0 ;;
-  esac
-  [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-read; return "$MEGABRAIN_USAGE_ERROR"; }
-  shift
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --lines) lines="${2:-}"; shift 2 ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show orchestrate-read; return 0 ;;
-      *) megabrain_error "unknown orchestrate read option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  [[ "$lines" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "--lines must be a positive number"; return "$MEGABRAIN_USAGE_ERROR"; }
-  meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
-  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  if [ "$runtime" = tmux ]; then
-    pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-    source=tmux
-    if ! output="$(megabrain_tmux_capture_pane "$pane" "-$lines" 2>/dev/null)"; then
-      transcript_path="$(megabrain_dispatch_transcript_path "$dispatch_id")"
-      if [ -f "$transcript_path" ]; then
-        output="$(megabrain_dispatch_render_transcript "$transcript_path" "$lines")" || {
-          megabrain_error "could not render dispatch transcript $transcript_path"
-          return 1
-        }
-        source=file
-        # The render path never loads more than MEGABRAIN_TRANSCRIPT_MAX_BYTES of the
-        # source file, so a transcript over that bound loses content the caller asked
-        # for; that fact must reach the caller rather than being promoted to a
-        # complete answer.
-        transcript_bytes="$(wc -c <"$transcript_path" 2>/dev/null | tr -d ' ')"
-        case "$transcript_bytes" in
-          ''|*[!0-9]*) ;;
-          *) [ "$transcript_bytes" -gt "$MEGABRAIN_TRANSCRIPT_MAX_BYTES" ] && truncated=true ;;
-        esac
-      else
-        megabrain_error "could not read tmux pane $pane and no persisted transcript exists"
-        return 1
-      fi
+  local megabrain_root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)}"
+  local typescript_binary="$megabrain_root/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
+  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+    if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
     fi
-  else
-    output="$(megabrain_dispatch_host_terminal_read "$meta")" || return 1
-    source=host
-    pane=""
   fi
-  if [ "$json" = true ]; then
-    jq -n --arg dispatchId "$dispatch_id" --arg pane "$pane" --arg source "$source" --arg output "$output" \
-      --argjson truncated "$truncated" \
-      '{dispatchId: $dispatchId, pane: $pane, source: $source, truncated: $truncated, text: $output}'
-  else
-    printf 'source: %s\n' "$source"
-    [ "$truncated" = true ] && printf 'truncated: transcript exceeds %s bytes, oldest lines dropped\n' "$MEGABRAIN_TRANSCRIPT_MAX_BYTES"
-    printf '%s\n' "$output"
-  fi
+  "$typescript_binary" orchestrate read "$@"
 }
 
 megabrain_dispatch_report() {
@@ -2536,111 +2457,23 @@ megabrain_dispatch_reply() {
 }
 
 megabrain_dispatch_stop() {
-  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION:-}"; then
-    "$typescript_binary" orchestrate stop "$@"
-    return $?
-  fi
-  local dispatch_id="${1:-}" json=false arg meta runtime host liveness_status liveness_reason agent pane terminal_status
-  local interrupt_affordance interrupt_status attempted_text result_text interrupt_reason=''
-  case "$dispatch_id" in
-    -h|--help) megabrain_usage_show orchestrate-stop; return 0 ;;
-  esac
-  [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-stop; return "$MEGABRAIN_USAGE_ERROR"; }
-  shift
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show orchestrate-stop; return 0 ;;
-      *) megabrain_error "unknown orchestrate stop option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
-  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  if [ "$runtime" = tmux ]; then
-    megabrain_dispatch_liveness_read "$dispatch_id" --json >/dev/null || return 1
-    liveness_status="${MEGABRAIN_DISPATCH_LIVENESS_STATUS:-unknown}"
-    liveness_reason="${MEGABRAIN_DISPATCH_LIVENESS_REASON:-liveness is not proven}"
-    if [ "$liveness_status" != working ]; then
-      case "$liveness_status" in
-        pending-check) liveness_reason='pending check frame: messages are waiting for the next tool call' ;;
-        unknown) liveness_reason="unknown liveness: ${liveness_reason:-liveness is not proven}" ;;
-        *) liveness_reason="${liveness_status}: ${liveness_reason:-agent is not working}" ;;
-      esac
-      megabrain_error "dispatch $dispatch_id cannot be stopped: $liveness_reason"
-      return 1
+  local megabrain_root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)}"
+  local typescript_binary="$megabrain_root/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
+  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+    if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+      export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
     fi
-    pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-    agent="$(printf '%s' "$meta" | jq -r '.agent // empty')"
-    [ -n "$agent" ] || agent="$(megabrain_tmux_agent_for_pane "$pane" 2>/dev/null || true)"
-    interrupt_affordance="$(megabrain_tmux_interrupt_affordance "$agent" 2>/dev/null || true)"
-    [ -n "$interrupt_affordance" ] || {
-      megabrain_error "dispatch $dispatch_id cannot be stopped: interrupt affordance is unknown for agent $agent"
-      return 1
-    }
-    attempted_text="interrupt attempted for dispatch $dispatch_id with $interrupt_affordance"
-    megabrain_dispatch_message_append "$dispatch_id" parent interrupt "$attempted_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
-    megabrain_tmux_send_interrupt "$pane" "$agent" || true
-    interrupt_status="${MEGABRAIN_TMUX_INTERRUPT_STATUS:-not-landed}"
-  else
-    host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
-    case "$host" in
-      orca)
-        megabrain_dispatch_terminal_status "$meta" || {
-          megabrain_error "dispatch $dispatch_id cannot be stopped: Orca terminal identity check failed"
-          return 1
-        }
-        terminal_status="${MEGABRAIN_TERMINAL_STATUS:-unknown}"
-        case "$terminal_status" in
-          proven) ;;
-          missing)
-            megabrain_error "dispatch $dispatch_id cannot be stopped: Orca terminal identity is missing; cannot safely interrupt"
-            return 1
-            ;;
-          *)
-            megabrain_error "dispatch $dispatch_id cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt"
-            return 1
-            ;;
-        esac
-        attempted_text="interrupt attempted for dispatch $dispatch_id with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca"
-        megabrain_dispatch_message_append "$dispatch_id" parent interrupt "$attempted_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
-        megabrain_dispatch_native_interrupt "$meta" || true
-        interrupt_status="${MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS:-not-landed}"
-        interrupt_reason="${MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON:-}"
-        ;;
-      superset)
-        megabrain_error "dispatch $dispatch_id cannot be stopped: Superset terminals send offers no interrupt capability"
-        return 1
-        ;;
-      *)
-        megabrain_error "dispatch $dispatch_id cannot be stopped: interrupt capability is unavailable for host ${host:-unknown}"
-        return 1
-        ;;
-    esac
   fi
-  if [ "$interrupt_status" = landed ] || [ "$interrupt_status" = queued ]; then
-    result_text="interrupt landed for dispatch $dispatch_id"
-    result_text="${result_text/landed/$interrupt_status}"
-    megabrain_dispatch_message_append "$dispatch_id" parent interrupt-result "$result_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
-    if [ "$json" = true ]; then
-      jq -n --arg dispatchId "$dispatch_id" --arg status interrupted --arg result "$interrupt_status" \
-        '{dispatchId: $dispatchId, status: $status, result: $result, interrupted: true}'
-    else
-      printf 'interrupted: %s\nresult: %s\n' "$dispatch_id" "$interrupt_status"
-    fi
-    return 0
-  fi
-  result_text="interrupt did not land for dispatch $dispatch_id"
-  [ -n "$interrupt_reason" ] && result_text="$result_text: $interrupt_reason"
-  megabrain_dispatch_message_append "$dispatch_id" parent interrupt-result "$result_text" "$MEGABRAIN_SESSION_ID" >/dev/null || return 1
-  if [ "$json" = true ]; then
-    jq -n --arg dispatchId "$dispatch_id" --arg status not-interrupted --arg result "$interrupt_status" \
-      '{dispatchId: $dispatchId, status: $status, result: $result, interrupted: false}'
-  else
-    printf 'interrupted: false\nresult: %s\n' "$interrupt_status"
-  fi
-  return 1
+  "$typescript_binary" orchestrate stop "$@"
+  return $?
 }
 
 command_ask() {

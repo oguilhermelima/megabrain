@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-host-runtime.XXXXXX")"
+fake_bin="$state_dir/bin"
 
 cleanup() {
   local rc=$?
@@ -34,6 +35,7 @@ export MEGABRAIN_ROOT="$root"
 export MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
+mkdir -p "$fake_bin"
 
 source "$root/lib/common.sh"
 source "$root/lib/module-tmux-runtime.sh"
@@ -145,7 +147,24 @@ printf 'renaming a host terminal does not affect identity proof\n'
 
 superset_terminals='{"sessions":[{"terminalId":"host-read-terminal","title":"host read"}]}'
 create_host_dispatch host-read superset running host-read-terminal
-host_read_result="$(command_orchestrate read host-read --json)"
+cat >"$fake_bin/megabrain_superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1 $2" = 'terminals read' ]; then
+  printf '%s\n' '{"output":"superset host output"}'
+else
+  exit 1
+fi
+EOF
+cat >"$fake_bin/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1 $2" = 'terminal read' ]; then
+  printf '%s\n' '{"text":"orca host output"}'
+else
+  exit 1
+fi
+EOF
+chmod +x "$fake_bin/megabrain_superset" "$fake_bin/orca"
+host_read_result="$(PATH="$fake_bin:$PATH" command_orchestrate read host-read --json)"
 assert_equal "$(printf '%s' "$host_read_result" | jq -r '.source')" host
 assert_equal "$(printf '%s' "$host_read_result" | jq -r '.text')" 'superset host output'
 printf 'host read returns output from the Superset terminal\n'
@@ -153,7 +172,7 @@ printf 'host read returns output from the Superset terminal\n'
 orca_terminals='{"result":{"terminals":[{"handle":"host-read-terminal","title":"host read"}]}}'
 jq '.childHost = "orca"' "$state_dir/dispatches/host-read/meta.json" >"$state_dir/orca-meta.json"
 mv -f "$state_dir/orca-meta.json" "$state_dir/dispatches/host-read/meta.json"
-orca_read_result="$(command_orchestrate read host-read --json)"
+orca_read_result="$(PATH="$fake_bin:$PATH" command_orchestrate read host-read --json)"
 assert_equal "$(printf '%s' "$orca_read_result" | jq -r '.source')" host
 assert_equal "$(printf '%s' "$orca_read_result" | jq -r '.text')" 'orca host output'
 printf 'host read returns output from the Orca terminal\n'

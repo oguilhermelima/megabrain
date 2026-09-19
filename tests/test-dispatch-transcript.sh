@@ -64,9 +64,11 @@ export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE
 touch "$capture_log" "$pipe_log" "$release_log"
 
-fake_bin="$state_dir/bin"
-mkdir -p "$fake_bin"
-cat >"$fake_bin/tmux" <<'EOF'
+compiled_bin_dir="$state_dir/bin"
+fake_bin="$compiled_bin_dir"
+mkdir -p "$compiled_bin_dir"
+capture_state="$state_dir/capture-output"
+cat >"$compiled_bin_dir/tmux" <<'EOF'
 #!/usr/bin/env bash
 target=""
 for arg in "$@"; do
@@ -90,7 +92,8 @@ case "${1:-}" in
     mv -f "${MEGABRAIN_FAKE_TMUX_SESSIONS}.tmp" "${MEGABRAIN_FAKE_TMUX_SESSIONS}"
     ;;
   capture-pane)
-    printf '%s\n' 'captured dispatch transcript'
+    [ "${CAPTURE_AVAILABLE:-false}" = true ] || exit 1
+    cat "${CAPTURE_PATH:?}"
     ;;
   *) exit 1 ;;
 esac
@@ -105,6 +108,13 @@ exit 1
 EOF
 chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
 export MEGABRAIN_FAKE_TMUX_SESSIONS="$live_sessions"
+export CAPTURE_PATH="$capture_state" CAPTURE_AVAILABLE=true
+export PATH="$compiled_bin_dir:$PATH"
+run_compiled_read() {
+  env MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
+    "$root/.build/megabrain" orchestrate read "$@"
+}
+sync_capture() { printf '%s\n' "$capture_output" >"$capture_state"; }
 
 source "$root/lib/common.sh"
 source "$root/lib/module-context.sh"
@@ -113,6 +123,7 @@ source "$root/lib/module-install.sh"
 
 capture_output='captured dispatch transcript'
 capture_available=true
+sync_capture
 pipe_start_available=true
 
 megabrain_tmux_capture_pane() {
@@ -213,9 +224,11 @@ capture_available=true
 pipe_start_available=true
 
 capture_output='first streamed output'
+sync_capture
 write_dispatch reconnect-session running reconnect-session
 megabrain_dispatch_start_transcript reconnect-session %99
 capture_output='second streamed output'
+sync_capture
 megabrain_dispatch_start_transcript reconnect-session %99
 assert_contains "$(cat "$(transcript_path reconnect-session)")" 'first streamed output'
 assert_contains "$(cat "$(transcript_path reconnect-session)")" 'second streamed output'
@@ -223,6 +236,7 @@ printf 'transcript stream appends output across reconnect\n'
 
 printf '%s\n' 'close-session' >"$live_sessions"
 capture_output='final output before close'
+sync_capture
 write_dispatch close-session done close-session
 megabrain_dispatch_start_transcript close-session %99
 PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate close close-session --json >/dev/null
@@ -232,9 +246,10 @@ assert_equal "$(grep -c '^stop' "$pipe_log" || true)" 0
 printf 'compiled close preserves the persisted transcript while releasing tmux\n'
 
 capture_available=false
+CAPTURE_AVAILABLE=false
 write_dispatch read-fallback done read-fallback
 printf '%s\n' 'persisted read output' >"$(transcript_path read-fallback)"
-read_result="$(command_orchestrate read read-fallback --lines 20 --json)"
+read_result="$(run_compiled_read read-fallback --lines 20 --json)"
 assert_equal "$(printf '%s' "$read_result" | jq -r '.source')" file
 assert_equal "$(printf '%s' "$read_result" | jq -r '.text')" 'persisted read output'
 printf 'read falls back to the persisted transcript and reports file source\n'
@@ -259,7 +274,7 @@ scenario_not_contains() {
   esac
 }
 
-rendered_result="$(command_orchestrate read rendered-fallback --lines 3 --json)"
+rendered_result="$(run_compiled_read rendered-fallback --lines 3 --json)"
 assert_equal "$(printf '%s' "$rendered_result" | jq -r '.source')" file
 if ! cmp -s "$(transcript_path rendered-fallback)" "$state_dir/rendered-fallback.raw"; then
   fail 'rendering changed the persisted transcript'
@@ -272,7 +287,7 @@ if [ "$scenario_failures" -ne 0 ]; then
 fi
 printf 'read renders terminal controls and keeps the final overwritten lines\n'
 
-limited_result="$(command_orchestrate read rendered-fallback --lines 2 --json)"
+limited_result="$(run_compiled_read rendered-fallback --lines 2 --json)"
 scenario_equal "$(printf '%s' "$limited_result" | jq -r '.text')" $'final one\nfinal two\nplain three'
 scenario_equal "$(printf '%s' "$limited_result" | jq -r '.text | split("\n") | length')" 3
 if [ "$scenario_failures" -ne 0 ]; then
@@ -285,7 +300,7 @@ if [ -n "$real_transcript" ]; then
   write_dispatch rendered-history done rendered-history
   dd if="$real_transcript" of="$(transcript_path rendered-history)" bs=1 count=8500000 2>/dev/null ||
     fail 'could not copy the real transcript slice'
-  history_result="$(command_orchestrate read rendered-history --lines 1000 --json)"
+  history_result="$(run_compiled_read rendered-history --lines 1000 --json)"
   history_text="$(printf '%s' "$history_result" | jq -r '.text')"
   assert_contains "$history_text" 'Worktree:'
   assert_contains "$history_text" 'DEFECT A'
@@ -408,16 +423,17 @@ printf 'render caps a fixture over-limit transcript to the tail and keeps the fi
 # argument ("jq: Argument list too long"). A much smaller cap here exercises
 # the same truncated-flag logic without hitting that ceiling.
 truncation_report_cap=65536
-MEGABRAIN_TRANSCRIPT_MAX_BYTES="$truncation_report_cap"
+export MEGABRAIN_TRANSCRIPT_MAX_BYTES="$truncation_report_cap"
 truncation_big="$state_dir/truncation-big.transcript"
 build_capped_transcript_fixture $((truncation_report_cap + 65536)) "$truncation_big"
 
 capture_available=false
+CAPTURE_AVAILABLE=false
 write_dispatch truncated-report done truncated-report
 cp "$truncation_big" "$(transcript_path truncated-report)"
-truncated_json="$(command_orchestrate read truncated-report --lines 50 --json)"
+truncated_json="$(run_compiled_read truncated-report --lines 50 --json)"
 scenario_equal "$(printf '%s' "$truncated_json" | jq -r '.truncated')" true
-truncated_plain="$(command_orchestrate read truncated-report --lines 50)"
+truncated_plain="$(run_compiled_read truncated-report --lines 50)"
 case "$truncated_plain" in
   *truncated:*) ;;
   *)
@@ -432,21 +448,24 @@ printf 'read reports truncation when the persisted transcript exceeds the cap\n'
 
 write_dispatch untruncated-report done untruncated-report
 cp "$small_slice" "$(transcript_path untruncated-report)"
-untruncated_json="$(command_orchestrate read untruncated-report --lines 50 --json)"
+untruncated_json="$(run_compiled_read untruncated-report --lines 50 --json)"
 scenario_equal "$(printf '%s' "$untruncated_json" | jq -r '.truncated')" false
-untruncated_plain="$(command_orchestrate read untruncated-report --lines 50)"
+untruncated_plain="$(run_compiled_read untruncated-report --lines 50)"
 scenario_not_contains "$untruncated_plain" 'truncated:'
 if [ "$scenario_failures" -ne 0 ]; then
   fail 'under-cap truncation reporting scenario failed'
 fi
 printf 'read does not report truncation for a transcript under the cap\n'
-MEGABRAIN_TRANSCRIPT_MAX_BYTES=10485760
+export MEGABRAIN_TRANSCRIPT_MAX_BYTES=10485760
 capture_available=true
+CAPTURE_AVAILABLE=true
 
 capture_available=true
+CAPTURE_AVAILABLE=true
 capture_output='live pane already rendered'
+sync_capture
 write_dispatch read-live done read-live
-live_result="$(command_orchestrate read read-live --lines 20 --json)"
+live_result="$(run_compiled_read read-live --lines 20 --json)"
 assert_equal "$(printf '%s' "$live_result" | jq -r '.source')" tmux
 assert_equal "$(printf '%s' "$live_result" | jq -r '.text')" 'live pane already rendered'
 printf 'read keeps the live pane rendering path\n'
@@ -454,10 +473,12 @@ printf 'read keeps the live pane rendering path\n'
 write_dispatch plain-fallback done plain-fallback
 printf '%s\n' 'plain transcript one' 'plain transcript two' >"$(transcript_path plain-fallback)"
 capture_available=false
-plain_result="$(command_orchestrate read plain-fallback --lines 20 --json)"
+CAPTURE_AVAILABLE=false
+plain_result="$(run_compiled_read plain-fallback --lines 20 --json)"
 assert_equal "$(printf '%s' "$plain_result" | jq -r '.text')" $'plain transcript one\nplain transcript two'
 printf 'read passes through an already plain transcript\n'
 capture_available=true
+CAPTURE_AVAILABLE=true
 
 printf '%s\n' 'doctor-leak' >"$live_sessions"
 write_dispatch doctor-leak done doctor-leak
@@ -530,6 +551,7 @@ printf 'caller tmux sessions are never counted or released\n'
 [ "$regression_failures" -eq 0 ] || fail 'session ownership regressions detected'
 
 capture_output='prune transcript'
+sync_capture
 printf '%s\n' 'prune-session' >"$live_sessions"
 write_dispatch prune-session done prune-session
 megabrain_dispatch_start_transcript prune-session %99

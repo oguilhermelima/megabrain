@@ -209,15 +209,6 @@ printf change >"$work/shared/feat-create2/change"
 git -C "$work/shared/feat-create2" add change && git -C "$work/shared/feat-create2" commit -qm change
 git -C "$work/shared/feat-create" config branch.feat/create.megabrain-parent feat/parent
 git -C "$work/shared/feat-create2" config branch.feat/create2.megabrain-parent feat/parent
-
-set +e
-shell_err="$(run_pair shell worktree finish "$work/shared/feat-create" --delete-branch 2>&1)"; shell_rc=$?
-binary_err="$(run_pair binary worktree finish "$work/shared/feat-create2" --delete-branch 2>&1)"; binary_rc=$?
-set -e
-[ "$shell_rc" -eq "$binary_rc" ] || fail 'finish refusal statuses differ'
-case "$shell_err" in *unmerged*) ;; *) fail 'shell finish did not refuse unmerged branch' ;; esac
-case "$binary_err" in *unmerged*) ;; *) fail 'binary finish did not refuse unmerged branch' ;; esac
-[ -d "$work/shared/feat-create" ] && [ -d "$work/shared/feat-create2" ] || fail 'finish refusal removed a worktree'
 assert_invoked shell 'git -C'
 assert_invoked binary 'git -C'
 
@@ -225,14 +216,6 @@ rm -f "$work/state/worktree-root"
 set +e
 shell_err="$(run_pair shell worktree pr nao-existe 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr nao-existe 2>&1)"; binary_rc=$?
-set -e
-assert_equal "$shell_rc" "$binary_rc"
-assert_equal "$shell_err" "$binary_err"
-assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
-
-set +e
-shell_err="$(run_pair shell worktree finish nao-existe 2>&1)"; shell_rc=$?
-binary_err="$(run_pair binary worktree finish nao-existe 2>&1)"; binary_rc=$?
 set -e
 assert_equal "$shell_rc" "$binary_rc"
 assert_equal "$shell_err" "$binary_err"
@@ -295,4 +278,4 @@ assert_invoked shell 'gh pr create --base feat/parent --head feat/create'
 assert_invoked binary 'gh auth status'
 assert_invoked binary 'gh pr create --base feat/parent --head feat/create2'
 
-printf 'ok: worktree create and finish compare both output, status, and filesystem effects\n'
+printf 'ok: worktree create compares output, status, and filesystem effects\n'

@@ -17,11 +17,11 @@ present and even if `MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary` is set.
 | subverb | TypeScript file and function | port complete | lines deletable | helpers that must stay and why |
 |---|---|---:|---:|---|
 | `orchestrate liveness` (guard at line 600) | `src/cli/commands/orchestrate-read-liveness.ts` — `executeOrchestrateLiveness` | yes* | 14 | `megabrain_dispatch_liveness_read` is also called by shell `stop`; its `megabrain_dispatch_meta_read` path is used by spawn, and `megabrain_dispatch_terminal_status` is used by reconcile, close, stop, and spawn lifecycle checks. |
-| `orchestrate reconcile` (guard at line 1042) | `src/cli/commands/orchestrate-stop-reconcile.ts` — `executeOrchestrateReconcile` | no | 0 | The shell body must remain. Its transitive graph includes prompt normalization/receipt synchronization, host-terminal identity checks, parent-status checks, and `megabrain_dispatch_reconcile_update`; those are not all represented by the TypeScript command. |
-| `orchestrate read` (guard at line 2190) | `src/cli/commands/orchestrate-read-liveness.ts` — `executeOrchestrateRead` | no | 0 | The TypeScript source references `resolved` in the tmux transcript fallback although no such variable is in scope (line 64); it also cannot be treated as a complete port until that path is fixed. Shell transcript helpers are shared with spawn/close. |
+| `orchestrate reconcile` (guard at line 1042) | `src/cli/commands/orchestrate-stop-reconcile.ts` — `executeOrchestrateReconcile` | yes | 50 | `megabrain_dispatch_reconcile_one`, `megabrain_dispatch_reconcile_update`, metadata normalization, prompt receipt synchronization, terminal identity, and parent-status helpers remain because doctor, spawn, hooks, and lifecycle paths call them directly. |
+| `orchestrate read` (guard at line 2190) | `src/cli/commands/orchestrate-read-liveness.ts` — `executeOrchestrateRead` | yes | 65 | The compiled path owns host read-back, tmux capture, and persisted transcript rendering. Shared transcript lifecycle helpers and terminal metadata helpers remain for spawn, close, liveness, and hooks. |
 | `orchestrate watch` (guard at line 2266) | `src/cli/commands/orchestrate-parent.ts` — `executeOrchestrateWatch` | no | 0 | The TypeScript parser accepts `--wait-mode nudge` but the loop only sleeps; the shell registers/unregisters a parent waiter and waits for event-driven wake-up. The shared `megabrain_dispatch_mailbox_watch` is also the child reader used by `check` and by the turn-end hook. |
 | `orchestrate ack` and child `ack` (guard at line 2412) | `src/cli/commands/orchestrate-parent.ts` — `executeOrchestrateAck`; `src/cli/commands/child-ack.ts` — `executeChildAck` | no | 0 | The parent TypeScript parser always defaults generation to `1` instead of reading `MEGABRAIN_CONSUMER_GENERATION`; child reply detection checks one padded filename while shell scans all messages for the delivery sequences. The shell `ack_for_owner` also reaches queue locks, message append, child lookup, and close. |
-| `orchestrate stop` (guard at line 2670) | `src/cli/commands/orchestrate-stop-reconcile.ts` — `executeOrchestrateStop` | no | 0 | TypeScript does not prove the tmux process identity before interrupting, does not use the shell interrupt-affordance lookup, and treats Orca as working without the shell terminal identity check. The shell body reaches liveness, terminal identity, native interrupt, and queue-message helpers. |
+| `orchestrate stop` (guard at line 2670) | `src/cli/commands/orchestrate-stop-reconcile.ts` — `executeOrchestrateStop` | yes | 107 | The compiled path proves tmux process identity, applies the agent interrupt affordance, proves Orca terminal identity, and preserves queue-message helpers. The shell terminal-status, native-interrupt, liveness, and metadata helpers remain shared lifecycle code. |
 | `ask` (guard at line 2955) | `src/cli/commands/queue-write.ts` — `executeQueueWrite("ask", ...)` | yes | 13 (+ shared 35 once in the queue lane) | `megabrain_dispatch_find_child` is also used by child `check`/`ack`; message append, metadata reads/updates, and prompt-receipt synchronization are used by spawn and queue lifecycle. The shared `megabrain_dispatch_child_message` body is counted once with this three-verb lane. |
 | `received` (guard at line 2969) | `src/cli/commands/queue-write.ts` — `executeQueueWrite("received", ...)` | yes | 12 (+ shared 35 once in the queue lane) | Same shared closure as `ask`; in particular, do not delete `megabrain_dispatch_meta_update_*` or `megabrain_dispatch_sync_prompt_receipt`, which spawn reaches directly. |
 | `done` (guard at line 2982) | `src/cli/commands/queue-write.ts` — `executeQueueWrite("done", ...)` | yes | 12 (+ shared 35 once in the queue lane) | Same shared closure as `ask`; the shared shell body is also the only shell implementation behind these three wrappers, so remove it only after all three wrappers are retired together. |
@@ -38,7 +38,7 @@ below. It is not a reason to delete the shared liveness reader.
 |---|---|---:|---:|---|
 | `terminal list` (guard at line 1431) | `src/cli/commands/terminal-list.ts` — `executeTerminalList` | yes | 54 | `megabrain_worktree_root_for_selector` is used by spawn/worktree operations; host-record, host-id, and process-status helpers are used by terminal create/restart/close lifecycle. |
 | `worktree create` (guard at line 1908) | `src/cli/commands/worktree-write.ts` — `executeWorktreeCreate` | no | 0 | The TypeScript parser lacks the spawn-only flags (`--orchestrate`, `--agent`, `--model`, `--effort`, `--chain`, `--prompt`, `--label`, `--tmux`, `--browser`, and `--agent-arg`). More importantly, the guarded shell body is the spawn implementation and reaches launch, prompt publication/transport/receipt, dispatch metadata, rollback, and chain helpers. |
-| `worktree finish` (guard at line 2355) | `src/cli/commands/worktree-write.ts` — `executeWorktreeFinish` | no | 0 | The shell JSON contract includes `baseSource`, `baseWarning`, structured refusal/error fields, and host-specific removal handling; TypeScript emits null/default metadata in paths where shell computes it. Its target, parent-base, root, and repository helpers are also shared with `pr` and worktree operations. |
+| `worktree finish` (guard at line 1976) | `src/cli/commands/worktree-write.ts` — `executeWorktreeFinish` | yes | 167 | The compiled contract now covers base/source/warning metadata, structured refusals/errors, merge guarding, and Superset/Orca/Git removal. Root, selector, parent-base, and repository helpers remain shared with `pr`, create, or spawn. |
 | `worktree pr` (guard at line 2523) | `src/cli/commands/worktree-write.ts` — `executeWorktreePr` | yes | 69 | `megabrain_worktree_target_path`, `megabrain_worktree_parent_branch`, `megabrain_repo_default_base`, and root/selector helpers are shared with `finish`, create, or spawn. No helper below this body is independently removable. |
 | `worktree list` (guard at line 2611) | `src/cli/commands/worktree-list.ts` — `executeWorktreeList` | yes | 215 (198 body + 17 `megabrain_worktree_list_tree_node`) | The recursive tree formatter is reached only by this shell verb and is removable with it. Root, Orca/Superset discovery, Git parsing, and PR discovery helpers are shared with other worktree operations or host lifecycle. |
 | `worktree adopt` (guard at line 2810) | `src/cli/commands/worktree-adopt.ts` — `executeWorktreeAdopt` | yes | 51 | Root/selector resolution, repository resolution, Superset project registration, and workspace creation are shared with worktree create/spawn and other lifecycle paths. |
@@ -63,9 +63,10 @@ deletion unit.
 
 ## What has already been removed
 
-Lanes 1 through 5 below were executed on 2026-09-18, except where noted. `terminal list`,
+Lanes 1 through 6 below were executed on 2026-09-18, except where noted. `terminal list`,
 `worktree adopt`, `worktree pr`, `worktree list` with its private tree formatter, `ask`, `received`,
-`done`, `check`, `orchestrate reply` and the liveness wrapper body are gone. `context` was attempted
+`done`, `check`, `orchestrate reply`, the liveness wrapper body, `orchestrate reconcile`,
+`orchestrate read`, and `orchestrate stop` are gone. `context` was attempted
 and reverted, for the reason in its row.
 
 Two things a later reader needs, because both were learned by getting them wrong here:
@@ -95,7 +96,10 @@ Only the `yes` rows are candidates. The following order keeps shared helper deci
 4. Remove only the `command_check` dispatch body. Leave `megabrain_dispatch_child_check` and
    `megabrain_dispatch_mailbox_watch` because the turn-end hook calls them directly.
 5. Remove `orchestrate reply` and the liveness wrapper body. Retain reply/queue helpers and
-   `megabrain_dispatch_liveness_read`, which the still-shell `stop` path reaches.
+   `megabrain_dispatch_liveness_read`, which remains a shared shell liveness reader.
+6. Remove the `orchestrate reconcile`, `orchestrate read`, and `orchestrate stop` bodies together
+   only after their compiled contracts prove routing, transcript content, prompt receipts, parent
+   identity, and interrupt identity safety. Retain the helpers named in their rows.
 
 The `no` rows are a hold lane, not deletion candidates. In particular, do not group
 `worktree create` with ordinary worktree writes: the `--orchestrate` guard makes it the spawn
@@ -111,7 +115,8 @@ The following are absence claims from token search, not proof by execution:
 - `megabrain_dispatch_child_message` has no production caller other than the `ask`, `received`,
   and `done` wrappers.
 - `megabrain_dispatch_host_terminal_read` and `megabrain_dispatch_render_transcript` have no
-  shell production caller other than `megabrain_dispatch_read`.
+  shell production caller after `megabrain_dispatch_read` is removed; transcript stream start,
+  stop, and metadata helpers remain independently reachable from lifecycle code.
 - `megabrain_worktree_parent_branch` is referenced by shell `finish` and `pr`; therefore it was
   not classified as private to `pr`.
 - The 31 dispatch-guard count was obtained with `rg`; it excludes the helper definition in

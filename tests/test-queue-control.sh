@@ -41,7 +41,6 @@ assert_not_contains() {
 
 export MEGABRAIN_STATE_DIR="$state_dir"
 export MEGABRAIN_ROOT="$root"
-export MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
@@ -49,22 +48,44 @@ fake_bin="$state_dir/bin"
 mkdir -p "$fake_bin"
 cat >"$fake_bin/tmux" <<'EOF'
 #!/usr/bin/env bash
-case "${1:-}" in
+case "$1" in
   has-session) exit 0 ;;
-  capture-pane) cat "${MEGABRAIN_TEST_PANE_FIXTURE:?}" ;;
-  send-keys) exit 0 ;;
+  list-panes) printf '%s\n' "$TARGET_PANE" ;;
+  display-message) printf '999\n' ;;
+  capture-pane) cat "$PANE_FIXTURE" ;;
+  send-keys) printf '%s\n' "$*" >>"$STOP_CALLS_FILE" ;;
+  *) exit 0 ;;
+esac
+EOF
+cat >"$fake_bin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = -p ]; then
+  printf 'pts/1\n'
+elif [ "${IDENTITY_FIXTURE:-unknown}" = proven ]; then
+  printf '999 1 worker MEGABRAIN_DISPATCH_ID=%s\n' "$TARGET_DISPATCH"
+else
+  printf '999 1 unrelated-worker\n'
+fi
+EOF
+cat >"$state_dir/bin/orca" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'terminal list') printf '{"result":{"terminals":[{"handle":"%s"},{"handle":"parent-terminal"}]}}\n' "${ORCA_IDENTITY:-unknown}" ;;
+  'terminal send') printf '%s\n' "$*" >>"$STOP_CALLS_FILE"; printf '%s\n' '{"ok":true}' ;;
   *) exit 1 ;;
 esac
 EOF
-cat >"$fake_bin/megabrain_superset" <<'EOF'
-#!/usr/bin/env bash
-if [ "${1:-}" = terminals ] && [ "${2:-}" = send ]; then
-  printf '%s\n' '{"ok":true}'
-  exit 0
-fi
-exit 1
-EOF
-chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
+chmod +x "$state_dir/bin/tmux" "$state_dir/bin/ps" "$state_dir/bin/orca"
+export PATH="$state_dir/bin:/usr/bin:/bin" PANE_FIXTURE="$pane_fixture" STOP_CALLS_FILE="$stop_calls_file"
+
+compiled_stop() {
+  local dispatch_id="$1" pane identity
+  pane="$(jq -r '.tmuxPane // empty' "$state_dir/dispatches/$dispatch_id/meta.json")"
+  identity="$terminal_status_fixture"
+  env MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
+    TARGET_PANE="$pane" TARGET_DISPATCH="$dispatch_id" IDENTITY_FIXTURE="$identity" ORCA_CHILD_ID="$dispatch_id-child" ORCA_IDENTITY="${identity/proven/$dispatch_id-child}" \
+    "$root/.build/megabrain" orchestrate stop "$@"
+}
 
 source "$root/lib/common.sh"
 source "$root/lib/module-tmux-runtime.sh"
@@ -194,7 +215,7 @@ scenario_stop_pending_check() {
   create_dispatch stop-pending
   set_pane_fixture pending-check
   stop_send_calls=0
-  if result="$(megabrain_dispatch_stop stop-pending --json 2>&1)"; then
+  if result="$(compiled_stop stop-pending --json 2>&1)"; then
     fail 'pending-check frame was not refused'
   fi
   assert_contains "$result" 'pending check'
@@ -211,7 +232,7 @@ scenario_stop_working() {
   stop_send_status=queued
   stop_send_calls=0
   : >"$stop_calls_file"
-  result="$(megabrain_dispatch_stop stop-working --json)"
+  result="$(compiled_stop stop-working --json)"
   assert_equal "$(jq -r '.status' <<<"$result")" interrupted
   assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
   message_types="$(jq -r '.type' "$state_dir/dispatches/stop-working/messages"/*.json | tr '\n' ' ')"
@@ -223,7 +244,7 @@ scenario_stop_host() {
   local result
   begin_scenario
   create_dispatch stop-host host
-  if result="$(megabrain_dispatch_stop stop-host --json 2>&1)"; then
+  if result="$(compiled_stop stop-host --json 2>&1)"; then
     fail 'Superset runtime accepted an interrupt it cannot provide'
   fi
   assert_contains "$result" 'Superset terminals send offers no interrupt capability'
@@ -237,7 +258,7 @@ scenario_stop_orca() {
   terminal_status_fixture=proven
   orca_interrupt_calls=0
   : >"$stop_calls_file"
-  result="$(megabrain_dispatch_stop stop-orca --json)"
+  result="$(compiled_stop stop-orca --json)"
   assert_equal "$(jq -r '.status' <<<"$result")" interrupted
   assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
   assert_contains "$(cat "$stop_calls_file")" '--interrupt'
@@ -253,7 +274,7 @@ scenario_stop_orca_unproven() {
   terminal_status_fixture=unknown
   orca_interrupt_calls=0
   : >"$stop_calls_file"
-  if result="$(megabrain_dispatch_stop stop-orca-unproven --json 2>&1)"; then
+  if result="$(compiled_stop stop-orca-unproven --json 2>&1)"; then
     fail 'Orca runtime interrupted without terminal identity proof'
   fi
   assert_contains "$result" 'Orca terminal identity is unproven'
