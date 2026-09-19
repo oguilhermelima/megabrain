@@ -157,7 +157,46 @@ jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._
   fail 'state.json did not identify its timestamp and live-status command'
 printf 'scenario 8: install record identifies its timestamp\n'
 
-# Scenario 9: both browser profiles need an explicit active/inactive explanation.
+# Scenario 9: compiled chain edit removes its editor directory on every path.
+run_chain_edit_cleanup_case() {
+  local case_name="$1" expected_status="$2"
+  local case_home="$state_dir/chain-edit-$case_name-home"
+  local case_state="$case_home/.megabrain"
+  local case_tmp="$case_home/tmp"
+  local case_editor="$case_home/editor.sh"
+  mkdir -p "$case_state" "$case_tmp"
+  printf '%s\n' '{"chains":{"demo":{"when":{},"steps":[{"agent":"codex","model":"gpt-5.6-luna","effort":"low"}]}},"defaultSteps":[]}' >"$case_state/chains.json"
+  case "$case_name" in
+    unchanged|failure)
+      printf '%s\n' '#!/usr/bin/env bash' 'touch "$(dirname "$1")/.$(basename "$1").swp"' >"$case_editor"
+      [ "$case_name" = failure ] && printf '%s\n' 'exit 1' >>"$case_editor"
+      ;;
+    edited)
+      printf '%s\n' '#!/usr/bin/env bash' 'tmp="$1.next"' 'jq '\''.chains.demo.steps[0].effort = "high"'\'' "$1" >"$tmp"' 'mv "$tmp" "$1"' 'touch "$(dirname "$1")/.$(basename "$1").swp"' >"$case_editor"
+      ;;
+  esac
+  chmod +x "$case_editor"
+  local status
+  if HOME="$case_home" TMPDIR="$case_tmp" MEGABRAIN_STATE_DIR="$case_state" \
+    MEGABRAIN_CHAIN_FILE="$case_state/chains.json" EDITOR="$case_editor" \
+    "$root/.build/megabrain" chain edit demo >/dev/null 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  [ "$status" -eq "$expected_status" ] || fail "chain edit $case_name returned status $status"
+  local leftover
+  leftover="$(find "$case_home" -mindepth 1 -maxdepth 1 -type d ! -name .megabrain -print -quit)"
+  [ -z "$leftover" ] || fail "chain edit $case_name left temporary directory $leftover"
+  leftover="$(find "$case_tmp" -mindepth 1 -print -quit)"
+  [ -z "$leftover" ] || fail "chain edit $case_name left temporary path $leftover"
+}
+run_chain_edit_cleanup_case unchanged 0
+run_chain_edit_cleanup_case edited 0
+run_chain_edit_cleanup_case failure 1
+printf 'scenario 9: chain editor temporary directories are cleaned on unchanged, edited, and failure paths\n'
+
+# Scenario 10: both browser profiles need an explicit active/inactive explanation.
 export MEGABRAIN_STATE_DIR="$state_dir/browser-state"
 MEGABRAIN_PLAYWRIGHT_ROOT="$state_dir/browser-root"
 megabrain_web_local_ready() { return 0; }
@@ -170,11 +209,11 @@ node() { return 0; }
 browser_output="$(module_simulator_web_install false both)"
 assert_contains "$browser_output" 'chromium' 'browser install did not identify the active Chromium profile'
 assert_contains "$browser_output" 'firefox' 'browser install did not explain the Firefox profile'
-printf 'scenario 9: browser profile roles are explicit\n'
+printf 'scenario 10: browser profile roles are explicit\n'
 
-# Scenario 10: a failing container test leaves named output outside the stdout pipe.
+# Scenario 11: a failing container test leaves named output outside the stdout pipe.
 if [ "${MEGABRAIN_IN_CONTAINER:-false}" = true ]; then
-  printf 'skip: scenario 10 skipped inside the container runner because Docker is host-owned\n'
+  printf 'skip: scenario 11 skipped inside the container runner because Docker is host-owned\n'
 else
   container_fixture="$root/tests/.container-failure-fixture.sh"
   container_output_dir="$state_dir/container-results"
@@ -188,7 +227,7 @@ else
     'container failure report did not name the failing test'
   assert_contains "$(cat "$failure_report")" 'deliberate fixture failure' \
     'container failure report did not preserve the failing output'
-  printf 'scenario 10: container failure output survives stdout piping (%s)\n' "$container_run_output"
+  printf 'scenario 11: container failure output survives stdout piping (%s)\n' "$container_run_output"
 fi
 
 printf 'ok: real-use defect scenarios\n'
