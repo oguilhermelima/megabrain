@@ -178,7 +178,8 @@ printf 'caller pane protection cannot be bypassed by force-release\n'
 shared_pane="$(tmux_cmd split-window -v -t "$parent_pane" -P -F '#{pane_id}' bash)"
 create_meta shared-child "$session_name" "$shared_pane" "$session_name" "$parent_pane"
 before_panes="$(tmux_cmd list-panes -t "$session_name" | wc -l | tr -d ' ')"
-compiled_close shared-child --json >/dev/null
+shared_close_output="$(compiled_close shared-child --json)"
+assert_contains "$shared_close_output" 'shared tmux session'
 after_panes="$(tmux_cmd list-panes -t "$session_name" | wc -l | tr -d ' ')"
 assert_equal "$before_panes" 2
 assert_equal "$after_panes" 1
@@ -191,7 +192,8 @@ printf 'shared-session child close removes only the child pane\n'
 tmux_cmd new-session -d -s "$dedicated_session_name" bash
 dedicated_pane="$(tmux_cmd display-message -p -t "$dedicated_session_name" '#{pane_id}')"
 create_meta dedicated-child "$dedicated_session_name" "$dedicated_pane" "$session_name" "$parent_pane"
-compiled_close dedicated-child --json >/dev/null
+dedicated_close_output="$(compiled_close dedicated-child --json)"
+assert_contains "$dedicated_close_output" 'exclusive tmux session'
 if tmux_cmd has-session -t "$dedicated_session_name" >/dev/null 2>&1; then
   fail 'dedicated dispatch session is still alive'
 fi

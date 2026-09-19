@@ -126,6 +126,7 @@ scenario_retired_timeout_is_readable() {
   write_old_timestamp timeout-prunable
   output="$(command_orchestrate prune --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.archived')" 0
+  assert_contains "$output" 'timeout-prunable'
   assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/timeout-prunable/meta.json")" running
   printf 'retired timeout is normalised and remains open\n'
 }

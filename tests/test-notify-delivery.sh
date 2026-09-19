@@ -173,6 +173,7 @@ create_meta shared-close "$parent_session" "$shared_pane"
 shared_close="$(compiled_close shared-close --json)"
 assert_equal "$(printf '%s' "$shared_close" | jq -r '.message')" \
   'tmux pane removed; the shared tmux session and host terminal tab were kept.'
+assert_equal "$(jq -r '.state' "$state_dir/dispatches/shared-close/meta.json")" closed
 printf 'shared close reports that session and host tab were kept\n'
 
 tmux_cmd new-session -d -s "$dedicated_session" bash

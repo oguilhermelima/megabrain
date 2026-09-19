@@ -137,6 +137,7 @@ for dispatch_id in missing-terminal running-live; do
 done
 dry_run="$("$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(jq -r '.archived' <<<"$dry_run")" 1
+assert_equal "$(jq -r '.dryRun' <<<"$dry_run")" true
 assert_contains "$dry_run" 'missing-terminal'
 assert_missing "$MEGABRAIN_DISPATCH_DIR/archive"
 assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/running-live/meta.json")" running

@@ -350,7 +350,7 @@ parent_watch_actionable() {
 run_flow() {
   local runtime="$1" chain_output dispatch_meta dispatch_id delivery replay delivery_id reply_result push_check push_ack push_receipt push_receipt_id
   local question_delivery question_delivery_id pull_result pull_delivery_id pull_receipt pull_receipt_id done_delivery done_delivery_id
-  local busy_pane busy_before receipt_before receipt_after ask_capture ask_pointer reply_capture reply_send_log
+  local busy_pane busy_before receipt_before receipt_after ask_capture ask_pointer reply_capture reply_send_log close_output
   MEGABRAIN_TEST_RUNTIME="$runtime"
   timing_begin
   fake_send_mode=ok
@@ -486,12 +486,13 @@ run_flow() {
   assert_contains "$queue_types" 'child/done'
   if [ "$runtime" = tmux ]; then
     tmux_cmd kill-pane -t "$(printf '%s' "$dispatch_meta" | jq -r '.tmuxPane')"
-    compiled_close "$dispatch_id" --json >/dev/null
+    close_output="$(compiled_close "$dispatch_id" --json)"
     assert_equal "$(tmux_cmd has-session -t "$child_session" >/dev/null 2>&1; printf '%s' "$?")" 1
   else
-    compiled_close "$dispatch_id" --json >/dev/null
+    close_output="$(compiled_close "$dispatch_id" --json)"
   fi
   timing_mark 'done and close'
+  assert_contains "$close_output" "$dispatch_id"
   assert_equal "$(jq -r '.state' "$state_dir/dispatches/$dispatch_id/meta.json")" closed
   assert_equal "$(find "$state_dir/dispatches/$dispatch_id/deliveries" -name '*.json' -exec jq -r 'select(.status == "outstanding") | .id' {} \; | wc -l | tr -d ' ')" 0
   printf '%s end-to-end: chain, queue, replay, push, busy reply, pull, done, duplicate ack, and close\n' "$runtime"
