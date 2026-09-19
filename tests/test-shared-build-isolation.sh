@@ -100,6 +100,7 @@ while IFS= read -r file; do
   done <"$file"
 done <<EOF
 $(find "$root/tests" -type f -name '*.sh' -print)
+$(find "$root/tests" -type f -name '*.bash' -print)
 EOF
 
 if [ -s "$violations" ]; then

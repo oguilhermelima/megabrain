@@ -33,7 +33,9 @@ assert_contains() {
 mkdir -p "$MEGABRAIN_STATE_DIR/dispatches/finished/messages"
 printf '%s\n' '{"type":"done","text":"finished"}' >"$MEGABRAIN_STATE_DIR/dispatches/finished/messages/0001.json"
 
-before="$(find "$state_dir" -type f -exec shasum {} \; | sort)"
+installer_fixture="$state_dir/install.sh"
+cp "$root/install.sh" "$installer_fixture"
+before="$(find "$MEGABRAIN_STATE_DIR" -type f -exec shasum {} \; | sort)"
 
 run_help() {
   local output status
@@ -108,9 +110,9 @@ run_help tmux --help
 run_help tmux tune --help
 run_help tmux wrapper --help
 
-install_output="$($root/install.sh --help 2>&1)"
+install_output="$("$installer_fixture" --help 2>&1)"
 assert_contains "$install_output" 'Usage:'
-assert_equal "$(find "$state_dir" -type f -exec shasum {} \; | sort)" "$before"
+assert_equal "$(find "$MEGABRAIN_STATE_DIR" -type f -exec shasum {} \; | sort)" "$before"
 printf 'help exits successfully without changing dispatch state\n'
 
 printf 'ok: every documented command and subcommand has side-effect-free help\n'
