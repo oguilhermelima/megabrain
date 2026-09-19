@@ -31,10 +31,41 @@ megabrain_dispatch_prune_states() {
   printf 'closed,done,failed,orphaned,circuit_broken\n'
 }
 
-if ! declare -F megabrain_dispatch_preamble >/dev/null 2>&1; then
-  # shellcheck source=local/megabrain/lib/module-facts.sh
-  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/module-facts.sh"
-fi
+megabrain_dispatch_command_path() {
+  local path root
+  path="$(type -P megabrain 2>/dev/null || true)"
+  if [ -n "$path" ] && [ "${path#/}" != "$path" ]; then
+    printf 'megabrain\n'
+    return 0
+  fi
+  # WHY: Children run in arbitrary repositories, so the preamble cannot depend on the checkout as its working directory.
+  root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+  if [ -n "${MEGABRAIN_EXECUTABLE:-}" ] && [ -x "$MEGABRAIN_EXECUTABLE" ]; then
+    printf '%q\n' "$MEGABRAIN_EXECUTABLE"
+  elif [ -x "$root/megabrain" ]; then
+    printf '%q\n' "$root/megabrain"
+  else
+    return 1
+  fi
+}
+
+megabrain_dispatch_protocol() {
+  local command_path
+  command_path="$(megabrain_dispatch_command_path 2>/dev/null || true)"
+  if [ -n "$command_path" ]; then
+    printf 'This is a managed megabrain dispatch. Before starting work, run %s received to confirm that you received this prompt. If you need coordinator input, run %s ask "your question"; wait with %s check until a reply arrives, then run %s ack <delivery-id> to confirm it. When the requested work is complete, run %s done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n' "$command_path" "$command_path" "$command_path" "$command_path" "$command_path"
+  else
+    printf 'This is a managed megabrain dispatch. The megabrain command could not be resolved through PATH or an absolute executable path, so receipt, coordinator questions, replies, and completion cannot be recorded. Do not print protocol markers and do not continue past an unanswered question.\n'
+  fi
+}
+
+# Keep this name for the worktree spawn contract. It now renders only the dispatch
+# protocol; the former fact validation and injection path has been removed.
+megabrain_dispatch_preamble() {
+  local _worktree_path="${1:-.}"
+  : "$_worktree_path"
+  printf '%s' "${MEGABRAIN_SUPERSET_PROTOCOL:-$(megabrain_dispatch_protocol)}"
+}
 
 if ! declare -F megabrain_dispatch_terminal_status >/dev/null 2>&1; then
   # shellcheck source=local/megabrain/lib/module-context.sh
