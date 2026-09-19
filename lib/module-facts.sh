@@ -112,19 +112,6 @@ megabrain_fact_validate() {
   }
 }
 
-megabrain_fact_store_write() {
-  local store="$1" path="${2:-$MEGABRAIN_FACTS_FILE}" directory tmp
-  megabrain_fact_validate "$store" || return 1
-  directory="$(dirname "$path")"
-  mkdir -p "$directory" || return 1
-  tmp="$(mktemp "$directory/.facts.XXXXXX")" || return 1
-  if ! printf '%s' "$store" | jq . >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-}
-
 megabrain_fact_render() {
   printf '%s' "$1" | jq -r '"- " + .id + ": " + .measurement + " (measured by " + .provenance.who + " at " + .provenance.when + "; rerun: " + .provenance.command + ")"'
 }
@@ -200,177 +187,13 @@ Treat each fact as a starting point with provenance, not as truth. If your own m
   fi
 }
 
-megabrain_fact_id_valid() {
-  case "$1" in
-    ""|*[!A-Za-z0-9._-]*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
-megabrain_fact_command_add() {
-  local id="${1:-}" measurement="" who="" when="" command="" scope_type=global repository="" json=false arg value store path fact updated
-  case "$id" in
-    -h|--help) megabrain_usage_show fact-add; return 0 ;;
-  esac
-  [ -n "$id" ] || { megabrain_usage_fail fact-add; return "$MEGABRAIN_USAGE_ERROR"; }
-  shift
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --measurement|--measured) value="${2:-}"; [ -n "$value" ] || { megabrain_error "$arg requires a value"; return "$MEGABRAIN_USAGE_ERROR"; }; measurement="$value"; shift 2 ;;
-      --who|--measured-by) value="${2:-}"; [ -n "$value" ] || { megabrain_error "$arg requires a value"; return "$MEGABRAIN_USAGE_ERROR"; }; who="$value"; shift 2 ;;
-      --when|--measured-at) value="${2:-}"; [ -n "$value" ] || { megabrain_error "$arg requires a value"; return "$MEGABRAIN_USAGE_ERROR"; }; when="$value"; shift 2 ;;
-      --command) value="${2:-}"; [ -n "$value" ] || { megabrain_error '--command requires a value'; return "$MEGABRAIN_USAGE_ERROR"; }; command="$value"; shift 2 ;;
-      --scope) value="${2:-}"; [ -n "$value" ] || { megabrain_error '--scope requires a value'; return "$MEGABRAIN_USAGE_ERROR"; }; scope_type="$value"; shift 2 ;;
-      --repository|--repo) value="${2:-}"; [ -n "$value" ] || { megabrain_error "$arg requires a value"; return "$MEGABRAIN_USAGE_ERROR"; }; repository="$value"; scope_type=repository; shift 2 ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show fact-add; return 0 ;;
-      *) megabrain_error "unknown fact add option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  megabrain_fact_id_valid "$id" || { megabrain_error "invalid fact id: $id"; return 1; }
-  case "$scope_type" in
-    global) [ -z "$repository" ] || { megabrain_error 'global facts cannot specify a repository'; return 1; } ;;
-    repository)
-      if [ -z "$repository" ]; then
-        repository="$(megabrain_fact_repository_id . 2>/dev/null || true)"
-        [ -n "$repository" ] || { megabrain_error 'could not determine repository identity for repository-scoped fact'; return 1; }
-      fi
-      ;;
-    *) megabrain_error 'fact scope must be global or repository'; return 1 ;;
-  esac
-  path="$MEGABRAIN_FACTS_FILE"
-  store="$(megabrain_fact_store_read "$path")" || return 1
-  megabrain_fact_validate "$store" || return 1
-  if printf '%s' "$store" | jq -e --arg id "$id" '.facts | any(.[]; .id == $id)' >/dev/null 2>&1; then
-    megabrain_error "fact already exists: $id"
-    return 1
-  fi
-  fact="$(jq -n --arg id "$id" --arg measurement "$measurement" --arg scopeType "$scope_type" --arg repository "$repository" --arg who "$who" --arg when "$when" --arg command "$command" '{id: $id, measurement: $measurement, scope: (if $scopeType == "global" then {type: "global"} else {type: "repository", repository: $repository} end), provenance: {who: $who, when: $when, command: $command}}')" || return 1
-  updated="$(printf '%s' "$store" | jq --argjson fact "$fact" '.facts += [$fact]')" || return 1
-  megabrain_fact_store_write "$updated" "$path" || return 1
-  if [ "$json" = true ]; then
-    printf '%s\n' "$fact"
-  else
-    printf 'fact added: %s\n' "$id"
-  fi
-}
-
-megabrain_fact_command_list() {
-  local json=false arg store id scope who measurement
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show fact-list; return 0 ;;
-      *) megabrain_error "unknown fact list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  store="$(megabrain_fact_store_read)" || return 1
-  megabrain_fact_validate "$store" || return 1
-  if [ "$json" = true ]; then
-    printf '%s\n' "$store" | jq -c '.facts'
-  else
-    printf '%-24s %-12s %-32s %s\n' ID SCOPE MEASURED_BY MEASUREMENT
-    printf '%s' "$store" | jq -r '.facts[] | [.id, .scope.type, .provenance.who, .measurement] | @tsv' |
-      while IFS=$'\t' read -r id scope who measurement; do
-        printf '%-24s %-12s %-32s %s\n' "$id" "$scope" "$who" "$measurement"
-      done
-  fi
-}
-
-megabrain_fact_command_edit() {
-  local id="${1:-}" json=false arg path store tmp editor edited
-  case "$id" in
-    -h|--help) megabrain_usage_show fact-edit; return 0 ;;
-  esac
-  [ -n "$id" ] || { megabrain_usage_fail fact-edit; return "$MEGABRAIN_USAGE_ERROR"; }
-  shift
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show fact-edit; return 0 ;;
-      *) megabrain_error "unknown fact edit option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  path="$MEGABRAIN_FACTS_FILE"
-  store="$(megabrain_fact_store_read "$path")" || return 1
-  megabrain_fact_validate "$store" || return 1
-  if ! printf '%s' "$store" | jq -e --arg id "$id" '.facts | any(.[]; .id == $id)' >/dev/null 2>&1; then
-    megabrain_error "fact not found: $id"
-    return 1
-  fi
-  tmp="$(mktemp "$(dirname "$path")/.facts-edit.XXXXXX")" || return 1
-  printf '%s\n' "$store" | jq . >"$tmp" || { rm -f "$tmp"; return 1; }
-  editor="${EDITOR:-vi}"
-  if ! "$editor" "$tmp"; then
-    rm -f "$tmp"
-    megabrain_error "editor failed while editing fact $id"
-    return 1
-  fi
-  edited="$(cat "$tmp")"
-  rm -f "$tmp"
-  megabrain_fact_validate "$edited" || return 1
-  if ! printf '%s' "$edited" | jq -e --arg id "$id" '.facts | any(.[]; .id == $id)' >/dev/null 2>&1; then
-    megabrain_error "edited fact not found: $id"
-    return 1
-  fi
-  megabrain_fact_store_write "$edited" "$path" || return 1
-  if [ "$json" = true ]; then
-    printf '%s\n' "$edited" | jq -c --arg id "$id" '.facts[] | select(.id == $id)'
-  else
-    printf 'fact edited: %s\n' "$id"
-  fi
-}
-
-megabrain_fact_command_remove() {
-  local id="${1:-}" json=false arg path store updated
-  case "$id" in
-    -h|--help) megabrain_usage_show fact-remove; return 0 ;;
-  esac
-  [ -n "$id" ] || { megabrain_usage_fail fact-remove; return "$MEGABRAIN_USAGE_ERROR"; }
-  shift
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show fact-remove; return 0 ;;
-      *) megabrain_error "unknown fact remove option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  path="$MEGABRAIN_FACTS_FILE"
-  store="$(megabrain_fact_store_read "$path")" || return 1
-  megabrain_fact_validate "$store" || return 1
-  if ! printf '%s' "$store" | jq -e --arg id "$id" '.facts | any(.[]; .id == $id)' >/dev/null 2>&1; then
-    megabrain_error "fact not found: $id"
-    return 1
-  fi
-  updated="$(printf '%s' "$store" | jq --arg id "$id" '.facts |= map(select(.id != $id))')" || return 1
-  megabrain_fact_store_write "$updated" "$path" || return 1
-  if [ "$json" = true ]; then
-    printf '{"removed":true,"id":%s}\n' "$(printf '%s' "$id" | jq -Rsa .)"
-  else
-    printf 'fact removed: %s\n' "$id"
-  fi
-}
-
 command_fact() {
-  local subcommand="${1:-}"
-  shift || true
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_FACT_IMPLEMENTATION:-}"; then
-    "$typescript_binary" fact "$subcommand" "$@"
-    return $?
-  fi
-  case "$subcommand" in
-    list) megabrain_fact_command_list "$@" ;;
-    add) megabrain_fact_command_add "$@" ;;
-    edit) megabrain_fact_command_edit "$@" ;;
-    remove|delete) megabrain_fact_command_remove "$@" ;;
-    -h|--help|"")
-      megabrain_usage_show fact
-      ;;
-    *) megabrain_error "unknown fact command: $subcommand"; return "$MEGABRAIN_USAGE_ERROR" ;;
-  esac
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: fact commands have no shell fallback; freshness remains visible at the boundary.
+  megabrain_warn_if_typescript_binary_stale
+  exec "$typescript_binary" fact "$@"
 }

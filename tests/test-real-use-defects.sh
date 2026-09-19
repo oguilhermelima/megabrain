@@ -157,27 +157,44 @@ jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._
   fail 'state.json did not identify its timestamp and live-status command'
 printf 'scenario 8: install record identifies its timestamp\n'
 
-# Scenario 9: an editor-created swap file beside the chain temp file must be removed.
-chain_state="$state_dir/chain-state"
-export MEGABRAIN_STATE_DIR="$chain_state"
-export MEGABRAIN_CHAIN_FILE="$chain_state/chains.json"
-export MEGABRAIN_MODEL_FILE="$chain_state/models.json"
-mkdir -p "$chain_state"
-cp "$root/.megabrain/models.json" "$MEGABRAIN_MODEL_FILE"
-printf '%s\n' '{"chains":{"demo":{"when":{},"steps":[{"agent":"codex","model":"gpt-5.6-luna","effort":"low"}]}},"defaultSteps":[]}' >"$MEGABRAIN_CHAIN_FILE"
-editor="$chain_state/editor.sh"
-cat >"$editor" <<'EOF'
-#!/usr/bin/env bash
-file="$1"
-touch "$(dirname "$file")/.$(basename "$file").swp"
-EOF
-chmod +x "$editor"
-export EDITOR="$editor"
-command_chain_edit demo >/dev/null || fail 'chain edit fixture did not complete'
-if find "$chain_state" -maxdepth 1 -name '.chains-edit.*.swp' -print -quit | grep -q .; then
-  fail 'chain edit left an editor swap file behind'
-fi
-printf 'scenario 9: chain editor swap file is cleaned\n'
+# Scenario 9: compiled chain edit removes its editor directory on every path.
+run_chain_edit_cleanup_case() {
+  local case_name="$1" expected_status="$2"
+  local case_home="$state_dir/chain-edit-$case_name-home"
+  local case_state="$case_home/.megabrain"
+  local case_tmp="$state_dir/chain-edit-$case_name-tmp"
+  local case_editor="$case_home/editor.sh"
+  mkdir -p "$case_state" "$case_tmp"
+  printf '%s\n' '{"chains":{"demo":{"when":{},"steps":[{"agent":"codex","model":"gpt-5.6-luna","effort":"low"}]}},"defaultSteps":[]}' >"$case_state/chains.json"
+  case "$case_name" in
+    unchanged|failure)
+      printf '%s\n' '#!/usr/bin/env bash' 'touch "$(dirname "$1")/.$(basename "$1").swp"' >"$case_editor"
+      [ "$case_name" = failure ] && printf '%s\n' 'exit 1' >>"$case_editor"
+      ;;
+    edited)
+      printf '%s\n' '#!/usr/bin/env bash' 'tmp="$1.next"' 'jq '\''.chains.demo.steps[0].effort = "high"'\'' "$1" >"$tmp"' 'mv "$tmp" "$1"' 'touch "$(dirname "$1")/.$(basename "$1").swp"' >"$case_editor"
+      ;;
+  esac
+  chmod +x "$case_editor"
+  local status
+  if HOME="$case_home" TMPDIR="$case_tmp" MEGABRAIN_STATE_DIR="$case_state" \
+    MEGABRAIN_CHAIN_FILE="$case_state/chains.json" EDITOR="$case_editor" \
+    "$root/.build/megabrain" chain edit demo >/dev/null 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  [ "$status" -eq "$expected_status" ] || fail "chain edit $case_name returned status $status"
+  local leftover
+  leftover="$(find "$case_home" -mindepth 1 -maxdepth 1 -type d ! -name .megabrain -print -quit)"
+  [ -z "$leftover" ] || fail "chain edit $case_name left temporary directory $leftover"
+  leftover="$(find "$case_tmp" -mindepth 1 -print -quit)"
+  [ -z "$leftover" ] || fail "chain edit $case_name left temporary path $leftover"
+}
+run_chain_edit_cleanup_case unchanged 0
+run_chain_edit_cleanup_case edited 0
+run_chain_edit_cleanup_case failure 1
+printf 'scenario 9: chain editor temporary directories are cleaned on unchanged, edited, and failure paths\n'
 
 # Scenario 10: both browser profiles need an explicit active/inactive explanation.
 export MEGABRAIN_STATE_DIR="$state_dir/browser-state"

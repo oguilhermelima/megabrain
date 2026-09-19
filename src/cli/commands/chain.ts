@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, unlinkSync, renameSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { type ChainConfig } from "../../core/chain.js";
@@ -120,9 +121,10 @@ function editChain(args: readonly string[], environment: ChainEnvironment, proce
   const name = args[0]; if (!name) return Promise.resolve(error("Usage: megabrain chain edit <name> [--allow-unknown-model] [--json]", 2)); let asJson = false;
   for (const arg of args.slice(1)) { if (arg === "--json") asJson = true; else if (arg !== "--allow-unknown-model") return Promise.resolve(error(`unknown chain edit option: ${arg}`, 2)); }
   const read = readConfig(environment); if (read.kind !== "ok") return Promise.resolve(read); if (!chainExists(read.value, name)) return Promise.resolve(error(`chain not found: ${name}`));
-  const path = chainPath(environment); const temp = resolve(mkdtempSync(resolve(path, "..")), "chains-edit.json"); writeFileSync(temp, readFileSync(path));
+  const path = chainPath(environment); const temporaryDirectory = mkdtempSync(resolve(tmpdir(), "megabrain-chain-edit-")); const temp = resolve(temporaryDirectory, "chains-edit.json");
+  try { writeFileSync(temp, readFileSync(path)); } catch (cause: unknown) { rmSync(temporaryDirectory, { recursive: true, force: true }); return Promise.resolve(error(cause instanceof Error ? cause.message : `could not prepare chain edit: ${path}`)); }
   const editor = environment.EDITOR ?? "vi";
-  return processAdapter.run(editor, [temp]).then((result) => { if (result.kind !== "ok") return error(`editor failed while editing chain ${name}`); let edited: ChainConfig; try { edited = JSON.parse(readFileSync(temp, "utf8")); } catch { return error(`chain file is not valid JSON: ${path}`); } if (JSON.stringify(edited) === JSON.stringify(read.value)) return ok(asJson ? json({ changed: false, name }) : `chain unchanged: ${name}\n`); const valid = validateWriteConfig(edited, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(edited, path); if (written.kind !== "ok") return written; return preserveStderr(ok(asJson ? json({ ...edited.chains[name], name, changed: true }) : `chain edited: ${name}\n`), valid.stderr); });
+  return processAdapter.run(editor, [temp]).then((result) => { if (result.kind !== "ok") return error(`editor failed while editing chain ${name}`); let edited: ChainConfig; try { edited = JSON.parse(readFileSync(temp, "utf8")); } catch { return error(`chain file is not valid JSON: ${path}`); } if (JSON.stringify(edited) === JSON.stringify(read.value)) return ok(asJson ? json({ changed: false, name }) : `chain unchanged: ${name}\n`); const valid = validateWriteConfig(edited, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(edited, path); if (written.kind !== "ok") return written; return preserveStderr(ok(asJson ? json({ ...edited.chains[name], name, changed: true }) : `chain edited: ${name}\n`), valid.stderr); }).finally(() => { rmSync(temporaryDirectory, { recursive: true, force: true }); });
 }
 function deleteChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usage("delete"));

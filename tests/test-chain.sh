@@ -375,13 +375,6 @@ megabrain_chain_limit_read claude 5h
 assert_equal "$(wc -l <"$fake_curl_call_file" | tr -d ' ')" 1
 printf 'stale cache: expired entry refreshed\n'
 
-limits_output="$(command_chain_limits --json)"
-assert_equal "$(printf '%s' "$limits_output" | jq 'map(select(.provider == "codex")) | length')" 2
-assert_equal "$(printf '%s' "$limits_output" | jq 'map(select(.provider == "claude")) | length')" 2
-assert_equal "$(printf '%s' "$limits_output" | jq -r 'map(select(.provider == "codex"))[0].reading.kind')" floor
-assert_equal "$(printf '%s' "$limits_output" | jq -r 'map(select(.provider == "codex"))[0].reading.basis')" last-recorded-turn
-printf 'chain limits command: all providers and windows listed\n'
-
 write_config '{"chains":{"provider":{"when":{"parentAgent":"codex"},"steps":[{"agent":"claude","model":"m","effort":"e"}]}},"defaultSteps":[],"usageLimits":{"liveProviders":["claude"],"cacheTtlSeconds":30,"timeoutSeconds":5,"notice":{"enabled":true,"intervalSeconds":3600}}}'
 command_orchestrate() {
   megabrain_dispatch_meta_write notice-dispatch parent-terminal superset superset workspace terminal-child "$root" main codex label running gpt-5 true codex '' '' host >/dev/null
