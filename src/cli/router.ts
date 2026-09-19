@@ -66,7 +66,7 @@ export function route(
     return executeTmux(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "list") {
-    return executeOrchestrateList(commandArgs.slice(1), dependencies.environment);
+    return executeOrchestrateList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "watch") {
     return executeOrchestrateWatch(commandArgs.slice(1), dependencies.environment);
@@ -93,7 +93,7 @@ export function route(
     return executeOrchestrateReconcile(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "prune") {
-    return executeOrchestratePrune(commandArgs.slice(1), dependencies.environment);
+    return executeOrchestratePrune(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && (commandArgs[0] === "ack" || commandArgs[0] === "acknowledge")) {
     return executeOrchestrateAck(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
