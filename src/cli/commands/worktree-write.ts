@@ -402,7 +402,7 @@ async function workspaceForTarget(
     return ok(undefined);
   }
   for (const record of workspaceRecords(payload)) {
-    const branch = stringField(record, ["branch"])?.replace(
+    const branch = stringField(record, ["branch", "git.branch"])?.replace(
       /^refs\/heads\//,
       "",
     );
@@ -414,7 +414,10 @@ async function workspaceForTarget(
     const name = stringField(record, ["name"]);
     if (target !== branch && target !== path && target !== name) continue;
     if (path === undefined) return ok(undefined);
-    return ok({ path, id: stringField(record, ["id", "workspaceId"]) });
+    return ok({
+      path,
+      id: stringField(record, ["id", "workspaceId", "workspace.id"]),
+    });
   }
   return ok(undefined);
 }
