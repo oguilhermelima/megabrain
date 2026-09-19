@@ -82,6 +82,7 @@ case "${1:-}" in
     grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1
     ;;
   list-panes)
+    [ "${MEGABRAIN_FAKE_TMUX_UNPROVEN_SESSION:-}" = "$target" ] && exit 1
     if grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1; then
       printf '%s\n' '%99'
     fi
@@ -579,7 +580,7 @@ set_old_timestamp unproven-session
 megabrain_dispatch_terminal_status() {
   MEGABRAIN_TERMINAL_STATUS=unknown
 }
-unproven_prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
+unproven_prune_result="$(MEGABRAIN_FAKE_TMUX_UNPROVEN_SESSION=unproven-session PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.archived')" 0
 assert_equal "$(printf '%s' "$unproven_prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unproven-session") | .reason')" 'terminal identity is unproven'
 assert_file "$MEGABRAIN_DISPATCH_DIR/unproven-session/meta.json"

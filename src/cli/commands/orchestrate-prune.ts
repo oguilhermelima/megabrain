@@ -70,7 +70,7 @@ function hostTerminalArgs(meta: RecordValue): { readonly command: string; readon
   return undefined;
 }
 
-async function releaseBeforePrune(meta: RecordValue, process: ProcessAdapter): Promise<Result<void>> {
+async function releaseBeforePrune(meta: RecordValue, environment: Environment, process: ProcessAdapter): Promise<Result<void>> {
   const terminalState = text(meta.terminalState);
   if (terminalState === "released" || terminalState === "missing") return ok(undefined);
   if (terminalState === "retained") return failed("terminal identity is unproven");
@@ -79,7 +79,18 @@ async function releaseBeforePrune(meta: RecordValue, process: ProcessAdapter): P
     if (session.kind !== "ok") return ok(undefined);
     const panes = await process.run("tmux", ["list-panes", "-t", text(meta.tmuxSession), "-F", "#{pane_id}"]);
     if (panes.kind !== "ok") return failed("terminal identity is unproven");
-    return panes.value.stdout.split("\n").includes(text(meta.tmuxPane)) ? failed("terminal identity is unproven") : ok(undefined);
+    if (!panes.value.stdout.split("\n").includes(text(meta.tmuxPane))) return ok(undefined);
+    const sessionName = text(meta.tmuxSession);
+    if (sessionName === text(meta.parentTmuxSession)) return ok(undefined);
+    if (environment.TMUX && environment.TMUX_PANE) {
+      const caller = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
+      if (caller.kind === "ok" && caller.value.stdout.trim() === sessionName) return ok(undefined);
+    }
+    const paneIds = panes.value.stdout.split("\n").filter((pane) => pane.length > 0);
+    const released = paneIds.length > 1
+      ? await process.run("tmux", ["kill-pane", "-t", text(meta.tmuxPane)])
+      : await process.run("tmux", ["kill-session", "-t", sessionName]);
+    return released.kind === "ok" ? ok(undefined) : failed("could not release dispatch terminal");
   }
   const listing = hostTerminalArgs(meta);
   if (listing === undefined) return failed("terminal identity is unproven");
@@ -119,7 +130,7 @@ export async function executeOrchestratePrune(args: readonly string[], environme
     const decision = pruneDecision(meta, options, now);
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
     if (!options.dryRun) {
-      const released = await releaseBeforePrune(meta, process);
+      const released = await releaseBeforePrune(meta, environment, process);
       if (released.kind !== "ok") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.error }); continue; }
     }
     if (options.mode === "archive") {
