@@ -235,6 +235,39 @@ EOF
   printf 'Orca owns removal when available\n'
 }
 
+scenario_superset_removal_is_used() {
+  local repo="$work/superset-repo" shared="$work/superset-shared" state="$work/superset-state" bin="$work/superset-bin"
+  local child output calls
+  setup_repo "$repo" "$shared" "$state"
+  mkdir -p "$bin"
+  cat >"$bin/superset" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$SUPERSET_LOG"
+case "$1 $2 $3" in
+  "workspaces list --local")
+    printf '{"result":{"workspaces":[{"id":"workspace-id","branch":"feat/superset","worktreePath":"%s"}]}}\n' "$SUPERSET_PATH"
+    ;;
+  "workspaces delete workspace-id")
+    /usr/bin/git -C "$SUPERSET_REPO" worktree remove "$SUPERSET_PATH"
+    printf '%s\n' '{"deleted":["workspace-id"],"warnings":[]}'
+    ;;
+esac
+EOF
+  chmod +x "$bin/superset"
+  child="$shared/superset"
+  git -C "$repo" worktree add -q "$child" -b feat/superset main
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" SUPERSET_LOG="$work/superset.log" SUPERSET_REPO="$repo" SUPERSET_PATH="$child" PATH="$bin:/usr/bin:/bin" \
+    "$root/.build/megabrain" worktree finish "$child" --json)" ||
+    fail "Superset removal finish failed: $output"
+  printf '%s' "$output" | jq -e '.deleted == true and .branch == "feat/superset"' >/dev/null ||
+    fail "Superset removal JSON was not successful: $output"
+  [ ! -e "$child" ] || fail 'Superset remover left the worktree'
+  calls="$(cat "$work/superset.log")"
+  assert_contains "$calls" 'workspaces list --local --json'
+  assert_contains "$calls" 'workspaces delete workspace-id --local --json'
+  printf 'Superset owns removal when its workspace is registered\n'
+}
+
 [ -x "$root/.build/megabrain" ] || { printf 'skip: compiled finish binary is missing at %s; run bun run build\n' "$root/.build/megabrain"; exit 0; }
 scenario_routes_finish_to_binary
 scenario_recorded_parent_controls_base
@@ -244,4 +277,5 @@ scenario_branch_selector_without_delete
 scenario_explicit_base_is_reported
 scenario_invalid_json_refusal
 scenario_orca_removal_is_used
+scenario_superset_removal_is_used
 printf 'ok: compiled worktree finish contract scenarios\n'
