@@ -14,6 +14,16 @@ const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
 
+function normalizeMetadata(meta: RecordValue): RecordValue {
+  const state = text(meta.state);
+  if (state !== "stalled" && state !== "timeout") return meta;
+  return {
+    ...meta,
+    state: "running",
+    ...(meta.processState === undefined ? { processState: "running" } : {}),
+  };
+}
+
 function containsTerminal(value: unknown, host: string, id: string): boolean {
   if (Array.isArray(value)) return value.some((item) => containsTerminal(item, host, id));
   if (typeof value !== "object" || value === null) return false;
@@ -88,7 +98,12 @@ async function releaseBeforePrune(meta: RecordValue, process: ProcessAdapter): P
 async function entries(root: string): Promise<Entry[]> {
   const result: Entry[] = [];
   for (const directory of await liveDispatchDirectories(root)) {
-    try { const meta = JSON.parse(await readFile(`${directory}/meta.json`, "utf8")) as RecordValue; if (typeof meta.dispatchId === "string") result.push({ id: meta.dispatchId, meta, directory }); } catch { /* shell ignores unreadable metadata */ }
+    try {
+      const parsed = JSON.parse(await readFile(`${directory}/meta.json`, "utf8")) as RecordValue;
+      const meta = normalizeMetadata(parsed);
+      if (meta !== parsed) await atomicJson(`${directory}/meta.json`, meta);
+      if (typeof meta.dispatchId === "string") result.push({ id: meta.dispatchId, meta, directory });
+    } catch { /* shell ignores unreadable metadata */ }
   }
   return result;
 }
