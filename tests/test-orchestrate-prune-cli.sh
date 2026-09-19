@@ -4,6 +4,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [ ! -x "$root/.build/megabrain" ]; then printf 'skip: compiled prune binary is missing; run bun run build\n'; exit 0; fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-prune-cli.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
+fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 fake_bin="$work/bin"
 mkdir -p "$fake_bin"
 cat >"$fake_bin/tmux" <<'EOF'
