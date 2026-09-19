@@ -555,14 +555,13 @@ printf '%s\n' 'prune-session' >"$live_sessions"
 write_dispatch prune-session done prune-session
 megabrain_dispatch_start_transcript prune-session %99
 set_old_timestamp prune-session
-jq '.terminalState = "released"' "$MEGABRAIN_DISPATCH_DIR/prune-session/meta.json" >"$state_dir/prune-meta.json"
-mv -f "$state_dir/prune-meta.json" "$MEGABRAIN_DISPATCH_DIR/prune-session/meta.json"
 prune_result="$(PATH="$fake_bin:$PATH" command_orchestrate prune --json)"
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 1
 assert_missing "$MEGABRAIN_DISPATCH_DIR/prune-session"
-assert_equal "$(grep -c '^prune-session$' "$release_log" || true)" 0
+assert_missing_session="$(grep -Fx 'prune-session' "$live_sessions" >/dev/null 2>&1; printf '%s' "$?")"
+assert_equal "$assert_missing_session" 1
 assert_contains "$(cat "$MEGABRAIN_DISPATCH_DIR/archive/$(date -u '+%Y-%m')/prune-session/transcript")" 'prune transcript'
-printf 'compiled prune archives the persisted transcript without a second release\n'
+printf 'compiled prune archives the persisted transcript and releases tmux\n'
 
 printf '%s\n' 'open-session' >"$live_sessions"
 write_dispatch open-session running open-session
