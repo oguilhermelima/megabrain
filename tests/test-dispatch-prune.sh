@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-dispatch-prune.XXXXXX")"
+fake_bin="$state_dir/bin"
 
 cleanup() {
   chmod -R u+rwx "$state_dir" 2>/dev/null || true
@@ -31,6 +32,7 @@ assert_missing() {
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 export SUPERSET_TERMINAL_ID=child-terminal
 unset TMUX TMUX_PANE
+mkdir -p "$fake_bin"
 
 source "$root/lib/common.sh"
 source "$root/lib/module-tmux-runtime.sh"
@@ -95,13 +97,16 @@ assert_file "$archive_path/meta.json"
 assert_missing "$MEGABRAIN_DISPATCH_DIR/archive-dispatch"
 assert_equal "$(command_orchestrate list --all --json | jq -r 'map(select(.dispatchId == "archive-dispatch")) | length')" 1
 
-megabrain_dispatch_require_parent() {
-  megabrain_dispatch_meta_read "$1"
-}
-megabrain_tmux_capture_pane() {
+cat >"$fake_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = capture-pane ]; then
   printf 'archived pane output\n'
-}
-read_result="$(command_orchestrate read archive-dispatch --json)"
+else
+  exit 1
+fi
+EOF
+chmod +x "$fake_bin/tmux"
+read_result="$(PATH="$fake_bin:$PATH" SUPERSET_TERMINAL_ID=parent-terminal command_orchestrate read archive-dispatch --json)"
 assert_equal "$(printf '%s' "$read_result" | jq -r '.text')" 'archived pane output'
 assert_equal "$(jq -r '.text' "$archive_path/messages"/*.json)" 'archived queue message'
 printf 'archived dispatch remains readable through list and read\n'

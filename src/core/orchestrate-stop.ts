@@ -25,6 +25,6 @@ export function stopDecision(liveness: string, affordance: "known" | "unknown"):
 
 export function stopOutput(dispatchId: string, result: string, json: boolean, reason = ""): string {
   const interrupted = result === "landed" || result === "queued";
-  if (json) return `${JSON.stringify({ dispatchId, status: interrupted ? "interrupted" : "not-interrupted", result, interrupted, ...(interrupted ? {} : reason === "" ? {} : { reason }) }, null, 2)}\n`;
+  if (json) return `${JSON.stringify({ dispatchId, status: interrupted ? "interrupted" : "not-interrupted", result, interrupted }, null, 2)}\n`;
   return interrupted ? `interrupted: ${dispatchId}\nresult: ${result}\n` : `interrupted: false\nresult: ${result}${reason === "" ? "" : `: ${reason}`}\n`;
 }
