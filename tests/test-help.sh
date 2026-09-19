@@ -35,7 +35,7 @@ printf '%s\n' '{"type":"done","text":"finished"}' >"$MEGABRAIN_STATE_DIR/dispatc
 
 installer_fixture="$state_dir/install.sh"
 cp "$root/install.sh" "$installer_fixture"
-before="$(find "$state_dir" -type f -exec shasum {} \; | sort)"
+before="$(find "$MEGABRAIN_STATE_DIR" -type f -exec shasum {} \; | sort)"
 
 run_help() {
   local output status
@@ -112,7 +112,7 @@ run_help tmux wrapper --help
 
 install_output="$("$installer_fixture" --help 2>&1)"
 assert_contains "$install_output" 'Usage:'
-assert_equal "$(find "$state_dir" -type f -exec shasum {} \; | sort)" "$before"
+assert_equal "$(find "$MEGABRAIN_STATE_DIR" -type f -exec shasum {} \; | sort)" "$before"
 printf 'help exits successfully without changing dispatch state\n'
 
 printf 'ok: every documented command and subcommand has side-effect-free help\n'
