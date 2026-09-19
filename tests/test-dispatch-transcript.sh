@@ -108,10 +108,9 @@ EOF
 chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
 export MEGABRAIN_FAKE_TMUX_SESSIONS="$live_sessions"
 export CAPTURE_PATH="$capture_state" CAPTURE_AVAILABLE=true
-export PATH="$compiled_bin_dir:$PATH"
 # Read scenarios exercise the compiled command; the shell implementation is gone.
 run_compiled_read() {
-  env MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
+  env PATH="$compiled_bin_dir:$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
     "$root/.build/megabrain" orchestrate read "$@"
 }
 sync_capture() { printf '%s\n' "$capture_output" >"$capture_state"; }
