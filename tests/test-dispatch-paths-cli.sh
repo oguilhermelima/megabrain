@@ -16,7 +16,7 @@ fi
 make_archived() {
   local state="$1"
   mkdir -p "$state/dispatches/archive/2026-09/arq/messages" "$state/dispatches/archive/2026-09/arq/deliveries"
-  printf '%s\n' '{"dispatchId":"arq","parentSessionId":"p","parentHost":"orca","runtime":"host","childHost":"orca","terminalId":"child"}' >"$state/dispatches/archive/2026-09/arq/meta.json"
+  printf '%s\n' '{"dispatchId":"arq","parentSessionId":"p","parentHost":"orca","runtime":"host","childHost":"orca","terminalId":"child","terminalState":"retained"}' >"$state/dispatches/archive/2026-09/arq/meta.json"
 }
 
 mkdir -p "$work/home"
@@ -26,7 +26,7 @@ archived_output="$(MEGABRAIN_STATE_DIR="$work/archive" MEGABRAIN_SESSION_HOST=or
 set -e
 [ "$archived_status" -eq 1 ] || fail "archived dispatch unexpectedly succeeded: $archived_output"
 case "$archived_output" in
-  *'could not close dispatch arq'*) ;;
+  *'terminal is retained because identity is unproven'*) ;;
   *) fail "archived dispatch content was not reported by the compiled command: $archived_output" ;;
 esac
 printf 'compiled archived-dispatch path reports the missing live record\n'
