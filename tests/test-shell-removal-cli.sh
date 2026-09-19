@@ -40,6 +40,10 @@ scenario_route_markers() {
   scenario_route_reaches_compiled_binary check '{"verb":"check"}' MEGABRAIN_CHECK_IMPLEMENTATION check --timeout 0 --json
   scenario_route_reaches_compiled_binary reply '{"verb":"reply"}' MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION orchestrate reply route-dispatch --text route-answer --json
   scenario_route_reaches_compiled_binary liveness '{"verb":"liveness"}' MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION orchestrate liveness route-dispatch --json
+  scenario_route_reaches_compiled_binary orchestrate-list '{"verb":"orchestrate-list"}' MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION orchestrate list --json
+  scenario_route_reaches_compiled_binary orchestrate-prune '{"verb":"orchestrate-prune"}' MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION orchestrate prune --dry-run --json
+  scenario_route_reaches_compiled_binary orchestrate-change '{"verb":"orchestrate-change"}' MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION orchestrate change route-dispatch --text route-answer --json
+  scenario_route_reaches_compiled_binary orchestrate-close '{"verb":"orchestrate-close"}' MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION orchestrate close route-dispatch --json
 }
 
 scenario_worktree_list_route_marker() {
@@ -133,6 +137,16 @@ scenario_compiled_argument_forms() {
   assert_equal "$status" 2
   assert_contains "$(cat "$work/received-invalid")" 'Usage: megabrain received'
   printf 'compiled commands preserve help and invalid-argument forms\n'
+}
+
+scenario_change_reports_actual_interrupt_outcome() {
+  local state="$work/content-change" output
+  write_dispatch_fixture "$state" change superset
+  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+    MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
+    "$root/.build/megabrain" orchestrate change change --text 'replacement content' --json)"
+  assert_json "$output" '.dispatchId == "change" and .queueChanged == true and .interrupted == false and (.reason | contains("Superset"))'
+  printf 'change content reports the actual unavailable interrupt outcome\n'
 }
 
 setup_repo() {
@@ -331,8 +345,13 @@ scenario_removed_route_falsification queue-done MEGABRAIN_QUEUE_WRITE_IMPLEMENTA
 scenario_removed_route_falsification check MEGABRAIN_CHECK_IMPLEMENTATION '{"verb":"check"}' check --timeout 0 --json
 scenario_removed_route_falsification reply MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION '{"verb":"reply"}' orchestrate reply route-dispatch --text route-answer --json
 scenario_removed_route_falsification liveness MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION '{"verb":"liveness"}' orchestrate liveness route-dispatch --json
+scenario_removed_route_falsification orchestrate-list MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION '{"verb":"orchestrate-list"}' orchestrate list --json
+scenario_removed_route_falsification orchestrate-prune MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION '{"verb":"orchestrate-prune"}' orchestrate prune --dry-run --json
+scenario_removed_route_falsification orchestrate-change MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION '{"verb":"orchestrate-change"}' orchestrate change route-dispatch --text route-answer --json
+scenario_removed_route_falsification orchestrate-close MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION '{"verb":"orchestrate-close"}' orchestrate close route-dispatch --json
 scenario_worktree_list_falsification
 scenario_compiled_content_contracts
 scenario_compiled_argument_forms
+scenario_change_reports_actual_interrupt_outcome
 scenario_worktree_list_content
 printf 'ok: compiled routes and content contracts cover all removal verbs\n'

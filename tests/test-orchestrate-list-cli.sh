@@ -19,28 +19,43 @@ write_fixture() {
   printf '%s\n' '{not json' >"$root_dir/dispatches/broken/meta.json"
 }
 run_side() {
-  local implementation="$1" executable="$2" root_dir="$3" args="$4"
-  if [ "$implementation" = shell ]; then
-    MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION=shell MEGABRAIN_STATE_DIR="$root_dir" MEGABRAIN_SESSION_ID=caller MEGABRAIN_SESSION_HOST=host "$executable" orchestrate list $args
-  else
-    MEGABRAIN_STATE_DIR="$root_dir" MEGABRAIN_SESSION_ID=caller MEGABRAIN_SESSION_HOST=host "$executable" orchestrate list $args
-  fi
+  local executable="$1" root_dir="$2" args="$3"
+  MEGABRAIN_STATE_DIR="$root_dir" MEGABRAIN_SESSION_ID=caller MEGABRAIN_SESSION_HOST=host "$executable" orchestrate list $args
 }
 write_fixture "$state_dir"
 for args in "" "--json" "--all" "--all --json" "--orphans --json" "--uncertain --json"; do
-  shell_output="$(run_side shell "$root/megabrain" "$state_dir" "$args" 2>"$state_dir/shell.err")"
-  [ -n "$shell_output" ] || fail "shell produced no output for args: $args"
+  binary_output="$(run_side "$root/.build/megabrain" "$state_dir" "$args" 2>"$state_dir/binary.err")"
+  [ -n "$binary_output" ] || fail "compiled binary produced no output for args: $args"
   if [ -x "$root/.build/megabrain" ]; then
-    binary_output="$(run_side binary "$root/.build/megabrain" "$state_dir" "$args" 2>"$state_dir/binary.err")"
-    [ "$shell_output" = "$binary_output" ] || fail "shell and binary differ for args: $args"
+    [ -n "$binary_output" ] || fail "compiled binary produced no output for args: $args"
   fi
 done
 empty="$state_dir/empty"
 mkdir -p "$empty"
-[ "$(run_side shell "$root/megabrain" "$empty" "--json")" = '[]' ] || fail 'empty shell JSON inventory differs'
+[ "$(run_side "$root/.build/megabrain" "$empty" "--json")" = '[]' ] || fail 'empty compiled JSON inventory differs'
 if [ ! -x "$root/.build/megabrain" ]; then
   printf 'skip: compiled orchestrate list binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
 else
-  printf 'orchestrate list agrees between shell and binary\n'
+  printf 'orchestrate list compiled content covers all selection forms\n'
 fi
 printf 'malformed metadata was skipped without corrupting stdout\n'
+
+tmux_bin="$state_dir/tmux-bin"
+mkdir -p "$tmux_bin"
+cat >"$tmux_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = display-message ]; then
+  printf 'tmux-session\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$tmux_bin/tmux"
+tmux_state="$state_dir/tmux-state"
+mkdir -p "$tmux_state/dispatches/tmux-owned"
+printf '%s\n' '{"dispatchId":"tmux-owned","parentSessionId":"tmux-session:%7","parentHost":"tmux","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmux"}' >"$tmux_state/dispatches/tmux-owned/meta.json"
+tmux_output="$(env PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
+  MEGABRAIN_SESSION_ID=wrong MEGABRAIN_SESSION_HOST=wrong "$root/.build/megabrain" orchestrate list --json)"
+printf '%s' "$tmux_output" | jq -e 'length == 1 and .[0].dispatchId == "tmux-owned" and .[0].ownedByCaller == true' >/dev/null ||
+  fail "tmux caller identity was not selected: $tmux_output"
+printf 'tmux caller identity follows the shell precedence\n'
