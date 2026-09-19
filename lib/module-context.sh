@@ -51,11 +51,13 @@ command_orchestrate() {
     list) command_orchestrate_list "$@" ;;
     prune)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION:-}"; then
-        "$typescript_binary" orchestrate prune "$@"
-        return $?
-      fi
-      megabrain_dispatch_prune "$@"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      "$typescript_binary" orchestrate prune "$@"
       ;;
     reconcile) megabrain_dispatch_reconcile "$@" ;;
     liveness) megabrain_dispatch_liveness "$@" ;;
@@ -75,19 +77,23 @@ command_orchestrate() {
     stop) megabrain_dispatch_stop "$@" ;;
     change)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION:-}"; then
-        "$typescript_binary" orchestrate change "$@"
-        return $?
-      fi
-      megabrain_dispatch_change "$@"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      "$typescript_binary" orchestrate change "$@"
       ;;
     close)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-      if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION:-}"; then
-        "$typescript_binary" orchestrate close "$@"
-        return $?
-      fi
-      megabrain_dispatch_close "$@"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      "$typescript_binary" orchestrate close "$@"
       ;;
     -h|--help|"")
       megabrain_usage_show orchestrate-spawn orchestrate-list orchestrate-reconcile \
@@ -361,92 +367,13 @@ megabrain_dispatch_terminal_status() {
 
 command_orchestrate_list() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION:-}"; then
-    "$typescript_binary" orchestrate list "$@"
-    return $?
-  fi
-  local json=false all=false orphans=false uncertain=false arg caller_id caller_host meta_path
-  local entries
-  local -a meta_paths
-  for arg in "$@"; do
-    case "$arg" in
-      --json) json=true ;;
-      --all) all=true ;;
-      --orphans) orphans=true ;;
-      --uncertain) uncertain=true ;;
-      -h|--help) megabrain_usage_show orchestrate-list; return 0 ;;
-      *) megabrain_error "unknown orchestrate list option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  megabrain_session_id >/dev/null
-  caller_id="$MEGABRAIN_SESSION_ID"
-  caller_host="$MEGABRAIN_SESSION_HOST"
-  meta_paths=()
-  for meta_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
-    [ -f "$meta_path" ] || continue
-    meta_paths[${#meta_paths[@]}]="$meta_path"
-  done
-  for meta_path in "$MEGABRAIN_DISPATCH_DIR"/archive/*/*/meta.json; do
-    [ -f "$meta_path" ] || continue
-    meta_paths[${#meta_paths[@]}]="$meta_path"
-  done
-  if [ "${#meta_paths[@]}" -eq 0 ]; then
-    if [ "$json" = true ]; then
-      printf '[]\n'
-      return 0
-    fi
-    printf '%-38s %-20s %-18s %-12s %-10s %s\n' DISPATCH STATE PROCESS TERMINAL OWNERSHIP WORKTREE
-    return 0
-  fi
-
-  # WHY: Listing is an inventory operation; explicit reconcile owns live terminal queries.
-  entries="$(jq -s \
-    --arg callerId "$caller_id" --arg callerHost "$caller_host" \
-    --argjson all "$all" --argjson orphans "$orphans" --argjson uncertain "$uncertain" '
-    map(. as $item
-      | ($item.parentHost // "") as $parentHost
-      | (($callerId != "") and ($item.parentSessionId == $callerId) and ($parentHost == $callerHost)) as $owned
-      | (($item.state // "") == "orphaned") as $orphan
-      | (($item.processState // "") == "start-unproven" or ($item.processState // "") == "stop-unproven" or ($item.processState // "") == "abandoned" or ($item.processState // "") == "exited") as $uncertainItem
-      | $item + {ownedByCaller: $owned, orphan: $orphan, uncertain: $uncertainItem, reconcileResult: ($item.reconcileOutcome // "unchanged")})
-    | map(select(($all or $orphans or $uncertain or .ownedByCaller) and (($orphans | not) or .orphan) and (($uncertain | not) or .uncertain)))
-  ' "${meta_paths[@]}" 2>/dev/null)" || {
-    # WHY: one unreadable meta aborts the whole batch, and the fast path must stay a
-    # single jq. So the per-file walk runs only once something is already wrong, drops
-    # exactly the files that cannot be parsed, and says which on stderr, where it cannot
-    # corrupt the --json a caller is about to parse.
-    local -a readable=()
-    for meta_path in "${meta_paths[@]}"; do
-      if jq empty "$meta_path" >/dev/null 2>&1; then
-        readable[${#readable[@]}]="$meta_path"
-      else
-        megabrain_notice "skipping unreadable dispatch metadata: $meta_path"
-      fi
-    done
-    if [ "${#readable[@]}" -eq 0 ]; then
-      [ "$json" = true ] && printf '[]\n'
-      return 0
-    fi
-    entries="$(jq -s \
-      --arg callerId "$caller_id" --arg callerHost "$caller_host" \
-        --argjson all "$all" --argjson orphans "$orphans" --argjson uncertain "$uncertain" '
-      map(. as $item
-        | ($item.parentHost // "") as $parentHost
-        | (($callerId != "") and ($item.parentSessionId == $callerId) and ($parentHost == $callerHost)) as $owned
-        | (($item.state // "") == "orphaned") as $orphan
-        | (($item.processState // "") == "start-unproven" or ($item.processState // "") == "stop-unproven" or ($item.processState // "") == "abandoned" or ($item.processState // "") == "exited") as $uncertainItem
-        | $item + {ownedByCaller: $owned, orphan: $orphan, uncertain: $uncertainItem, reconcileResult: ($item.reconcileOutcome // "unchanged")})
-      | map(select(($all or $orphans or $uncertain or .ownedByCaller) and (($orphans | not) or .orphan) and (($uncertain | not) or .uncertain)))
-    ' "${readable[@]}")" || return 1
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
   }
-  if [ "$json" = true ]; then
-    printf '%s\n' "$entries"
-    return 0
-  fi
-  printf '%-38s %-20s %-18s %-12s %-10s %s\n' DISPATCH STATE PROCESS TERMINAL OWNERSHIP WORKTREE
-  printf '%s\n' "$entries" | jq -r '.[] | [.dispatchId, .state, (.processState // "unknown"), (.terminalState // "unknown"), (if .ownedByCaller then "owned" else "not-owned" end), .worktreePath] | @tsv' | while IFS=$'\t' read -r dispatch state process terminal ownership worktree; do
-    printf '%-38s %-20s %-18s %-12s %-10s %s\n' "$dispatch" "$state" "$process" "$terminal" "$ownership" "$worktree"
-  done
+  # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+  megabrain_warn_if_typescript_binary_stale
+  "$typescript_binary" orchestrate list "$@"
 }
 
 megabrain_superset_terminals_json() {

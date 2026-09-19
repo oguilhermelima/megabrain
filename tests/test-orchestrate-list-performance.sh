@@ -40,6 +40,7 @@ for i in $(seq 1 200); do
 done
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export MEGABRAIN_ROOT="$root"
 export MEGABRAIN_DISPATCH_DIR="$state_dir/dispatches"
 export MEGABRAIN_TEST_JQ_COUNT="$count_file"
 export MEGABRAIN_TEST_JQ_REAL="$real_jq"

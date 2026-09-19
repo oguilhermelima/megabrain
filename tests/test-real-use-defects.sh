@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+export MEGABRAIN_ROOT="$root"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-real-use.XXXXXX")"
 
 cleanup() {
@@ -137,6 +138,7 @@ mkdir -p "$MEGABRAIN_DISPATCH_DIR/uncertain/meta" "$MEGABRAIN_DISPATCH_DIR/healt
 printf '%s\n' '{"dispatchId":"uncertain","parentSessionId":"","parentHost":"unknown","state":"running","processState":"start-unproven","terminalState":"owned","worktreePath":"/tmp/uncertain"}' >"$MEGABRAIN_DISPATCH_DIR/uncertain/meta.json"
 printf '%s\n' '{"dispatchId":"healthy","parentSessionId":"","parentHost":"unknown","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmp/healthy"}' >"$MEGABRAIN_DISPATCH_DIR/healthy/meta.json"
 uncertain_list="$(command_orchestrate_list --uncertain --json)"
+assert_contains "$uncertain_list" 'uncertain'
 assert_contains "$uncertain_list" 'uncertain' 'orchestrate list --uncertain omitted the doctor-counted dispatch'
 assert_not_contains "$uncertain_list" 'healthy' 'orchestrate list --uncertain included a healthy dispatch'
 printf 'scenario 6: uncertain dispatches are selectable\n'

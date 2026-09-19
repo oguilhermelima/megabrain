@@ -76,6 +76,7 @@ scenario_text_doctor_has_leaked_counter_default() {
 
 export HOME="$state_root/home"
 export MEGABRAIN_STATE_DIR="$state_root/state"
+export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE
 
@@ -125,6 +126,7 @@ scenario_retired_timeout_is_readable() {
   write_old_timestamp timeout-prunable
   output="$(command_orchestrate prune --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.archived')" 0
+  assert_contains "$output" 'timeout-prunable'
   assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/timeout-prunable/meta.json")" running
   printf 'retired timeout is normalised and remains open\n'
 }

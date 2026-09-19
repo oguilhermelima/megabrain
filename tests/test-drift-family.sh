@@ -112,6 +112,8 @@ printf 'scenario 5: install manifest compares selected configuration fields\n'
 
 dispatch_state="$work/dispatch-state"
 export MEGABRAIN_STATE_DIR="$dispatch_state"
+export MEGABRAIN_DISPATCH_DIR="$dispatch_state/dispatches"
+export MEGABRAIN_ROOT="$root"
 source "$root/lib/module-context.sh"
 source "$root/lib/module-orchestrate.sh"
 mkdir -p "$MEGABRAIN_DISPATCH_DIR"
@@ -133,8 +135,9 @@ for dispatch_id in missing-terminal running-live; do
     "$MEGABRAIN_DISPATCH_DIR/$dispatch_id/meta.json" >"$work/$dispatch_id.json"
   mv "$work/$dispatch_id.json" "$MEGABRAIN_DISPATCH_DIR/$dispatch_id/meta.json"
 done
-dry_run="$(megabrain_dispatch_prune --dry-run --json)"
+dry_run="$("$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(jq -r '.archived' <<<"$dry_run")" 1
+assert_equal "$(jq -r '.dryRun' <<<"$dry_run")" true
 assert_contains "$dry_run" 'missing-terminal'
 assert_missing "$MEGABRAIN_DISPATCH_DIR/archive"
 assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/running-live/meta.json")" running

@@ -5,8 +5,43 @@ import { addSupersedeSummary, parseParentChangeArgs, parseParentReplyArgs, reply
 import { acquireLock, appendMessage, atomicJson, notifyChild, readJson, type QueueEnvironment } from "./queue-write.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
 
 type JsonRecord = Record<string, unknown>;
+
+function recordValue(value: unknown): JsonRecord | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : undefined;
+}
+
+function summaryFromReply(value: string): SupersedeSummary {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    const record = recordValue(parsed);
+    if (record !== undefined) {
+      const queued = typeof record.supersededQueued === "number" ? record.supersededQueued : 0;
+      const delivered = typeof record.supersededDelivered === "number" ? record.supersededDelivered : 0;
+      const sequences = Array.isArray(record.deliveredSequences) ? record.deliveredSequences.filter((item): item is number => typeof item === "number") : [];
+      return { queued, delivered, deliveredSequences: sequences };
+    }
+  } catch {
+    // The reply command owns queue durability; a malformed formatter must not undo it.
+  }
+  return { queued: 0, delivered: 0, deliveredSequences: [] };
+}
+
+function stopReason(value: string): string {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    const record = recordValue(parsed);
+    if (record !== undefined) {
+      const reason = record.reason;
+      if (typeof reason === "string" && reason.length > 0) return reason;
+    }
+  } catch {
+    // Stop errors are also allowed to be plain host text.
+  }
+  return value;
+}
 
 async function requireParent(root: string, dispatch: string, environment: QueueEnvironment): Promise<Result<JsonRecord>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
@@ -101,8 +136,10 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   const parsed = parseParentChangeArgs(args); if (parsed.kind !== "ok") return parsed;
   const reply = await executeOrchestrateReply([parsed.value.dispatchId, "--text", parsed.value.text, "--supersede", "--json"], environment, processAdapter);
   if (reply.kind !== "ok") return reply;
-  const queued = JSON.parse(reply.value) as { readonly supersededQueued: number; readonly supersededDelivered: number; readonly deliveredSequences: readonly number[] };
-  const reason = "megabrain: dispatch " + parsed.value.dispatchId + " cannot be stopped: interrupt capability is unavailable for host " + (environment.MEGABRAIN_CHILD_HOST ?? "unknown");
-  if (parsed.value.json) return ok(`${JSON.stringify({ dispatchId: parsed.value.dispatchId, queueChanged: true, interrupted: false, supersededQueued: queued.supersededQueued, supersededDelivered: queued.supersededDelivered, deliveredSequences: queued.deliveredSequences, reason, message: "queue changed; agent was not interrupted" }, null, 2)}\n`);
-  return ok(`changed: ${parsed.value.dispatchId}\ninterrupted: false\nqueue changed; agent was not interrupted\n`);
+  const queued = summaryFromReply(reply.value);
+  const stopped = await executeOrchestrateStop([parsed.value.dispatchId, "--json"], environment, processAdapter);
+  const interrupted = stopped.kind === "ok";
+  const reason = stopped.kind === "failed" ? stopReason(stopped.error) : "";
+  if (parsed.value.json) return ok(`${JSON.stringify({ dispatchId: parsed.value.dispatchId, queueChanged: true, interrupted, supersededQueued: queued.queued, supersededDelivered: queued.delivered, deliveredSequences: queued.deliveredSequences, ...(interrupted ? {} : { reason, message: "queue changed; agent was not interrupted" }) }, null, 2)}\n`);
+  return ok(`changed: ${parsed.value.dispatchId}\ninterrupted: ${interrupted}\n${interrupted ? "" : "queue changed; agent was not interrupted\n"}`);
 }

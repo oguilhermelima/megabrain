@@ -2,10 +2,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-state_shell="$(mktemp -d /tmp/mbclose-shell.XXXXXX)"
 state_binary="$(mktemp -d /tmp/mbclose-binary.XXXXXX)"
 fake_dir="$(mktemp -d /tmp/mbclose-bin.XXXXXX)"
-trap 'rm -rf "$state_shell" "$state_binary" "$fake_dir"' EXIT
+trap 'rm -rf "$state_binary" "$fake_dir"' EXIT
 cat >"$fake_dir/orca" <<'EOF'
 #!/usr/bin/env bash
 if [ "${MB_CLOSE_MODE:-success}" = failure ]; then
@@ -46,34 +45,34 @@ make_meta() {
   megabrain_dispatch_meta_write "$id" parent-terminal superset orca workspace-test "$id-terminal" "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
 }
 run_one() {
-  local implementation="$1" state="$2" mode="$3" id="$4" out err rc
+  local state="$1" mode="$2" id="$3" out err rc
   make_meta "$state" "$id"
-  export MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION="$implementation" MB_CLOSE_MODE="$mode"
+  export MB_CLOSE_MODE="$mode"
   set +e
-  out="$(command_orchestrate close "$id" --json 2>"$state/err")"
+  out="$("$root/.build/megabrain" orchestrate close "$id" --json 2>"$state/err")"
   rc=$?
   set -e
   err="$(cat "$state/err")"
   if [ -n "$out" ]; then
     out="$(printf '%s' "$out" | jq -c .)"
   fi
-  printf '%s\t%s\t%s\t%s\n' "$rc" "$out" "$err" "$(jq -c '{state,terminalState,terminalReason}' "$state/dispatches/$id/meta.json")"
+  printf '%s\t%s\t%s\t%s\n' "$rc" "$out" "$err" "$(jq -c '{state,processState,terminalState,terminalReason}' "$state/dispatches/$id/meta.json")"
 }
 
-success_shell="$(run_one shell "$state_shell" success close-success)"
-success_binary="$(run_one binary "$state_binary" success close-success)"
-[ "$success_shell" = "$success_binary" ] || fail "close-success: shell=$success_shell binary=$success_binary"
-[ "$(printf '%s' "$success_shell" | cut -f1)" = "0" ] || fail "close-success-shell-status: expected=0 actual=$(printf '%s' "$success_shell" | cut -f1)"
+success_binary="$(run_one "$state_binary" success close-success)"
 [ "$(printf '%s' "$success_binary" | cut -f1)" = "0" ] || fail "close-success-binary-status: expected=0 actual=$(printf '%s' "$success_binary" | cut -f1)"
-[ "$(printf '%s' "$success_shell" | cut -f2)" = "$(printf '%s' "$success_binary" | cut -f2)" ] || fail "close-success-output: shell=$(printf '%s' "$success_shell" | cut -f2) binary=$(printf '%s' "$success_binary" | cut -f2)"
+[ "$(printf '%s' "$success_binary" | cut -f2)" = '{"dispatchId":"close-success","status":"closed"}' ] || fail "close-success-output: $(printf '%s' "$success_binary" | cut -f2)"
+[ "$(printf '%s' "$success_binary" | cut -f4 | jq -r .processState)" = stopped ] || fail 'close-success did not stop the process state'
 
-failure_shell="$(run_one shell "$state_shell" failure close-failure)"
-failure_binary="$(run_one binary "$state_binary" failure close-failure)"
-[ "$(printf '%s' "$failure_shell" | cut -f1)" = "1" ] || fail "close-failure-shell-status: expected=1 actual=$(printf '%s' "$failure_shell" | cut -f1)"
+failure_binary="$(run_one "$state_binary" failure close-failure)"
 [ "$(printf '%s' "$failure_binary" | cut -f1)" = "1" ] || fail "close-failure-binary-status: expected=1 actual=$(printf '%s' "$failure_binary" | cut -f1)"
-[ "$failure_shell" = "$failure_binary" ] || fail "close-failure: shell=$failure_shell binary=$failure_binary"
+[ "$(printf '%s' "$failure_binary" | cut -f3)" = 'megabrain: could not close dispatch close-failure: terminal close denied by host' ] || fail "close-failure-reason: $(printf '%s' "$failure_binary" | cut -f3)"
 
-empty_shell="$(run_one shell "$state_shell" empty close-empty)"
-empty_binary="$(run_one binary "$state_binary" empty close-empty)"
-[ "$empty_shell" = "$empty_binary" ] || fail "close-empty: shell=$empty_shell binary=$empty_binary"
-printf '3 passed, 0 failed, 0 skipped\n'
+empty_binary="$(run_one "$state_binary" empty close-empty)"
+[ "$(printf '%s' "$empty_binary" | cut -f1)" = "1" ] || fail "close-empty-status: expected=1 actual=$(printf '%s' "$empty_binary" | cut -f1)"
+[ "$(printf '%s' "$empty_binary" | cut -f3)" = 'megabrain: could not close dispatch close-empty: the host gave no reason' ] || fail "close-empty-reason: $(printf '%s' "$empty_binary" | cut -f3)"
+
+make_meta "$state_binary" close-precedence
+precedence_output="$(MEGABRAIN_STATE_DIR="$state_binary" MEGABRAIN_SESSION_ID=wrong-session SUPERSET_TERMINAL_ID=parent-terminal ORCA_TERMINAL_HANDLE=other-terminal "$root/.build/megabrain" orchestrate close close-precedence --json)"
+[ "$(printf '%s' "$precedence_output" | jq -r '.status')" = closed ] || fail "Superset identity did not win caller precedence: $precedence_output"
+printf '4 passed, 0 failed, 0 skipped\n'

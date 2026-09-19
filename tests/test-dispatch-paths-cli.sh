@@ -16,27 +16,30 @@ fi
 make_archived() {
   local state="$1"
   mkdir -p "$state/dispatches/archive/2026-09/arq/messages" "$state/dispatches/archive/2026-09/arq/deliveries"
-  printf '%s\n' '{"dispatchId":"arq","parentSessionId":"p","parentHost":"orca","runtime":"host","childHost":"orca","terminalId":"child"}' >"$state/dispatches/archive/2026-09/arq/meta.json"
+  printf '%s\n' '{"dispatchId":"arq","parentSessionId":"p","parentHost":"orca","runtime":"host","childHost":"orca","terminalId":"child","terminalState":"retained"}' >"$state/dispatches/archive/2026-09/arq/meta.json"
 }
 
 mkdir -p "$work/home"
-make_archived "$work/archive-shell"
-make_archived "$work/archive-binary"
+make_archived "$work/archive"
 set +e
-shell_archived="$(MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION=shell MEGABRAIN_STATE_DIR="$work/archive-shell" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=p SUPERSET_TERMINAL_ID=p "$root/megabrain" orchestrate close arq 2>&1)"; shell_status=$?
-binary_archived="$(MEGABRAIN_STATE_DIR="$work/archive-binary" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=p SUPERSET_TERMINAL_ID=p "$root/.build/megabrain" orchestrate close arq 2>&1)"; binary_status=$?
+archived_output="$(MEGABRAIN_STATE_DIR="$work/archive" MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=p ORCA_TERMINAL_HANDLE=p "$root/.build/megabrain" orchestrate close arq 2>&1)"; archived_status=$?
 set -e
-[ "$shell_status" -eq "$binary_status" ] || fail "archived status differs: shell=$shell_status binary=$binary_status"
-[ "$shell_archived" = "$binary_archived" ] || fail "archived dispatch differs: shell=$shell_archived binary=$binary_archived"
-printf 'archived dispatch agrees between shell and binary\n'
+[ "$archived_status" -eq 1 ] || fail "archived dispatch unexpectedly succeeded: $archived_output"
+case "$archived_output" in
+  *'terminal is retained because identity is unproven'*) ;;
+  *) fail "archived dispatch content was not reported by the compiled command: $archived_output" ;;
+esac
+printf 'compiled archived-dispatch path reports the missing live record\n'
 
 set +e
-shell_invalid="$(MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION=shell MEGABRAIN_STATE_DIR="$work/invalid-shell" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=p SUPERSET_TERMINAL_ID=p "$root/megabrain" orchestrate close ../fora 2>&1)"; shell_status=$?
-binary_invalid="$(MEGABRAIN_STATE_DIR="$work/invalid-binary" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=p SUPERSET_TERMINAL_ID=p "$root/.build/megabrain" orchestrate close ../fora 2>&1)"; binary_status=$?
+invalid_output="$(MEGABRAIN_STATE_DIR="$work/invalid" MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=p ORCA_TERMINAL_HANDLE=p "$root/.build/megabrain" orchestrate close ../fora 2>&1)"; invalid_status=$?
 set -e
-[ "$shell_status" -eq "$binary_status" ] || fail "invalid-id status differs: shell=$shell_status binary=$binary_status"
-[ "$shell_invalid" = "$binary_invalid" ] || fail "invalid-id output differs: shell=$shell_invalid binary=$binary_invalid"
-printf 'invalid dispatch identifier agrees between shell and binary\n'
+[ "$invalid_status" -eq 1 ] || fail "invalid dispatch identifier unexpectedly succeeded: $invalid_output"
+case "$invalid_output" in
+  *'invalid dispatch id'*) ;;
+  *) fail "invalid dispatch identifier content was not reported by the compiled command: $invalid_output" ;;
+esac
+printf 'compiled invalid-dispatch path reports the rejected identifier\n'
 
 if rg -n 'dispatches/' "$root/src" --glob '!src/adapters/dispatch-store.ts' >/dev/null; then
   fail 'dispatch path construction exists outside src/adapters/dispatch-store.ts'

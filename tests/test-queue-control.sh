@@ -40,11 +40,13 @@ assert_not_contains() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
-mkdir -p "$state_dir/bin"
-cat >"$state_dir/bin/tmux" <<'EOF'
+fake_bin="$state_dir/bin"
+mkdir -p "$fake_bin"
+cat >"$fake_bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   has-session) exit 0 ;;
@@ -55,7 +57,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 EOF
-cat >"$state_dir/bin/ps" <<'EOF'
+cat >"$fake_bin/ps" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = -p ]; then
   printf 'pts/1\n'
@@ -140,6 +142,7 @@ create_dispatch() {
 
 set_pane_fixture() {
   cp "$root/tests/fixtures/agent-liveness/$1.transcript" "$pane_fixture"
+  export MEGABRAIN_TEST_PANE_FIXTURE="$pane_fixture"
 }
 
 scenario_empty_report() {
@@ -285,7 +288,7 @@ scenario_change_on_refusal() {
   create_dispatch change-refused
   megabrain_dispatch_reply change-refused --text 'obsolete direction' >/dev/null
   set_pane_fixture pending-check
-  result="$(megabrain_dispatch_change change-refused --text 'authoritative replacement' --json 2>&1)" || true
+  result="$(PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate change change-refused --text 'authoritative replacement' --json 2>&1)" || true
   assert_equal "$(jq -r '.queueChanged' <<<"$result")" true
   assert_equal "$(jq -r '.interrupted' <<<"$result")" false
   assert_contains "$result" 'not interrupted'

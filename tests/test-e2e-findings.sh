@@ -6,6 +6,15 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-e2e-findings.XXXXXX")"
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
+cat >"$bin_dir/megabrain_superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminals ] && [ "${2:-}" = close ]; then
+  printf '%s\n' '{"ok":true}'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$bin_dir/megabrain_superset"
 
 cleanup() {
   rm -rf "$state_dir"
@@ -36,6 +45,7 @@ assert_not_contains() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
+export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=parent-terminal
 export PATH="$bin_dir:$PATH"
 
@@ -173,7 +183,7 @@ megabrain_dispatch_message_append queued-proof child done 'finished before close
 megabrain_dispatch_reconcile_one queued-proof
 assert_equal "$MEGABRAIN_RECONCILE_OUTCOME" adopted
 assert_equal "$(jq -r '.terminalState' "$MEGABRAIN_DISPATCH_DIR/queued-proof/meta.json")" owned
-megabrain_dispatch_close queued-proof >/dev/null
+MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate close queued-proof >/dev/null
 assert_equal "$(jq -r '.terminalState' "$MEGABRAIN_DISPATCH_DIR/queued-proof/meta.json")" released
 printf 'child queue message proves identity for a done dispatch\n'
 

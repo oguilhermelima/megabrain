@@ -30,9 +30,18 @@ assert_missing() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
+export MEGABRAIN_ROOT="$root"
+export MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION=shell
 export SUPERSET_TERMINAL_ID=child-terminal
 unset TMUX TMUX_PANE
 mkdir -p "$fake_bin"
+
+fake_bin="$state_dir/bin"
+mkdir -p "$fake_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$fake_bin/tmux"
+printf '%s\n' '#!/usr/bin/env bash' 'if [ "${1:-}" = terminals ] && [ "${2:-}" = list ]; then exit 1; fi' 'exit 1' >"$fake_bin/megabrain_superset"
+chmod +x "$fake_bin/tmux" "$fake_bin/megabrain_superset"
+export PATH="$fake_bin:$PATH"
 
 source "$root/lib/common.sh"
 source "$root/lib/module-tmux-runtime.sh"
@@ -115,7 +124,7 @@ megabrain_dispatch_meta_write delete-dispatch parent-terminal superset superset 
 set_old delete-dispatch
 delete_result="$(command_orchestrate prune --delete --json)"
 assert_equal "$(printf '%s' "$delete_result" | jq -r '.deleted')" 0
-assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "delete-dispatch") | .reason')" 'host terminal identity is unproven; dispatch terminal was retained'
+assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "delete-dispatch") | .reason')" 'terminal identity is unproven'
 assert_file "$MEGABRAIN_DISPATCH_DIR/delete-dispatch/meta.json"
 assert_file "$MEGABRAIN_DISPATCH_DIR/running-dispatch/meta.json"
 assert_file "$MEGABRAIN_DISPATCH_DIR/unknown-dispatch/meta.json"
