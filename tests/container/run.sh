@@ -49,11 +49,9 @@ exec docker run --rm \
       commit -qm "fixture container source"
     cd "$HOME/work"
     bun run build
-    # The suite only reads this artifact. Lock the file after the single build so an
-    # unnoticed contract writer cannot open it for in-place replacement and race an exec.
-    # Keep the directory writable because some contracts copy the checkout and rebuild
-    # the copied artifact as part of an isolated fixture.
-    chmod a-w "$HOME/work/.build/megabrain"
+    shared_binary="$HOME/work/.build/megabrain"
+    shared_binary_inode_before="$(ls -di "$shared_binary" | awk '{print $1}')"
+    printf "shared artifact inode before tests: %s\n" "$shared_binary_inode_before"
     printf "bash %s on %s\n\n" "$BASH_VERSION" "$(uname -sm)"
     selected_tests=""
     if [ "$#" -eq 0 ]; then
@@ -177,6 +175,12 @@ EOF
     done
     printf "\n%s passed, %s failed, %s skipped\n" "$passed" "$failed" "$skipped"
     printf "slowest: %s (%ss); timeout ceiling: 60s; workers: %s\n" "$slowest_test" "$slowest_seconds" "$test_jobs"
+    shared_binary_inode_after="$(ls -di "$shared_binary" | awk '{print $1}')"
+    printf "shared artifact inode after tests: %s\n" "$shared_binary_inode_after"
+    if [ "$shared_binary_inode_after" != "$shared_binary_inode_before" ]; then
+      printf "shared artifact inode changed during the container run\n" >&2
+      failed=$((failed + 1))
+    fi
     if [ "$failed" -eq 0 ]; then
       printf "No failing tests.\n" >"$failure_report"
     fi
