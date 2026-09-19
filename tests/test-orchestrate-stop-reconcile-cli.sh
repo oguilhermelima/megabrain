@@ -50,7 +50,9 @@ run_binary() {
   local state="$1"; shift
   env -i HOME="$work/home" PATH="$work/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" \
     MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=parent \
-    ORCA_TERMINAL_HANDLE=parent "$root/.build/megabrain" "$@"
+    ORCA_TERMINAL_HANDLE=parent PS_IDENTITY="${PS_IDENTITY:-missing}" \
+    MEGABRAIN_TEST_DISPATCH="${MEGABRAIN_TEST_DISPATCH:-dispatch}" TMUX_CALLS="${TMUX_CALLS:-/dev/null}" \
+    "$root/.build/megabrain" "$@"
 }
 
 write_tmux_fixture() {
@@ -108,7 +110,7 @@ scenario_stop_interrupts_proven_working_agent() {
   output="$(TMUX_CALLS="$work/tmux.calls" MEGABRAIN_TEST_DISPATCH=stop-proven PS_IDENTITY=proven run_binary "$state" orchestrate stop stop-proven --json)"
   assert_json "$output" '.dispatchId == "stop-proven" and .status == "interrupted" and .result == "landed" and .interrupted == true'
   assert_contains "$(cat "$work/tmux.calls")" 'send-keys -t %1 Escape'
-  assert_equal "$(jq -s 'map(.type) | join(" ")' "$state/dispatches/stop-proven/messages"/*.json)" 'interrupt interrupt-result'
+  assert_equal "$(jq -sr 'map(.type) | join(" ")' "$state/dispatches/stop-proven/messages"/*.json)" 'interrupt interrupt-result'
   printf 'stop records and lands an interrupt only after identity and working checks\n'
 }
 
