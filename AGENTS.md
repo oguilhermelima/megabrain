@@ -28,7 +28,7 @@
 - Run megabrain ask "question".
 - Run megabrain done "summary".
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.
-- Run megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--consumer <id>] [--generation <number>] [--full] [--json].
+- Run megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json].
 - Run megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json].
 - Run megabrain chain list [--json].
 - Run megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>].
