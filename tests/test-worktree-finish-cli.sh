@@ -44,7 +44,7 @@ run_binary() {
 }
 
 scenario_routes_finish_to_binary() {
-  local fixture="$work/routing" state="$work/routing-state" output status
+  local fixture="$work/routing" state="$work/routing-state" output status backup modified
   source "$root/tests/fixtures/entrypoint-routing.sh"
   make_entrypoint_routing_fixture "$root" "$fixture" 97
   mkdir -p "$state/home"
@@ -57,6 +57,28 @@ scenario_routes_finish_to_binary() {
   assert_equal "$status" 97
   assert_contains "$output" 'installed skill source is missing'
   printf 'finish route reaches the compiled entrypoint: status=%s\n' "$status"
+  backup="$work/routing-module.saved"
+  modified="$work/routing-module.modified"
+  cp "$fixture/lib/module-worktree.sh" "$backup"
+  awk '$0 !~ /^    finish\) megabrain_worktree_finish / { print }' "$backup" >"$modified"
+  mv "$modified" "$fixture/lib/module-worktree.sh"
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
+    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
+    "$fixture/megabrain" worktree finish missing --json 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 97 ] || fail 'deleted finish route still reached the compiled entrypoint'
+  assert_contains "$output" 'unknown worktree command: finish'
+  cp "$backup" "$fixture/lib/module-worktree.sh"
+  set +e
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
+    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
+    "$fixture/megabrain" worktree finish missing --json 2>&1)"
+  status=$?
+  set -e
+  assert_equal "$status" 97
+  printf 'finish route deletion exposes the shell dispatcher and restoration reaches binary: status=%s\n' "$status"
 }
 
 scenario_recorded_parent_controls_base() {
