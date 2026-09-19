@@ -44,6 +44,7 @@ reconcile_state="$work/reconcile/state"
 mkdir -p "$reconcile_state/dispatches/uncertain"
 printf '%s\n' '{"dispatchId":"uncertain","state":"running","processState":"abandoned","terminalState":"owned","runtime":"tmux","tmuxSession":"missing","tmuxPane":"%9","createdAt":"2020-01-01T00:00:00Z"}' >"$reconcile_state/dispatches/uncertain/meta.json"
 reconciled="$(PATH="$fake_bin:$PATH" MEGABRAIN_STATE_DIR="$reconcile_state" "$root/.build/megabrain" orchestrate prune --json)"
-assert_path "$reconcile_state/dispatches/archive/$(date -u +%Y-%m)/uncertain/meta.json" true 'prune reconciles terminal-missing dispatch before archive'
-printf '%s' "$reconciled" | jq -e '.archivedDispatches | map(.dispatchId) | index("uncertain") != null' >/dev/null || fail 'reconciled dispatch was not reported as archived'
-printf 'prune reconciles uncertain dispatches before moving them\n'
+assert_equal "$(jq -r '.state' "$reconcile_state/dispatches/uncertain/meta.json")" failed 'prune reconciles terminal-missing dispatch'
+assert_path "$reconcile_state/dispatches/uncertain/meta.json" true 'reconcile keeps the freshly updated dispatch'
+printf '%s' "$reconciled" | jq -e '.skippedDispatches | any(.[]; .dispatchId == "uncertain" and (.reason | contains("younger")))' >/dev/null || fail 'reconciled dispatch was not reported as skipped safely'
+printf 'prune reconciles uncertain dispatches before applying age policy\n'

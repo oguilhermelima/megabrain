@@ -69,6 +69,6 @@ failure_binary="$(run_one "$state_binary" failure close-failure)"
 [ "$(printf '%s' "$failure_binary" | cut -f3)" = 'megabrain: could not close dispatch close-failure: terminal close denied by host' ] || fail "close-failure-reason: $(printf '%s' "$failure_binary" | cut -f3)"
 
 empty_binary="$(run_one "$state_binary" empty close-empty)"
-[ "$(printf '%s' "$empty_binary" | cut -f1)" = "0" ] || fail "close-empty-status: expected=0 actual=$(printf '%s' "$empty_binary" | cut -f1)"
-[ "$(printf '%s' "$empty_binary" | cut -f4 | jq -r .terminalState)" = released ] || fail 'close-empty did not release the absent host terminal'
+[ "$(printf '%s' "$empty_binary" | cut -f1)" = "1" ] || fail "close-empty-status: expected=1 actual=$(printf '%s' "$empty_binary" | cut -f1)"
+[ "$(printf '%s' "$empty_binary" | cut -f3)" = 'megabrain: could not close dispatch close-empty: the host gave no reason' ] || fail "close-empty-reason: $(printf '%s' "$empty_binary" | cut -f3)"
 printf '3 passed, 0 failed, 0 skipped\n'

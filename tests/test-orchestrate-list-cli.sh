@@ -54,7 +54,7 @@ chmod +x "$tmux_bin/tmux"
 tmux_state="$state_dir/tmux-state"
 mkdir -p "$tmux_state/dispatches/tmux-owned"
 printf '%s\n' '{"dispatchId":"tmux-owned","parentSessionId":"tmux-session:%7","parentHost":"tmux","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmux"}' >"$tmux_state/dispatches/tmux-owned/meta.json"
-tmux_output="$(env PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
+tmux_output="$(env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
   MEGABRAIN_SESSION_ID=wrong MEGABRAIN_SESSION_HOST=wrong "$root/.build/megabrain" orchestrate list --json)"
 printf '%s' "$tmux_output" | jq -e 'length == 1 and .[0].dispatchId == "tmux-owned" and .[0].ownedByCaller == true' >/dev/null ||
   fail "tmux caller identity was not selected: $tmux_output"
