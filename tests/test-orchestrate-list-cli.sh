@@ -59,3 +59,11 @@ tmux_output="$(env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE PATH="$tmux_b
 printf '%s' "$tmux_output" | jq -e 'length == 1 and .[0].dispatchId == "tmux-owned" and .[0].ownedByCaller == true' >/dev/null ||
   fail "tmux caller identity was not selected: $tmux_output"
 printf 'tmux caller identity follows the shell precedence\n'
+
+precedence_state="$state_dir/precedence"
+mkdir -p "$precedence_state/dispatches/superset-owned"
+printf '%s\n' '{"dispatchId":"superset-owned","parentSessionId":"caller","parentHost":"superset","state":"running","processState":"running","terminalState":"owned","worktreePath":"/superset"}' >"$precedence_state/dispatches/superset-owned/meta.json"
+precedence_output="$(MEGABRAIN_STATE_DIR="$precedence_state" MEGABRAIN_SESSION_ID=wrong MEGABRAIN_SESSION_HOST=wrong SUPERSET_TERMINAL_ID=caller ORCA_TERMINAL_HANDLE=other "$root/.build/megabrain" orchestrate list --json)"
+printf '%s' "$precedence_output" | jq -e 'length == 1 and .[0].dispatchId == "superset-owned" and .[0].ownedByCaller == true' >/dev/null ||
+  fail "Superset identity did not win over generic and Orca identities: $precedence_output"
+printf 'Superset identity wins over generic and Orca identities\n'
