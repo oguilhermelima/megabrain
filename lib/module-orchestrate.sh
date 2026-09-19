@@ -2032,141 +2032,22 @@ megabrain_dispatch_report() {
 }
 
 megabrain_dispatch_mailbox_watch() {
-  if [ "$1" = parent ]; then
-    local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-    if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_WATCH_IMPLEMENTATION:-}"; then
-      shift
-      "$typescript_binary" orchestrate watch "$@"
-      return $?
-    fi
-  fi
-  local mailbox="$1" dispatch_id timeout=120 poll_interval=3 wait_mode=nudge json=false full=false arg meta start_time now remaining
-  local consumer="${MEGABRAIN_CONSUMER_ID:-}" generation="${MEGABRAIN_CONSUMER_GENERATION:-1}"
-  local messages_dir deliveries_dir lock path seq from type message_seqs delivery_id outstanding_path outstanding_consumer outstanding_generation outstanding_seq candidate_seq delivery_status
+  local mailbox="${1:-}" module_root typescript_binary
+  module_root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  typescript_binary="${MEGABRAIN_ROOT:-$module_root}/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: child check is called by the turn-end hook on every agent turn; keeping this
+  # boundary binary-only prevents the retired mailbox implementation from being selected.
+  megabrain_warn_if_typescript_binary_stale
   shift
-  case "${1:-}" in
-    -h|--help)
-      if [ "$mailbox" = parent ]; then
-        megabrain_usage_show orchestrate-watch
-      else
-        megabrain_usage_show check
-      fi
-      return 0
-      ;;
+  case "$mailbox" in
+    parent) "$typescript_binary" orchestrate watch "$@" ;;
+    child) "$typescript_binary" check "$@" ;;
+    *) megabrain_error "unknown mailbox owner: $mailbox"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
-  if [ "$mailbox" = parent ]; then
-    dispatch_id="${1:-}"
-    [ -n "$dispatch_id" ] || { megabrain_usage_fail orchestrate-watch; return "$MEGABRAIN_USAGE_ERROR"; }
-    shift
-  else
-    megabrain_dispatch_find_child || return 1
-    dispatch_id="$MEGABRAIN_FOUND_DISPATCH"
-  fi
-  # Legacy actionable mail is migrated before this reader claims deliveries; new writes never
-  # depend on this path, and a migration is scoped to the dispatch being read.
-  megabrain_dispatch_migrate_legacy_deliveries "$dispatch_id" || true
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --timeout) timeout="${2:-}"; shift 2 ;;
-      --poll-interval) poll_interval="${2:-}"; shift 2 ;;
-      --wait-mode) wait_mode="${2:-}"; shift 2 ;;
-      --poll) wait_mode=poll; shift ;;
-      --consumer) consumer="${2:-}"; shift 2 ;;
-      --generation) generation="${2:-}"; shift 2 ;;
-      --full) full=true; shift ;;
-      --json) json=true; shift ;;
-      -h|--help)
-        if [ "$mailbox" = parent ]; then
-          megabrain_usage_show orchestrate-watch
-        else
-          megabrain_usage_show check
-        fi
-        return 0
-        ;;
-      *) megabrain_error "unknown orchestrate watch option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  [[ "$timeout" =~ ^[0-9]+$ ]] || { megabrain_error "--timeout must be a non-negative number of seconds"; return "$MEGABRAIN_USAGE_ERROR"; }
-  [[ "$poll_interval" =~ ^[0-9]+$ ]] || { megabrain_error "--poll-interval must be a non-negative number of seconds"; return "$MEGABRAIN_USAGE_ERROR"; }
-  case "$wait_mode" in nudge|poll) ;; *) megabrain_error "--wait-mode must be nudge or poll"; return "$MEGABRAIN_USAGE_ERROR" ;; esac
-  [[ "$generation" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "--generation must be a positive number"; return "$MEGABRAIN_USAGE_ERROR"; }
-  [[ "$MEGABRAIN_DISPATCH_DELIVERY_BATCH_CAP" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "delivery batch cap is invalid"; return 1; }
-  if [ "$mailbox" = parent ]; then
-    meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
-    megabrain_session_id >/dev/null
-    [ -n "$consumer" ] || consumer="$MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID"
-  else
-    meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-    [ -n "$consumer" ] || consumer="$(megabrain_dispatch_child_consumer)" || return 1
-  fi
-  [ -n "$consumer" ] || { megabrain_error "consumer identity is empty"; return 1; }
-  messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")"
-  deliveries_dir="$(megabrain_dispatch_deliveries_dir "$dispatch_id")"
-  mkdir -p "$deliveries_dir" || return 1
-  if [ "$mailbox" = parent ]; then
-    megabrain_parent_notify_waiter_register "$dispatch_id" "$meta" || return 1
-  fi
-  lock="$messages_dir/.lock"
-  start_time="$(date +%s)"
-  while true; do
-    megabrain_dispatch_lock_acquire "$lock" || return 1
-    outstanding_path=""
-    outstanding_seq=""
-    for path in "$deliveries_dir"/*.json; do
-      [ -f "$path" ] || continue
-      delivery_status="$(jq -r '.status // empty' "$path" 2>/dev/null || true)"
-      [ "$delivery_status" = outstanding ] || { [ "$full" = true ] && [ "$delivery_status" = superseded ]; } || continue
-      [ "$full" = true ] || [ "$(jq -r '.superseded // false' "$path" 2>/dev/null || true)" != true ] || continue
-      megabrain_dispatch_delivery_matches_mailbox "$dispatch_id" "$path" "$mailbox" "$full" || continue
-      outstanding_consumer="$(jq -r '.consumer // empty' "$path" 2>/dev/null || true)"
-      if [ -z "$outstanding_consumer" ] || [ "$outstanding_consumer" = "$consumer" ]; then
-        candidate_seq="$(jq -r '.messageSeqs[0] // empty' "$path" 2>/dev/null || true)"
-        if [[ "$candidate_seq" =~ ^[0-9]+$ ]] && {
-          [ -z "$outstanding_seq" ] || [ "$candidate_seq" -lt "$outstanding_seq" ]
-        }; then
-          outstanding_path="$path"
-          outstanding_seq="$candidate_seq"
-        fi
-      fi
-    done
-    if [ -n "$outstanding_path" ]; then
-      outstanding_consumer="$(jq -r '.consumer // empty' "$outstanding_path")"
-      outstanding_generation="$(jq -r '.consumerGeneration // empty' "$outstanding_path")"
-      delivery_id="$(jq -r '.id // empty' "$outstanding_path")"
-      if [ -z "$outstanding_consumer" ]; then
-        megabrain_dispatch_delivery_claim "$outstanding_path" "$consumer" "$generation" || {
-          rmdir "$lock"
-          [ "$mailbox" = parent ] && megabrain_parent_notify_waiter_unregister "$dispatch_id"
-          return 1
-        }
-        rmdir "$lock"
-        [ "$mailbox" = parent ] && megabrain_parent_notify_waiter_unregister "$dispatch_id"
-        megabrain_dispatch_delivery_report "$dispatch_id" "$delivery_id" false "$json"
-        return $?
-      fi
-      if [ "$outstanding_consumer" = "$consumer" ] && [ "$outstanding_generation" = "$generation" ]; then
-        rmdir "$lock"
-        [ "$mailbox" = parent ] && megabrain_parent_notify_waiter_unregister "$dispatch_id"
-        megabrain_dispatch_delivery_report "$dispatch_id" "$delivery_id" true "$json"
-        return $?
-      fi
-      megabrain_dispatch_delivery_fence "$outstanding_path" || { rmdir "$lock"; [ "$mailbox" = parent ] && megabrain_parent_notify_waiter_unregister "$dispatch_id"; return 1; }
-    fi
-    rmdir "$lock"
-    now="$(date +%s)"
-    if [ $((now - start_time)) -ge "$timeout" ]; then
-      [ "$mailbox" = parent ] && megabrain_parent_notify_waiter_unregister "$dispatch_id"
-      megabrain_dispatch_empty_delivery_report "$dispatch_id" "$json"
-      return 0
-    fi
-    if [ "$mailbox" = parent ] && [ "$wait_mode" = nudge ]; then
-      remaining=$((timeout - (now - start_time)))
-      [ "$remaining" -gt 0 ] && megabrain_parent_notify_wait_for_wake "$dispatch_id" "$remaining" || true
-    else
-      sleep "$poll_interval"
-    fi
-  done
 }
 
 megabrain_dispatch_watch() {
@@ -2188,186 +2069,22 @@ megabrain_dispatch_child_check() {
 }
 
 megabrain_dispatch_ack_for_owner() {
-  if [ "$1" = parent ] || [ "$1" = child ]; then
-    local owner="$1" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-    if megabrain_should_use_typescript_binary "${MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION:-}"; then
-      shift
-      if [ "$owner" = parent ]; then
-        "$typescript_binary" orchestrate ack "$@"
-      else
-        "$typescript_binary" ack "$@"
-      fi
-      return $?
-    fi
-  fi
-  local owner="$1" dispatch_id="" delivery_id="" consumer="${MEGABRAIN_CONSUMER_ID:-}" generation="${MEGABRAIN_CONSUMER_GENERATION:-1}"
-  local json=false close=false arg meta path status record_consumer record_generation lock tmp now message_seqs close_output
+  local owner="${1:-}" module_root typescript_binary
+  module_root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  typescript_binary="${MEGABRAIN_ROOT:-$module_root}/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: child acknowledgements are durable queue mutations; routing them only through the
+  # compiled command keeps the shell fallback from diverging from the shared queue semantics.
+  megabrain_warn_if_typescript_binary_stale
   shift
-  case "${1:-}" in
-    -h|--help)
-      if [ "$owner" = parent ]; then
-        megabrain_usage_show orchestrate-ack
-      else
-        megabrain_usage_show ack
-      fi
-      return 0
-      ;;
+  case "$owner" in
+    parent) "$typescript_binary" orchestrate ack "$@" ;;
+    child) "$typescript_binary" ack "$@" ;;
+    *) megabrain_error "unknown mailbox owner: $owner"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
-  if [ "$owner" = parent ]; then
-    dispatch_id="${1:-}"
-    delivery_id="${2:-}"
-    shift 2
-  else
-    delivery_id="${1:-}"
-    shift
-    megabrain_dispatch_find_child || return 1
-    dispatch_id="$MEGABRAIN_FOUND_DISPATCH"
-    [ -n "$consumer" ] || consumer="$(megabrain_dispatch_child_consumer)" || return 1
-  fi
-  [ -n "$dispatch_id" ] && [ -n "$delivery_id" ] || { megabrain_usage_fail orchestrate-ack; return "$MEGABRAIN_USAGE_ERROR"; }
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --consumer) consumer="${2:-}"; shift 2 ;;
-      --generation) generation="${2:-}"; shift 2 ;;
-      --close)
-        [ "$owner" = parent ] || { megabrain_error "unknown orchestrate ack option: $arg"; return "$MEGABRAIN_USAGE_ERROR"; }
-        close=true
-        shift
-        ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show orchestrate-ack; return 0 ;;
-      *) megabrain_error "unknown orchestrate ack option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  [[ "$generation" =~ ^[1-9][0-9]*$ ]] || { megabrain_error "--generation must be a positive number"; return "$MEGABRAIN_USAGE_ERROR"; }
-  if [ "$owner" = parent ]; then
-    meta="$(megabrain_dispatch_require_parent "$dispatch_id")" || return 1
-    megabrain_session_id >/dev/null
-    [ -n "$consumer" ] || consumer="$MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID"
-  else
-    meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-  fi
-  if [ "$close" = true ]; then
-    status="$(printf '%s' "$meta" | jq -r '.state // empty')"
-    case "$status" in
-      done|closed) ;;
-      *)
-        if [ "$json" = true ]; then
-          jq -n --arg message "dispatch $dispatch_id is ${status:-unknown}; refusing to acknowledge delivery with --close; dispatch must be done or closed" \
-            '{refusal: {code: "dispatch-not-done", message: $message}}'
-          megabrain_error "dispatch-not-done: dispatch $dispatch_id is ${status:-unknown}; refusing to acknowledge delivery with --close; dispatch must be done or closed"
-        else
-          megabrain_error "dispatch-not-done: dispatch $dispatch_id is ${status:-unknown}; refusing to acknowledge delivery with --close; dispatch must be done or closed"
-        fi
-        return 1
-        ;;
-    esac
-  fi
-  [ -n "$consumer" ] || { megabrain_error "consumer identity is empty"; return 1; }
-  path="$(megabrain_dispatch_delivery_path "$dispatch_id" "$delivery_id")" || return 1
-  [ -f "$path" ] || { megabrain_error "delivery $delivery_id refused: delivery is unknown"; return 1; }
-  lock="$(megabrain_dispatch_messages_dir "$dispatch_id")/.lock"
-  megabrain_dispatch_lock_acquire "$lock" || return 1
-  status="$(jq -r '.status // empty' "$path")"
-  case "$status" in
-    acknowledged)
-      # Idempotent acknowledgement makes retries safe after a lost connection.
-      message_seqs="$(jq -c '.messageSeqs // []' "$path")"
-      if [ "$owner" = child ] && megabrain_dispatch_delivery_is_reply "$dispatch_id" "$path" &&
-        ! megabrain_dispatch_has_reply_receipt "$dispatch_id" "$delivery_id"; then
-        megabrain_dispatch_message_append_locked "$dispatch_id" child ack "$delivery_id" "$MEGABRAIN_SESSION_ID" >/dev/null || {
-          rmdir "$lock"
-          return 1
-        }
-      fi
-      rmdir "$lock"
-      if [ "$close" = true ]; then
-        if [ "$json" = true ]; then
-          close_output="$(megabrain_dispatch_close "$dispatch_id" --json 2>&1)" || {
-            megabrain_error "delivery $delivery_id acknowledged; $close_output"
-            return 1
-          }
-          jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" --argjson close "$close_output" \
-            '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: true, status: "acknowledged", messageSeqs: $messageSeqs, close: $close}'
-        else
-          printf 'acknowledged: %s\nduplicate: true\n' "$delivery_id"
-          close_output="$(megabrain_dispatch_close "$dispatch_id" 2>&1)" || {
-            megabrain_error "delivery $delivery_id acknowledged; $close_output"
-            return 1
-          }
-          printf '%s\n' "$close_output"
-        fi
-        return 0
-      fi
-      if [ "$json" = true ]; then
-        jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" \
-          '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: true, status: "acknowledged", messageSeqs: $messageSeqs}'
-      else
-        printf 'acknowledged: %s\nduplicate: true\n' "$delivery_id"
-      fi
-      return 0
-      ;;
-    fenced)
-      # A fenced delivery must stay refused so an old generation cannot acknowledge a replacement batch.
-      rmdir "$lock"
-      megabrain_error "delivery $delivery_id refused: delivery is fenced"
-      return 1
-      ;;
-    outstanding|superseded) ;;
-    *)
-      rmdir "$lock"
-      megabrain_error "delivery $delivery_id refused: status is invalid ($status)"
-      return 1
-      ;;
-  esac
-  record_consumer="$(jq -r '.consumer // empty' "$path")"
-  record_generation="$(jq -r '.consumerGeneration // empty' "$path")"
-  if [ "$record_consumer" != "$consumer" ] || [ "$record_generation" != "$generation" ]; then
-    rmdir "$lock"
-    megabrain_error "delivery $delivery_id refused: outstanding delivery belongs to consumer $record_consumer generation $record_generation"
-    return 1
-  fi
-  now="$(megabrain_iso_now)"
-  if [ "$owner" = child ] && megabrain_dispatch_delivery_is_reply "$dispatch_id" "$path"; then
-    if ! megabrain_dispatch_has_reply_receipt "$dispatch_id" "$delivery_id"; then
-      megabrain_dispatch_message_append_locked "$dispatch_id" child ack "$delivery_id" "$MEGABRAIN_SESSION_ID" >/dev/null || {
-        rmdir "$lock"
-        return 1
-      }
-    fi
-  fi
-  tmp="$(mktemp "$(dirname "$path")/.delivery.XXXXXX")" || { rmdir "$lock"; return 1; }
-  if ! jq --arg now "$now" '.status = "acknowledged" | .acknowledgedAt = $now | .updatedAt = $now' "$path" >"$tmp"; then
-    rm -f "$tmp"
-    rmdir "$lock"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-  message_seqs="$(jq -c '.messageSeqs // []' "$path")"
-  rmdir "$lock"
-  if [ "$json" = true ]; then
-    if [ "$close" = true ]; then
-      close_output="$(megabrain_dispatch_close "$dispatch_id" --json 2>&1)" || {
-        megabrain_error "delivery $delivery_id acknowledged; $close_output"
-        return 1
-      }
-      jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" --argjson close "$close_output" \
-        '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: false, status: "acknowledged", messageSeqs: $messageSeqs, close: $close}'
-    else
-      jq -n --arg dispatchId "$dispatch_id" --arg deliveryId "$delivery_id" --argjson messageSeqs "$message_seqs" \
-        '{dispatchId: $dispatchId, deliveryId: $deliveryId, acknowledged: true, duplicate: false, status: "acknowledged", messageSeqs: $messageSeqs}'
-    fi
-  else
-    printf 'acknowledged: %s\nduplicate: false\n' "$delivery_id"
-    if [ "$close" = true ]; then
-      close_output="$(megabrain_dispatch_close "$dispatch_id" 2>&1)" || {
-        megabrain_error "delivery $delivery_id acknowledged; $close_output"
-        return 1
-      }
-      printf '%s\n' "$close_output"
-    fi
-  fi
 }
 
 megabrain_dispatch_ack() {

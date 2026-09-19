@@ -116,21 +116,23 @@ export function report(dispatch: string, delivery: CheckDelivery | undefined, me
 }
 
 export async function executeCheck(args: readonly string[], environment: CheckEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
-  let timeout = 120; let pollInterval = 3; let full = false; let json = false; let consumer = "";
+  let timeout = 120; let pollInterval = 3; let waitMode = "poll"; let full = false; let json = false; let consumer = "";
   let generation = environment.MEGABRAIN_CONSUMER_GENERATION === undefined ? 1 : Number(environment.MEGABRAIN_CONSUMER_GENERATION);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--timeout") timeout = Number(args[++index]);
     else if (arg === "--poll-interval") pollInterval = Number(args[++index]);
+    else if (arg === "--wait-mode") waitMode = args[++index] ?? "";
     else if (arg === "--consumer") consumer = args[++index] ?? "";
     else if (arg === "--generation") generation = Number(args[++index]);
     else if (arg === "--full") full = true;
     else if (arg === "--json") json = true;
-    else if (arg === "-h" || arg === "--help") return ok("Usage: megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
+    else if (arg === "-h" || arg === "--help") return ok("Usage: megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
     else return failed(`unknown check option: ${arg}`, 2);
   }
   if (!Number.isInteger(timeout) || timeout < 0) return failed("--timeout must be a non-negative number of seconds", 2);
   if (!Number.isInteger(pollInterval) || pollInterval < 0) return failed("--poll-interval must be a non-negative number of seconds", 2);
+  if (waitMode !== "poll") return failed("--wait-mode must be poll", 2);
   if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);
   const root = resolveStateDirectory(environment);
   const dispatch = await dispatchId(environment, root, processAdapter);

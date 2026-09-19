@@ -330,7 +330,7 @@ megabrain_usage_line() {
     ask) printf 'ask "question"' ;;
     done) printf 'done "summary"' ;;
     received) printf 'received' ;;
-    check) printf 'check [--timeout <seconds>] [--poll-interval <seconds>] [--consumer <id>] [--generation <number>] [--full] [--json]' ;;
+    check) printf 'check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]' ;;
     ack) printf 'ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]' ;;
     chain) printf 'chain list|limits|add|edit|delete|run|repair ...' ;;
     chain-list) printf 'chain list [--json]' ;;

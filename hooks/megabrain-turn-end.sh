@@ -91,7 +91,7 @@ MEGABRAIN_HOOK_STATE="$(printf '%s' "$MEGABRAIN_HOOK_META" | jq -r '.state // em
 
 megabrain_hook_check_reply() {
   local output message_count
-  output="$(megabrain_dispatch_child_check --timeout 0 --poll-interval 0 --wait-mode poll --json 2>/dev/null || true)"
+  output="$("$MEGABRAIN_HOOK_ROOT/megabrain" check --timeout 0 --poll-interval 0 --wait-mode poll --json 2>/dev/null || true)"
   message_count="$(printf '%s' "$output" | jq -r '(.messages // []) | length' 2>/dev/null || printf '0')"
   [[ "$message_count" =~ ^[1-9][0-9]*$ ]] || return 0
   if [ "${MEGABRAIN_HOOK_AGENT:-}" = cursor ]; then
