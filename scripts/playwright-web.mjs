@@ -37,6 +37,9 @@ const REPOSITORIES = {
 const MCP_CONFIG_NAMES = { chromium: 'chromium.json', firefox: 'firefox.json' };
 export const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 720 });
 export const DEFAULT_IMAGE_SETTLE_TIMEOUT_MS = 5000;
+export const DEFAULT_SCROLL_SETTLE_TIMEOUT_MS = 30000;
+export const SCROLL_SETTLE_STABLE_STEPS = 3;
+export const SCROLL_SETTLE_STEP_DELAY_MS = 100;
 export const MAX_VIEWPORT_DIMENSION = 10000;
 // BrowserStack's 2026 screen-resolution guide (sourcing StatCounter) informs the
 // mobile, tablet, and desktop conventions. Its figures are market-share context,
@@ -351,6 +354,34 @@ export async function settlePage(page, { imageTimeout = DEFAULT_IMAGE_SETTLE_TIM
       return image.alt || image.currentSrc || image.src || `image ${index + 1}`;
     }))).filter(Boolean);
   }, imageTimeout);
+}
+
+export async function settleByScrolling(page, {
+  timeout = DEFAULT_SCROLL_SETTLE_TIMEOUT_MS,
+  stableSteps = SCROLL_SETTLE_STABLE_STEPS,
+  stepDelay = SCROLL_SETTLE_STEP_DELAY_MS,
+} = {}) {
+  if (!Number.isSafeInteger(timeout) || timeout < 1) throw new Error('scroll timeout must be a positive integer in milliseconds');
+  if (!Number.isSafeInteger(stableSteps) || stableSteps < 1) throw new Error('scroll stable steps must be a positive integer');
+  if (!Number.isSafeInteger(stepDelay) || stepDelay < 1) throw new Error('scroll step delay must be a positive integer in milliseconds');
+
+  const startedAt = Date.now();
+  let previousHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  let stableCount = 0;
+  while (stableCount < stableSteps) {
+    const remaining = timeout - (Date.now() - startedAt);
+    if (remaining <= 0) throw new Error(`scroll settling timed out after ${timeout}ms`);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(Math.min(stepDelay, remaining));
+    const currentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+    if (currentHeight > previousHeight) {
+      previousHeight = currentHeight;
+      stableCount = 0;
+    } else {
+      stableCount += 1;
+    }
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
 }
 
 export async function prepareDeterministicRendering(page, { now = null } = {}) {
@@ -1131,6 +1162,8 @@ function validateScreen(screen) {
 
 export function captureRequestFromArgs(args) {
   const request = viewportRequestFromArgs(args);
+  const settle = argumentValue(args, '--settle', 'default');
+  if (!['default', 'scroll'].includes(settle)) throw new Error('--settle must be default or scroll');
   return {
     ...request,
     browser: argumentValue(args, '--browser', 'chromium'),
@@ -1147,15 +1180,34 @@ export function captureRequestFromArgs(args) {
       argumentValue(args, '--image-timeout', String(DEFAULT_IMAGE_SETTLE_TIMEOUT_MS)),
       '--image-timeout',
     ),
+    settle,
+    scrollTimeout: parsePositiveInteger(
+      argumentValue(args, '--scroll-timeout', String(DEFAULT_SCROLL_SETTLE_TIMEOUT_MS)),
+      '--scroll-timeout',
+    ),
     freezeTime: argumentValue(args, '--freeze-time', ''),
   };
 }
 
-async function renderScreen(context, screen, { freezeTime = '', imageTimeout = DEFAULT_IMAGE_SETTLE_TIMEOUT_MS } = {}) {
+function assertNavigationResponse(response, screen) {
+  const status = response?.status();
+  if (status >= 400) {
+    throw new Error(`navigation failed for screen ${screen.name}: ${screen.url} returned HTTP ${status}`);
+  }
+}
+
+async function renderScreen(context, screen, {
+  freezeTime = '',
+  imageTimeout = DEFAULT_IMAGE_SETTLE_TIMEOUT_MS,
+  settle = 'default',
+  scrollTimeout = DEFAULT_SCROLL_SETTLE_TIMEOUT_MS,
+} = {}) {
   const page = await context.newPage();
   await prepareDeterministicRendering(page, freezeTime ? { now: freezeTime } : {});
-  await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
+  const response = await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
+  assertNavigationResponse(response, screen);
   await disableAnimations(page);
+  if (settle === 'scroll') await settleByScrolling(page, { timeout: scrollTimeout });
   const slowImages = await settlePage(page, { imageTimeout });
   return { page, slowImages };
 }

@@ -14,8 +14,8 @@ function helpFor(args: readonly string[]): string {
   const lines: Readonly<Record<string, string>> = {
     "web-viewport": "Usage: megabrain web viewport set|show|devices ...\n",
     "web-userscript": "Usage: megabrain web userscript install|list|remove ...\n",
-    "web-capture": "Usage: megabrain web capture --url URL --screen NAME [options]\n",
-    "web-measure": "Usage: megabrain web measure --url URL --screen NAME [options]\n",
+    "web-capture": "Usage: megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]\n",
+    "web-measure": "Usage: megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]\n",
     "web-session": "Usage: megabrain web session save --url URL --output FILE [options]\n",
     "web-viewport-set": "Usage: megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape]\n",
     "web-viewport-show": "Usage: megabrain web viewport show [--browser chromium|firefox|both]\n",

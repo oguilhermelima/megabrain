@@ -257,9 +257,7 @@ NODE
 web_root="$HOME/.megabrain/playwright"
 web_install='megabrain install simulator-web --browser chromium'
 
-if [ "${MEGABRAIN_WEB_E2E:-true}" = false ]; then
-  printf 'skip: web end-to-end proof disabled by MEGABRAIN_WEB_E2E=false\n'
-elif [ ! -d "$web_root/node_modules/playwright" ]; then
+if [ ! -d "$web_root/node_modules/playwright" ]; then
   printf 'skip: pinned Playwright is not installed at %s; run %s\n' \
     "$web_root/node_modules/playwright" "$web_install"
 elif [ ! -f "$web_root/manifest.json" ]; then
@@ -283,7 +281,121 @@ NODE
   if [ -z "$web_browser_path" ] || [ ! -x "$web_browser_path" ]; then
     printf 'skip: pinned Chromium binary is missing at %s; run %s\n' \
       "${web_browser_path:-<unknown path>}" "$web_install"
-  else
-    node "$root/scripts/playwright-web.mjs" e2e-proof
+else
+    node --input-type=module - "$root/scripts/playwright-web.mjs" "$web_root" "$root" <<'NODE'
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import http from 'node:http';
+
+const [scriptPath, browserRoot, sourceRoot] = process.argv.slice(2);
+const script = await import(new URL(`file://${scriptPath}`).href);
+const fixtureRoot = fs.mkdtempSync(path.join(sourceRoot, '.web-fixture-'));
+const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'megabrain-web-state-'));
+const selectorsPath = path.join(fixtureRoot, 'selectors.json');
+const failurePage = path.join(fixtureRoot, 'failure.html');
+const scrollPage = path.join(fixtureRoot, 'scroll.html');
+fs.writeFileSync(failurePage, '<!doctype html><title>fixture failure</title><h1>fixture failure</h1>');
+fs.writeFileSync(scrollPage, `<!doctype html>
+<style>section { height: 900px; }</style>
+<section id="section-1">section 1</section>
+<script>
+  let nextSection = 2;
+  addEventListener('scroll', () => {
+    if (nextSection <= 4 && innerHeight + scrollY >= document.documentElement.scrollHeight - 8) {
+      const section = document.createElement('section');
+      section.id = 'section-' + nextSection;
+      section.textContent = 'section ' + nextSection;
+      document.body.append(section);
+      nextSection += 1;
+    }
+  });
+</script>`);
+fs.writeFileSync(selectorsPath, JSON.stringify({
+  section1: '#section-1',
+  section2: '#section-2',
+  section3: '#section-3',
+  section4: '#section-4',
+}));
+
+const config = script.buildBrowserConfig('chromium', {
+  root: browserRoot,
+  profile: path.join(browserRoot, 'profiles', 'chromium'),
+  extensions: {
+    ublock: path.join(browserRoot, 'extensions', 'chromium', 'ublock-origin-lite'),
+    violentmonkey: path.join(browserRoot, 'extensions', 'chromium', 'violentmonkey'),
+  },
+});
+const configPath = path.join(fixtureRoot, 'chromium.json');
+fs.writeFileSync(configPath, JSON.stringify(config));
+
+const server = http.createServer((request, response) => {
+  if (request.url === '/failure') {
+    response.writeHead(500, { 'content-type': 'text/html' });
+    response.end(fs.readFileSync(failurePage));
+    return;
+  }
+  if (request.url === '/scroll') {
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end(fs.readFileSync(scrollPage));
+    return;
+  }
+  response.writeHead(404);
+  response.end();
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const port = server.address().port;
+
+function run(args) {
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [scriptPath, ...args], {
+      env: { ...process.env, MEGABRAIN_STATE_DIR: stateRoot },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('close', status => resolve({ status, stdout, stderr }));
+  });
+}
+
+try {
+  const failedNavigation = await run([
+    'measure', '--root', browserRoot, '--config', configPath,
+    '--url', `http://127.0.0.1:${port}/failure`, '--screen', 'failed-navigation',
+  ]);
+  assert.notEqual(failedNavigation.status, 0, `failed navigation must fail: ${failedNavigation.stdout}`);
+
+  const withoutScroll = await run([
+    'measure', '--root', browserRoot, '--config', configPath,
+    '--url', `http://127.0.0.1:${port}/scroll`, '--screen', 'scroll', '--selectors', selectorsPath,
+  ]);
+  assert.equal(withoutScroll.status, 0, withoutScroll.stderr);
+  const withoutScrollGeometry = JSON.parse(withoutScroll.stdout);
+  assert.equal(Object.values(withoutScrollGeometry).filter(Boolean).length, 1);
+
+  const withScroll = await run([
+    'measure', '--root', browserRoot, '--config', configPath,
+    '--url', `http://127.0.0.1:${port}/scroll`, '--screen', 'scroll', '--selectors', selectorsPath,
+    '--settle', 'scroll', '--scroll-timeout', '3000',
+  ]);
+  assert.equal(withScroll.status, 0, withScroll.stderr);
+  const withScrollGeometry = JSON.parse(withScroll.stdout);
+  assert.equal(Object.values(withScrollGeometry).filter(Boolean).length, 4);
+  console.log('ok: web visual scenarios reject HTTP 500 and settle all four lazy sections');
+} finally {
+  server.close();
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  fs.rmSync(stateRoot, { recursive: true, force: true });
+}
+NODE
+    if [ "${MEGABRAIN_WEB_E2E:-true}" = false ]; then
+      printf 'skip: web end-to-end proof disabled by MEGABRAIN_WEB_E2E=false\n'
+    else
+      node "$root/scripts/playwright-web.mjs" e2e-proof
+    fi
   fi
 fi
