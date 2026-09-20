@@ -11,11 +11,12 @@ import { executeNative } from "../../src/cli/commands/native.js";
 import { failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
-type FakeTarget = "none" | "probe" | "hang" | "unchanged";
+type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "changed" | "delayed";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
   readonly evaluations: string[];
+  readonly routeInfoReads: number;
   readonly listRequests: number;
   readonly close: () => Promise<void>;
   readonly setTargets: (targets: FakeTarget) => void;
@@ -32,6 +33,17 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   const rawSockets = new Set<Socket>();
   let targets = initialTargets;
   let listRequests = 0;
+  let routeInfoReads = 0;
+
+  const currentRoute = { pathname: "/home", segments: ["(tabs)", "home"], params: {} };
+  const changedRoute = { pathname: "/home", segments: ["(tabs)", "home"], params: { filter: "favorites" } };
+
+  const routeInfo = () => {
+    const read = routeInfoReads++;
+    if (targets === "changed" && read > 0) return changedRoute;
+    if (targets === "delayed" && read > 1) return changedRoute;
+    return currentRoute;
+  };
 
   const sendProbeResult = (socket: WebSocket, message: string) => {
     const request = JSON.parse(message) as { id?: number; method?: string; params?: { expression?: string } };
@@ -42,14 +54,14 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
       return;
     }
-    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") || expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
+    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") ? { ok: true } : expression.includes("megabrain:route-info") ? routeInfo() : expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
     if (value !== undefined) socket.send(JSON.stringify({ id: request.id, result: { result: { type: typeof value === "number" ? "number" : "object", value } } }));
   };
 
   wsServer.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("message", (message) => {
-      if (targets === "probe" || targets === "unchanged") sendProbeResult(socket, message.toString());
+      if (targets === "probe" || targets === "unchanged" || targets === "changed" || targets === "delayed") sendProbeResult(socket, message.toString());
     });
     socket.on("close", () => sockets.delete(socket));
   });
@@ -85,6 +97,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     port,
     origins,
     evaluations,
+    get routeInfoReads() { return routeInfoReads; },
     get listRequests() { return listRequests; },
     setTargets(value) { targets = value; },
     async close() {
@@ -171,7 +184,30 @@ describe("Metro inspector transport", () => {
     }
   });
 
-  test("reports no remount when navigate leaves the active route unchanged", async () => {
+  test("proves navigation when the reported params change", async () => {
+    const server = await fakeMetro("changed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-cdp-"));
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    const process: ProcessAdapter = {
+      async run(command) { return command === "git" ? failed("git is unavailable") : failed(`${command} should not run`); },
+      async startDetached() { return failed("must not start a process"); },
+      invocationCount() { return 0; },
+    };
+
+    try {
+      const result = await executeNative(["navigate", "phone", "/home", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+
+      expect(result.kind).toBe("ok");
+      expect(server.routeInfoReads).toBeGreaterThan(1);
+      expect(server.evaluations.some((expression) => expression.includes("getRouteInfo"))).toBe(true);
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ before: { pathname: "/home", params: {} }, after: { pathname: "/home", params: { filter: "favorites" } } });
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("reports no route change when the reported route is unchanged", async () => {
     const server = await fakeMetro("unchanged");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-cdp-"));
     await mkdir(join(worktree, ".megabrain"));
@@ -186,8 +222,34 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["navigate", "phone", "/home"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
 
       expect(result.kind).toBe("failed");
-      expect(server.evaluations.some((expression) => expression.includes("expo-router/build/global-state/router-store.js"))).toBe(true);
-      if (result.kind === "failed") expect(result.error).toContain("did not remount");
+      expect(server.routeInfoReads).toBeGreaterThan(1);
+      expect(server.evaluations.some((expression) => expression.includes("getRouteInfo"))).toBe(true);
+      if (result.kind === "failed") {
+        expect(result.error).toContain("route did not change");
+        expect(result.error).toContain("/home");
+      }
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("polls until the reported route changes", async () => {
+    const server = await fakeMetro("delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-cdp-"));
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    const process: ProcessAdapter = {
+      async run(command) { return command === "git" ? failed("git is unavailable") : failed(`${command} should not run`); },
+      async startDetached() { return failed("must not start a process"); },
+      invocationCount() { return 0; },
+    };
+
+    try {
+      const result = await executeNative(["navigate", "phone", "/home", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+
+      expect(result.kind).toBe("ok");
+      expect(server.routeInfoReads).toBeGreaterThan(2);
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ after: { params: { filter: "favorites" } } });
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
