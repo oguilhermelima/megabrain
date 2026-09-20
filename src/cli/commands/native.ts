@@ -464,14 +464,20 @@ async function nativeEval(args: readonly string[], environment: Environment, pro
 const routerModuleExpression = `(() => {
   const resolver = globalThis.__r;
   if (resolver === undefined || typeof resolver.getModules !== "function") throw new Error("Metro module registry is unavailable");
-  const find = (paths) => {
+  const find = (modulePath, exportName) => {
     for (const [id, metadata] of resolver.getModules()) {
       const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
-      if (typeof name === "string" && paths.some((path) => name === path || name.endsWith("/" + path))) return resolver(id);
+      if (typeof name !== "string" || (name !== modulePath && !name.endsWith("/" + modulePath))) continue;
+      const module = resolver(id);
+      if (module === null || (typeof module !== "object" && typeof module !== "function") || !(exportName in module)) throw new Error("required Expo Router export " + exportName + " is unavailable from " + modulePath);
+      return module[exportName];
     }
-    throw new Error("required Expo Router module is unavailable");
+    throw new Error("required Expo Router module " + modulePath + " is unavailable (expected export " + exportName + ")");
   };
-  return { router: find(["expo-router/build/imperative-api.js"]).router, navigationRef: find(["expo-router/build/global-state/navigation-ref.js", "expo-router/build/global-state/navigationRef.js"]).navigationRef };
+  const router = find("expo-router/build/imperative-api.js", "router");
+  const store = find("expo-router/build/global-state/router-store.js", "store");
+  if (store === null || (typeof store !== "object" && typeof store !== "function") || !("navigationRef" in store)) throw new Error("required Expo Router export navigationRef is unavailable from expo-router/build/global-state/router-store.js export store");
+  return { router, navigationRef: store.navigationRef };
 })()`;
 const navigationStateExpression = `(() => {
   const modules = ${routerModuleExpression};

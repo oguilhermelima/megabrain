@@ -15,6 +15,7 @@ type FakeTarget = "none" | "probe" | "hang" | "unchanged";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
+  readonly evaluations: string[];
   readonly listRequests: number;
   readonly close: () => Promise<void>;
   readonly setTargets: (targets: FakeTarget) => void;
@@ -27,6 +28,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   const sockets = new Set<WebSocket>();
   const wsServer = new WebSocketServer({ noServer: true });
   const origins: string[] = [];
+  const evaluations: string[] = [];
   const rawSockets = new Set<Socket>();
   let targets = initialTargets;
   let listRequests = 0;
@@ -35,6 +37,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     const request = JSON.parse(message) as { id?: number; method?: string; params?: { expression?: string } };
     if (request.method !== "Runtime.evaluate" || request.id === undefined) return;
     const expression = request.params?.expression ?? "";
+    evaluations.push(expression);
     if (expression.startsWith("throw")) {
       socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
       return;
@@ -81,6 +84,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   const server: FakeMetro = {
     port,
     origins,
+    evaluations,
     get listRequests() { return listRequests; },
     setTargets(value) { targets = value; },
     async close() {
@@ -182,6 +186,7 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["navigate", "phone", "/home"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
 
       expect(result.kind).toBe("failed");
+      expect(server.evaluations.some((expression) => expression.includes("expo-router/build/global-state/router-store.js"))).toBe(true);
       if (result.kind === "failed") expect(result.error).toContain("did not remount");
     } finally {
       await rm(worktree, { recursive: true, force: true });
