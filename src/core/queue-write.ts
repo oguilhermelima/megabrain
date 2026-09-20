@@ -5,8 +5,11 @@ export type QueueRecipient = "parent" | "child" | undefined;
 
 export function parseChildMessage(type: string, args: readonly string[]): Result<string> {
   if (type === "received") return args.length === 0 ? ok("prompt received") : failed("Usage: megabrain received\n", 2);
-  if (type === "ask") return args.length === 1 && args[0] !== "" ? ok(args[0]) : failed('Usage: megabrain ask "question"\n', 2);
-  if (type === "done") return args.length === 1 && args[0] !== "" ? ok(args[0]) : failed('Usage: megabrain done "summary"\n', 2);
+  if (type === "ask" || type === "done") {
+    const text = args[0] === "--text" ? args.length === 2 ? args[1] : "" : args.length === 1 ? args[0] : "";
+    const usage = type === "ask" ? 'Usage: megabrain ask "question"\n' : 'Usage: megabrain done "summary"\n';
+    return text !== "" ? ok(text) : failed(usage, 2);
+  }
   return failed(`unsupported child message type: ${type}`, 2);
 }
 
