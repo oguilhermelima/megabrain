@@ -6,6 +6,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
 import { createNativeSessionStore } from "../../adapters/native-session-store.js";
+import { connectMetroInspector, type MetroEvaluation } from "../../core/native-cdp.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
@@ -250,7 +251,7 @@ function appiumMessage(body: string): string | undefined {
 }
 function appiumHttpFailure(action: string, response: AppiumResponse): string {
   const message = appiumMessage(response.body);
-  return `${action} failed (HTTP ${response.status})${message ? `: ${message}` : ""}`;
+  return `${action} (HTTP ${response.status})${message ? `: ${message}` : ""}`;
 }
 async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform): Promise<Result<string>> {
   const session = await processAdapter.run("curl", ["-sS", "-w", "\n%{http_code}", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(platform, key.udid, key.bundleId) } })]);
@@ -414,6 +415,126 @@ async function nativeReload(args: readonly string[], environment: Environment, p
   if (open.kind !== "ok") return error(`failed to open URL on simulator ${selected.value.udid}: ${url.value}`);
   return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, bundleId, url: url.value, terminated: true, opened: true, renderObserved: false })}\n`) : ok(`reloaded ${bundleId} on simulator ${selected.value.udid}: terminated and opened ${url.value}; app rendering was not observed\n`);
 }
+
+function runtimeValue(value: unknown): string {
+  if (value === undefined) return "undefined\n";
+  try { return `${JSON.stringify(value)}\n`; } catch { return `${String(value)}\n`; }
+}
+function formatEvaluation(evaluation: MetroEvaluation, json: boolean): Result<string> {
+  if (json) {
+    const value = evaluation.kind === "value" ? evaluation.value : null;
+    const exception = evaluation.kind === "exception" ? evaluation.message : null;
+    return ok(`${JSON.stringify({ value, exception })}\n`);
+  }
+  return evaluation.kind === "exception" ? ok(`expression threw: ${evaluation.message}\n`) : ok(runtimeValue(evaluation.value));
+}
+function cdpArguments(args: readonly string[], environment: Environment): Result<{ kind: NativeKind; timeoutMs: number; expression: string }> {
+  const kind = parseKind(args); if (kind.kind !== "ok") return kind;
+  const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
+  const timeout = validateTimeout(timeoutRaw); if (timeout.kind !== "ok") return timeout;
+  const expressionParts: string[] = [];
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") continue;
+    if ((arg === "--timeout" || arg === "--metro-port") && args[index + 1] !== undefined) { index += 1; continue; }
+    if (arg.startsWith("--")) return error(`unknown native CDP option: ${arg}`, 2);
+    expressionParts.push(arg);
+  }
+  if (expressionParts.length === 0) return error("native eval requires an expression");
+  return ok({ kind: kind.value, timeoutMs: timeout.value * 1000, expression: expressionParts.join(" ") });
+}
+async function nativeEval(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]\n");
+  const parsed = cdpArguments(args, environment); if (parsed.kind !== "ok") return parsed;
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
+  const portRaw = optionValue(args, "--metro-port") ?? setting(loaded.value, parsed.value.kind, "metroPort");
+  const validPort = validateMetroPort(portRaw); if (validPort.kind !== "ok") return validPort;
+  if (validPort.value === "" || validPort.value === "none") return error(`Metro port is required for ${parsed.value.kind}; pass --metro-port`);
+  const connection = await connectMetroInspector(Number(validPort.value), parsed.value.timeoutMs);
+  if (connection.kind !== "ok") return connection;
+  try {
+    const evaluation = await connection.value.evaluate(parsed.value.expression, parsed.value.timeoutMs);
+    if (evaluation.kind !== "ok") return evaluation;
+    return formatEvaluation(evaluation.value, args.includes("--json"));
+  } finally {
+    connection.value.close();
+  }
+}
+const routerModuleExpression = `(() => {
+  const resolver = globalThis.__r;
+  if (resolver === undefined || typeof resolver.getModules !== "function") throw new Error("Metro module registry is unavailable");
+  const find = (paths) => {
+    for (const [id, metadata] of resolver.getModules()) {
+      const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
+      if (typeof name === "string" && paths.some((path) => name === path || name.endsWith("/" + path))) return resolver(id);
+    }
+    throw new Error("required Expo Router module is unavailable");
+  };
+  return { router: find(["expo-router/build/imperative-api.js"]).router, navigationRef: find(["expo-router/build/global-state/navigation-ref.js", "expo-router/build/global-state/navigationRef.js"]).navigationRef };
+})()`;
+const navigationStateExpression = `(() => {
+  const modules = ${routerModuleExpression};
+  let state = modules.navigationRef.getRootState();
+  let route = null;
+  while (state && Array.isArray(state.routes)) {
+    route = state.routes[typeof state.index === "number" ? state.index : 0];
+    state = route?.state;
+  }
+  return route === null ? null : { key: route.key ?? null, name: route.name ?? null };
+})() /* megabrain:navigation-state */`;
+function navigationExpression(path: string): string {
+  return `(() => {
+    const modules = ${routerModuleExpression};
+    if (modules.router.canDismiss()) modules.router.dismissAll();
+    modules.router.navigate(${JSON.stringify(path)});
+  })() /* megabrain:navigate */`;
+}
+type RouteSnapshot = Readonly<{ key: string | null; name: string | null }>;
+function routeSnapshot(value: unknown): RouteSnapshot | undefined {
+  if (typeof value !== "object" || value === null) return value === null ? { key: null, name: null } : undefined;
+  const item = value as { key?: unknown; name?: unknown };
+  return { key: typeof item.key === "string" ? item.key : null, name: typeof item.name === "string" ? item.name : null };
+}
+async function nativeNavigate(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n");
+  const parsed = cdpArguments(args, environment); if (parsed.kind !== "ok") return parsed;
+  const path = parsed.value.expression;
+  if (!path.startsWith("/")) return error(`native navigate requires an absolute route path: ${path}`, 2);
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
+  const portRaw = optionValue(args, "--metro-port") ?? setting(loaded.value, parsed.value.kind, "metroPort");
+  const validPort = validateMetroPort(portRaw); if (validPort.kind !== "ok") return validPort;
+  if (validPort.value === "" || validPort.value === "none") return error(`Metro port is required for ${parsed.value.kind}; pass --metro-port`);
+  const connection = await connectMetroInspector(Number(validPort.value), parsed.value.timeoutMs);
+  if (connection.kind !== "ok") return connection;
+  try {
+    const before = await connection.value.evaluate(navigationStateExpression, parsed.value.timeoutMs);
+    if (before.kind !== "ok") return before;
+    if (before.value.kind === "exception") return error(`could not read current route: ${before.value.message}`);
+    const beforeRoute = routeSnapshot(before.value.value);
+    if (beforeRoute === undefined) return error("could not read current route: inspector returned invalid route state");
+    const navigate = await connection.value.evaluate(navigationExpression(path), parsed.value.timeoutMs);
+    if (navigate.kind !== "ok") return navigate;
+    if (navigate.value.kind === "exception") return error(`navigation expression threw: ${navigate.value.message}`);
+    const deadline = Date.now() + parsed.value.timeoutMs;
+    let afterRoute: RouteSnapshot | undefined;
+    while (Date.now() < deadline) {
+      const remaining = Math.max(1, deadline - Date.now());
+      const after = await connection.value.evaluate(navigationStateExpression, Math.min(500, remaining));
+      if (after.kind === "ok" && after.value.kind === "value") {
+        afterRoute = routeSnapshot(after.value.value);
+        if (afterRoute !== undefined && JSON.stringify(afterRoute) !== JSON.stringify(beforeRoute)) break;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
+    }
+    if (afterRoute === undefined || JSON.stringify(afterRoute) === JSON.stringify(beforeRoute)) return error(`navigation did not remount route: active route remained ${beforeRoute.name ?? "unknown"}`);
+    const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, remounted: true };
+    return args.includes("--json") ? ok(`${JSON.stringify(output)}\n`) : ok(`navigated ${path}: active route remounted\n`);
+  } finally {
+    connection.value.close();
+  }
+}
 async function appium(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("appium"));
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("appium"));
@@ -465,6 +586,8 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter);
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "eval") result = await nativeEval([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "navigate") result = await nativeNavigate([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
   else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));

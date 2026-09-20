@@ -232,7 +232,7 @@ describe("native health Appium session", () => {
     try {
       const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--metro-port", "none", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.value).tree.reason).toContain("'automationName' is required to be present");
+      expect(JSON.parse(result.value).tree.reason).toContain("Appium server rejected session (HTTP 400): 'automationName' is required to be present");
     } finally {
       await rm(state, { recursive: true, force: true });
     }
