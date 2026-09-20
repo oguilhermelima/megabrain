@@ -15,16 +15,16 @@ describe("parseChildMessage", () => {
   test.each([
     ["received", ["extra"], "Usage: megabrain received\n"],
     ["received", ["--text", "hello"], "Usage: megabrain received\n"],
-    ["ask", [], "Usage: megabrain ask \"question\"\n"],
-    ["ask", [""], "Usage: megabrain ask \"question\"\n"],
-    ["ask", ["--text"], "Usage: megabrain ask \"question\"\n"],
-    ["ask", ["--text", ""], "Usage: megabrain ask \"question\"\n"],
-    ["ask", ["question", "--text", "other"], "Usage: megabrain ask \"question\"\n"],
-    ["done", [], "Usage: megabrain done \"summary\"\n"],
-    ["done", [""], "Usage: megabrain done \"summary\"\n"],
-    ["done", ["--text"], "Usage: megabrain done \"summary\"\n"],
-    ["done", ["--text", ""], "Usage: megabrain done \"summary\"\n"],
-    ["done", ["summary", "--text", "other"], "Usage: megabrain done \"summary\"\n"],
+    ["ask", [], "Usage: megabrain ask \"question\" | megabrain ask --text \"question\"\n"],
+    ["ask", [""], "Usage: megabrain ask \"question\" | megabrain ask --text \"question\"\n"],
+    ["ask", ["--text"], "Usage: megabrain ask \"question\" | megabrain ask --text \"question\"\n"],
+    ["ask", ["--text", ""], "Usage: megabrain ask \"question\" | megabrain ask --text \"question\"\n"],
+    ["ask", ["question", "--text", "other"], "Usage: megabrain ask \"question\" | megabrain ask --text \"question\"\n"],
+    ["done", [], "Usage: megabrain done \"summary\" | megabrain done --text \"summary\"\n"],
+    ["done", [""], "Usage: megabrain done \"summary\" | megabrain done --text \"summary\"\n"],
+    ["done", ["--text"], "Usage: megabrain done \"summary\" | megabrain done --text \"summary\"\n"],
+    ["done", ["--text", ""], "Usage: megabrain done \"summary\" | megabrain done --text \"summary\"\n"],
+    ["done", ["summary", "--text", "other"], "Usage: megabrain done \"summary\" | megabrain done --text \"summary\"\n"],
   ] as const)("rejects invalid %s arguments", (type, args, error) => {
     expect(parseChildMessage(type, args)).toEqual({ kind: "failed", error, exitCode: 2 });
   });
