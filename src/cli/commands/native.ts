@@ -223,15 +223,16 @@ function unknownMetro(reason: string): NativeHealth["metro"] { return { state: "
 function unknownTree(reason: string): NativeHealth["tree"] { return { count: null, reason }; }
 function unknownFrame(reason: string): NativeHealth["frame"] { return { state: "unknown", reason }; }
 const APPIUM_SESSION_DEFAULTS = {
+  "appium:automationName": "XCUITest",
   "appium:isHeadless": true,
   "appium:newCommandTimeout": 60,
 } as const;
-function appiumSessionCapabilities(udid: string, bundleId: string): Record<string, string | boolean | number> {
-  return { platformName: "iOS", ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
+function appiumSessionCapabilities(platform: NativePlatform, udid: string, bundleId: string): Record<string, string | boolean | number> {
+  return { platformName: platform, ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
 }
 type AppiumSession = Readonly<{ sessionId: string; stored: boolean }>;
-async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey): Promise<string | undefined> {
-  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(key.udid, key.bundleId) } })]);
+async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform): Promise<string | undefined> {
+  const session = await processAdapter.run("curl", ["-fsS", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(platform, key.udid, key.bundleId) } })]);
   if (session.kind !== "ok") return undefined;
   try {
     const value = JSON.parse(session.value.stdout) as { sessionId?: string; value?: { sessionId?: string } };
@@ -243,10 +244,10 @@ async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSe
 }
 // WHY: the TypeScript path reuses verified sessions; the unchanged shell path keeps its
 // create/read/destroy behavior because both paths return identical health output.
-async function appiumSession(environment: Environment, processAdapter: ProcessAdapter, key: NativeSessionKey): Promise<Result<AppiumSession | undefined>> {
+async function appiumSession(environment: Environment, processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform): Promise<Result<AppiumSession | undefined>> {
   const store = createNativeSessionStore(environment);
   if (!store.available) {
-    const sessionId = await createAppiumSession(processAdapter, key);
+    const sessionId = await createAppiumSession(processAdapter, key, platform);
     return ok(sessionId === undefined ? undefined : { sessionId, stored: false });
   }
   return store.update(async (sessions) => {
@@ -257,7 +258,7 @@ async function appiumSession(environment: Environment, processAdapter: ProcessAd
       if (probe.kind === "ok") return { sessions, value: { sessionId: recorded.sessionId, stored: true } };
       current = removeNativeSession(sessions, key);
     }
-    const sessionId = await createAppiumSession(processAdapter, key);
+    const sessionId = await createAppiumSession(processAdapter, key, platform);
     if (sessionId === undefined) return { sessions: current, value: undefined };
     return { sessions: replaceNativeSession(current, { ...key, sessionId }), value: { sessionId, stored: true } };
   });
@@ -296,7 +297,8 @@ async function nativeHealth(args: readonly string[], environment: Environment, p
   }
 
   let tree: NativeHealth["tree"] = unknownTree("accessibility tree could not be consulted");
-  const session = await appiumSession(environment, processAdapter, { udid, bundleId });
+  const platform: NativePlatform = kind.value === "phone" ? "iOS" : "tvOS";
+  const session = await appiumSession(environment, processAdapter, { udid, bundleId }, platform);
   if (session.kind === "ok" && session.value !== undefined) {
     const source = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${session.value.sessionId}/source`]);
     if (source.kind === "ok") tree = { count: (source.value.stdout.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? []).length };
