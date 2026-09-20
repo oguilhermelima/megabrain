@@ -251,7 +251,7 @@ function appiumMessage(body: string): string | undefined {
 }
 function appiumHttpFailure(action: string, response: AppiumResponse): string {
   const message = appiumMessage(response.body);
-  return `${action} failed (HTTP ${response.status})${message ? `: ${message}` : ""}`;
+  return `${action} (HTTP ${response.status})${message ? `: ${message}` : ""}`;
 }
 async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform): Promise<Result<string>> {
   const session = await processAdapter.run("curl", ["-sS", "-w", "\n%{http_code}", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(platform, key.udid, key.bundleId) } })]);
