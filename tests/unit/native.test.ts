@@ -157,14 +157,15 @@ describe("native build planning", () => {
 
 describe("native health Appium session", () => {
   test("requests a headless driver session", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-"));
     const calls: Array<{ command: string; args: string[] }> = [];
     const process: ProcessAdapter = {
       async run(command, args) {
         calls.push({ command, args: [...args] });
         if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
         if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
-        if (command === "curl" && args[3] === "http://127.0.0.1:4723/session") return ok({ stdout: JSON.stringify({ value: { sessionId: "session-1" } }), stderr: "", exitCode: 0 });
-        if (command === "curl" && args[0] === "-fsS" && args[1]?.includes("/source")) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>", stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) return ok({ stdout: `${JSON.stringify({ value: { sessionId: "session-1" } })}\n200`, stderr: "", exitCode: 0 });
+        if (command === "curl" && args.some((arg) => arg.includes("/source"))) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>\n200", stderr: "", exitCode: 0 });
         if (command === "curl" && args[0] === "-fsS" && args[1] === "-X") return ok({ stdout: "", stderr: "", exitCode: 0 });
         return failed(`${command} unavailable`);
       },
@@ -172,12 +173,117 @@ describe("native health Appium session", () => {
       invocationCount: () => calls.length,
     };
 
-    const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], {}, process);
-    expect(result.kind).toBe("ok");
-    const sessionRequest = calls.find((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
-    expect(sessionRequest).toBeDefined();
-    expect(JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch["appium:isHeadless"]).toBe(true);
-    expect(JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch["appium:newCommandTimeout"]).toBe(60);
+    try {
+      const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      const sessionRequest = calls.find((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
+      expect(sessionRequest).toBeDefined();
+      const capabilities = JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch;
+      expect(capabilities.platformName).toBe("iOS");
+      expect(capabilities["appium:automationName"]).toBe("XCUITest");
+      expect(capabilities["appium:isHeadless"]).toBe(true);
+      expect(capabilities["appium:newCommandTimeout"]).toBe(60);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+
+  test("requests a tvOS driver session for tv health", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-"));
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "tvOS-1": [{ udid: "tv-one", state: "Booted", name: "Apple TV", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.tv", stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) return ok({ stdout: `${JSON.stringify({ value: { sessionId: "session-tv" } })}\n200`, stderr: "", exitCode: 0 });
+        if (command === "curl" && args.some((arg) => arg.includes("/source"))) return ok({ stdout: "<XCUIElementTypeWindow/>\n200", stderr: "", exitCode: 0 });
+        if (command === "curl" && args[0] === "-fsS" && args[1] === "-X") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => calls.length,
+    };
+
+    try {
+      const result = await executeNative(["health", "tv", "--bundle-id", "com.example.tv", "--device", "tv-one"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      const sessionRequest = calls.find((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
+      expect(sessionRequest).toBeDefined();
+      expect(JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch.platformName).toBe("tvOS");
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the server message when Appium rejects a session", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-"));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) return ok({ stdout: `${JSON.stringify({ value: { error: "invalid argument", message: "'automationName' is required to be present" } })}\n400`, stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => 0,
+    };
+
+    try {
+      const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--metro-port", "none", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.value).tree.reason).toContain("'automationName' is required to be present");
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+
+  test("distinguishes an unreachable Appium server from a rejected session", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-"));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) return failed("curl: (7) Failed to connect to 127.0.0.1 port 4723: Connection refused");
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => 0,
+    };
+
+    try {
+      const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--metro-port", "none", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      const reason = JSON.parse(result.value).tree.reason;
+      expect(reason).toContain("Appium server was unreachable");
+      expect(reason).not.toContain("automationName");
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+
+  test("reports a failed source request after creating a session", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-"));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) return ok({ stdout: `${JSON.stringify({ value: { sessionId: "session-1" } })}\n200`, stderr: "", exitCode: 0 });
+        if (command === "curl" && args.some((arg) => arg.includes("/source"))) return ok({ stdout: `${JSON.stringify({ value: { error: "unknown error", message: "source endpoint failed" } })}\n500`, stderr: "", exitCode: 0 });
+        if (command === "curl" && args[0] === "-fsS" && args[1] === "-X") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => 0,
+    };
+
+    try {
+      const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--metro-port", "none", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.value).tree.reason).toContain("source endpoint failed");
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
   });
 });
 

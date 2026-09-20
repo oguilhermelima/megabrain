@@ -18,26 +18,28 @@ async function seed(directory: string, sessions: readonly { readonly udid: strin
   await writeFile(join(directory, "native-sessions.json"), `${JSON.stringify({ version: 1, sessions })}\n`);
 }
 
-function processStub(options: { readonly dead?: ReadonlySet<string>; readonly postDelay?: number } = {}): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[] }[] } {
+function processStub(options: { readonly dead?: ReadonlySet<string>; readonly postDelay?: number; readonly kind?: "phone" | "tv" } = {}): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[] }[] } {
   const calls: Array<{ readonly command: string; readonly args: readonly string[] }> = [];
   let created = 0;
   const dead = options.dead ?? new Set<string>();
+  const kind = options.kind ?? "phone";
+  const device = kind === "tv" ? "tv-one" : "one";
   return {
     calls,
     async run(command, args) {
       calls.push({ command, args: [...args] });
-      if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
-      if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
-      if (command === "curl" && args[3] === "http://127.0.0.1:4723/session") {
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { [kind === "tv" ? "tvOS-1" : "iOS-1"]: [{ udid: device, state: "Booted", name: kind === "tv" ? "Apple TV" : "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+      if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: kind === "tv" ? "com.example.tv" : "com.example.app", stderr: "", exitCode: 0 });
+      if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) {
         if (options.postDelay !== undefined) await new Promise((resolve) => setTimeout(resolve, options.postDelay));
         created += 1;
-        return ok({ stdout: JSON.stringify({ value: { sessionId: `created-${created}` } }), stderr: "", exitCode: 0 });
+        return ok({ stdout: `${JSON.stringify({ value: { sessionId: `created-${created}` } })}\n200`, stderr: "", exitCode: 0 });
       }
-      if (command === "curl" && args[0] === "-fsS" && args[1]?.startsWith("http://127.0.0.1:4723/session/") && !args[1].endsWith("/source")) {
-        const sessionId = args[1].slice("http://127.0.0.1:4723/session/".length);
+      if (command === "curl" && args.some((arg) => arg.startsWith("http://127.0.0.1:4723/session/")) && !args.some((arg) => arg.endsWith("/source"))) {
+        const sessionId = args.find((arg) => arg.startsWith("http://127.0.0.1:4723/session/"))?.slice("http://127.0.0.1:4723/session/".length) ?? "";
         return dead.has(sessionId) ? failed("404 invalid session id") : ok({ stdout: JSON.stringify({ value: { id: sessionId } }), stderr: "", exitCode: 0 });
       }
-      if (command === "curl" && args[1]?.endsWith("/source")) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>", stderr: "", exitCode: 0 });
+      if (command === "curl" && args.some((arg) => arg.endsWith("/source"))) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>\n200", stderr: "", exitCode: 0 });
       return failed(`${command} unavailable`);
     },
     async startDetached() { return failed("not used"); },
@@ -55,22 +57,22 @@ function statefulServerProcessStub(): ProcessAdapter & { readonly calls: readonl
       calls.push({ command, args: [...args] });
       if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
       if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
-      if (command === "curl" && args[3] === "http://127.0.0.1:4723/session") {
+      if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) {
         created += 1;
         const sessionId = `created-${created}`;
         live.add(sessionId);
-        return ok({ stdout: JSON.stringify({ value: { sessionId } }), stderr: "", exitCode: 0 });
+        return ok({ stdout: `${JSON.stringify({ value: { sessionId } })}\n200`, stderr: "", exitCode: 0 });
       }
       if (command === "curl" && args[1] === "-X" && args[2] === "DELETE") {
         const sessionId = args[3]?.slice("http://127.0.0.1:4723/session/".length);
         if (sessionId !== undefined) live.delete(sessionId);
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       }
-      if (command === "curl" && args[0] === "-fsS" && args[1]?.startsWith("http://127.0.0.1:4723/session/") && !args[1].endsWith("/source")) {
-        const sessionId = args[1].slice("http://127.0.0.1:4723/session/".length);
+      if (command === "curl" && args.some((arg) => arg.startsWith("http://127.0.0.1:4723/session/")) && !args.some((arg) => arg.endsWith("/source"))) {
+        const sessionId = args.find((arg) => arg.startsWith("http://127.0.0.1:4723/session/"))?.slice("http://127.0.0.1:4723/session/".length) ?? "";
         return live.has(sessionId) ? ok({ stdout: JSON.stringify({ value: { id: sessionId } }), stderr: "", exitCode: 0 }) : failed("404 invalid session id");
       }
-      if (command === "curl" && args[1]?.endsWith("/source")) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>", stderr: "", exitCode: 0 });
+      if (command === "curl" && args.some((arg) => arg.endsWith("/source"))) return ok({ stdout: "<XCUIElementTypeWindow/><XCUIElementTypeButton/>\n200", stderr: "", exitCode: 0 });
       return failed(`${command} unavailable`);
     },
     async startDetached() { return failed("not used"); },
@@ -78,8 +80,8 @@ function statefulServerProcessStub(): ProcessAdapter & { readonly calls: readonl
   };
 }
 
-async function health(directory: string, processAdapter: ProcessAdapter): Promise<void> {
-  const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], { MEGABRAIN_STATE_DIR: directory }, processAdapter);
+async function health(directory: string, processAdapter: ProcessAdapter, kind: "phone" | "tv" = "phone"): Promise<void> {
+  const result = await executeNative(["health", kind, "--bundle-id", kind === "tv" ? "com.example.tv" : "com.example.app", "--device", kind === "tv" ? "tv-one" : "one"], { MEGABRAIN_STATE_DIR: directory }, processAdapter);
   expect(result.kind).toBe("ok");
 }
 
@@ -98,7 +100,7 @@ describe("native Appium session store", () => {
 
     await health(directory, processAdapter);
 
-    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(0);
     expect(processAdapter.calls.some((call) => call.args[1] === "http://127.0.0.1:4723/session/live-session")).toBe(true);
   });
@@ -110,7 +112,7 @@ describe("native Appium session store", () => {
 
     await health(directory, processAdapter);
 
-    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
     const stored = JSON.parse(await readFile(join(directory, "native-sessions.json"), "utf8")) as { readonly sessions: readonly { readonly sessionId: string }[] };
     expect(stored.sessions).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
@@ -123,7 +125,7 @@ describe("native Appium session store", () => {
     await health(directory, processAdapter);
     await health(directory, processAdapter);
 
-    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
   });
 
@@ -133,9 +135,20 @@ describe("native Appium session store", () => {
 
     await health(directory, processAdapter);
 
-    const post = processAdapter.calls.find((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    const post = processAdapter.calls.find((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(post).toBeDefined();
-    expect(JSON.parse(post?.args.at(-1) ?? "{}")).toEqual({ capabilities: { alwaysMatch: { platformName: "iOS", "appium:isHeadless": true, "appium:newCommandTimeout": 60, "appium:udid": "one", "appium:bundleId": "com.example.app" } } });
+    expect(JSON.parse(post?.args.at(-1) ?? "{}")).toEqual({ capabilities: { alwaysMatch: { platformName: "iOS", "appium:automationName": "XCUITest", "appium:isHeadless": true, "appium:newCommandTimeout": 60, "appium:udid": "one", "appium:bundleId": "com.example.app" } } });
+  });
+
+  test("sends tvOS for a tv session", async () => {
+    const directory = await fixture();
+    const processAdapter = processStub({ kind: "tv" });
+
+    await health(directory, processAdapter, "tv");
+
+    const post = processAdapter.calls.find((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
+    expect(post).toBeDefined();
+    expect(JSON.parse(post?.args.at(-1) ?? "{}")).toEqual({ capabilities: { alwaysMatch: { platformName: "tvOS", "appium:automationName": "XCUITest", "appium:isHeadless": true, "appium:newCommandTimeout": 60, "appium:udid": "tv-one", "appium:bundleId": "com.example.tv" } } });
   });
 
   test("serializes concurrent writers so one live session is shared", async () => {
@@ -144,7 +157,7 @@ describe("native Appium session store", () => {
 
     await Promise.all([health(directory, processAdapter), health(directory, processAdapter)]);
 
-    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session");
+    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
     const stored = JSON.parse(await readFile(join(directory, "native-sessions.json"), "utf8")) as { readonly sessions: readonly unknown[] };
     expect(stored.sessions).toHaveLength(1);
@@ -158,7 +171,7 @@ describe("native Appium session store", () => {
     const statelessResult = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], {}, stateless);
 
     expect(statelessResult).toEqual(statefulResult);
-    expect(stateless.calls.filter((call) => call.command === "curl" && call.args[3] === "http://127.0.0.1:4723/session")).toHaveLength(1);
+    expect(stateless.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session")).length).toBe(1);
     expect(stateless.calls.some((call) => call.command === "curl" && call.args[1] === "-X" && call.args[2] === "DELETE")).toBe(true);
     await expect(readFile("/.megabrain/native-sessions.json", "utf8")).rejects.toBeDefined();
   });
