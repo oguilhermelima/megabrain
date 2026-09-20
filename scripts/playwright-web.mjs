@@ -1189,6 +1189,13 @@ export function captureRequestFromArgs(args) {
   };
 }
 
+function assertNavigationResponse(response, screen) {
+  const status = response?.status();
+  if (status >= 400) {
+    throw new Error(`navigation failed for screen ${screen.name}: ${screen.url} returned HTTP ${status}`);
+  }
+}
+
 async function renderScreen(context, screen, {
   freezeTime = '',
   imageTimeout = DEFAULT_IMAGE_SETTLE_TIMEOUT_MS,
@@ -1198,9 +1205,7 @@ async function renderScreen(context, screen, {
   const page = await context.newPage();
   await prepareDeterministicRendering(page, freezeTime ? { now: freezeTime } : {});
   const response = await page.goto(screen.url, { waitUntil: 'domcontentloaded' });
-  if (response?.status() >= 400) {
-    throw new Error(`navigation failed for screen ${screen.name}: ${screen.url} returned HTTP ${response.status()}`);
-  }
+  assertNavigationResponse(response, screen);
   await disableAnimations(page);
   if (settle === 'scroll') await settleByScrolling(page, { timeout: scrollTimeout });
   const slowImages = await settlePage(page, { imageTimeout });
