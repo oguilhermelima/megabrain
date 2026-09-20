@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -7,10 +9,12 @@ import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInpu
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
 import { createNativeSessionStore } from "../../adapters/native-session-store.js";
 import { connectMetroInspector, type MetroEvaluation } from "../../core/native-cdp.js";
+import { buildNativeCapturePaths, decideCaptureOutcome, type NativeCaptureFrame } from "../../core/native-capture.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
 type ExpoApp = { readonly expo?: { readonly scheme?: unknown; readonly ios?: { readonly bundleIdentifier?: unknown } } };
+type NativeCaptureScreen = Readonly<{ name: string; route: string }>;
 
 function error<T = string>(message: string, code = 1): Result<T> { return failed(message, code); }
 function refusalCode(exitCode: number): string { return exitCode === 2 ? "invalid-arguments" : "native-error"; }
@@ -540,6 +544,186 @@ async function nativeNavigate(args: readonly string[], environment: Environment,
     connection.value.close();
   }
 }
+
+function nativeCaptureScreens(args: readonly string[]): Result<NativeCaptureScreen[]> {
+  const screensFile = optionValue(args, "--screens");
+  if (screensFile !== undefined) {
+    let value: unknown;
+    try { value = JSON.parse(readFileSync(screensFile, "utf8")); } catch { return error(`screens file is missing or invalid: ${screensFile}`, 2); }
+    if (!Array.isArray(value) || value.length === 0) return error("screens file must contain a non-empty array", 2);
+    const screens: NativeCaptureScreen[] = [];
+    for (const entry of value) {
+      if (typeof entry !== "object" || entry === null) return error("each native capture screen needs name and route", 2);
+      const item = entry as { name?: unknown; route?: unknown };
+      if (typeof item.name !== "string" || item.name.length === 0 || typeof item.route !== "string" || !item.route.startsWith("/")) return error("each native capture screen needs a name and an absolute route", 2);
+      screens.push({ name: item.name, route: item.route });
+    }
+    return uniqueCaptureScreens(screens);
+  }
+  const name = optionValue(args, "--screen");
+  const route = optionValue(args, "--route");
+  if (!name || !route) return error("native capture requires --screens FILE, or --screen NAME --route PATH", 2);
+  if (!route.startsWith("/")) return error(`native capture requires an absolute route path: ${route}`, 2);
+  return uniqueCaptureScreens([{ name, route }]);
+}
+
+function uniqueCaptureScreens(screens: NativeCaptureScreen[]): Result<NativeCaptureScreen[]> {
+  const names = new Set<string>();
+  for (const screen of screens) {
+    if (names.has(screen.name)) return error(`native capture screen names must be unique: ${screen.name}`, 2);
+    names.add(screen.name);
+  }
+  return ok(screens);
+}
+
+function captureOptionNames(): ReadonlySet<string> {
+  return new Set(["--screens", "--screen", "--route", "--output-root", "--surface", "--capture-id", "--theme", "--viewport", "--device", "--bundle-id", "--metro-port", "--timeout"]);
+}
+
+function validateCaptureOptions(args: readonly string[]): Result<void> {
+  const options = captureOptionNames();
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") continue;
+    if (options.has(arg)) {
+      if (args[index + 1] === undefined || args[index + 1]?.startsWith("--")) return error(`native capture option requires a value: ${arg}`, 2);
+      index += 1;
+      continue;
+    }
+    return error(`unknown native capture option: ${arg}`, 2);
+  }
+  return ok(undefined);
+}
+
+async function resetNativeCaptureApp(processAdapter: ProcessAdapter, udid: string, bundleId: string): Promise<Result<void>> {
+  const terminate = await processAdapter.run("xcrun", ["simctl", "terminate", udid, bundleId]);
+  if (terminate.kind !== "ok" && !/not running|no such process|does not exist|not found|nothing to terminate/i.test(terminate.error)) {
+    return error(`failed to terminate ${bundleId} on simulator ${udid}: ${terminate.error}`);
+  }
+  const launch = await processAdapter.run("xcrun", ["simctl", "launch", udid, bundleId]);
+  if (launch.kind !== "ok") return error(`failed to relaunch ${bundleId} on simulator ${udid}: ${launch.error}`);
+  return ok(undefined);
+}
+
+async function captureNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string): Promise<Result<string>> {
+  const capture = await processAdapter.run("xcrun", ["simctl", "io", udid, "screenshot", path]);
+  if (capture.kind !== "ok") return error(`failed to capture simulator frame: ${capture.error}`);
+  const hash = await processAdapter.run("shasum", ["-a", "256", path]);
+  if (hash.kind !== "ok") return error(`failed to hash simulator frame: ${hash.error}`);
+  const value = hash.value.stdout.trim().split(/\s+/)[0] ?? "";
+  return value.length > 0 ? ok(value) : error("failed to hash simulator frame: shasum returned no hash");
+}
+
+function captureNavigationArgs(kind: NativeKind, route: string, metroPort: string, timeout: string): string[] {
+  return [kind, route, "--metro-port", metroPort, "--timeout", timeout];
+}
+
+async function nativeCapture(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("capture"));
+  const kind = parseKind(args); if (kind.kind !== "ok") return kind;
+  const validOptions = validateCaptureOptions(args); if (validOptions.kind !== "ok") return validOptions;
+  const screens = nativeCaptureScreens(args); if (screens.kind !== "ok") return screens;
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
+  const requestedDevice = optionValue(args, "--device") ?? setting(loaded.value, kind.value, "device");
+  const bundleId = optionValue(args, "--bundle-id") ?? setting(loaded.value, kind.value, "bundleId");
+  if (!bundleId) return error(`bundle id is required for ${kind.value}; pass --bundle-id`);
+  const metroPort = optionValue(args, "--metro-port") ?? setting(loaded.value, kind.value, "metroPort");
+  const validPort = validateMetroPort(metroPort); if (validPort.kind !== "ok") return validPort;
+  if (validPort.value === "" || validPort.value === "none") return error(`Metro port is required for ${kind.value}; pass --metro-port`);
+  const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
+  const timeout = validateTimeout(timeoutRaw); if (timeout.kind !== "ok") return timeout;
+  const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
+  const selected = selectDevice(kind.value, candidates.value, requestedDevice, true); if (selected.kind !== "ok") return selected;
+  const commit = await processAdapter.run("git", ["-C", root, "rev-parse", "HEAD"]);
+  if (commit.kind !== "ok" || commit.value.stdout.trim().length === 0) return error(`could not determine repository commit: ${commit.kind === "failed" ? commit.error : "git returned no commit"}`);
+
+  const outputRoot = resolve(root, optionValue(args, "--output-root") ?? "native-captures");
+  const surface = optionValue(args, "--surface") ?? kind.value;
+  const captureId = optionValue(args, "--capture-id") ?? `capture-${new Date().toISOString().replace(/[.:]/g, "-")}`;
+  const theme = optionValue(args, "--theme") ?? "light";
+  const viewport = optionValue(args, "--viewport") ?? "default";
+  let manifestPath = "";
+  let tempDirectory = "";
+  const frameRecords: NativeCaptureFrame[] = [];
+  const screenErrors: string[] = [];
+  try {
+    tempDirectory = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const controlPath = join(tempDirectory, "control.png");
+    const control = await captureNativeFrame(processAdapter, selected.value.udid, controlPath);
+    if (control.kind !== "ok") return control;
+    for (let index = 0; index < screens.value.length; index += 1) {
+      const screen = screens.value[index] as NativeCaptureScreen;
+      let paths;
+      try { paths = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screen.name }); }
+      catch (cause: unknown) { screenErrors.push(`screen ${screen.name}: ${cause instanceof Error ? cause.message : "invalid output path"}`); continue; }
+      manifestPath = paths.manifest;
+      const reset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
+      if (reset.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${reset.error}`); continue; }
+      const navigation = await nativeNavigate(captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), environment, processAdapter);
+      if (navigation.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigation.error}`); continue; }
+      let framePath = join(tempDirectory, `screen-${index}.png`);
+      let frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
+      if (frame.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${frame.error}`); continue; }
+      let hash = frame.value;
+      if (hash === control.value) {
+        frameRecords.push({ name: screen.name, hash });
+        screenErrors.push(`screen ${screen.name}: frame matches the control frame`);
+        continue;
+      }
+      const previousHash = frameRecords.at(-1)?.hash;
+      if (previousHash !== undefined && hash === previousHash) {
+        const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
+        if (retryReset.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
+        const retryNavigation = await nativeNavigate(captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), environment, processAdapter);
+        if (retryNavigation.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigation.error}`); continue; }
+        framePath = join(tempDirectory, `screen-${index}-retry.png`);
+        frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
+        if (frame.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${frame.error}`); continue; }
+        hash = frame.value;
+        if (hash === control.value) {
+          frameRecords.push({ name: screen.name, hash });
+          screenErrors.push(`screen ${screen.name}: retry frame matches the control frame`);
+          continue;
+        }
+        if (hash === previousHash) {
+          frameRecords.push({ name: screen.name, hash });
+          screenErrors.push(`screen ${screen.name}: frame duplicates the previous screen after retry`);
+          continue;
+        }
+      }
+      await mkdir(dirname(paths.image), { recursive: true });
+      await rename(framePath, paths.image);
+      frameRecords.push({ name: screen.name, hash });
+    }
+    const outcome = decideCaptureOutcome({ controlHash: control.value, screens: frameRecords });
+    const failureReasons = [...outcome.failureReasons, ...screenErrors];
+    if (manifestPath.length === 0) {
+      const first = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screens.value[0]?.name ?? "capture" });
+      manifestPath = first.manifest;
+    }
+    await mkdir(dirname(manifestPath), { recursive: true });
+    await writeFile(manifestPath, `${JSON.stringify({
+      surface,
+      captureId,
+      theme,
+      viewport,
+      commit: commit.value.stdout.trim(),
+      date: new Date().toISOString(),
+      screens: frameRecords,
+      summary: outcome.summary,
+      failures: failureReasons,
+    }, null, 2)}\n`);
+    const failedRun = outcome.failed || screenErrors.length > 0;
+    const report = args.includes("--json")
+      ? `${JSON.stringify({ ok: !failedRun, ...outcome, failureReasons, manifest: manifestPath })}\n`
+      : `${outcome.summary}\n${failureReasons.map((reason) => `failed: ${reason}`).join("\n")}${failureReasons.length > 0 ? "\n" : ""}`;
+    return ok(report, failedRun ? 1 : undefined);
+  } finally {
+    if (tempDirectory.length > 0) await rm(tempDirectory, { recursive: true, force: true });
+  }
+}
+
 async function appium(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("appium"));
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("appium"));
@@ -593,6 +777,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "eval") result = await nativeEval([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "navigate") result = await nativeNavigate([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "capture") result = await nativeCapture([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
   else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));
