@@ -476,19 +476,14 @@ const routerModuleExpression = `(() => {
   };
   const router = find("expo-router/build/imperative-api.js", "router");
   const store = find("expo-router/build/global-state/router-store.js", "store");
-  if (store === null || (typeof store !== "object" && typeof store !== "function") || !("navigationRef" in store)) throw new Error("required Expo Router export navigationRef is unavailable from expo-router/build/global-state/router-store.js export store");
-  return { router, navigationRef: store.navigationRef };
+  if (store === null || (typeof store !== "object" && typeof store !== "function") || typeof store.getRouteInfo !== "function") throw new Error("required Expo Router export getRouteInfo is unavailable from expo-router/build/global-state/router-store.js export store");
+  return { router, store };
 })()`;
-const navigationStateExpression = `(() => {
+const routeInfoExpression = `(() => {
   const modules = ${routerModuleExpression};
-  let state = modules.navigationRef.getRootState();
-  let route = null;
-  while (state && Array.isArray(state.routes)) {
-    route = state.routes[typeof state.index === "number" ? state.index : 0];
-    state = route?.state;
-  }
-  return route === null ? null : { key: route.key ?? null, name: route.name ?? null };
-})() /* megabrain:navigation-state */`;
+  const route = modules.store.getRouteInfo();
+  return { pathname: route.pathname, params: route.params };
+})() /* megabrain:route-info */`;
 function navigationExpression(path: string): string {
   return `(() => {
     const modules = ${routerModuleExpression};
@@ -496,11 +491,15 @@ function navigationExpression(path: string): string {
     modules.router.navigate(${JSON.stringify(path)});
   })() /* megabrain:navigate */`;
 }
-type RouteSnapshot = Readonly<{ key: string | null; name: string | null }>;
+type RouteSnapshot = Readonly<{ pathname: string; params: unknown }>;
 function routeSnapshot(value: unknown): RouteSnapshot | undefined {
-  if (typeof value !== "object" || value === null) return value === null ? { key: null, name: null } : undefined;
-  const item = value as { key?: unknown; name?: unknown };
-  return { key: typeof item.key === "string" ? item.key : null, name: typeof item.name === "string" ? item.name : null };
+  if (typeof value !== "object" || value === null) return undefined;
+  const item = value as { pathname?: unknown; params?: unknown };
+  if (typeof item.pathname !== "string") return undefined;
+  return { pathname: item.pathname, params: item.params ?? {} };
+}
+function routeChanged(before: RouteSnapshot, after: RouteSnapshot): boolean {
+  return before.pathname !== after.pathname || JSON.stringify(before.params) !== JSON.stringify(after.params);
 }
 async function nativeNavigate(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n");
@@ -515,7 +514,7 @@ async function nativeNavigate(args: readonly string[], environment: Environment,
   const connection = await connectMetroInspector(Number(validPort.value), parsed.value.timeoutMs);
   if (connection.kind !== "ok") return connection;
   try {
-    const before = await connection.value.evaluate(navigationStateExpression, parsed.value.timeoutMs);
+    const before = await connection.value.evaluate(routeInfoExpression, parsed.value.timeoutMs);
     if (before.kind !== "ok") return before;
     if (before.value.kind === "exception") return error(`could not read current route: ${before.value.message}`);
     const beforeRoute = routeSnapshot(before.value.value);
@@ -527,16 +526,16 @@ async function nativeNavigate(args: readonly string[], environment: Environment,
     let afterRoute: RouteSnapshot | undefined;
     while (Date.now() < deadline) {
       const remaining = Math.max(1, deadline - Date.now());
-      const after = await connection.value.evaluate(navigationStateExpression, Math.min(500, remaining));
+      const after = await connection.value.evaluate(routeInfoExpression, Math.min(500, remaining));
       if (after.kind === "ok" && after.value.kind === "value") {
         afterRoute = routeSnapshot(after.value.value);
-        if (afterRoute !== undefined && JSON.stringify(afterRoute) !== JSON.stringify(beforeRoute)) break;
+        if (afterRoute !== undefined && routeChanged(beforeRoute, afterRoute)) break;
       }
       await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
     }
-    if (afterRoute === undefined || JSON.stringify(afterRoute) === JSON.stringify(beforeRoute)) return error(`navigation did not remount route: active route remained ${beforeRoute.name ?? "unknown"}`);
-    const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, remounted: true };
-    return args.includes("--json") ? ok(`${JSON.stringify(output)}\n`) : ok(`navigated ${path}: active route remounted\n`);
+    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}`);
+    const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, changed: true };
+    return args.includes("--json") ? ok(`${JSON.stringify(output)}\n`) : ok(`navigated ${path}: route changed\n`);
   } finally {
     connection.value.close();
   }
