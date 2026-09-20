@@ -1,9 +1,15 @@
 import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { once } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { afterEach, describe, expect, test } from "bun:test";
 import { connectMetroInspector } from "../../src/core/native-cdp.js";
+import { executeNative } from "../../src/cli/commands/native.js";
+import { failed } from "../../src/core/result.js";
+import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
 type FakeTarget = "none" | "probe" | "hang";
 type FakeMetro = {
@@ -29,7 +35,11 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     const request = JSON.parse(message) as { id?: number; method?: string; params?: { expression?: string } };
     if (request.method !== "Runtime.evaluate" || request.id === undefined) return;
     const expression = request.params?.expression ?? "";
-    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") || expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
+    if (expression.startsWith("throw")) {
+      socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
+      return;
+    }
+    const value = expression === "1+1" ? 2 : undefined;
     if (value !== undefined) socket.send(JSON.stringify({ id: request.id, result: { result: { type: typeof value === "number" ? "number" : "object", value } } }));
   };
 
@@ -133,4 +143,27 @@ describe("Metro inspector transport", () => {
     if (result.kind === "ok") result.value.close();
   });
 
+  test("keeps an app exception distinct from a transport refusal", async () => {
+    const server = await fakeMetro("probe");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-cdp-"));
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    const process: ProcessAdapter = {
+      async run(command) { return command === "git" ? failed("git is unavailable") : failed(`${command} should not run`); },
+      async startDetached() { return failed("must not start a process"); },
+      invocationCount() { return 0; },
+    };
+
+    try {
+      const value = await executeNative(["eval", "phone", "1+1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+      const exception = await executeNative(["eval", "phone", "throw new Error('boom')", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+
+      expect(value.kind).toBe("ok");
+      expect(exception.kind).toBe("ok");
+      if (value.kind === "ok") expect(JSON.parse(value.value)).toMatchObject({ value: 2, exception: null, refusal: null });
+      if (exception.kind === "ok") expect(JSON.parse(exception.value)).toMatchObject({ value: null, exception: "Uncaught Error: boom", refusal: null });
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
 });
