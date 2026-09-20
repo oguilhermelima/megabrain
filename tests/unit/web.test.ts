@@ -14,6 +14,8 @@ describe("planWeb", () => {
     [["userscript", "list"], { command: "userscript-list", args: [] }],
     [["userscript", "remove", "hello.user.js"], { command: "userscript-remove", args: ["--file", "hello.user.js"] }],
     [["capture", "--url", "https://example.com", "--screen", "home"], { command: "capture", args: ["--url", "https://example.com", "--screen", "home"] }],
+    [["capture", "--url", "http://fixture.test", "--screen", "home", "--settle", "scroll"], { command: "capture", args: ["--url", "http://fixture.test", "--screen", "home", "--settle", "scroll"] }],
+    [["measure", "--url", "http://fixture.test", "--screen", "home", "--settle", "scroll"], { command: "measure", args: ["--url", "http://fixture.test", "--screen", "home", "--settle", "scroll"] }],
     [["session", "save", "--url", "https://example.com", "--output", "state.json"], { command: "session-save", args: ["--url", "https://example.com", "--output", "state.json"] }],
   ] as const)("assembles %j", (input, expected) => {
     expect(planWeb(input)).toEqual({ kind: "run", ...expected });
