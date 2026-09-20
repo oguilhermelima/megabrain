@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
+import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
@@ -233,7 +233,7 @@ async function updateMeta(root: string, dispatch: string, type: string): Promise
 }
 
 export async function executeQueueWrite(type: "received" | "ask" | "done", args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok(`Usage: megabrain ${type}${type === "received" ? "" : type === "ask" ? ' "question"' : ' "summary"'}\n`);
+  if (args[0] === "-h" || args[0] === "--help") return ok(childMessageUsage(type));
   const parsed = parseChildMessage(type, args);
   if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);

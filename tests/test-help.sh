@@ -82,6 +82,10 @@ run_help orchestrate close --help
 run_help ask --help
 run_help done --help
 run_help received --help
+
+assert_equal "$($root/megabrain ask --help 2>&1)" 'Usage: megabrain ask "question" | megabrain ask --text "question"'
+assert_equal "$($root/megabrain done --help 2>&1)" 'Usage: megabrain done "summary" | megabrain done --text "summary"'
+assert_equal "$($root/megabrain received --help 2>&1)" 'Usage: megabrain received'
 run_help check --help
 run_help ack --help
 run_help chain --help
