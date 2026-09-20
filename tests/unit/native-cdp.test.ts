@@ -11,7 +11,7 @@ import { executeNative } from "../../src/cli/commands/native.js";
 import { failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
-type FakeTarget = "none" | "probe" | "hang";
+type FakeTarget = "none" | "probe" | "hang" | "unchanged";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
@@ -39,14 +39,14 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
       return;
     }
-    const value = expression === "1+1" ? 2 : undefined;
+    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") || expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
     if (value !== undefined) socket.send(JSON.stringify({ id: request.id, result: { result: { type: typeof value === "number" ? "number" : "object", value } } }));
   };
 
   wsServer.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("message", (message) => {
-      if (targets === "probe") sendProbeResult(socket, message.toString());
+      if (targets === "probe" || targets === "unchanged") sendProbeResult(socket, message.toString());
     });
     socket.on("close", () => sockets.delete(socket));
   });
@@ -162,6 +162,27 @@ describe("Metro inspector transport", () => {
       expect(exception.kind).toBe("ok");
       if (value.kind === "ok") expect(JSON.parse(value.value)).toMatchObject({ value: 2, exception: null, refusal: null });
       if (exception.kind === "ok") expect(JSON.parse(exception.value)).toMatchObject({ value: null, exception: "Uncaught Error: boom", refusal: null });
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("reports no remount when navigate leaves the active route unchanged", async () => {
+    const server = await fakeMetro("unchanged");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-cdp-"));
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    const process: ProcessAdapter = {
+      async run(command) { return command === "git" ? failed("git is unavailable") : failed(`${command} should not run`); },
+      async startDetached() { return failed("must not start a process"); },
+      invocationCount() { return 0; },
+    };
+
+    try {
+      const result = await executeNative(["navigate", "phone", "/home"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("did not remount");
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }

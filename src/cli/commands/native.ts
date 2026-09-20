@@ -461,6 +461,80 @@ async function nativeEval(args: readonly string[], environment: Environment, pro
     connection.value.close();
   }
 }
+const routerModuleExpression = `(() => {
+  const resolver = globalThis.__r;
+  if (resolver === undefined || typeof resolver.getModules !== "function") throw new Error("Metro module registry is unavailable");
+  const find = (paths) => {
+    for (const [id, metadata] of resolver.getModules()) {
+      const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
+      if (typeof name === "string" && paths.some((path) => name === path || name.endsWith("/" + path))) return resolver(id);
+    }
+    throw new Error("required Expo Router module is unavailable");
+  };
+  return { router: find(["expo-router/build/imperative-api.js"]).router, navigationRef: find(["expo-router/build/global-state/navigation-ref.js", "expo-router/build/global-state/navigationRef.js"]).navigationRef };
+})()`;
+const navigationStateExpression = `(() => {
+  const modules = ${routerModuleExpression};
+  let state = modules.navigationRef.getRootState();
+  let route = null;
+  while (state && Array.isArray(state.routes)) {
+    route = state.routes[typeof state.index === "number" ? state.index : 0];
+    state = route?.state;
+  }
+  return route === null ? null : { key: route.key ?? null, name: route.name ?? null };
+})() /* megabrain:navigation-state */`;
+function navigationExpression(path: string): string {
+  return `(() => {
+    const modules = ${routerModuleExpression};
+    if (modules.router.canDismiss()) modules.router.dismissAll();
+    modules.router.navigate(${JSON.stringify(path)});
+  })() /* megabrain:navigate */`;
+}
+type RouteSnapshot = Readonly<{ key: string | null; name: string | null }>;
+function routeSnapshot(value: unknown): RouteSnapshot | undefined {
+  if (typeof value !== "object" || value === null) return value === null ? { key: null, name: null } : undefined;
+  const item = value as { key?: unknown; name?: unknown };
+  return { key: typeof item.key === "string" ? item.key : null, name: typeof item.name === "string" ? item.name : null };
+}
+async function nativeNavigate(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n");
+  const parsed = cdpArguments(args, environment); if (parsed.kind !== "ok") return parsed;
+  const path = parsed.value.expression;
+  if (!path.startsWith("/")) return error(`native navigate requires an absolute route path: ${path}`, 2);
+  const root = await nativeWorktreeRoot(environment, processAdapter);
+  const loaded = config(root); if (loaded.kind !== "ok") return loaded;
+  const portRaw = optionValue(args, "--metro-port") ?? setting(loaded.value, parsed.value.kind, "metroPort");
+  const validPort = validateMetroPort(portRaw); if (validPort.kind !== "ok") return validPort;
+  if (validPort.value === "" || validPort.value === "none") return error(`Metro port is required for ${parsed.value.kind}; pass --metro-port`);
+  const connection = await connectMetroInspector(Number(validPort.value), parsed.value.timeoutMs);
+  if (connection.kind !== "ok") return connection;
+  try {
+    const before = await connection.value.evaluate(navigationStateExpression, parsed.value.timeoutMs);
+    if (before.kind !== "ok") return before;
+    if (before.value.kind === "exception") return error(`could not read current route: ${before.value.message}`);
+    const beforeRoute = routeSnapshot(before.value.value);
+    if (beforeRoute === undefined) return error("could not read current route: inspector returned invalid route state");
+    const navigate = await connection.value.evaluate(navigationExpression(path), parsed.value.timeoutMs);
+    if (navigate.kind !== "ok") return navigate;
+    if (navigate.value.kind === "exception") return error(`navigation expression threw: ${navigate.value.message}`);
+    const deadline = Date.now() + parsed.value.timeoutMs;
+    let afterRoute: RouteSnapshot | undefined;
+    while (Date.now() < deadline) {
+      const remaining = Math.max(1, deadline - Date.now());
+      const after = await connection.value.evaluate(navigationStateExpression, Math.min(500, remaining));
+      if (after.kind === "ok" && after.value.kind === "value") {
+        afterRoute = routeSnapshot(after.value.value);
+        if (afterRoute !== undefined && JSON.stringify(afterRoute) !== JSON.stringify(beforeRoute)) break;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
+    }
+    if (afterRoute === undefined || JSON.stringify(afterRoute) === JSON.stringify(beforeRoute)) return error(`navigation did not remount route: active route remained ${beforeRoute.name ?? "unknown"}`);
+    const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, remounted: true };
+    return args.includes("--json") ? ok(`${JSON.stringify(output)}\n`) : ok(`navigated ${path}: active route remounted\n`);
+  } finally {
+    connection.value.close();
+  }
+}
 async function appium(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("appium"));
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("appium"));
@@ -513,6 +587,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "eval") result = await nativeEval([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "navigate") result = await nativeNavigate([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
   else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));
