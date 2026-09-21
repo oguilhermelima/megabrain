@@ -156,7 +156,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   return server;
 }
 
-function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: readonly string[] = []): ProcessAdapter {
+function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: readonly string[] = [], holdLastFrame = false): ProcessAdapter {
   let frameHashIndex = 0;
   return {
     async run(command, args) {
@@ -167,7 +167,7 @@ function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: 
       if (command === "xcrun" && args[0] === "simctl" && args[1] === "io") { await writeFile(args.at(-1) as string, "frame"); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
       if (command === "shasum") {
         const path = args.at(-1) ?? "";
-        const hash = path.endsWith("control.png") ? "control-hash" : frameHashes[frameHashIndex++] ?? (distinctFrames ? "screen-hash" : `frame-${frameHashIndex}`);
+        const hash = path.endsWith("control.png") ? "control-hash" : frameHashes[frameHashIndex++] ?? (holdLastFrame ? frameHashes.at(-1) ?? "frame" : (distinctFrames ? "screen-hash" : `frame-${frameHashIndex}`));
         return ok({ stdout: `${hash}  frame\n`, stderr: "", exitCode: 0 });
       }
       return failed(`${command} should not run`);
@@ -485,7 +485,7 @@ describe("Metro inspector transport", () => {
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
-    const process = captureProcess(server, false, ["initial-frame", "settled-frame", "settled-frame"]);
+    const process = captureProcess(server, false, ["initial-frame", "settled-frame", "settled-frame"], true);
 
     try {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "default-window", "--timeout", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
@@ -510,7 +510,7 @@ describe("Metro inspector transport", () => {
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
-    const process = captureProcess(server, false, ["early-frame", "early-frame", "later-frame", "later-frame"]);
+    const process = captureProcess(server, false, ["early-frame", "early-frame", "later-frame", "later-frame"], true);
 
     try {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "repeat-before-window", "--timeout", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);

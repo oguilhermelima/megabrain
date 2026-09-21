@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
+import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, DEFAULT_NATIVE_STABLE_WINDOW_MS, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateStableWindow, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
@@ -656,7 +656,7 @@ function uniqueCaptureScreens(screens: NativeCaptureScreen[]): Result<NativeCapt
 }
 
 function captureOptionNames(): ReadonlySet<string> {
-  return new Set(["--screens", "--screen", "--route", "--output-root", "--surface", "--capture-id", "--theme", "--viewport", "--device", "--bundle-id", "--metro-port", "--timeout"]);
+  return new Set(["--screens", "--screen", "--route", "--output-root", "--surface", "--capture-id", "--theme", "--viewport", "--device", "--bundle-id", "--metro-port", "--timeout", "--stable-window"]);
 }
 
 function validateCaptureOptions(args: readonly string[]): Result<void> {
@@ -700,13 +700,28 @@ async function captureNativeFrame(processAdapter: ProcessAdapter, udid: string, 
   return value.length > 0 ? ok(value) : error("failed to hash simulator frame: shasum returned no hash");
 }
 
-async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string, timeoutMs: number): Promise<Result<string>> {
+type NativeSettledFrame = Readonly<{
+  hash: string;
+  stableDurationMs: number;
+  sampleCount: number;
+}>;
+
+async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string, timeoutMs: number, stableWindowMs: number): Promise<Result<NativeSettledFrame>> {
   const deadline = Date.now() + timeoutMs;
   let previousHash: string | undefined;
+  let stableSince: number | undefined;
+  let sampleCount = 0;
   while (Date.now() < deadline) {
     const frame = await captureNativeFrame(processAdapter, udid, path);
     if (frame.kind !== "ok") return frame;
-    if (frame.value === previousHash) return frame;
+    sampleCount += 1;
+    const sampledAt = Date.now();
+    if (frame.value === previousHash) {
+      const stableDurationMs = sampledAt - (stableSince ?? sampledAt);
+      if (stableDurationMs >= stableWindowMs) return ok({ hash: frame.value, stableDurationMs, sampleCount });
+    } else {
+      stableSince = sampledAt;
+    }
     previousHash = frame.value;
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
@@ -784,6 +799,8 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
   if (validPort.value === "" || validPort.value === "none") return error(`Metro port is required for ${kind.value}; pass --metro-port`);
   const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
   const timeout = validateTimeout(timeoutRaw); if (timeout.kind !== "ok") return timeout;
+  const stableWindowRaw = optionValue(args, "--stable-window") ?? String(DEFAULT_NATIVE_STABLE_WINDOW_MS / 1000);
+  const stableWindow = validateStableWindow(stableWindowRaw); if (stableWindow.kind !== "ok") return stableWindow;
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   const selected = selectDevice(kind.value, candidates.value, requestedDevice, true); if (selected.kind !== "ok") return selected;
   const commit = await processAdapter.run("git", ["-C", root, "rev-parse", "HEAD"]);
@@ -863,12 +880,12 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       }
       let reachedPathname = navigationResult.value.after.pathname;
       let framePath = join(tempDirectory, `screen-${index}.png`);
-      let frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000);
+      let frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value);
       if (frame.kind !== "ok") {
         recordScreenFailure(screen, `screen ${screen.name}: ${frame.error}`);
         continue;
       }
-      let hash = frame.value;
+      let hash = frame.value.hash;
       if (hash === control.value) {
         outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
         recordScreenFailure(screen, `screen ${screen.name}: frame matches the control frame`);
@@ -898,13 +915,13 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         }
         reachedPathname = retryNavigationResult.value.after.pathname;
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
-        frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000);
+        frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value);
         if (frame.kind !== "ok") {
           outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
           recordScreenFailure(screen, `screen ${screen.name}: duplicate retry failed: ${frame.error}`);
           continue;
         }
-        hash = frame.value;
+        hash = frame.value.hash;
         if (hash === control.value) {
           outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
           recordScreenFailure(screen, `screen ${screen.name}: retry frame matches the control frame`);
