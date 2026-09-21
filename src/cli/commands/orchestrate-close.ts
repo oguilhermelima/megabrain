@@ -1,10 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { failed, ok, type Result } from "../../core/result.js";
+import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../core/orchestrate-close.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
+import { getHost, type HostCommand } from "../../hosts/index.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -46,13 +47,20 @@ async function preserveTranscript(directory: string, meta: RecordValue, process:
   }
 }
 
-async function closeHostTerminal(meta: RecordValue, process: ProcessAdapter): Promise<Result<string>> {
+export function hostCloseCommand(meta: RecordValue): HostCommand | undefined {
   const host = text(meta.childHost);
   const terminal = text(meta.terminalId);
   const workspace = text(meta.workspaceId);
-  const command = host === "orca" ? "orca" : "megabrain_superset";
-  const args = host === "orca" ? ["terminal", "close", "--terminal", terminal, "--json"] : ["terminals", "close", "--workspace", workspace, "--terminal", terminal, "--json"];
-  const result = await process.run(command, args);
+  const provider = getHost(host);
+  if (provider === undefined) return undefined;
+  const result = provider.close({ workspaceId: workspace === "" ? null : workspace, terminalId: terminal });
+  return result.kind === "ok" ? result.value : undefined;
+}
+
+async function closeHostTerminal(meta: RecordValue, process: ProcessAdapter): Promise<Result<string>> {
+  const call = hostCloseCommand(meta);
+  if (call === undefined) return unknown(`capability-unavailable: ${text(meta.childHost)} cannot close terminals`);
+  const result = await process.run(call.command, call.args);
   if (result.kind === "ok") return ok("closed");
   const reason = errorText(result);
   return absent(reason) ? ok("absent") : failed(reason);

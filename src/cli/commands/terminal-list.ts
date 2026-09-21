@@ -4,6 +4,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { formatTerminalList, processStatus, type HostTerminal, type TerminalRecord } from "../../core/terminal-list.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { getHost } from "../../hosts/index.js";
 
 export type TerminalListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -60,14 +61,9 @@ function terminalRecord(value: unknown): TerminalRecord | undefined {
 }
 
 async function hostRecords(process: ProcessAdapter, record: TerminalRecord): Promise<{ readonly valid: boolean; readonly terminal?: HostTerminal }> {
-  const args = record.host === "orca"
-    ? ["terminal", "list", "--json"]
-    : record.host === "superset" && record.workspaceId !== null
-      ? ["terminals", "list", "--workspace", record.workspaceId, "--json"]
-      : [];
-  if (args.length === 0) return { valid: false };
-  const command = record.host === "orca" ? "orca" : "superset";
-  const result = await process.run(command, args);
+  const call = getHost(record.host)?.list({ workspaceId: record.workspaceId });
+  if (call === undefined || call.kind !== "ok") return { valid: false };
+  const result = await process.run(call.value.command, call.value.args);
   if (result.kind !== "ok") return { valid: false };
   const parsed = jsonValue(result.value.stdout);
   if (parsed === undefined) return { valid: false };

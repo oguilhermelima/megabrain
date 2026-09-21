@@ -6,6 +6,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { readJson } from "./check.js";
 import { dispatchFile, resolveDispatchDirectory, type DispatchHandle } from "../../adapters/dispatch-store.js";
 import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
+import { getHost } from "../../hosts/index.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 const defaultTranscriptCap = 10485760;
@@ -30,9 +31,9 @@ async function parentMeta(id: string, environment: Environment): Promise<Result<
 
 async function hostRead(meta: RecordValue, process: ProcessAdapter): Promise<Result<string>> {
   const host = stringValue(meta.childHost); const terminal = stringValue(meta.terminalId); const workspace = stringValue(meta.workspaceId);
-  const command = host === "orca" ? "orca" : "megabrain_superset";
-  const args = host === "orca" ? ["terminal", "read", "--terminal", terminal, "--json"] : ["terminals", "read", "--workspace", workspace, "--terminal", terminal, "--json"];
-  const result = await process.run(command, args);
+  const call = getHost(host)?.read({ workspaceId: workspace === "" ? null : workspace, terminalId: terminal });
+  if (call === undefined || call.kind !== "ok") return failed(`${host} terminal ${terminal} could not be read; host terminal output is unavailable`);
+  const result = await process.run(call.value.command, call.value.args);
   if (result.kind !== "ok") return failed(`${host} terminal ${terminal} could not be read; host terminal output is unavailable`);
   try {
     const value: unknown = JSON.parse(result.value.stdout);

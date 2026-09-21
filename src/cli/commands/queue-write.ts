@@ -5,6 +5,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { getHost } from "../../hosts/index.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -127,15 +128,16 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, pr
     const affordance = meta.parentAgent === "codex" || meta.agent === "codex" ? "Tab" : "Enter";
     result = await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", pointer]);
     if (result.kind === "ok") result = await processAdapter.run("tmux", ["send-keys", "-t", pane, affordance]);
-  } else if (host === "orca") {
-    const terminal = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
-    result = await processAdapter.run("orca", ["terminal", "send", "--terminal", terminal, "--text", pointer, "--enter", "--json"]);
-  } else if (host === "superset") {
-    const workspace = typeof meta.parentWorkspaceId === "string" ? meta.parentWorkspaceId : "";
-    const terminal = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
-    result = await processAdapter.run("superset", ["terminals", "send", "--workspace", workspace, "--terminal", terminal, "--text", pointer, "--json"]);
   } else {
-    return { outcome: "failed", reason: `unsupported parent host: ${host}` };
+    const provider = getHost(host);
+    if (provider === undefined) return { outcome: "failed", reason: `unsupported parent host: ${host}` };
+    const call = provider.send({
+      workspaceId: typeof meta.parentWorkspaceId === "string" ? meta.parentWorkspaceId : null,
+      terminalId: typeof meta.parentSessionId === "string" ? meta.parentSessionId : "",
+      text: pointer,
+    });
+    if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
+    result = await processAdapter.run(call.value.command, call.value.args);
   }
   return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
 }
@@ -152,15 +154,16 @@ export async function notifyChild(root: string, meta: JsonRecord, dispatch: stri
     const affordance = meta.agent === "codex" ? "Tab" : "Enter";
     result = await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", pointer]);
     if (result.kind === "ok") result = await processAdapter.run("tmux", ["send-keys", "-t", pane, affordance]);
-  } else if (host === "orca") {
-    const terminal = typeof meta.terminalId === "string" ? meta.terminalId : "";
-    result = await processAdapter.run("orca", ["terminal", "send", "--terminal", terminal, "--text", pointer, "--enter", "--json"]);
-  } else if (host === "superset") {
-    const workspace = typeof meta.workspaceId === "string" ? meta.workspaceId : "";
-    const terminal = typeof meta.terminalId === "string" ? meta.terminalId : "";
-    result = await processAdapter.run("superset", ["terminals", "send", "--workspace", workspace, "--terminal", terminal, "--text", pointer, "--json"]);
   } else {
-    return { outcome: "failed", reason: `unsupported child host: ${host}` };
+    const provider = getHost(host);
+    if (provider === undefined) return { outcome: "failed", reason: `unsupported child host: ${host}` };
+    const call = provider.send({
+      workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null,
+      terminalId: typeof meta.terminalId === "string" ? meta.terminalId : "",
+      text: pointer,
+    });
+    if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
+    result = await processAdapter.run(call.value.command, call.value.args);
   }
   return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified" } : { outcome: "failed", reason: result.error };
 }
