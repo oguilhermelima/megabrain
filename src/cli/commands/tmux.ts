@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile, mkdtemp } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { getTmux } from "../../hosts/tmux.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { blockPresent, nextBackupPath, parseTmuxOptions, removeManagedBlock, rewriteManagedBlock, shellFor, TMUX_TUNE_END, TMUX_TUNE_SOURCE, TMUX_TUNE_START, tmuxUsage, tunePlan, validateManagedConfig, wrapperPlan, wrapperSource, TMUX_WRAPPER_END, TMUX_WRAPPER_START, type TmuxOptions, type TmuxVerb } from "../../core/tmux.js";
 
@@ -131,11 +132,11 @@ function wrapperBackupDirectory(environment: Environment): string {
 }
 
 async function serverState(processAdapter: ProcessAdapter): Promise<Readonly<{ running: boolean; rgb: boolean }>> {
-  const running = (await processAdapter.run("tmux", ["list-sessions"])).kind === "ok";
+  const running = (await getTmux().listSessions(processAdapter)).kind === "ok";
   if (!running) return { running: false, rgb: false };
-  const features = await processAdapter.run("tmux", ["show-options", "-gqv", "terminal-features"]);
+  const features = await getTmux().globalOption("terminal-features", processAdapter);
   if (features.kind !== "ok") return { running: true, rgb: false };
-  const rgb = features.value.stdout.split(",").some((entry) => entry.split(":").includes("RGB"));
+  const rgb = features.value.split(",").some((entry) => entry.split(":").includes("RGB"));
   return { running: true, rgb };
 }
 
@@ -156,7 +157,7 @@ async function apply(context: TmuxContext, config: FileReading, processAdapter: 
   if (verb === "tune") {
     const server = await serverState(processAdapter);
     if (server.running) {
-      const sourceResult = await processAdapter.run("tmux", ["source-file", context.install]);
+      const sourceResult = await getTmux().sourceFile(context.install, processAdapter);
       if (sourceResult.kind !== "ok") return failed("could not apply tmux tuning to the running server");
       return ok({ backup, serverApplied: true });
     }

@@ -83,9 +83,9 @@ async function readParentTmuxChannel(meta: JsonRecord, processAdapter: ProcessAd
 async function parentContextMatches(root: string, meta: JsonRecord, processAdapter: ProcessAdapter): Promise<boolean> {
   const channel = await readParentTmuxChannel(meta, processAdapter);
   if (channel === undefined) return true;
-  const context = await processAdapter.run("tmux", ["show-environment", "-t", channel.session, "MEGABRAIN_STATE_DIR"]);
+  const context = await getTmux().showEnvironment(channel.session, "MEGABRAIN_STATE_DIR", processAdapter);
   if (context.kind === "ok") {
-    const value = context.value.stdout.trim().replace(/^MEGABRAIN_STATE_DIR=/, "");
+    const value = context.value.trim().replace(/^MEGABRAIN_STATE_DIR=/, "");
     if (value !== "") {
       const [current, parent] = await Promise.all([realpath(root).catch(() => root), realpath(value).catch(() => value)]);
       if (parent !== current) return false;

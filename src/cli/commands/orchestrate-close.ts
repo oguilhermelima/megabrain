@@ -102,7 +102,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     const hasSession = await getTmux().sessionExists(session, process);
     if (shared) {
       outcome = "shared-pane";
-      if (hasSession.kind === "ok" && (await process.run("tmux", ["kill-pane", "-t", pane])).kind !== "ok") return failed("could not close dispatch terminal");
+      if (hasSession.kind === "ok" && (await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
     } else {
       let paneCount = 0;
       if (hasSession.kind === "ok") {
@@ -111,10 +111,10 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       }
       if (paneCount > 1) {
         outcome = "exclusive-pane";
-        if ((await process.run("tmux", ["kill-pane", "-t", pane])).kind !== "ok") return failed("could not close dispatch terminal");
+        if ((await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
       } else {
         outcome = "exclusive-session";
-        if (hasSession.kind === "ok") await process.run("tmux", ["kill-session", "-t", session]);
+        if (hasSession.kind === "ok") await getTmux().killSession(session, process);
         const hostClose = await closeHostTerminal(meta, process);
         if (hostClose.kind !== "ok") return failed(`could not close dispatch ${parsed.value.dispatchId}: ${hostClose.error}`);
       }

@@ -257,8 +257,8 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
       // Match the shell scan: malformed metadata is not a health record.
     }
   }
-  const sessions = await process.run("tmux", ["list-sessions", "-F", "#{session_name}"]);
-  const liveSessions = new Set(sessions.kind === "ok" ? sessions.value.stdout.split("\n").filter(Boolean) : []);
+  const sessions = await getTmux().listSessions(process, "#{session_name}");
+  const liveSessions = new Set(sessions.kind === "ok" ? sessions.value : []);
   const callerSessionName = await callerSession(environment, process);
   const leaked = new Set<string>();
   for (const record of records) {
@@ -283,17 +283,17 @@ async function appiumReady(process: ProcessAdapter): Promise<boolean> {
 }
 
 async function tmuxServerState(process: ProcessAdapter): Promise<{ running: boolean; rgb: boolean; configApplied: boolean }> {
-  const sessions = await process.run("tmux", ["list-sessions", "-F", "#{session_name}"]);
+  const sessions = await getTmux().listSessions(process, "#{session_name}");
   if (sessions.kind !== "ok") return { running: false, rgb: false, configApplied: false };
-  const features = await process.run("tmux", ["show-options", "-gqv", "terminal-features"]);
-  const rgb = features.kind === "ok" && /(^|:)RGB(?:$|\s|:)/m.test(features.value.stdout);
+  const features = await getTmux().globalOption("terminal-features", process);
+  const rgb = features.kind === "ok" && /(^|:)RGB(?:$|\s|:)/m.test(features.value);
   let configApplied = false;
-  for (const session of sessions.value.stdout.split("\n").filter((value) => value.startsWith("megabrain-"))) {
-    const mouse = await process.run("tmux", ["show-options", "-t", session, "-v", "mouse"]);
-    const status = await process.run("tmux", ["show-options", "-t", session, "-v", "status"]);
-    const escape = await process.run("tmux", ["show-options", "-t", session, "-v", "escape-time"]);
-    const border = await process.run("tmux", ["show-options", "-t", session, "-v", "pane-active-border-style"]);
-    if (mouse.kind === "ok" && mouse.value.stdout.trim() === "on" && status.kind === "ok" && status.value.stdout.trim() === "off" && escape.kind === "ok" && escape.value.stdout.trim() === "0" && border.kind === "ok" && border.value.stdout.trim() !== "") configApplied = true;
+  for (const session of sessions.value.filter((value) => value.startsWith("megabrain-"))) {
+    const mouse = await getTmux().sessionOption(session, "mouse", process);
+    const status = await getTmux().sessionOption(session, "status", process);
+    const escape = await getTmux().sessionOption(session, "escape-time", process);
+    const border = await getTmux().sessionOption(session, "pane-active-border-style", process);
+    if (mouse.kind === "ok" && mouse.value.trim() === "on" && status.kind === "ok" && status.value.trim() === "off" && escape.kind === "ok" && escape.value.trim() === "0" && border.kind === "ok" && border.value.trim() !== "") configApplied = true;
   }
   return { running: true, rgb, configApplied };
 }
