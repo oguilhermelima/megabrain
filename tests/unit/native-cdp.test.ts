@@ -156,7 +156,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   return server;
 }
 
-function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: readonly string[] = [], holdLastFrame = false): ProcessAdapter {
+function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: readonly string[] = [], holdLastFrame = true): ProcessAdapter {
   let frameHashIndex = 0;
   return {
     async run(command, args) {
@@ -179,7 +179,7 @@ function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: 
 
 function captureArgs(args: readonly string[]): string[] {
   const timeoutIndex = args.indexOf("--timeout");
-  return [...args.slice(0, timeoutIndex + 2), "--stable-window", "0.1", ...args.slice(timeoutIndex + 2)];
+  return [...args.slice(0, timeoutIndex + 2), "--stable-window", "0.04", ...args.slice(timeoutIndex + 2)];
 }
 
 afterEach(async () => {
@@ -469,7 +469,7 @@ describe("Metro inspector transport", () => {
           reachedPathname: "/home",
         };
         expect(value).toMatchObject({ ok: true, screens: [expectedScreen] });
-        expect(JSON.parse(await Bun.file(join(outputRoot, "phone/settle/manifest.json")).text()).screens).toEqual([expectedScreen]);
+        expect(JSON.parse(await Bun.file(join(outputRoot, "phone/settle/manifest.json")).text()).screens).toEqual(value.screens);
       }
       expect(await Bun.file(join(outputRoot, "phone/settle/light/default/first.png")).exists()).toBe(true);
     } finally {
@@ -493,9 +493,11 @@ describe("Metro inspector transport", () => {
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
         const value = JSON.parse(result.value);
-        expect(value.screens[0]).toMatchObject({ name: "first", hash: "settled-frame", stableDurationMs: expect.any(Number), sampleCount: expect.any(Number) });
-        expect(value.screens[0].stableDurationMs).toBeGreaterThanOrEqual(1000);
-        expect(value.screens[0].sampleCount).toBeGreaterThan(2);
+        expect(value.screens[0]).toMatchObject({ name: "first", hash: "settled-frame" });
+        expect(typeof value.screens[0].stableDurationMs).toBe("number");
+        expect(typeof value.screens[0].sampleCount).toBe("number");
+        expect(value.screens[0].stableDurationMs >= 1000).toBe(true);
+        expect(value.screens[0].sampleCount > 2).toBe(true);
       }
     } finally {
       await rm(worktree, { recursive: true, force: true });
@@ -531,7 +533,7 @@ describe("Metro inspector transport", () => {
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
-    const process = captureProcess(server, false, ["initial-frame", "settled-frame", "settled-frame"]);
+    const process = captureProcess(server, false, ["initial-frame", "settled-frame", "settled-frame"], true);
 
     try {
       const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "evidence", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
@@ -540,8 +542,10 @@ describe("Metro inspector transport", () => {
       if (result.kind === "ok") {
         const value = JSON.parse(result.value);
         const manifest = JSON.parse(await Bun.file(join(outputRoot, "phone/evidence/manifest.json")).text());
-        expect(value.screens[0].stableDurationMs).toBeGreaterThanOrEqual(100);
-        expect(value.screens[0].sampleCount).toBeGreaterThan(2);
+        expect(typeof value.screens[0].stableDurationMs).toBe("number");
+        expect(typeof value.screens[0].sampleCount).toBe("number");
+        expect(value.screens[0].stableDurationMs >= 40).toBe(true);
+        expect(value.screens[0].sampleCount > 2).toBe(true);
         expect(manifest.screens[0]).toMatchObject({ stableDurationMs: value.screens[0].stableDurationMs, sampleCount: value.screens[0].sampleCount });
       }
     } finally {
@@ -611,7 +615,7 @@ describe("Metro inspector transport", () => {
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
-    const process = captureProcess(server, false, ["frame-1", "frame-2", "frame-3"]);
+    const process = captureProcess(server, false, ["frame-1", "frame-2", "frame-3"], false);
     const started = performance.now();
 
     try {

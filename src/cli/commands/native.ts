@@ -886,8 +886,11 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         continue;
       }
       let hash = frame.value.hash;
+      let stableDurationMs = frame.value.stableDurationMs;
+      let sampleCount = frame.value.sampleCount;
+      const makeRecord = (): NativeCaptureRecord => buildNativeCaptureRecord({ paths, name: screen.name, hash, stableDurationMs, sampleCount, requestedRoute: screen.route, reachedPathname });
       if (hash === control.value) {
-        outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+        outcomeFrames.push(makeRecord());
         recordScreenFailure(screen, `screen ${screen.name}: frame matches the control frame`);
         continue;
       }
@@ -895,20 +898,20 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       if (previousHash !== undefined && hash === previousHash) {
         const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId, Number(validPort.value), timeout.value * 1000);
         if (retryReset.kind !== "ok") {
-          outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          outcomeFrames.push(makeRecord());
           recordScreenFailure(screen, `screen ${screen.name}: duplicate retry failed: ${retryReset.error}`);
           continue;
         }
         recordOverlayReset(retryReset.value);
         const retryNavigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
         if (retryNavigation.kind !== "ok") {
-          outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          outcomeFrames.push(makeRecord());
           if (recordNavigationFailure(screen, `duplicate retry failed: ${retryNavigation.error}`, screens.value.slice(index + 1))) break;
           continue;
         }
         const retryNavigationResult = nativeNavigationResult(retryNavigation.value);
         if (retryNavigationResult.kind !== "ok") {
-          outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          outcomeFrames.push(makeRecord());
           recordScreenFailure(screen, `screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`);
           previousPendingFailureCount = undefined;
           continue;
@@ -917,25 +920,27 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
         frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value);
         if (frame.kind !== "ok") {
-          outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          outcomeFrames.push(makeRecord());
           recordScreenFailure(screen, `screen ${screen.name}: duplicate retry failed: ${frame.error}`);
           continue;
         }
         hash = frame.value.hash;
+        stableDurationMs = frame.value.stableDurationMs;
+        sampleCount = frame.value.sampleCount;
         if (hash === control.value) {
-          outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          outcomeFrames.push(makeRecord());
           recordScreenFailure(screen, `screen ${screen.name}: retry frame matches the control frame`);
           continue;
         }
         if (hash === previousHash) {
-          outcomeFrames.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          outcomeFrames.push(makeRecord());
           recordScreenFailure(screen, `screen ${screen.name}: frame duplicates the previous screen after retry`);
           continue;
         }
       }
       await mkdir(dirname(paths.image), { recursive: true });
       await rename(framePath, paths.image);
-      const record = buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname });
+      const record = makeRecord();
       outcomeFrames.push(record);
       reportedScreens.push(record);
     }
