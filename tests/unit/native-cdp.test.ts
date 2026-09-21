@@ -177,6 +177,11 @@ function captureProcess(server: FakeMetro, distinctFrames = false, frameHashes: 
   };
 }
 
+function captureArgs(args: readonly string[]): string[] {
+  const timeoutIndex = args.indexOf("--timeout");
+  return [...args.slice(0, timeoutIndex + 2), "--stable-window", "0.1", ...args.slice(timeoutIndex + 2)];
+}
+
 afterEach(async () => {
   while (servers.length > 0) await servers.pop()?.close();
 });
@@ -428,7 +433,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, true);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       expect(server.launches).toBe(1);
@@ -451,7 +456,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "stable-frame", "stable-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "settle", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "settle", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
@@ -472,6 +477,101 @@ describe("Metro inspector transport", () => {
     }
   });
 
+  test("holds a changed frame for the default stable window before accepting it", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["initial-frame", "settled-frame", "settled-frame"]);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "default-window", "--timeout", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const value = JSON.parse(result.value);
+        expect(value.screens[0]).toMatchObject({ name: "first", hash: "settled-frame", stableDurationMs: expect.any(Number), sampleCount: expect.any(Number) });
+        expect(value.screens[0].stableDurationMs).toBeGreaterThanOrEqual(1000);
+        expect(value.screens[0].sampleCount).toBeGreaterThan(2);
+      }
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("does not accept the first repeat when the frame changes before the stable window", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["early-frame", "early-frame", "later-frame", "later-frame"]);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "repeat-before-window", "--timeout", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value).screens[0].hash).toBe("later-frame");
+      expect(await Bun.file(join(outputRoot, "phone/repeat-before-window/light/default/first.png")).exists()).toBe(true);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("reports stable duration and samples in JSON and manifest", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["initial-frame", "settled-frame", "settled-frame"]);
+
+    try {
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "evidence", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const value = JSON.parse(result.value);
+        const manifest = JSON.parse(await Bun.file(join(outputRoot, "phone/evidence/manifest.json")).text());
+        expect(value.screens[0].stableDurationMs).toBeGreaterThanOrEqual(100);
+        expect(value.screens[0].sampleCount).toBeGreaterThan(2);
+        expect(manifest.screens[0]).toMatchObject({ stableDurationMs: value.screens[0].stableDurationMs, sampleCount: value.screens[0].sampleCount });
+      }
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps the stable window inside the screen timeout", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["same-frame", "same-frame", "same-frame"]);
+    const started = performance.now();
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "deadline", "--timeout", "1", "--stable-window", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      expect(performance.now() - started).toBeLessThan(1250);
+      if (result.kind === "ok") expect(result.value).toContain("screen first: frame did not settle within 1000ms");
+      expect(await Bun.file(join(outputRoot, "phone/deadline/light/default/first.png")).exists()).toBe(false);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
   test("reports a failed screen without advertising an image and keeps the failure once", async () => {
     const server = await fakeMetro("reset-delayed");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
@@ -485,7 +585,7 @@ describe("Metro inspector transport", () => {
     const failure = "screen first: frame matches the control frame";
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "failed", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "failed", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
@@ -515,7 +615,7 @@ describe("Metro inspector transport", () => {
     const started = performance.now();
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "unsettled", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "unsettled", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       expect(performance.now() - started).toBeLessThan(1250);
@@ -537,7 +637,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["transient-frame", "control-hash", "control-hash"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "control", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "control", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
@@ -565,7 +665,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "first-frame", "transient-second", "first-frame", "first-frame", "transient-retry", "first-frame", "first-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "previous", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "previous", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(result.value).toContain("screen second: frame duplicates the previous screen after retry");
@@ -587,7 +687,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "first-frame", "second-frame", "second-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-absent", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-absent", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView not found in module registry" });
@@ -609,7 +709,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "first-frame", "second-frame", "second-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-present", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-present", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored after 2 resets; DevLoadingView not found in module registry" });
@@ -632,7 +732,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "first-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-plain", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-plain", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox ignored; DevLoadingView not found in module registry" });
@@ -654,7 +754,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "first-frame", "second-frame", "second-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView hidden after 2 resets" });
@@ -677,7 +777,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["first-frame", "first-frame", "first-frame", "first-frame", "second-frame", "second-frame"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "duplicate-overlay", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "duplicate-overlay", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored after 3 resets; DevLoadingView not found in module registry" });
@@ -701,7 +801,7 @@ describe("Metro inspector transport", () => {
     const started = performance.now();
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       expect(performance.now() - started).toBeLessThan(1250);
@@ -727,7 +827,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       expect(server.navigationCalls).toBe(2);
@@ -758,7 +858,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server, false, ["control-hash", "control-hash", "control-hash", "control-hash"]);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "failed-duplicate", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "failed-duplicate", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
@@ -784,7 +884,7 @@ describe("Metro inspector transport", () => {
     const process = captureProcess(server);
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
       expect(server.navigationCalls).toBe(3);
