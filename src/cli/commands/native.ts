@@ -523,6 +523,10 @@ function nativeNavigationResult(value: string): Result<NativeNavigationResult> {
     return error("native navigate returned invalid JSON");
   }
 }
+function pendingNavigationCount(message: string): number | undefined {
+  const match = /\((\d+) pending actions\)/.exec(message);
+  return match === null ? undefined : Number(match[1]);
+}
 async function nativeNavigate(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n");
   const parsed = cdpArguments(args, environment); if (parsed.kind !== "ok") return parsed;
@@ -533,35 +537,56 @@ async function nativeNavigate(args: readonly string[], environment: Environment,
   const portRaw = optionValue(args, "--metro-port") ?? setting(loaded.value, parsed.value.kind, "metroPort");
   const validPort = validateMetroPort(portRaw); if (validPort.kind !== "ok") return validPort;
   if (validPort.value === "" || validPort.value === "none") return error(`Metro port is required for ${parsed.value.kind}; pass --metro-port`);
-  const connection = await connectMetroInspector(Number(validPort.value), parsed.value.timeoutMs);
+  const deadline = Date.now() + parsed.value.timeoutMs;
+  const connectionBudget = deadline - Date.now();
+  if (connectionBudget <= 0) return error("native navigate timed out before connecting to Metro");
+  const connection = await connectMetroInspector(Number(validPort.value), connectionBudget);
   if (connection.kind !== "ok") return connection;
   try {
-    const before = await connection.value.evaluate(routeInfoExpression, parsed.value.timeoutMs);
+    const remaining = () => deadline - Date.now();
+    const beforeBudget = remaining();
+    if (beforeBudget <= 0) return error("native navigate timed out before reading the current route");
+    const before = await connection.value.evaluate(routeInfoExpression, beforeBudget);
     if (before.kind !== "ok") return before;
     if (before.value.kind === "exception") return error(`could not read current route: ${before.value.message}`);
     const beforeRoute = routeSnapshot(before.value.value);
     if (beforeRoute === undefined) return error("could not read current route: inspector returned invalid route state");
-    const navigate = await connection.value.evaluate(navigationExpression(path), parsed.value.timeoutMs);
+    const navigateBudget = remaining();
+    if (navigateBudget <= 0) return error("native navigate timed out before requesting navigation");
+    const navigate = await connection.value.evaluate(navigationExpression(path), navigateBudget);
     if (navigate.kind !== "ok") return navigate;
     if (navigate.value.kind === "exception") return error(`navigation expression threw: ${navigate.value.message}`);
-    const deadline = Date.now() + parsed.value.timeoutMs;
     let afterRoute: RouteSnapshot | undefined;
-    while (Date.now() < deadline) {
-      const remaining = Math.max(1, deadline - Date.now());
-      const after = await connection.value.evaluate(routeInfoExpression, Math.min(500, remaining));
+    let queueLength: number | undefined;
+    let observedPendingWork = false;
+    while (remaining() > 0) {
+      const routeBudget = remaining();
+      const after = await connection.value.evaluate(routeInfoExpression, routeBudget);
+      let changed = false;
       if (after.kind === "ok" && after.value.kind === "value") {
         afterRoute = routeSnapshot(after.value.value);
-        if (afterRoute !== undefined && routeChanged(beforeRoute, afterRoute)) break;
+        changed = afterRoute !== undefined && routeChanged(beforeRoute, afterRoute);
       }
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
-    }
-    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) {
-      const queue = await connection.value.evaluate(navigationQueueExpression, parsed.value.timeoutMs);
-      const queueLength = queue.kind === "ok" && queue.value.kind === "value" && typeof queue.value.value === "number" && Number.isInteger(queue.value.value) && queue.value.value >= 0
+      const queueBudget = remaining();
+      if (queueBudget <= 0) break;
+      const queue = await connection.value.evaluate(navigationQueueExpression, queueBudget);
+      const inspectedQueueLength = queue.kind === "ok" && queue.value.kind === "value" && typeof queue.value.value === "number" && Number.isInteger(queue.value.value) && queue.value.value >= 0
         ? queue.value.value
         : undefined;
+      if (inspectedQueueLength !== undefined) {
+        queueLength = inspectedQueueLength;
+        if (queueLength > 0) observedPendingWork = true;
+        if (!changed && queueLength === 0 && !observedPendingWork) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was not queued (navigation queue is empty)`);
+      }
+      if (changed) break;
+      const waitBudget = remaining();
+      if (waitBudget <= 0) break;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, waitBudget)));
+    }
+    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) {
       if (queueLength !== undefined && queueLength > 0) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was queued but not applied (${queueLength} pending actions)`);
-      if (queueLength === 0) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was not queued (navigation queue is empty)`);
+      if (queueLength === 0 && !observedPendingWork) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was not queued (navigation queue is empty)`);
+      if (queueLength === 0 && observedPendingWork) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation queue drained but the route was not applied`);
       return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation queue could not be inspected`);
     }
     const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, changed: true };
