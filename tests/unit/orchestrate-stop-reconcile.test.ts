@@ -34,7 +34,9 @@ describe("orchestrate reconcile", () => {
 
   test("increments missing terminal failures and preserves settled process states", () => {
     expect(reconcileDecision(meta({ processState: "succeeded" }), "missing", "unknown").updates.processState).toBeUndefined();
-    expect(reconcileDecision(meta({ processState: "stopped", failureCount: 2 }), "missing", "unknown").updates.state).toBe("circuit_broken");
+    const first = reconcileDecision(meta({ processState: "stopped", failureCount: 2 }), "missing", "unknown");
+    expect(first.updates.state).toBe("failed");
+    expect(reconcileDecision({ ...meta({ processState: "stopped", terminalState: "missing", failureCount: 3 }), state: first.updates.state }, "missing", "unknown").updates.state).toBe("circuit_broken");
   });
 
   test("retains an unknown terminal when the parent is alive", () => {
