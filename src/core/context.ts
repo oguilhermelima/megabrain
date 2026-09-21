@@ -1,3 +1,5 @@
+import { getAgent, resolveAgentDescriptor } from "../agents/index.js";
+
 export type Context = {
   readonly host: string;
   readonly workspaceId: string | null;
@@ -38,17 +40,6 @@ function present(value: string | undefined): value is string {
   return value !== undefined && value.length > 0;
 }
 
-function descriptorAgent(descriptor: string): "claude" | "codex" | "agy" | undefined {
-  if (descriptor === "claude" || descriptor === "codex" || descriptor === "agy") {
-    return descriptor;
-  }
-  const match = /^(claude-code|codex|agy)_[0-9]+-[0-9]+-[0-9]+_agent$/.exec(descriptor);
-  if (match === null) {
-    return undefined;
-  }
-  return match[1] === "claude-code" ? "claude" : match[1] as "codex" | "agy";
-}
-
 export function resolveParentContext(environment: ParentEnvironment): ParentResolution {
   const model = present(environment.supersetModel) ? environment.supersetModel : environment.aiModel;
   const effort = present(environment.supersetEffort) ? environment.supersetEffort : environment.aiEffort;
@@ -56,7 +47,7 @@ export function resolveParentContext(environment: ParentEnvironment): ParentReso
     return { kind: "resolved", agent: environment.supersetAgentId, model: model ?? null, effort: effort ?? null };
   }
   const descriptor = environment.aiAgent ?? "";
-  const agent = descriptorAgent(descriptor) ?? (descriptor.length === 0 && present(environment.codexSessionId) ? "codex" : undefined);
+  const agent = resolveAgentDescriptor(descriptor) ?? (descriptor.length === 0 && present(environment.codexSessionId) ? getAgent("codex")?.id : undefined);
   if (agent !== undefined) {
     return { kind: "resolved", agent, model: model ?? null, effort: effort ?? null };
   }
