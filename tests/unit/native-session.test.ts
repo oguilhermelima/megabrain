@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeNative } from "../../src/cli/commands/native.js";
+import { openDatabase } from "../../src/db/db.js";
+import { listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
@@ -114,8 +116,10 @@ describe("native Appium session store", () => {
 
     const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
-    const stored = JSON.parse(await readFile(join(directory, "native-sessions.json"), "utf8")) as { readonly sessions: readonly { readonly sessionId: string }[] };
-    expect(stored.sessions).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
+    const database = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+    expect(database).toBeDefined();
+    expect(database === undefined ? [] : listNativeSessions(database)).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
+    database?.close();
   });
 
   test("reuses the session produced by the previous health call", async () => {
@@ -159,8 +163,10 @@ describe("native Appium session store", () => {
 
     const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
-    const stored = JSON.parse(await readFile(join(directory, "native-sessions.json"), "utf8")) as { readonly sessions: readonly unknown[] };
-    expect(stored.sessions).toHaveLength(1);
+    const database = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+    expect(database).toBeDefined();
+    expect(database === undefined ? [] : listNativeSessions(database)).toHaveLength(1);
+    database?.close();
   });
 
   test("creates and cleans up without reuse when no state directory is resolvable", async () => {
@@ -168,11 +174,10 @@ describe("native Appium session store", () => {
     const stateful = processStub();
     const stateless = processStub();
     const statefulResult = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], { MEGABRAIN_STATE_DIR: directory }, stateful);
-    const statelessResult = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], {}, stateless);
+    const statelessResult = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one"], { MEGABRAIN_STATE_DIR: "", HOME: directory }, stateless);
 
     expect(statelessResult).toEqual(statefulResult);
     expect(stateless.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session")).length).toBe(1);
     expect(stateless.calls.some((call) => call.command === "curl" && call.args[1] === "-X" && call.args[2] === "DELETE")).toBe(true);
-    await expect(readFile("/.megabrain/native-sessions.json", "utf8")).rejects.toBeDefined();
-  });
+});
 });
