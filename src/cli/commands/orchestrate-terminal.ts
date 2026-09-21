@@ -138,10 +138,6 @@ export async function parentStatus(meta: RecordValue, process: ProcessAdapter): 
   return (await parentRecords(meta, process)).status;
 }
 
-export function interruptAffordance(agent: string): "Escape" | undefined {
-  return agent === "codex" || agent === "claude" ? "Escape" : undefined;
-}
-
 export function hostReadText(value: unknown): string {
   if (typeof value === "string") return value;
   const root = recordValue(value);
