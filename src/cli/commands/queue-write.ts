@@ -114,7 +114,7 @@ async function appendNotificationOutcome(root: string, dispatch: string, pointer
   finally { await rm(lock, { recursive: true, force: true }); }
 }
 
-async function notifyParent(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter): Promise<NotificationResult> {
+async function notifyParent(root: string, meta: JsonRecord, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
   const pointer = `mail: megabrain orchestrate watch ${dispatch}`;
   if (!(await parentContextMatches(root, meta, processAdapter))) {
     return { outcome: "suppressed", reason: "state-directory-mismatch" };
@@ -130,9 +130,9 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, pr
     const parentAgent = typeof meta.parentAgent === "string" && meta.parentAgent !== "" ? meta.parentAgent : typeof meta.agent === "string" ? meta.agent : "";
     const affordance = submitKey(parentAgent);
     if (affordance.kind !== "ok") return { outcome: "failed", reason: affordance.error };
-    const text = await getTmux().sendText(pane, pointer, processAdapter);
-    if (text.kind !== "ok") return { outcome: "failed", reason: text.error };
-    result = await getTmux().sendKey(pane, affordance.value, processAdapter);
+    const sent = await sendTmuxPair(root, pane, pointer, affordance.value, environment, processAdapter);
+    if (sent.kind !== "ok") return { outcome: "failed", reason: sent.kind === "unknown" ? sent.reason : sent.error };
+    result = sent;
   } else {
     const provider = getHost(host);
     if (provider === undefined) return { outcome: "failed", reason: `unsupported parent host: ${host}` };
@@ -147,7 +147,7 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, pr
   return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
 }
 
-export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter): Promise<NotificationResult> {
+export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}): Promise<NotificationResult> {
   const pointer = `[megabrain] reply available; run megabrain check`;
   const host = typeof meta.childHost === "string" ? meta.childHost : "";
   const runtime = typeof meta.runtime === "string" ? meta.runtime : "host";
@@ -158,9 +158,9 @@ export async function notifyChild(root: string, meta: JsonRecord, dispatch: stri
     if (pane === "" || session === "") return { outcome: "failed", reason: "tmux dispatch metadata has no session or pane" };
     const affordance = submitKey(typeof meta.agent === "string" ? meta.agent : "");
     if (affordance.kind !== "ok") return { outcome: "failed", reason: affordance.error };
-    const text = await getTmux().sendText(pane, pointer, processAdapter);
-    if (text.kind !== "ok") return { outcome: "failed", reason: text.error };
-    result = await getTmux().sendKey(pane, affordance.value, processAdapter);
+    const sent = await sendTmuxPair(root, pane, pointer, affordance.value, environment, processAdapter);
+    if (sent.kind !== "ok") return { outcome: "failed", reason: sent.kind === "unknown" ? sent.reason : sent.error };
+    result = sent;
   } else {
     const provider = getHost(host);
     if (provider === undefined) return { outcome: "failed", reason: `unsupported child host: ${host}` };
@@ -188,6 +188,22 @@ export async function acquireLock(path: string, environment: QueueEnvironment): 
   }
 }
 
+function tmuxSendLockPath(root: string, pane: string): string {
+  return `${root}/locks/tmux/${encodeURIComponent(pane)}.lock`;
+}
+
+async function sendTmuxPair(root: string, pane: string, text: string, key: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  const lock = tmuxSendLockPath(root, pane);
+  try { await mkdir(`${root}/locks/tmux`, { recursive: true }); } catch { return failed(`could not prepare tmux send lock: ${lock}`); }
+  const acquired = await acquireLock(lock, environment);
+  if (acquired.kind !== "ok") return acquired;
+  try {
+    const sentText = await getTmux().sendText(pane, text, processAdapter);
+    if (sentText.kind !== "ok") return sentText;
+    return await getTmux().sendKey(pane, key, processAdapter);
+  } finally { await rm(lock, { recursive: true, force: true }); }
+}
+
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
   const messages = await dispatchPath(root, dispatch, "messages");
   const deliveries = await dispatchPath(root, dispatch, "deliveries");
@@ -212,7 +228,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
         const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
         if (meta !== undefined) {
           try {
-            const notification = await notifyParent(root, meta, dispatch, processAdapter);
+            const notification = await notifyParent(root, meta, dispatch, environment, processAdapter);
             await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, notification.outcome, notification.reason);
           } catch (error: unknown) {
             const reason = error instanceof Error ? error.message : "notification failed";
