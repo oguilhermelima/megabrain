@@ -53,8 +53,8 @@ function output(stdout: string): Result<ProcessOutput> {
   return ok({ stdout, stderr: "", exitCode: 0 });
 }
 
-function gitWorktrees(repo: string, linked: string, outside: string): string {
-  return [
+function gitWorktrees(repo: string, linked: string, outside?: string): string {
+  const records = [
     `worktree ${repo}`,
     "HEAD abc",
     "branch refs/heads/main",
@@ -63,11 +63,9 @@ function gitWorktrees(repo: string, linked: string, outside: string): string {
     "HEAD def",
     "branch refs/heads/feature/linked",
     "",
-    `worktree ${outside}`,
-    "HEAD ghi",
-    "branch refs/heads/feature/outside",
-    "",
-  ].join("\n");
+  ];
+  if (outside !== undefined) records.push(`worktree ${outside}`, "HEAD ghi", "branch refs/heads/feature/outside", "");
+  return records.join("\n");
 }
 
 function commandOutput(command: string): Result<ProcessOutput> {
@@ -152,19 +150,15 @@ describe("executeWorktreeList", () => {
   test("lists a named repository whose worktrees are outside the shared root", async () => {
     const fixture = await createFixture();
     const outside = join(fixture.repo, "remove-cognito");
-    const ignored = join(fixture.root, "ignored");
     await mkdir(outside);
-    await mkdir(ignored);
-    const result = await listForRepo(fixture, gitWorktrees(fixture.repo, outside, ignored));
+    const result = await listForRepo(fixture, gitWorktrees(fixture.repo, outside));
 
     expect(paths(result)).toEqual([fixture.repo, outside]);
   });
 
   test("lists a named repository whose linked worktree is under the shared root", async () => {
     const fixture = await createFixture();
-    const ignored = join(fixture.root, "ignored");
-    await mkdir(ignored);
-    const result = await listForRepo(fixture, gitWorktrees(fixture.repo, fixture.linked, ignored));
+    const result = await listForRepo(fixture, gitWorktrees(fixture.repo, fixture.linked));
 
     expect(paths(result)).toEqual([fixture.repo, fixture.linked]);
   });
