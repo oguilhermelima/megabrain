@@ -674,7 +674,7 @@ function validateCaptureOptions(args: readonly string[]): Result<void> {
   return ok(undefined);
 }
 
-async function resetNativeCaptureApp(processAdapter: ProcessAdapter, udid: string, bundleId: string, metroPort: number, timeoutMs: number): Promise<Result<void>> {
+async function resetNativeCaptureApp(processAdapter: ProcessAdapter, udid: string, bundleId: string, metroPort: number, timeoutMs: number): Promise<Result<NativeResetOverlayStatus>> {
   const deadline = Date.now() + timeoutMs;
   const terminate = await processAdapter.run("xcrun", ["simctl", "terminate", udid, bundleId]);
   if (terminate.kind !== "ok" && !/not running|no such process|does not exist|not found|nothing to terminate/i.test(terminate.error)) {
@@ -686,7 +686,9 @@ async function resetNativeCaptureApp(processAdapter: ProcessAdapter, udid: strin
   if (remaining <= 0) return error(`failed to reset ${bundleId} on simulator ${udid}: Metro inspector target was not ready within ${timeoutMs}ms`);
   const target = await waitForMetroInspectorTarget(metroPort, remaining);
   if (target.kind !== "ok") return error(`failed to reset ${bundleId} on simulator ${udid}: ${target.error}`);
-  return ok(undefined);
+  const overlays = await silenceNativeOverlays(processAdapter, metroPort, remaining);
+  if (overlays.kind !== "ok") return error(`failed to reset ${bundleId} on simulator ${udid}: ${overlays.error}`);
+  return ok(overlays.value);
 }
 
 async function captureNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string): Promise<Result<string>> {
@@ -715,6 +717,10 @@ async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, p
 
 type NativeLogBoxStatus = "ignored" | "absent";
 type NativeDevLoadingViewStatus = "hidden" | "absent";
+type NativeResetOverlayStatus = Readonly<{
+  logBox: NativeLogBoxStatus;
+  devLoadingView: NativeDevLoadingViewStatus;
+}>;
 
 async function silenceNativeLogBox(processAdapter: ProcessAdapter, metroPort: number, timeoutMs: number): Promise<Result<NativeLogBoxStatus>> {
   const connection = await connectMetroInspector(metroPort, timeoutMs);
@@ -742,6 +748,21 @@ async function hideNativeDevLoadingView(processAdapter: ProcessAdapter, metroPor
   } finally {
     connection.value.close();
   }
+}
+
+async function silenceNativeOverlays(processAdapter: ProcessAdapter, metroPort: number, timeoutMs: number): Promise<Result<NativeResetOverlayStatus>> {
+  const logBox = await silenceNativeLogBox(processAdapter, metroPort, timeoutMs);
+  if (logBox.kind !== "ok") return logBox;
+  const devLoadingView = await hideNativeDevLoadingView(processAdapter, metroPort, timeoutMs);
+  if (devLoadingView.kind !== "ok") return devLoadingView;
+  return ok({ logBox: logBox.value, devLoadingView: devLoadingView.value });
+}
+
+function nativeOverlaySummary(name: string, presentVerb: string, absentSummary: string, counts: Readonly<{ present: number; absent: number }>): string {
+  if (counts.present === 0 && counts.absent === 0) return `${name} not checked`;
+  if (counts.present > 0 && counts.absent === 0) return counts.present === 1 ? `${name} ${presentVerb}` : `${name} ${presentVerb} after ${counts.present} resets`;
+  if (counts.present === 0) return absentSummary;
+  return `${name} ${presentVerb} after ${counts.present} resets; ${counts.absent} resets without ${name}`;
 }
 
 function captureNavigationArgs(kind: NativeKind, route: string, metroPort: string, timeout: string): string[] {
@@ -779,8 +800,16 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
   const screenErrors: string[] = [];
   let previousPendingFailureCount: number | undefined;
   let earlyStopReason: string | undefined;
-  let logBoxStatus: NativeLogBoxStatus | "pending" | "failed" = "pending";
-  let devLoadingViewStatus: NativeDevLoadingViewStatus | "pending" | "failed" = "pending";
+  const overlayCounts = {
+    logBox: { present: 0, absent: 0 },
+    devLoadingView: { present: 0, absent: 0 },
+  };
+  const recordOverlayReset = (reset: NativeResetOverlayStatus): void => {
+    if (reset.logBox === "ignored") overlayCounts.logBox.present += 1;
+    else overlayCounts.logBox.absent += 1;
+    if (reset.devLoadingView === "hidden") overlayCounts.devLoadingView.present += 1;
+    else overlayCounts.devLoadingView.absent += 1;
+  };
   const recordNavigationFailure = (screen: NativeCaptureScreen, message: string, remainingScreens: readonly NativeCaptureScreen[]): boolean => {
     screenErrors.push(`screen ${screen.name}: navigation failed: ${message}`);
     const pendingCount = pendingNavigationCount(message);
@@ -809,24 +838,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       manifestPath = paths.manifest;
       const reset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId, Number(validPort.value), timeout.value * 1000);
       if (reset.kind !== "ok") { screenErrors.push(`screen ${screen.name}: reset failed: ${reset.error}`); continue; }
-      if (logBoxStatus === "pending") {
-        const logBox = await silenceNativeLogBox(processAdapter, Number(validPort.value), timeout.value * 1000);
-        if (logBox.kind !== "ok") {
-          logBoxStatus = "failed";
-          screenErrors.push(`capture run: failed to silence LogBox: ${logBox.error}`);
-          continue;
-        }
-        logBoxStatus = logBox.value;
-      }
-      if (devLoadingViewStatus === "pending") {
-        const devLoadingView = await hideNativeDevLoadingView(processAdapter, Number(validPort.value), timeout.value * 1000);
-        if (devLoadingView.kind !== "ok") {
-          devLoadingViewStatus = "failed";
-          screenErrors.push(`capture run: failed to hide DevLoadingView: ${devLoadingView.error}`);
-          continue;
-        }
-        devLoadingViewStatus = devLoadingView.value;
-      }
+      recordOverlayReset(reset.value);
       const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
       if (navigation.kind !== "ok") {
         if (recordNavigationFailure(screen, navigation.error, screens.value.slice(index + 1))) break;
@@ -849,6 +861,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       if (previousHash !== undefined && hash === previousHash) {
         const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId, Number(validPort.value), timeout.value * 1000);
         if (retryReset.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
+        recordOverlayReset(retryReset.value);
         const retryNavigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
         if (retryNavigation.kind !== "ok") {
           frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
@@ -878,8 +891,8 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
     }
     const outcome = decideCaptureOutcome({ controlHash: control.value, screens: frameRecords });
-    const logBoxSummary = logBoxStatus === "ignored" ? "LogBox ignored" : logBoxStatus === "absent" ? "LogBox not found in module registry" : logBoxStatus === "failed" ? "LogBox could not be silenced" : "LogBox not checked";
-    const devLoadingViewSummary = devLoadingViewStatus === "hidden" ? "DevLoadingView hidden" : devLoadingViewStatus === "absent" ? "DevLoadingView not found in module registry" : devLoadingViewStatus === "failed" ? "DevLoadingView could not be hidden" : "DevLoadingView not checked";
+    const logBoxSummary = nativeOverlaySummary("LogBox", "ignored", "LogBox not found in module registry", overlayCounts.logBox);
+    const devLoadingViewSummary = nativeOverlaySummary("DevLoadingView", "hidden", "DevLoadingView not found in module registry", overlayCounts.devLoadingView);
     const captureOutcome = earlyStopReason === undefined
       ? { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}; ${devLoadingViewSummary}` }
       : { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}; ${devLoadingViewSummary}; ${earlyStopReason}` };
