@@ -8,6 +8,7 @@ import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
+import { checkDispatchTransition } from "../../core/dispatch-states.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -251,7 +252,10 @@ async function updateMeta(root: string, dispatch: string, type: string): Promise
   const processState = typeof meta.processState === "string" ? meta.processState : "running";
   const nextState = type === "ask" ? "waiting_for_reply" : type === "done" ? "done" : state === "spawning" ? "running" : state;
   const nextProcess = type === "done" ? "succeeded" : processState === "starting" || processState === "start-unproven" ? "running" : processState;
-  if (type === "done" && !["spawning", "running", "waiting_for_reply", "done", "orphaned"].includes(state)) return failed(`illegal dispatch state transition: ${state} -> done`);
+  if (type === "done") {
+    const transition = checkDispatchTransition("dispatch", state, nextState);
+    if (transition.kind !== "ok") return transition;
+  }
   const updated: JsonRecord = { ...meta, state: nextState, processState: nextProcess, updatedAt: new Date().toISOString() };
   if (type === "received") { updated.promptReceipt = "received"; updated.promptState = "confirmed"; }
   await atomicJson(path, updated);
