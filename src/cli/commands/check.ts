@@ -6,6 +6,7 @@ import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/
 import { rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dispatchDeliveryFile, dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -29,7 +30,7 @@ export async function files(path: string): Promise<string[]> {
   return result;
 }
 
-async function dispatchId(environment: CheckEnvironment, root: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
+export async function dispatchId(environment: CheckEnvironment, root: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
   const direct = environment.MEGABRAIN_DISPATCH_ID;
   if (direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct)) {
     const resolved = await resolveDispatchDirectory(root, direct);
@@ -37,9 +38,9 @@ async function dispatchId(environment: CheckEnvironment, root: string, processAd
     if (meta !== undefined && meta.dispatchId === direct) return direct;
   }
   if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
-    const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
+    const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
     if (result.kind !== "ok") return undefined;
-    const session = result.value.stdout.trim();
+    const session = result.value;
     if (session.length === 0) return undefined;
     for (const path of await files(`${root}/dispatches`)) {
       if (!path.endsWith("/meta.json")) continue;
@@ -59,12 +60,12 @@ async function dispatchId(environment: CheckEnvironment, root: string, processAd
   return undefined;
 }
 
-async function childIdentity(environment: CheckEnvironment, processAdapter: ProcessAdapter): Promise<Pick<ConsumerIdentityInput, "childHost" | "childSessionId" | "tmux">> {
+export async function childIdentity(environment: CheckEnvironment, processAdapter: ProcessAdapter): Promise<Pick<ConsumerIdentityInput, "childHost" | "childSessionId" | "tmux">> {
   const childHost = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : "tmux";
   const childSessionId = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
   if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
-    const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-    return { childHost, tmux: { session: result.kind === "ok" ? result.value.stdout.trim() : undefined, pane: environment.TMUX_PANE } };
+    const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
+    return { childHost, tmux: { session: result.kind === "ok" ? result.value : undefined, pane: environment.TMUX_PANE } };
   }
   return { childHost, childSessionId };
 }

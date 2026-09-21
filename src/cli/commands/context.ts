@@ -1,10 +1,11 @@
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveContext, type Context, type ContextEnvironment } from "../../core/context.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
-async function tmuxSessionName(
+export async function tmuxSessionName(
   environment: Environment,
   processAdapter: ProcessAdapter,
 ): Promise<string | undefined> {
@@ -12,18 +13,8 @@ async function tmuxSessionName(
       environment.TMUX_PANE === undefined || environment.TMUX_PANE.length === 0) {
     return undefined;
   }
-  const result = await processAdapter.run("tmux", [
-    "display-message",
-    "-p",
-    "-t",
-    environment.TMUX_PANE,
-    "#{session_name}",
-  ]);
-  if (result.kind !== "ok") {
-    return undefined;
-  }
-  const sessionName = result.value.stdout.trim();
-  return sessionName.length > 0 ? sessionName : undefined;
+  const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
+  return result.kind === "ok" ? result.value : undefined;
 }
 
 function isOrcaWorktreeResponse(value: unknown): boolean {

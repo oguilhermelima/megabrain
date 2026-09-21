@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
@@ -258,21 +259,23 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
   }
   const sessions = await process.run("tmux", ["list-sessions", "-F", "#{session_name}"]);
   const liveSessions = new Set(sessions.kind === "ok" ? sessions.value.stdout.split("\n").filter(Boolean) : []);
-  let callerSession = "";
-  if (environment.TMUX && environment.TMUX_PANE) {
-    const caller = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-    if (caller.kind === "ok") callerSession = caller.value.stdout.trim();
-  }
+  const callerSessionName = await callerSession(environment, process);
   const leaked = new Set<string>();
   for (const record of records) {
     if (!pruneStates.has(typeof record.state === "string" ? record.state : "")) continue;
     if (record.runtime !== "tmux") continue;
     const session = typeof record.tmuxSession === "string" ? record.tmuxSession : "";
     const parent = typeof record.parentTmuxSession === "string" ? record.parentTmuxSession : "";
-    if (session && session !== parent && (!callerSession || session !== callerSession) && liveSessions.has(session)) leaked.add(session);
+    if (session && session !== parent && (!callerSessionName || session !== callerSessionName) && liveSessions.has(session)) leaked.add(session);
   }
   result.leakedDispatchSessions = leaked.size;
   return result;
+}
+
+export async function callerSession(environment: Environment, process: ProcessAdapter): Promise<string> {
+  if (!environment.TMUX || !environment.TMUX_PANE) return "";
+  const result = await getTmux().sessionForPane(environment.TMUX_PANE, process);
+  return result.kind === "ok" ? result.value : "";
 }
 
 async function appiumReady(process: ProcessAdapter): Promise<boolean> {

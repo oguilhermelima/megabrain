@@ -1,5 +1,6 @@
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 export type RecordValue = Record<string, unknown>;
 export type TerminalStatus = "proven" | "missing" | "unknown";
@@ -78,18 +79,18 @@ export async function terminalStatus(meta: RecordValue, process: ProcessAdapter)
   const session = stringValue(meta.tmuxSession);
   const pane = stringValue(meta.tmuxPane);
   const dispatch = stringValue(meta.dispatchId);
-  if ((await process.run("tmux", ["has-session", "-t", session])).kind !== "ok") return "missing";
-  const panes = await process.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
+  if ((await getTmux().sessionExists(session, process)).kind !== "ok") return "missing";
+  const panes = await getTmux().panesForSession(session, process);
   if (panes.kind !== "ok") return "missing";
-  if (!panes.value.stdout.split("\n").includes(pane)) return "missing";
-  const pid = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{pane_pid}"]);
-  if (pid.kind !== "ok" || pid.value.stdout.trim() === "") return "unknown";
-  const tty = await process.run("ps", ["-p", pid.value.stdout.trim(), "-o", "tty="]);
+  if (!panes.value.includes(pane)) return "missing";
+  const pid = await getTmux().panePid(pane, process);
+  if (pid.kind !== "ok") return "unknown";
+  const tty = await process.run("ps", ["-p", pid.value, "-o", "tty="]);
   if (tty.kind !== "ok" || tty.value.stdout.trim() === "") return "unknown";
   const tree = await process.run("ps", ["eww", "-t", tty.value.stdout.trim(), "-o", "pid=,ppid=,command="]);
   if (tree.kind !== "ok") return "unknown";
   const marker = `MEGABRAIN_DISPATCH_ID=${dispatch}`;
-  return processTreeHasIdentity(tree.value.stdout, pid.value.stdout.trim(), marker) ? "proven" : "unknown";
+  return processTreeHasIdentity(tree.value.stdout, pid.value, marker) ? "proven" : "unknown";
 }
 
 async function parentRecords(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: ParentStatus; readonly records?: unknown }> {

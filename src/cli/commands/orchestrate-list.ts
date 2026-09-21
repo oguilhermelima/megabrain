@@ -3,10 +3,11 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, parseDispatchRecord, type DispatchCaller, type DispatchListOptions, type DispatchRecord } from "../../core/dispatch.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
 
-async function callerFromEnvironment(environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<DispatchCaller> {
+export async function callerFromEnvironment(environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<DispatchCaller> {
   if (environment.SUPERSET_TERMINAL_ID !== undefined && environment.SUPERSET_TERMINAL_ID.length > 0) {
     return { id: environment.SUPERSET_TERMINAL_ID, host: "superset" };
   }
@@ -14,9 +15,9 @@ async function callerFromEnvironment(environment: OrchestrateListEnvironment, pr
     return { id: environment.ORCA_TERMINAL_HANDLE, host: "orca" };
   }
   if (environment.TMUX !== undefined && environment.TMUX_PANE !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE.length > 0) {
-    const session = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-    if (session.kind === "ok" && session.value.stdout.trim().length > 0) {
-      return { id: `${session.value.stdout.trim()}:${environment.TMUX_PANE}`, host: "tmux" };
+    const session = await getTmux().sessionForPane(environment.TMUX_PANE, process);
+    if (session.kind === "ok") {
+      return { id: `${session.value}:${environment.TMUX_PANE}`, host: "tmux" };
     }
   }
   if (environment.MEGABRAIN_SESSION_ID !== undefined && environment.MEGABRAIN_SESSION_ID.length > 0 && environment.MEGABRAIN_SESSION_HOST !== undefined && environment.MEGABRAIN_SESSION_HOST.length > 0) {

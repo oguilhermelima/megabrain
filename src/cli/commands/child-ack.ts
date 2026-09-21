@@ -6,6 +6,7 @@ import { atomicJson, appendMessage, readJson, type QueueEnvironment } from "./qu
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 type JsonRecord = Record<string, unknown>;
 type ChildArguments = Readonly<{ deliveryId: string; consumer?: string; generation: number; json: boolean }>;
@@ -34,12 +35,12 @@ function parseArgs(args: readonly string[], environment: QueueEnvironment): Resu
   return ok({ deliveryId, ...(consumer !== undefined ? { consumer } : {}), generation, json });
 }
 
-async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildSession>> {
+export async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildSession>> {
   if (environment.TMUX && environment.TMUX_PANE) {
-    const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-    if (result.kind !== "ok" || result.value.stdout.trim() === "") return failed("tmux session could not be resolved");
+    const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
+    if (result.kind !== "ok") return failed("tmux session could not be resolved");
     const host = environment.SUPERSET_TERMINAL_ID ? "superset" : environment.ORCA_TERMINAL_HANDLE ? "orca" : "tmux";
-    return ok({ host, id: `${result.value.stdout.trim()}:${environment.TMUX_PANE}`, tmuxSession: result.value.stdout.trim(), tmuxPane: environment.TMUX_PANE });
+    return ok({ host, id: `${result.value}:${environment.TMUX_PANE}`, tmuxSession: result.value, tmuxPane: environment.TMUX_PANE });
   }
   if (environment.SUPERSET_TERMINAL_ID) return ok({ host: "superset", id: environment.SUPERSET_TERMINAL_ID });
   if (environment.ORCA_TERMINAL_HANDLE) return ok({ host: "orca", id: environment.ORCA_TERMINAL_HANDLE });
