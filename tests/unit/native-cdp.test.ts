@@ -11,15 +11,18 @@ import { executeNative } from "../../src/cli/commands/native.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
-type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "queued-hang" | "changed" | "delayed" | "delayed-queued" | "draining" | "capture-growing" | "capture-shrinking";
+type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "queued-hang" | "changed" | "delayed" | "delayed-queued" | "draining" | "capture-growing" | "capture-shrinking" | "reset-delayed";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
   readonly evaluations: string[];
   readonly routeInfoReads: number;
   readonly navigationCalls: number;
+  readonly firstNavigationListRequest: number;
   readonly listRequests: number;
+  readonly launches: number;
   readonly close: () => Promise<void>;
+  readonly markLaunch: () => void;
   readonly setTargets: (targets: FakeTarget) => void;
 };
 
@@ -36,14 +39,17 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   let listRequests = 0;
   let routeInfoReads = 0;
   let navigationCalls = 0;
+  let firstNavigationListRequest = 0;
   let queueReads = 0;
+  let launches = 0;
+  let launched = false;
 
   const currentRoute = { pathname: "/home", segments: ["(tabs)", "home"], params: {} };
   const changedRoute = { pathname: "/home", segments: ["(tabs)", "home"], params: { filter: "favorites" } };
 
   const routeInfo = () => {
     const read = routeInfoReads++;
-    if (targets === "changed" && read > 0) return changedRoute;
+    if ((targets === "changed" || targets === "reset-delayed") && read > 0) return changedRoute;
     if ((targets === "delayed" || targets === "delayed-queued") && read > 1) return changedRoute;
     if (targets === "draining" && read > 2) return changedRoute;
     return currentRoute;
@@ -58,7 +64,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
       return;
     }
-    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") ? (navigationCalls += 1, { ok: true }) : expression.includes("megabrain:navigation-queue") && targets !== "queued-hang" ? (
+    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") ? (navigationCalls += 1, firstNavigationListRequest ||= listRequests, { ok: true }) : expression.includes("megabrain:navigation-queue") && targets !== "queued-hang" ? (
       queueReads += 1,
       targets === "queued" ? 3
         : targets === "delayed-queued" ? 2
@@ -84,7 +90,8 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       return;
     }
     listRequests += 1;
-    const target = targets === "none" ? [] : [{ id: "target", webSocketDebuggerUrl: `ws://127.0.0.1:${(http.address() as { port: number }).port}/inspector/debug?target=target` }];
+    const targetAvailable = targets === "reset-delayed" ? launched && listRequests >= 3 : targets !== "none";
+    const target = targetAvailable ? [{ id: "target", webSocketDebuggerUrl: `ws://127.0.0.1:${(http.address() as { port: number }).port}/inspector/debug?target=target` }] : [];
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(target));
   });
@@ -111,7 +118,10 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     evaluations,
     get routeInfoReads() { return routeInfoReads; },
     get navigationCalls() { return navigationCalls; },
+    get firstNavigationListRequest() { return firstNavigationListRequest; },
     get listRequests() { return listRequests; },
+    get launches() { return launches; },
+    markLaunch() { launches += 1; launched = true; },
     setTargets(value) { targets = value; },
     async close() {
       for (const socket of sockets) socket.terminate();
@@ -123,6 +133,26 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   };
   servers.push(server);
   return server;
+}
+
+function captureProcess(server: FakeMetro, distinctFrames = false): ProcessAdapter {
+  return {
+    async run(command, args) {
+      if (command === "git") return ok({ stdout: "commit", stderr: "", exitCode: 0 });
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "terminate") return ok({ stdout: "", stderr: "", exitCode: 0 });
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "launch") { server.markLaunch(); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "io") { await writeFile(args.at(-1) as string, "frame"); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
+      if (command === "shasum") {
+        const path = args.at(-1) ?? "";
+        const hash = distinctFrames && !path.endsWith("control.png") ? "screen-hash" : "control-hash";
+        return ok({ stdout: `${hash}  frame\n`, stderr: "", exitCode: 0 });
+      }
+      return failed(`${command} should not run`);
+    },
+    async startDetached() { return failed("must not start a process"); },
+    invocationCount() { return 0; },
+  };
 }
 
 afterEach(async () => {
@@ -365,6 +395,56 @@ describe("Metro inspector transport", () => {
     }
   });
 
+  test("resets before a screen and waits for the inspector before navigating", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, true);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      expect(server.launches).toBe(1);
+      expect(server.firstNavigationListRequest).toBeGreaterThan(3);
+      expect(server.navigationCalls).toBe(1);
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, captured: 1 });
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("fails the screen when reset cannot find an inspector target within its budget", async () => {
+    const server = await fakeMetro("none");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server);
+    const started = performance.now();
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      expect(performance.now() - started).toBeLessThan(1250);
+      expect(server.launches).toBe(1);
+      expect(server.navigationCalls).toBe(0);
+      if (result.kind === "ok") {
+        expect(result.value).toContain("reset failed");
+        expect(result.value).toContain("Metro inspector target");
+      }
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
   test("stops capture when pending navigation work is not draining", async () => {
     const server = await fakeMetro("capture-growing");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
@@ -373,17 +453,7 @@ describe("Metro inspector transport", () => {
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }, { name: "second", route: "/second" }, { name: "third", route: "/third" }]));
-    const process: ProcessAdapter = {
-      async run(command, args) {
-        if (command === "git") return ok({ stdout: "commit", stderr: "", exitCode: 0 });
-        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
-        if (command === "xcrun" && args[0] === "simctl" && args[1] === "io") { await writeFile(args.at(-1) as string, "frame"); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
-        if (command === "shasum") return ok({ stdout: "control-hash  frame\n", stderr: "", exitCode: 0 });
-        return failed(`${command} should not run`);
-      },
-      async startDetached() { return failed("must not start a process"); },
-      invocationCount() { return 0; },
-    };
+    const process = captureProcess(server);
 
     try {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
@@ -407,17 +477,7 @@ describe("Metro inspector transport", () => {
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }, { name: "second", route: "/second" }, { name: "third", route: "/third" }]));
-    const process: ProcessAdapter = {
-      async run(command, args) {
-        if (command === "git") return ok({ stdout: "commit", stderr: "", exitCode: 0 });
-        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
-        if (command === "xcrun" && args[0] === "simctl" && args[1] === "io") { await writeFile(args.at(-1) as string, "frame"); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
-        if (command === "shasum") return ok({ stdout: "control-hash  frame\n", stderr: "", exitCode: 0 });
-        return failed(`${command} should not run`);
-      },
-      async startDetached() { return failed("must not start a process"); },
-      invocationCount() { return 0; },
-    };
+    const process = captureProcess(server);
 
     try {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
