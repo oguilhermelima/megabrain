@@ -11,7 +11,7 @@ import { executeNative } from "../../src/cli/commands/native.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
-type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "queued-hang" | "changed" | "delayed" | "delayed-queued" | "draining" | "capture-growing" | "capture-shrinking" | "reset-delayed" | "logbox-present";
+type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "queued-hang" | "changed" | "delayed" | "delayed-queued" | "draining" | "capture-growing" | "capture-shrinking" | "reset-delayed" | "logbox-present" | "logbox-react-native-tvos" | "logbox-react-native" | "dev-loading-view-react-native-tvos";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
@@ -23,6 +23,8 @@ type FakeMetro = {
   readonly launches: number;
   readonly logBoxCalls: number;
   readonly ignoreAllLogsCalls: number;
+  readonly devLoadingViewCalls: number;
+  readonly hideDevLoadingViewCalls: number;
   readonly close: () => Promise<void>;
   readonly markLaunch: () => void;
   readonly setTargets: (targets: FakeTarget) => void;
@@ -46,6 +48,8 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   let launches = 0;
   let logBoxCalls = 0;
   let ignoreAllLogsCalls = 0;
+  let devLoadingViewCalls = 0;
+  let hideDevLoadingViewCalls = 0;
   let launched = false;
   let routeReadsSinceLaunch = 0;
 
@@ -55,7 +59,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   const routeInfo = () => {
     const read = routeInfoReads++;
     routeReadsSinceLaunch += 1;
-    if ((targets === "reset-delayed" || targets === "logbox-present") && routeReadsSinceLaunch > 1 && navigationCalls > 0) return changedRoute;
+    if ((targets === "reset-delayed" || targets === "logbox-present" || targets === "logbox-react-native-tvos" || targets === "logbox-react-native" || targets === "dev-loading-view-react-native-tvos") && routeReadsSinceLaunch > 1 && navigationCalls > 0) return changedRoute;
     if (targets === "changed" && read > 0) return changedRoute;
     if ((targets === "delayed" || targets === "delayed-queued") && read > 1) return changedRoute;
     if (targets === "draining" && read > 2) return changedRoute;
@@ -71,7 +75,13 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
       return;
     }
-    const value = expression === "1+1" ? 2 : expression.includes("megabrain:logbox") ? (logBoxCalls += 1, expression.includes("ignoreAllLogs") ? (ignoreAllLogsCalls += 1, { present: targets === "logbox-present" }) : { present: targets === "logbox-present" }) : expression.includes("megabrain:navigate") ? (navigationCalls += 1, firstNavigationListRequest ||= listRequests, { ok: true }) : expression.includes("megabrain:navigation-queue") && targets !== "queued-hang" ? (
+    const logBoxPath = targets === "logbox-react-native-tvos" ? "react-native-tvos/Libraries/LogBox/LogBox.js" : "react-native/Libraries/LogBox/LogBox.js";
+    const logBoxModuleFound = (targets === "logbox-present" || targets === "logbox-react-native-tvos" || targets === "logbox-react-native") && (
+      expression.includes('name.endsWith("/Libraries/LogBox/LogBox.js")') ||
+      (logBoxPath.startsWith("react-native/") && expression.includes('name.endsWith("/react-native/Libraries/LogBox/LogBox.js")'))
+    );
+    const devLoadingViewModuleFound = targets === "dev-loading-view-react-native-tvos" && expression.includes('name.endsWith("/Libraries/Utilities/DevLoadingView.js")');
+    const value = expression === "1+1" ? 2 : expression.includes("megabrain:logbox") ? (logBoxCalls += 1, logBoxModuleFound ? (ignoreAllLogsCalls += 1, { present: true }) : { present: false }) : expression.includes("megabrain:dev-loading-view") ? (devLoadingViewCalls += 1, devLoadingViewModuleFound ? (hideDevLoadingViewCalls += 1, { present: true }) : { present: false }) : expression.includes("megabrain:navigate") ? (navigationCalls += 1, firstNavigationListRequest ||= listRequests, { ok: true }) : expression.includes("megabrain:navigation-queue") && targets !== "queued-hang" ? (
       queueReads += 1,
       targets === "queued" ? 3
         : targets === "delayed-queued" ? 2
@@ -130,6 +140,8 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     get launches() { return launches; },
     get logBoxCalls() { return logBoxCalls; },
     get ignoreAllLogsCalls() { return ignoreAllLogsCalls; },
+    get devLoadingViewCalls() { return devLoadingViewCalls; },
+    get hideDevLoadingViewCalls() { return hideDevLoadingViewCalls; },
     markLaunch() { launches += 1; launched = true; routeReadsSinceLaunch = 0; },
     setTargets(value) { targets = value; },
     async close() {
@@ -529,15 +541,16 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-absent", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox not found in module registry" });
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox not found in module registry; DevLoadingView not found in module registry" });
       expect(server.logBoxCalls).toBe(1);
+      expect(server.devLoadingViewCalls).toBe(1);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
   });
 
   test("silences a registered LogBox once per capture run", async () => {
-    const server = await fakeMetro("logbox-present");
+    const server = await fakeMetro("logbox-react-native-tvos");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
     const outputRoot = join(worktree, "output");
     const screensFile = join(worktree, "screens.json");
@@ -550,9 +563,55 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-present", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored" });
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored; DevLoadingView not found in module registry" });
       expect(server.logBoxCalls).toBe(1);
       expect(server.ignoreAllLogsCalls).toBe(1);
+      expect(server.devLoadingViewCalls).toBe(1);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("silences a LogBox registered by the plain react-native package", async () => {
+    const server = await fakeMetro("logbox-react-native");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["first-frame", "first-frame"]);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-plain", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox ignored; DevLoadingView not found in module registry" });
+      expect(server.logBoxCalls).toBe(1);
+      expect(server.ignoreAllLogsCalls).toBe(1);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("hides a forked DevLoadingView once per capture run", async () => {
+    const server = await fakeMetro("dev-loading-view-react-native-tvos");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }, { name: "second", route: "/second" }]));
+    const process = captureProcess(server, false, ["first-frame", "first-frame", "second-frame", "second-frame"]);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView hidden" });
+      expect(server.logBoxCalls).toBe(1);
+      expect(server.devLoadingViewCalls).toBe(1);
+      expect(server.hideDevLoadingViewCalls).toBe(1);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }

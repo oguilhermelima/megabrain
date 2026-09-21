@@ -490,7 +490,7 @@ const logBoxExpression = `(() => {
   if (resolver === undefined || typeof resolver.getModules !== "function") return { present: false };
   for (const [id, metadata] of resolver.getModules()) {
     const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
-    if (typeof name !== "string" || (!name.endsWith("/react-native/Libraries/LogBox/LogBox.js") && !name.endsWith("/react-native/Libraries/LogBox/LogBox") && name !== "react-native/Libraries/LogBox/LogBox.js" && name !== "react-native/Libraries/LogBox/LogBox")) continue;
+    if (typeof name !== "string" || (!name.endsWith("/Libraries/LogBox/LogBox.js") && !name.endsWith("/Libraries/LogBox/LogBox"))) continue;
     const module = resolver(id);
     const logBox = module?.LogBox ?? module?.default;
     if (logBox === null || (typeof logBox !== "object" && typeof logBox !== "function") || typeof logBox.ignoreAllLogs !== "function") return { present: false };
@@ -499,6 +499,20 @@ const logBoxExpression = `(() => {
   }
   return { present: false };
 })() /* megabrain:logbox */`;
+const devLoadingViewExpression = `(() => {
+  const resolver = globalThis.__r;
+  if (resolver === undefined || typeof resolver.getModules !== "function") return { present: false };
+  for (const [id, metadata] of resolver.getModules()) {
+    const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
+    if (typeof name !== "string" || !name.endsWith("/Libraries/Utilities/DevLoadingView.js")) continue;
+    const module = resolver(id);
+    const devLoadingView = module?.DevLoadingView ?? module?.default ?? module;
+    if (devLoadingView === null || (typeof devLoadingView !== "object" && typeof devLoadingView !== "function") || typeof devLoadingView.hide !== "function") return { present: false };
+    devLoadingView.hide();
+    return { present: true };
+  }
+  return { present: false };
+})() /* megabrain:dev-loading-view */`;
 const routeInfoExpression = `(() => {
   const modules = ${routerModuleExpression};
   const route = modules.store.getRouteInfo();
@@ -700,6 +714,7 @@ async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, p
 }
 
 type NativeLogBoxStatus = "ignored" | "absent";
+type NativeDevLoadingViewStatus = "hidden" | "absent";
 
 async function silenceNativeLogBox(processAdapter: ProcessAdapter, metroPort: number, timeoutMs: number): Promise<Result<NativeLogBoxStatus>> {
   const connection = await connectMetroInspector(metroPort, timeoutMs);
@@ -710,6 +725,20 @@ async function silenceNativeLogBox(processAdapter: ProcessAdapter, metroPort: nu
     if (evaluation.value.kind === "exception") return error(`could not silence LogBox: ${evaluation.value.message}`);
     if (typeof evaluation.value.value !== "object" || evaluation.value.value === null || typeof (evaluation.value.value as { present?: unknown }).present !== "boolean") return error("could not silence LogBox: inspector returned invalid registry data");
     return ok((evaluation.value.value as { present: boolean }).present ? "ignored" : "absent");
+  } finally {
+    connection.value.close();
+  }
+}
+
+async function hideNativeDevLoadingView(processAdapter: ProcessAdapter, metroPort: number, timeoutMs: number): Promise<Result<NativeDevLoadingViewStatus>> {
+  const connection = await connectMetroInspector(metroPort, timeoutMs);
+  if (connection.kind !== "ok") return connection;
+  try {
+    const evaluation = await connection.value.evaluate(devLoadingViewExpression, timeoutMs);
+    if (evaluation.kind !== "ok") return evaluation;
+    if (evaluation.value.kind === "exception") return error(`could not hide DevLoadingView: ${evaluation.value.message}`);
+    if (typeof evaluation.value.value !== "object" || evaluation.value.value === null || typeof (evaluation.value.value as { present?: unknown }).present !== "boolean") return error("could not hide DevLoadingView: inspector returned invalid registry data");
+    return ok((evaluation.value.value as { present: boolean }).present ? "hidden" : "absent");
   } finally {
     connection.value.close();
   }
@@ -751,6 +780,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
   let previousPendingFailureCount: number | undefined;
   let earlyStopReason: string | undefined;
   let logBoxStatus: NativeLogBoxStatus | "pending" | "failed" = "pending";
+  let devLoadingViewStatus: NativeDevLoadingViewStatus | "pending" | "failed" = "pending";
   const recordNavigationFailure = (screen: NativeCaptureScreen, message: string, remainingScreens: readonly NativeCaptureScreen[]): boolean => {
     screenErrors.push(`screen ${screen.name}: navigation failed: ${message}`);
     const pendingCount = pendingNavigationCount(message);
@@ -787,6 +817,15 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
           continue;
         }
         logBoxStatus = logBox.value;
+      }
+      if (devLoadingViewStatus === "pending") {
+        const devLoadingView = await hideNativeDevLoadingView(processAdapter, Number(validPort.value), timeout.value * 1000);
+        if (devLoadingView.kind !== "ok") {
+          devLoadingViewStatus = "failed";
+          screenErrors.push(`capture run: failed to hide DevLoadingView: ${devLoadingView.error}`);
+          continue;
+        }
+        devLoadingViewStatus = devLoadingView.value;
       }
       const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
       if (navigation.kind !== "ok") {
@@ -840,9 +879,10 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
     }
     const outcome = decideCaptureOutcome({ controlHash: control.value, screens: frameRecords });
     const logBoxSummary = logBoxStatus === "ignored" ? "LogBox ignored" : logBoxStatus === "absent" ? "LogBox not found in module registry" : logBoxStatus === "failed" ? "LogBox could not be silenced" : "LogBox not checked";
+    const devLoadingViewSummary = devLoadingViewStatus === "hidden" ? "DevLoadingView hidden" : devLoadingViewStatus === "absent" ? "DevLoadingView not found in module registry" : devLoadingViewStatus === "failed" ? "DevLoadingView could not be hidden" : "DevLoadingView not checked";
     const captureOutcome = earlyStopReason === undefined
-      ? { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}` }
-      : { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}; ${earlyStopReason}` };
+      ? { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}; ${devLoadingViewSummary}` }
+      : { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}; ${devLoadingViewSummary}; ${earlyStopReason}` };
     const failureReasons = [...outcome.failureReasons, ...screenErrors];
     if (manifestPath.length === 0) {
       const first = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screens.value[0]?.name ?? "capture" });
