@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildNativeCapturePaths, decideCaptureOutcome } from "../../src/core/native-capture.js";
+import { buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome } from "../../src/core/native-capture.js";
 
 describe("native capture distinctness", () => {
   test("fails when two screens share a hash and names both screens", () => {
@@ -76,6 +76,31 @@ describe("native capture paths", () => {
       directory: "/tmp/captures/phone/2026-09-20",
       image: "/tmp/captures/phone/2026-09-20/dark/390x844/settings.png",
       manifest: "/tmp/captures/phone/2026-09-20/manifest.json",
+    });
+  });
+
+  test("builds a complete per-screen record with absolute image path and routes", () => {
+    const paths = buildNativeCapturePaths({
+      outputRoot: "/tmp/captures",
+      surface: "tv",
+      captureId: "2026-09-21T00-09-02-595Z",
+      theme: "light",
+      viewport: "1920x1080",
+      screen: "browse",
+    });
+
+    expect(buildNativeCaptureRecord({
+      paths,
+      name: "browse",
+      hash: "hash-browse",
+      requestedRoute: "/browse",
+      reachedPathname: "/browse",
+    })).toEqual({
+      name: "browse",
+      hash: "hash-browse",
+      image: "/tmp/captures/tv/2026-09-21T00-09-02-595Z/light/1920x1080/browse.png",
+      requestedRoute: "/browse",
+      reachedPathname: "/browse",
     });
   });
 });

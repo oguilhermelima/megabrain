@@ -11,7 +11,7 @@ import { executeNative } from "../../src/cli/commands/native.js";
 import { failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
-type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "changed" | "delayed";
+type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "changed" | "delayed";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
@@ -54,14 +54,14 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       socket.send(JSON.stringify({ id: request.id, result: { exceptionDetails: { text: "Uncaught Error: boom" } } }));
       return;
     }
-    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") ? { ok: true } : expression.includes("megabrain:route-info") ? routeInfo() : expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
+    const value = expression === "1+1" ? 2 : expression.includes("megabrain:navigate") ? { ok: true } : expression.includes("megabrain:navigation-queue") ? (targets === "queued" ? 3 : 0) : expression.includes("megabrain:route-info") ? routeInfo() : expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
     if (value !== undefined) socket.send(JSON.stringify({ id: request.id, result: { result: { type: typeof value === "number" ? "number" : "object", value } } }));
   };
 
   wsServer.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("message", (message) => {
-      if (targets === "probe" || targets === "unchanged" || targets === "changed" || targets === "delayed") sendProbeResult(socket, message.toString());
+      if (targets === "probe" || targets === "unchanged" || targets === "queued" || targets === "changed" || targets === "delayed") sendProbeResult(socket, message.toString());
     });
     socket.on("close", () => sockets.delete(socket));
   });
@@ -225,8 +225,32 @@ describe("Metro inspector transport", () => {
       expect(server.routeInfoReads).toBeGreaterThan(1);
       expect(server.evaluations.some((expression) => expression.includes("getRouteInfo"))).toBe(true);
       if (result.kind === "failed") {
-        expect(result.error).toContain("route did not change");
-        expect(result.error).toContain("/home");
+        expect(result.error).toBe("navigation route did not change: pathname remained /home with params {}; navigation was not queued (navigation queue is empty)");
+      }
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("reports when the unchanged route is still queued", async () => {
+    const server = await fakeMetro("queued");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-cdp-"));
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    const process: ProcessAdapter = {
+      async run(command) { return command === "git" ? failed("git is unavailable") : failed(`${command} should not run`); },
+      async startDetached() { return failed("must not start a process"); },
+      invocationCount() { return 0; },
+    };
+
+    try {
+      const result = await executeNative(["navigate", "phone", "/home"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+
+      expect(result.kind).toBe("failed");
+      expect(server.evaluations.some((expression) => expression.includes("routingQueue") && expression.includes("snapshot"))).toBe(true);
+      if (result.kind === "failed") {
+        expect(result.error).toBe("navigation route did not change: pathname remained /home with params {}; navigation was queued but not applied (3 pending actions)");
+        expect(result.error).not.toBe("navigation route did not change: pathname remained /home with params {}; navigation was not queued (navigation queue is empty)");
       }
     } finally {
       await rm(worktree, { recursive: true, force: true });
