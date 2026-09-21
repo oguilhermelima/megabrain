@@ -11,7 +11,7 @@ import { executeNative } from "../../src/cli/commands/native.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
-type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "queued-hang" | "changed" | "delayed" | "delayed-queued" | "draining" | "capture-growing" | "capture-shrinking" | "reset-delayed" | "logbox-present" | "logbox-react-native-tvos" | "logbox-react-native" | "dev-loading-view-react-native-tvos";
+type FakeTarget = "none" | "probe" | "hang" | "unchanged" | "queued" | "queued-hang" | "changed" | "delayed" | "delayed-queued" | "draining" | "capture-growing" | "capture-shrinking" | "reset-delayed" | "logbox-present" | "logbox-react-native-tvos" | "logbox-react-native" | "dev-loading-view-react-native-tvos" | "dev-loading-view-read-only";
 type FakeMetro = {
   readonly port: number;
   readonly origins: string[];
@@ -25,9 +25,12 @@ type FakeMetro = {
   readonly ignoreAllLogsCalls: number;
   readonly devLoadingViewCalls: number;
   readonly hideDevLoadingViewCalls: number;
+  readonly preventDevLoadingViewCalls: number;
+  readonly showMessageCalls: number;
   readonly close: () => Promise<void>;
   readonly markLaunch: () => void;
   readonly setTargets: (targets: FakeTarget) => void;
+  readonly simulateDevLoadingViewRefresh: () => void;
 };
 
 const servers: FakeMetro[] = [];
@@ -50,6 +53,9 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   let ignoreAllLogsCalls = 0;
   let devLoadingViewCalls = 0;
   let hideDevLoadingViewCalls = 0;
+  let preventDevLoadingViewCalls = 0;
+  let showMessageCalls = 0;
+  let devLoadingViewPatched = false;
   let launched = false;
   let routeReadsSinceLaunch = 0;
 
@@ -59,7 +65,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   const routeInfo = () => {
     const read = routeInfoReads++;
     routeReadsSinceLaunch += 1;
-    if ((targets === "reset-delayed" || targets === "logbox-present" || targets === "logbox-react-native-tvos" || targets === "logbox-react-native" || targets === "dev-loading-view-react-native-tvos") && routeReadsSinceLaunch > 1 && navigationCalls > 0) return changedRoute;
+    if ((targets === "reset-delayed" || targets === "logbox-present" || targets === "logbox-react-native-tvos" || targets === "logbox-react-native" || targets === "dev-loading-view-react-native-tvos" || targets === "dev-loading-view-read-only") && routeReadsSinceLaunch > 1 && navigationCalls > 0) return changedRoute;
     if (targets === "changed" && read > 0) return changedRoute;
     if ((targets === "delayed" || targets === "delayed-queued") && read > 1) return changedRoute;
     if (targets === "draining" && read > 2) return changedRoute;
@@ -80,8 +86,31 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
       expression.includes('name.endsWith("/Libraries/LogBox/LogBox.js")') ||
       (logBoxPath.startsWith("react-native/") && expression.includes('name.endsWith("/react-native/Libraries/LogBox/LogBox.js")'))
     );
-    const devLoadingViewModuleFound = targets === "dev-loading-view-react-native-tvos" && expression.includes('name.endsWith("/Libraries/Utilities/DevLoadingView.js")');
-    const value = expression === "1+1" ? 2 : expression.includes("megabrain:logbox") ? (logBoxCalls += 1, logBoxModuleFound ? (ignoreAllLogsCalls += 1, { present: true }) : { present: false }) : expression.includes("megabrain:dev-loading-view") ? (devLoadingViewCalls += 1, devLoadingViewModuleFound ? (hideDevLoadingViewCalls += 1, { present: true }) : { present: false }) : expression.includes("megabrain:navigate") ? (navigationCalls += 1, firstNavigationListRequest ||= listRequests, { ok: true }) : expression.includes("megabrain:navigation-queue") && targets !== "queued-hang" ? (
+    const devLoadingViewModuleFound = (targets === "dev-loading-view-react-native-tvos" || targets === "dev-loading-view-read-only") && expression.includes('name.endsWith("/Libraries/Utilities/DevLoadingView.js")');
+    let value: unknown;
+    if (expression === "1+1") value = 2;
+    else if (expression.includes("megabrain:logbox")) {
+      logBoxCalls += 1;
+      value = logBoxModuleFound ? (ignoreAllLogsCalls += 1, { present: true }) : { present: false };
+    } else if (expression.includes("megabrain:dev-loading-view")) {
+      devLoadingViewCalls += 1;
+      if (!devLoadingViewModuleFound) value = { present: false };
+      else {
+        const prevented = expression.includes("showMessage") && expression.includes("= noOp");
+        if (targets === "dev-loading-view-read-only") {
+          hideDevLoadingViewCalls += 1;
+          value = { present: true, prevented: false };
+        } else {
+          if (prevented) {
+            preventDevLoadingViewCalls += 1;
+            devLoadingViewPatched = true;
+          }
+          hideDevLoadingViewCalls += 1;
+          value = { present: true, prevented };
+        }
+      }
+    } else if (expression.includes("megabrain:navigate")) value = (navigationCalls += 1, firstNavigationListRequest ||= listRequests, { ok: true });
+    else if (expression.includes("megabrain:navigation-queue") && targets !== "queued-hang") value = (
       queueReads += 1,
       targets === "queued" ? 3
         : targets === "delayed-queued" ? 2
@@ -89,7 +118,9 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
             : targets === "capture-growing" ? navigationCalls * 2
               : targets === "capture-shrinking" ? Math.max(0, 8 - navigationCalls * 2)
                 : 0
-    ) : expression.includes("megabrain:route-info") ? routeInfo() : expression.includes("megabrain:navigation-state") ? { key: "same-route", name: "home" } : undefined;
+    );
+    else if (expression.includes("megabrain:route-info")) value = routeInfo();
+    else if (expression.includes("megabrain:navigation-state")) value = { key: "same-route", name: "home" };
     if (value !== undefined) socket.send(JSON.stringify({ id: request.id, result: { result: { type: typeof value === "number" ? "number" : "object", value } } }));
   };
 
@@ -142,8 +173,13 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     get ignoreAllLogsCalls() { return ignoreAllLogsCalls; },
     get devLoadingViewCalls() { return devLoadingViewCalls; },
     get hideDevLoadingViewCalls() { return hideDevLoadingViewCalls; },
+    get preventDevLoadingViewCalls() { return preventDevLoadingViewCalls; },
+    get showMessageCalls() { return showMessageCalls; },
     markLaunch() { launches += 1; launched = true; routeReadsSinceLaunch = 0; },
     setTargets(value) { targets = value; },
+    simulateDevLoadingViewRefresh() {
+      if (!devLoadingViewPatched) showMessageCalls += 1;
+    },
     async close() {
       for (const socket of sockets) socket.terminate();
       for (const socket of rawSockets) socket.destroy();
@@ -747,7 +783,30 @@ describe("Metro inspector transport", () => {
     }
   });
 
-  test("hides a forked DevLoadingView after every screen reset", async () => {
+  test("prevents a later DevLoadingView showMessage after reset", async () => {
+    const server = await fakeMetro("dev-loading-view-react-native-tvos");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["first-frame", "first-frame"]);
+
+    try {
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view-late-show", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox not found in module registry; DevLoadingView prevented" });
+      expect(server.preventDevLoadingViewCalls).toBe(1);
+      server.simulateDevLoadingViewRefresh();
+      expect(server.showMessageCalls).toBe(0);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("prevents a forked DevLoadingView and hides once after every screen reset", async () => {
     const server = await fakeMetro("dev-loading-view-react-native-tvos");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
     const outputRoot = join(worktree, "output");
@@ -761,10 +820,33 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView hidden after 2 resets" });
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView prevented after 2 resets" });
       expect(server.logBoxCalls).toBe(2);
       expect(server.devLoadingViewCalls).toBe(2);
+      expect(server.preventDevLoadingViewCalls).toBe(2);
       expect(server.hideDevLoadingViewCalls).toBe(2);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to hide when DevLoadingView showMessage is read-only", async () => {
+    const server = await fakeMetro("dev-loading-view-read-only");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["first-frame", "first-frame"]);
+
+    try {
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view-read-only", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox not found in module registry; DevLoadingView hide-only fallback" });
+      expect(server.preventDevLoadingViewCalls).toBe(0);
+      expect(server.hideDevLoadingViewCalls).toBe(1);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
