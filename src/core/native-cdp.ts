@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { failed, ok, type Result } from "./result.js";
 
-type MetroTarget = Readonly<{ webSocketDebuggerUrl: string }>;
+export type MetroTarget = Readonly<{ webSocketDebuggerUrl: string }>;
 type CdpResponse = Readonly<{
   id?: number;
   result?: {
@@ -142,15 +142,29 @@ function wait(timeoutMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 20)));
 }
 
-export async function connectMetroInspector(port: number, timeoutMs: number): Promise<Result<MetroInspector>> {
+export async function waitForMetroInspectorTarget(port: number, timeoutMs: number): Promise<Result<MetroTarget>> {
   const started = Date.now();
   let lastError = "Metro has no inspector target";
   while (Date.now() - started < timeoutMs) {
     const remaining = timeoutMs - (Date.now() - started);
     const targets = await listTargets(port, Math.max(1, Math.min(remaining, 250)));
-    if (targets.kind === "ok" && targets.value.length > 0) {
+    if (targets.kind === "ok" && targets.value.length > 0) return ok(targets.value[0] as MetroTarget);
+    if (targets.kind === "failed") lastError = targets.error;
+    const afterAttempt = timeoutMs - (Date.now() - started);
+    if (afterAttempt > 0) await wait(afterAttempt);
+  }
+  return failed(`Metro inspector target was not ready within ${timeoutMs}ms: ${lastError}`);
+}
+
+export async function connectMetroInspector(port: number, timeoutMs: number): Promise<Result<MetroInspector>> {
+  const started = Date.now();
+  let lastError = "Metro has no inspector target";
+  while (Date.now() - started < timeoutMs) {
+    const remaining = timeoutMs - (Date.now() - started);
+    const target = await waitForMetroInspectorTarget(port, remaining);
+    if (target.kind === "ok") {
       const attemptMs = Math.max(1, Math.min(timeoutMs - (Date.now() - started), 250));
-      const socket = await openSocket(targets.value[0]?.webSocketDebuggerUrl ?? "", `http://127.0.0.1:${port}`, attemptMs);
+      const socket = await openSocket(target.value.webSocketDebuggerUrl, `http://127.0.0.1:${port}`, attemptMs);
       if (socket.kind === "ok") {
         const inspector = inspectorFor(socket.value);
         const probe = await inspector.evaluate("1+1", attemptMs);
@@ -158,7 +172,7 @@ export async function connectMetroInspector(port: number, timeoutMs: number): Pr
         lastError = probe.kind === "failed" ? probe.error : "Metro inspector probe returned an unexpected value";
         inspector.close();
       } else lastError = socket.error;
-    } else if (targets.kind === "failed") lastError = targets.error;
+    } else lastError = target.error;
     const afterAttempt = timeoutMs - (Date.now() - started);
     if (afterAttempt > 0) await wait(afterAttempt);
   }

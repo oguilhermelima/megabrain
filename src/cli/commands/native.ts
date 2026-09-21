@@ -8,7 +8,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
 import { createNativeSessionStore } from "../../adapters/native-session-store.js";
-import { connectMetroInspector, type MetroEvaluation } from "../../core/native-cdp.js";
+import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../core/native-cdp.js";
 import { buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord } from "../../core/native-capture.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -646,13 +646,18 @@ function validateCaptureOptions(args: readonly string[]): Result<void> {
   return ok(undefined);
 }
 
-async function resetNativeCaptureApp(processAdapter: ProcessAdapter, udid: string, bundleId: string): Promise<Result<void>> {
+async function resetNativeCaptureApp(processAdapter: ProcessAdapter, udid: string, bundleId: string, metroPort: number, timeoutMs: number): Promise<Result<void>> {
+  const deadline = Date.now() + timeoutMs;
   const terminate = await processAdapter.run("xcrun", ["simctl", "terminate", udid, bundleId]);
   if (terminate.kind !== "ok" && !/not running|no such process|does not exist|not found|nothing to terminate/i.test(terminate.error)) {
     return error(`failed to terminate ${bundleId} on simulator ${udid}: ${terminate.error}`);
   }
   const launch = await processAdapter.run("xcrun", ["simctl", "launch", udid, bundleId]);
   if (launch.kind !== "ok") return error(`failed to relaunch ${bundleId} on simulator ${udid}: ${launch.error}`);
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return error(`failed to reset ${bundleId} on simulator ${udid}: Metro inspector target was not ready within ${timeoutMs}ms`);
+  const target = await waitForMetroInspectorTarget(metroPort, remaining);
+  if (target.kind !== "ok") return error(`failed to reset ${bundleId} on simulator ${udid}: ${target.error}`);
   return ok(undefined);
 }
 
@@ -726,6 +731,8 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       try { paths = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screen.name }); }
       catch (cause: unknown) { screenErrors.push(`screen ${screen.name}: ${cause instanceof Error ? cause.message : "invalid output path"}`); continue; }
       manifestPath = paths.manifest;
+      const reset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId, Number(validPort.value), timeout.value * 1000);
+      if (reset.kind !== "ok") { screenErrors.push(`screen ${screen.name}: reset failed: ${reset.error}`); continue; }
       const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
       if (navigation.kind !== "ok") {
         if (recordNavigationFailure(screen, navigation.error, screens.value.slice(index + 1))) break;
@@ -746,7 +753,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       }
       const previousHash = frameRecords.at(-1)?.hash;
       if (previousHash !== undefined && hash === previousHash) {
-        const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
+        const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId, Number(validPort.value), timeout.value * 1000);
         if (retryReset.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
         const retryNavigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
         if (retryNavigation.kind !== "ok") {
