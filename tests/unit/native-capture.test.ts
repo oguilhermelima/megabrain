@@ -28,7 +28,7 @@ describe("native capture distinctness", () => {
     expect(outcome.failed).toBe(true);
     expect(outcome.controlMatches).toEqual(["home"]);
     expect(outcome.duplicateGroups).toEqual([]);
-    expect(outcome.failureReasons).toContain("screen matches the control frame: home");
+    expect(outcome.failureReasons).not.toContain("screen matches the control frame: home");
   });
 
   test("reports exact captured and distinct counts and duplicate groups", () => {

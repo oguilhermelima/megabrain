@@ -454,8 +454,50 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "settle", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, screens: [{ hash: "stable-frame" }] });
+      if (result.kind === "ok") {
+        const value = JSON.parse(result.value);
+        const expectedScreen = {
+          name: "first",
+          hash: "stable-frame",
+          image: join(outputRoot, "phone/settle/light/default/first.png"),
+          requestedRoute: "/first",
+          reachedPathname: "/home",
+        };
+        expect(value).toMatchObject({ ok: true, screens: [expectedScreen] });
+        expect(JSON.parse(await Bun.file(join(outputRoot, "phone/settle/manifest.json")).text()).screens).toEqual([expectedScreen]);
+      }
       expect(await Bun.file(join(outputRoot, "phone/settle/light/default/first.png")).exists()).toBe(true);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("reports a failed screen without advertising an image and keeps the failure once", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
+    const process = captureProcess(server, false, ["control-hash", "control-hash"]);
+    const image = join(outputRoot, "phone/failed/light/default/first.png");
+    const failure = "screen first: frame matches the control frame";
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "failed", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const value = JSON.parse(result.value);
+        const expectedScreen = { name: "first", requestedRoute: "/first", image: null, failure };
+        expect(value.screens).toEqual([expectedScreen]);
+        expect(result.value.split(failure).length - 1).toBe(1);
+        const manifestText = await Bun.file(join(outputRoot, "phone/failed/manifest.json")).text();
+        expect(JSON.parse(manifestText).screens).toEqual([expectedScreen]);
+        expect(manifestText.split(failure).length - 1).toBe(1);
+      }
+      expect(await Bun.file(image).exists()).toBe(false);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
@@ -498,7 +540,14 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "control", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(result.value).toContain("screen matches the control frame");
+      if (result.kind === "ok") {
+        const value = JSON.parse(result.value);
+        const failure = "screen first: frame matches the control frame";
+        expect(value.screens[0].failure).toBe(failure);
+        expect(result.value.split(failure).length - 1).toBe(1);
+        const manifestText = await Bun.file(join(outputRoot, "phone/control/manifest.json")).text();
+        expect(manifestText.split(failure).length - 1).toBe(1);
+      }
       expect(await Bun.file(join(outputRoot, "phone/control/light/default/first.png")).exists()).toBe(false);
     } finally {
       await rm(worktree, { recursive: true, force: true });
@@ -683,8 +732,41 @@ describe("Metro inspector transport", () => {
       expect(result.kind).toBe("ok");
       expect(server.navigationCalls).toBe(2);
       if (result.kind === "ok") {
-        expect(result.value).toContain("capture stopped early");
-        expect(result.value).toContain("screens not attempted: third");
+        const value = JSON.parse(result.value);
+        expect(value.failureReasons.some((reason: string) => reason.startsWith("capture stopped early"))).toBe(true);
+        expect(value.screens).toHaveLength(3);
+        expect(value.screens[2]).toEqual({
+          name: "third",
+          requestedRoute: "/third",
+          image: null,
+          failure: expect.stringContaining("not attempted"),
+        });
+      }
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("uses a failed screen hash for later duplicate and control-frame detection", async () => {
+    const server = await fakeMetro("reset-delayed");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }, { name: "second", route: "/second" }]));
+    const process = captureProcess(server, false, ["control-hash", "control-hash", "control-hash", "control-hash"]);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "failed-duplicate", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const value = JSON.parse(result.value);
+        expect(value.controlMatches).toEqual(["first", "second"]);
+        expect(value.duplicateGroups).toEqual([["first", "second"]]);
+        expect(value.failureReasons).toContain("screens share a hash: first, second");
+        expect(value.screens.every((screen: { image: string | null }) => screen.image === null)).toBe(true);
       }
     } finally {
       await rm(worktree, { recursive: true, force: true });
