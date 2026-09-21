@@ -9,6 +9,8 @@ export type NativeCaptureRecord = NativeCaptureFrame & Readonly<{
   image: string;
   requestedRoute: string;
   reachedPathname: string;
+  stableDurationMs: number;
+  sampleCount: number;
 }>;
 
 export type NativeCaptureFailureRecord = Readonly<{
@@ -105,16 +107,20 @@ export function buildNativeCaptureRecord({
   paths,
   name,
   hash,
+  stableDurationMs,
+  sampleCount,
   requestedRoute,
   reachedPathname,
 }: {
   readonly paths: NativeCapturePaths;
   readonly name: string;
   readonly hash: string;
+  readonly stableDurationMs: number;
+  readonly sampleCount: number;
   readonly requestedRoute: string;
   readonly reachedPathname: string;
 }): NativeCaptureRecord {
-  return { name, hash, image: paths.image, requestedRoute, reachedPathname };
+  return { name, hash, stableDurationMs, sampleCount, image: paths.image, requestedRoute, reachedPathname };
 }
 
 export function buildNativeCaptureFailureRecord({

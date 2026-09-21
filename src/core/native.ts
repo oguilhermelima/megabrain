@@ -20,6 +20,7 @@ export function runtimesFromSimctl(value: unknown): Result<NativeRuntime[]> {
 }
 
 export type NativeKind = "phone" | "tv";
+export const DEFAULT_NATIVE_STABLE_WINDOW_MS = 1000;
 export type NativeCandidate = { readonly udid: string; readonly state: string; readonly name: string };
 export type NativeBuildStep = "prebuild" | "pods" | "build" | "install" | "launch";
 export type NativeBuildOutcome = { readonly ok: boolean; readonly error?: string };
@@ -59,7 +60,7 @@ export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "ap
     appium: "Usage: megabrain native appium start|stop|status\n",
     eval: "Usage: megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]\n",
     navigate: "Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n",
-    capture: "Usage: megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--json]\n",
+    capture: "Usage: megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]\n",
     health: "Usage: megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n",
     crashes: "Usage: megabrain native crashes <phone|tv> [--last N] [--json]\n",
     "runtime-list": "Usage: megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]\n",
@@ -77,6 +78,14 @@ export function validateKind(value: string): Result<NativeKind> {
 export function validateTimeout(value: string): Result<number> {
   if (!/^[1-9][0-9]*$/.test(value)) return failed(`timeout must be a positive integer: ${value}`, 2);
   return ok(Number(value));
+}
+
+export function validateStableWindow(value: string): Result<number> {
+  const seconds = Number(value);
+  if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value) || seconds <= 0 || !Number.isFinite(seconds)) {
+    return failed(`stable window must be a positive number of seconds: ${value}`, 2);
+  }
+  return ok(seconds * 1000);
 }
 
 export function validateMetroPort(value: string): Result<string> {
