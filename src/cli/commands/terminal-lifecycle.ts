@@ -5,6 +5,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../core/terminal-lifecycle.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { getHost, type HostCommand } from "../../hosts/index.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type JsonObject = { readonly [key: string]: unknown };
@@ -105,22 +106,12 @@ function host(env: Environment): Host {
   return "unknown";
 }
 
-function hostCommand(recordHost: string, operation: string, record: { readonly workspaceId: string | null; readonly terminalId?: string; readonly command?: string; readonly title?: string | null }): { readonly command: string; readonly args: string[] } | undefined {
-  if (recordHost === "superset" && record.workspaceId !== null) {
-    return {
-      command: "superset",
-      args: operation === "list"
-        ? ["terminals", "list", "--workspace", record.workspaceId, "--json"]
-        : ["terminals", operation, "--workspace", record.workspaceId, ...(record.terminalId === undefined ? [] : ["--terminal", record.terminalId]), ...(record.command === undefined ? [] : ["--command", record.command]), "--json"],
-    };
-  }
-  if (recordHost === "orca") {
-    return {
-      command: "orca",
-      args: ["terminal", operation, ...(record.terminalId === undefined ? [] : ["--terminal", record.terminalId]), ...(record.title === undefined || record.title === null ? [] : ["--title", record.title]), ...(record.command === undefined ? [] : ["--command", record.command]), "--json"],
-    };
-  }
-  return undefined;
+function hostCommand(recordHost: string, operation: string, record: { readonly workspaceId: string | null; readonly terminalId?: string }): HostCommand | undefined {
+  const provider = getHost(recordHost);
+  if (provider === undefined || (record.terminalId === undefined && operation !== "list")) return undefined;
+  const input = { workspaceId: record.workspaceId, terminalId: record.terminalId ?? "" };
+  const result = operation === "list" ? provider.list({ workspaceId: record.workspaceId }) : operation === "read" ? provider.read(input) : operation === "close" ? provider.close(input) : undefined;
+  return result?.kind === "ok" ? result.value : undefined;
 }
 
 function hostEntries(value: unknown): JsonObject[] {
@@ -159,7 +150,9 @@ async function worktree(process: ProcessAdapter, value: string | undefined, curr
 }
 
 async function workspaceId(process: ProcessAdapter, worktreePath: string): Promise<string | undefined> {
-  const result = await process.run("superset", ["workspaces", "list", "--local", "--json"]);
+  const call = getHost("superset")?.workspaces();
+  if (call === undefined || call.kind !== "ok") return undefined;
+  const result = await process.run(call.value.command, call.value.args);
   if (result.kind !== "ok") return undefined;
   const value = parsed(result.value.stdout);
   const workspaces = hostEntries(isObject(value) ? (value.workspaces ?? value.result) : value);
@@ -266,15 +259,12 @@ async function waitForPort(process: ProcessAdapter, port: string | number, desir
 }
 
 async function identityFromHost(process: ProcessAdapter, recordHost: Host, workspace: string | null, terminalId: string, marker: string, timeoutMs: number): Promise<number | undefined> {
-  const call = recordHost === "superset" && workspace !== null
-    ? { command: "superset", args: ["terminals", "read", "--workspace", workspace, "--terminal", terminalId, "--json"] }
-    : recordHost === "orca"
-      ? { command: "orca", args: ["terminal", "read", "--terminal", terminalId, "--json"] }
-      : undefined;
-  if (call === undefined) return undefined;
+  const provider = getHost(recordHost);
+  const call = provider?.read({ workspaceId: workspace, terminalId });
+  if (call?.kind !== "ok") return undefined;
   const attempts = Math.max(1, Math.ceil(timeoutMs / 100));
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const result = await process.run(call.command, call.args);
+    const result = await process.run(call.value.command, call.value.args);
     if (result.kind === "ok") {
       const match = result.value.stdout.match(new RegExp(`${marker}=([0-9]+)`));
       if (match?.[1] !== undefined) return Number(match[1]);
@@ -286,13 +276,9 @@ async function identityFromHost(process: ProcessAdapter, recordHost: Host, works
 
 async function createHost(process: ProcessAdapter, recordHost: Host, workspace: string | null, worktreePath: string, title: string | null, command: string): Promise<Result<{ readonly value: JsonObject; readonly launch: string; readonly stdout: string }>> {
   const launched = launchCommand(command);
-  const call = recordHost === "superset" && workspace !== null
-    ? { command: "superset", args: ["terminals", "create", "--workspace", workspace, "--command", launched.command, "--json"] }
-    : recordHost === "orca"
-      ? { command: "orca", args: ["terminal", "create", "--worktree", `path:${worktreePath}`, ...(title === null ? [] : ["--title", title]), "--command", launched.command, "--json"] }
-      : undefined;
-  if (call === undefined) return failed(recordHost === "superset" ? "no Superset workspace is registered for the target; run megabrain worktree adopt first" : "cannot create terminal from unknown orchestration host");
-  const result = await process.run(call.command, call.args);
+  const call = getHost(recordHost)?.create({ workspaceId: workspace, worktreePath, title, command: launched.command });
+  if (call === undefined || call.kind !== "ok") return failed(recordHost === "superset" ? "no Superset workspace is registered for the target; run megabrain worktree adopt first" : "cannot create terminal from unknown orchestration host");
+  const result = await process.run(call.value.command, call.value.args);
   if (result.kind !== "ok") return result;
   const value = parsed(result.value.stdout);
   if (!isObject(value)) return failed(`${recordHost} terminal create returned no terminal identity`);

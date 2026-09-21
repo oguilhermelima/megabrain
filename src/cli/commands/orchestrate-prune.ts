@@ -6,6 +6,7 @@ import { dispatchArchiveDirectory, dispatchArchiveParentDirectory, liveDispatchD
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson } from "./queue-write.js";
+import { getHost } from "../../hosts/index.js";
 
 type RecordValue = Record<string, unknown>;
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -65,9 +66,8 @@ async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<Re
 
 function hostTerminalArgs(meta: RecordValue): { readonly command: string; readonly args: readonly string[]; readonly host: string } | undefined {
   const host = text(meta.childHost);
-  if (host === "orca") return { command: "orca", args: ["terminal", "list", "--json"], host };
-  if (host === "superset") return { command: "megabrain_superset", args: ["terminals", "list", "--workspace", text(meta.workspaceId), "--json"], host };
-  return undefined;
+  const call = getHost(host)?.list({ workspaceId: text(meta.workspaceId) || null });
+  return call?.kind === "ok" ? { ...call.value, host } : undefined;
 }
 
 async function releaseBeforePrune(meta: RecordValue, environment: Environment, process: ProcessAdapter): Promise<Result<void>> {
@@ -99,9 +99,9 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
   let parsed: unknown;
   try { parsed = JSON.parse(terminals.value.stdout); } catch { return failed("terminal identity is unproven"); }
   if (!containsTerminal(parsed, listing.host, text(meta.terminalId))) return ok(undefined);
-  const closeCommand = listing.host === "orca" ? "orca" : "megabrain_superset";
-  const closeArgs = listing.host === "orca" ? ["terminal", "close", "--terminal", text(meta.terminalId), "--json"] : ["terminals", "close", "--workspace", text(meta.workspaceId), "--terminal", text(meta.terminalId), "--json"];
-  const closed = await process.run(closeCommand, closeArgs);
+  const close = getHost(listing.host)?.close({ workspaceId: text(meta.workspaceId) || null, terminalId: text(meta.terminalId) });
+  if (close === undefined || close.kind !== "ok") return failed("could not release dispatch terminal");
+  const closed = await process.run(close.value.command, close.value.args);
   if (closed.kind === "ok" || /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(closed.error)) return ok(undefined);
   return failed("could not release dispatch terminal");
 }

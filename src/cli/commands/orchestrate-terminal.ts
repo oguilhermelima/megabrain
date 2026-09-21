@@ -1,4 +1,5 @@
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { getHost, type HostCommand } from "../../hosts/index.js";
 
 export type RecordValue = Record<string, unknown>;
 export type TerminalStatus = "proven" | "missing" | "unknown";
@@ -50,13 +51,20 @@ function hasHostTerminal(value: unknown, host: string, id: string): boolean {
   return hostItems(value, host)?.some((item) => (host === "orca" ? stringValue(item.handle) : stringValue(item.terminalId)) === id) ?? false;
 }
 
-async function hostList(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: TerminalStatus; readonly records?: unknown }> {
+export function hostCommand(meta: RecordValue): HostCommand {
   const host = stringValue(meta.childHost);
   const workspace = stringValue(meta.workspaceId);
-  const command = host === "orca" ? "orca" : host === "superset" ? "megabrain_superset" : "";
-  const args = host === "orca" ? ["terminal", "list", "--json"] : host === "superset" && workspace !== "" ? ["terminals", "list", "--workspace", workspace, "--json"] : [];
-  if (command === "" || args.length === 0) return { status: "unknown" };
-  const result = await process.run(command, args);
+  const provider = getHost(host);
+  if (provider === undefined || (host === "superset" && workspace === "")) return { command: "", args: [] };
+  const result = provider.list({ workspaceId: workspace === "" ? null : workspace });
+  return result.kind === "ok" ? result.value : { command: "", args: [] };
+}
+
+async function hostList(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: TerminalStatus; readonly records?: unknown }> {
+  const host = stringValue(meta.childHost);
+  const call = hostCommand(meta);
+  if (call.command === "" || call.args.length === 0) return { status: "unknown" };
+  const result = await process.run(call.command, call.args);
   if (result.kind !== "ok") return { status: "unknown" };
   const records = parseJson(result.value.stdout);
   const items = hostItems(records, host);
@@ -87,16 +95,21 @@ export async function terminalStatus(meta: RecordValue, process: ProcessAdapter)
 async function parentRecords(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: ParentStatus; readonly records?: unknown }> {
   const host = stringValue(meta.parentHost);
   const parent = stringValue(meta.parentSessionId);
+  const provider = getHost(host);
+  if (provider === undefined) return { status: "unknown" };
   if (host === "orca") {
-    const result = await process.run("orca", ["terminal", "list", "--json"]);
+    const call = provider.list({ workspaceId: null });
+    if (call.kind !== "ok") return { status: "unknown" };
+    const result = await process.run(call.value.command, call.value.args);
     if (result.kind !== "ok") return { status: "unknown" };
     const records = parseJson(result.value.stdout);
     const items = hostItems(records, host);
     if (items === undefined) return { status: "unknown", records };
     return { status: hasHostTerminal(records, host, parent) ? "alive" : "gone", records };
   }
-  if (host !== "superset") return { status: "unknown" };
-  const workspaces = await process.run("megabrain_superset", ["workspaces", "list", "--local", "--json"]);
+  const workspacesCall = provider.workspaces();
+  if (workspacesCall.kind !== "ok") return { status: "unknown" };
+  const workspaces = await process.run(workspacesCall.value.command, workspacesCall.value.args);
   if (workspaces.kind !== "ok") return { status: "unknown" };
   const workspaceValue = parseJson(workspaces.value.stdout);
   const root = recordValue(workspaceValue);
@@ -108,7 +121,9 @@ async function parentRecords(meta: RecordValue, process: ProcessAdapter): Promis
     const workspaceId = workspaceRecord === undefined ? "" : stringValue(workspaceRecord.id) || stringValue(workspaceRecord.workspaceId);
     if (workspaceId === "") continue;
     queried = true;
-    const terminals = await process.run("megabrain_superset", ["terminals", "list", "--workspace", workspaceId, "--json"]);
+    const terminalsCall = provider.list({ workspaceId });
+    if (terminalsCall.kind !== "ok") return { status: "unknown" };
+    const terminals = await process.run(terminalsCall.value.command, terminalsCall.value.args);
     if (terminals.kind !== "ok") return { status: "unknown" };
     const records = parseJson(terminals.value.stdout);
     const items = hostItems(records, host);

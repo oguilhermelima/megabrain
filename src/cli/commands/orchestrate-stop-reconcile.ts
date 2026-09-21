@@ -8,6 +8,7 @@ import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { parentStatus, terminalStatus, interruptAffordance, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
+import { getHost } from "../../hosts/index.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -118,15 +119,21 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
     const sent = await process.run("tmux", ["send-keys", "-t", value(meta.tmuxPane), affordance ?? "Escape"]); interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
   } else {
     const host = value(meta.childHost);
-    if (host === "superset") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Superset terminals send offers no interrupt capability`);
-    if (host !== "orca") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: interrupt capability is unavailable for host ${host || "unknown"}`);
+    const provider = getHost(host);
+    if (provider === undefined) return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: interrupt capability is unavailable for host ${host || "unknown"}`);
+    const interrupt = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: value(meta.terminalId), interrupt: true });
+    if (interrupt.kind === "unknown") {
+      const reason = host === "superset" ? "Superset terminals send offers no interrupt capability" : interrupt.reason;
+      return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${reason}`);
+    }
+    if (interrupt.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${interrupt.error}`);
     const identity = await terminalStatus(meta, process);
     if (identity === "missing") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is missing; cannot safely interrupt`);
     if (identity !== "proven") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt`);
     const session = env.MEGABRAIN_SESSION_ID ?? env.SUPERSET_TERMINAL_ID ?? env.ORCA_TERMINAL_HANDLE ?? "";
     const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca`;
     const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
-    const sent = await process.run("orca", ["terminal", "send", "--terminal", value(meta.terminalId), "--interrupt", "--json"]);
+    const sent = await process.run(interrupt.value.command, interrupt.value.args);
     interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
     interruptReason = sent.kind === "failed" ? sent.error : "";
   }
