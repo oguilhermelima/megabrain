@@ -9,7 +9,7 @@ import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInpu
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
 import { createNativeSessionStore } from "../../adapters/native-session-store.js";
 import { connectMetroInspector, type MetroEvaluation } from "../../core/native-cdp.js";
-import { buildNativeCapturePaths, decideCaptureOutcome, type NativeCaptureFrame } from "../../core/native-capture.js";
+import { buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord } from "../../core/native-capture.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
@@ -480,14 +480,21 @@ const routerModuleExpression = `(() => {
   };
   const router = find("expo-router/build/imperative-api.js", "router");
   const store = find("expo-router/build/global-state/router-store.js", "store");
+  const routingQueue = find("expo-router/build/global-state/routingQueue.js", "routingQueue");
   if (store === null || (typeof store !== "object" && typeof store !== "function") || typeof store.getRouteInfo !== "function") throw new Error("required Expo Router export getRouteInfo is unavailable from expo-router/build/global-state/router-store.js export store");
-  return { router, store };
+  if (routingQueue === null || (typeof routingQueue !== "object" && typeof routingQueue !== "function") || typeof routingQueue.snapshot !== "function") throw new Error("required Expo Router export snapshot is unavailable from expo-router/build/global-state/routingQueue.js export routingQueue");
+  return { router, store, routingQueue };
 })()`;
 const routeInfoExpression = `(() => {
   const modules = ${routerModuleExpression};
   const route = modules.store.getRouteInfo();
   return { pathname: route.pathname, params: route.params };
 })() /* megabrain:route-info */`;
+const navigationQueueExpression = `(() => {
+  const modules = ${routerModuleExpression};
+  const queue = modules.routingQueue.snapshot();
+  return Array.isArray(queue) ? queue.length : -1;
+})() /* megabrain:navigation-queue */`;
 function navigationExpression(path: string): string {
   return `(() => {
     const modules = ${routerModuleExpression};
@@ -496,6 +503,7 @@ function navigationExpression(path: string): string {
   })() /* megabrain:navigate */`;
 }
 type RouteSnapshot = Readonly<{ pathname: string; params: unknown }>;
+type NativeNavigationResult = Readonly<{ after: RouteSnapshot }>;
 function routeSnapshot(value: unknown): RouteSnapshot | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const item = value as { pathname?: unknown; params?: unknown };
@@ -504,6 +512,16 @@ function routeSnapshot(value: unknown): RouteSnapshot | undefined {
 }
 function routeChanged(before: RouteSnapshot, after: RouteSnapshot): boolean {
   return before.pathname !== after.pathname || JSON.stringify(before.params) !== JSON.stringify(after.params);
+}
+function nativeNavigationResult(value: string): Result<NativeNavigationResult> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null) return error("native navigate returned invalid JSON");
+    const after = routeSnapshot((parsed as { after?: unknown }).after);
+    return after === undefined ? error("native navigate returned invalid route data") : ok({ after });
+  } catch {
+    return error("native navigate returned invalid JSON");
+  }
 }
 async function nativeNavigate(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n");
@@ -537,7 +555,15 @@ async function nativeNavigate(args: readonly string[], environment: Environment,
       }
       await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
     }
-    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}`);
+    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) {
+      const queue = await connection.value.evaluate(navigationQueueExpression, parsed.value.timeoutMs);
+      const queueLength = queue.kind === "ok" && queue.value.kind === "value" && typeof queue.value.value === "number" && Number.isInteger(queue.value.value) && queue.value.value >= 0
+        ? queue.value.value
+        : undefined;
+      if (queueLength !== undefined && queueLength > 0) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was queued but not applied (${queueLength} pending actions)`);
+      if (queueLength === 0) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was not queued (navigation queue is empty)`);
+      return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation queue could not be inspected`);
+    }
     const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, changed: true };
     return args.includes("--json") ? ok(`${JSON.stringify(output)}\n`) : ok(`navigated ${path}: route changed\n`);
   } finally {
@@ -645,7 +671,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
   const viewport = optionValue(args, "--viewport") ?? "default";
   let manifestPath = "";
   let tempDirectory = "";
-  const frameRecords: NativeCaptureFrame[] = [];
+  const frameRecords: NativeCaptureRecord[] = [];
   const screenErrors: string[] = [];
   try {
     tempDirectory = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
@@ -658,43 +684,47 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       try { paths = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screen.name }); }
       catch (cause: unknown) { screenErrors.push(`screen ${screen.name}: ${cause instanceof Error ? cause.message : "invalid output path"}`); continue; }
       manifestPath = paths.manifest;
-      const reset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
-      if (reset.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${reset.error}`); continue; }
-      const navigation = await nativeNavigate(captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), environment, processAdapter);
+      const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
       if (navigation.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigation.error}`); continue; }
+      const navigationResult = nativeNavigationResult(navigation.value);
+      if (navigationResult.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigationResult.error}`); continue; }
+      let reachedPathname = navigationResult.value.after.pathname;
       let framePath = join(tempDirectory, `screen-${index}.png`);
       let frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
       if (frame.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${frame.error}`); continue; }
       let hash = frame.value;
       if (hash === control.value) {
-        frameRecords.push({ name: screen.name, hash });
+        frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
         screenErrors.push(`screen ${screen.name}: frame matches the control frame`);
         continue;
       }
       const previousHash = frameRecords.at(-1)?.hash;
       if (previousHash !== undefined && hash === previousHash) {
         const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
-        if (retryReset.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
-        const retryNavigation = await nativeNavigate(captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), environment, processAdapter);
-        if (retryNavigation.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigation.error}`); continue; }
+        if (retryReset.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
+        const retryNavigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
+        if (retryNavigation.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigation.error}`); continue; }
+        const retryNavigationResult = nativeNavigationResult(retryNavigation.value);
+        if (retryNavigationResult.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`); continue; }
+        reachedPathname = retryNavigationResult.value.after.pathname;
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
         frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
-        if (frame.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${frame.error}`); continue; }
+        if (frame.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${frame.error}`); continue; }
         hash = frame.value;
         if (hash === control.value) {
-          frameRecords.push({ name: screen.name, hash });
+          frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
           screenErrors.push(`screen ${screen.name}: retry frame matches the control frame`);
           continue;
         }
         if (hash === previousHash) {
-          frameRecords.push({ name: screen.name, hash });
+          frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
           screenErrors.push(`screen ${screen.name}: frame duplicates the previous screen after retry`);
           continue;
         }
       }
       await mkdir(dirname(paths.image), { recursive: true });
       await rename(framePath, paths.image);
-      frameRecords.push({ name: screen.name, hash });
+      frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
     }
     const outcome = decideCaptureOutcome({ controlHash: control.value, screens: frameRecords });
     const failureReasons = [...outcome.failureReasons, ...screenErrors];
@@ -716,7 +746,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
     }, null, 2)}\n`);
     const failedRun = outcome.failed || screenErrors.length > 0;
     const report = args.includes("--json")
-      ? `${JSON.stringify({ ok: !failedRun, ...outcome, failureReasons, manifest: manifestPath })}\n`
+      ? `${JSON.stringify({ ok: !failedRun, ...outcome, failureReasons, manifest: manifestPath, screens: frameRecords })}\n`
       : `${outcome.summary}\n${failureReasons.map((reason) => `failed: ${reason}`).join("\n")}${failureReasons.length > 0 ? "\n" : ""}`;
     return ok(report, failedRun ? 1 : undefined);
   } finally {

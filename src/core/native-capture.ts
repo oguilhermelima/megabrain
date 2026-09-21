@@ -5,6 +5,12 @@ export type NativeCaptureFrame = Readonly<{
   hash: string;
 }>;
 
+export type NativeCaptureRecord = NativeCaptureFrame & Readonly<{
+  image: string;
+  requestedRoute: string;
+  reachedPathname: string;
+}>;
+
 export type NativeCaptureOutcome = Readonly<{
   captured: number;
   distinct: number;
@@ -85,4 +91,20 @@ export function buildNativeCapturePaths({
     image: join(themeDirectory, `${name}.png`),
     manifest: join(directory, "manifest.json"),
   };
+}
+
+export function buildNativeCaptureRecord({
+  paths,
+  name,
+  hash,
+  requestedRoute,
+  reachedPathname,
+}: {
+  readonly paths: NativeCapturePaths;
+  readonly name: string;
+  readonly hash: string;
+  readonly requestedRoute: string;
+  readonly reachedPathname: string;
+}): NativeCaptureRecord {
+  return { name, hash, image: paths.image, requestedRoute, reachedPathname };
 }
