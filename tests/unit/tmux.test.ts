@@ -8,6 +8,7 @@ import { session as childSession } from "../../src/cli/commands/child-ack.js";
 import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
+import { notifyChild } from "../../src/cli/commands/queue-write.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -59,9 +60,12 @@ describe("tmux identity provider", () => {
     const fake: TmuxProvider = {
       id: "tmux",
       sessionForPane: async () => ok("module-session"),
-      sessionExists: async () => ok(true),
-      panesForSession: async () => ok(["%4"]),
-      panePid: async () => ok("1234"),
+    sessionExists: async () => ok(true),
+    panesForSession: async () => ok(["%4"]),
+    panePid: async () => ok("1234"),
+      capturePane: async () => ok("captured"),
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
     };
     registerTmux(fake);
     try {
@@ -70,6 +74,63 @@ describe("tmux identity provider", () => {
     } finally {
       registerTmux(original);
     }
+  });
+
+  test("captures with the exact arguments, including the requested line count", async () => {
+    const process = processFor();
+    const tmux = getTmux();
+
+    expect(await tmux.capturePane("%7", 200, process)).toEqual({ kind: "ok", value: "work\n" });
+    expect(await tmux.capturePane("%7", 37, process)).toEqual({ kind: "ok", value: "work\n" });
+    expect(process.calls).toEqual([
+      { command: "tmux", args: ["capture-pane", "-p", "-t", "%7", "-S", "-200"] },
+      { command: "tmux", args: ["capture-pane", "-p", "-t", "%7", "-S", "-37"] },
+    ]);
+  });
+
+  test("sends text and the submit key as two separate calls", async () => {
+    const process = processFor();
+    const tmux = getTmux();
+
+    expect(await tmux.sendText("%7", "pointer", process)).toEqual({ kind: "ok", value: undefined });
+    expect(await tmux.sendKey("%7", "Tab", process)).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls).toEqual([
+      { command: "tmux", args: ["send-keys", "-t", "%7", "-l", "pointer"] },
+      { command: "tmux", args: ["send-keys", "-t", "%7", "Tab"] },
+    ]);
+  });
+
+  test("the child notification follows the registered agent and tmux modules", async () => {
+    const calls: Call[] = [];
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      id: "tmux",
+      sessionForPane: async () => ok("module-session"),
+      sessionExists: async () => ok(true),
+      panesForSession: async () => ok(["%4"]),
+      panePid: async () => ok("1234"),
+      capturePane: async () => ok("captured"),
+      sendText: async (pane, text) => { calls.push({ command: "tmux", args: ["send-keys", "-t", pane, "-l", text] }); return ok(undefined); },
+      sendKey: async (pane, key) => { calls.push({ command: "tmux", args: ["send-keys", "-t", pane, key] }); return ok(undefined); },
+    };
+    registerTmux(fake);
+    try {
+      const result = await notifyChild("/tmp/unused", { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "dispatch", processFor());
+      expect(result).toEqual({ outcome: "delivered", reason: "child-notified" });
+      expect(calls).toEqual([
+        { command: "tmux", args: ["send-keys", "-t", "%4", "-l", "[megabrain] reply available; run megabrain check"] },
+        { command: "tmux", args: ["send-keys", "-t", "%4", "Tab"] },
+      ]);
+    } finally {
+      registerTmux(original);
+    }
+  });
+
+  test("an unknown child agent is not sent text followed by Enter", async () => {
+    const process = processFor();
+    const result = await notifyChild("/tmp/unused", { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "unregistered-agent" }, "dispatch", process);
+    expect(result.outcome).toBe("failed");
+    expect(process.calls).toEqual([]);
   });
 
   test("does not query tmux without a pane marker", async () => {
