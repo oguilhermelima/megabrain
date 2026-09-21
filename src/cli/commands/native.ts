@@ -490,7 +490,7 @@ const logBoxExpression = `(() => {
   if (resolver === undefined || typeof resolver.getModules !== "function") return { present: false };
   for (const [id, metadata] of resolver.getModules()) {
     const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
-    if (typeof name !== "string" || (!name.endsWith("/react-native/Libraries/LogBox/LogBox.js") && !name.endsWith("/react-native/Libraries/LogBox/LogBox") && name !== "react-native/Libraries/LogBox/LogBox.js" && name !== "react-native/Libraries/LogBox/LogBox")) continue;
+    if (typeof name !== "string" || (!name.endsWith("/Libraries/LogBox/LogBox.js") && !name.endsWith("/Libraries/LogBox/LogBox"))) continue;
     const module = resolver(id);
     const logBox = module?.LogBox ?? module?.default;
     if (logBox === null || (typeof logBox !== "object" && typeof logBox !== "function") || typeof logBox.ignoreAllLogs !== "function") return { present: false };
