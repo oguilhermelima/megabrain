@@ -1,10 +1,11 @@
 import { ok, unknown, type Result } from "./result.js";
+import { dispatchStates, processStates, terminalStates, type DispatchStateValue, type ProcessStateValue, type TerminalStateValue } from "./dispatch-states.js";
 
 export type JsonRecord = { readonly [key: string]: unknown };
 export type UnknownField = { readonly kind: "unknown"; readonly value: string };
-export type DispatchState = "spawning" | "running" | "done" | "failed" | "closed" | "orphaned" | UnknownField;
-export type ProcessState = "starting" | "start-unproven" | "running" | "stopping" | "stop-unproven" | "stopped" | "succeeded" | "failed" | "abandoned" | "exited" | UnknownField;
-export type TerminalState = "owned" | "missing" | "retained" | "released" | UnknownField;
+export type DispatchState = DispatchStateValue | UnknownField;
+export type ProcessState = ProcessStateValue | UnknownField;
+export type TerminalState = TerminalStateValue | UnknownField;
 
 export type DispatchRecord = {
   readonly raw: JsonRecord;
@@ -20,10 +21,6 @@ export type DispatchRecord = {
 export type DispatchListOptions = Readonly<{ all: boolean; orphans: boolean; uncertain: boolean }>;
 export type DispatchCaller = Readonly<{ id: string; host: string }>;
 export type DecoratedDispatch = JsonRecord & Readonly<{ ownedByCaller: boolean; orphan: boolean; uncertain: boolean; reconcileResult: unknown }>;
-
-const states = ["spawning", "running", "done", "failed", "closed", "orphaned"] as const;
-const processes = ["starting", "start-unproven", "running", "stopping", "stop-unproven", "stopped", "succeeded", "failed", "abandoned", "exited"] as const;
-const terminals = ["owned", "missing", "retained", "released"] as const;
 
 function field<T extends string>(value: unknown, known: readonly T[]): T | UnknownField | undefined {
   if (typeof value !== "string") return undefined;
@@ -43,9 +40,9 @@ export function parseDispatchRecord(value: unknown): Result<DispatchRecord> {
     parentSessionId: stringField(raw.parentSessionId),
     parentHost: stringField(raw.parentHost),
     worktreePath: stringField(raw.worktreePath),
-    state: field(raw.state, states),
-    processState: field(raw.processState, processes),
-    terminalState: field(raw.terminalState, terminals),
+    state: field(raw.state, dispatchStates),
+    processState: field(raw.processState, processStates),
+    terminalState: field(raw.terminalState, terminalStates),
   });
 }
 

@@ -1,4 +1,5 @@
 import { failed, ok, type Result } from "./result.js";
+import { checkDispatchTransition } from "./dispatch-states.js";
 
 export type ParentReplyArguments = Readonly<{
   readonly dispatchId: string;
@@ -46,7 +47,8 @@ export function parseParentChangeArgs(args: readonly string[]): Result<ParentRep
 }
 
 export function replyStateError(dispatch: string, state: string, change: boolean): string | undefined {
-  const allowed = ["spawning", "running", "waiting_for_reply", "orphaned", "done"].includes(state);
+  // A done child is already terminal; accepting a reply there is an idempotent no-op for state.
+  const allowed = state === "done" || checkDispatchTransition("dispatch", state, "running").kind === "ok";
   if (allowed) return undefined;
   if (!change && ["failed", "closed", "circuit_broken"].includes(state)) {
     return `dispatch ${dispatch} is settled in state ${state}; open a new dispatch for a reply`;
@@ -63,4 +65,3 @@ export function supersedeDelivery(status: string, consumer: string | null, seque
 export function addSupersedeSummary(total: SupersedeSummary, next: SupersedeSummary): SupersedeSummary {
   return { queued: total.queued + next.queued, delivered: total.delivered + next.delivered, deliveredSequences: [...total.deliveredSequences, ...next.deliveredSequences] };
 }
-
