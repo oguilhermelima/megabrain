@@ -746,7 +746,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
     }, null, 2)}\n`);
     const failedRun = outcome.failed || screenErrors.length > 0;
     const report = args.includes("--json")
-      ? `${JSON.stringify({ ok: !failedRun, ...outcome, failureReasons, manifest: manifestPath })}\n`
+      ? `${JSON.stringify({ ok: !failedRun, ...outcome, failureReasons, manifest: manifestPath, screens: frameRecords })}\n`
       : `${outcome.summary}\n${failureReasons.map((reason) => `failed: ${reason}`).join("\n")}${failureReasons.length > 0 ? "\n" : ""}`;
     return ok(report, failedRun ? 1 : undefined);
   } finally {
