@@ -1,12 +1,26 @@
-import { dirname, resolve } from "node:path";
-import { mkdir, readFile, rm } from "node:fs/promises";
-import { acquireLock, atomicJson, type QueueEnvironment } from "../cli/commands/queue-write.js";
-import { resolveStateDirectory } from "../core/state.js";
+import { openDatabase } from "../db/db.js";
+import { listNativeSessions, replaceNativeSessions } from "../db/queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
-import { parseNativeSessions, type NativeSession } from "../core/native-session.js";
+import type { NativeSession } from "../core/native-session.js";
+import type { QueueEnvironment } from "../cli/commands/queue-write.js";
 
 type Update<T> = Readonly<{ sessions: readonly NativeSession[]; value: T }>;
-type JsonRecord = Record<string, unknown>;
+
+type ProcessLock = Readonly<{ tail: Promise<void>; release(): void }>;
+const processLocks = new Map<string, ProcessLock>();
+
+async function acquireProcessLock(path: string): Promise<() => void> {
+  const previous = processLocks.get(path)?.tail ?? Promise.resolve();
+  let releaseCurrent: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => { releaseCurrent = resolve; });
+  const lock: ProcessLock = { tail: previous.then(() => current), release: () => releaseCurrent?.() };
+  processLocks.set(path, lock);
+  await previous;
+  return () => {
+    lock.release();
+    if (processLocks.get(path) === lock) processLocks.delete(path);
+  };
+}
 
 export type NativeSessionStore = Readonly<{
   readonly available: boolean;
@@ -14,36 +28,38 @@ export type NativeSessionStore = Readonly<{
   update<T>(operation: (sessions: readonly NativeSession[]) => Promise<Update<T>>): Promise<Result<T>>;
 }>;
 
-async function readSessions(path: string): Promise<NativeSession[]> {
-  try {
-    return parseNativeSessions(JSON.parse(await readFile(path, "utf8")) as unknown);
-  } catch {
-    return [];
-  }
-}
-
 export function createNativeSessionStore(environment: QueueEnvironment): NativeSessionStore {
-  const configuredStateDirectory = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
-  const path = configuredStateDirectory === undefined || configuredStateDirectory === "" ? undefined : resolve(resolveStateDirectory(environment), "native-sessions.json");
-  const lockPath = path === undefined ? undefined : `${path}.lock`;
+  const database = openDatabase(environment);
+  if (database === undefined) {
+    return {
+      available: false,
+      path: undefined,
+      async update<T>() {
+        return failed("native session store has no resolvable state directory") as Result<T>;
+      },
+    };
+  }
+
   return {
-    available: path !== undefined,
-    path,
+    available: true,
+    path: database.path,
     async update<T>(operation: (sessions: readonly NativeSession[]) => Promise<Update<T>>) {
-      if (path === undefined || lockPath === undefined) return failed("native session store has no resolvable state directory");
+      const releaseProcessLock = await acquireProcessLock(database.path);
       try {
-        await mkdir(dirname(path), { recursive: true });
-        const lock = await acquireLock(lockPath, environment);
-        if (lock.kind !== "ok") return lock;
+        database.db.run("BEGIN IMMEDIATE");
         try {
-          const update = await operation(await readSessions(path));
-          await atomicJson(path, { version: 1, sessions: update.sessions } as JsonRecord);
+          const update = await operation(listNativeSessions(database));
+          replaceNativeSessions(database, update.sessions);
+          database.db.run("COMMIT");
           return ok(update.value);
-        } finally {
-          await rm(lockPath, { recursive: true, force: true });
+        } catch (cause: unknown) {
+          try { database.db.run("ROLLBACK"); } catch { /* preserve the update failure */ }
+          throw cause;
         }
       } catch (cause: unknown) {
         return failed(`could not update native session store: ${cause instanceof Error ? cause.message : "unknown error"}`);
+      } finally {
+        releaseProcessLock();
       }
     },
   };
