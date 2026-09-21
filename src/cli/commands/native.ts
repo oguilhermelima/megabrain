@@ -485,6 +485,20 @@ const routerModuleExpression = `(() => {
   if (routingQueue === null || (typeof routingQueue !== "object" && typeof routingQueue !== "function") || typeof routingQueue.snapshot !== "function") throw new Error("required Expo Router export snapshot is unavailable from expo-router/build/global-state/routingQueue.js export routingQueue");
   return { router, store, routingQueue };
 })()`;
+const logBoxExpression = `(() => {
+  const resolver = globalThis.__r;
+  if (resolver === undefined || typeof resolver.getModules !== "function") return { present: false };
+  for (const [id, metadata] of resolver.getModules()) {
+    const name = typeof metadata === "string" ? metadata : metadata?.verboseName;
+    if (typeof name !== "string" || (!name.endsWith("/react-native/Libraries/LogBox/LogBox.js") && !name.endsWith("/react-native/Libraries/LogBox/LogBox") && name !== "react-native/Libraries/LogBox/LogBox.js" && name !== "react-native/Libraries/LogBox/LogBox")) continue;
+    const module = resolver(id);
+    const logBox = module?.LogBox ?? module?.default;
+    if (logBox === null || (typeof logBox !== "object" && typeof logBox !== "function") || typeof logBox.ignoreAllLogs !== "function") return { present: false };
+    logBox.ignoreAllLogs();
+    return { present: true };
+  }
+  return { present: false };
+})() /* megabrain:logbox */`;
 const routeInfoExpression = `(() => {
   const modules = ${routerModuleExpression};
   const route = modules.store.getRouteInfo();
@@ -670,6 +684,37 @@ async function captureNativeFrame(processAdapter: ProcessAdapter, udid: string, 
   return value.length > 0 ? ok(value) : error("failed to hash simulator frame: shasum returned no hash");
 }
 
+async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string, timeoutMs: number): Promise<Result<string>> {
+  const deadline = Date.now() + timeoutMs;
+  let previousHash: string | undefined;
+  while (Date.now() < deadline) {
+    const frame = await captureNativeFrame(processAdapter, udid, path);
+    if (frame.kind !== "ok") return frame;
+    if (frame.value === previousHash) return frame;
+    previousHash = frame.value;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
+  }
+  return error(`frame did not settle within ${timeoutMs}ms`);
+}
+
+type NativeLogBoxStatus = "ignored" | "absent";
+
+async function silenceNativeLogBox(processAdapter: ProcessAdapter, metroPort: number, timeoutMs: number): Promise<Result<NativeLogBoxStatus>> {
+  const connection = await connectMetroInspector(metroPort, timeoutMs);
+  if (connection.kind !== "ok") return connection;
+  try {
+    const evaluation = await connection.value.evaluate(logBoxExpression, timeoutMs);
+    if (evaluation.kind !== "ok") return evaluation;
+    if (evaluation.value.kind === "exception") return error(`could not silence LogBox: ${evaluation.value.message}`);
+    if (typeof evaluation.value.value !== "object" || evaluation.value.value === null || typeof (evaluation.value.value as { present?: unknown }).present !== "boolean") return error("could not silence LogBox: inspector returned invalid registry data");
+    return ok((evaluation.value.value as { present: boolean }).present ? "ignored" : "absent");
+  } finally {
+    connection.value.close();
+  }
+}
+
 function captureNavigationArgs(kind: NativeKind, route: string, metroPort: string, timeout: string): string[] {
   return [kind, route, "--metro-port", metroPort, "--timeout", timeout];
 }
@@ -705,6 +750,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
   const screenErrors: string[] = [];
   let previousPendingFailureCount: number | undefined;
   let earlyStopReason: string | undefined;
+  let logBoxStatus: NativeLogBoxStatus | "pending" | "failed" = "pending";
   const recordNavigationFailure = (screen: NativeCaptureScreen, message: string, remainingScreens: readonly NativeCaptureScreen[]): boolean => {
     screenErrors.push(`screen ${screen.name}: navigation failed: ${message}`);
     const pendingCount = pendingNavigationCount(message);
@@ -733,6 +779,15 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       manifestPath = paths.manifest;
       const reset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId, Number(validPort.value), timeout.value * 1000);
       if (reset.kind !== "ok") { screenErrors.push(`screen ${screen.name}: reset failed: ${reset.error}`); continue; }
+      if (logBoxStatus === "pending") {
+        const logBox = await silenceNativeLogBox(processAdapter, Number(validPort.value), timeout.value * 1000);
+        if (logBox.kind !== "ok") {
+          logBoxStatus = "failed";
+          screenErrors.push(`capture run: failed to silence LogBox: ${logBox.error}`);
+          continue;
+        }
+        logBoxStatus = logBox.value;
+      }
       const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
       if (navigation.kind !== "ok") {
         if (recordNavigationFailure(screen, navigation.error, screens.value.slice(index + 1))) break;
@@ -743,7 +798,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       if (navigationResult.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigationResult.error}`); previousPendingFailureCount = undefined; continue; }
       let reachedPathname = navigationResult.value.after.pathname;
       let framePath = join(tempDirectory, `screen-${index}.png`);
-      let frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
+      let frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000);
       if (frame.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${frame.error}`); continue; }
       let hash = frame.value;
       if (hash === control.value) {
@@ -765,7 +820,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         if (retryNavigationResult.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`); previousPendingFailureCount = undefined; continue; }
         reachedPathname = retryNavigationResult.value.after.pathname;
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
-        frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
+        frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000);
         if (frame.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${frame.error}`); continue; }
         hash = frame.value;
         if (hash === control.value) {
@@ -784,7 +839,10 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
     }
     const outcome = decideCaptureOutcome({ controlHash: control.value, screens: frameRecords });
-    const captureOutcome = earlyStopReason === undefined ? outcome : { ...outcome, summary: `${outcome.summary}; ${earlyStopReason}` };
+    const logBoxSummary = logBoxStatus === "ignored" ? "LogBox ignored" : logBoxStatus === "absent" ? "LogBox not found in module registry" : logBoxStatus === "failed" ? "LogBox could not be silenced" : "LogBox not checked";
+    const captureOutcome = earlyStopReason === undefined
+      ? { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}` }
+      : { ...outcome, summary: `${outcome.summary}; ${logBoxSummary}; ${earlyStopReason}` };
     const failureReasons = [...outcome.failureReasons, ...screenErrors];
     if (manifestPath.length === 0) {
       const first = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screens.value[0]?.name ?? "capture" });
