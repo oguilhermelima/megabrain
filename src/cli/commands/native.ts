@@ -480,14 +480,21 @@ const routerModuleExpression = `(() => {
   };
   const router = find("expo-router/build/imperative-api.js", "router");
   const store = find("expo-router/build/global-state/router-store.js", "store");
+  const routingQueue = find("expo-router/build/global-state/routingQueue.js", "routingQueue");
   if (store === null || (typeof store !== "object" && typeof store !== "function") || typeof store.getRouteInfo !== "function") throw new Error("required Expo Router export getRouteInfo is unavailable from expo-router/build/global-state/router-store.js export store");
-  return { router, store };
+  if (routingQueue === null || (typeof routingQueue !== "object" && typeof routingQueue !== "function") || typeof routingQueue.snapshot !== "function") throw new Error("required Expo Router export snapshot is unavailable from expo-router/build/global-state/routingQueue.js export routingQueue");
+  return { router, store, routingQueue };
 })()`;
 const routeInfoExpression = `(() => {
   const modules = ${routerModuleExpression};
   const route = modules.store.getRouteInfo();
   return { pathname: route.pathname, params: route.params };
 })() /* megabrain:route-info */`;
+const navigationQueueExpression = `(() => {
+  const modules = ${routerModuleExpression};
+  const queue = modules.routingQueue.snapshot();
+  return Array.isArray(queue) ? queue.length : -1;
+})() /* megabrain:navigation-queue */`;
 function navigationExpression(path: string): string {
   return `(() => {
     const modules = ${routerModuleExpression};
@@ -548,7 +555,15 @@ async function nativeNavigate(args: readonly string[], environment: Environment,
       }
       await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
     }
-    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}`);
+    if (afterRoute === undefined || !routeChanged(beforeRoute, afterRoute)) {
+      const queue = await connection.value.evaluate(navigationQueueExpression, parsed.value.timeoutMs);
+      const queueLength = queue.kind === "ok" && queue.value.kind === "value" && typeof queue.value.value === "number" && Number.isInteger(queue.value.value) && queue.value.value >= 0
+        ? queue.value.value
+        : undefined;
+      if (queueLength !== undefined && queueLength > 0) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was queued but not applied (${queueLength} pending actions)`);
+      if (queueLength === 0) return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation was not queued (navigation queue is empty)`);
+      return error(`navigation route did not change: pathname remained ${beforeRoute.pathname} with params ${JSON.stringify(beforeRoute.params)}; navigation queue could not be inspected`);
+    }
     const output = { ok: true, kind: parsed.value.kind, path, before: beforeRoute, after: afterRoute, changed: true };
     return args.includes("--json") ? ok(`${JSON.stringify(output)}\n`) : ok(`navigated ${path}: route changed\n`);
   } finally {
