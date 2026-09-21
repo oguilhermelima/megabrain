@@ -21,6 +21,7 @@ export type WorktreeListEntry = {
   readonly branch: string;
   readonly parent: string | null;
   readonly inSuperset: boolean;
+  readonly inSharedRoot: boolean;
   readonly pullRequest: PullRequest | null;
 };
 
