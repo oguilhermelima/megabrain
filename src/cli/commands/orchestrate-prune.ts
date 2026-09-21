@@ -7,6 +7,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 type RecordValue = Record<string, unknown>;
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -33,11 +34,11 @@ function containsTerminal(value: unknown, host: string, id: string): boolean {
 
 async function terminalStatus(meta: RecordValue, process: ProcessAdapter): Promise<"proven" | "missing" | "unknown"> {
   if (text(meta.runtime) !== "tmux") return "unknown";
-  const session = await process.run("tmux", ["has-session", "-t", text(meta.tmuxSession)]);
+  const session = await getTmux().sessionExists(text(meta.tmuxSession), process);
   if (session.kind !== "ok") return "missing";
-  const panes = await process.run("tmux", ["list-panes", "-t", text(meta.tmuxSession), "-F", "#{pane_id}"]);
+  const panes = await getTmux().panesForSession(text(meta.tmuxSession), process);
   if (panes.kind !== "ok") return "unknown";
-  return panes.value.stdout.split("\n").includes(text(meta.tmuxPane)) ? "proven" : "missing";
+  return panes.value.includes(text(meta.tmuxPane)) ? "proven" : "missing";
 }
 
 async function childIdentityProof(directory: string): Promise<boolean> {
@@ -56,7 +57,7 @@ async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<Re
   const proven = terminal === "proven" || await childIdentityProof(entry.directory);
   let parent: "alive" | "gone" | "unknown" = "unknown";
   const parentSession = text(entry.meta.parentTmuxSession);
-  if (proven && parentSession !== "") parent = (await process.run("tmux", ["has-session", "-t", parentSession])).kind === "ok" ? "alive" : "gone";
+  if (proven && parentSession !== "") parent = (await getTmux().sessionExists(parentSession, process)).kind === "ok" ? "alive" : "gone";
   const decision = reconcileDecision(entry.meta, proven ? "proven" : terminal, parent);
   if (decision.outcome === "unchanged") return entry.meta;
   const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
@@ -75,18 +76,18 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
   if (terminalState === "released" || terminalState === "missing") return ok(undefined);
   if (terminalState === "retained") return failed("terminal identity is unproven");
   if (text(meta.runtime) === "tmux") {
-    const session = await process.run("tmux", ["has-session", "-t", text(meta.tmuxSession)]);
+    const session = await getTmux().sessionExists(text(meta.tmuxSession), process);
     if (session.kind !== "ok") return ok(undefined);
-    const panes = await process.run("tmux", ["list-panes", "-t", text(meta.tmuxSession), "-F", "#{pane_id}"]);
+    const panes = await getTmux().panesForSession(text(meta.tmuxSession), process);
     if (panes.kind !== "ok") return failed("terminal identity is unproven");
-    if (!panes.value.stdout.split("\n").includes(text(meta.tmuxPane))) return ok(undefined);
+    if (!panes.value.includes(text(meta.tmuxPane))) return ok(undefined);
     const sessionName = text(meta.tmuxSession);
     if (sessionName === text(meta.parentTmuxSession)) return ok(undefined);
     if (environment.TMUX && environment.TMUX_PANE) {
-      const caller = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-      if (caller.kind === "ok" && caller.value.stdout.trim() === sessionName) return ok(undefined);
+      const caller = await tmuxCallerSession(environment, process);
+      if (caller !== undefined && caller === sessionName) return ok(undefined);
     }
-    const paneIds = panes.value.stdout.split("\n").filter((pane) => pane.length > 0);
+    const paneIds = panes.value;
     const released = paneIds.length > 1
       ? await process.run("tmux", ["kill-pane", "-t", text(meta.tmuxPane)])
       : await process.run("tmux", ["kill-session", "-t", sessionName]);
@@ -104,6 +105,12 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
   const closed = await process.run(close.value.command, close.value.args);
   if (closed.kind === "ok" || /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(closed.error)) return ok(undefined);
   return failed("could not release dispatch terminal");
+}
+
+export async function tmuxCallerSession(environment: Environment, process: ProcessAdapter): Promise<string | undefined> {
+  if (!environment.TMUX || !environment.TMUX_PANE) return undefined;
+  const result = await getTmux().sessionForPane(environment.TMUX_PANE, process);
+  return result.kind === "ok" ? result.value : undefined;
 }
 
 async function entries(root: string): Promise<Entry[]> {

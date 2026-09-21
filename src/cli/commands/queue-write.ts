@@ -6,6 +6,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getHost } from "../../hosts/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -71,10 +72,10 @@ async function readParentTmuxChannel(meta: JsonRecord, processAdapter: ProcessAd
   const session = typeof meta.parentTmuxSession === "string" ? meta.parentTmuxSession : undefined;
   const pane = typeof meta.parentTmuxPane === "string" ? meta.parentTmuxPane : undefined;
   if (session === undefined || session === "" || pane === undefined || pane === "") return undefined;
-  const hasSession = await processAdapter.run("tmux", ["has-session", "-t", session]);
+  const hasSession = await getTmux().sessionExists(session, processAdapter);
   if (hasSession.kind !== "ok") return undefined;
-  const panes = await processAdapter.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
-  if (panes.kind !== "ok" || !panes.value.stdout.split("\n").some((value) => value === pane)) return undefined;
+  const panes = await getTmux().panesForSession(session, processAdapter);
+  if (panes.kind !== "ok" || !panes.value.includes(pane)) return undefined;
   return { session, pane };
 }
 

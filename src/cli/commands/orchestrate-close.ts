@@ -6,17 +6,18 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
 const absent = (value: string): boolean => /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(value);
 
-async function caller(environment: QueueEnvironment, process: ProcessAdapter): Promise<{ host?: string; id?: string; tmuxPane?: string; tmuxSession?: string }> {
+export async function caller(environment: QueueEnvironment, process: ProcessAdapter): Promise<{ host?: string; id?: string; tmuxPane?: string; tmuxSession?: string }> {
   if (environment.TMUX && environment.TMUX_PANE) {
     let identity: { host: string; id?: string } = environment.SUPERSET_TERMINAL_ID ? { host: "superset", id: environment.SUPERSET_TERMINAL_ID } : environment.ORCA_TERMINAL_HANDLE ? { host: "orca", id: environment.ORCA_TERMINAL_HANDLE } : { host: "tmux" };
     if (identity.id === undefined) {
-      const session = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-      if (session.kind === "ok" && session.value.stdout.trim() !== "") identity = { host: "tmux", id: `${session.value.stdout.trim()}:${environment.TMUX_PANE}` };
+      const session = await getTmux().sessionForPane(environment.TMUX_PANE, process);
+      if (session.kind === "ok") identity = { host: "tmux", id: `${session.value}:${environment.TMUX_PANE}` };
     }
     return { ...identity, tmuxPane: environment.TMUX_PANE };
   }
@@ -24,6 +25,12 @@ async function caller(environment: QueueEnvironment, process: ProcessAdapter): P
   if (environment.ORCA_TERMINAL_HANDLE) return { host: "orca", id: environment.ORCA_TERMINAL_HANDLE };
   if (environment.MEGABRAIN_SESSION_ID) return { host: environment.MEGABRAIN_SESSION_HOST ?? "unknown", id: environment.MEGABRAIN_SESSION_ID };
   return {};
+}
+
+export async function tmuxSessionForEnvironment(environment: QueueEnvironment, process: ProcessAdapter): Promise<string | undefined> {
+  if (!environment.TMUX || !environment.TMUX_PANE) return undefined;
+  const result = await getTmux().sessionForPane(environment.TMUX_PANE, process);
+  return result.kind === "ok" ? result.value : undefined;
 }
 
 function errorText(result: { readonly error?: string; readonly value?: { readonly stderr: string } }): string {
@@ -79,10 +86,8 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   const expectedHost = text(meta.parentHost); const expectedId = text(meta.parentSessionId);
   if (current.host !== expectedHost || current.id !== expectedId) return failed(`dispatch ${parsed.value.dispatchId} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id}`);
   let tmuxSession = current.tmuxSession;
-  if (environment.TMUX && environment.TMUX_PANE) {
-    const session = await process.run("tmux", ["display-message", "-p", "-t", environment.TMUX_PANE, "#{session_name}"]);
-    tmuxSession = session.kind === "ok" ? session.value.stdout.trim() : undefined;
-  }
+  const callerSession = await tmuxSessionForEnvironment(environment, process);
+  if (callerSession !== undefined) tmuxSession = callerSession;
   const decision = closeDecision(meta, { ...current, tmuxSession }, parsed.value.forceRelease);
   if (decision.kind !== "ok") return decision;
   if (decision.value === "retained") return failed(`dispatch ${parsed.value.dispatchId} terminal is retained because identity is unproven; refusing release; verify it manually or rerun with --force-release`);
@@ -94,15 +99,15 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   if (runtime === "tmux") {
     const session = text(meta.tmuxSession); const pane = text(meta.tmuxPane); const parentSession = text(meta.parentTmuxSession);
     const shared = session === parentSession || session === tmuxSession;
-    const hasSession = await process.run("tmux", ["has-session", "-t", session]);
+    const hasSession = await getTmux().sessionExists(session, process);
     if (shared) {
       outcome = "shared-pane";
       if (hasSession.kind === "ok" && (await process.run("tmux", ["kill-pane", "-t", pane])).kind !== "ok") return failed("could not close dispatch terminal");
     } else {
       let paneCount = 0;
       if (hasSession.kind === "ok") {
-        const panes = await process.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
-        if (panes.kind === "ok") paneCount = panes.value.stdout.split("\n").filter((item) => item.length > 0).length;
+        const panes = await getTmux().panesForSession(session, process);
+        if (panes.kind === "ok") paneCount = panes.value.length;
       }
       if (paneCount > 1) {
         outcome = "exclusive-pane";
