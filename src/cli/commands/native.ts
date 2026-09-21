@@ -698,6 +698,23 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
   let tempDirectory = "";
   const frameRecords: NativeCaptureRecord[] = [];
   const screenErrors: string[] = [];
+  let previousPendingFailureCount: number | undefined;
+  let earlyStopReason: string | undefined;
+  const recordNavigationFailure = (screen: NativeCaptureScreen, message: string, remainingScreens: readonly NativeCaptureScreen[]): boolean => {
+    screenErrors.push(`screen ${screen.name}: navigation failed: ${message}`);
+    const pendingCount = pendingNavigationCount(message);
+    if (pendingCount === undefined) {
+      previousPendingFailureCount = undefined;
+      return false;
+    }
+    if (previousPendingFailureCount !== undefined && pendingCount >= previousPendingFailureCount) {
+      earlyStopReason = `capture stopped early after screen ${screen.name}: pending navigation queue did not drain (${pendingCount} pending actions; previous failure had ${previousPendingFailureCount}); screens not attempted: ${remainingScreens.length > 0 ? remainingScreens.map((item) => item.name).join(", ") : "none"}`;
+      screenErrors.push(earlyStopReason);
+      return true;
+    }
+    previousPendingFailureCount = pendingCount;
+    return false;
+  };
   try {
     tempDirectory = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
     const controlPath = join(tempDirectory, "control.png");
@@ -710,9 +727,13 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       catch (cause: unknown) { screenErrors.push(`screen ${screen.name}: ${cause instanceof Error ? cause.message : "invalid output path"}`); continue; }
       manifestPath = paths.manifest;
       const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
-      if (navigation.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigation.error}`); continue; }
+      if (navigation.kind !== "ok") {
+        if (recordNavigationFailure(screen, navigation.error, screens.value.slice(index + 1))) break;
+        continue;
+      }
+      previousPendingFailureCount = undefined;
       const navigationResult = nativeNavigationResult(navigation.value);
-      if (navigationResult.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigationResult.error}`); continue; }
+      if (navigationResult.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigationResult.error}`); previousPendingFailureCount = undefined; continue; }
       let reachedPathname = navigationResult.value.after.pathname;
       let framePath = join(tempDirectory, `screen-${index}.png`);
       let frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
@@ -728,9 +749,13 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
         if (retryReset.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
         const retryNavigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
-        if (retryNavigation.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigation.error}`); continue; }
+        if (retryNavigation.kind !== "ok") {
+          frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
+          if (recordNavigationFailure(screen, `duplicate retry failed: ${retryNavigation.error}`, screens.value.slice(index + 1))) break;
+          continue;
+        }
         const retryNavigationResult = nativeNavigationResult(retryNavigation.value);
-        if (retryNavigationResult.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`); continue; }
+        if (retryNavigationResult.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`); previousPendingFailureCount = undefined; continue; }
         reachedPathname = retryNavigationResult.value.after.pathname;
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
         frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
@@ -752,6 +777,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname }));
     }
     const outcome = decideCaptureOutcome({ controlHash: control.value, screens: frameRecords });
+    const captureOutcome = earlyStopReason === undefined ? outcome : { ...outcome, summary: `${outcome.summary}; ${earlyStopReason}` };
     const failureReasons = [...outcome.failureReasons, ...screenErrors];
     if (manifestPath.length === 0) {
       const first = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screens.value[0]?.name ?? "capture" });
@@ -766,13 +792,13 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       commit: commit.value.stdout.trim(),
       date: new Date().toISOString(),
       screens: frameRecords,
-      summary: outcome.summary,
+      summary: captureOutcome.summary,
       failures: failureReasons,
     }, null, 2)}\n`);
-    const failedRun = outcome.failed || screenErrors.length > 0;
+    const failedRun = captureOutcome.failed || screenErrors.length > 0;
     const report = args.includes("--json")
-      ? `${JSON.stringify({ ok: !failedRun, ...outcome, failureReasons, manifest: manifestPath, screens: frameRecords })}\n`
-      : `${outcome.summary}\n${failureReasons.map((reason) => `failed: ${reason}`).join("\n")}${failureReasons.length > 0 ? "\n" : ""}`;
+      ? `${JSON.stringify({ ok: !failedRun, ...captureOutcome, failureReasons, manifest: manifestPath, screens: frameRecords })}\n`
+      : `${captureOutcome.summary}\n${failureReasons.map((reason) => `failed: ${reason}`).join("\n")}${failureReasons.length > 0 ? "\n" : ""}`;
     return ok(report, failedRun ? 1 : undefined);
   } finally {
     if (tempDirectory.length > 0) await rm(tempDirectory, { recursive: true, force: true });
