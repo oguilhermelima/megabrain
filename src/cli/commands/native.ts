@@ -670,6 +670,21 @@ async function captureNativeFrame(processAdapter: ProcessAdapter, udid: string, 
   return value.length > 0 ? ok(value) : error("failed to hash simulator frame: shasum returned no hash");
 }
 
+async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string, timeoutMs: number): Promise<Result<string>> {
+  const deadline = Date.now() + timeoutMs;
+  let previousHash: string | undefined;
+  while (Date.now() < deadline) {
+    const frame = await captureNativeFrame(processAdapter, udid, path);
+    if (frame.kind !== "ok") return frame;
+    if (frame.value === previousHash) return frame;
+    previousHash = frame.value;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
+  }
+  return error(`frame did not settle within ${timeoutMs}ms`);
+}
+
 function captureNavigationArgs(kind: NativeKind, route: string, metroPort: string, timeout: string): string[] {
   return [kind, route, "--metro-port", metroPort, "--timeout", timeout];
 }
@@ -743,7 +758,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       if (navigationResult.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigationResult.error}`); previousPendingFailureCount = undefined; continue; }
       let reachedPathname = navigationResult.value.after.pathname;
       let framePath = join(tempDirectory, `screen-${index}.png`);
-      let frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
+      let frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000);
       if (frame.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${frame.error}`); continue; }
       let hash = frame.value;
       if (hash === control.value) {
@@ -765,7 +780,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         if (retryNavigationResult.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`); previousPendingFailureCount = undefined; continue; }
         reachedPathname = retryNavigationResult.value.after.pathname;
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
-        frame = await captureNativeFrame(processAdapter, selected.value.udid, framePath);
+        frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000);
         if (frame.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${frame.error}`); continue; }
         hash = frame.value;
         if (hash === control.value) {
