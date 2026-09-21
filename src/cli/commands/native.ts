@@ -703,7 +703,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         const retryReset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
         if (retryReset.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry failed: ${retryReset.error}`); continue; }
         const retryNavigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
-        if (retryNavigation.kind !== "ok") { frameRecords.push({ name: screen.name, hash }); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigation.error}`); continue; }
+        if (retryNavigation.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigation.error}`); continue; }
         const retryNavigationResult = nativeNavigationResult(retryNavigation.value);
         if (retryNavigationResult.kind !== "ok") { frameRecords.push(buildNativeCaptureRecord({ paths, name: screen.name, hash, requestedRoute: screen.route, reachedPathname })); screenErrors.push(`screen ${screen.name}: duplicate retry navigation failed: ${retryNavigationResult.error}`); continue; }
         reachedPathname = retryNavigationResult.value.after.pathname;
