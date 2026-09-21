@@ -11,6 +11,15 @@ export type NativeCaptureRecord = NativeCaptureFrame & Readonly<{
   reachedPathname: string;
 }>;
 
+export type NativeCaptureFailureRecord = Readonly<{
+  name: string;
+  requestedRoute: string;
+  image: null;
+  failure: string;
+}>;
+
+export type NativeCaptureScreenRecord = NativeCaptureRecord | NativeCaptureFailureRecord;
+
 export type NativeCaptureOutcome = Readonly<{
   captured: number;
   distinct: number;
@@ -50,7 +59,6 @@ export function decideCaptureOutcome({
   }
   const duplicateGroups = [...groups.values()].filter((names) => names.length > 1);
   const failureReasons = [
-    ...(controlMatches.length > 0 ? [`screen matches the control frame: ${controlMatches.join(", ")}`] : []),
     ...duplicateGroups.map((names) => `screens share a hash: ${names.join(", ")}`),
   ];
   const distinct = groups.size;
@@ -62,7 +70,7 @@ export function decideCaptureOutcome({
     distinct,
     controlMatches,
     duplicateGroups,
-    failed: failureReasons.length > 0,
+    failed: controlMatches.length > 0 || failureReasons.length > 0,
     failureReasons,
     summary: `${screens.length} captured, ${distinct} distinct${groupsText}`,
   };
@@ -107,4 +115,16 @@ export function buildNativeCaptureRecord({
   readonly reachedPathname: string;
 }): NativeCaptureRecord {
   return { name, hash, image: paths.image, requestedRoute, reachedPathname };
+}
+
+export function buildNativeCaptureFailureRecord({
+  name,
+  requestedRoute,
+  failure,
+}: {
+  readonly name: string;
+  readonly requestedRoute: string;
+  readonly failure: string;
+}): NativeCaptureFailureRecord {
+  return { name, requestedRoute, image: null, failure };
 }
