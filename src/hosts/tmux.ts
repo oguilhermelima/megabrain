@@ -10,10 +10,27 @@ export type TmuxProvider = Readonly<{
   readonly capturePane: (pane: string, lines: number, process: ProcessAdapter) => Promise<Result<string>>;
   readonly sendText: (pane: string, text: string, process: ProcessAdapter) => Promise<Result<void>>;
   readonly sendKey: (pane: string, key: string, process: ProcessAdapter) => Promise<Result<void>>;
+  readonly killPane: (pane: string, process: ProcessAdapter) => Promise<Result<void>>;
+  readonly killSession: (session: string, process: ProcessAdapter) => Promise<Result<void>>;
+  readonly listSessions: (process: ProcessAdapter, format?: string) => Promise<Result<readonly string[]>>;
+  readonly globalOption: (option: string, process: ProcessAdapter) => Promise<Result<string>>;
+  readonly sessionOption: (session: string, option: string, process: ProcessAdapter) => Promise<Result<string>>;
+  readonly sourceFile: (path: string, process: ProcessAdapter) => Promise<Result<void>>;
+  readonly showEnvironment: (session: string, variable: string, process: ProcessAdapter) => Promise<Result<string>>;
 }>;
 
 function unavailable(query: string): Result<never> {
   return unknown(`tmux ${query} could not be determined`);
+}
+
+async function runAction(args: readonly string[], process: ProcessAdapter): Promise<Result<void>> {
+  const result = await process.run("tmux", args);
+  return result.kind === "ok" ? ok(undefined) : failed(result.error);
+}
+
+async function query(args: readonly string[], description: string, process: ProcessAdapter): Promise<Result<string>> {
+  const result = await process.run("tmux", args);
+  return result.kind === "ok" ? ok(result.value.stdout) : unavailable(description);
 }
 
 const provider: TmuxProvider = {
@@ -51,12 +68,22 @@ const provider: TmuxProvider = {
     const result = await process.run("tmux", ["send-keys", "-t", pane, key]);
     return result.kind === "ok" ? ok(undefined) : failed(result.error);
   },
+  killPane: async (pane, process) => runAction(["kill-pane", "-t", pane], process),
+  killSession: async (session, process) => runAction(["kill-session", "-t", session], process),
+  listSessions: async (process, format) => {
+    const result = await query(format === undefined ? ["list-sessions"] : ["list-sessions", "-F", format], "sessions", process);
+    return result.kind === "ok" ? ok(result.value.split("\n").filter((session) => session.length > 0)) : result;
+  },
+  globalOption: async (option, process) => query(["show-options", "-gqv", option], `global option ${option}`, process),
+  sessionOption: async (session, option, process) => query(["show-options", "-t", session, "-v", option], `session option ${option} for session ${session}`, process),
+  sourceFile: async (path, process) => runAction(["source-file", path], process),
+  showEnvironment: async (session, variable, process) => query(["show-environment", "-t", session, variable], `environment ${variable} for session ${session}`, process),
 };
 
 const registry = new Map<string, TmuxProvider>([[provider.id, provider]]);
 
 export function registerTmux(value: TmuxProvider): void {
-  registry.set(value.id, value);
+  registry.set(value.id, { ...provider, ...value });
 }
 
 export function unregisterTmux(id: string): void {

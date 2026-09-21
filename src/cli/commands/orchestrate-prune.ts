@@ -89,8 +89,8 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
     }
     const paneIds = panes.value;
     const released = paneIds.length > 1
-      ? await process.run("tmux", ["kill-pane", "-t", text(meta.tmuxPane)])
-      : await process.run("tmux", ["kill-session", "-t", sessionName]);
+      ? await getTmux().killPane(text(meta.tmuxPane), process)
+      : await getTmux().killSession(sessionName, process);
     return released.kind === "ok" ? ok(undefined) : failed("could not release dispatch terminal");
   }
   const listing = hostTerminalArgs(meta);
