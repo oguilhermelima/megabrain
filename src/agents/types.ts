@@ -2,6 +2,8 @@ import { ok, unknown, type Result } from "../core/result.js";
 
 export type Liveness = "working" | "idle" | "blocked" | "pending-check" | "unknown" | "missing";
 export type LivenessResult = Readonly<{ status: Liveness; reason: string | null }>;
+export type SubmitKey = "Enter" | "Tab";
+export type InterruptKey = "Escape";
 
 export type AgentMarker = Readonly<{
   readonly status: Exclude<Liveness, "unknown" | "missing">;
@@ -14,9 +16,15 @@ export type Agent = Readonly<{
   readonly id: string;
   readonly matchesDescriptor: (descriptor: string) => boolean;
   readonly classifyLiveness: (output: string) => Result<LivenessResult>;
+  readonly submitKey?: () => Result<SubmitKey>;
+  readonly interruptKey?: () => Result<InterruptKey>;
 }>;
 
 export const LIVENESS_UNAVAILABLE = "liveness-unavailable";
+
+export function unavailableKey(agent: string, operation: "submit" | "interrupt"): Result<never> {
+  return unknown(`${operation}-key-unavailable: ${agent} has no ${operation} key`);
+}
 
 export function classifyMarkers(markers: readonly AgentMarker[], output: string): Result<LivenessResult> {
   for (const marker of markers) {

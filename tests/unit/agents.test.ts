@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveParentContext } from "../../src/core/context.js";
 import { classifyLiveness } from "../../src/core/liveness.js";
-import { getAgent, registerAgent, unregisterAgent, type Agent } from "../../src/agents/index.js";
+import { getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
 import { ok, type Result } from "../../src/core/result.js";
 
 const fourthAgent: Agent = {
@@ -17,6 +17,21 @@ const fourthAgent: Agent = {
 };
 
 describe("agent registry", () => {
+  test("agents own their submit and interrupt keys", () => {
+    expect(submitKey("claude")).toEqual({ kind: "ok", value: "Enter" });
+    expect(submitKey("codex")).toEqual({ kind: "ok", value: "Tab" });
+    expect(interruptKey("claude")).toEqual({ kind: "ok", value: "Escape" });
+    expect(interruptKey("codex")).toEqual({ kind: "ok", value: "Escape" });
+    expect(submitKey("agy")).toMatchObject({ kind: "unknown" });
+    expect(interruptKey("agy")).toMatchObject({ kind: "unknown" });
+  });
+
+  test("an unknown agent key is unknown rather than Enter", () => {
+    const result = submitKey("unregistered-agent");
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") expect(result.reason).toContain("unregistered-agent");
+  });
+
   test("registered agents are used by descriptor and liveness consumers", () => {
     registerAgent(fourthAgent);
     try {

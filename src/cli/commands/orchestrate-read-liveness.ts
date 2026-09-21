@@ -7,6 +7,7 @@ import { readJson } from "./check.js";
 import { dispatchFile, resolveDispatchDirectory, type DispatchHandle } from "../../adapters/dispatch-store.js";
 import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
 import { getHost } from "../../hosts/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 const defaultTranscriptCap = 10485760;
@@ -42,8 +43,8 @@ async function hostRead(meta: RecordValue, process: ProcessAdapter): Promise<Res
 }
 
 async function capture(pane: string, lines: number, process: ProcessAdapter): Promise<Result<string>> {
-  const result = await process.run("tmux", ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
-  return result.kind === "ok" ? ok(result.value.stdout.replace(/\n+$/, "")) : failed("capture failed");
+  const result = await getTmux().capturePane(pane, lines, process);
+  return result.kind === "ok" ? ok(result.value.replace(/\n+$/, "")) : failed("capture failed");
 }
 
 export async function executeOrchestrateRead(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {

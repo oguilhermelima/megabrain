@@ -7,8 +7,10 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { parentStatus, terminalStatus, interruptAffordance, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
+import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
 import { getHost } from "../../hosts/index.js";
+import { interruptKey } from "../../agents/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -47,9 +49,9 @@ async function tmuxLiveness(meta: RecordValue, process: ProcessAdapter): Promise
   const identity = await terminalStatus(meta, process);
   if (identity !== "proven") return { status: identity === "missing" ? "missing" : "unknown", reason: identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven", identity };
   const pane = value(meta.tmuxPane);
-  const capture = await process.run("tmux", ["capture-pane", "-p", "-t", pane, "-S", "-200"]);
+  const capture = await getTmux().capturePane(pane, 200, process);
   if (capture.kind !== "ok") return { status: "unknown", reason: "terminal output is unavailable", identity };
-  const classified = classifyLiveness(value(meta.agent), capture.value.stdout);
+  const classified = classifyLiveness(value(meta.agent), capture.value);
   return { status: classified.status, reason: classified.reason ?? "", identity };
 }
 
@@ -110,13 +112,14 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
   if (runtime === "tmux") {
     const live = await tmuxLiveness(meta, process); status = live.status;
     reason = status === "pending-check" ? "pending check frame: messages are waiting for the next tool call" : status === "unknown" ? `unknown liveness: ${live.reason || "liveness is not proven"}` : live.reason || `${status}: agent is not working`;
-    const affordance = interruptAffordance(value(meta.agent));
-    const decision = stopDecision(status, affordance === undefined ? "unknown" : "known");
+    const affordance = interruptKey(value(meta.agent));
+    const decision = stopDecision(status, affordance.kind === "ok" ? "known" : "unknown");
     if (decision.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${reason || decision.error}`);
-    const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with Escape`;
+    if (affordance.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${affordance.error}`);
+    const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with ${affordance.value}`;
     const session = env.MEGABRAIN_SESSION_ID ?? env.SUPERSET_TERMINAL_ID ?? env.ORCA_TERMINAL_HANDLE ?? "";
     const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
-    const sent = await process.run("tmux", ["send-keys", "-t", value(meta.tmuxPane), affordance ?? "Escape"]); interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
+    const sent = await getTmux().sendKey(value(meta.tmuxPane), affordance.value, process); interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
   } else {
     const host = value(meta.childHost);
     const provider = getHost(host);

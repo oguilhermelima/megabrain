@@ -44,11 +44,11 @@ async function preserveTranscript(directory: string, meta: RecordValue, process:
   if (await Bun.file(path).exists()) return;
   const pane = text(meta.tmuxPane);
   if (pane === "") return;
-  const captured = await process.run("tmux", ["capture-pane", "-p", "-t", pane, "-S", "-200"]);
-  if (captured.kind !== "ok" || captured.value.stdout === "") return;
+  const captured = await getTmux().capturePane(pane, 200, process);
+  if (captured.kind !== "ok" || captured.value === "") return;
   try {
     await mkdir(directory, { recursive: true });
-    await writeFile(path, captured.value.stdout);
+    await writeFile(path, captured.value);
   } catch {
     // Transcript capture is best effort; an existing transcript is never overwritten.
   }
