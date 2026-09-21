@@ -37,7 +37,9 @@ export function reconcileDecision(meta: Meta, terminalStatus: "proven" | "missin
       return accepted(meta, updates, { outcome: "agent-exited", updates });
     }
     const failures = number(meta.failureCount, 0) + 1;
-    const nextState = failures >= 3 ? "circuit_broken" : "failed";
+    const requestedState = failures >= 3 ? "circuit_broken" : "failed";
+    // circuit_broken is an escalation from failed; a running dispatch must first record failed.
+    const nextState = requestedState === "circuit_broken" && !transitionsAllow(meta, { state: requestedState }) ? "failed" : requestedState;
     const nextProcess = ["succeeded", "failed", "stopped", "abandoned"].includes(processState) ? undefined : "abandoned";
     const updates = { state: nextState, ...(nextProcess === undefined ? {} : { processState: nextProcess }), terminalState: "missing", stage: "terminal-missing", reason: "terminal-missing", failureCount: failures };
     return accepted(meta, updates, { outcome: "terminal-missing", updates });
