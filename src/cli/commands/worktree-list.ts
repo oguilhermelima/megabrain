@@ -112,15 +112,16 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]\n");
   const root = await sharedRoot(environment);
   if (root.kind !== "ok") return root;
-  const repos = await repositories(root.value, process);
   let filter: string | undefined;
+  let selectedRepository: Repository | undefined;
   if (options.value.repo !== undefined) {
     const selector = await repoFromOrca(process, options.value.repo);
-    if (selector.kind !== "ok") return selector;
-    const selected = await repositoryForDirectory(process, selector.value);
-    if (selected === undefined) return failed(`repo not found: ${options.value.repo}`);
-    filter = selected.common;
+    if (selector.kind !== "ok") return failed(`repo not found: ${options.value.repo}`);
+    selectedRepository = await repositoryForDirectory(process, selector.value);
+    if (selectedRepository === undefined) return failed(`repo not found: ${options.value.repo}`);
+    filter = selectedRepository.common;
   }
+  const repos = selectedRepository === undefined ? await repositories(root.value, process) : [selectedRepository];
   const gitRecords: GitWorktree[] = [];
   const parents: ParentConfig[] = [];
   for (const repository of repos) {
@@ -136,10 +137,13 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   const entries: WorktreeListEntry[] = [];
   for (const record of gitRecords) {
     const path = await canonical(record.path);
-    if (path === undefined || !path.startsWith(`${root.value}/`) || (filter !== undefined && record.repository !== filter)) continue;
+    if (path === undefined) continue;
+    const inSharedRoot = path === root.value || path.startsWith(`${root.value}/`);
+    if (options.value.repo === undefined && !inSharedRoot) continue;
+    if (filter !== undefined && record.repository !== filter) continue;
     const config = parents.find((item) => item.repository === record.repository && item.branch === record.branch);
     const parent = config?.parent ?? orcaParents.get(path) ?? null;
-    entries.push({ path, branch: record.branch, parent, inSuperset: workspaces.has(path), pullRequest: pullRequests.get(record.branch) ?? null });
+    entries.push({ path, branch: record.branch, parent, inSuperset: workspaces.has(path), inSharedRoot, pullRequest: pullRequests.get(record.branch) ?? null });
   }
   const formatted = formatWorktreeList(entries, options.value);
   if (options.value.json) return ok(formatted);
