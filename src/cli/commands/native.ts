@@ -669,8 +669,6 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       try { paths = buildNativeCapturePaths({ outputRoot, surface, captureId, theme, viewport, screen: screen.name }); }
       catch (cause: unknown) { screenErrors.push(`screen ${screen.name}: ${cause instanceof Error ? cause.message : "invalid output path"}`); continue; }
       manifestPath = paths.manifest;
-      const reset = await resetNativeCaptureApp(processAdapter, selected.value.udid, bundleId);
-      if (reset.kind !== "ok") { screenErrors.push(`screen ${screen.name}: ${reset.error}`); continue; }
       const navigation = await nativeNavigate([...captureNavigationArgs(kind.value, screen.route, validPort.value, String(timeout.value)), "--json"], environment, processAdapter);
       if (navigation.kind !== "ok") { screenErrors.push(`screen ${screen.name}: navigation failed: ${navigation.error}`); continue; }
       const navigationResult = nativeNavigationResult(navigation.value);
