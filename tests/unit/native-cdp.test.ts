@@ -527,29 +527,29 @@ describe("Metro inspector transport", () => {
     }
   });
 
-  test("reports an absent LogBox without failing the capture", async () => {
+  test("reports absent overlays once without failing a multi-screen capture", async () => {
     const server = await fakeMetro("reset-delayed");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
     const outputRoot = join(worktree, "output");
     const screensFile = join(worktree, "screens.json");
     await mkdir(join(worktree, ".megabrain"));
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
-    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
-    const process = captureProcess(server, false, ["stable-frame", "stable-frame"]);
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }, { name: "second", route: "/second" }]));
+    const process = captureProcess(server, false, ["first-frame", "first-frame", "second-frame", "second-frame"]);
 
     try {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-absent", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "1 captured, 1 distinct; LogBox not found in module registry; DevLoadingView not found in module registry" });
-      expect(server.logBoxCalls).toBe(1);
-      expect(server.devLoadingViewCalls).toBe(1);
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView not found in module registry" });
+      expect(server.logBoxCalls).toBe(2);
+      expect(server.devLoadingViewCalls).toBe(2);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
   });
 
-  test("silences a registered LogBox once per capture run", async () => {
+  test("silences registered overlays after every screen reset", async () => {
     const server = await fakeMetro("logbox-react-native-tvos");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
     const outputRoot = join(worktree, "output");
@@ -563,10 +563,10 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "logbox-present", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored; DevLoadingView not found in module registry" });
-      expect(server.logBoxCalls).toBe(1);
-      expect(server.ignoreAllLogsCalls).toBe(1);
-      expect(server.devLoadingViewCalls).toBe(1);
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored after 2 resets; DevLoadingView not found in module registry" });
+      expect(server.logBoxCalls).toBe(2);
+      expect(server.ignoreAllLogsCalls).toBe(2);
+      expect(server.devLoadingViewCalls).toBe(2);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
@@ -594,7 +594,7 @@ describe("Metro inspector transport", () => {
     }
   });
 
-  test("hides a forked DevLoadingView once per capture run", async () => {
+  test("hides a forked DevLoadingView after every screen reset", async () => {
     const server = await fakeMetro("dev-loading-view-react-native-tvos");
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
     const outputRoot = join(worktree, "output");
@@ -608,10 +608,33 @@ describe("Metro inspector transport", () => {
       const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "dev-loading-view", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView hidden" });
-      expect(server.logBoxCalls).toBe(1);
-      expect(server.devLoadingViewCalls).toBe(1);
-      expect(server.hideDevLoadingViewCalls).toBe(1);
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox not found in module registry; DevLoadingView hidden after 2 resets" });
+      expect(server.logBoxCalls).toBe(2);
+      expect(server.devLoadingViewCalls).toBe(2);
+      expect(server.hideDevLoadingViewCalls).toBe(2);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("silences overlays after a duplicate-frame retry reset", async () => {
+    const server = await fakeMetro("logbox-react-native-tvos");
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-capture-"));
+    const outputRoot = join(worktree, "output");
+    const screensFile = join(worktree, "screens.json");
+    await mkdir(join(worktree, ".megabrain"));
+    await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
+    await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }, { name: "second", route: "/second" }]));
+    const process = captureProcess(server, false, ["first-frame", "first-frame", "first-frame", "first-frame", "second-frame", "second-frame"]);
+
+    try {
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "duplicate-overlay", "--timeout", "1", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ ok: true, summary: "2 captured, 2 distinct; LogBox ignored after 3 resets; DevLoadingView not found in module registry" });
+      expect(server.logBoxCalls).toBe(3);
+      expect(server.ignoreAllLogsCalls).toBe(3);
+      expect(server.devLoadingViewCalls).toBe(3);
     } finally {
       await rm(worktree, { recursive: true, force: true });
     }
