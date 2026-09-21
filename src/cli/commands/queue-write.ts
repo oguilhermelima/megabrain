@@ -7,6 +7,7 @@ import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMe
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { submitKey } from "../../agents/index.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -126,9 +127,12 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, pr
   let result;
   if (host === "tmux") {
     const pane = channel?.pane ?? "";
-    const affordance = meta.parentAgent === "codex" || meta.agent === "codex" ? "Tab" : "Enter";
-    result = await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", pointer]);
-    if (result.kind === "ok") result = await processAdapter.run("tmux", ["send-keys", "-t", pane, affordance]);
+    const parentAgent = typeof meta.parentAgent === "string" && meta.parentAgent !== "" ? meta.parentAgent : typeof meta.agent === "string" ? meta.agent : "";
+    const affordance = submitKey(parentAgent);
+    if (affordance.kind !== "ok") return { outcome: "failed", reason: affordance.error };
+    const text = await getTmux().sendText(pane, pointer, processAdapter);
+    if (text.kind !== "ok") return { outcome: "failed", reason: text.error };
+    result = await getTmux().sendKey(pane, affordance.value, processAdapter);
   } else {
     const provider = getHost(host);
     if (provider === undefined) return { outcome: "failed", reason: `unsupported parent host: ${host}` };
@@ -152,9 +156,11 @@ export async function notifyChild(root: string, meta: JsonRecord, dispatch: stri
     const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
     const session = typeof meta.tmuxSession === "string" ? meta.tmuxSession : "";
     if (pane === "" || session === "") return { outcome: "failed", reason: "tmux dispatch metadata has no session or pane" };
-    const affordance = meta.agent === "codex" ? "Tab" : "Enter";
-    result = await processAdapter.run("tmux", ["send-keys", "-t", pane, "-l", pointer]);
-    if (result.kind === "ok") result = await processAdapter.run("tmux", ["send-keys", "-t", pane, affordance]);
+    const affordance = submitKey(typeof meta.agent === "string" ? meta.agent : "");
+    if (affordance.kind !== "ok") return { outcome: "failed", reason: affordance.error };
+    const text = await getTmux().sendText(pane, pointer, processAdapter);
+    if (text.kind !== "ok") return { outcome: "failed", reason: text.error };
+    result = await getTmux().sendKey(pane, affordance.value, processAdapter);
   } else {
     const provider = getHost(host);
     if (provider === undefined) return { outcome: "failed", reason: `unsupported child host: ${host}` };
