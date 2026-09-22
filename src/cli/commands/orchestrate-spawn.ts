@@ -9,6 +9,7 @@ import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
+import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, type HostCommand, type HostProvider } from "../../hosts/index.js";
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
@@ -178,7 +179,10 @@ export async function defaultResolveWorktree(target: string | undefined, options
     const branch = await runGit(process, ["-C", direct, "symbolic-ref", "--quiet", "--short", "HEAD"]);
     return ok({ path: direct, branch: branch.kind === "ok" && branch.value !== "" ? branch.value : "detached", ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
   }
-  const listed = await runGit(process, ["worktree", "list", "--porcelain"]);
+  if (options.repo === undefined) return failed("--repo is required to resolve a worktree by name");
+  const repository = await repoFromOrca(process, options.repo);
+  if (repository.kind !== "ok") return repository;
+  const listed = await runGit(process, ["-C", repository.value, "worktree", "list", "--porcelain"]);
   if (listed.kind === "ok") {
     let path = "";
     for (const line of listed.value.split("\n")) {
