@@ -52,7 +52,16 @@ command_orchestrate() {
       megabrain_require_worktree_binary "$typescript_binary" || return 1
       "$typescript_binary" orchestrate spawn "$@"
       ;;
-    list) command_orchestrate_list "$@" ;;
+    list)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      "$typescript_binary" orchestrate list "$@"
+      ;;
     prune)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
       [ -x "$typescript_binary" ] || {
@@ -64,9 +73,41 @@ command_orchestrate() {
       "$typescript_binary" orchestrate prune "$@"
       ;;
     reconcile) megabrain_dispatch_reconcile "$@" ;;
-    liveness) megabrain_dispatch_liveness "$@" ;;
+    liveness)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
+        fi
+      fi
+      "$typescript_binary" orchestrate liveness "$@"
+      ;;
     watch) megabrain_dispatch_watch "$@" ;;
-    read) megabrain_dispatch_read "$@" ;;
+    read)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
+        fi
+      fi
+      "$typescript_binary" orchestrate read "$@"
+      ;;
     ack|acknowledge) megabrain_dispatch_ack "$@" ;;
     reply)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
@@ -375,7 +416,7 @@ command_orchestrate_list() {
     megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
   }
-  # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+  # WHY: retained for sourced shell contracts; the dispatcher routes directly above.
   megabrain_warn_if_typescript_binary_stale
   "$typescript_binary" orchestrate list "$@"
 }
