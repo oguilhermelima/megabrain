@@ -5,6 +5,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getAgent, submitKey } from "../../agents/index.js";
 import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
+import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
@@ -286,6 +287,18 @@ async function updateMeta(root: string, id: string, update: RecordValue): Promis
   return ok(undefined);
 }
 
+export async function markRunningIfSpawning(root: string, id: string): Promise<Result<void>> {
+  const path = await dispatchPath(root, id, "meta.json");
+  const meta = await readJson(path);
+  if (meta === undefined) return failed(`dispatch not found: ${id}`);
+  const state = stringValue(meta.state);
+  const transition = checkDispatchTransition("dispatch", state, "running");
+  if (transition.kind === "unknown") return transition;
+  if (state !== "spawning") return ok(undefined);
+  if (transition.kind === "failed") return transition;
+  return updateMeta(root, id, { state: "running" });
+}
+
 async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: ReturnType<typeof parent>, runtime: SpawnRuntime, terminalId: string, session: string | null, pane: string | null): Promise<RecordValue> {
   const now = new Date().toISOString();
   return {
@@ -495,12 +508,19 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     if (planned.kind !== "ok") return planned;
     const plan = planned.value;
     state = plan.state;
-    const metadataUpdate: RecordValue = { state: state.dispatch, processState: state.process, terminalState: state.terminal };
+    const metadataUpdate: RecordValue = {};
+    if (step !== "prompt-transport" && step !== "prompt-confirmation" && step !== "state-persist") {
+      Object.assign(metadataUpdate, { state: state.dispatch, processState: state.process, terminalState: state.terminal });
+    }
     if (step === "prompt-publication" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptPublication: "published", promptState: "awaiting-transport" });
     if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt" });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: "failed", processState: "failed", terminalState: "released", reason: plan.reason, promptState: "failed" });
     await updateMeta(root, id, metadataUpdate);
+    if (step === "prompt-transport" && outcome.kind === "prompt-transport" && outcome.status === "delivered") {
+      const marked = await markRunningIfSpawning(root, id);
+      if (marked.kind !== "ok") return marked;
+    }
     if (plan.action === "fail") {
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
       return failureResult(plan, step === "readiness-wait" ? readinessError : undefined, cleanupFailures);
