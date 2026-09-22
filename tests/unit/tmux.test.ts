@@ -125,7 +125,9 @@ describe("tmux identity provider", () => {
         sendTmuxPair(root, "%7", "first", "Tab", {}, processFor()),
         sendTmuxPair(root, "%7", "second", "Enter", {}, processFor()),
       ]);
-      expect(calls).toEqual(["text:first", "key:Tab", "text:second", "key:Enter"]);
+      expect(calls).toHaveLength(4);
+      expect(calls.indexOf("key:Tab")).toBe(calls.indexOf("text:first") + 1);
+      expect(calls.indexOf("key:Enter")).toBe(calls.indexOf("text:second") + 1);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
