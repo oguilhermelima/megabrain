@@ -39,6 +39,8 @@ type SpawnOptions = Readonly<{
   readonly worktree: string;
   readonly repo?: string;
   readonly branch?: string;
+  readonly base?: string;
+  readonly name?: string;
   readonly agent: string;
   readonly model: string | null;
   readonly effort: string | null;
@@ -66,6 +68,8 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let worktree: string | undefined;
   let repo: string | undefined;
   let branch: string | undefined;
+  let base: string | undefined;
+  let name: string | undefined;
   let agent: string | undefined;
   let model: string | null = null;
   let effort: string | null = null;
@@ -86,12 +90,14 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       if (parsed === undefined) return failed("--tmux requires true or false", 2);
       tmux = parsed;
       index += 1;
-    } else if (["--worktree", "--repo", "--branch", "--agent", "--model", "--effort", "--prompt", "--label", "--agent-arg"].includes(arg)) {
+    } else if (["--worktree", "--repo", "--branch", "--base", "--name", "--agent", "--model", "--effort", "--prompt", "--label", "--agent-arg"].includes(arg)) {
       const value = args[index + 1];
       if (value === undefined || value === "") return failed(`${arg} requires a non-empty value`, 2);
       if (arg === "--worktree") worktree = value;
       else if (arg === "--repo") repo = value;
       else if (arg === "--branch") branch = value;
+      else if (arg === "--base") base = value;
+      else if (arg === "--name") name = value;
       else if (arg === "--agent") agent = value;
       else if (arg === "--model") model = value;
       else if (arg === "--effort") effort = value;
@@ -106,7 +112,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   if (worktree === undefined) return failed("--worktree is required", 2);
   if (agent === undefined) return failed("--agent is required", 2);
   if (prompt === undefined) return failed("--prompt is required", 2);
-  return ok({ worktree, repo, branch, agent, model, effort, prompt, label, tmux, browser, agentArgs, json });
+  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, browser, agentArgs, json });
 }
 
 function dispatchId(environment: SpawnEnvironment): string {
@@ -142,11 +148,18 @@ async function runGit(process: ProcessAdapter, args: readonly string[]): Promise
   return result.kind === "ok" ? ok(result.value.stdout.trim()) : failed(result.kind === "failed" ? result.error : result.reason, result.exitCode);
 }
 
-async function defaultResolveWorktree(target: string, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter): Promise<Result<SpawnWorktree>> {
+function existingWorktreeError(options: SpawnOptions): string | undefined {
+  const flags = [options.base === undefined ? undefined : "--base", options.name === undefined ? undefined : "--name"].filter((flag): flag is string => flag !== undefined);
+  return flags.length === 0 ? undefined : `worktree already exists; ${flags.join(" and ")} cannot be applied`;
+}
+
+export async function defaultResolveWorktree(target: string, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter): Promise<Result<SpawnWorktree>> {
   const direct = await realpath(target).catch(() => undefined);
   if (direct !== undefined) {
     const top = await runGit(process, ["-C", direct, "rev-parse", "--show-toplevel"]);
     if (top.kind !== "ok") return failed(`worktree path is not a Git directory: ${target}`);
+    const existingError = existingWorktreeError(options);
+    if (existingError !== undefined) return failed(existingError);
     const branch = await runGit(process, ["-C", direct, "symbolic-ref", "--quiet", "--short", "HEAD"]);
     return ok({ path: direct, branch: branch.kind === "ok" && branch.value !== "" ? branch.value : "detached", ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
   }
@@ -156,6 +169,8 @@ async function defaultResolveWorktree(target: string, options: SpawnOptions, env
     for (const line of listed.value.split("\n")) {
       if (line.startsWith("worktree ")) path = line.slice(9);
       if (line === `branch refs/heads/${target}` || (line.startsWith("worktree ") && basename(path) === target)) {
+        const existingError = existingWorktreeError(options);
+        if (existingError !== undefined) return failed(existingError);
         return ok({ path, branch: line.startsWith("branch refs/heads/") ? line.slice(18) : target, ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
       }
     }
@@ -163,6 +178,8 @@ async function defaultResolveWorktree(target: string, options: SpawnOptions, env
   if (options.repo === undefined || options.branch === undefined) return failed(`worktree not found: ${target}`);
   const createArgs = ["--repo", options.repo, "--branch", options.branch, "--json"];
   if (options.model !== null) createArgs.push("--model", options.model);
+  if (options.base !== undefined) createArgs.push("--base", options.base);
+  if (options.name !== undefined) createArgs.push("--name", options.name);
   const created = await executeWorktreeCreate(createArgs, environment, process);
   if (created.kind !== "ok") return created;
   try {
