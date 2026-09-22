@@ -142,6 +142,10 @@ function commandFor(options: SpawnOptions): string {
   return parts.join(" ");
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
   return `[megabrain dispatch: ${label}]\n\nThis is a managed megabrain dispatch. Before starting work, run megabrain received to confirm that you received this prompt. If you need coordinator input, run megabrain ask "your question"; wait with megabrain check until a reply arrives, then run megabrain ack <delivery-id> to confirm it. When the requested work is complete, run megabrain done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
@@ -428,12 +432,13 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       }
     } else if (step === "command-submission") {
       if (runtime === "tmux") {
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} MEGABRAIN_TMUX_SESSION=${JSON.stringify(session ?? "")} MEGABRAIN_TMUX_PANE=${JSON.stringify(pane ?? "")} ${command}`, key.value, environment, process);
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, key.value, environment, process);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
-        const call = host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} ${command}` });
+        const identityVariable = host?.terminalIdentityVariable;
+        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} ${command}` });
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
