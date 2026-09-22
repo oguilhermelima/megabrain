@@ -15,6 +15,10 @@ export const codex: Agent = {
   classifyLiveness: (output) => classifyMarkers(markers, output),
   commandLine: ({ model, effort, browser, agentArgs }) => {
     const parts = ["codex", "--dangerously-bypass-hook-trust", "--dangerously-bypass-approvals-and-sandbox"];
+    // Codex's own startup update check can pop an "Update available!" modal (default option
+    // runs a remote installer) over an already-idle composer, after readiness has been
+    // confirmed and right as the prompt's Enter is about to land. Disable it at launch.
+    parts.push("-c", "check_for_update_on_startup=false");
     if (model !== null) parts.push("-c", `model=${doubleQuote(model)}`);
     if (effort !== null) parts.push("-c", `model_reasoning_effort=${doubleQuote(effort)}`);
     parts.push("-c", `mcp_servers.playwright.enabled=${browser}`);
