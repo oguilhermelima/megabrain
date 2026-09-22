@@ -99,17 +99,17 @@ function nextStep(runtime: SpawnRuntime, step: SpawnStep, status?: SpawnStepOutc
     case "transcript-start":
       return "prompt-publication";
     case "prompt-publication":
-      return runtime === "tmux" ? "command-submission" : "metadata-read-before-command";
+      return runtime === "tmux" ? "command-submission" : "readiness-wait";
     case "metadata-read-before-command":
       return "command-submission";
     case "command-submission":
-      return runtime === "tmux" ? "model-substitution-record" : "readiness-wait";
+      return runtime === "tmux" ? "model-substitution-record" : "prompt-transport";
     case "model-substitution-record":
       return "readiness-output-validation";
     case "readiness-output-validation":
       return "prompt-transport";
     case "readiness-wait":
-      return "metadata-read-after-readiness";
+      return "metadata-read-before-command";
     case "metadata-read-after-readiness":
       return "prompt-transport";
     case "prompt-transport":

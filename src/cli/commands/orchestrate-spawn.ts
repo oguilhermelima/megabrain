@@ -21,6 +21,7 @@ type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly SUPERSET_WORKSPACE_ID?: string;
   readonly MEGABRAIN_SPAWN_DISPATCH_ID?: string;
   readonly MEGABRAIN_SPAWN_RUNTIME?: string;
+  readonly MEGABRAIN_AGENT_READY_TIMEOUT_MS?: string;
 }>;
 
 export type SpawnWorktree = Readonly<{
@@ -144,6 +145,15 @@ function commandFor(options: SpawnOptions): string {
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
   return `[megabrain dispatch: ${label}]\n\nThis is a managed megabrain dispatch. Before starting work, run megabrain received to confirm that you received this prompt. If you need coordinator input, run megabrain ask "your question"; wait with megabrain check until a reply arrives, then run megabrain ack <delivery-id> to confirm it. When the requested work is complete, run megabrain done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
+}
+
+function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
+  const raw = environment.MEGABRAIN_AGENT_READY_TIMEOUT_MS;
+  if (raw !== undefined && /^\d+$/.test(raw)) {
+    const value = Number(raw);
+    if (Number.isSafeInteger(value)) return value;
+  }
+  return 10000;
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
@@ -293,8 +303,8 @@ async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: 
   if (plan.cleanup.worktree === "remove") await (dependencies.removeWorktree ?? defaultRemoveWorktree)(worktree.path, process);
 }
 
-function failureResult(plan: SpawnPlan): Result<string> {
-  return failed(plan.reason ?? "spawn failed", plan.exitCode);
+function failureResult(plan: SpawnPlan, detail?: string): Result<string> {
+  return failed(detail === undefined ? plan.reason ?? "spawn failed" : `${plan.reason ?? "spawn failed"}: ${detail}`, plan.exitCode);
 }
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
@@ -314,10 +324,12 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
   const command = commandFor(options);
   const prompt = finalPrompt(options, id);
+  const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
   let session: string | null = null;
   let pane: string | null = null;
   let sessionOwned = true;
+  let readinessError: string | undefined;
 
   if (runtime === "tmux") {
     if (parentContext.host === "tmux" && environment.TMUX_PANE !== undefined) {
@@ -370,6 +382,17 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     if (step === "prompt-publication") {
       const appended = await appendMessage(root, id, "parent", "prompt", prompt, parentContext.id, environment, process);
       outcome = appended.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+    } else if (step === "readiness-wait") {
+      const host = getHost(parentContext.host);
+      const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId }, process, readinessTimeoutMs);
+      if (waited === undefined) {
+        readinessError = `${parentContext.host} terminal ${terminalId} did not become ready within ${readinessTimeoutMs}ms`;
+        outcome = { kind: "failed" };
+      } else {
+        const result = await waited;
+        if (result.kind !== "ok") readinessError = result.error;
+        outcome = result.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+      }
     } else if (step === "command-submission") {
       if (runtime === "tmux") {
         const sent = await sendTmuxPair(root, pane ?? "", `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} MEGABRAIN_TMUX_SESSION=${JSON.stringify(session ?? "")} MEGABRAIN_TMUX_PANE=${JSON.stringify(pane ?? "")} ${command}`, key.value, environment, process);
@@ -410,7 +433,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     await updateMeta(root, id, metadataUpdate);
     if (plan.action === "fail") {
       await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
-      return failureResult(plan);
+      return failureResult(plan, step === "readiness-wait" ? readinessError : undefined);
     }
     if (plan.nextStep === null) {
       const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null };
