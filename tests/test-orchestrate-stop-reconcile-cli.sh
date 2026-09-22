@@ -190,6 +190,16 @@ scenario_reconcile_refuses_unproven_terminal() {
   printf 'reconcile retains a terminal whose process identity is unproven\n'
 }
 
+scenario_reconcile_keeps_waiting_for_reply() {
+  local state="$work/reconcile-waiting" output
+  write_tmux_fixture
+  write_meta "$state" reconcile-waiting '{"dispatchId":"reconcile-waiting","parentSessionId":"parent","parentHost":"orca","runtime":"tmux","agent":"codex","tmuxSession":"session","tmuxPane":"%1","state":"waiting_for_reply","processState":"running","terminalState":"owned"}'
+  printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"question"}' >"$state/dispatches/reconcile-waiting/messages/00001-child-ask.json"
+  output="$(TMUX_CALLS="$work/tmux.calls" MEGABRAIN_TEST_DISPATCH=reconcile-waiting PS_IDENTITY=proven run_binary "$state" orchestrate reconcile reconcile-waiting --json)"
+  assert_json "$output" '.reconcileResult == "adopted" and .state == "waiting_for_reply" and .processState == "running"'
+  printf 'reconcile keeps a live dispatch waiting for its unanswered child question\n'
+}
+
 scenario_routes
 
 if [ ! -x "$root/.build/megabrain" ]; then
@@ -205,4 +215,5 @@ scenario_read_preserves_host_content
 scenario_read_renders_transcript_fallback
 scenario_reconcile_syncs_receipt_and_parent_identity
 scenario_reconcile_refuses_unproven_terminal
+scenario_reconcile_keeps_waiting_for_reply
 printf 'ok: stop, read, and reconcile routing and content contracts\n'
