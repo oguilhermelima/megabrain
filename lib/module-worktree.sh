@@ -1551,7 +1551,7 @@ megabrain_worktree_create() {
       break
     fi
   done
-  if [ "$orchestrate_requested" = false ] && megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then
+  if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then
     "$typescript_binary" worktree create "$@"
     return $?
   fi
