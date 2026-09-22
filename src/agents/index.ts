@@ -1,8 +1,8 @@
 import { agy } from "./agy.js";
 import { claude } from "./claude.js";
 import { codex } from "./codex.js";
-import { unavailableKey, type Agent, type InterruptKey, type SubmitKey } from "./types.js";
-import type { Result } from "../core/result.js";
+import { unknown, type Result } from "../core/result.js";
+import { unavailableKey, type Agent, type AgentCommandOptions, type InterruptKey, type SubmitKey } from "./types.js";
 
 const registry = new Map<string, Agent>([
   [claude.id, claude],
@@ -22,6 +22,11 @@ export function getAgent(agentId: string): Agent | undefined {
   return registry.get(agentId);
 }
 
+export function commandLine(agentId: string, options: AgentCommandOptions): Result<string> {
+  const agent = getAgent(agentId);
+  return agent?.commandLine?.(options) ?? unknown(`agent cannot be determined: ${agentId}`);
+}
+
 export function submitKey(agentId: string): Result<SubmitKey> {
   const agent = getAgent(agentId);
   return agent?.submitKey?.() ?? unavailableKey(agentId, "submit");
@@ -37,4 +42,4 @@ export function resolveAgentDescriptor(descriptor: string): string | undefined {
   return undefined;
 }
 
-export type { Agent, InterruptKey, SubmitKey } from "./types.js";
+export type { Agent, AgentCommandOptions, InterruptKey, SubmitKey } from "./types.js";

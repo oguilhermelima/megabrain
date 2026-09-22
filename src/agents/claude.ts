@@ -1,4 +1,4 @@
-import { classifyMarkers, type Agent, type AgentMarker } from "./types.js";
+import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
 import { ok } from "../core/result.js";
 
 const markers: readonly AgentMarker[] = [
@@ -12,6 +12,13 @@ export const claude: Agent = {
   id: "claude",
   matchesDescriptor: (descriptor) => descriptor === "claude" || /^claude-code_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
+  commandLine: ({ model, effort, agentArgs }) => {
+    const parts = ["claude", "--dangerously-skip-permissions"];
+    if (model !== null) parts.push("--model", doubleQuote(model));
+    if (effort !== null) parts.push("--effort", doubleQuote(effort));
+    parts.push(...agentArgs.map(shellArgument));
+    return { kind: "ok", value: parts.join(" ") };
+  },
   submitKey: () => ok("Enter"),
   interruptKey: () => ok("Escape"),
 };
