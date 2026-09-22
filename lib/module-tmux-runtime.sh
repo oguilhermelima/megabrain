@@ -390,41 +390,6 @@ megabrain_tmux_interrupt_affordance() {
   esac
 }
 
-# Each row is agent|liveness|first marker (grep -E)|second marker (grep -E)|reason.
-# The first and second markers are separate because tmux also captures echoed prompts.
-MEGABRAIN_AGENT_LIVENESS_MARKERS="codex|pending-check|Messages to be submitted after next tool call|press esc to interrupt and send immediately|terminal is waiting to submit queued messages
-codex|working|Working \(|esc to interrupt|terminal shows the working indicator
-codex|idle|^[[:space:]]*› Ask Codex to do anything[[:space:]]*$||terminal shows an empty Codex composer
-codex|blocked|^[[:space:]]*You've hit your usage limit for|Switch to another model now,|terminal shows a usage limit refusal
-codex|blocked|Hook error:|socket connection was closed unexpectedly|terminal shows a socket connection transport error
-claude|pending-check|Messages to be submitted after next tool call|press esc to interrupt and send immediately|terminal is waiting to submit queued messages
-claude|working|Working|esc to interrupt|terminal shows the working indicator
-claude|idle|^[[:space:]]*❯[[:space:]]*$||terminal shows an empty Claude composer
-claude|blocked|API Error:|authentication|terminal shows an authentication error"
-
-MEGABRAIN_TMUX_LIVENESS_STATUS=unknown
-MEGABRAIN_TMUX_LIVENESS_REASON=''
-
-megabrain_tmux_liveness_classify() {
-  local agent="$1" output="$2" row_agent row_status first_marker second_marker reason
-  MEGABRAIN_TMUX_LIVENESS_STATUS=unknown
-  MEGABRAIN_TMUX_LIVENESS_REASON=''
-  while IFS='|' read -r row_agent row_status first_marker second_marker reason; do
-    [ "$row_agent" = "$agent" ] || continue
-    if [ -n "$first_marker" ] && ! printf '%s\n' "$output" | grep -E "$first_marker" >/dev/null 2>&1; then
-      continue
-    fi
-    if [ -n "$second_marker" ] && ! printf '%s\n' "$output" | grep -E "$second_marker" >/dev/null 2>&1; then
-      continue
-    fi
-    MEGABRAIN_TMUX_LIVENESS_STATUS="$row_status"
-    MEGABRAIN_TMUX_LIVENESS_REASON="$reason"
-    return 0
-  done <<EOF
-$MEGABRAIN_AGENT_LIVENESS_MARKERS
-EOF
-}
-
 megabrain_tmux_agent_for_pane() {
   local pane="$1" session="" record_path="" record="" agent="" record_match="" record_state="" record_agent="" resolved_agent=""
   session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null || true)"
