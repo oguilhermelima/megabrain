@@ -20,6 +20,11 @@ export type SpawnReason = typeof spawnFailureReasons[keyof typeof spawnFailureRe
 export type SpawnRuntime = "tmux" | "host";
 export type WorktreeOwnership = "created" | "existing" | "unknown";
 
+export type SpawnFailure = Readonly<{
+  readonly call: string;
+  readonly detail: string;
+}>;
+
 export type SpawnStep = keyof typeof spawnFailureReasons;
 
 export type SpawnState = {
@@ -30,8 +35,8 @@ export type SpawnState = {
 
 export type SpawnStepOutcome =
   | { readonly kind: "succeeded" }
-  | { readonly kind: "failed" }
-  | { readonly kind: "prompt-transport"; readonly status: "delivered" | "awaiting-receipt" | "failed" };
+  | { readonly kind: "failed"; readonly failure?: SpawnFailure }
+  | { readonly kind: "prompt-transport"; readonly status: "delivered" | "awaiting-receipt" | "failed"; readonly failure?: SpawnFailure };
 
 type PromptTransportStatus = Extract<SpawnStepOutcome, { readonly kind: "prompt-transport" }>["status"];
 
@@ -53,6 +58,7 @@ export type SpawnPlan = {
   readonly nextStep: SpawnStep | null;
   readonly state: SpawnState;
   readonly reason: SpawnReason | null;
+  readonly failure: SpawnFailure | null;
   readonly cleanup: SpawnCleanup;
   readonly exitCode: 0 | 1;
   readonly lifecycle: "open";
@@ -128,6 +134,10 @@ function isPromptTransportOutcome(outcome: SpawnStepOutcome): outcome is Extract
   return outcome.kind === "prompt-transport";
 }
 
+function failureOf(outcome: SpawnStepOutcome): SpawnFailure | null {
+  return outcome.kind === "succeeded" ? null : outcome.failure ?? null;
+}
+
 function planFailure(input: SpawnDecisionInput, reason: SpawnReason): Result<SpawnPlan> {
   const cleanup = failureCleanup(input.runtime, input.worktree);
   if (cleanup.kind !== "ok") return cleanup;
@@ -142,6 +152,7 @@ function planFailure(input: SpawnDecisionInput, reason: SpawnReason): Result<Spa
     nextStep: null,
     state: state.value,
     reason,
+    failure: failureOf(input.outcome),
     cleanup: cleanup.value,
     exitCode: 1,
     lifecycle: "open",
@@ -163,6 +174,7 @@ function planSuccess(input: SpawnDecisionInput, status?: SpawnStepOutcome["kind"
     nextStep: nextStep(input.runtime, input.step, status),
     state: state.value,
     reason: null,
+    failure: null,
     cleanup: { kind: "none" },
     exitCode: 0,
     lifecycle: "open",
