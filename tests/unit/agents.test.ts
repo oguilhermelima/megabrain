@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveParentContext } from "../../src/core/context.js";
 import { classifyLiveness } from "../../src/core/liveness.js";
-import { getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
+import { commandLine, getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
 import { ok, type Result } from "../../src/core/result.js";
 
 const fourthAgent: Agent = {
@@ -17,6 +17,37 @@ const fourthAgent: Agent = {
 };
 
 describe("agent registry", () => {
+  test("agents own their launch flags and option syntax", () => {
+    expect(commandLine("codex", { model: "gpt-5", effort: "high", browser: true, agentArgs: [] })).toEqual({
+      kind: "ok",
+      value: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort="high" -c mcp_servers.playwright.enabled=true',
+    });
+    expect(commandLine("claude", { model: "claude-sonnet-4-6", effort: "high", browser: true, agentArgs: [] })).toEqual({
+      kind: "ok",
+      value: 'claude --dangerously-skip-permissions --model "claude-sonnet-4-6" --effort "high"',
+    });
+    expect(commandLine("agy", { model: "gemini-3.8-flash-high", effort: "high", browser: true, agentArgs: [] })).toEqual({
+      kind: "ok",
+      value: 'agy --dangerously-skip-permissions --model "gemini-3.8-flash-high"',
+    });
+  });
+
+  test("browser configuration and agent arguments remain appended", () => {
+    expect(commandLine("codex", { model: null, effort: null, browser: false, agentArgs: ["--extra-flag", "value"] })).toEqual({
+      kind: "ok",
+      value: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox -c mcp_servers.playwright.enabled=false --extra-flag value",
+    });
+  });
+
+  test("an unknown agent refuses command construction", () => {
+    expect(commandLine("unregistered-agent", { model: "gpt-5", effort: "high", browser: false, agentArgs: [] })).toEqual({
+      kind: "unknown",
+      reason: "agent cannot be determined: unregistered-agent",
+      error: "agent cannot be determined: unregistered-agent",
+      exitCode: 1,
+    });
+  });
+
   test("agents own their submit and interrupt keys", () => {
     expect(submitKey("claude")).toEqual({ kind: "ok", value: "Enter" });
     expect(submitKey("codex")).toEqual({ kind: "ok", value: "Tab" });
