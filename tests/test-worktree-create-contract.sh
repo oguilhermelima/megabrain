@@ -132,48 +132,31 @@ scenario_orchestrator_free_create_and_list() {
 }
 
 scenario_superset_project_failure_keeps_git_work() {
-  local implementation state repo shared output branch
-  for implementation in shell; do
-    state="$work_dir/project-failure-$implementation/state"
-    repo="$work_dir/project-failure-$implementation/repo"
-    shared="$work_dir/project-failure-$implementation/shared"
-    branch="feat/project-failure-$implementation"
-    mkdir -p "$state" "$shared"
-    make_repo "$repo"
-    printf '%s\n' "$shared" >"$state/worktree-root"
-    if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
-      fail "$implementation accepted a project registration failure"
-    fi
-    assert_contains "$output" 'could not register Superset project'
-    assert_contains "$output" 'kept Git worktree'
-    assert_contains "$output" "branch $branch"
-    [ -d "$shared/${branch//\//-}" ] || fail "$implementation removed the worktree after project registration failed"
-    git -C "$repo" branch --list "$branch" | grep -q "$branch" || fail "$implementation removed the branch after project registration failed"
-  done
-  printf 'project registration failure keeps Git work\n'
+  local state="$work_dir/project-failure-shell/state" repo="$work_dir/project-failure-shell/repo" shared="$work_dir/project-failure-shell/shared" output branch=feat/project-failure-shell
+  mkdir -p "$state" "$shared"
+  make_repo "$repo"
+  printf '%s\n' "$shared" >"$state/worktree-root"
+  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
+    fail 'shell fallback accepted a project registration failure'
+  fi
+  assert_contains "$output" 'shell worktree implementation no longer exists'
+  [ ! -e "$shared/${branch//\//-}" ] || fail 'shell fallback created a worktree after removal'
+  git -C "$repo" branch --list "$branch" | grep -q "$branch" && fail 'shell fallback created a branch after removal'
+  printf 'project registration scenario refuses the removed shell fallback\n'
 }
 
 scenario_superset_workspace_failure_keeps_git_work() {
-  local implementation state repo shared output branch
-  for implementation in shell; do
-    state="$work_dir/workspace-failure-$implementation/state"
-    repo="$work_dir/workspace-failure-$implementation/repo"
-    shared="$work_dir/workspace-failure-$implementation/shared"
-    branch="feat/workspace-failure-$implementation"
-    mkdir -p "$state" "$shared"
-    make_repo "$repo"
-    printf '%s\n' "$shared" >"$state/worktree-root"
-    if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
-      fail "$implementation accepted a workspace registration failure"
-    fi
-    assert_contains "$output" 'could not create Superset workspace'
-    assert_contains "$output" 'kept Git worktree'
-    assert_contains "$output" 'Superset project: registered'
-    assert_contains "$output" 'Superset workspace: not registered'
-    [ -d "$shared/${branch//\//-}" ] || fail "$implementation removed the worktree after workspace registration failed"
-    git -C "$repo" branch --list "$branch" | grep -q "$branch" || fail "$implementation removed the branch after workspace registration failed"
-  done
-  printf 'workspace registration failure keeps Git work\n'
+  local state="$work_dir/workspace-failure-shell/state" repo="$work_dir/workspace-failure-shell/repo" shared="$work_dir/workspace-failure-shell/shared" output branch=feat/workspace-failure-shell
+  mkdir -p "$state" "$shared"
+  make_repo "$repo"
+  printf '%s\n' "$shared" >"$state/worktree-root"
+  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
+    fail 'shell fallback accepted a workspace registration failure'
+  fi
+  assert_contains "$output" 'shell worktree implementation no longer exists'
+  [ ! -e "$shared/${branch//\//-}" ] || fail 'shell fallback created a worktree after removal'
+  git -C "$repo" branch --list "$branch" | grep -q "$branch" && fail 'shell fallback created a branch after removal'
+  printf 'workspace registration scenario refuses the removed shell fallback\n'
 }
 
 scenario_compiled_registration_failure_keeps_git_work() {
