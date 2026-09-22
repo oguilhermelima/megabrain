@@ -190,6 +190,23 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("creates the host terminal without a command", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-create-`);
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "launch", "--tmux", "false"], {
+        ...environment(root, "dispatch-host-create"),
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, options(worktree("existing")));
+      expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "create", "--worktree", "path:/work/tree", "--title", "codex /work/tree", "--json"] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("returns readiness-timeout after submitting the command and does not send the prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-timeout-`);
     const dispatchId = "dispatch-readiness-timeout";
