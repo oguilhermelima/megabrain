@@ -414,7 +414,7 @@ describe("executeSpawn", () => {
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") throw new Error(result.error);
       expect(result.exitCode).toBe(0);
-      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Tab"]);
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
       expect(meta).toMatchObject({ dispatchId, state: "running", promptDelivery: "delivered", promptState: "confirmed", runtime: "tmux", tmuxSession: `megabrain-${dispatchId}`, tmuxPane: "%9" });
     } finally {
@@ -821,7 +821,7 @@ describe("executeSpawn", () => {
     if (result.kind === "failed") expect(result.error).toContain(flag);
   });
 
-  test.each(["codex", "claude"] as const)("submits the tmux launch line with Enter regardless of %s's own submit key", async (agent) => {
+  test.each(["codex", "claude"] as const)("submits both the tmux launch line and the initial prompt with Enter regardless of %s's own submit key", async (agent) => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-launch-enter-${agent}-`);
     const events: string[] = [];
     const dispatchId = `dispatch-launch-enter-${agent}`;
@@ -848,8 +848,7 @@ describe("executeSpawn", () => {
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
-      const commandKeyIndex = events.indexOf("text:command") + 1;
-      expect(events[commandKeyIndex]).toBe("key:Enter");
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
