@@ -62,6 +62,8 @@ function parseBoolean(value: string): boolean | undefined {
   return undefined;
 }
 
+const unsupportedOptions = ["--from", "--parent", "--no-parent", "--issue", "--linear-issue", "--pr", "--base", "--name", "--chain", "--orchestrate"] as const;
+
 function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let worktree: string | undefined;
   let repo: string | undefined;
@@ -79,6 +81,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
     const arg = args[index];
     if (arg === "--json") json = true;
     else if (arg === "--browser") browser = true;
+    else if (unsupportedOptions.includes(arg as typeof unsupportedOptions[number])) return failed(`unsupported orchestrate spawn option: ${arg}`, 2);
     else if (arg === "--tmux") {
       const value = args[index + 1];
       if (value === undefined) return failed("--tmux requires true or false", 2);
@@ -287,7 +290,7 @@ function failureResult(plan: SpawnPlan): Result<string> {
 }
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain orchestrate spawn --worktree <path> --agent <agent> --prompt <text> [--model <model>] [--effort <effort>] [--tmux true|false] [--json]\n");
+  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <model>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]\n");
   const parsed = parseArgs(args);
   if (parsed.kind !== "ok") return parsed;
   const options = parsed.value;

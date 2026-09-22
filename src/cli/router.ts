@@ -20,6 +20,7 @@ import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
 import { executeChain } from "./commands/chain.js";
 import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
+import { executeSpawn } from "./commands/orchestrate-spawn.js";
 import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
 import { executeTmux } from "./commands/tmux.js";
 import { executeChildAck } from "./commands/child-ack.js";
@@ -66,6 +67,9 @@ export function route(
   }
   if (command === "orchestrate" && commandArgs[0] === "list") {
     return executeOrchestrateList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "spawn") {
+    return executeSpawn(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "watch") {
     return executeOrchestrateWatch(commandArgs.slice(1), dependencies.environment);
