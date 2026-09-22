@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { getAgent, submitKey } from "../../agents/index.js";
+import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness } from "../../core/liveness.js";
@@ -438,8 +438,6 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   });
   if (agentCommand === undefined) return unknown(`agent cannot build a command line: ${options.agent}`);
   if (agentCommand.kind !== "ok") return agentCommand;
-  const key = submitKey(options.agent);
-  if (key.kind !== "ok") return key;
   const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
   // dispatchId does not depend on the worktree, so the wrapped prompt (the payload actually
   // transported, not the raw --prompt) can be built and budgeted before anything is created.
@@ -543,7 +541,11 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       outcome = waited.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
-        const sent = await sendTmuxPair(root, pane ?? "", prompt, key.value, environment, process);
+        // The readiness wait just proved the composer idle, so this is a normal submit, not a
+        // queued one (submitKey(agent) is for queue-write.ts typing into a possibly busy
+        // composer, where Codex's Tab queues instead of submitting). Every agent's composer
+        // submits an idle prompt on Enter.
+        const sent = await sendTmuxPair(root, pane ?? "", prompt, "Enter", environment, process);
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       } else {
