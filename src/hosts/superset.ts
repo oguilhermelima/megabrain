@@ -45,7 +45,7 @@ export const superset: HostProvider = {
   },
   readiness: async ({ workspaceId, terminalId }, process: ProcessAdapter, timeoutMs) => {
     const target = workspace(workspaceId);
-    if (target.kind !== "ok") return unknown(target.reason);
+    if (target.kind !== "ok") return target.kind === "unknown" ? unknown(target.reason) : failed(target.error, target.exitCode);
     const attempts = Math.max(1, Math.ceil(Math.max(0, timeoutMs) / 100));
     let previous = "";
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
