@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { tmuxSessionName } from "../../src/cli/commands/context.js";
@@ -9,7 +11,7 @@ import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { notifyChild } from "../../src/cli/commands/queue-write.js";
-import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
+import { getTmux, registerTmux, sendTmuxPair, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -98,6 +100,36 @@ describe("tmux identity provider", () => {
       { command: "tmux", args: ["send-keys", "-t", "%7", "-l", "pointer"] },
       { command: "tmux", args: ["send-keys", "-t", "%7", "Tab"] },
     ]);
+  });
+
+  test("keeps each text and submit key pair under one pane lock", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-pair-`);
+    const calls: string[] = [];
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        calls.push(`text:${text}`);
+        if (text === "first") await new Promise((resolve) => setTimeout(resolve, 20));
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => {
+        calls.push(`key:${key}`);
+        return ok(undefined);
+      },
+    };
+    registerTmux(fake);
+    try {
+      await Promise.all([
+        sendTmuxPair(root, "%7", "first", "Tab", {}, processFor()),
+        sendTmuxPair(root, "%7", "second", "Enter", {}, processFor()),
+      ]);
+      expect(calls).toEqual(["text:first", "key:Tab", "text:second", "key:Enter"]);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("the child notification follows the registered agent and tmux modules", async () => {
