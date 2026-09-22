@@ -96,6 +96,38 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("passes --base through the command to worktree creation", async () => {
+    let receivedBase: string | undefined;
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-command-base-`);
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--repo", "/repo", "--branch", "feat/spawn", "--base", "release/next", "--agent", "codex", "--prompt", "spawn", "--tmux", "false"], environment(root, "dispatch-command-base"), processFor([]), {
+        resolveWorktree: async (_target, options) => {
+          receivedBase = options.base;
+          return ok(worktree("existing"));
+        },
+      });
+      expect(receivedBase).toBe("release/next");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("passes --name through the command to worktree creation", async () => {
+    let receivedName: string | undefined;
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-command-name-`);
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--repo", "/repo", "--branch", "feat/spawn", "--name", "operator-name", "--agent", "codex", "--prompt", "spawn", "--tmux", "false"], environment(root, "dispatch-command-name"), processFor([]), {
+        resolveWorktree: async (_target, options) => {
+          receivedName = options.name;
+          return ok(worktree("existing"));
+        },
+      });
+      expect(receivedName).toBe("operator-name");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("exports the created host terminal identity through its provider variable", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-identity-`);
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
