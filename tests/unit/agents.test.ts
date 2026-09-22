@@ -20,7 +20,7 @@ describe("agent registry", () => {
   test("agents own their launch flags and option syntax", () => {
     expect(commandLine("codex", { model: "gpt-5", effort: "high", browser: true, agentArgs: [] })).toEqual({
       kind: "ok",
-      value: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox -c model="gpt-5" -c model_reasoning_effort="high" -c mcp_servers.playwright.enabled=true',
+      value: 'codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c disable_paste_burst=true -c model="gpt-5" -c model_reasoning_effort="high" -c mcp_servers.playwright.enabled=true',
     });
     expect(commandLine("claude", { model: "claude-sonnet-4-6", effort: "high", browser: true, agentArgs: [] })).toEqual({
       kind: "ok",
@@ -35,8 +35,35 @@ describe("agent registry", () => {
   test("browser configuration and agent arguments remain appended", () => {
     expect(commandLine("codex", { model: null, effort: null, browser: false, agentArgs: ["--extra-flag", "value"] })).toEqual({
       kind: "ok",
-      value: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox -c mcp_servers.playwright.enabled=false --extra-flag value",
+      value: "codex --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c disable_paste_burst=true -c mcp_servers.playwright.enabled=false --extra-flag value",
     });
+  });
+
+  // Codex's own startup update check can pop a modal ("Update available! ... Press enter to
+  // continue") over an idle composer after readiness has already been confirmed, and an Enter
+  // meant for the prompt then lands on the modal's default option instead — which runs a remote
+  // installer (`curl ... | sh`). Disabling the check at launch removes the modal, not just its
+  // Enter risk.
+  test("codex launches with the startup update check disabled", () => {
+    const launched = commandLine("codex", { model: null, effort: null, browser: false, agentArgs: [] });
+    expect(launched.kind).toBe("ok");
+    if (launched.kind === "ok") {
+      expect(launched.value.split(" ")).toContain("check_for_update_on_startup=false");
+      expect(launched.value).toContain("-c check_for_update_on_startup=false");
+    }
+  });
+
+  // Measured against real codex 0.155.1 in tmux: fast send-keys text followed immediately by
+  // Enter is read as one paste burst, and the trailing Enter is absorbed into the paste instead
+  // of submitting it, leaving the prompt sitting in the composer. Disabling paste-burst detection
+  // at launch is what made an otherwise identical session submit and answer.
+  test("codex launches with paste burst detection disabled", () => {
+    const launched = commandLine("codex", { model: null, effort: null, browser: false, agentArgs: [] });
+    expect(launched.kind).toBe("ok");
+    if (launched.kind === "ok") {
+      expect(launched.value.split(" ")).toContain("disable_paste_burst=true");
+      expect(launched.value).toContain("-c disable_paste_burst=true");
+    }
   });
 
   test("an unknown agent refuses command construction", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
@@ -15,9 +15,15 @@ const worktree = (ownership: SpawnWorktree["ownership"], path = "/work/tree"): S
   workspaceId: "workspace-1",
 });
 
-function processFor(events: string[], behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = (command, args) => command === "tmux" && args[0] === "list-panes"
-  ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
-  : ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter & { readonly calls: readonly Call[] } {
+const codexIdleOutput = "› Ask Codex to do anything";
+const claudeIdleOutput = "❯";
+const idleOutputFor = (agent: string): string => agent === "claude" ? claudeIdleOutput : codexIdleOutput;
+
+function processFor(events: string[], behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = (command, args) => {
+  if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+  if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: `${codexIdleOutput}\n`, stderr: "", exitCode: 0 });
+  return ok({ stdout: "", stderr: "", exitCode: 0 });
+}): ProcessAdapter & { readonly calls: readonly Call[] } {
   const calls: Call[] = [];
   return {
     calls,
@@ -400,6 +406,7 @@ describe("executeSpawn", () => {
         return ok(undefined);
       },
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => ok(codexIdleOutput),
     };
     registerTmux(fake);
     try {
@@ -407,7 +414,7 @@ describe("executeSpawn", () => {
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") throw new Error(result.error);
       expect(result.exitCode).toBe(0);
-      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Tab", "text:prompt", "key:Tab"]);
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
       expect(meta).toMatchObject({ dispatchId, state: "running", promptDelivery: "delivered", promptState: "confirmed", runtime: "tmux", tmuxSession: `megabrain-${dispatchId}`, tmuxPane: "%9" });
     } finally {
@@ -460,6 +467,7 @@ describe("executeSpawn", () => {
         return ok(undefined);
       },
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => ok(codexIdleOutput),
     };
     registerTmux(fake);
     try {
@@ -811,6 +819,361 @@ describe("executeSpawn", () => {
     const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", flag, "value"], {}, processFor([]));
     expect(result.kind).toBe("failed");
     if (result.kind === "failed") expect(result.error).toContain(flag);
+  });
+
+  test.each(["codex", "claude"] as const)("submits both the tmux launch line and the initial prompt with Enter regardless of %s's own submit key", async (agent) => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-launch-enter-${agent}-`);
+    const events: string[] = [];
+    const dispatchId = `dispatch-launch-enter-${agent}`;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        if (text.startsWith("[megabrain dispatch")) {
+          const directory = `${root}/dispatches/${dispatchId}`;
+          await mkdir(`${directory}/messages`, { recursive: true });
+          await writeFile(`${directory}/messages/9999-child-received.json`, JSON.stringify({ type: "received", from: "child" }));
+        }
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => ok(idleOutputFor(agent)),
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("waits for tmux readiness before sending the prompt", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-order-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-readiness-order";
+    let captureCalls = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        if (text.startsWith("[megabrain dispatch")) {
+          const directory = `${root}/dispatches/${dispatchId}`;
+          await mkdir(`${directory}/messages`, { recursive: true });
+          await writeFile(`${directory}/messages/9999-child-received.json`, JSON.stringify({ type: "received", from: "child" }));
+        }
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        events.push(`capture:${captureCalls}`);
+        return ok(captureCalls < 3 ? "" : codexIdleOutput);
+      },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "2000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      expect(captureCalls).toBeGreaterThanOrEqual(3);
+      const promptIndex = events.indexOf("text:prompt");
+      const lastCaptureIndex = events.lastIndexOf(`capture:${captureCalls}`);
+      expect(promptIndex).toBeGreaterThan(lastCaptureIndex);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails with a tmux readiness timeout and sends no prompt", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-timeout-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-readiness-timeout";
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => { events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`); return ok(undefined); },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => ok(""),
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "0",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("readiness-output-invalid");
+      expect(events).not.toContain("text:prompt");
+      const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta).toMatchObject({ state: "failed", reason: "readiness-output-invalid" });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // Codex's composer can read idle for one poll and then have something else replace it (the
+  // update-check modal from the earlier correction is one example, but the pane can show any
+  // transient text) before the next poll. A single idle observation is not proof the composer is
+  // still there to receive the prompt, so readiness must see idle hold for a stretch of time
+  // (1000ms, two observations at least that far apart with nothing else observed between them)
+  // before it is trusted.
+  test("does not send the prompt until an idle composer is stable again after an interruption", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-stability-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-readiness-stability";
+    let captureCalls = 0;
+    let lastNonIdleAt = 0;
+    let promptSentAt = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        const isPrompt = text.startsWith("[megabrain dispatch");
+        events.push(`text:${isPrompt ? "prompt" : "command"}`);
+        if (isPrompt) {
+          promptSentAt = Date.now();
+          const directory = `${root}/dispatches/${dispatchId}`;
+          await mkdir(`${directory}/messages`, { recursive: true });
+          await writeFile(`${directory}/messages/9999-child-received.json`, JSON.stringify({ type: "received", from: "child" }));
+        }
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        events.push(`capture:${captureCalls}`);
+        // idle briefly (calls 3-5), then an interruption (calls 6-7, e.g. an update-check modal
+        // replacing the composer), then idle again from call 8 onward until it is stable.
+        if (captureCalls <= 2) return ok("");
+        if (captureCalls >= 3 && captureCalls <= 5) return ok(codexIdleOutput);
+        if (captureCalls === 6 || captureCalls === 7) {
+          lastNonIdleAt = Date.now();
+          return ok("Update available! 0.155.1 -> 0.156.0\n1. Update now\n2. Skip\nPress enter to continue");
+        }
+        return ok(codexIdleOutput);
+      },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "5000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      expect(events).toContain("text:prompt");
+      expect(captureCalls).toBeGreaterThan(7);
+      // The prompt must land at least 1000ms after the last non-idle observation, proving the
+      // composer had to be idle continuously for that long after the interruption, not merely
+      // idle again for one poll.
+      expect(promptSentAt - lastNonIdleAt).toBeGreaterThanOrEqual(950);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("times out and sends no prompt when the composer never stays idle long enough to be stable", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-flicker-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-readiness-flicker";
+    let captureCalls = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => { events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`); return ok(undefined); },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        // flips every other poll, so idle is never observed twice in a row: it can never
+        // accumulate the required 1000ms of stability before the deadline.
+        return ok(captureCalls % 2 === 0 ? codexIdleOutput : "Update available! Press enter to continue");
+      },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "400",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("readiness-output-invalid");
+      expect(events).not.toContain("text:prompt");
+      const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta).toMatchObject({ state: "failed", reason: "readiness-output-invalid" });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("creates the tmux dispatch session without a hardcoded shell command", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-default-shell-`);
+    const dispatchId = "dispatch-tmux-default-shell";
+    const process = processFor([]);
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      const created = process.calls.find((call) => call.command === "tmux" && call.args[0] === "new-session");
+      expect(created).toEqual({ command: "tmux", args: ["new-session", "-d", "-A", "-s", `megabrain-${dispatchId}`, "-c", "/work/tree"] });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // The budget guards the payload actually transported — finalPrompt(options, id), which wraps
+  // the raw --prompt in a fixed "[megabrain dispatch: ...]" preamble plus the dispatch identity —
+  // not the raw --prompt value alone. Each wrapper-overhead figure below was measured once by
+  // encoding that exact fixed text (agent "codex", worktree "/work/tree", the dispatch id the
+  // test uses) with TextEncoder and is asserted here as a plain number so a change to the wrapper
+  // text or to a test's dispatch id shows up as a failing byte count instead of silently drifting:
+  // "dispatch-budget-tmux-exact" / "dispatch-budget-argv-exact" -> 540 bytes of fixed wrapper text
+  // "dispatch-budget-tmux-over" / "dispatch-budget-argv-over" / "dispatch-budget-multibyte" -> 539
+  // "dispatch-budget-wrapped-overflow" -> 546
+  describe("prompt byte budgets", () => {
+    test("accepts a tmux prompt whose wrapped form is exactly at the 12000 byte budget", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-exact-`);
+      const dispatchId = "dispatch-budget-tmux-exact";
+      const wrapperOverheadBytes = 540;
+      const original = getTmux();
+      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      try {
+        const prompt = "a".repeat(12000 - wrapperOverheadBytes);
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], {
+          ...environment(root, dispatchId),
+          MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+        }, processFor([]), options(worktree("existing")));
+        expect(result.kind).toBe("ok");
+      } finally {
+        registerTmux(original);
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("refuses a tmux prompt whose wrapped form is one byte over the 12000 byte budget without creating anything", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-over-`);
+      const dispatchId = "dispatch-budget-tmux-over";
+      const wrapperOverheadBytes = 539;
+      let resolveCalled = false;
+      const prompt = "a".repeat(12000 - wrapperOverheadBytes + 1);
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+          resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
+        });
+        expect(result).toEqual({ kind: "failed", error: "prompt is too large for tmux delivery: 12001 bytes (limit: 12000 bytes)", exitCode: 2 });
+        expect(resolveCalled).toBe(false);
+        await expect(readdir(`${root}/dispatches`)).rejects.toThrow();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("accepts a host prompt whose wrapped form is exactly at the 262144 byte budget", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-exact-`);
+      const dispatchId = "dispatch-budget-argv-exact";
+      const wrapperOverheadBytes = 540;
+      const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+        ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      try {
+        const prompt = "a".repeat(262144 - wrapperOverheadBytes);
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], {
+          ...environment(root, dispatchId),
+          MEGABRAIN_SESSION_HOST: "orca",
+          MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+        }, process, options(worktree("existing")));
+        expect(result.kind).toBe("ok");
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("refuses a host prompt whose wrapped form is one byte over the 262144 byte budget without creating anything", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-over-`);
+      const dispatchId = "dispatch-budget-argv-over";
+      const wrapperOverheadBytes = 539;
+      let resolveCalled = false;
+      const prompt = "a".repeat(262144 - wrapperOverheadBytes + 1);
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], { ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca" }, processFor([]), {
+          resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
+        });
+        expect(result).toEqual({ kind: "failed", error: "prompt is too large for argv delivery: 262145 bytes (limit: 262144 bytes)", exitCode: 2 });
+        expect(resolveCalled).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("refuses a multibyte tmux prompt that is under the character count but over the byte budget", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-multibyte-`);
+      const dispatchId = "dispatch-budget-multibyte";
+      const wrapperOverheadBytes = 539;
+      let resolveCalled = false;
+      const prompt = "é".repeat(7000);
+      expect(prompt.length).toBeLessThan(12000);
+      expect(new TextEncoder().encode(prompt).length).toBeGreaterThan(12000);
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+          resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
+        });
+        expect(result.kind).toBe("failed");
+        if (result.kind === "failed") expect(result.error).toContain(`prompt is too large for tmux delivery: ${14000 + wrapperOverheadBytes} bytes (limit: 12000 bytes)`);
+        expect(resolveCalled).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("refuses a raw tmux prompt under the limit whose wrapped form exceeds it, without creating anything", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-wrapped-overflow-`);
+      const dispatchId = "dispatch-budget-wrapped-overflow";
+      const wrapperOverheadBytes = 546;
+      let resolveCalled = false;
+      const prompt = "a".repeat(11900);
+      expect(new TextEncoder().encode(prompt).length).toBeLessThan(12000);
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+          resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
+        });
+        expect(result).toEqual({ kind: "failed", error: `prompt is too large for tmux delivery: ${11900 + wrapperOverheadBytes} bytes (limit: 12000 bytes)`, exitCode: 2 });
+        expect(resolveCalled).toBe(false);
+        await expect(readdir(`${root}/dispatches`)).rejects.toThrow();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   });
 });
 

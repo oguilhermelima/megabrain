@@ -3,9 +3,10 @@ import { mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { getAgent, submitKey } from "../../agents/index.js";
+import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
+import { classifyLiveness } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
@@ -17,6 +18,8 @@ import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxS
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
 const TERMINAL_CREATE_BACKOFF_MS = 250;
+const PROMPT_BUDGET_TMUX_BYTES = 12000;
+const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly HOME?: string;
@@ -150,6 +153,20 @@ function finalPrompt(options: SpawnOptions, id: string): string {
   return `[megabrain dispatch: ${label}]\n\nThis is a managed megabrain dispatch. Before starting work, run megabrain received to confirm that you received this prompt. If you need coordinator input, run megabrain ask "your question"; wait with megabrain check until a reply arrives, then run megabrain ack <delivery-id> to confirm it. When the requested work is complete, run megabrain done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
 }
 
+// Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the
+// pane's paste buffer or the OS argv limit once it is UTF-8 encoded.
+function promptByteLength(prompt: string): number {
+  return new TextEncoder().encode(prompt).length;
+}
+
+function validatePromptBudget(prompt: string, runtime: SpawnRuntime): Result<void> {
+  const transport = runtime === "tmux" ? "tmux" : "argv";
+  const limit = runtime === "tmux" ? PROMPT_BUDGET_TMUX_BYTES : PROMPT_BUDGET_ARGV_BYTES;
+  const actual = promptByteLength(prompt);
+  if (actual > limit) return failed(`prompt is too large for ${transport} delivery: ${actual} bytes (limit: ${limit} bytes)`, 2);
+  return ok(undefined);
+}
+
 function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
   const raw = environment.MEGABRAIN_AGENT_READY_TIMEOUT_MS;
   if (raw !== undefined && /^\d+$/.test(raw)) {
@@ -157,6 +174,34 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
     if (Number.isSafeInteger(value)) return value;
   }
   return 10000;
+}
+
+const TMUX_READINESS_POLL_MS = 100;
+const TMUX_READINESS_STABLE_MS = 1000;
+
+// Reuses the same output classification `orchestrate liveness` uses (core/liveness.ts,
+// getTmux().capturePane): the tmux runtime has no blocking "wait until ready" call the way the
+// host providers do, so readiness is read from the pane's own text until the agent's composer
+// reports idle or the deadline passes. A single idle poll is not proof the composer is still
+// there to type into: something else (an update-check modal, for one real example) can replace
+// it between polls. So readiness only succeeds once idle has held continuously for
+// TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
+// failing outright, since the composer may still settle before the overall deadline.
+async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Result<void>> {
+  const started = Date.now();
+  let stableSince: number | null = null;
+  while (true) {
+    const captured = await getTmux().capturePane(pane, 200, process);
+    const idle = captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle";
+    if (idle) {
+      if (stableSince === null) stableSince = Date.now();
+      else if (Date.now() - stableSince >= TMUX_READINESS_STABLE_MS) return ok(undefined);
+    } else {
+      stableSince = null;
+    }
+    if (Date.now() - started >= timeoutMs) return failed(`tmux pane ${pane} did not become ready within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, TMUX_READINESS_POLL_MS));
+  }
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
@@ -405,16 +450,18 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   });
   if (agentCommand === undefined) return unknown(`agent cannot build a command line: ${options.agent}`);
   if (agentCommand.kind !== "ok") return agentCommand;
-  const key = submitKey(options.agent);
-  if (key.kind !== "ok") return key;
+  const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
+  // dispatchId does not depend on the worktree, so the wrapped prompt (the payload actually
+  // transported, not the raw --prompt) can be built and budgeted before anything is created.
+  const id = dispatchId(environment);
+  const prompt = finalPrompt(options, id);
+  const budget = validatePromptBudget(prompt, runtime);
+  if (budget.kind !== "ok") return budget;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
-  const id = dispatchId(environment);
   const parentContext = parent(environment);
-  const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
   const command = agentCommand.value;
-  const prompt = finalPrompt(options, id);
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
   let session: string | null = null;
@@ -438,7 +485,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
     if (session === null) {
       session = `megabrain-${id}`;
-      const created = await createTmuxSession(session, worktree.path, "bash", process);
+      const created = await createTmuxSession(session, worktree.path, undefined, process);
       if (created.kind !== "ok") return created;
     }
     const waited = await waitForTmuxSession(session, process);
@@ -487,7 +534,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       }
     } else if (step === "command-submission") {
       if (runtime === "tmux") {
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, key.value, environment, process);
+        // The launch line runs in the pane's shell, not the agent composer: it always submits on
+        // Enter regardless of the agent's own submit key (Tab for Codex, which the shell reads as
+        // completion instead of running the command).
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
@@ -497,9 +547,17 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
+    } else if (step === "readiness-output-validation") {
+      const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process);
+      if (waited.kind !== "ok") readinessError = waited.error;
+      outcome = waited.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
-        const sent = await sendTmuxPair(root, pane ?? "", prompt, key.value, environment, process);
+        // The readiness wait just proved the composer idle, so this is a normal submit, not a
+        // queued one (submitKey(agent) is for queue-write.ts typing into a possibly busy
+        // composer, where Codex's Tab queues instead of submitting). Every agent's composer
+        // submits an idle prompt on Enter.
+        const sent = await sendTmuxPair(root, pane ?? "", prompt, "Enter", environment, process);
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       } else {
@@ -533,7 +591,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
     if (plan.action === "fail") {
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
-      return failureResult(plan, step === "readiness-wait" ? readinessError : undefined, cleanupFailures);
+      return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
       const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }) };
