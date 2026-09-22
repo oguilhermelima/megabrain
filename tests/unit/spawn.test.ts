@@ -49,7 +49,7 @@ function argsContain(args: readonly string[], value: string): boolean {
   return args.includes(value) || args.some((arg) => arg.includes(value));
 }
 
-function creationOptions(worktreePath: string, overrides: Record<string, unknown> = {}): Parameters<typeof defaultResolveWorktree>[1] {
+function creationOptions(worktreePath: string | undefined, overrides: Record<string, unknown> = {}): Parameters<typeof defaultResolveWorktree>[1] {
   return {
     worktree: worktreePath,
     repo: "/repo",
@@ -96,6 +96,77 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("accepts the primary repo and branch form and dispatches", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-primary-`);
+    const dispatchId = "dispatch-primary";
+    let receivedTarget: string | undefined;
+    let receivedRepo: string | undefined;
+    let receivedBranch: string | undefined;
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
+    try {
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+        resolveWorktree: async (target, options) => {
+          receivedTarget = target;
+          receivedRepo = options.repo;
+          receivedBranch = options.branch;
+          return ok(worktree("created"));
+        },
+      });
+      expect(result.kind).toBe("ok");
+      expect(receivedTarget).toBeUndefined();
+      expect(receivedRepo).toBe("/repo");
+      expect(receivedBranch).toBe("feat/primary");
+      expect(JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`))).toMatchObject({ worktreePath: "/work/tree", branch: "feat/example" });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps accepting an explicit worktree without repo or branch", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-explicit-worktree-`);
+    let receivedTarget: string | undefined;
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, "dispatch-explicit-worktree"), processFor([]), {
+        resolveWorktree: async (target) => {
+          receivedTarget = target;
+          return ok(worktree("existing"));
+        },
+      });
+      expect(result.kind).toBe("ok");
+      expect(receivedTarget).toBe("/work/tree");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a spawn without either accepted worktree form", async () => {
+    const result = await executeSpawn(["--agent", "codex", "--prompt", "spawn"], {}, processFor([]));
+    expect(result).toEqual({ kind: "failed", error: "either --worktree <path> or --repo <name|path> with --branch <branch> is required", exitCode: 2 });
+  });
+
+  test.each([
+    ["created", true],
+    ["existing", false],
+  ] as const)("applies ownership cleanup to the primary form when the launch is %s", async (ownership, removeExpected) => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-primary-cleanup-`);
+    const removed: string[] = [];
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", sendText: async () => failed("launch failed"), sendKey: async () => ok(undefined) });
+    try {
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "fail", "--tmux", "true"], environment(root, `dispatch-primary-cleanup-${ownership}`), processFor([]), {
+        resolveWorktree: async () => ok(worktree(ownership)),
+        removeWorktree: async (path) => { removed.push(path); return ok(undefined); },
+      });
+      expect(result.kind).toBe("failed");
+      expect(removed).toEqual(removeExpected ? ["/work/tree"] : []);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("marks a spawning dispatch running after prompt delivery", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-mark-running-`);
     const dispatchId = "dispatch-mark-running";
