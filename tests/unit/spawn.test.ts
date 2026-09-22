@@ -15,7 +15,9 @@ const worktree = (ownership: SpawnWorktree["ownership"]): SpawnWorktree => ({
   workspaceId: "workspace-1",
 });
 
-function processFor(events: string[], behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> = () => ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter & { readonly calls: readonly Call[] } {
+function processFor(events: string[], behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> = (command, args) => command === "tmux" && args[0] === "list-panes"
+  ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+  : ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter & { readonly calls: readonly Call[] } {
   const calls: Call[] = [];
   return {
     calls,
