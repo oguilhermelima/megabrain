@@ -190,6 +190,49 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("returns readiness-timeout with host and duration and does not submit the command", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-timeout-`);
+    const dispatchId = "dispatch-readiness-timeout";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : command === "orca" && args[1] === "wait"
+        ? failed("terminal remained busy")
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "timeout", "--tmux", "false"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "1234",
+      }, process, options(worktree("existing")));
+      expect(result).toEqual({ kind: "failed", error: "readiness-timeout: orca terminal child-terminal did not become ready within 1234ms", exitCode: 1 });
+      expect(process.calls.some((call) => call.command === "orca" && call.args[1] === "send")).toBe(false);
+      const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta.reason).toBe("readiness-timeout");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("submits the host command only after readiness succeeds", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-order-`);
+    const dispatchId = "dispatch-readiness-order";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "order", "--tmux", "false"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, options(worktree("existing")));
+      const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "wait" || call.args[1] === "send"));
+      expect(hostCalls[0]).toEqual({ command: "orca", args: ["terminal", "wait", "--terminal", "child-terminal", "--for", "tui-idle", "--timeout-ms", "10000"] });
+      expect(hostCalls[1]?.args[1]).toBe("send");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("forwards --base literally to worktree creation", async () => {
     const fixture = await creationFixture({ base: "release/next" });
     try {

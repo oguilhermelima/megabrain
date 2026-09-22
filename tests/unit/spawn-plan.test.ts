@@ -172,9 +172,17 @@ describe("spawn step sequencing", () => {
     const host = planFor(decideSpawnStep(input({ runtime: "host", step: "prompt-publication" })));
 
     expect(tmux.nextStep).toBe("prompt-publication");
-    expect(host.nextStep).toBe("metadata-read-before-command");
+    expect(host.nextStep).toBe("readiness-wait");
     expect(tmux.cleanup.kind).toBe("none");
     expect(host.cleanup.kind).toBe("none");
+  });
+
+  test("places host readiness before metadata and command submission", () => {
+    const readiness = planFor(decideSpawnStep(input({ runtime: "host", step: "readiness-wait" })));
+    const metadata = planFor(decideSpawnStep(input({ runtime: "host", step: "metadata-read-before-command" })));
+
+    expect(readiness.nextStep).toBe("metadata-read-before-command");
+    expect(metadata.nextStep).toBe("command-submission");
   });
 
   test("marks a confirmed prompt as running", () => {

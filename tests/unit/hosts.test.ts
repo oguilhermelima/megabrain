@@ -1,13 +1,31 @@
 import { describe, expect, test } from "bun:test";
+import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { hostCloseCommand } from "../../src/cli/commands/orchestrate-close.js";
 import { hostCommand } from "../../src/cli/commands/orchestrate-terminal.js";
 import { getHost, registerHost, unregisterHost, type HostProvider } from "../../src/hosts/index.js";
-import { ok } from "../../src/core/result.js";
+import { failed, ok } from "../../src/core/result.js";
+
+type Call = Readonly<{ command: string; args: readonly string[] }>;
+
+function processFor(outputs: readonly string[]): ProcessAdapter & { readonly calls: readonly Call[] } {
+  const calls: Call[] = [];
+  let outputIndex = 0;
+  return {
+    calls,
+    async run(command, args) {
+      calls.push({ command, args: [...args] });
+      return ok<ProcessOutput>({ stdout: outputs[outputIndex++] ?? "", stderr: "", exitCode: 0 });
+    },
+    async startDetached() { return failed("not used"); },
+    invocationCount() { return calls.length; },
+  };
+}
 
 const fourthHost: HostProvider = {
   id: "fourth",
   create: () => ok({ command: "fourth", args: ["terminals", "create"] }),
   terminalIdentity: () => undefined,
+  readiness: async () => ok(undefined),
   list: ({ workspaceId }) => ok({ command: "fourth", args: ["terminals", "list", "--workspace", workspaceId ?? "", "--json"] }),
   read: ({ workspaceId, terminalId }) => ok({ command: "fourth", args: ["terminals", "read", "--workspace", workspaceId ?? "", "--terminal", terminalId, "--json"] }),
   close: ({ workspaceId, terminalId }) => ok({ command: "fourth", args: ["terminals", "close", "--workspace", workspaceId ?? "", "--terminal", terminalId, "--json"] }),
@@ -16,6 +34,33 @@ const fourthHost: HostProvider = {
 };
 
 describe("host providers", () => {
+  test("orca readiness builds the native wait call with its terminal and timeout", async () => {
+    const orca = getHost("orca");
+    const process = processFor([]);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210);
+
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "wait", "--terminal", "terminal-child", "--for", "tui-idle", "--timeout-ms", "3210"] }]);
+  });
+
+  test("superset readiness polls until two consecutive non-empty reads are identical", async () => {
+    const superset = getHost("superset");
+    const process = processFor([JSON.stringify({ text: "starting" }), JSON.stringify({ text: "ready" }), JSON.stringify({ text: "ready" })]);
+    const result = await superset?.readiness({ workspaceId: "workspace", terminalId: "terminal-child" }, process, 250);
+
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls).toHaveLength(3);
+  });
+
+  test("superset readiness does not report ready on a single non-empty read", async () => {
+    const superset = getHost("superset");
+    const process = processFor([JSON.stringify({ text: "ready" })]);
+    const result = await superset?.readiness({ workspaceId: "workspace", terminalId: "terminal-child" }, process, 0);
+
+    expect(result).toEqual({ kind: "failed", error: "superset terminal terminal-child did not become ready within 0ms", exitCode: 1 });
+    expect(process.calls).toHaveLength(1);
+  });
+
   test("orca extracts the child handle instead of the request id", () => {
     const orca = getHost("orca");
     expect(orca?.terminalIdentity({ id: "request-id", result: { terminal: { handle: "term_real" } } })).toBe("term_real");
