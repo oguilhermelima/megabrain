@@ -441,15 +441,17 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const key = submitKey(options.agent);
   if (key.kind !== "ok") return key;
   const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
-  const budget = validatePromptBudget(options.prompt, runtime);
+  // dispatchId does not depend on the worktree, so the wrapped prompt (the payload actually
+  // transported, not the raw --prompt) can be built and budgeted before anything is created.
+  const id = dispatchId(environment);
+  const prompt = finalPrompt(options, id);
+  const budget = validatePromptBudget(prompt, runtime);
   if (budget.kind !== "ok") return budget;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
-  const id = dispatchId(environment);
   const parentContext = parent(environment);
   const command = agentCommand.value;
-  const prompt = finalPrompt(options, id);
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
   let session: string | null = null;
