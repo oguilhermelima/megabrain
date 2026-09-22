@@ -11,7 +11,7 @@ import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { notifyChild } from "../../src/cli/commands/queue-write.js";
-import { getTmux, registerTmux, sendTmuxPair, type TmuxProvider } from "../../src/hosts/tmux.js";
+import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -132,6 +132,35 @@ describe("tmux identity provider", () => {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("creates and splits a tmux session with the runtime flags", async () => {
+    const calls: Call[] = [];
+    let sessionChecks = 0;
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (args[0] === "has-session") {
+          sessionChecks += 1;
+          return sessionChecks === 3 ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("session is not ready");
+        }
+        if (args[0] === "split-window") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+
+    expect(await createTmuxSession("child", "/work/tree", "codex", process)).toEqual({ kind: "ok", value: undefined });
+    expect(await splitTmuxWindow("child", "/work/tree", process)).toEqual({ kind: "ok", value: "%9" });
+    expect(await waitForTmuxSession("child", process, { attempts: 3, waitMs: 0 })).toEqual({ kind: "ok", value: undefined });
+    expect(calls).toEqual([
+      { command: "tmux", args: ["new-session", "-d", "-A", "-s", "child", "-c", "/work/tree", "codex"] },
+      { command: "tmux", args: ["split-window", "-d", "-t", "child", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] },
+      { command: "tmux", args: ["has-session", "-t", "child"] },
+      { command: "tmux", args: ["has-session", "-t", "child"] },
+      { command: "tmux", args: ["has-session", "-t", "child"] },
+    ]);
   });
 
   test("the child notification follows the registered agent and tmux modules", async () => {
