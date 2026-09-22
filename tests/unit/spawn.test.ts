@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
@@ -66,11 +66,12 @@ function creationOptions(worktreePath: string, overrides: Record<string, unknown
 async function creationFixture(overrides: Record<string, unknown> = {}) {
   const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-create-`);
   const repo = `${root}/repo`;
-  const shared = `${root}/shared`;
+  const sharedPath = `${root}/shared`;
   const state = `${root}/state`;
   const target = `${root}/missing`;
   await mkdir(repo, { recursive: true });
-  await mkdir(shared, { recursive: true });
+  await mkdir(sharedPath, { recursive: true });
+  const shared = await realpath(sharedPath);
   await mkdir(state, { recursive: true });
   await writeFile(`${state}/worktree-root`, `${shared}\n`);
   const process = processFor([], (command, args) => {
