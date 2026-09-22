@@ -190,7 +190,6 @@ export async function defaultResolveWorktree(target: string, options: SpawnOptio
   }
   if (options.repo === undefined || options.branch === undefined) return failed(`worktree not found: ${target}`);
   const createArgs = ["--repo", options.repo, "--branch", options.branch, "--json"];
-  if (options.model !== null) createArgs.push("--model", options.model);
   if (options.base !== undefined) createArgs.push("--base", options.base);
   if (options.name !== undefined) createArgs.push("--name", options.name);
   const created = await executeWorktreeCreate(createArgs, environment, process);
