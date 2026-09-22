@@ -47,7 +47,7 @@ command_orchestrate() {
   local subcommand="${1:-}"
   shift || true
   case "$subcommand" in
-    spawn) command_worktree create --orchestrate "$@" ;;
+    spawn) if megabrain_should_use_typescript_binary "${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}"; then "${MEGABRAIN_ROOT:-}/.build/megabrain" orchestrate spawn "$@"; else command_worktree create --orchestrate "$@"; fi ;;
     list) command_orchestrate_list "$@" ;;
     prune)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
