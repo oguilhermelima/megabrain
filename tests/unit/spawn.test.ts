@@ -932,6 +932,109 @@ describe("executeSpawn", () => {
     }
   });
 
+  // Codex's composer can read idle for one poll and then have something else replace it (the
+  // update-check modal from the earlier correction is one example, but the pane can show any
+  // transient text) before the next poll. A single idle observation is not proof the composer is
+  // still there to receive the prompt, so readiness must see idle hold for a stretch of time
+  // (1000ms, two observations at least that far apart with nothing else observed between them)
+  // before it is trusted.
+  test("does not send the prompt until an idle composer is stable again after an interruption", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-stability-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-readiness-stability";
+    let captureCalls = 0;
+    let lastNonIdleAt = 0;
+    let promptSentAt = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        const isPrompt = text.startsWith("[megabrain dispatch");
+        events.push(`text:${isPrompt ? "prompt" : "command"}`);
+        if (isPrompt) {
+          promptSentAt = Date.now();
+          const directory = `${root}/dispatches/${dispatchId}`;
+          await mkdir(`${directory}/messages`, { recursive: true });
+          await writeFile(`${directory}/messages/9999-child-received.json`, JSON.stringify({ type: "received", from: "child" }));
+        }
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        events.push(`capture:${captureCalls}`);
+        // idle briefly (calls 3-5), then an interruption (calls 6-7, e.g. an update-check modal
+        // replacing the composer), then idle again from call 8 onward until it is stable.
+        if (captureCalls <= 2) return ok("");
+        if (captureCalls >= 3 && captureCalls <= 5) return ok(codexIdleOutput);
+        if (captureCalls === 6 || captureCalls === 7) {
+          lastNonIdleAt = Date.now();
+          return ok("Update available! 0.155.1 -> 0.156.0\n1. Update now\n2. Skip\nPress enter to continue");
+        }
+        return ok(codexIdleOutput);
+      },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "5000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      expect(events).toContain("text:prompt");
+      expect(captureCalls).toBeGreaterThan(7);
+      // The prompt must land at least 1000ms after the last non-idle observation, proving the
+      // composer had to be idle continuously for that long after the interruption, not merely
+      // idle again for one poll.
+      expect(promptSentAt - lastNonIdleAt).toBeGreaterThanOrEqual(950);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("times out and sends no prompt when the composer never stays idle long enough to be stable", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-flicker-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-readiness-flicker";
+    let captureCalls = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => { events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`); return ok(undefined); },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        // flips every other poll, so idle is never observed twice in a row: it can never
+        // accumulate the required 1000ms of stability before the deadline.
+        return ok(captureCalls % 2 === 0 ? codexIdleOutput : "Update available! Press enter to continue");
+      },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "400",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("readiness-output-invalid");
+      expect(events).not.toContain("text:prompt");
+      const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta).toMatchObject({ state: "failed", reason: "readiness-output-invalid" });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("creates the tmux dispatch session without a hardcoded shell command", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-default-shell-`);
     const dispatchId = "dispatch-tmux-default-shell";
