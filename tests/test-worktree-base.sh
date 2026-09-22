@@ -35,32 +35,23 @@ printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 remote_tip="$(git -C "$work/repo" rev-parse origin/main)"
 feature_tip="$(git -C "$work/repo" rev-parse feat/stack)"
 
-run_shell() {
-  MEGABRAIN_ROOT="$root" HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" \
-    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell "$root/megabrain" "$@"
-}
 run_binary() {
   MEGABRAIN_ROOT="$root" HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" \
     "$root/.build/megabrain" "$@"
 }
 
 create_and_assert() {
-  local implementation="$1" branch="$2" output path
-  if [ "$implementation" = shell ]; then
-    output="$(run_shell worktree create --repo "$work/repo" --branch "$branch" --json)"
-  else
-    output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
-  fi
+  local branch="$1" output path
+  output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
   path="$work/shared/${branch//\//-}"
   json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip\" and .baseSource == \"remote\""
   assert_equal "$(git -C "$path" rev-parse HEAD)" "$remote_tip"
   assert_contains "$output" 'origin/main'
   assert_contains "$output" "$remote_tip"
-  printf '%s default base output: %s\n' "$implementation" "$output"
+  printf 'binary default base output: %s\n' "$output"
 }
 
-create_and_assert shell feat/default-shell
-create_and_assert binary feat/default-binary
+create_and_assert feat/default-binary
 human_output="$(run_binary worktree create --repo "$work/repo" --branch feat/human-binary --from feat/stack)"
 assert_contains "$human_output" 'base: feat/stack'
 assert_contains "$human_output" "base commit: $feature_tip"
@@ -72,14 +63,6 @@ assert_equal "$(git -C "$work/shared/feat-from-binary" rev-parse HEAD)" "$featur
 assert_contains "$from_output" 'feat/stack'
 assert_contains "$from_output" "$feature_tip"
 printf 'binary --from output: %s\n' "$from_output"
-from_output="$(run_shell worktree create --repo "$work/repo" --branch feat/from-shell --from feat/stack --json)"
-json "$from_output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\" and .baseSource == \"explicit\""
-assert_equal "$(git -C "$work/shared/feat-from-shell" rev-parse HEAD)" "$feature_tip"
-printf 'shell --from output: %s\n' "$from_output"
-human_output="$(run_shell worktree create --repo "$work/repo" --branch feat/human-shell --from feat/stack)"
-assert_contains "$human_output" 'base: feat/stack'
-assert_contains "$human_output" "base commit: $feature_tip"
-printf 'human create output: %s' "$human_output"
 
 isolation_fixture="$work/isolation-fixture"
 make_binary_isolation_fixture "$root" "$isolation_fixture" 97
@@ -96,20 +79,14 @@ git -C "$work/seed" commit -qam v3 && git -C "$work/seed" push -q
 remote_tip_without_head="$(git -C "$work/seed" rev-parse HEAD)"
 
 create_without_origin_head() {
-  local implementation="$1" branch="$2" output path
-  if [ "$implementation" = shell ]; then
-    output="$(run_shell worktree create --repo "$work/repo" --branch "$branch" --json)"
-  else
-    output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
-  fi
+  local branch="$1" output path
   path="$work/shared/${branch//\//-}"
   json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip_without_head\" and .baseSource == \"remote\""
   assert_equal "$(git -C "$path" rev-parse HEAD)" "$remote_tip_without_head"
-  printf '%s missing origin HEAD output: %s\n' "$implementation" "$output"
+  printf 'binary missing origin HEAD output: %s\n' "$output"
 }
 
-create_without_origin_head shell feat/missing-head-shell
-create_without_origin_head binary feat/missing-head-binary
+create_without_origin_head feat/missing-head-binary
 
 git -C "$work/repo" remote set-url origin "$work/missing-origin"
 if output="$(run_binary worktree create --repo "$work/repo" --branch feat/fetch-failure --json 2>&1)"; then

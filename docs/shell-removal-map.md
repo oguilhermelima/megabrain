@@ -6,11 +6,10 @@ brace. A helper is counted only when it is reachable from the removed body and h
 production caller. Shared helpers are counted once in the proposed lane, not once per row.
 
 The 31 dispatch guards agree with the stated count when the definition of
-`megabrain_should_use_typescript_binary` in `lib/common.sh` is excluded. The spawn guard is
-different from the other guards: `megabrain_worktree_create` scans all arguments for the exact
-`--orchestrate` flag first, and the binary condition is evaluated only when that scan remains
-false. Therefore `orchestrate spawn` always enters the shell implementation, even with a binary
-present and even if `MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary` is set.
+`megabrain_should_use_typescript_binary` in `lib/common.sh` is excluded. The spawn guard was
+retired with the Bash implementation: `orchestrate spawn` now requires and invokes the compiled
+binary directly, and an explicit `MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell` fails because no
+shell implementation remains.
 
 ## `lib/module-orchestrate.sh`
 
@@ -37,11 +36,11 @@ below. It is not a reason to delete the shared liveness reader.
 | subverb | TypeScript file and function | port complete | lines deletable | helpers that must stay and why |
 |---|---|---:|---:|---|
 | `terminal list` (guard at line 1431) | `src/cli/commands/terminal-list.ts` — `executeTerminalList` | yes | 54 | `megabrain_worktree_root_for_selector` is used by spawn/worktree operations; host-record, host-id, and process-status helpers are used by terminal create/restart/close lifecycle. |
-| `worktree create` (guard at line 1908) | `src/cli/commands/worktree-write.ts` — `executeWorktreeCreate` | no | 0 | The TypeScript parser lacks the spawn-only flags (`--orchestrate`, `--agent`, `--model`, `--effort`, `--chain`, `--prompt`, `--label`, `--tmux`, `--browser`, and `--agent-arg`). More importantly, the guarded shell body is the spawn implementation and reaches launch, prompt publication/transport/receipt, dispatch metadata, rollback, and chain helpers. |
-| `worktree finish` (guard at line 1976) | `src/cli/commands/worktree-write.ts` — `executeWorktreeFinish` | yes | 167 | The compiled contract now covers base/source/warning metadata, structured refusals/errors, merge guarding, and Superset/Orca/Git removal. Root, selector, parent-base, and repository helpers remain shared with `pr`, create, or spawn. |
-| `worktree pr` (guard at line 2523) | `src/cli/commands/worktree-write.ts` — `executeWorktreePr` | yes | 69 | `megabrain_worktree_target_path`, `megabrain_worktree_parent_branch`, `megabrain_repo_default_base`, and root/selector helpers are shared with `finish`, create, or spawn. No helper below this body is independently removable. |
+| `worktree create` | `src/cli/commands/worktree-write.ts` — `executeWorktreeCreate` | yes | 0 | The compiled command owns create; spawn is routed separately to `executeSpawn`. The Bash create and spawn bodies, including their exclusive helpers, are removed. |
+| `worktree finish` (guard at line 1976) | `src/cli/commands/worktree-write.ts` — `executeWorktreeFinish` | yes | 167 | The compiled contract now covers base/source/warning metadata, structured refusals/errors, merge guarding, and Superset/Orca/Git removal. The shell wrapper remains only as a binary boundary; root and selector helpers remain for terminal lifecycle and module doctor. |
+| `worktree pr` (guard at line 2523) | `src/cli/commands/worktree-write.ts` — `executeWorktreePr` | yes | 69 | The compiled command owns pull-request resolution; the old shell-only helpers are no longer retained for create or spawn. |
 | `worktree list` (guard at line 2611) | `src/cli/commands/worktree-list.ts` — `executeWorktreeList` | yes | 215 (198 body + 17 `megabrain_worktree_list_tree_node`) | The recursive tree formatter is reached only by this shell verb and is removable with it. Root, Orca/Superset discovery, Git parsing, and PR discovery helpers are shared with other worktree operations or host lifecycle. |
-| `worktree adopt` (guard at line 2810) | `src/cli/commands/worktree-adopt.ts` — `executeWorktreeAdopt` | yes | 51 | Root/selector resolution, repository resolution, Superset project registration, and workspace creation are shared with worktree create/spawn and other lifecycle paths. |
+| `worktree adopt` (guard at line 2810) | `src/cli/commands/worktree-adopt.ts` — `executeWorktreeAdopt` | yes | 51 | The compiled command owns repository and Superset registration; the retained shell root/selector helpers serve terminal lifecycle and module doctor. |
 | `terminal create` (guard at line 2890) | `src/cli/commands/terminal-lifecycle.ts` — `executeTerminalLifecycle("create", ...)` | no | 0 | TypeScript requires `--command`; shell can derive the command from `.superset/config.json`, wraps identity markers/agent permissions, and records host-derived process identity. |
 | `terminal restart` (guard at line 2901) | `src/cli/commands/terminal-lifecycle.ts` — `executeTerminalLifecycle("restart", ...)` | no | 0 | TypeScript parses `--wait-port` and `--timeout` but does not implement the shell's port-free/listening waits or process-tree ownership checks. |
 | `terminal close` (guard at line 2911) | `src/cli/commands/terminal-lifecycle.ts` — `executeTerminalLifecycle("close", ...)` | no | 0 | The TypeScript route is part of the incomplete lifecycle port; the shell verifies the host terminal, handles stale records, and retains/removes records according to host identity. |
@@ -66,7 +65,7 @@ deletion unit.
 Lanes 1 through 6 below were executed on 2026-09-18, except where noted. `terminal list`,
 `worktree adopt`, `worktree pr`, `worktree list` with its private tree formatter, `ask`, `received`,
 `done`, `check`, `orchestrate reply`, the liveness wrapper body, `orchestrate reconcile`,
-`orchestrate read`, and `orchestrate stop` are gone. `context` was attempted
+`orchestrate read`, `orchestrate stop`, `worktree create`, and `orchestrate spawn` are gone. `context` was attempted
 and reverted, for the reason in its row.
 
 Two things a later reader needs, because both were learned by getting them wrong here:
@@ -100,11 +99,12 @@ Only the `yes` rows are candidates. The following order keeps shared helper deci
 6. Remove the `orchestrate reconcile`, `orchestrate read`, and `orchestrate stop` bodies together
    only after their compiled contracts prove routing, transcript content, prompt receipts, parent
    identity, and interrupt identity safety. Retain the helpers named in their rows.
+7. Remove the `worktree create` and `orchestrate spawn` Bash bodies together after the compiled
+   create and spawn contracts prove routing, failure behavior, and the absence of a shell fallback.
 
 The `no` rows are a hold lane, not deletion candidates. In particular, do not group
-`worktree create` with ordinary worktree writes: the `--orchestrate` guard makes it the spawn
-implementation. Revisit those rows only after the missing TypeScript behavior is implemented and
-the spawn design is explicitly replanned.
+`worktree create` with ordinary worktree writes: its compiled route owns both worktree creation
+and the create phase of spawn.
 
 ## Claims based on grep alone
 
