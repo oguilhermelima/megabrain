@@ -1,4 +1,5 @@
-import { ok } from "../core/result.js";
+import type { ProcessAdapter } from "../adapters/proc.js";
+import { failed, ok } from "../core/result.js";
 import { unavailable, type HostProvider } from "./types.js";
 
 const record = (value: unknown): Record<string, unknown> => typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
@@ -16,6 +17,10 @@ export const orca: HostProvider = {
     const resultTerminal = record(result.terminal);
     const terminal = record(root.terminal);
     return stringValue(resultTerminal.handle) ?? stringValue(terminal.handle) ?? stringValue(root.handle);
+  },
+  readiness: async ({ terminalId }, process: ProcessAdapter, timeoutMs) => {
+    const result = await process.run("orca", ["terminal", "wait", "--terminal", terminalId, "--for", "tui-idle", "--timeout-ms", String(timeoutMs)]);
+    return result.kind === "ok" ? ok(undefined) : failed(`orca terminal ${terminalId} did not become ready within ${timeoutMs}ms`, result.exitCode);
   },
   list: () => ok({ command: "orca", args: ["terminal", "list", "--json"] }),
   read: ({ terminalId }) => ok({ command: "orca", args: ["terminal", "read", "--terminal", terminalId, "--json"] }),

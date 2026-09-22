@@ -1,3 +1,4 @@
+import type { ProcessAdapter } from "../adapters/proc.js";
 import { unknown, type Result } from "../core/result.js";
 
 export type HostCommand = Readonly<{
@@ -28,6 +29,7 @@ export type HostProvider = Readonly<{
   readonly id: string;
   readonly create: (input: CreateTerminal) => Result<HostCommand>;
   readonly terminalIdentity: (value: unknown) => string | undefined;
+  readonly readiness: (input: TerminalTarget, process: ProcessAdapter, timeoutMs: number) => Promise<Result<void>>;
   readonly list: (input: Pick<TerminalTarget, "workspaceId">) => Result<HostCommand>;
   readonly read: (input: TerminalTarget) => Result<HostCommand>;
   readonly close: (input: TerminalTarget) => Result<HostCommand>;
