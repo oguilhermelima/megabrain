@@ -98,6 +98,13 @@ describe("host providers", () => {
     expect(superset?.send({ workspaceId: "workspace", terminalId: "terminal", text: "hello" })).toEqual({ kind: "ok", value: { command: "superset", args: ["terminals", "send", "--workspace", "workspace", "--terminal", "terminal", "--text", "hello", "--json"] } });
   });
 
+  test("orca and superset omit the terminal command when none is provided", () => {
+    const orca = getHost("orca");
+    const superset = getHost("superset");
+    expect(orca?.create({ workspaceId: null, worktreePath: "/work/tree", title: "codex /work/tree", command: undefined as never })).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "create", "--worktree", "path:/work/tree", "--title", "codex /work/tree", "--json"] } });
+    expect(superset?.create({ workspaceId: "workspace", worktreePath: "/work/tree", title: "codex /work/tree", command: undefined as never })).toEqual({ kind: "ok", value: { command: "superset", args: ["terminals", "create", "--workspace", "workspace", "--json"] } });
+  });
+
   test("unsupported capabilities are unknown and unknown hosts keep empty terminal commands", () => {
     const orca = getHost("orca");
     expect(orca?.workspaces()).toEqual({ kind: "unknown", reason: "capability-unavailable: orca cannot list workspaces", error: "capability-unavailable: orca cannot list workspaces", exitCode: 1 });

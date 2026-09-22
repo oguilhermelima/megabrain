@@ -15,7 +15,7 @@ export type CreateTerminal = Readonly<{
   readonly workspaceId: string | null;
   readonly worktreePath: string;
   readonly title: string | null;
-  readonly command: string;
+  readonly command?: string;
 }>;
 
 export type SendText = Readonly<{
