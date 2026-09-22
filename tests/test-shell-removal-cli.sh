@@ -79,6 +79,50 @@ scenario_worktree_list_route_marker() {
   printf 'worktree-list route reaches the compiled binary and preserves its marker status\n'
 }
 
+scenario_worktree_write_route_marker() {
+  local fixture="$work/route-worktree-write" output status
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  write_fixture_binary "$fixture" WORKTREE_WRITE_BINARY
+  set +e
+  output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary \
+    MEGABRAIN_STATE_DIR="$work/route-worktree-write-state" "$fixture/megabrain" \
+    worktree create --repo fixture --branch feat/route --json 2>"$work/route-worktree-write.err")"
+  status=$?
+  set -e
+  assert_equal "$status" 73
+  assert_equal "$output" WORKTREE_WRITE_BINARY
+  printf 'worktree-write route reaches the compiled binary and preserves its marker status\n'
+}
+
+scenario_spawn_route_marker() {
+  local fixture="$work/route-spawn" output status
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  write_fixture_binary "$fixture" SPAWN_BINARY
+  set +e
+  output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary \
+    MEGABRAIN_STATE_DIR="$work/route-spawn-state" "$fixture/megabrain" \
+    orchestrate spawn --repo fixture --branch feat/route --json 2>"$work/route-spawn.err")"
+  status=$?
+  set -e
+  assert_equal "$status" 73
+  assert_equal "$output" SPAWN_BINARY
+  printf 'orchestrate-spawn route reaches the compiled binary and preserves its marker status\n'
+}
+
+scenario_shell_worktree_write_override_fails() {
+  local fixture="$work/route-shell-override" output status
+  make_entrypoint_routing_fixture "$root" "$fixture" 73
+  set +e
+  output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell \
+    MEGABRAIN_STATE_DIR="$work/route-shell-override-state" "$fixture/megabrain" \
+    orchestrate spawn --repo fixture --branch feat/route --json 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'shell worktree override unexpectedly succeeded'
+  assert_contains "$output" 'shell worktree implementation no longer exists'
+  printf 'shell worktree override fails clearly after removal\n'
+}
+
 write_dispatch_fixture() {
   local state="$1" dispatch="$2" parent_host="${3:-unknown}" runtime="${4:-host}"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
@@ -406,6 +450,9 @@ scenario_falsification_is_red_for_each_route worktree-pr '{"verb":"worktree-pr"}
 scenario_falsification_is_red_for_each_route worktree-adopt '{"verb":"worktree-adopt"}' worktree adopt fixture --json
 scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-list"}' terminal list --json
 scenario_worktree_list_route_marker
+scenario_worktree_write_route_marker
+scenario_spawn_route_marker
+scenario_shell_worktree_write_override_fails
 scenario_removed_route_falsification queue-ask MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"ask"}' ask route-question
 scenario_removed_route_falsification queue-received MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"received"}' received
 scenario_removed_route_falsification queue-done MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"done"}' done route-summary

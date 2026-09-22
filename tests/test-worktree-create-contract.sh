@@ -33,12 +33,6 @@ assert_not_contains() {
   esac
 }
 
-install_routing_fixture_skill() {
-  local fixture="$1"
-  mkdir -p "$fixture/skills/megabrain"
-  cp "$root/skills/megabrain/SKILL.md" "$fixture/skills/megabrain/SKILL.md"
-}
-
 make_repo() {
   local repo="$1"
   mkdir -p "$repo"
@@ -106,13 +100,13 @@ EOF
 run_impl() {
   local implementation="$1" state="$2" repo="$3" branch="$4"
   shift 4
-  env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
+  env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
 }
 
 run_no_orchestrator() {
   local implementation="$1" state="$2" repo="$3" branch="$4"
   shift 4
-  env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" PATH=/usr/bin:/bin "$root/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
+  env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
 }
 
 scenario_orchestrator_free_create_and_list() {
@@ -130,7 +124,7 @@ scenario_orchestrator_free_create_and_list() {
     [ -d "$shared/feat-no-host-$implementation" ] || fail "$implementation did not create the worktree"
     git -C "$repo" branch --list "feat/no-host-$implementation" | grep -q "feat/no-host-$implementation" ||
       fail "$implementation did not create the branch"
-    output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION="$implementation" PATH=/usr/bin:/bin "$root/megabrain" worktree list --json)" ||
+    output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$root/.build/megabrain" worktree list --json)" ||
       fail "$implementation did not list without an orchestrator: $output"
     assert_contains "$output" "feat/no-host-$implementation"
   done
@@ -147,7 +141,7 @@ scenario_superset_project_failure_keeps_git_work() {
     mkdir -p "$state" "$shared"
     make_repo "$repo"
     printf '%s\n' "$shared" >"$state/worktree-root"
-    if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
+    if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
       fail "$implementation accepted a project registration failure"
     fi
     assert_contains "$output" 'could not register Superset project'
@@ -169,7 +163,7 @@ scenario_superset_workspace_failure_keeps_git_work() {
     mkdir -p "$state" "$shared"
     make_repo "$repo"
     printf '%s\n' "$shared" >"$state/worktree-root"
-    if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
+    if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
       fail "$implementation accepted a workspace registration failure"
     fi
     assert_contains "$output" 'could not create Superset workspace'
@@ -199,17 +193,10 @@ scenario_compiled_registration_failure_keeps_git_work() {
 run_failed_create() {
   local implementation="$1" state="$2" repo="$3" shared="$4" branch="$5" output status command slug
   slug="${branch//\//-}"
-  if [ "$implementation" = binary ]; then
-    touch "$shared/$slug"
-    command="$root/.build/megabrain"
-  else
-    # WHY: the shell checks -e before Git; a dangling symlink is the failure shape
-    # that lets git worktree add create the branch before rejecting the target.
-    ln -s "$shared/missing-target" "$shared/$slug"
-    command="$root/megabrain"
-  fi
+  touch "$shared/$slug"
+  command="$root/.build/megabrain"
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" PATH=/usr/bin:/bin "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail "$implementation accepted a failed Git create: $output"
@@ -231,14 +218,10 @@ EOF
 
 run_unreadable_branch_check() {
   local implementation="$1" state="$2" repo="$3" branch="$4" marker="$5" output status command real_git
-  if [ "$implementation" = binary ]; then
-    command="$root/.build/megabrain"
-  else
-    command="$root/megabrain"
-  fi
+  command="$root/.build/megabrain"
   real_git="$(command -v git)"
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" MEGABRAIN_REAL_GIT="$real_git" MEGABRAIN_SHOW_REF_MARKER="$marker" PATH="$work_dir/unreadable-bin:/usr/bin:/bin" "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary MEGABRAIN_REAL_GIT="$real_git" MEGABRAIN_SHOW_REF_MARKER="$marker" PATH="$work_dir/unreadable-bin:/usr/bin:/bin" "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail "$implementation accepted an unreadable branch check: $output"
@@ -314,7 +297,6 @@ scenario_worktree_create_routes_binary() {
   local fixture="$work_dir/orphan-routing" state="$work_dir/orphan-routing-state" repo="$work_dir/orphan-routing-repo" shared="$work_dir/orphan-routing-shared" output status
   source "$root/tests/fixtures/entrypoint-routing.sh"
   make_entrypoint_routing_fixture "$root" "$fixture" 97
-  install_routing_fixture_skill "$fixture"
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
@@ -332,7 +314,7 @@ refusal_output() {
   mkdir -p "$state" "$work_dir/refusal-$implementation-$mode/shared"
   printf '%s\n' "$work_dir/refusal-$implementation-$mode/shared" >"$state/worktree-root"
   set +e
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" ORCA_MODE="$mode" PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo selector-that-does-not-match --branch "feat/refusal-$implementation-$mode" --json 2>&1)"
+  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE="$mode" PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch "feat/refusal-$implementation-$mode" --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail "$implementation accepted $mode repository refusal"
@@ -345,7 +327,7 @@ scenario_repo_selector_refusal_causes() {
   for implementation in shell binary; do
     mkdir -p "$work_dir/absent-$implementation/state" "$work_dir/absent-$implementation/shared"
     printf '%s\n' "$work_dir/absent-$implementation/shared" >"$work_dir/absent-$implementation/state/worktree-root"
-    absent="$(env HOME="$work_dir/absent-$implementation/home" MEGABRAIN_STATE_DIR="$work_dir/absent-$implementation/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$implementation" PATH=/usr/bin:/bin "$root/megabrain" worktree create --repo selector-that-does-not-match --branch feat/refusal-absent --json 2>&1 || true)"
+    absent="$(env HOME="$work_dir/absent-$implementation/home" MEGABRAIN_STATE_DIR="$work_dir/absent-$implementation/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch feat/refusal-absent --json 2>&1 || true)"
     unresponsive="$(refusal_output "$implementation" unavailable)"
     unmatched="$(refusal_output "$implementation" registry)"
     assert_contains "$absent" 'when orca is not installed'
@@ -360,45 +342,6 @@ scenario_repo_selector_refusal_causes() {
   printf 'repo selector refusal causes are distinct in both implementations\n'
 }
 
-scenario_routing_deleted_and_restored() {
-  local fixture="$work_dir/routing" state="$work_dir/routing-state" repo="$work_dir/routing-repo" shared="$work_dir/routing-shared" output status backup modified
-  source "$root/tests/fixtures/entrypoint-routing.sh"
-  make_entrypoint_routing_fixture "$root" "$fixture" 97
-  install_routing_fixture_skill "$fixture"
-  mkdir -p "$state" "$shared"
-  make_repo "$repo"
-  printf '%s\n' "$shared" >"$state/worktree-root"
-
-  set +e
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/megabrain" worktree create --repo "$repo" --branch feat/routing-marker --json 2>&1)"
-  status=$?
-  set -e
-  assert_equal "$status" 97
-  printf 'routing restored: status=%s output=%s\n' "$status" "$output"
-
-  backup="$work_dir/module-worktree.sh.saved"
-  modified="$work_dir/module-worktree.sh.modified"
-  cp "$fixture/lib/module-worktree.sh" "$backup"
-  awk '
-    index($0, "megabrain_should_use_typescript_binary \"${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}\"; then") { skip = 1; next }
-    skip && /^  fi$/ { skip = 0; next }
-    !skip { print }
-  ' "$backup" >"$modified"
-  mv "$modified" "$fixture/lib/module-worktree.sh"
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/megabrain" worktree create --repo "$repo" --branch feat/routing-deleted --json)" ||
-    fail 'deleting the binary route did not expose the shell implementation'
-  [ -d "$shared/feat-routing-deleted" ] || fail 'shell implementation did not create after route deletion'
-  printf 'routing deleted: shell create succeeded\n'
-
-  cp "$backup" "$fixture/lib/module-worktree.sh"
-  set +e
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/megabrain" worktree create --repo "$repo" --branch feat/routing-restored --json 2>&1)"
-  status=$?
-  set -e
-  assert_equal "$status" 97
-  printf 'routing restored: status=%s output=%s\n' "$status" "$output"
-}
-
 write_orchestrator_stubs
 scenario_orchestrator_free_create_and_list
 scenario_superset_project_failure_keeps_git_work
@@ -409,5 +352,4 @@ scenario_existing_branch_survives_failed_create
 scenario_unreadable_branch_check_preserves_existing_branch
 scenario_worktree_create_routes_binary
 scenario_repo_selector_refusal_causes
-scenario_routing_deleted_and_restored
 printf 'ok: worktree create contract scenarios\n'

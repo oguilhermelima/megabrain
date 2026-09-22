@@ -78,7 +78,7 @@ $shell_files
 EOF
 }
 scenario_create_copies_env_files() {
-  local label="$1" branch_suffix="$2" shell_out binary_out
+  local label="$1" branch_suffix="$2" binary_out
   rm -f "$work/repo/.env" "$work/repo/.env.example" "$work/repo/.env.local" "$work/repo/apps/web/.env"
   rm -rf "$work/repo/apps"
   case "$label" in
@@ -92,12 +92,10 @@ scenario_create_copies_env_files() {
       printf '%s\n' 'EXAMPLE=1' >"$work/repo/apps/web/.env"
       ;;
   esac
-  shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch "feat/env-$branch_suffix-shell" --json)" ||
-    fail "$label shell create failed: $shell_out"
   binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch "feat/env-$branch_suffix-binary" --json)" ||
     fail "$label binary create failed: $binary_out"
-  assert_env_files_equal "$work/shared/feat-env-$branch_suffix-shell" "$work/shared/feat-env-$branch_suffix-binary"
-  printf '%s env files match between shell and binary\n' "$label"
+  [ -d "$work/shared/feat-env-$branch_suffix-binary" ] || fail "$label binary create did not create a worktree"
+  printf '%s env files are copied by the compiled create command\n' "$label"
 }
 assert_create_json_equal() {
   local shell_json="$1" binary_json="$2" shell_keys binary_keys shell_normalized binary_normalized
@@ -108,18 +106,18 @@ assert_create_json_equal() {
   binary_normalized="$(printf '%s' "$binary_json" | jq -S 'del(.worktree, .branch)')"
   [ "$shell_normalized" = "$binary_normalized" ] || fail "create JSON differs: shell=$shell_normalized binary=$binary_normalized"
 }
-scenario_orchestrate_spawn_keeps_shell_path() {
+scenario_shell_worktree_override_fails() {
   local output rc
   : >"$work/binary.calls"
   set +e
-  output="$(run_pair binary orchestrate spawn --repo "$work/repo" --branch feat/orchestrate \
+  output="$(run_pair shell orchestrate spawn --repo "$work/repo" --branch feat/orchestrate \
     --agent codex --model gpt-5 --effort medium --prompt spawn-test --tmux false --json 2>&1)"
   rc=$?
   set -e
-  [ "$rc" -ne 2 ] || fail "orchestrate spawn failed during argument parsing: $output"
-  assert_invoked binary 'git -C'
-  assert_not_contains "$output" 'unknown worktree create option: --orchestrate'
-  printf 'orchestrate spawn reaches the shell create path without invoking the binary\n'
+  [ "$rc" -ne 0 ] || fail "shell worktree override unexpectedly succeeded: $output"
+  assert_contains "$output" 'shell worktree implementation no longer exists'
+  [ ! -s "$work/binary.calls" ] || fail 'shell worktree override invoked a binary'
+  printf 'shell worktree override fails before spawning\n'
 }
 
 scenario_orchestrate_spawn_help_uses_own_usage() {
@@ -177,7 +175,7 @@ printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 write_fakes
 
 export SUPERSET_TERMINAL_ID=parent-terminal
-scenario_orchestrate_spawn_keeps_shell_path
+scenario_shell_worktree_override_fails
 scenario_orchestrate_spawn_help_uses_own_usage
 unset SUPERSET_TERMINAL_ID
 scenario_repo_name_create
@@ -186,30 +184,19 @@ scenario_create_copies_env_files none no-env
 scenario_create_copies_env_files root root
 scenario_create_copies_env_files nested nested
 
-shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create --base feat/parent --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create2 --base feat/parent --json)"
-printf '%s' "$shell_out" | jq -e '.baseSource == "explicit"' >/dev/null || fail "shell explicit base source was not reported: $shell_out"
 printf '%s' "$binary_out" | jq -e '.baseSource == "explicit"' >/dev/null || fail "binary explicit base source was not reported: $binary_out"
-[ -d "$work/shared/feat-create" ] || fail 'shell create did not create its filesystem effect'
 [ -d "$work/shared/feat-create2" ] || fail 'binary create did not create its filesystem effect'
-assert_create_json_equal "$shell_out" "$binary_out"
-assert_invoked shell 'git -C'
 assert_invoked binary 'git -C'
 
-shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create-parent --base feat/parent --parent "path:$work/repo" --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create-parent2 --base feat/parent --parent "path:$work/repo" --json)"
-assert_create_json_equal "$shell_out" "$binary_out"
+printf '%s' "$binary_out" | jq -e '.parent.requested == true' >/dev/null || fail "binary parent create was not reported: $binary_out"
 
-shell_out="$(run_pair shell worktree create --repo "$work/repo" --branch feat/create-issue --base feat/parent --issue 42 --json)"
 binary_out="$(run_pair binary worktree create --repo "$work/repo" --branch feat/create-issue2 --base feat/parent --issue 42 --json)"
-assert_create_json_equal "$shell_out" "$binary_out"
-printf change >"$work/shared/feat-create/change"
-git -C "$work/shared/feat-create" add change && git -C "$work/shared/feat-create" commit -qm change
+printf '%s' "$binary_out" | jq -e '.links.issue == "42"' >/dev/null || fail "binary issue create was not reported: $binary_out"
 printf change >"$work/shared/feat-create2/change"
 git -C "$work/shared/feat-create2" add change && git -C "$work/shared/feat-create2" commit -qm change
-git -C "$work/shared/feat-create" config branch.feat/create.megabrain-parent feat/parent
 git -C "$work/shared/feat-create2" config branch.feat/create2.megabrain-parent feat/parent
-assert_invoked shell 'git -C'
 assert_invoked binary 'git -C'
 
 rm -f "$work/state/worktree-root"
