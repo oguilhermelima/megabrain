@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
-import { executeSpawn, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
+import { defaultResolveWorktree, executeSpawn, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -43,6 +43,52 @@ function environment(root: string, dispatchId: string): Record<string, string> {
 
 function options(resolved: SpawnWorktree): SpawnDependencies {
   return { resolveWorktree: async () => ok(resolved) };
+}
+
+function creationOptions(worktreePath: string, overrides: Record<string, unknown> = {}): Parameters<typeof defaultResolveWorktree>[1] {
+  return {
+    worktree: worktreePath,
+    repo: "/repo",
+    branch: "feat/spawn",
+    agent: "codex",
+    model: null,
+    effort: null,
+    prompt: "spawn",
+    label: null,
+    tmux: true,
+    browser: false,
+    agentArgs: [],
+    json: true,
+    ...overrides,
+  } as Parameters<typeof defaultResolveWorktree>[1];
+}
+
+async function creationFixture(overrides: Record<string, unknown> = {}) {
+  const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-create-`);
+  const repo = `${root}/repo`;
+  const sharedPath = `${root}/shared`;
+  const state = `${root}/state`;
+  const target = `${root}/missing`;
+  await mkdir(repo, { recursive: true });
+  await mkdir(sharedPath, { recursive: true });
+  const shared = await realpath(sharedPath);
+  await mkdir(state, { recursive: true });
+  await writeFile(`${state}/worktree-root`, `${shared}\n`);
+  const process = processFor([], (command, args) => {
+    if (command !== "git") return ok({ stdout: "", stderr: "", exitCode: 0 });
+    if (args.includes("worktree") && args.includes("list")) return failed("not available", 1);
+    if (args.includes("--show-toplevel")) return ok({ stdout: `${repo}\n`, stderr: "", exitCode: 0 });
+    if (args.includes("--path-format=absolute")) return failed("not a linked worktree", 1);
+    if (args.includes("--verify")) return ok({ stdout: "commit\n", stderr: "", exitCode: 0 });
+    if (args.includes("show-ref")) return failed("branch does not exist", 1);
+    if (args.includes("worktree") && args.includes("add")) return ok({ stdout: "", stderr: "", exitCode: 0 });
+    if (args.includes("refs/remotes/origin/HEAD")) return failed("origin/HEAD is unset", 1);
+    if (args.includes("get-url")) return failed("origin is unset", 1);
+    if (args.includes("init.defaultBranch")) return ok({ stdout: "main\n", stderr: "", exitCode: 0 });
+    return ok({ stdout: "", stderr: "", exitCode: 0 });
+  });
+  const result = await defaultResolveWorktree(target, creationOptions(target, { ...overrides, repo }), { MEGABRAIN_STATE_DIR: state }, process);
+  return { root, repo, shared, state, target, calls: process.calls, result };
 }
 
 describe("executeSpawn", () => {
@@ -142,5 +188,65 @@ describe("executeSpawn", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("forwards --base literally to worktree creation", async () => {
+    const fixture = await creationFixture({ base: "release/next" });
+    try {
+      expect(fixture.result.kind).toBe("ok");
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "rev-parse", "--verify", "release/next^{commit}"] });
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/feat-spawn`, "-b", "feat/spawn", "release/next"] });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("forwards --name literally to worktree creation", async () => {
+    const fixture = await creationFixture({ name: "operator-name" });
+    try {
+      expect(fixture.result.kind).toBe("ok");
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/operator-name`, "-b", "feat/spawn", "main"] });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("forwards --base and --name together to worktree creation", async () => {
+    const fixture = await creationFixture({ base: "release/next", name: "operator-name" });
+    try {
+      expect(fixture.result.kind).toBe("ok");
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "rev-parse", "--verify", "release/next^{commit}"] });
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/operator-name`, "-b", "feat/spawn", "release/next"] });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses creation flags for an existing worktree instead of ignoring them", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-existing-`);
+    const process = processFor([], (command, args) => args.includes("--show-toplevel")
+      ? ok({ stdout: `${root}\n`, stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await defaultResolveWorktree(root, creationOptions(root, { base: "release/next", name: "operator-name" }), {}, process);
+      expect(result).toEqual({ kind: "failed", error: "worktree already exists; --base and --name cannot be applied", exitCode: 1 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    "--chain",
+    "--from",
+    "--parent",
+    "--no-parent",
+    "--issue",
+    "--linear-issue",
+    "--pr",
+    "--orchestrate",
+  ])("refuses unsupported %s by name", async (flag) => {
+    const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", flag, "value"], {}, processFor([]));
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") expect(result.error).toContain(flag);
   });
 });
