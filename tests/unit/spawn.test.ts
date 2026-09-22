@@ -317,6 +317,78 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("retries a host terminal create that fails before returning an identity", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-create-retry-`);
+    let createAttempts = 0;
+    const process = processFor([], (command, args) => {
+      if (command === "orca" && args[1] === "create") {
+        createAttempts += 1;
+        return createAttempts === 1
+          ? failed("workspace is still registering", 1)
+          : ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 });
+      }
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "retry", "--tmux", "false", "--json"], {
+        ...environment(root, "dispatch-create-retry"),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") throw new Error(result.error);
+      expect(JSON.parse(result.value)).toMatchObject({ terminalId: "child-terminal", terminalCreateAttempts: 2 });
+      expect(createAttempts).toBe(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("names the host terminal create and its error after retries are exhausted", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-create-failure-`);
+    const prompt = "private prompt body that must not appear in the error";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? failed("workspace registration still pending", 1)
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], {
+        ...environment(root, "dispatch-create-failure"),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result).toEqual({
+        kind: "failed",
+        error: "orca terminal create --worktree path:/work/tree --title codex /work/tree: workspace registration still pending after 5 attempts",
+        exitCode: 1,
+      });
+      if (result.kind === "failed") expect(result.error).not.toContain(prompt);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not retry after a host terminal identity is returned", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-create-identity-`);
+    let createAttempts = 0;
+    const process = processFor([], (command, args) => {
+      if (command === "orca" && args[1] === "create") {
+        createAttempts += 1;
+        return ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 });
+      }
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "identity", "--tmux", "false", "--json"], {
+        ...environment(root, "dispatch-create-identity"),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") throw new Error(result.error);
+      expect(JSON.parse(result.value).terminalCreateAttempts).toBe(1);
+      expect(createAttempts).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("returns readiness-timeout after submitting the command and does not send the prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-timeout-`);
     const dispatchId = "dispatch-readiness-timeout";

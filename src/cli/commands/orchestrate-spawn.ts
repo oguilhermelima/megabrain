@@ -9,8 +9,12 @@ import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
-import { getHost, type HostCommand } from "../../hosts/index.js";
+import { getHost, type HostCommand, type HostProvider } from "../../hosts/index.js";
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
+
+const TERMINAL_CREATE_MAX_ATTEMPTS = 5;
+const TERMINAL_CREATE_DEADLINE_MS = 500;
+const TERMINAL_CREATE_BACKOFF_MS = 100;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly HOME?: string;
@@ -230,6 +234,34 @@ function failureForCall(call: HostCommand | undefined, result: Result<unknown>, 
   };
 }
 
+type HostTerminalCreation = Readonly<{
+  readonly terminalId: string;
+  readonly attempts: number;
+}>;
+
+function terminalCreateFailure(call: HostCommand, response: Result<unknown>, attempts: number): Result<HostTerminalCreation> {
+  const failure = failureForCall(call, response, "terminal create");
+  return failed(`${failure.call}: ${failure.detail} after ${attempts} attempts`, response.kind === "ok" ? 1 : response.exitCode);
+}
+
+async function createHostTerminal(host: Pick<HostProvider, "terminalIdentity">, call: HostCommand, process: ProcessAdapter): Promise<Result<HostTerminalCreation>> {
+  const started = Date.now();
+  for (let attempts = 1; attempts <= TERMINAL_CREATE_MAX_ATTEMPTS; attempts += 1) {
+    const response = await process.run(call.command, call.args);
+    if (response.kind === "ok") {
+      const terminalId = host.terminalIdentity(JSON.parse(response.value.stdout || "{}")) ?? "";
+      if (terminalId === "") return failed("terminal create returned no terminal identity");
+      return ok({ terminalId, attempts });
+    }
+    const elapsed = Date.now() - started;
+    if (attempts === TERMINAL_CREATE_MAX_ATTEMPTS || elapsed >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts);
+    const waitMs = Math.min(TERMINAL_CREATE_BACKOFF_MS, TERMINAL_CREATE_DEADLINE_MS - elapsed);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    if (Date.now() - started >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts);
+  }
+  return failed("terminal create retry deadline expired");
+}
+
 function resultError(result: Result<unknown>, fallback: string): string {
   return result.kind === "ok" ? fallback : result.error;
 }
@@ -367,6 +399,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   let pane: string | null = null;
   let sessionOwned = true;
   let readinessError: string | undefined;
+  let terminalCreateAttempts: number | undefined;
 
   if (runtime === "tmux") {
     if (parentContext.host === "tmux" && environment.TMUX_PANE !== undefined) {
@@ -399,10 +432,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     if (host === undefined) return failed(`cannot launch agent from unknown orchestration host: ${parentContext.host}`);
     const created = host.create({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
     if (created.kind !== "ok") return created;
-    const response = await process.run(created.value.command, created.value.args);
-    if (response.kind !== "ok") return failed(response.error, response.exitCode);
-    terminalId = host.terminalIdentity(JSON.parse(response.value.stdout || "{}")) ?? "";
-    if (terminalId === "") return failed(`${parentContext.host} terminal create returned no terminal identity`);
+    const createdTerminal = await createHostTerminal(host, created.value, process);
+    if (createdTerminal.kind !== "ok") return createdTerminal;
+    terminalId = createdTerminal.value.terminalId;
+    terminalCreateAttempts = createdTerminal.value.attempts;
   }
 
   const root = resolveStateDirectory(environment);
@@ -474,8 +507,9 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       return failureResult(plan, step === "readiness-wait" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
-      const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null };
-      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\nreconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
+      const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }) };
+      const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
+      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${attempts}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
     }
     step = plan.nextStep;
   }
