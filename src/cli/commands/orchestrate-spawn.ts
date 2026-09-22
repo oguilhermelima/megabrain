@@ -37,12 +37,12 @@ export type SpawnWorktree = Readonly<{
 }>;
 
 export type SpawnDependencies = Readonly<{
-  readonly resolveWorktree?: (target: string, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter) => Promise<Result<SpawnWorktree>>;
+  readonly resolveWorktree?: (target: string | undefined, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter) => Promise<Result<SpawnWorktree>>;
   readonly removeWorktree?: (path: string, process: ProcessAdapter) => Promise<Result<void>>;
 }>;
 
 type SpawnOptions = Readonly<{
-  readonly worktree: string;
+  readonly worktree?: string;
   readonly repo?: string;
   readonly branch?: string;
   readonly base?: string;
@@ -118,7 +118,9 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json });
     } else return failed(`unknown orchestrate spawn option: ${arg}`, 2);
   }
-  if (worktree === undefined) return failed("--worktree is required", 2);
+  if (worktree === undefined && (repo === undefined || branch === undefined)) {
+    return failed("either --worktree <path> or --repo <name|path> with --branch <branch> is required", 2);
+  }
   if (agent === undefined) return failed("--agent is required", 2);
   if (prompt === undefined) return failed("--prompt is required", 2);
   return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, browser, agentArgs, json });
@@ -166,8 +168,8 @@ function existingWorktreeError(options: SpawnOptions): string | undefined {
   return flags.length === 0 ? undefined : `worktree already exists; ${flags.join(" and ")} cannot be applied`;
 }
 
-export async function defaultResolveWorktree(target: string, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter): Promise<Result<SpawnWorktree>> {
-  const direct = await realpath(target).catch(() => undefined);
+export async function defaultResolveWorktree(target: string | undefined, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter): Promise<Result<SpawnWorktree>> {
+  const direct = target === undefined ? undefined : await realpath(target).catch(() => undefined);
   if (direct !== undefined) {
     const top = await runGit(process, ["-C", direct, "rev-parse", "--show-toplevel"]);
     if (top.kind !== "ok") return failed(`worktree path is not a Git directory: ${target}`);
@@ -181,10 +183,14 @@ export async function defaultResolveWorktree(target: string, options: SpawnOptio
     let path = "";
     for (const line of listed.value.split("\n")) {
       if (line.startsWith("worktree ")) path = line.slice(9);
-      if (line === `branch refs/heads/${target}` || (line.startsWith("worktree ") && basename(path) === target)) {
+      const listedBranch = line.startsWith("branch refs/heads/") ? line.slice(18) : undefined;
+      const matches = target === undefined
+        ? listedBranch === options.branch
+        : listedBranch === target || (line.startsWith("worktree ") && basename(path) === target);
+      if (matches) {
         const existingError = existingWorktreeError(options);
         if (existingError !== undefined) return failed(existingError);
-        return ok({ path, branch: line.startsWith("branch refs/heads/") ? line.slice(18) : target, ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
+        return ok({ path, branch: listedBranch ?? target ?? "detached", ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
       }
     }
   }
@@ -324,7 +330,7 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     spawnRuntime: runtime === "tmux" ? "tmux" : "ide",
     tmuxSession: session,
     tmuxPane: pane,
-    label: options.label ?? `${options.agent} ${options.worktree}`,
+    label: options.label ?? `${options.agent} ${worktree.path}`,
     chain: null,
     state: "spawning",
     promptDelivered: false,
