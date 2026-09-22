@@ -813,3 +813,53 @@ describe("executeSpawn", () => {
     if (result.kind === "failed") expect(result.error).toContain(flag);
   });
 });
+
+describe("defaultResolveWorktree", () => {
+  test("scopes named worktree lookup to the selected repository", async () => {
+    const process = processFor([], (command, args) => {
+      if (command !== "git") return ok({ stdout: "", stderr: "", exitCode: 0 });
+      if (args[0] === "-C" && args[2] === "rev-parse" && args[3] === "--show-toplevel") return ok({ stdout: "/repo\n", stderr: "", exitCode: 0 });
+      if (args[0] === "-C" && args[2] === "rev-parse" && args[3] === "--path-format=absolute") return failed("not a linked worktree", 1);
+      if (args.includes("worktree") && args.includes("list")) return ok({ stdout: "worktree /repo/feature-name\nbranch refs/heads/feature-name\n", stderr: "", exitCode: 0 });
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    const result = await defaultResolveWorktree("feature-name", creationOptions("feature-name"), {}, process);
+
+    expect(result).toEqual({
+      kind: "ok",
+      value: { path: "/repo/feature-name", branch: "feature-name", ownership: "existing", workspaceId: null },
+    });
+    expect(process.calls).toContainEqual({ command: "git", args: ["-C", "/repo", "worktree", "list", "--porcelain"] });
+  });
+
+  test("resolves an absolute worktree path without a repository selector", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-existing-path-`);
+    const path = await realpath(root);
+    const process = processFor([], (command, args) => args.includes("--show-toplevel")
+      ? ok({ stdout: `${path}\n`, stderr: "", exitCode: 0 })
+      : args.includes("symbolic-ref")
+        ? ok({ stdout: "feat/existing\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await defaultResolveWorktree(root, creationOptions(root, { repo: undefined }), {}, process);
+
+      expect(result).toEqual({
+        kind: "ok",
+        value: { path, branch: "feat/existing", ownership: "existing", workspaceId: null },
+      });
+      expect(process.calls).not.toContainEqual({ command: "git", args: ["worktree", "list", "--porcelain"] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a named worktree lookup without a repository selector", async () => {
+    const process = processFor([]);
+
+    const result = await defaultResolveWorktree("feature-name", creationOptions("feature-name", { repo: undefined }), {}, process);
+
+    expect(result).toEqual({ kind: "failed", error: "--repo is required to resolve a worktree by name", exitCode: 1 });
+    expect(process.calls).toEqual([]);
+  });
+});
