@@ -400,7 +400,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     const created = host.create({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
     if (created.kind !== "ok") return created;
     const response = await process.run(created.value.command, created.value.args);
-    if (response.kind !== "ok") return failed(response.error, response.exitCode);
+    if (response.kind !== "ok") {
+      const failure = failureForCall(created.value, response, `${parentContext.host} terminal create`);
+      return failed(`${failure.call}: ${failure.detail}`, response.exitCode);
+    }
     terminalId = host.terminalIdentity(JSON.parse(response.value.stdout || "{}")) ?? "";
     if (terminalId === "") return failed(`${parentContext.host} terminal create returned no terminal identity`);
   }
