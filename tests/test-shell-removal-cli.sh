@@ -53,6 +53,7 @@ scenario_route_markers() {
   scenario_route_reaches_compiled_binary queue-done '{"verb":"done"}' MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION done route-summary
   scenario_route_reaches_compiled_binary check '{"verb":"check"}' MEGABRAIN_CHECK_IMPLEMENTATION check --timeout 0 --json
   scenario_route_reaches_compiled_binary reply '{"verb":"reply"}' MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION orchestrate reply route-dispatch --text route-answer --json
+  scenario_route_reaches_compiled_binary read '{"verb":"read"}' MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION orchestrate read route-dispatch --json
   scenario_route_reaches_compiled_binary liveness '{"verb":"liveness"}' MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION orchestrate liveness route-dispatch --json
   scenario_route_reaches_compiled_binary orchestrate-list '{"verb":"orchestrate-list"}' MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION orchestrate list --json
   scenario_route_reaches_compiled_binary orchestrate-prune '{"verb":"orchestrate-prune"}' MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION orchestrate prune --dry-run --json
@@ -458,6 +459,7 @@ scenario_removed_route_falsification queue-received MEGABRAIN_QUEUE_WRITE_IMPLEM
 scenario_removed_route_falsification queue-done MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"done"}' done route-summary
 scenario_removed_route_falsification check MEGABRAIN_CHECK_IMPLEMENTATION '{"verb":"check"}' check --timeout 0 --json
 scenario_removed_route_falsification reply MEGABRAIN_ORCHESTRATE_REPLY_IMPLEMENTATION '{"verb":"reply"}' orchestrate reply route-dispatch --text route-answer --json
+scenario_removed_route_falsification read MEGABRAIN_ORCHESTRATE_READ_IMPLEMENTATION '{"verb":"read"}' orchestrate read route-dispatch --json
 scenario_removed_route_falsification liveness MEGABRAIN_ORCHESTRATE_LIVENESS_IMPLEMENTATION '{"verb":"liveness"}' orchestrate liveness route-dispatch --json
 scenario_removed_route_falsification orchestrate-list MEGABRAIN_ORCHESTRATE_LIST_IMPLEMENTATION '{"verb":"orchestrate-list"}' orchestrate list --json
 scenario_removed_route_falsification orchestrate-prune MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION '{"verb":"orchestrate-prune"}' orchestrate prune --dry-run --json
