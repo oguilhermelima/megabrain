@@ -27,6 +27,7 @@ export type SendText = Readonly<{
 export type HostProvider = Readonly<{
   readonly id: string;
   readonly create: (input: CreateTerminal) => Result<HostCommand>;
+  readonly terminalIdentity: (value: unknown) => string | undefined;
   readonly list: (input: Pick<TerminalTarget, "workspaceId">) => Result<HostCommand>;
   readonly read: (input: TerminalTarget) => Result<HostCommand>;
   readonly close: (input: TerminalTarget) => Result<HostCommand>;

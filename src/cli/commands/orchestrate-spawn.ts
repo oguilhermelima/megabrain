@@ -181,15 +181,6 @@ async function defaultRemoveWorktree(path: string, process: ProcessAdapter): Pro
   return result.kind === "ok" ? ok(undefined) : failed(result.kind === "failed" ? result.error : result.reason, result.exitCode);
 }
 
-function hostIdentity(value: unknown, host: string): string | undefined {
-  if (typeof value === "string" && value !== "") return value;
-  if (typeof value !== "object" || value === null) return undefined;
-  const record = value as RecordValue;
-  const nested = [record.terminalId, record.sessionId, record.handle, record.id, (record.result as RecordValue | undefined)?.terminalId, (record.result as RecordValue | undefined)?.sessionId, (record.result as RecordValue | undefined)?.handle, (record.result as RecordValue | undefined)?.id, (record.terminal as RecordValue | undefined)?.id, (record.terminal as RecordValue | undefined)?.handle];
-  const valueFound = nested.find((item): item is string => typeof item === "string" && item !== "");
-  return valueFound ?? (host === "orca" ? stringValue((record.result as RecordValue | undefined)?.terminal) : undefined);
-}
-
 async function hasReceipt(root: string, id: string): Promise<boolean> {
   const directory = await dispatchPath(root, id, "messages");
   for (const name of await readdir(directory).catch(() => [])) {
@@ -341,7 +332,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     if (created.kind !== "ok") return created;
     const response = await process.run(created.value.command, created.value.args);
     if (response.kind !== "ok") return failed(response.error, response.exitCode);
-    terminalId = hostIdentity(JSON.parse(response.value.stdout || "{}"), parentContext.host) ?? "";
+    terminalId = host.terminalIdentity(JSON.parse(response.value.stdout || "{}")) ?? "";
     if (terminalId === "") return failed(`${parentContext.host} terminal create returned no terminal identity`);
   }
 
@@ -364,7 +355,8 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const sent = await sendTmuxPair(root, pane ?? "", `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} MEGABRAIN_TMUX_SESSION=${JSON.stringify(session ?? "")} MEGABRAIN_TMUX_PANE=${JSON.stringify(pane ?? "")} ${command}`, key.value, environment, process);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
       } else {
-        const host = getHost(parentContext.host);
+        const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
+        const host = getHost(childHost);
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} ${command}` });
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed("host command could not be built");
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
@@ -375,7 +367,8 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed" };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       } else {
-        const host = getHost(parentContext.host);
+        const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
+        const host = getHost(childHost);
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: prompt });
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed("host prompt could not be built");
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed" };
