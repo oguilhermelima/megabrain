@@ -164,6 +164,8 @@ else
 fi
 EOF
 chmod +x "$fake_bin/megabrain_superset" "$fake_bin/orca"
+cp "$fake_bin/megabrain_superset" "$fake_bin/superset"
+chmod +x "$fake_bin/superset"
 host_read_result="$(PATH="$fake_bin:$PATH" command_orchestrate read host-read --json)"
 assert_equal "$(printf '%s' "$host_read_result" | jq -r '.source')" host
 assert_equal "$(printf '%s' "$host_read_result" | jq -r '.text')" 'superset host output'

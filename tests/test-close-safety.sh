@@ -96,6 +96,8 @@ fi
 exit 1
 EOF
 chmod +x "$fake_bin/orca" "$fake_bin/megabrain_superset"
+cp "$fake_bin/megabrain_superset" "$fake_bin/superset"
+chmod +x "$fake_bin/superset"
 export PATH="$fake_bin:$PATH"
 export MB_CLOSE_LOG="$close_log"
 
