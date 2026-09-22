@@ -987,25 +987,6 @@ megabrain_dispatch_reconcile_update() {
   megabrain_dispatch_meta_update_fields "$@"
 }
 
-megabrain_dispatch_reconcile() {
-  local megabrain_root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)}"
-  local typescript_binary="$megabrain_root/.build/megabrain"
-  [ -x "$typescript_binary" ] || {
-    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
-    return 1
-  }
-  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
-  megabrain_warn_if_typescript_binary_stale
-  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-    if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
-      export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
-    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
-      export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
-    fi
-  fi
-  "$typescript_binary" orchestrate reconcile "$@"
-}
-
 megabrain_dispatch_tmux_sessions() {
   tmux list-sessions -F '#{session_name}' 2>/dev/null || true
 }
@@ -1111,59 +1092,6 @@ EOF
   MODULE_PRUNABLE_DISPATCHES="$prunable_count"
   MODULE_UNCERTAIN_REASONS="$uncertain_reasons"
   MODULE_RETAINED_REASONS="$retained_reasons"
-}
-
-megabrain_dispatch_prune_state_terminal() {
-  # WHY: this is the archive policy, narrower than the transition table. A state may
-  # still be recoverable (orphaned) while old dispatch records are safe to archive.
-  case ",$(megabrain_dispatch_prune_states)," in
-    *,"$1",*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-megabrain_dispatch_prune_state_selected() {
-  case ",$2," in
-    *,"$1",*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-megabrain_dispatch_timestamp_epoch() {
-  local timestamp="$1" epoch
-  epoch="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$timestamp" '+%s' 2>/dev/null || true)"
-  if ! [[ "$epoch" =~ ^[0-9]+$ ]]; then
-    epoch="$(date -u -d "$timestamp" '+%s' 2>/dev/null || true)"
-  fi
-  [[ "$epoch" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "$epoch"
-}
-
-megabrain_dispatch_prune_release() {
-  local dispatch_id="$1" meta="$2" runtime terminal_state
-  MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON=""
-  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  if [ "$runtime" = host ]; then
-    if ! megabrain_dispatch_release_terminal_process "$dispatch_id"; then
-      MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='could not release dispatch terminal'
-      return 1
-    fi
-    terminal_state="$(jq -r '.terminalState // "owned"' "$(megabrain_dispatch_meta_path "$dispatch_id")" 2>/dev/null || printf 'owned')"
-    if [ "$terminal_state" = retained ]; then
-      MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='host terminal identity is unproven; dispatch terminal was retained'
-      return 1
-    fi
-    return 0
-  fi
-  megabrain_dispatch_release_tmux_session "$meta" || {
-    MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='could not release dispatch terminal'
-    return 1
-  }
-  if [ "${MEGABRAIN_DISPATCH_TERMINAL_STATUS:-unknown}" = unknown ]; then
-    MEGABRAIN_DISPATCH_PRUNE_RELEASE_REASON='terminal identity is unproven'
-    return 1
-  fi
-  return 0
 }
 
 megabrain_dispatch_cursor_read() {
@@ -1738,39 +1666,6 @@ megabrain_dispatch_close_output_is_absent() {
   esac
 }
 
-MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS=not-landed
-MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON=''
-
-megabrain_dispatch_native_interrupt() {
-  local meta="$1" host terminal_id
-  MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS=not-landed
-  MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON=''
-  host="$(printf '%s' "$meta" | jq -r '.childHost // empty')"
-  terminal_id="$(printf '%s' "$meta" | jq -r '.terminalId // empty')"
-  case "$host" in
-    superset)
-      MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON='Superset terminals send offers no interrupt capability'
-      return 1
-      ;;
-    orca)
-      [ -n "$terminal_id" ] || {
-        MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON='Orca terminal id is missing'
-        return 1
-      }
-      if orca terminal send --terminal "$terminal_id" --interrupt --json >/dev/null 2>&1; then
-        MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_STATUS=landed
-        return 0
-      fi
-      MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON="Orca terminal $terminal_id rejected --interrupt"
-      return 1
-      ;;
-    *)
-      MEGABRAIN_DISPATCH_NATIVE_INTERRUPT_REASON="interrupt capability is unavailable for host $host"
-      return 1
-      ;;
-  esac
-}
-
 megabrain_dispatch_close_result() {
   local output="$1" close_rc="$2"
   [ "$close_rc" -eq 0 ] && return 0
@@ -2063,26 +1958,6 @@ megabrain_dispatch_reply() {
     [ "$supersede" = true ] && printf 'superseded queued: %s\nsuperseded delivered: %s\n' "$MEGABRAIN_LAST_SUPERSEDE_QUEUED" "$MEGABRAIN_LAST_SUPERSEDE_DELIVERED"
     [ "$nudge" = typed ] || printf 'nudge not typed; the child will still find this reply with megabrain check\n'
   fi
-}
-
-megabrain_dispatch_stop() {
-  local megabrain_root="${MEGABRAIN_ROOT:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)}"
-  local typescript_binary="$megabrain_root/.build/megabrain"
-  [ -x "$typescript_binary" ] || {
-    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
-    return 1
-  }
-  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
-  megabrain_warn_if_typescript_binary_stale
-  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-    if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
-      export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
-    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
-      export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
-    fi
-  fi
-  "$typescript_binary" orchestrate stop "$@"
-  return $?
 }
 
 command_ask() {
