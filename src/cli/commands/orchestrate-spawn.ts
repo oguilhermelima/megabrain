@@ -69,7 +69,7 @@ function parseBoolean(value: string): boolean | undefined {
   return undefined;
 }
 
-const unsupportedOptions = ["--from", "--parent", "--no-parent", "--issue", "--linear-issue", "--pr", "--base", "--name", "--chain", "--orchestrate"] as const;
+const unsupportedOptions = ["--from", "--parent", "--no-parent", "--issue", "--linear-issue", "--pr", "--chain", "--orchestrate"] as const;
 
 function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let worktree: string | undefined;
