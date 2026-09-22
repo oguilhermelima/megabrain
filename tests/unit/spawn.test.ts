@@ -8,8 +8,8 @@ import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.j
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
-const worktree = (ownership: SpawnWorktree["ownership"]): SpawnWorktree => ({
-  path: "/work/tree",
+const worktree = (ownership: SpawnWorktree["ownership"], path = "/work/tree"): SpawnWorktree => ({
+  path,
   branch: "feat/example",
   ownership,
   workspaceId: "workspace-1",
@@ -43,6 +43,10 @@ function environment(root: string, dispatchId: string): Record<string, string> {
 
 function options(resolved: SpawnWorktree): SpawnDependencies {
   return { resolveWorktree: async () => ok(resolved) };
+}
+
+function argsContain(args: readonly string[], value: string): boolean {
+  return args.includes(value) || args.some((arg) => arg.includes(value));
 }
 
 function creationOptions(worktreePath: string, overrides: Record<string, unknown> = {}): Parameters<typeof defaultResolveWorktree>[1] {
@@ -92,6 +96,112 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("exports the created host terminal identity through its provider variable", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-identity-`);
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "identity", "--tmux", "false"], {
+        ...environment(root, "dispatch-host-identity"),
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, options(worktree("existing")));
+      const command = process.calls.find((call) => call.command === "orca" && call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
+      const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
+      expect(text).toContain("ORCA_TERMINAL_HANDLE='child-terminal'");
+      expect(text).toContain("MEGABRAIN_DISPATCH_ID='dispatch-host-identity'");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("scopes the host command to the dispatch state and clears parent tmux markers", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-environment-`);
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "environment", "--tmux", "false"], {
+        ...environment(root, "dispatch-host-environment"),
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, options(worktree("existing")));
+      const command = process.calls.find((call) => call.command === "orca" && call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
+      const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
+      expect(text).toContain("env -u TMUX -u TMUX_PANE");
+      expect(text).toContain(`MEGABRAIN_STATE_DIR='${root}'`);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("uses the Superset terminal identity variable for Superset children", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-superset-identity-`);
+    const process = processFor([], (command, args) => {
+      if (command === "superset" && args[1] === "create") return ok({ stdout: JSON.stringify({ terminalId: "child-terminal" }), stderr: "", exitCode: 0 });
+      if (command === "superset" && args[1] === "read") return ok({ stdout: JSON.stringify({ text: "ready" }), stderr: "", exitCode: 0 });
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "superset", "--tmux", "false"], {
+        ...environment(root, "dispatch-superset-identity"),
+        MEGABRAIN_SESSION_HOST: "superset",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, options(worktree("existing")));
+      const command = process.calls.find((call) => call.command === "superset" && argsContain(call.args, "MEGABRAIN_DISPATCH_ID"));
+      const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
+      expect(text).toContain("SUPERSET_TERMINAL_ID='child-terminal'");
+      expect(text).not.toContain("ORCA_TERMINAL_HANDLE");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("quotes a worktree path containing a space as one shell argument", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-path-quote-`);
+    const path = "/work/tree with space";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", path, "--agent", "codex", "--prompt", "quoted", "--tmux", "false"], {
+        ...environment(root, "dispatch-path-quote"),
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, options(worktree("existing", path)));
+      const command = process.calls.find((call) => call.command === "orca" && argsContain(call.args, "MEGABRAIN_DISPATCH_ID"));
+      const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
+      expect(text).toContain("cd '/work/tree with space' &&");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps tmux identity variables and adds the shared state directory", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-environment-`);
+    const dispatchId = "dispatch-tmux-environment";
+    const commandTexts: string[] = [];
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => { commandTexts.push(text); return ok(undefined); },
+      sendKey: async () => ok(undefined),
+    });
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "tmux", "--tmux", "true"], environment(root, dispatchId), processFor([]), options(worktree("existing")));
+      const command = commandTexts.find((text) => text.includes("MEGABRAIN_DISPATCH_ID")) ?? "";
+      expect(command).toContain("MEGABRAIN_DISPATCH_ID");
+      expect(command).toContain("MEGABRAIN_TMUX_SESSION");
+      expect(command).toContain("MEGABRAIN_TMUX_PANE");
+      expect(command).toContain(`MEGABRAIN_STATE_DIR='${root}'`);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("writes metadata, creates tmux, sends command and prompt, and confirms delivery", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-`);
     const events: string[] = [];
