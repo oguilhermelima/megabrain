@@ -97,6 +97,47 @@ export function getTmux(): TmuxProvider {
   return registry.get(provider.id) ?? provider;
 }
 
+export type TmuxSessionWaitOptions = Readonly<{
+  readonly attempts?: number;
+  readonly waitMs?: number;
+}>;
+
+export async function createTmuxSession(
+  session: string,
+  worktreePath: string,
+  command: string,
+  process: ProcessAdapter,
+): Promise<Result<void>> {
+  const result = await process.run("tmux", ["new-session", "-d", "-A", "-s", session, "-c", worktreePath, command]);
+  return result.kind === "ok" ? ok(undefined) : failed(result.error, result.exitCode);
+}
+
+export async function splitTmuxWindow(
+  session: string,
+  worktreePath: string,
+  process: ProcessAdapter,
+): Promise<Result<string>> {
+  const result = await process.run("tmux", ["split-window", "-d", "-t", session, "-c", worktreePath, "-P", "-F", "#{pane_id}"]);
+  if (result.kind !== "ok") return failed(result.error, result.exitCode);
+  const pane = result.value.stdout.trim();
+  return pane.length > 0 ? ok(pane) : failed(`tmux split for session ${session} returned no pane`);
+}
+
+export async function waitForTmuxSession(
+  session: string,
+  process: ProcessAdapter,
+  options: TmuxSessionWaitOptions = {},
+): Promise<Result<void>> {
+  const attempts = Math.max(1, options.attempts ?? 600);
+  const waitMs = Math.max(0, options.waitMs ?? 100);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const exists = await getTmux().sessionExists(session, process);
+    if (exists.kind === "ok") return ok(undefined);
+    if (attempt < attempts && waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  return failed(`tmux session ${session} did not become available`);
+}
+
 function lockPath(root: string, pane: string): string {
   return `${root}/locks/tmux/${encodeURIComponent(pane)}.lock`;
 }
