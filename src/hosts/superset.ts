@@ -26,7 +26,7 @@ export const superset: HostProvider = {
   id: "superset",
   create: ({ workspaceId, command }) => {
     const target = workspace(workspaceId);
-    return target.kind === "ok" ? ok({ command: "superset", args: ["terminals", "create", "--workspace", target.value, "--command", command, "--json"] }) : target;
+    return target.kind === "ok" ? ok({ command: "superset", args: ["terminals", "create", "--workspace", target.value, ...(command === undefined ? [] : ["--command", command]), "--json"] }) : target;
   },
   terminalIdentity: (value) => {
     const root = record(value);

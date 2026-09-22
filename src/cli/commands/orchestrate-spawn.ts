@@ -360,7 +360,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   } else {
     const host = getHost(parentContext.host);
     if (host === undefined) return failed(`cannot launch agent from unknown orchestration host: ${parentContext.host}`);
-    const created = host.create({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}`, command: "bash" });
+    const created = host.create({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
     if (created.kind !== "ok") return created;
     const response = await process.run(created.value.command, created.value.args);
     if (response.kind !== "ok") return failed(response.error, response.exitCode);

@@ -9,7 +9,7 @@ export const orca: HostProvider = {
   id: "orca",
   create: ({ worktreePath, title, command }) => ok({
     command: "orca",
-    args: ["terminal", "create", "--worktree", `path:${worktreePath}`, ...(title === null ? [] : ["--title", title]), "--command", command, "--json"],
+    args: ["terminal", "create", "--worktree", `path:${worktreePath}`, ...(title === null ? [] : ["--title", title]), ...(command === undefined ? [] : ["--command", command]), "--json"],
   }),
   terminalIdentity: (value) => {
     const root = record(value);
