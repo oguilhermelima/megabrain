@@ -13,9 +13,9 @@ import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, type HostCommand, type HostProvider } from "../../hosts/index.js";
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
 
-const TERMINAL_CREATE_MAX_ATTEMPTS = 5;
-const TERMINAL_CREATE_DEADLINE_MS = 500;
-const TERMINAL_CREATE_BACKOFF_MS = 100;
+const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
+const TERMINAL_CREATE_DEADLINE_MS = 2000;
+const TERMINAL_CREATE_BACKOFF_MS = 250;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly HOME?: string;
@@ -231,9 +231,9 @@ type HostTerminalCreation = Readonly<{
   readonly attempts: number;
 }>;
 
-function terminalCreateFailure(call: HostCommand, response: Result<unknown>, attempts: number): Result<HostTerminalCreation> {
+function terminalCreateFailure(call: HostCommand, response: Result<unknown>, attempts: number, elapsedMs: number): Result<HostTerminalCreation> {
   const failure = failureForCall(call, response, "terminal create");
-  return failed(`${failure.call}: ${failure.detail} after ${attempts} attempts`, response.kind === "ok" ? 1 : response.exitCode);
+  return failed(`${failure.call}: ${failure.detail} after ${attempts} attempts in ${elapsedMs}ms`, response.kind === "ok" ? 1 : response.exitCode);
 }
 
 async function createHostTerminal(host: Pick<HostProvider, "terminalIdentity">, call: HostCommand, process: ProcessAdapter): Promise<Result<HostTerminalCreation>> {
@@ -246,10 +246,11 @@ async function createHostTerminal(host: Pick<HostProvider, "terminalIdentity">, 
       return ok({ terminalId, attempts });
     }
     const elapsed = Date.now() - started;
-    if (attempts === TERMINAL_CREATE_MAX_ATTEMPTS || elapsed >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts);
+    if (attempts === TERMINAL_CREATE_MAX_ATTEMPTS || elapsed >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts, elapsed);
     const waitMs = Math.min(TERMINAL_CREATE_BACKOFF_MS, TERMINAL_CREATE_DEADLINE_MS - elapsed);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-    if (Date.now() - started >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts);
+    const retryElapsed = Date.now() - started;
+    if (retryElapsed >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts, retryElapsed);
   }
   return failed("terminal create retry deadline expired");
 }
