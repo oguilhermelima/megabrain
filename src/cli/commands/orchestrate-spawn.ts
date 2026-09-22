@@ -6,6 +6,7 @@ import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getAgent, submitKey } from "../../agents/index.js";
 import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
+import { classifyLiveness } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
@@ -157,6 +158,22 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
     if (Number.isSafeInteger(value)) return value;
   }
   return 10000;
+}
+
+const TMUX_READINESS_POLL_MS = 100;
+
+// Reuses the same output classification `orchestrate liveness` uses (core/liveness.ts,
+// getTmux().capturePane): the tmux runtime has no blocking "wait until ready" call the way the
+// host providers do, so readiness is read from the pane's own text until the agent's composer
+// reports idle or the deadline passes.
+async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Result<void>> {
+  const started = Date.now();
+  while (true) {
+    const captured = await getTmux().capturePane(pane, 200, process);
+    if (captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle") return ok(undefined);
+    if (Date.now() - started >= timeoutMs) return failed(`tmux pane ${pane} did not become ready within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, TMUX_READINESS_POLL_MS));
+  }
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
@@ -500,6 +517,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
+    } else if (step === "readiness-output-validation") {
+      const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process);
+      if (waited.kind !== "ok") readinessError = waited.error;
+      outcome = waited.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
         const sent = await sendTmuxPair(root, pane ?? "", prompt, key.value, environment, process);
@@ -536,7 +557,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
     if (plan.action === "fail") {
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
-      return failureResult(plan, step === "readiness-wait" ? readinessError : undefined, cleanupFailures);
+      return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
       const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }) };
