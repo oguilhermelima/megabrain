@@ -455,7 +455,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
     if (session === null) {
       session = `megabrain-${id}`;
-      const created = await createTmuxSession(session, worktree.path, "bash", process);
+      const created = await createTmuxSession(session, worktree.path, undefined, process);
       if (created.kind !== "ok") return created;
     }
     const waited = await waitForTmuxSession(session, process);

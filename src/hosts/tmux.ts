@@ -105,10 +105,14 @@ export type TmuxSessionWaitOptions = Readonly<{
 export async function createTmuxSession(
   session: string,
   worktreePath: string,
-  command: string,
+  command: string | undefined,
   process: ProcessAdapter,
 ): Promise<Result<void>> {
-  const result = await process.run("tmux", ["new-session", "-d", "-A", "-s", session, "-c", worktreePath, command]);
+  const args = ["new-session", "-d", "-A", "-s", session, "-c", worktreePath];
+  // Omitting the trailing command lets tmux start its configured default-shell (which follows
+  // $SHELL) instead of hardcoding one; a caller that wants a specific command still can.
+  if (command !== undefined) args.push(command);
+  const result = await process.run("tmux", args);
   return result.kind === "ok" ? ok(undefined) : failed(result.error, result.exitCode);
 }
 
