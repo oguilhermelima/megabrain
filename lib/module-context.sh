@@ -47,7 +47,11 @@ command_orchestrate() {
   local subcommand="${1:-}"
   shift || true
   case "$subcommand" in
-    spawn) command_worktree create --orchestrate "$@" ;;
+    spawn)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      megabrain_require_worktree_binary "$typescript_binary" || return 1
+      "$typescript_binary" orchestrate spawn "$@"
+      ;;
     list) command_orchestrate_list "$@" ;;
     prune)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
