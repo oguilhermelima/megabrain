@@ -28,7 +28,7 @@ const transitions = {
   },
   terminal: {
     owned: ["owned", "missing", "retained", "released"],
-    retained: ["retained", "missing", "released"],
+    retained: ["retained", "owned", "missing", "released"],
     missing: ["missing", "retained", "released"],
     released: ["released"],
   },
@@ -70,8 +70,9 @@ describe("dispatch state consumers", () => {
     expect(result).toEqual({ outcome: "adopted", updates: { state: "running", stage: "terminal-proven", reason: "identity-proven" } });
   });
 
-  test("rejects retained-to-owned because bash does not allow that terminal transition", () => {
+  test("allows retained-to-owned adoption after terminal identity is proven", () => {
+    expect(checkDispatchTransition("terminal", "retained", "owned").kind).toBe("ok");
     const result = reconcileDecision({ state: "running", processState: "running", terminalState: "retained" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "unchanged", updates: {} });
+    expect(result).toEqual({ outcome: "adopted", updates: { terminalState: "owned", stage: "terminal-proven", reason: "identity-proven" } });
   });
 });
