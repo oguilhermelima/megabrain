@@ -18,6 +18,8 @@ import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxS
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
 const TERMINAL_CREATE_BACKOFF_MS = 250;
+const PROMPT_BUDGET_TMUX_BYTES = 12000;
+const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly HOME?: string;
@@ -149,6 +151,20 @@ function shellQuote(value: string): string {
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
   return `[megabrain dispatch: ${label}]\n\nThis is a managed megabrain dispatch. Before starting work, run megabrain received to confirm that you received this prompt. If you need coordinator input, run megabrain ask "your question"; wait with megabrain check until a reply arrives, then run megabrain ack <delivery-id> to confirm it. When the requested work is complete, run megabrain done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
+}
+
+// Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the
+// pane's paste buffer or the OS argv limit once it is UTF-8 encoded.
+function promptByteLength(prompt: string): number {
+  return new TextEncoder().encode(prompt).length;
+}
+
+function validatePromptBudget(prompt: string, runtime: SpawnRuntime): Result<void> {
+  const transport = runtime === "tmux" ? "tmux" : "argv";
+  const limit = runtime === "tmux" ? PROMPT_BUDGET_TMUX_BYTES : PROMPT_BUDGET_ARGV_BYTES;
+  const actual = promptByteLength(prompt);
+  if (actual > limit) return failed(`prompt is too large for ${transport} delivery: ${actual} bytes (limit: ${limit} bytes)`, 2);
+  return ok(undefined);
 }
 
 function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
@@ -424,12 +440,14 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   if (agentCommand.kind !== "ok") return agentCommand;
   const key = submitKey(options.agent);
   if (key.kind !== "ok") return key;
+  const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
+  const budget = validatePromptBudget(options.prompt, runtime);
+  if (budget.kind !== "ok") return budget;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
   const id = dispatchId(environment);
   const parentContext = parent(environment);
-  const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
   const command = agentCommand.value;
   const prompt = finalPrompt(options, id);
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
