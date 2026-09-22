@@ -128,8 +128,8 @@ describe("spawn failure reasons", () => {
   });
 
   test("metadata-read-failed is raised by both metadata read steps", () => {
-    const beforeCommand = planFor(decideSpawnStep(input({ step: "metadata-read-before-command" })));
-    const afterReadiness = planFor(decideSpawnStep(input({ step: "metadata-read-after-readiness" })));
+    const beforeCommand = planFor(decideSpawnStep(input({ step: "metadata-read-before-command", outcome: { kind: "failed" } })));
+    const afterReadiness = planFor(decideSpawnStep(input({ step: "metadata-read-after-readiness", outcome: { kind: "failed" } })));
 
     expect(beforeCommand.reason).toBe("metadata-read-failed");
     expect(afterReadiness.reason).toBe("metadata-read-failed");
@@ -139,27 +139,27 @@ describe("spawn failure reasons", () => {
 
 describe("spawn cleanup ownership", () => {
   test("removes a worktree created by this invocation", () => {
-    const plan = planFor(decideSpawnStep(input({ worktree: "created" })));
+    const plan = planFor(decideSpawnStep(input({ worktree: "created", outcome: { kind: "failed" } })));
 
     expect(plan.cleanup).toEqual({ kind: "required", runtime: "host", worktree: "remove" });
   });
 
   test("preserves a pre-existing worktree on launch failure", () => {
-    const plan = planFor(decideSpawnStep(input({ worktree: "existing" })));
+    const plan = planFor(decideSpawnStep(input({ worktree: "existing", outcome: { kind: "failed" } })));
 
     expect(plan.cleanup).toEqual({ kind: "required", runtime: "host", worktree: "preserve" });
   });
 
   test("does not guess when worktree ownership is unknown", () => {
-    const result = decideSpawnStep(input({ worktree: "unknown" }));
+    const result = decideSpawnStep(input({ worktree: "unknown", outcome: { kind: "failed" } }));
 
     expect(result.kind).toBe("unknown");
     if (result.kind === "unknown") expect(result.reason).toContain("worktree ownership");
   });
 
   test("distinguishes tmux and host cleanup", () => {
-    const tmux = planFor(decideSpawnStep(input({ runtime: "tmux" })));
-    const host = planFor(decideSpawnStep(input({ runtime: "host" })));
+    const tmux = planFor(decideSpawnStep(input({ runtime: "tmux", outcome: { kind: "failed" } })));
+    const host = planFor(decideSpawnStep(input({ runtime: "host", outcome: { kind: "failed" } })));
 
     expect(tmux.cleanup).toEqual({ kind: "required", runtime: "tmux", worktree: "remove" });
     expect(host.cleanup).toEqual({ kind: "required", runtime: "host", worktree: "remove" });
