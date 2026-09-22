@@ -34,7 +34,8 @@ const transitionTable: Readonly<Record<DispatchAxis, Readonly<Record<string, rea
   },
   terminal: {
     owned: ["owned", "missing", "retained", "released"],
-    retained: ["retained", "missing", "released"],
+    // A reconciled proof of identity lets a retained terminal be adopted again.
+    retained: ["retained", "owned", "missing", "released"],
     missing: ["missing", "retained", "released"],
     released: ["released"],
   },
