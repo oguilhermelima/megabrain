@@ -7,6 +7,7 @@ const stringValue = (value: unknown): string | undefined => typeof value === "st
 
 export const orca: HostProvider = {
   id: "orca",
+  terminalIdentityVariable: "ORCA_TERMINAL_HANDLE",
   create: ({ worktreePath, title, command }) => ok({
     command: "orca",
     args: ["terminal", "create", "--worktree", `path:${worktreePath}`, ...(title === null ? [] : ["--title", title]), ...(command === undefined ? [] : ["--command", command]), "--json"],

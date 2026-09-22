@@ -24,6 +24,7 @@ function renderedOutput(stdout: string): string {
 
 export const superset: HostProvider = {
   id: "superset",
+  terminalIdentityVariable: "SUPERSET_TERMINAL_ID",
   create: ({ workspaceId, command }) => {
     const target = workspace(workspaceId);
     return target.kind === "ok" ? ok({ command: "superset", args: ["terminals", "create", "--workspace", target.value, ...(command === undefined ? [] : ["--command", command]), "--json"] }) : target;
