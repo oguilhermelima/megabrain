@@ -246,6 +246,33 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("keeps --model for the agent command instead of worktree creation", async () => {
+    const fixture = await creationFixture({ model: "gpt-5.6-luna" });
+    try {
+      expect(fixture.result.kind).toBe("ok");
+      expect(fixture.calls.every((call) => !call.args.includes("--model"))).toBe(true);
+
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-model-command-`);
+      const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+        ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--model", "gpt-5.6-luna", "--prompt", "spawn", "--tmux", "false"], {
+          ...environment(root, "dispatch-model-command"),
+          MEGABRAIN_SESSION_HOST: "orca",
+        }, process, options(worktree("created")));
+        expect(result.kind).toBe("ok");
+        const command = process.calls.find((call) => call.command === "orca" && call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
+        const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
+        expect(text).toContain('-c model="gpt-5.6-luna"');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   test("exports the created host terminal identity through its provider variable", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-identity-`);
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
