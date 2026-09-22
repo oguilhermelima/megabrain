@@ -4,12 +4,12 @@ import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { submitKey, getAgent } from "../../agents/index.js";
-import { decideSpawnStep, type SpawnDecisionInput, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
+import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
-import { getHost } from "../../hosts/index.js";
+import { getHost, type HostCommand } from "../../hosts/index.js";
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
@@ -211,6 +211,25 @@ async function defaultRemoveWorktree(path: string, process: ProcessAdapter): Pro
   return result.kind === "ok" ? ok(undefined) : failed(result.kind === "failed" ? result.error : result.reason, result.exitCode);
 }
 
+function describeHostCall(call: HostCommand): string {
+  const text = call.args.indexOf("--text");
+  const json = call.args.indexOf("--json");
+  const end = text === -1 ? json : json === -1 ? text : Math.min(text, json);
+  const args = end === -1 ? call.args : call.args.slice(0, end);
+  return [call.command, ...args].join(" ");
+}
+
+function failureForCall(call: HostCommand | undefined, result: Result<unknown>, fallbackCall: string): SpawnFailure {
+  return {
+    call: call === undefined ? fallbackCall : describeHostCall(call),
+    detail: result.kind === "ok" ? "call failed" : result.error,
+  };
+}
+
+function resultError(result: Result<unknown>, fallback: string): string {
+  return result.kind === "ok" ? fallback : result.error;
+}
+
 async function hasReceipt(root: string, id: string): Promise<boolean> {
   const directory = await dispatchPath(root, id, "messages");
   for (const name of await readdir(directory).catch(() => [])) {
@@ -286,25 +305,39 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
   };
 }
 
-async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: SpawnPlan, process: ProcessAdapter, dependencies: SpawnDependencies, terminalId: string, session: string | null, pane: string | null, sessionOwned: boolean): Promise<void> {
-  if (plan.cleanup.kind !== "required") return;
+async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: SpawnPlan, process: ProcessAdapter, dependencies: SpawnDependencies, terminalId: string, session: string | null, pane: string | null, sessionOwned: boolean): Promise<readonly string[]> {
+  if (plan.cleanup.kind !== "required") return [];
+  const failures: string[] = [];
   if (plan.cleanup.runtime === "tmux" && session !== null) {
-    if (sessionOwned) await getTmux().killSession(session, process);
-    else if (pane !== null) await getTmux().killPane(pane, process);
+    const call = sessionOwned ? `tmux kill-session --target ${session}` : `tmux kill-pane --target ${pane ?? ""}`;
+    const result = sessionOwned ? await getTmux().killSession(session, process) : pane === null ? undefined : await getTmux().killPane(pane, process);
+    if (result !== undefined && result.kind !== "ok") failures.push(`${call}: ${result.error}`);
   }
   if (plan.cleanup.runtime === "host") {
     const provider = getHost(stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost));
     const workspaceId = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.workspaceId) || null;
     if (provider !== undefined && terminalId !== "") {
       const call = provider.close({ workspaceId, terminalId });
-      if (call.kind === "ok") await process.run(call.value.command, call.value.args);
+      if (call.kind === "ok") {
+        const result = await process.run(call.value.command, call.value.args);
+        if (result.kind !== "ok") failures.push(`${describeHostCall(call.value)}: ${result.error}`);
+      } else {
+        failures.push(`${provider.id} terminal close --terminal ${terminalId}: ${call.error}`);
+      }
     }
   }
-  if (plan.cleanup.worktree === "remove") await (dependencies.removeWorktree ?? defaultRemoveWorktree)(worktree.path, process);
+  if (plan.cleanup.worktree === "remove") {
+    const result = await (dependencies.removeWorktree ?? defaultRemoveWorktree)(worktree.path, process);
+    if (result.kind !== "ok") failures.push(`git worktree remove --force ${worktree.path}: ${result.error}`);
+  }
+  return failures;
 }
 
-function failureResult(plan: SpawnPlan, detail?: string): Result<string> {
-  return failed(detail === undefined ? plan.reason ?? "spawn failed" : `${plan.reason ?? "spawn failed"}: ${detail}`, plan.exitCode);
+function failureResult(plan: SpawnPlan, detail?: string, cleanupFailures: readonly string[] = []): Result<string> {
+  const primary = plan.failure === null ? detail : `${plan.failure.call}: ${plan.failure.detail}`;
+  const message = [plan.reason ?? "spawn failed", primary].filter((part): part is string => part !== undefined).join(": ");
+  const cleanup = cleanupFailures.map((failure) => `cleanup failed: ${failure}`).join("; ");
+  return failed(cleanup === "" ? message : `${message}; ${cleanup}`, plan.exitCode);
 }
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
@@ -381,7 +414,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     let outcome: SpawnDecisionInput["outcome"];
     if (step === "prompt-publication") {
       const appended = await appendMessage(root, id, "parent", "prompt", prompt, parentContext.id, environment, process);
-      outcome = appended.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+      outcome = appended.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: "dispatch message append", detail: appended.error } };
     } else if (step === "readiness-wait") {
       const host = getHost(parentContext.host);
       const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId }, process, readinessTimeoutMs);
@@ -396,25 +429,25 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     } else if (step === "command-submission") {
       if (runtime === "tmux") {
         const sent = await sendTmuxPair(root, pane ?? "", `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} MEGABRAIN_TMUX_SESSION=${JSON.stringify(session ?? "")} MEGABRAIN_TMUX_PANE=${JSON.stringify(pane ?? "")} ${command}`, key.value, environment, process);
-        outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+        outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: `cd ${JSON.stringify(worktree.path)} && MEGABRAIN_DISPATCH_ID=${JSON.stringify(id)} ${command}` });
-        const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed("host command could not be built");
-        outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+        const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
+        outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
         const sent = await sendTmuxPair(root, pane ?? "", prompt, key.value, environment, process);
-        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed" };
+        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: prompt });
-        const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed("host prompt could not be built");
-        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed" };
+        const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
+        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       }
     } else {
@@ -432,8 +465,8 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: "failed", processState: "failed", terminalState: "released", reason: plan.reason, promptState: "failed" });
     await updateMeta(root, id, metadataUpdate);
     if (plan.action === "fail") {
-      await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
-      return failureResult(plan, step === "readiness-wait" ? readinessError : undefined);
+      const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
+      return failureResult(plan, step === "readiness-wait" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
       const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null };

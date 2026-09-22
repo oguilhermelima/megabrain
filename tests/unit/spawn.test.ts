@@ -269,10 +269,51 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_SESSION_HOST: "orca",
       }, process, options(worktree("existing")));
-      expect(result).toEqual({ kind: "failed", error: "command-not-submitted", exitCode: 1 });
+      expect(result).toEqual({ kind: "failed", error: "command-not-submitted: orca terminal send --terminal child-terminal: command rejected", exitCode: 1 });
       expect(process.calls.some((call) => call.command === "orca" && call.args[1] === "wait")).toBe(false);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
       expect(meta.reason).toBe("command-not-submitted");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the host call and detail when prompt transport fails without leaking the prompt", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-prompt-failure-`);
+    const dispatchId = "dispatch-prompt-failure";
+    const prompt = "private prompt body that must not appear in the error";
+    const process = processFor([], (command, args) => {
+      if (command === "orca" && args[1] === "create") return ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "send" && (args[args.indexOf("--text") + 1] ?? "").includes(prompt)) return failed("prompt rejected", 1);
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", prompt, "--tmux", "false"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result).toEqual({ kind: "failed", error: "prompt-transport-failed: orca terminal send --terminal child-terminal: prompt rejected", exitCode: 1 });
+      if (result.kind === "failed") expect(result.error).not.toContain(prompt);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reports cleanup failure alongside the primary host command failure", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-cleanup-failure-`);
+    const dispatchId = "dispatch-cleanup-failure";
+    const process = processFor([], (command, args) => {
+      if (command === "orca" && args[1] === "create") return ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "send" && (args[args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID")) return failed("command rejected", 1);
+      if (command === "orca" && args[1] === "close") return failed("close rejected", 1);
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "cleanup", "--tmux", "false"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result).toEqual({ kind: "failed", error: "command-not-submitted: orca terminal send --terminal child-terminal: command rejected; cleanup failed: orca terminal close --terminal child-terminal: close rejected", exitCode: 1 });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
