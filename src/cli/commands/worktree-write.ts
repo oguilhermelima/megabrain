@@ -106,7 +106,8 @@ async function root(
       : failed(
           `shared worktree root for host 'unknown' is unset; choose one interactively with megabrain worktree create or set ${state}/worktree-root`,
         );
-  return ok((await realpath(resolve(raw))) || resolve(raw));
+  const resolved = resolve(raw);
+  return ok(await realpath(resolved).catch(() => resolved));
 }
 async function repositoryRoot(
   process: ProcessAdapter,
@@ -186,7 +187,9 @@ async function pathFor(
           entry === target ||
           entry === target.replaceAll("/", "-"))
       )
-        return ok((await realpath(top.value.stdout.trim())) ?? candidate);
+        return ok(
+          await realpath(top.value.stdout.trim()).catch(() => candidate),
+        );
     }
     return failed(`worktree not found: ${target}`);
   }
