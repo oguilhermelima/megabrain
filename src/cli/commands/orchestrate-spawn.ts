@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { submitKey, getAgent } from "../../agents/index.js";
+import { getAgent, submitKey } from "../../agents/index.js";
 import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -135,15 +135,6 @@ function parent(environment: SpawnEnvironment): Readonly<{ id: string; host: str
   const id = environment.MEGABRAIN_SESSION_ID ?? environment.ORCA_TERMINAL_HANDLE ?? environment.SUPERSET_TERMINAL_ID ?? "";
   const workspaceId = environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null;
   return { id, host, workspaceId, tmuxSession: environment.TMUX_PANE ? environment.MEGABRAIN_TMUX_SESSION ?? null : null, tmuxPane: environment.TMUX_PANE ?? null };
-}
-
-function commandFor(options: SpawnOptions): string {
-  const parts = [options.agent];
-  if (options.model !== null) parts.push(options.agent === "codex" ? `-c model=${JSON.stringify(options.model)}` : `--model ${JSON.stringify(options.model)}`);
-  if (options.effort !== null && options.agent === "codex") parts.push(`-c reasoning_effort=${JSON.stringify(options.effort)}`);
-  if (options.browser) parts.push("--browser");
-  parts.push(...options.agentArgs.map((arg) => JSON.stringify(arg)));
-  return parts.join(" ");
 }
 
 function shellQuote(value: string): string {
@@ -383,6 +374,14 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const options = parsed.value;
   const agent = getAgent(options.agent);
   if (agent === undefined) return unknown(`agent cannot be determined: ${options.agent}`);
+  const agentCommand = agent.commandLine?.({
+    model: options.model,
+    effort: options.effort,
+    browser: options.browser,
+    agentArgs: options.agentArgs,
+  });
+  if (agentCommand === undefined) return unknown(`agent cannot build a command line: ${options.agent}`);
+  if (agentCommand.kind !== "ok") return agentCommand;
   const key = submitKey(options.agent);
   if (key.kind !== "ok") return key;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
@@ -391,7 +390,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const id = dispatchId(environment);
   const parentContext = parent(environment);
   const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
-  const command = commandFor(options);
+  const command = agentCommand.value;
   const prompt = finalPrompt(options, id);
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";

@@ -1,4 +1,4 @@
-import { classifyMarkers, type Agent, type AgentMarker } from "./types.js";
+import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
 import { ok } from "../core/result.js";
 
 const markers: readonly AgentMarker[] = [
@@ -13,6 +13,14 @@ export const codex: Agent = {
   id: "codex",
   matchesDescriptor: (descriptor) => descriptor === "codex" || /^codex_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
+  commandLine: ({ model, effort, browser, agentArgs }) => {
+    const parts = ["codex", "--dangerously-bypass-hook-trust", "--dangerously-bypass-approvals-and-sandbox"];
+    if (model !== null) parts.push("-c", `model=${doubleQuote(model)}`);
+    if (effort !== null) parts.push("-c", `model_reasoning_effort=${doubleQuote(effort)}`);
+    parts.push("-c", `mcp_servers.playwright.enabled=${browser}`);
+    parts.push(...agentArgs.map(shellArgument));
+    return { kind: "ok", value: parts.join(" ") };
+  },
   submitKey: () => ok("Tab"),
   interruptKey: () => ok("Escape"),
 };
