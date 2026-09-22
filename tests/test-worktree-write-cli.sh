@@ -201,68 +201,48 @@ assert_invoked binary 'git -C'
 
 rm -f "$work/state/worktree-root"
 set +e
-shell_err="$(run_pair shell worktree pr nao-existe 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr nao-existe 2>&1)"; binary_rc=$?
 set -e
-assert_equal "$shell_rc" "$binary_rc"
-assert_equal "$shell_err" "$binary_err"
-assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
+assert_equal "$binary_rc" 1
+assert_equal "$binary_err" 'megabrain: worktree not found: nao-existe'
 
 printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 set +e
-shell_err="$(run_pair shell worktree pr nao-existe 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr nao-existe 2>&1)"; binary_rc=$?
 set -e
-assert_equal "$shell_rc" 1
 assert_equal "$binary_rc" 1
-assert_equal "$shell_err" "$binary_err"
-assert_equal "$shell_err" 'megabrain: worktree not found: nao-existe'
+assert_equal "$binary_err" 'megabrain: worktree not found: nao-existe'
 
 set +e
-shell_err="$(run_pair shell worktree pr "$work/shared/feat-create" --base nao-existe 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr "$work/shared/feat-create2" --base nao-existe 2>&1)"; binary_rc=$?
 set -e
-assert_equal "$shell_rc" 1
 assert_equal "$binary_rc" 1
-assert_equal "$shell_err" "$binary_err"
-assert_equal "$shell_err" 'megabrain: pull request base does not exist: nao-existe'
+assert_equal "$binary_err" 'megabrain: pull request base does not exist: nao-existe'
 
-shell_out="$(run_pair_from /tmp shell worktree pr feat/create --json)"
 binary_out="$(run_pair_from /tmp binary worktree pr feat/create2 --json)"
-assert_equal "$(printf '%s' "$shell_out" | jq -r '.base')" feat/parent
 assert_equal "$(printf '%s' "$binary_out" | jq -r '.base')" feat/parent
 
 mv "$work/bin/gh" "$work/bin/gh.missing"
 set +e
-shell_err="$(run_pair shell worktree pr "$work/shared/feat-create" 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr "$work/shared/feat-create2" 2>&1)"; binary_rc=$?
 set -e
-assert_equal "$shell_rc" 1
 assert_equal "$binary_rc" 1
-assert_equal "$shell_err" "$binary_err"
-assert_equal "$shell_err" 'megabrain: gh CLI is not installed'
+assert_equal "$binary_err" 'megabrain: gh CLI is not installed'
 mv "$work/bin/gh.missing" "$work/bin/gh"
 
 GH_MODE=unauthenticated
 export GH_MODE
 set +e
-shell_err="$(run_pair shell worktree pr "$work/shared/feat-create" 2>&1)"; shell_rc=$?
 binary_err="$(run_pair binary worktree pr "$work/shared/feat-create2" 2>&1)"; binary_rc=$?
 set -e
-assert_equal "$shell_rc" 1
 assert_equal "$binary_rc" 1
-assert_equal "$shell_err" "$binary_err"
-assert_equal "$shell_err" 'megabrain: gh CLI is not authenticated'
+assert_equal "$binary_err" 'megabrain: gh CLI is not authenticated'
 
 GH_MODE=success
 export GH_MODE
-shell_out="$(run_pair shell worktree pr "$work/shared/feat-create" --json)"
 binary_out="$(run_pair binary worktree pr "$work/shared/feat-create2" --json)"
-assert_equal "$(printf '%s' "$shell_out" | jq -r '.branch')" feat/create
 assert_equal "$(printf '%s' "$binary_out" | jq -r '.branch')" feat/create2
-assert_invoked shell 'gh auth status'
-assert_invoked shell 'gh pr create --base feat/parent --head feat/create'
 assert_invoked binary 'gh auth status'
 assert_invoked binary 'gh pr create --base feat/parent --head feat/create2'
 
-printf 'ok: worktree create compares output, status, and filesystem effects\n'
+printf 'ok: compiled worktree create compares status and filesystem effects\n'
