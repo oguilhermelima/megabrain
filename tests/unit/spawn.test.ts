@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
-import { defaultResolveWorktree, executeSpawn, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
+import { defaultResolveWorktree, executeSpawn, markRunningIfSpawning, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -96,6 +96,53 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("marks a spawning dispatch running after prompt delivery", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-mark-running-`);
+    const dispatchId = "dispatch-mark-running";
+    try {
+      await mkdir(`${root}/dispatches/${dispatchId}`, { recursive: true });
+      await writeFile(`${root}/dispatches/${dispatchId}/meta.json`, JSON.stringify({ dispatchId, state: "spawning" }));
+
+      const result = await markRunningIfSpawning(root, dispatchId);
+
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8"))).toMatchObject({ state: "running" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not move a waiting-for-reply dispatch back to running", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-mark-waiting-`);
+    const dispatchId = "dispatch-waiting";
+    try {
+      await mkdir(`${root}/dispatches/${dispatchId}`, { recursive: true });
+      await writeFile(`${root}/dispatches/${dispatchId}/meta.json`, JSON.stringify({ dispatchId, state: "waiting_for_reply" }));
+
+      const result = await markRunningIfSpawning(root, dispatchId);
+
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8"))).toMatchObject({ state: "waiting_for_reply" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("checks the transition table for an unknown dispatch state", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-mark-unknown-`);
+    const dispatchId = "dispatch-unknown-state";
+    try {
+      await mkdir(`${root}/dispatches/${dispatchId}`, { recursive: true });
+      await writeFile(`${root}/dispatches/${dispatchId}/meta.json`, JSON.stringify({ dispatchId, state: "future" }));
+
+      const result = await markRunningIfSpawning(root, dispatchId);
+
+      expect(result.kind).toBe("unknown");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("passes --base through the command to worktree creation", async () => {
     let receivedBase: string | undefined;
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-command-base-`);
@@ -285,6 +332,43 @@ describe("executeSpawn", () => {
       expect(result.value).toContain(`megabrain orchestrate reconcile ${dispatchId}`);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
       expect(meta).toMatchObject({ state: "spawning", promptTransport: "transported", promptState: "awaiting-receipt", promptReceipt: "pending" });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves a child ask that races with prompt bookkeeping", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-racing-ask-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-racing-ask";
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        if (text.startsWith("[megabrain dispatch")) {
+          const directory = `${root}/dispatches/${dispatchId}`;
+          const metaPath = `${directory}/meta.json`;
+          await mkdir(`${directory}/messages`, { recursive: true });
+          await writeFile(`${directory}/messages/9999-child-received.json`, JSON.stringify({ type: "received", from: "child" }));
+          const meta = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
+          await writeFile(metaPath, JSON.stringify({ ...meta, state: "waiting_for_reply", processState: "running" }));
+        }
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta).toMatchObject({ state: "waiting_for_reply", processState: "running" });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
