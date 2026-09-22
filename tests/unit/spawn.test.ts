@@ -950,14 +950,24 @@ describe("executeSpawn", () => {
     }
   });
 
+  // The budget guards the payload actually transported — finalPrompt(options, id), which wraps
+  // the raw --prompt in a fixed "[megabrain dispatch: ...]" preamble plus the dispatch identity —
+  // not the raw --prompt value alone. Each wrapper-overhead figure below was measured once by
+  // encoding that exact fixed text (agent "codex", worktree "/work/tree", the dispatch id the
+  // test uses) with TextEncoder and is asserted here as a plain number so a change to the wrapper
+  // text or to a test's dispatch id shows up as a failing byte count instead of silently drifting:
+  // "dispatch-budget-tmux-exact" / "dispatch-budget-argv-exact" -> 540 bytes of fixed wrapper text
+  // "dispatch-budget-tmux-over" / "dispatch-budget-argv-over" / "dispatch-budget-multibyte" -> 539
+  // "dispatch-budget-wrapped-overflow" -> 546
   describe("prompt byte budgets", () => {
-    test("accepts a tmux prompt exactly at the 12000 byte budget", async () => {
+    test("accepts a tmux prompt whose wrapped form is exactly at the 12000 byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-exact-`);
       const dispatchId = "dispatch-budget-tmux-exact";
+      const wrapperOverheadBytes = 540;
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
       try {
-        const prompt = "a".repeat(12000);
+        const prompt = "a".repeat(12000 - wrapperOverheadBytes);
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], {
           ...environment(root, dispatchId),
           MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
@@ -969,12 +979,14 @@ describe("executeSpawn", () => {
       }
     });
 
-    test("refuses a tmux prompt one byte over the 12000 byte budget without creating anything", async () => {
+    test("refuses a tmux prompt whose wrapped form is one byte over the 12000 byte budget without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-over-`);
+      const dispatchId = "dispatch-budget-tmux-over";
+      const wrapperOverheadBytes = 539;
       let resolveCalled = false;
-      const prompt = "a".repeat(12001);
+      const prompt = "a".repeat(12000 - wrapperOverheadBytes + 1);
       try {
-        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, "dispatch-budget-tmux-over"), processFor([]), {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
         expect(result).toEqual({ kind: "failed", error: "prompt is too large for tmux delivery: 12001 bytes (limit: 12000 bytes)", exitCode: 2 });
@@ -985,15 +997,17 @@ describe("executeSpawn", () => {
       }
     });
 
-    test("accepts a host prompt exactly at the 262144 byte budget", async () => {
+    test("accepts a host prompt whose wrapped form is exactly at the 262144 byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-exact-`);
+      const dispatchId = "dispatch-budget-argv-exact";
+      const wrapperOverheadBytes = 540;
       const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
         ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       try {
-        const prompt = "a".repeat(262144);
+        const prompt = "a".repeat(262144 - wrapperOverheadBytes);
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], {
-          ...environment(root, "dispatch-budget-argv-exact"),
+          ...environment(root, dispatchId),
           MEGABRAIN_SESSION_HOST: "orca",
           MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
         }, process, options(worktree("existing")));
@@ -1003,12 +1017,14 @@ describe("executeSpawn", () => {
       }
     });
 
-    test("refuses a host prompt one byte over the 262144 byte budget without creating anything", async () => {
+    test("refuses a host prompt whose wrapped form is one byte over the 262144 byte budget without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-over-`);
+      const dispatchId = "dispatch-budget-argv-over";
+      const wrapperOverheadBytes = 539;
       let resolveCalled = false;
-      const prompt = "a".repeat(262145);
+      const prompt = "a".repeat(262144 - wrapperOverheadBytes + 1);
       try {
-        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], { ...environment(root, "dispatch-budget-argv-over"), MEGABRAIN_SESSION_HOST: "orca" }, processFor([]), {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], { ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca" }, processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
         expect(result).toEqual({ kind: "failed", error: "prompt is too large for argv delivery: 262145 bytes (limit: 262144 bytes)", exitCode: 2 });
@@ -1020,17 +1036,38 @@ describe("executeSpawn", () => {
 
     test("refuses a multibyte tmux prompt that is under the character count but over the byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-multibyte-`);
+      const dispatchId = "dispatch-budget-multibyte";
+      const wrapperOverheadBytes = 539;
       let resolveCalled = false;
       const prompt = "é".repeat(7000);
       expect(prompt.length).toBeLessThan(12000);
       expect(new TextEncoder().encode(prompt).length).toBeGreaterThan(12000);
       try {
-        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, "dispatch-budget-multibyte"), processFor([]), {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
         expect(result.kind).toBe("failed");
-        if (result.kind === "failed") expect(result.error).toContain("prompt is too large for tmux delivery: 14000 bytes (limit: 12000 bytes)");
+        if (result.kind === "failed") expect(result.error).toContain(`prompt is too large for tmux delivery: ${14000 + wrapperOverheadBytes} bytes (limit: 12000 bytes)`);
         expect(resolveCalled).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("refuses a raw tmux prompt under the limit whose wrapped form exceeds it, without creating anything", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-wrapped-overflow-`);
+      const dispatchId = "dispatch-budget-wrapped-overflow";
+      const wrapperOverheadBytes = 546;
+      let resolveCalled = false;
+      const prompt = "a".repeat(11900);
+      expect(new TextEncoder().encode(prompt).length).toBeLessThan(12000);
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+          resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
+        });
+        expect(result).toEqual({ kind: "failed", error: `prompt is too large for tmux delivery: ${11900 + wrapperOverheadBytes} bytes (limit: 12000 bytes)`, exitCode: 2 });
+        expect(resolveCalled).toBe(false);
+        await expect(readdir(`${root}/dispatches`)).rejects.toThrow();
       } finally {
         await rm(root, { recursive: true, force: true });
       }
