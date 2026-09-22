@@ -72,7 +72,23 @@ command_orchestrate() {
       megabrain_warn_if_typescript_binary_stale
       "$typescript_binary" orchestrate prune "$@"
       ;;
-    reconcile) megabrain_dispatch_reconcile "$@" ;;
+    reconcile)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
+        fi
+      fi
+      "$typescript_binary" orchestrate reconcile "$@"
+      ;;
     liveness)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
       [ -x "$typescript_binary" ] || {
@@ -119,7 +135,23 @@ command_orchestrate() {
       megabrain_warn_if_typescript_binary_stale
       "$typescript_binary" orchestrate reply "$@"
       ;;
-    stop) megabrain_dispatch_stop "$@" ;;
+    stop)
+      local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+      [ -x "$typescript_binary" ] || {
+        megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+        return 1
+      }
+      # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
+      megabrain_warn_if_typescript_binary_stale
+      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
+        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
+        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
+        fi
+      fi
+      "$typescript_binary" orchestrate stop "$@"
+      ;;
     change)
       local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
       [ -x "$typescript_binary" ] || {

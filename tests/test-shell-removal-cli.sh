@@ -59,6 +59,8 @@ scenario_route_markers() {
   scenario_route_reaches_compiled_binary orchestrate-prune '{"verb":"orchestrate-prune"}' MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION orchestrate prune --dry-run --json
   scenario_route_reaches_compiled_binary orchestrate-change '{"verb":"orchestrate-change"}' MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION orchestrate change route-dispatch --text route-answer --json
   scenario_route_reaches_compiled_binary orchestrate-close '{"verb":"orchestrate-close"}' MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION orchestrate close route-dispatch --json
+  scenario_route_reaches_compiled_binary orchestrate-reconcile '{"verb":"orchestrate-reconcile"}' MEGABRAIN_ORCHESTRATE_RECONCILE_IMPLEMENTATION orchestrate reconcile route-dispatch --json
+  scenario_route_reaches_compiled_binary orchestrate-stop '{"verb":"orchestrate-stop"}' MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION orchestrate stop route-dispatch --json
   scenario_route_reaches_compiled_binary_default chain-list '{"verb":"chain-list"}' chain list --json
   scenario_route_reaches_compiled_binary_default chain-limits '{"verb":"chain-limits"}' chain limits --json
   scenario_route_reaches_compiled_binary_default chain-add '{"verb":"chain-add"}' chain add route --json
@@ -465,6 +467,8 @@ scenario_removed_route_falsification orchestrate-list MEGABRAIN_ORCHESTRATE_LIST
 scenario_removed_route_falsification orchestrate-prune MEGABRAIN_ORCHESTRATE_PRUNE_IMPLEMENTATION '{"verb":"orchestrate-prune"}' orchestrate prune --dry-run --json
 scenario_removed_route_falsification orchestrate-change MEGABRAIN_ORCHESTRATE_CHANGE_IMPLEMENTATION '{"verb":"orchestrate-change"}' orchestrate change route-dispatch --text route-answer --json
 scenario_removed_route_falsification orchestrate-close MEGABRAIN_ORCHESTRATE_CLOSE_IMPLEMENTATION '{"verb":"orchestrate-close"}' orchestrate close route-dispatch --json
+scenario_removed_route_falsification orchestrate-reconcile MEGABRAIN_ORCHESTRATE_RECONCILE_IMPLEMENTATION '{"verb":"orchestrate-reconcile"}' orchestrate reconcile route-dispatch --json
+scenario_removed_route_falsification orchestrate-stop MEGABRAIN_ORCHESTRATE_STOP_IMPLEMENTATION '{"verb":"orchestrate-stop"}' orchestrate stop route-dispatch --json
 scenario_falsification_is_red_for_each_route chain-list '{"verb":"chain-list"}' chain list --json
 scenario_falsification_is_red_for_each_route chain-limits '{"verb":"chain-limits"}' chain limits --json
 scenario_falsification_is_red_for_each_route chain-add '{"verb":"chain-add"}' chain add route --json

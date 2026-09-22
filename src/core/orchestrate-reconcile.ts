@@ -51,7 +51,7 @@ export function reconcileDecision(meta: Meta, terminalStatus: "proven" | "missin
       return accepted(meta, updates, { outcome: "orphaned", updates });
     }
     if (parentStatus === "unknown") return { outcome: "parent-unproven", updates: { stage: "parent-unproven", reason: "parent-unproven" } };
-    const updates = { ...(state === "spawning" || state === "orphaned" || state === "waiting_for_reply" ? { state: "running" } : {}), ...(processState === "starting" || processState === "start-unproven" ? { processState: "running" } : {}), ...(meta.terminalState === "retained" ? { terminalState: "owned" } : {}), stage: "terminal-proven", reason: "identity-proven" };
+    const updates = { ...(state === "spawning" || state === "orphaned" ? { state: "running" } : {}), ...(processState === "starting" || processState === "start-unproven" ? { processState: "running" } : {}), ...(meta.terminalState === "retained" ? { terminalState: "owned" } : {}), stage: "terminal-proven", reason: "identity-proven" };
     return accepted(meta, updates, { outcome: "adopted", updates });
   }
   const updates = { ...(processState === "starting" ? { processState: "start-unproven" } : {}), terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" };

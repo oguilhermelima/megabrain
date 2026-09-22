@@ -28,7 +28,7 @@ const transitions = {
   },
   terminal: {
     owned: ["owned", "missing", "retained", "released"],
-    retained: ["retained", "missing", "released"],
+    retained: ["retained", "owned", "missing", "released"],
     missing: ["missing", "retained", "released"],
     released: ["released"],
   },
@@ -65,13 +65,16 @@ describe("dispatch state consumers", () => {
     expect(checkDispatchTransition("dispatch", "orphaned", "done").kind).toBe("ok");
   });
 
-  test("allows a proven waiting-for-reply dispatch to resume", () => {
+  test("keeps a waiting dispatch waiting when reconcile proves it alive", () => {
     const result = reconcileDecision({ state: "waiting_for_reply", processState: "running", terminalState: "owned" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "adopted", updates: { state: "running", stage: "terminal-proven", reason: "identity-proven" } });
+    expect(result).toEqual({ outcome: "adopted", updates: { stage: "terminal-proven", reason: "identity-proven" } });
+    // Reply depends on the transition table retaining this legal state change.
+    expect(checkDispatchTransition("dispatch", "waiting_for_reply", "running").kind).toBe("ok");
   });
 
-  test("rejects retained-to-owned because bash does not allow that terminal transition", () => {
+  test("allows retained-to-owned adoption after terminal identity is proven", () => {
+    expect(checkDispatchTransition("terminal", "retained", "owned").kind).toBe("ok");
     const result = reconcileDecision({ state: "running", processState: "running", terminalState: "retained" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "unchanged", updates: {} });
+    expect(result).toEqual({ outcome: "adopted", updates: { terminalState: "owned", stage: "terminal-proven", reason: "identity-proven" } });
   });
 });

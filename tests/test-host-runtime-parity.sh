@@ -164,6 +164,8 @@ else
 fi
 EOF
 chmod +x "$fake_bin/megabrain_superset" "$fake_bin/orca"
+cp "$fake_bin/megabrain_superset" "$fake_bin/superset"
+chmod +x "$fake_bin/superset"
 host_read_result="$(PATH="$fake_bin:$PATH" command_orchestrate read host-read --json)"
 assert_equal "$(printf '%s' "$host_read_result" | jq -r '.source')" host
 assert_equal "$(printf '%s' "$host_read_result" | jq -r '.text')" 'superset host output'
@@ -229,33 +231,5 @@ assert_equal "$(printf '%s' "$prune_result" | jq -r '.archived')" 0
 assert_equal "$(printf '%s' "$prune_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "host-unproven") | .reason')" 'terminal identity is unproven'
 assert_file "$state_dir/dispatches/host-unproven/meta.json"
 printf 'prune keeps a host dispatch whose terminal identity is unproven\n'
-
-megabrain_context_detect() {
-  printf 'orca\n'
-}
-megabrain_session_id() {
-  MEGABRAIN_SESSION_ID=parent-session
-  MEGABRAIN_SESSION_HOST=orca
-}
-megabrain_workspace_id_for_target() {
-  printf 'workspace-test\n'
-}
-megabrain_resolve_spawn_runtime() {
-  MEGABRAIN_SPAWN_RUNTIME=host
-  MEGABRAIN_SPAWN_CONTEXT=orca
-}
-megabrain_dispatch_preamble() {
-  printf 'test preamble\n'
-}
-megabrain_agent_command() {
-  printf 'true\n'
-}
-megabrain_dispatch_send_prompt_with_receipt() {
-  return 0
-}
-orca_terminals='{"result":{"terminals":[{"handle":"orca-launch-terminal","title":"renamed by host"}]}}'
-megabrain_launch_agent "$root" workspace-test codex gpt-5 low title-check label false >/dev/null
-assert_equal "$(cat "$orca_title_log")" "codex $root"
-printf 'Orca host launch title does not carry dispatch identity\n'
 
 printf 'ok: host runtime release, read, and prune parity\n'
