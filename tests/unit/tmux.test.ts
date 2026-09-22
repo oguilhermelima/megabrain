@@ -163,6 +163,23 @@ describe("tmux identity provider", () => {
     ]);
   });
 
+  test("creates a tmux session without a shell command when none is given", async () => {
+    const calls: Call[] = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+
+    expect(await createTmuxSession("child", "/work/tree", undefined, process)).toEqual({ kind: "ok", value: undefined });
+    expect(calls).toStrictEqual([
+      { command: "tmux", args: ["new-session", "-d", "-A", "-s", "child", "-c", "/work/tree"] },
+    ]);
+  });
+
   test("the child notification follows the registered agent and tmux modules", async () => {
     const calls: Call[] = [];
     const original = getTmux();
