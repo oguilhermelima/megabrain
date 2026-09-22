@@ -177,16 +177,28 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
 }
 
 const TMUX_READINESS_POLL_MS = 100;
+const TMUX_READINESS_STABLE_MS = 1000;
 
 // Reuses the same output classification `orchestrate liveness` uses (core/liveness.ts,
 // getTmux().capturePane): the tmux runtime has no blocking "wait until ready" call the way the
 // host providers do, so readiness is read from the pane's own text until the agent's composer
-// reports idle or the deadline passes.
+// reports idle or the deadline passes. A single idle poll is not proof the composer is still
+// there to type into: something else (an update-check modal, for one real example) can replace
+// it between polls. So readiness only succeeds once idle has held continuously for
+// TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
+// failing outright, since the composer may still settle before the overall deadline.
 async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Result<void>> {
   const started = Date.now();
+  let stableSince: number | null = null;
   while (true) {
     const captured = await getTmux().capturePane(pane, 200, process);
-    if (captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle") return ok(undefined);
+    const idle = captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle";
+    if (idle) {
+      if (stableSince === null) stableSince = Date.now();
+      else if (Date.now() - stableSince >= TMUX_READINESS_STABLE_MS) return ok(undefined);
+    } else {
+      stableSince = null;
+    }
     if (Date.now() - started >= timeoutMs) return failed(`tmux pane ${pane} did not become ready within ${timeoutMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, TMUX_READINESS_POLL_MS));
   }
