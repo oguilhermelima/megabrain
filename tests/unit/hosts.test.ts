@@ -7,6 +7,7 @@ import { ok } from "../../src/core/result.js";
 const fourthHost: HostProvider = {
   id: "fourth",
   create: () => ok({ command: "fourth", args: ["terminals", "create"] }),
+  terminalIdentity: () => undefined,
   list: ({ workspaceId }) => ok({ command: "fourth", args: ["terminals", "list", "--workspace", workspaceId ?? "", "--json"] }),
   read: ({ workspaceId, terminalId }) => ok({ command: "fourth", args: ["terminals", "read", "--workspace", workspaceId ?? "", "--terminal", terminalId, "--json"] }),
   close: ({ workspaceId, terminalId }) => ok({ command: "fourth", args: ["terminals", "close", "--workspace", workspaceId ?? "", "--terminal", terminalId, "--json"] }),
@@ -15,6 +16,11 @@ const fourthHost: HostProvider = {
 };
 
 describe("host providers", () => {
+  test("orca extracts the child handle instead of the request id", () => {
+    const orca = getHost("orca");
+    expect(orca?.terminalIdentity({ id: "request-id", result: { terminal: { handle: "term_real" } } })).toBe("term_real");
+  });
+
   test("registered hosts are used by terminal listing and close consumers", () => {
     registerHost(fourthHost);
     try {
