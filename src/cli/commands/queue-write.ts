@@ -6,7 +6,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getHost } from "../../hosts/index.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 
@@ -187,22 +187,6 @@ export async function acquireLock(path: string, environment: QueueEnvironment): 
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   }
-}
-
-function tmuxSendLockPath(root: string, pane: string): string {
-  return `${root}/locks/tmux/${encodeURIComponent(pane)}.lock`;
-}
-
-async function sendTmuxPair(root: string, pane: string, text: string, key: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<void>> {
-  const lock = tmuxSendLockPath(root, pane);
-  try { await mkdir(`${root}/locks/tmux`, { recursive: true }); } catch { return failed(`could not prepare tmux send lock: ${lock}`); }
-  const acquired = await acquireLock(lock, environment);
-  if (acquired.kind !== "ok") return acquired;
-  try {
-    const sentText = await getTmux().sendText(pane, text, processAdapter);
-    if (sentText.kind !== "ok") return sentText;
-    return await getTmux().sendKey(pane, key, processAdapter);
-  } finally { await rm(lock, { recursive: true, force: true }); }
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {

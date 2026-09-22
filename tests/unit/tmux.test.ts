@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { tmuxSessionName } from "../../src/cli/commands/context.js";
@@ -9,7 +11,7 @@ import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { notifyChild } from "../../src/cli/commands/queue-write.js";
-import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
+import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -97,6 +99,67 @@ describe("tmux identity provider", () => {
     expect(process.calls).toEqual([
       { command: "tmux", args: ["send-keys", "-t", "%7", "-l", "pointer"] },
       { command: "tmux", args: ["send-keys", "-t", "%7", "Tab"] },
+    ]);
+  });
+
+  test("keeps each text and submit key pair under one pane lock", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-pair-`);
+    const calls: string[] = [];
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        calls.push(`text:${text}`);
+        if (text === "first") await new Promise((resolve) => setTimeout(resolve, 20));
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => {
+        calls.push(`key:${key}`);
+        return ok(undefined);
+      },
+    };
+    registerTmux(fake);
+    try {
+      await Promise.all([
+        sendTmuxPair(root, "%7", "first", "Tab", {}, processFor()),
+        sendTmuxPair(root, "%7", "second", "Enter", {}, processFor()),
+      ]);
+      expect(calls).toHaveLength(4);
+      expect(calls.indexOf("key:Tab")).toBe(calls.indexOf("text:first") + 1);
+      expect(calls.indexOf("key:Enter")).toBe(calls.indexOf("text:second") + 1);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("creates and splits a tmux session with the runtime flags", async () => {
+    const calls: Call[] = [];
+    let sessionChecks = 0;
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (args[0] === "has-session") {
+          sessionChecks += 1;
+          return sessionChecks === 3 ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("session is not ready");
+        }
+        if (args[0] === "split-window") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+
+    expect(await createTmuxSession("child", "/work/tree", "codex", process)).toEqual({ kind: "ok", value: undefined });
+    expect(await splitTmuxWindow("child", "/work/tree", process)).toEqual({ kind: "ok", value: "%9" });
+    expect(await waitForTmuxSession("child", process, { attempts: 3, waitMs: 0 })).toEqual({ kind: "ok", value: undefined });
+    expect(calls).toEqual([
+      { command: "tmux", args: ["new-session", "-d", "-A", "-s", "child", "-c", "/work/tree", "codex"] },
+      { command: "tmux", args: ["split-window", "-d", "-t", "child", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] },
+      { command: "tmux", args: ["has-session", "-t", "child"] },
+      { command: "tmux", args: ["has-session", "-t", "child"] },
+      { command: "tmux", args: ["has-session", "-t", "child"] },
     ]);
   });
 

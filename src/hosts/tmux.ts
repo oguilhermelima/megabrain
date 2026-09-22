@@ -1,5 +1,8 @@
 import { type ProcessAdapter } from "../adapters/proc.js";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { failed, ok, unknown, type Result } from "../core/result.js";
+
+export type TmuxSendEnvironment = Readonly<Record<string, string | undefined>>;
 
 export type TmuxProvider = Readonly<{
   readonly id: string;
@@ -92,4 +95,98 @@ export function unregisterTmux(id: string): void {
 
 export function getTmux(): TmuxProvider {
   return registry.get(provider.id) ?? provider;
+}
+
+export type TmuxSessionWaitOptions = Readonly<{
+  readonly attempts?: number;
+  readonly waitMs?: number;
+}>;
+
+export async function createTmuxSession(
+  session: string,
+  worktreePath: string,
+  command: string,
+  process: ProcessAdapter,
+): Promise<Result<void>> {
+  const result = await process.run("tmux", ["new-session", "-d", "-A", "-s", session, "-c", worktreePath, command]);
+  return result.kind === "ok" ? ok(undefined) : failed(result.error, result.exitCode);
+}
+
+export async function splitTmuxWindow(
+  session: string,
+  worktreePath: string,
+  process: ProcessAdapter,
+): Promise<Result<string>> {
+  const result = await process.run("tmux", ["split-window", "-d", "-t", session, "-c", worktreePath, "-P", "-F", "#{pane_id}"]);
+  if (result.kind !== "ok") return failed(result.error, result.exitCode);
+  const pane = result.value.stdout.trim();
+  return pane.length > 0 ? ok(pane) : failed(`tmux split for session ${session} returned no pane`);
+}
+
+export async function waitForTmuxSession(
+  session: string,
+  process: ProcessAdapter,
+  options: TmuxSessionWaitOptions = {},
+): Promise<Result<void>> {
+  const attempts = Math.max(1, options.attempts ?? 600);
+  const waitMs = Math.max(0, options.waitMs ?? 100);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const exists = await getTmux().sessionExists(session, process);
+    if (exists.kind === "ok") return ok(undefined);
+    if (attempt < attempts && waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  return failed(`tmux session ${session} did not become available`);
+}
+
+function lockPath(root: string, pane: string): string {
+  return `${root}/locks/tmux/${encodeURIComponent(pane)}.lock`;
+}
+
+async function acquireLock(path: string, environment: TmuxSendEnvironment): Promise<Result<void>> {
+  const waitSeconds = Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15");
+  const staleSeconds = Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30");
+  const deadline = Date.now() + Math.max(0, waitSeconds) * 1000;
+  while (true) {
+    try {
+      await mkdir(path);
+      return ok(undefined);
+    } catch {
+      try {
+        const age = (Date.now() - (await stat(path)).mtimeMs) / 1000;
+        if (age >= staleSeconds) {
+          await rm(path, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= deadline) return failed(`mailbox lock is held by another writer: ${path}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+}
+
+export async function sendTmuxPair(
+  root: string,
+  pane: string,
+  text: string,
+  key: string,
+  environment: TmuxSendEnvironment,
+  process: ProcessAdapter,
+): Promise<Result<void>> {
+  const lock = lockPath(root, pane);
+  try {
+    await mkdir(`${root}/locks/tmux`, { recursive: true });
+  } catch {
+    return failed(`could not prepare tmux send lock: ${lock}`);
+  }
+  const acquired = await acquireLock(lock, environment);
+  if (acquired.kind !== "ok") return acquired;
+  try {
+    const sentText = await getTmux().sendText(pane, text, process);
+    if (sentText.kind !== "ok") return sentText;
+    return await getTmux().sendKey(pane, key, process);
+  } finally {
+    await rm(lock, { recursive: true, force: true });
+  }
 }
