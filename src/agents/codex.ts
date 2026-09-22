@@ -19,6 +19,10 @@ export const codex: Agent = {
     // runs a remote installer) over an already-idle composer, after readiness has been
     // confirmed and right as the prompt's Enter is about to land. Disable it at launch.
     parts.push("-c", "check_for_update_on_startup=false");
+    // Fast send-keys text immediately followed by Enter is read as one paste burst, and the
+    // trailing Enter is absorbed into the paste instead of submitting it (measured against real
+    // codex 0.155.1 in tmux).
+    parts.push("-c", "disable_paste_burst=true");
     if (model !== null) parts.push("-c", `model=${doubleQuote(model)}`);
     if (effort !== null) parts.push("-c", `model_reasoning_effort=${doubleQuote(effort)}`);
     parts.push("-c", `mcp_servers.playwright.enabled=${browser}`);
