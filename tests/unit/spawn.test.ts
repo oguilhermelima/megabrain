@@ -190,7 +190,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("returns readiness-timeout with host and duration and does not submit the command", async () => {
+  test("returns readiness-timeout after submitting the command and does not send the prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-timeout-`);
     const dispatchId = "dispatch-readiness-timeout";
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
@@ -205,7 +205,9 @@ describe("executeSpawn", () => {
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "1234",
       }, process, options(worktree("existing")));
       expect(result).toEqual({ kind: "failed", error: "readiness-timeout: orca terminal child-terminal did not become ready within 1234ms", exitCode: 1 });
-      expect(process.calls.some((call) => call.command === "orca" && call.args[1] === "send")).toBe(false);
+      const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "send" || call.args[1] === "wait"));
+      expect(hostCalls.map((call) => call.args[1])).toEqual(["send", "wait"]);
+      expect(hostCalls.filter((call) => call.args[1] === "send")).toHaveLength(1);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
       expect(meta.reason).toBe("readiness-timeout");
     } finally {
@@ -213,7 +215,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("submits the host command only after readiness succeeds", async () => {
+  test("submits the host command, waits for readiness, and then sends the prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-order-`);
     const dispatchId = "dispatch-readiness-order";
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
@@ -226,8 +228,34 @@ describe("executeSpawn", () => {
         MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
       const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "wait" || call.args[1] === "send"));
-      expect(hostCalls[0]).toEqual({ command: "orca", args: ["terminal", "wait", "--terminal", "child-terminal", "--for", "tui-idle", "--timeout-ms", "10000"] });
-      expect(hostCalls[1]?.args[1]).toBe("send");
+      const sequence = hostCalls.map((call) => {
+        if (call.args[1] === "wait") return "readiness";
+        const text = call.args[call.args.indexOf("--text") + 1] ?? "";
+        return text.includes("MEGABRAIN_DISPATCH_ID") ? "command" : "prompt";
+      });
+      expect(sequence).toEqual(["command", "readiness", "prompt"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("returns command-not-submitted and does not wait when host command submission fails", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-command-failure-`);
+    const dispatchId = "dispatch-command-failure";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : command === "orca" && args[1] === "send" && (args[args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID")
+        ? failed("command rejected")
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "submission", "--tmux", "false"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result).toEqual({ kind: "failed", error: "command-not-submitted", exitCode: 1 });
+      expect(process.calls.some((call) => call.command === "orca" && call.args[1] === "wait")).toBe(false);
+      const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta.reason).toBe("command-not-submitted");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
