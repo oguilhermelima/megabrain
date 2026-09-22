@@ -3,9 +3,9 @@ import { mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { commandLine, submitKey } from "../../agents/index.js";
+import { getAgent, submitKey } from "../../agents/index.js";
 import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
-import { failed, ok, type Result } from "../../core/result.js";
+import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
@@ -372,12 +372,15 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const parsed = parseArgs(args);
   if (parsed.kind !== "ok") return parsed;
   const options = parsed.value;
-  const agentCommand = commandLine(options.agent, {
+  const agent = getAgent(options.agent);
+  if (agent === undefined) return unknown(`agent cannot be determined: ${options.agent}`);
+  const agentCommand = agent.commandLine?.({
     model: options.model,
     effort: options.effort,
     browser: options.browser,
     agentArgs: options.agentArgs,
   });
+  if (agentCommand === undefined) return unknown(`agent cannot build a command line: ${options.agent}`);
   if (agentCommand.kind !== "ok") return agentCommand;
   const key = submitKey(options.agent);
   if (key.kind !== "ok") return key;
