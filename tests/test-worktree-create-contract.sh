@@ -33,6 +33,12 @@ assert_not_contains() {
   esac
 }
 
+install_routing_fixture_skill() {
+  local fixture="$1"
+  mkdir -p "$fixture/skills/megabrain"
+  cp "$root/skills/megabrain/SKILL.md" "$fixture/skills/megabrain/SKILL.md"
+}
+
 make_repo() {
   local repo="$1"
   mkdir -p "$repo"
@@ -308,6 +314,7 @@ scenario_worktree_create_routes_binary() {
   local fixture="$work_dir/orphan-routing" state="$work_dir/orphan-routing-state" repo="$work_dir/orphan-routing-repo" shared="$work_dir/orphan-routing-shared" output status
   source "$root/tests/fixtures/entrypoint-routing.sh"
   make_entrypoint_routing_fixture "$root" "$fixture" 97
+  install_routing_fixture_skill "$fixture"
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
@@ -357,6 +364,7 @@ scenario_routing_deleted_and_restored() {
   local fixture="$work_dir/routing" state="$work_dir/routing-state" repo="$work_dir/routing-repo" shared="$work_dir/routing-shared" output status backup modified
   source "$root/tests/fixtures/entrypoint-routing.sh"
   make_entrypoint_routing_fixture "$root" "$fixture" 97
+  install_routing_fixture_skill "$fixture"
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
@@ -372,7 +380,7 @@ scenario_routing_deleted_and_restored() {
   modified="$work_dir/module-worktree.sh.modified"
   cp "$fixture/lib/module-worktree.sh" "$backup"
   awk '
-    /if \[ "\$orchestrate_requested" = false \] && megabrain_should_use_typescript_binary/ { skip = 1; next }
+    index($0, "megabrain_should_use_typescript_binary \"${MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION:-}\"; then") { skip = 1; next }
     skip && /^  fi$/ { skip = 0; next }
     !skip { print }
   ' "$backup" >"$modified"
