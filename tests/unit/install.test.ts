@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -64,13 +64,47 @@ describe("executeInstall", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("reports already installed without attempting any external step", async () => {
+  // WHY: the shell's megabrain_install_one always calls the module's install function first,
+  // unconditionally, and only checks doctor status afterward to decide what to report — it never
+  // skips the install step just because the doctor already reports "ok" beforehand. An earlier
+  // version of this port added exactly that skip as an "idempotence" shortcut; a container test
+  // (test-integration-surfaces.sh) caught it live: orchestration-hooks install stopped backing up
+  // and deduping a stale-but-regex-matching hook entry once every agent happened to already read
+  // as "entry-present". See the dedicated regression test below for that case; this one covers
+  // the simpler alias modules (orchestration/worktree), where "install" has no side effects of
+  // its own, so running it unconditionally must still report the doctor's live status, not a
+  // separate "already installed" phrase that the shell never produces either.
+  test("installing an already-ok alias module (orchestration) still reports live doctor status, not a skip", async () => {
     const home = tmpHome("already");
     const process = fakeProcess({ "orca status --json": "{}" });
     const result = await executeInstall(["orchestration", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, process);
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected success");
-    expect(result.value).toBe("orchestration: already installed\n");
+    expect(result.value).toBe('orchestration: ok (usable runtimes: orca; other runtimes are optional; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: 0; leaked dispatch sessions: 0; prunable dispatches: 0)\n');
+  });
+
+  test("install repairs and backs up an orchestration-hooks config even when the doctor already reports it ok", async () => {
+    // A stale entry from a different checkout still matches hookEntryPresent's path-agnostic
+    // regex, so the doctor reports "ok" before install ever runs — exactly the state
+    // test-integration-surfaces.sh's fixture reaches (every agent pre-seeded with a
+    // regex-matching but stale, duplicated entry). Install must still repair and back it up.
+    const home = tmpHome("hooks-already-ok");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const staleCommand = "MEGABRAIN_HOOK_AGENT=claude /some/other/checkout/hooks/megabrain-turn-end.sh";
+    const original = { hooks: { Stop: [{ hooks: [{ type: "command", command: "keep" }, { type: "command", command: staleCommand }, { type: "command", command: staleCommand }] }] } };
+    const configPath = join(home, ".claude", "settings.json");
+    writeFileSync(configPath, JSON.stringify(original));
+    const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: repoRoot };
+    const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
+    const backups = readdirSync(join(home, ".claude")).filter((name) => name.startsWith("settings.json.megabrain-backup-"));
+    expect(backups.length).toBeGreaterThan(0);
+    const written = JSON.parse(readFileSync(configPath, "utf8")) as { hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> } };
+    const matches = written.hooks.Stop[0].hooks.filter((entry) => /megabrain-turn-end\.sh/.test(entry.command));
+    expect(matches).toHaveLength(1);
+    expect(matches[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/hooks/megabrain-turn-end.sh`);
   });
 
   test("orchestration and worktree install as a pure doctor alias and fail when nothing is usable", async () => {
