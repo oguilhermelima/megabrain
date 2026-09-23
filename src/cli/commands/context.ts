@@ -55,8 +55,13 @@ async function detectContext(
     }
   }
   const contextEnvironment: ContextEnvironment = {
+    megabrainSessionId: environment.MEGABRAIN_SESSION_ID,
+    megabrainSessionHost: environment.MEGABRAIN_SESSION_HOST,
+    claudeCodeSessionId: environment.CLAUDE_CODE_SESSION_ID,
+    codexThreadId: environment.CODEX_THREAD_ID,
     supersetTerminalId: environment.SUPERSET_TERMINAL_ID,
     orcaTerminalHandle: environment.ORCA_TERMINAL_HANDLE,
+    orcaStructuredSession: environment.ORCA_STRUCTURED_SESSION,
     tmux: environment.TMUX,
     tmuxPane: environment.TMUX_PANE,
     workspaceId: environment.SUPERSET_WORKSPACE_ID,

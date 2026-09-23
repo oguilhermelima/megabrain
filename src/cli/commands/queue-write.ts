@@ -4,6 +4,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
+import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
@@ -28,15 +29,88 @@ export async function readJson(path: string): Promise<JsonRecord | undefined> {
   try { const value: unknown = JSON.parse(await readFile(path, "utf8")); return typeof value === "object" && value !== null ? value as JsonRecord : undefined; } catch { return undefined; }
 }
 
+// The one caller-identity resolver (core/context.js), reached through the same env-var mapping
+// from every command that needs to know who is running it — no verb hand-rolls its own chain.
+export function callerEnvironment(environment: QueueEnvironment): CallerEnvironment {
+  return {
+    megabrainSessionId: environment.MEGABRAIN_SESSION_ID,
+    megabrainSessionHost: environment.MEGABRAIN_SESSION_HOST,
+    claudeCodeSessionId: environment.CLAUDE_CODE_SESSION_ID,
+    codexThreadId: environment.CODEX_THREAD_ID,
+    supersetTerminalId: environment.SUPERSET_TERMINAL_ID,
+    orcaTerminalHandle: environment.ORCA_TERMINAL_HANDLE,
+    orcaStructuredSession: environment.ORCA_STRUCTURED_SESSION,
+    tmux: environment.TMUX,
+    tmuxPane: environment.TMUX_PANE,
+  };
+}
+
+async function tmuxSessionNameFor(pane: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const result = await getTmux().sessionForPane(pane, processAdapter);
+  return result.kind === "ok" ? result.value : undefined;
+}
+
+// The tmux session the CURRENT process is physically running in, right now — independent of any
+// caller-identity override or agent-session id. For "am I running in this pane/session right
+// now" safety checks (orchestrate prune, install-doctor's leaked-session count), never for
+// identity or ownership: unlike resolveCaller, a MEGABRAIN_SESSION_ID/HOST override or a
+// superset/orca terminal handle set alongside a genuine tmux pane must never suppress this probe
+// — the caller really is in that pane regardless of which identity it also carries. MEASURED
+// regression (tests/test-dispatch-transcript.sh): a caller with SUPERSET_TERMINAL_ID set who was
+// also physically in a tmux pane had that pane wrongly treated as prunable, because resolveCaller
+// let the override skip the probe entirely.
+export async function tmuxCallerPaneSession(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  if (environment.TMUX === undefined || environment.TMUX === "" || environment.TMUX_PANE === undefined || environment.TMUX_PANE === "") return undefined;
+  return tmuxSessionNameFor(environment.TMUX_PANE, processAdapter);
+}
+
+// Resolves the current caller's identity, probing the tmux session name only when nothing of
+// higher precedence (an explicit override, or a superset/orca terminal handle) already answers
+// the host — the same guard the old close.ts caller() used, now shared by every verb instead of
+// each one hand-rolling it.
+export async function resolveCaller(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<CallerIdentity> {
+  const fields = callerEnvironment(environment);
+  const needsTmuxProbe = fields.megabrainSessionHost === undefined
+    && fields.supersetTerminalId === undefined
+    && fields.orcaTerminalHandle === undefined
+    && fields.tmux !== undefined && fields.tmux.length > 0
+    && fields.tmuxPane !== undefined && fields.tmuxPane.length > 0;
+  const tmuxSessionName = needsTmuxProbe ? await tmuxSessionNameFor(fields.tmuxPane as string, processAdapter) : undefined;
+  return resolveCallerIdentity(fields, { tmuxSessionName });
+}
+
+// The child's own identity, for matching against the dispatch record spawn wrote for it
+// (meta.terminalId / meta.childHost, or meta.tmuxSession / meta.tmuxPane): spawn only ever hands
+// a child a terminal-based identity, never a synthetic session id, so the terminal handle is
+// preferred over a stable agent-session id here even though ownership checks prefer the reverse.
+// Historically this looked up a tmux pane's session via `tmux list-panes -a`, not the
+// `display-message`-based probe resolveCaller shares with every other verb — some deployments'
+// tmux only answers the former. MEASURED regression (tests/test-queue-write-cli.sh): a child
+// with only TMUX/TMUX_PANE set (no override, no terminal handle) could no longer find its own
+// dispatch once this went through resolveCaller alone. The override/superset/orca/agent-session
+// precedence is still resolveCaller's; list-panes is only a fallback for the plain-tmux case it
+// could not resolve.
+async function tmuxSessionViaListPanes(pane: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"]);
+  if (result.kind !== "ok") return undefined;
+  const match = result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[1] === pane);
+  return match?.[0];
+}
+
 async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Session | undefined> {
-  if (environment.TMUX && environment.TMUX_PANE) {
-    const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"]);
-    const pane = result.kind === "ok" ? result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[1] === environment.TMUX_PANE) : undefined;
-    if (pane?.[0]) return { host: "tmux", id: `${pane[0]}:${environment.TMUX_PANE}`, tmuxSession: pane[0], tmuxPane: environment.TMUX_PANE };
-    return { host: "tmux", id: "" };
+  const caller = await resolveCaller(environment, processAdapter);
+  if (hasCallerIdentity(caller)) {
+    return {
+      host: caller.host,
+      id: caller.terminalId ?? caller.id,
+      ...(caller.tmuxSession !== null ? { tmuxSession: caller.tmuxSession } : {}),
+      ...(caller.tmuxPane !== null ? { tmuxPane: caller.tmuxPane } : {}),
+    };
   }
-  if (environment.SUPERSET_TERMINAL_ID) return { host: "superset", id: environment.SUPERSET_TERMINAL_ID };
-  if (environment.ORCA_TERMINAL_HANDLE) return { host: "orca", id: environment.ORCA_TERMINAL_HANDLE };
+  if (environment.TMUX !== undefined && environment.TMUX !== "" && environment.TMUX_PANE !== undefined && environment.TMUX_PANE !== "") {
+    const sessionName = await tmuxSessionViaListPanes(environment.TMUX_PANE, processAdapter);
+    if (sessionName !== undefined) return { host: "tmux", id: `${sessionName}:${environment.TMUX_PANE}`, tmuxSession: sessionName, tmuxPane: environment.TMUX_PANE };
+  }
   return undefined;
 }
 

@@ -3,27 +3,18 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, parseDispatchRecord, type DispatchCaller, type DispatchListOptions, type DispatchRecord } from "../../core/dispatch.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { resolveCaller } from "./queue-write.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
 
+// The one caller-identity resolver (core/context.js, via queue-write.js resolveCaller). Narrowed
+// to {id, host} — DispatchCaller's own shape — since ownership here is compared by id/host only;
+// see core/dispatch.js decorateDispatchRecord for where that comparison itself now goes through
+// ownsDispatch. Without this, a structured Orca session (no terminal handle) resolved to
+// {id:"", host:"unknown"} and `orchestrate list` showed none of its own dispatches.
 export async function callerFromEnvironment(environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<DispatchCaller> {
-  if (environment.SUPERSET_TERMINAL_ID !== undefined && environment.SUPERSET_TERMINAL_ID.length > 0) {
-    return { id: environment.SUPERSET_TERMINAL_ID, host: "superset" };
-  }
-  if (environment.ORCA_TERMINAL_HANDLE !== undefined && environment.ORCA_TERMINAL_HANDLE.length > 0) {
-    return { id: environment.ORCA_TERMINAL_HANDLE, host: "orca" };
-  }
-  if (environment.TMUX !== undefined && environment.TMUX_PANE !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE.length > 0) {
-    const session = await getTmux().sessionForPane(environment.TMUX_PANE, process);
-    if (session.kind === "ok") {
-      return { id: `${session.value}:${environment.TMUX_PANE}`, host: "tmux" };
-    }
-  }
-  if (environment.MEGABRAIN_SESSION_ID !== undefined && environment.MEGABRAIN_SESSION_ID.length > 0 && environment.MEGABRAIN_SESSION_HOST !== undefined && environment.MEGABRAIN_SESSION_HOST.length > 0) {
-    return { id: environment.MEGABRAIN_SESSION_ID, host: environment.MEGABRAIN_SESSION_HOST };
-  }
-  return { id: "", host: "unknown" };
+  const identity = await resolveCaller(environment, process);
+  return { id: identity.id, host: identity.host };
 }
 
 async function metadataPaths(dispatchRoot: string): Promise<string[]> {

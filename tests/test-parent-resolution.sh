@@ -17,7 +17,6 @@ mkdir -p "$MEGABRAIN_STATE_DIR"
 
 source "$root/lib/common.sh"
 source "$root/lib/module-context.sh"
-source "$root/lib/module-chain.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -42,9 +41,15 @@ assert_equal "$MEGABRAIN_PARENT_AGENT" claude
 assert_equal "$MEGABRAIN_PARENT_MODEL" ''
 assert_equal "$MEGABRAIN_PARENT_EFFORT" ''
 
+# chain run is answered by the compiled binary (megabrain_chain_select no longer
+# exists in shell), so selection is driven and observed through it as a black box.
+# defaultSteps is empty, so the run always fails once selection has picked a chain
+# (no usable steps to spawn) — that failure report still names the chosen chain,
+# which is all this test needs.
 config='{"chains":{"claude-parent":{"when":{"parentAgent":"claude"},"steps":[{"agent":"codex","model":"m","effort":"e"}]}},"defaultSteps":[]}'
-megabrain_chain_select "$config" '' "$MEGABRAIN_PARENT_AGENT" "$MEGABRAIN_PARENT_MODEL" "$MEGABRAIN_PARENT_EFFORT"
-assert_equal "$MEGABRAIN_CHAIN_SELECTED_NAME" claude-parent
+printf '%s\n' "$config" >"$MEGABRAIN_CHAIN_FILE"
+select_output="$(MEGABRAIN_ROOT="$state_dir" "$root/.build/megabrain" chain run --worktree "$state_dir" --prompt test --json)" || true
+assert_equal "$(printf '%s' "$select_output" | jq -r '.chain')" claude-parent
 printf 'non-Superset parent selects matching chain\n'
 
 unset AI_AGENT
@@ -67,10 +72,14 @@ printf 'Superset parent variables retain precedence\n'
 unset SUPERSET_AGENT_ID SUPERSET_AGENT_MODEL SUPERSET_AGENT_EFFORT AI_AGENT
 megabrain_resolve_parent_context
 assert_equal "$MEGABRAIN_PARENT_AGENT" ''
-megabrain_chain_select "$config" '' "$MEGABRAIN_PARENT_AGENT" "$MEGABRAIN_PARENT_MODEL" "$MEGABRAIN_PARENT_EFFORT"
-assert_equal "$MEGABRAIN_CHAIN_SELECTED_NAME" ''
-assert_contains "$MEGABRAIN_CHAIN_SELECTION_REASON" 'parent agent is unknown'
-printf 'unknown parent does not match and states why\n'
+# The "parent agent is unknown; ..." selection reason itself is not observable
+# through chain run's report: a defaultSteps fallback always reports "used
+# defaultSteps; ..." regardless of why defaultSteps was chosen (module-chain.sh's
+# own command_chain_run discarded the selection reason the same way before this
+# was migrated). Only the resulting fallback-to-defaultSteps is checked here.
+select_output="$(MEGABRAIN_ROOT="$state_dir" "$root/.build/megabrain" chain run --worktree "$state_dir" --prompt test --json)" || true
+assert_equal "$(printf '%s' "$select_output" | jq -r '.chain')" defaultSteps
+printf 'unknown parent does not match and falls back to defaultSteps\n'
 
 export AI_AGENT=claude-code_2-1-270_agent
 megabrain_resolve_parent_context

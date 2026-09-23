@@ -24,10 +24,11 @@ export function selectChain(
   config: ChainConfig,
   explicitName: string | undefined,
   parent: Readonly<{ readonly agent?: string; readonly model?: string; readonly effort?: string }>,
+  explicitSource: "name" | "flag" = "name",
 ): ChainSelection {
   if (explicitName !== undefined && explicitName.length > 0) {
     const chain = config.chains[explicitName];
-    if (chain !== undefined) return { kind: "selected", name: explicitName, steps: chain.steps, usedDefault: false, reason: "explicit --chain requested" };
+    if (chain !== undefined) return { kind: "selected", name: explicitName, steps: chain.steps, usedDefault: false, reason: explicitSource === "flag" ? "explicit --chain requested" : "explicit name given" };
     return { kind: "not-found", name: explicitName };
   }
   const matches = Object.entries(config.chains).filter(([, chain]) => {
@@ -43,7 +44,11 @@ export function selectChain(
     if (candidates.length > 1) return { kind: "ambiguous", candidates };
     const name = candidates[0];
     const chain = config.chains[name];
-    return { kind: "selected", name, steps: chain.steps, usedDefault: false, reason: "most specific matching chain" };
+    return { kind: "selected", name, steps: chain.steps, usedDefault: false, reason: `selector match with ${mostSpecific} field(s)` };
   }
-  return { kind: "default", name: "defaultSteps", steps: config.defaultSteps, reason: "no matching chain; using defaultSteps" };
+  const hasSelectorFields = Object.values(config.chains).some((chain) => Object.keys(chain.when ?? {}).length > 0);
+  const reason = hasSelectorFields && (parent.agent === undefined || parent.agent.length === 0)
+    ? "parent agent is unknown; no selector matched; using defaultSteps"
+    : "no selector matched; using defaultSteps";
+  return { kind: "default", name: "defaultSteps", steps: config.defaultSteps, reason };
 }

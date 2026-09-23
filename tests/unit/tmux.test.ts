@@ -5,12 +5,12 @@ import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { tmuxSessionName } from "../../src/cli/commands/context.js";
 import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.js";
-import { caller, tmuxSessionForEnvironment } from "../../src/cli/commands/orchestrate-close.js";
+import { tmuxSessionForEnvironment } from "../../src/cli/commands/orchestrate-close.js";
 import { session as childSession } from "../../src/cli/commands/child-ack.js";
 import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
-import { notifyChild } from "../../src/cli/commands/queue-write.js";
+import { notifyChild, resolveCaller } from "../../src/cli/commands/queue-write.js";
 import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -229,9 +229,12 @@ describe("tmux identity provider", () => {
 
     expect(await tmuxSessionName(environment, process)).toBeUndefined();
     expect(await callerFromEnvironment(environment, process)).toEqual({ id: "", host: "unknown" });
-    expect(await caller(environment, process)).toEqual({ host: "tmux", tmuxPane: "%4" });
+    // The shared resolver (core/context.js resolveCallerIdentity, via queue-write.js
+    // resolveCaller) is what orchestrate-close and child-ack now both go through — a failed tmux
+    // probe with nothing else set resolves to no identity at all, not a guessed "tmux" host.
+    expect(await resolveCaller(environment, process)).toEqual({ id: "", host: "unknown", terminalId: null, tmuxSession: null, tmuxPane: null });
     expect(await tmuxSessionForEnvironment(environment, process)).toBeUndefined();
-    expect(await childSession(environment, process)).toEqual({ kind: "failed", error: "tmux session could not be resolved", exitCode: 1 });
+    expect(await childSession(environment, process)).toEqual({ kind: "failed", error: "this command requires a managed terminal identity; run it inside an Orca or Superset terminal", exitCode: 1 });
     expect(await callerSession(environment, process)).toBe("");
     expect(await childIdentity(environment, process)).toEqual({ childHost: "tmux", tmux: { session: undefined, pane: "%4" } });
     expect(await tmuxCallerSession(environment, process)).toBeUndefined();
