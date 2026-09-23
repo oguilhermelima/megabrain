@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-receipt.XXXXXX")"
 
 cleanup() {
@@ -12,12 +13,7 @@ trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
 export ORCA_TERMINAL_HANDLE=parent-terminal
-unset SUPERSET_TERMINAL_ID
-source "$root/lib/common.sh"
-source "$root/lib/module-tmux-runtime.sh"
-source "$root/lib/module-parent-notify.sh"
-source "$root/lib/module-orchestrate.sh"
-source "$root/lib/module-worktree.sh"
+unset SUPERSET_TERMINAL_ID TMUX TMUX_PANE
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -35,62 +31,60 @@ assert_contains() {
   esac
 }
 
-assert_not_contains() {
-  case "$1" in
-    *"$2"*) fail "expected '$1' not to contain '$2'" ;;
-    *) ;;
-  esac
-}
-
+# Fixture built directly with jq (tests/fixtures/a-dispatch-meta.sh): no lib/ sourcing, no
+# megabrain_dispatch_meta_write / megabrain_dispatch_message_append.
 create_dispatch() {
   local dispatch_id="$1" state="$2" terminal_id="${3:-child-terminal}"
-  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal orca orca "" "$terminal_id" "$root" fix/prompt-delivery-proof codex label "$state" gpt-5 true codex "" "" host ide >/dev/null
+  write_dispatch_meta "$state_dir" "$dispatch_id" \
+    parentSessionId=parent-terminal parentHost=orca childHost=orca terminalId="$terminal_id" \
+    worktreePath="$root" branch=fix/prompt-delivery-proof agent=codex agentId=codex label=label \
+    state="$state" model=gpt-5 modelHonored=true runtime=host spawnRuntime=ide >/dev/null
 }
 
-preamble="$(MEGABRAIN_ROOT="$root" MEGABRAIN_EXECUTABLE="$root/megabrain" megabrain_dispatch_preamble "$root")"
-assert_contains "$preamble" 'received to confirm that you received this prompt'
-assert_contains "$preamble" 'ask "your question"'
-assert_contains "$preamble" 'check until a reply arrives'
-assert_contains "$preamble" 'ack <delivery-id>'
-assert_contains "$preamble" 'done "short outcome summary"'
-assert_not_contains "$preamble" 'Facts in scope'
-assert_not_contains "$preamble" 'Facts in scope'
+# megabrain_dispatch_preamble (dynamic PATH-based executable-hint text, with a distinct fallback
+# message when the executable cannot be resolved through PATH or an absolute path) has no
+# equivalent left: the compiled binary's spawn prompt (finalPrompt, src/cli/commands/
+# orchestrate-spawn.ts) is a fixed template embedded inside executeSpawn, with no executable-path
+# resolution at all and no standalone entry point to call it directly outside a real spawn.
+# Dropped per rule 3.
 
-no_path_root="$state_dir/no-path"
-mkdir -p "$no_path_root/lib"
-cp "$root/lib/common.sh" "$root/lib/module-context.sh" "$root/lib/module-orchestrate.sh" "$no_path_root/lib/"
-no_path_preamble="$(PATH=/usr/bin:/bin MEGABRAIN_ROOT="$no_path_root" MEGABRAIN_EXECUTABLE="$no_path_root/megabrain" bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; megabrain_dispatch_preamble "$1"' _ "$no_path_root")"
-assert_contains "$no_path_preamble" 'could not be resolved through PATH or an absolute executable path'
-assert_not_contains "$no_path_preamble" 'run ./megabrain'
-assert_not_contains "$no_path_preamble" 'run ./megabrain'
-printf 'dispatch preamble contains only the protocol and handles an unavailable executable\n'
+# megabrain_spawn_mark_prompt_failed and megabrain_dispatch_failure_error (a formatter that
+# surfaces the child's last stalled message inside a spawn failure error) have no TS callers or
+# equivalent output shape anywhere in src/ -- grep for "child message:"/"failureError"/
+# "markPromptFailed" across src/ is empty. A spawn failure is reported through executeSpawn's own
+# Result, never through a standalone "failure error" formatter. Dropped per rule 3.
+
+# The turn-end hook (src/cli/commands/hook-turn-end.ts, a full port of hooks/megabrain-turn-
+# end.sh) never touches promptDelivery/promptReceipt/promptState for an ordinary turn, empty or
+# not -- grep for those fields in hook-turn-end.ts only matches the unrelated usage-limit-refusal
+# branch. The "a turn ending can implicitly confirm receipt, guarded against an empty turn"
+# mechanism this scenario proved is gone; the only path that ever sets promptReceipt=received is
+# an explicit child "received" message (via `megabrain received`, exercised below, or
+# reconcile's syncPromptReceipt). Dropped per rule 3. FLAG FOR THE LEAD: this may be an
+# intentional simplification (receipts are now always explicit) or a dropped safety net for
+# agents that never call `megabrain received`; worth confirming which.
+
+# megabrain_dispatch_send_prompt_with_receipt's bounded resend (MEGABRAIN_PROMPT_RECEIPT_ATTEMPTS
+# retries, re-pressing Enter/Tab until a receipt appears or attempts are exhausted) has no
+# equivalent: the compiled spawn path's awaitReceipt (src/cli/commands/orchestrate-spawn.ts)
+# sends the prompt exactly once and then only polls for an existing receipt for
+# MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS -- it never resends, and a timeout never fails the
+# spawn (it returns success with promptState="awaiting-receipt", pointing at `orchestrate
+# reconcile`; see tests/unit/spawn.test.ts: "returns success while receipt is pending and points
+# to reconcile"). The three scenarios built on the old resend contract -- a bounded resend that
+# eventually gets a receipt, exhaustion failing without claiming delivery, and a tmux Enter retry
+# that must not duplicate composer text -- all test that removed contract. Dropped per rule 3.
 
 outside="$state_dir/outside-repository"
 mkdir -p "$outside"
-megabrain_dispatch_meta_write outside-repository parent-terminal superset superset workspace-test outside-terminal "$outside" main codex label spawning gpt-5 true codex '' '' host ide >/dev/null
-(cd "$outside" && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/megabrain" received >/dev/null)
+write_dispatch_meta "$state_dir" outside-repository \
+  parentSessionId=parent-terminal parentHost=superset childHost=superset workspaceId=workspace-test \
+  terminalId=outside-terminal worktreePath="$outside" branch=main agent=codex agentId=codex \
+  label=label state=spawning model=gpt-5 modelHonored=true runtime=host spawnRuntime=ide >/dev/null
+(cd "$outside" && env -u TMUX -u TMUX_PANE -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/megabrain" received >/dev/null)
 assert_equal "$(find "$state_dir/dispatches/outside-repository/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
 printf 'dispatch receipt works from a non-checkout directory\n'
 
-create_dispatch stalled-report spawning
-megabrain_dispatch_message_append stalled-report child stalled 'child could not run the dispatch command' child-terminal >/dev/null
-megabrain_spawn_mark_prompt_failed stalled-report prompt-send-not-observed
-failure_output="$(megabrain_dispatch_failure_error stalled-report 'dispatch did not observe prompt send' 2>&1)"
-assert_contains "$failure_output" 'child message: "child could not run the dispatch command"'
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/stalled-report/meta.json")" failed
-printf 'failed dispatch reports the child stalled message\n'
-
-# A turn-end hook is evidence that a child turn ended, not evidence that this prompt
-# reached it. An empty turn must remain pending rather than becoming a receipt.
-create_dispatch empty-turn running
-env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=child-terminal MEGABRAIN_DISPATCH_ID=empty-turn MEGABRAIN_HOOK_AGENT=codex \
-  "$root/hooks/megabrain-turn-end.sh" '{"last_assistant_message":""}' >/dev/null
-assert_equal "$(jq -r '.promptDelivery' "$state_dir/dispatches/empty-turn/meta.json")" pending
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/empty-turn/meta.json")" running
-printf 'empty child turn does not confirm prompt delivery or rewrite the contract\n'
-
-# The child receipt is the delivery fact. It is durable in the dispatch queue and must be
-# observed before the parent marks the prompt delivered.
 create_dispatch optional-receipt spawning command-terminal
 received_output="$(env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=command-terminal MEGABRAIN_STATE_DIR="$state_dir" \
   "$root/megabrain" received)"
@@ -101,50 +95,18 @@ assert_equal "$(jq -r '.type' "$received_message")" received
 assert_equal "$(jq -r '.state' "$state_dir/dispatches/optional-receipt/meta.json")" running
 printf 'received command is durable and authoritative\n'
 
-receipt_dispatch=receipt-retry
-create_dispatch "$receipt_dispatch" spawning command-terminal
-receipt_send_count=0
-megabrain_dispatch_native_send() {
-  receipt_send_count=$((receipt_send_count + 1))
-  if [ "$receipt_send_count" -eq 2 ]; then
-    megabrain_dispatch_message_append "$receipt_dispatch" child received 'prompt received' child-terminal >/dev/null
-  fi
-  return 0
-}
-export MEGABRAIN_PROMPT_RECEIPT_ATTEMPTS=3
-export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=0
-megabrain_dispatch_send_prompt_with_receipt "$receipt_dispatch" 'prompt delivered after retry' ||
-  fail 'prompt was not delivered after the child receipt appeared'
-assert_equal "$receipt_send_count" 2
-assert_equal "$(jq -r '.promptDelivery' "$state_dir/dispatches/$receipt_dispatch/meta.json")" pending
-printf 'prompt receipt: missing first receipt causes a bounded resend\n'
-
-no_receipt_dispatch=no-receipt
-create_dispatch "$no_receipt_dispatch" spawning command-terminal
-no_receipt_send_count=0
-megabrain_dispatch_native_send() {
-  no_receipt_send_count=$((no_receipt_send_count + 1))
-  return 0
-}
-export MEGABRAIN_PROMPT_RECEIPT_ATTEMPTS=2
-if megabrain_dispatch_send_prompt_with_receipt "$no_receipt_dispatch" 'prompt without receipt'; then
-  fail 'prompt without a receipt unexpectedly succeeded'
-fi
-assert_equal "$no_receipt_send_count" 2
-printf 'prompt receipt: exhaustion fails without claiming delivery\n'
-
 create_dispatch running-reply running
-reply_result="$(megabrain_dispatch_reply running-reply --text 'Continue work' --json)"
+reply_result="$("$root/.build/megabrain" orchestrate reply running-reply --text 'Continue work' --json)"
 assert_equal "$(jq -r '.status' <<<"$reply_result")" queued
 reply_message="$(find "$state_dir/dispatches/running-reply/messages" -name '*.json' -print -quit)"
 assert_equal "$(jq -r '.type' "$reply_message")" reply
 assert_equal "$(jq -r '.text' "$reply_message")" 'Continue work'
 printf 'running child accepts queued parent reply\n'
 
-# A child that has just ended an ask turn is waiting_for_reply. The turn-end hook must
-# inspect its own mailbox before the waiting guard, and ask the agent to consume it.
+# A child that has just ended an ask turn is waiting_for_reply. The turn-end hook must inspect
+# its own mailbox before the waiting guard, and ask the agent to consume it.
 create_dispatch waiting-reply waiting_for_reply waiting-terminal
-megabrain_dispatch_message_append waiting-reply parent reply 'reply waiting at turn end' parent-terminal >/dev/null
+append_dispatch_message "$state_dir" waiting-reply parent reply 'reply waiting at turn end' parent-terminal >/dev/null
 waiting_hook_output="$(env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=waiting-terminal MEGABRAIN_STATE_DIR="$state_dir" \
   "$root/hooks/megabrain-turn-end.sh" '{}')"
 assert_equal "$(jq -r '.decision' <<<"$waiting_hook_output")" block
@@ -153,51 +115,5 @@ waiting_delivery="$state_dir/dispatches/waiting-reply/deliveries"/*.json
 assert_equal "$(jq -r '.status' $waiting_delivery)" outstanding
 assert_equal "$(jq -r '.state' "$state_dir/dispatches/waiting-reply/meta.json")" waiting_for_reply
 printf 'waiting child turn: hook exposes queued reply before the state guard\n'
-
-# A starting agent may accept the first prompt's keystrokes while ignoring Enter. A
-# receipt retry must press the prompt affordance again without appending another copy.
-tmux_prompt_dispatch=tmux-prompt-retry
-tmux_prompt_pane=%prompt
-tmux_prompt_composer="$state_dir/tmux-prompt-composer"
-tmux_prompt_submitted="$state_dir/tmux-prompt-submitted"
-tmux_prompt_keys="$state_dir/tmux-prompt-keys"
-create_tmux_dispatch() {
-  megabrain_dispatch_meta_write "$tmux_prompt_dispatch" parent-terminal orca orca "" child-terminal "$root" fix/prompt-delivery-proof codex label spawning gpt-5 true codex test-session "$tmux_prompt_pane" tmux tmux >/dev/null
-}
-create_tmux_dispatch
-: >"$tmux_prompt_composer"
-: >"$tmux_prompt_submitted"
-: >"$tmux_prompt_keys"
-tmux() {
-  local command="${1:-}" enter_count
-  case "$command" in
-    send-keys)
-      case "${4:-}" in
-        -l) printf '%s' "${5:-}" >>"$tmux_prompt_composer" ;;
-        Enter)
-          printf '%s\n' Enter >>"$tmux_prompt_keys"
-          enter_count="$(wc -l <"$tmux_prompt_keys" | tr -d ' ')"
-          if [ "$enter_count" -ge 2 ]; then
-            cat "$tmux_prompt_composer" >"$tmux_prompt_submitted"
-            : >"$tmux_prompt_composer"
-            megabrain_dispatch_message_append "$tmux_prompt_dispatch" child received 'prompt received' child-terminal >/dev/null
-          fi
-          ;;
-      esac
-      ;;
-    *) return 0 ;;
-  esac
-}
-export MEGABRAIN_PROMPT_RECEIPT_ATTEMPTS=2
-export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=0
-tmux_prompt_text='prompt survives a non-submitting first Enter'
-if ! megabrain_dispatch_send_prompt_with_receipt "$tmux_prompt_dispatch" "$tmux_prompt_text"; then
-  fail 'tmux prompt retry did not receive the child receipt'
-fi
-assert_equal "$(wc -l <"$tmux_prompt_keys" | tr -d ' ')" 2
-assert_equal "$(cat "$tmux_prompt_submitted")" "$tmux_prompt_text"
-assert_equal "$(cat "$tmux_prompt_composer")" ''
-printf 'tmux prompt receipt retry: Enter is retried without duplicating composer text\n'
-unset -f tmux
 
 printf 'ok: receipt delivery and running reply scenarios\n'

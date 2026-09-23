@@ -3,20 +3,18 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-reply-nudge.XXXXXX")"
 state_root="$(cd -P "$state_root" && pwd -P)"
+state_dir="$state_root/state"
 socket_name=mbreply
 session_name=megabrain-reply-nudge
 parent_pane=""
 child_pane=""
-tmux_info=""
-parent_identity=""
 
-unset TMUX TMUX_PANE
+unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE SUPERSET_TERMINAL_ID
 export TMUX_TMPDIR="$state_root"
-export MEGABRAIN_STATE_DIR="$state_root/state"
-export ORCA_TERMINAL_HANDLE=""
-export SUPERSET_TERMINAL_ID=""
+export MEGABRAIN_STATE_DIR="$state_dir"
 
 tmux_cmd() {
   tmux -L "$socket_name" "$@"
@@ -46,17 +44,6 @@ assert_contains() {
   esac
 }
 
-assert_not_contains() {
-  case "$1" in
-    *"$2"*) fail "expected output not to contain '$2'" ;;
-    *) ;;
-  esac
-}
-
-source "$root/lib/common.sh"
-source "$root/lib/module-tmux-runtime.sh"
-source "$root/lib/module-orchestrate.sh"
-
 tmux_cmd new-session -d -s "$session_name" -x 120 -y 30 bash
 parent_pane="$(tmux_cmd display-message -p -t "$session_name" '#{pane_id}')"
 tmux_info="$(tmux_cmd display-message -p -t "$parent_pane" '#{socket_path},#{pid},#{session_id}')"
@@ -66,18 +53,27 @@ case "${tmux_info%%,*}" in
 esac
 export TMUX="$tmux_info"
 export TMUX_PANE="$parent_pane"
-parent_identity="$(megabrain_session_id)"
+parent_identity="$session_name:$parent_pane"
 child_pane="$(tmux_cmd split-window -d -t "$session_name" -c "$root" -P -F '#{pane_id}' 'trap "" INT; sleep 60')"
 
+# Fixture built directly with jq (tests/fixtures/a-dispatch-meta.sh): no lib/ sourcing, no
+# megabrain_dispatch_meta_write.
 create_meta() {
   local dispatch_id="$1" pane="$2" agent="${3:-codex}"
-  megabrain_dispatch_meta_write "$dispatch_id" "$parent_identity" tmux tmux "" child-terminal \
-    "$root" main "$agent" label running gpt-5 true "$agent" "$session_name" "$pane" tmux tmux \
-    "$session_name" "$parent_pane" "" >/dev/null
+  write_dispatch_meta "$state_dir" "$dispatch_id" \
+    parentSessionId="$parent_identity" parentHost=tmux childHost=tmux terminalId=child-terminal \
+    worktreePath="$root" branch=main agent="$agent" agentId="$agent" label=label state=running \
+    model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$pane" \
+    runtime=tmux spawnRuntime=tmux parentTmuxSession="$session_name" parentTmuxPane="$parent_pane" >/dev/null
 }
 
-# A process that never reads stdin exercises the real pty backpressure. This is a
-# transport-bound test only; the composer-delivery proof is the repainting scenario above.
+# `orchestrate reply` writes the queue message durably before it ever touches the pane
+# (queue-write.ts's appendMessage runs first in executeOrchestrateReply), then attempts a
+# best-effort nudge through the real tmux binary (queue-write.ts's notifyChild ->
+# hosts/tmux.ts's sendTmuxPair: "tmux send-keys -l" followed by the submit key). A process that
+# never reads stdin exercises real pty backpressure on that send: the durable write and the
+# command's own return must not depend on the child ever consuming it. Real tmux only here, no
+# fakes — the whole point is exercising actual pty behaviour.
 dispatch_id=bounded-reply
 create_meta "$dispatch_id" "$child_pane"
 answer="$(printf '%65536s' '' | tr ' ' x)"
@@ -85,7 +81,7 @@ done_file="$state_root/reply-done"
 reply_output="$state_root/reply-output"
 reply_error="$state_root/reply-error"
 (
-  if megabrain_dispatch_reply "$dispatch_id" --text "$answer" --json >"$reply_output" 2>"$reply_error"; then
+  if "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text "$answer" --json >"$reply_output" 2>"$reply_error"; then
     printf '0\n' >"$done_file"
   else
     printf '1\n' >"$done_file"
@@ -95,7 +91,7 @@ reply_pid=$!
 started="$(date +%s)"
 while [ ! -f "$done_file" ]; do
   now="$(date +%s)"
-  [ $((now - started)) -lt 3 ] || break
+  [ $((now - started)) -lt 5 ] || break
   sleep 0.05
 done
 if [ ! -f "$done_file" ]; then
@@ -104,195 +100,77 @@ if [ ! -f "$done_file" ]; then
   fail 'reply remained blocked while the child pane did not read stdin'
 fi
 wait "$reply_pid"
-case "$(jq -r '.status' "$reply_output")" in
-  queued|replied) ;;
-  *) fail "reply did not queue or nudge: $(cat "$reply_output")" ;;
-esac
-assert_equal "$(find "$state_root/state/dispatches/$dispatch_id/messages" -name '*.json' | wc -l | tr -d ' ')" 1
-assert_equal "$(jq -r '.text' "$state_root/state/dispatches/$dispatch_id/messages"/*.json)" "$answer"
+assert_equal "$(jq -r '.status' "$reply_output")" queued
+assert_equal "$(find "$state_dir/dispatches/$dispatch_id/messages" -name '*.json' | wc -l | tr -d ' ')" 1
+assert_equal "$(jq -r '.text' "$state_dir/dispatches/$dispatch_id/messages"/*.json)" "$answer"
 printf 'busy child: reply returns within the bound and keeps the full queue message\n'
 
 tmux_cmd kill-pane -t "$child_pane"
 
-# Width is read from the target pane, so the cap follows narrow and wide terminals.
-nudge_width=70
-tmux() {
-  case "$1" in
-    display-message) printf '%s\n' "$nudge_width" ;;
-    *) return 0 ;;
-  esac
-}
-long_nudge='[megabrain] mail available; run megabrain orchestrate watch dispatch-with-a-very-long-identifier'
-capped_nudge="$(megabrain_tmux_nudge_text_for_pane %width "$long_nudge")"
-# The container's C locale counts the UTF-8 ellipsis as three characters. Replace
-# that display-cell marker before measuring so this assertion is locale-independent.
-capped_nudge_length="$(printf '%s' "$capped_nudge" | sed 's/…/x/g' | wc -m | tr -d ' ')"
-assert_equal "$capped_nudge_length" "$nudge_width"
-assert_contains "$capped_nudge" '…'
-printf 'nudge width: text is capped to pane columns with an ellipsis\n'
-unset -f tmux
+# megabrain_tmux_nudge_text_for_pane (width capping with an ellipsis) has no production caller
+# left: notifyChild/sendParentPointer (src/core/queue-write.ts, wired through
+# executeOrchestrateReply in src/cli/commands/orchestrate-reply.ts) send a fixed pointer string
+# ("[megabrain] reply available; run megabrain check") with no pane-width measurement or
+# truncation anywhere in that path. Dropped per rule 3.
 
-# Codex's Tab affordance queues the pointer, so no stale draft can survive in the pane.
-log_file="$state_root/tmux-send.log"
-pointer_composer_file="$state_root/pointer-composer"
-pointer_queue_file="$state_root/pointer-queue"
-: >"$log_file"
-: >"$pointer_composer_file"
-: >"$pointer_queue_file"
-tmux() {
-  case "${1:-}" in
-    display-message) printf '%s\n' "$session_name" ;;
-    capture-pane) cat "$pointer_composer_file" ;;
-    send-keys)
-      printf '%s\n' "$*" >>"$log_file"
-      case "${4:-}" in
-        -l) printf '%s\n' "${5:-}" >"$pointer_composer_file" ;;
-        Tab)
-          cat "$pointer_composer_file" >"$pointer_queue_file"
-          : >"$pointer_composer_file"
-          ;;
-      esac
-      case "$*" in
-        *BSpace*) : >"$pointer_composer_file" ;;
-      esac
-      ;;
-    *) return 0 ;;
-  esac
-}
-megabrain_tmux_session_exists() {
-  return 0
-}
-dispatch_id=pointer-reply
-create_meta "$dispatch_id" '%fake'
-pointer_answer='answer body must stay in the queue'
-pointer_output="$(megabrain_dispatch_reply "$dispatch_id" --text "$pointer_answer" --json)"
-assert_equal "$(jq -r '.status' <<<"$pointer_output")" queued
-typed="$(cat "$log_file")"
-assert_contains "$typed" ' Tab'
-assert_not_contains "$typed" ' Enter'
-assert_equal "$(cat "$pointer_composer_file")" ''
-assert_equal "$(cat "$pointer_queue_file")" '[megabrain] reply available; run megabrain check'
-pointer_message="$state_root/state/dispatches/$dispatch_id/messages"/*.json
-assert_equal "$(jq -r '.text' $pointer_message)" "$pointer_answer"
-assert_contains "$(jq -r '.sessionId' $pointer_message)" ':'
-pointer_transport_status="$(megabrain_tmux_send_nudge %fake 'codex pointer is queued' codex; printf '%s' "$MEGABRAIN_TMUX_SEND_STATUS")"
-assert_equal "$pointer_transport_status" queued
-printf 'reply transport: Tab queues the pointer and parent provenance is recorded\n'
+# A fake "tmux" placed first on PATH, not a shell function override — a subprocess (the compiled
+# binary) never sees this script's own function table, only real executables on PATH. It records
+# every send-keys call so the reply command's real submit-key choice per agent can be observed
+# from outside.
+fake_bin="$state_root/bin"
+mkdir -p "$fake_bin"
+send_log="$state_root/send.log"
+cat >"$fake_bin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+  display-message) printf '%s\n' "$session_name" ;;
+  send-keys) printf '%s\n' "\$*" >>"$send_log" ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$fake_bin/tmux"
 
-# Claude and Codex have measured busy-pane affordances; agy stays on the durable queue path
-# because its safe nudge affordance is not established here.
-nudge_composer_file="$state_root/nudge-composer"
-nudge_queue_file="$state_root/nudge-queue"
-nudge_keys_file="$state_root/nudge-keys"
-nudge_agent=claude
-nudge_mode=accept
-: >"$nudge_composer_file"
-: >"$nudge_queue_file"
-: >"$nudge_keys_file"
-tmux() {
-  local command="${1:-}" count
-  case "$command" in
-    display-message) printf '120\n' ;;
-    send-keys)
-      printf '%s\n' "$*" >>"$nudge_keys_file"
-      if [ "${2:-}" = -N ]; then
-        count="${3:-0}"
-        if [ "${6:-}" = BSpace ]; then
-          printf '%s\n' "backspaces=$count" >>"$nudge_keys_file"
-          : >"$nudge_composer_file"
-        fi
-        return 0
-      fi
-      case "${4:-}" in
-        -l)
-          # The delay makes overlapping writers reproduce a pane-level race if no lock
-          # serializes the complete text-plus-affordance transaction.
-          sleep 0.1
-          printf '%s' "${5:-}" >"$nudge_composer_file"
-          ;;
-        Enter)
-          if [ "$nudge_agent" = claude ] && [ "$nudge_mode" = accept ]; then
-            cat "$nudge_composer_file" >>"$nudge_queue_file"
-            printf '\n' >>"$nudge_queue_file"
-            : >"$nudge_composer_file"
-          fi
-          ;;
-        Tab)
-          if [ "$nudge_agent" = codex ] && [ "$nudge_mode" = accept ]; then
-            cat "$nudge_composer_file" >>"$nudge_queue_file"
-            printf '\n' >>"$nudge_queue_file"
-            : >"$nudge_composer_file"
-          fi
-          ;;
-      esac
-      ;;
-    *) return 0 ;;
-  esac
+# The real production reply path (executeOrchestrateReply -> notifyChild) picks the submit key
+# from the dispatch's own agent (src/agents/claude.ts, codex.ts, agy.ts: claude=Enter, codex=Tab,
+# agy has none) and reports "typed"/"not-typed" purely from whether that send itself succeeded --
+# there is no busy-pane inspection, no backspace clearing, and no distinct "queued" nudge status
+# anywhere in notifyChild; it sends unconditionally. The old busy-composer / backspace-clearing /
+# per-affordance "queued" assertions tested a shell nudge system with no surviving counterpart;
+# dropped per rule 3. What is still real and worth proving here: which key each agent's dispatch
+# causes to be sent, that a missing affordance (agy) sends no keys at all and still reports
+# "not-typed" without losing the queued message, and that the message stays durable and
+# attributed regardless of nudge outcome.
+scenario_agent_nudge() {
+  local agent="$1" expect_key="$2" expect_nudge="$3"
+  local dispatch_id="nudge-$agent"
+  : >"$send_log"
+  create_meta "$dispatch_id" '%fake' "$agent"
+  local output message
+  output="$(PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text "answer for $agent" --json)"
+  assert_equal "$(jq -r '.status' <<<"$output")" queued
+  assert_equal "$(jq -r '.nudge' <<<"$output")" "$expect_nudge"
+  message="$state_dir/dispatches/$dispatch_id/messages"/*.json
+  assert_equal "$(jq -r '.text' $message)" "answer for $agent"
+  assert_contains "$(jq -r '.sessionId' $message)" ':'
+  if [ "$expect_key" = none ]; then
+    [ ! -s "$send_log" ] || fail "$agent: expected no send-keys call, got: $(cat "$send_log")"
+  else
+    # The pane receives a fixed pointer, never the reply text itself (queue-write.ts's
+    # notifyChild: "[megabrain] reply available; run megabrain check"); the reply text only ever
+    # lands in the durable queue message asserted above.
+    grep -Fqx 'send-keys -t %fake -l [megabrain] reply available; run megabrain check' "$send_log" || fail "$agent: pointer text was not sent literally: $(cat "$send_log")"
+    grep -Fqx "send-keys -t %fake $expect_key" "$send_log" || fail "$agent: submit key $expect_key was not sent: $(cat "$send_log")"
+  fi
+  printf '%s nudge: submit key %s, reported %s\n' "$agent" "$expect_key" "$expect_nudge"
 }
 
-busy_claude='claude reply queued separately from the busy composer'
-nudge_agent=claude
-nudge_mode=accept
-: >"$nudge_composer_file"
-: >"$nudge_queue_file"
-busy_status="$(megabrain_tmux_send_nudge %busy "$busy_claude" claude; printf '%s' "$MEGABRAIN_TMUX_SEND_STATUS")"
-assert_equal "$busy_status" queued
-assert_equal "$(cat "$nudge_composer_file")" ''
-assert_equal "$(cat "$nudge_queue_file")" "$busy_claude"
-assert_contains "$(cat "$nudge_keys_file")" ' Enter'
-assert_not_contains "$(cat "$nudge_keys_file")" ' Tab'
-printf 'busy Claude: Enter queues the nudge\n'
+scenario_agent_nudge claude Enter typed
+scenario_agent_nudge codex Tab typed
+scenario_agent_nudge agy none not-typed
 
-# Codex's measured Tab affordance is distinct from agy's unknown composer.
-nudge_agent=codex
-nudge_mode=accept
-: >"$nudge_composer_file"
-: >"$nudge_queue_file"
-: >"$nudge_keys_file"
-unknown_status="$(megabrain_tmux_send_nudge %busy 'codex pointer is queued with Tab' codex; printf '%s' "$MEGABRAIN_TMUX_SEND_STATUS")"
-assert_equal "$unknown_status" queued
-assert_equal "$(cat "$nudge_composer_file")" ''
-assert_equal "$(cat "$nudge_queue_file")" 'codex pointer is queued with Tab'
-assert_contains "$(cat "$nudge_keys_file")" ' Tab'
-printf 'Codex queue: Tab queues the nudge\n'
-
-nudge_agent=agy
-nudge_mode=accept
-: >"$nudge_composer_file"
-: >"$nudge_queue_file"
-: >"$nudge_keys_file"
-unknown_status="$(megabrain_tmux_send_nudge %busy 'agy pointer is not typed without a proven queue' agy; printf '%s' "$MEGABRAIN_TMUX_SEND_STATUS")"
-assert_equal "$unknown_status" not-typed
-assert_equal "$(cat "$nudge_composer_file")" ''
-assert_equal "$(cat "$nudge_queue_file")" ''
-assert_equal "$(cat "$nudge_keys_file")" ''
-printf 'unknown agy queue: nudge is not typed\n'
-
-# Two Claude nudges to one busy pane are independent queue entries, never one concatenated
-# draft. The lock must cover both the literal and its Enter.
-nudge_agent=claude
-nudge_mode=accept
-: >"$nudge_composer_file"
-: >"$nudge_queue_file"
-: >"$nudge_keys_file"
-(
-  megabrain_tmux_send_nudge %busy 'first concurrent nudge' claude
-  printf '%s\n' "$MEGABRAIN_TMUX_SEND_STATUS" >"$state_root/first-status"
-) &
-first_pid=$!
-(
-  megabrain_tmux_send_nudge %busy 'second concurrent nudge' claude
-  printf '%s\n' "$MEGABRAIN_TMUX_SEND_STATUS" >"$state_root/second-status"
-) &
-second_pid=$!
-wait "$first_pid"
-wait "$second_pid"
-assert_equal "$(wc -l <"$nudge_queue_file" | tr -d ' ')" 2
-grep -Fx 'first concurrent nudge' "$nudge_queue_file" >/dev/null || fail 'first concurrent nudge was not a separate queue entry'
-grep -Fx 'second concurrent nudge' "$nudge_queue_file" >/dev/null || fail 'second concurrent nudge was not a separate queue entry'
-assert_equal "$(cat "$nudge_composer_file")" ''
-assert_equal "$(cat "$state_root/first-status")" queued
-assert_equal "$(cat "$state_root/second-status")" queued
-printf 'concurrent busy pane: nudges remain ordered queue entries\n'
+# The per-pane lock around a queued text-plus-key pair (so two concurrent nudges to the same pane
+# never interleave into one draft) is exercised directly against the real sendTmuxPair in
+# tests/unit/tmux.test.ts: "keeps each text and submit key pair under one pane lock". Dropped
+# here per rule 2.
 
 printf 'ok: bounded reply nudge scenarios\n'

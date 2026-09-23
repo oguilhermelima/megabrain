@@ -126,3 +126,87 @@ describe("findChild: tmux-runtime records", () => {
     });
   });
 });
+
+// MEGABRAIN_DISPATCH_ID is meant to short-circuit the identity scan for the common case (a child
+// asking about its own dispatch), not to bypass ownership entirely. A stale value left over from a
+// different dispatch (env inherited across an exec, or copy-pasted) names a dispatch that still
+// exists on disk but was never spawned for/by this caller. The shell implementation this replaces
+// fell back to the identity scan in that case; the ported fast path regressed to trusting the id
+// outright, which the reproduction in tests/test-dispatch-prune.sh caught.
+describe("findChild: MEGABRAIN_DISPATCH_ID fast path only short-circuits for the caller's own dispatch", () => {
+  function fakeProcess(): ProcessAdapter {
+    return {
+      async run() { return ok({ stdout: "", stderr: "", exitCode: 0 }); },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return 0; },
+    };
+  }
+
+  async function withRoot<T>(body: (root: string) => Promise<T>): Promise<T> {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-findchild-direct-`);
+    try { return await body(root); } finally { await rm(root, { recursive: true, force: true }); }
+  }
+
+  async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
+    const directory = join(root, "dispatches", dispatchId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+  }
+
+  test("falls back to the identity scan when MEGABRAIN_DISPATCH_ID names a dispatch that is not the caller's", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "wrong-dispatch", { runtime: "host", terminalId: "other-terminal", childHost: "superset" });
+      await writeDispatch(root, "fallback-dispatch", { runtime: "host", terminalId: "child-terminal", childHost: "superset" });
+      const environment = { MEGABRAIN_STATE_DIR: root, SUPERSET_TERMINAL_ID: "child-terminal", MEGABRAIN_DISPATCH_ID: "wrong-dispatch" };
+      const result = await findChild(root, environment, fakeProcess());
+      expect("kind" in result).toBe(false);
+      if ("kind" in result) return;
+      expect(result.dispatch).toBe("fallback-dispatch");
+    });
+  });
+
+  test("falls back to the identity scan when MEGABRAIN_DISPATCH_ID names an absent dispatch", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "fallback-dispatch", { runtime: "host", terminalId: "child-terminal", childHost: "superset" });
+      const environment = { MEGABRAIN_STATE_DIR: root, SUPERSET_TERMINAL_ID: "child-terminal", MEGABRAIN_DISPATCH_ID: "deleted-dispatch" };
+      const result = await findChild(root, environment, fakeProcess());
+      expect("kind" in result).toBe(false);
+      if ("kind" in result) return;
+      expect(result.dispatch).toBe("fallback-dispatch");
+    });
+  });
+
+  test("still short-circuits (never scans siblings) when MEGABRAIN_DISPATCH_ID names the caller's own dispatch", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "direct-dispatch", { runtime: "host", terminalId: "child-terminal", childHost: "superset" });
+      // A second dispatch that would also match this caller's identity, and would make a full
+      // scan ambiguous — proving the fast path truly short-circuits instead of merely routing
+      // through the scan with a candidate list of one that happens to be right.
+      await writeDispatch(root, "sibling-dispatch", { runtime: "host", terminalId: "child-terminal", childHost: "superset" });
+      const environment = { MEGABRAIN_STATE_DIR: root, SUPERSET_TERMINAL_ID: "child-terminal", MEGABRAIN_DISPATCH_ID: "direct-dispatch" };
+      const result = await findChild(root, environment, fakeProcess());
+      expect("kind" in result).toBe(false);
+      if ("kind" in result) return;
+      expect(result.dispatch).toBe("direct-dispatch");
+    });
+  });
+
+  test("applies the same tmuxSession+tmuxPane rule to a tmux-runtime dispatch named directly", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "real-child", {
+        runtime: "tmux", terminalId: "coord-orca-term", childHost: "orca",
+        tmuxSession: "dispatch-session", tmuxPane: "%5",
+      });
+      const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "some-server", TMUX_PANE: "%5", MEGABRAIN_DISPATCH_ID: "real-child" };
+      const process: ProcessAdapter = {
+        async run(command, args) { return command === "tmux" && args[0] === "display-message" ? ok({ stdout: "dispatch-session\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }); },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      };
+      const result = await findChild(root, environment, process);
+      expect("kind" in result).toBe(false);
+      if ("kind" in result) return;
+      expect(result.dispatch).toBe("real-child");
+    });
+  });
+});

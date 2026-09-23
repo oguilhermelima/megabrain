@@ -284,7 +284,7 @@ async function appiumSession(environment: Environment, processAdapter: ProcessAd
     let current = sessions;
     if (recorded !== undefined) {
       const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${recorded.sessionId}`]);
-      if (probe.kind === "ok") return { sessions, value: { sessionId: recorded.sessionId, stored: true } };
+      if (probe.kind === "ok") return { sessions, value: { session: { sessionId: recorded.sessionId, stored: true } } };
       current = removeNativeSession(sessions, key);
     }
     const sessionId = await createAppiumSession(processAdapter, key, platform);
