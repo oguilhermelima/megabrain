@@ -27,6 +27,7 @@ import {
   type PullRequestOptions,
 } from "../../core/worktree-write.js";
 import { repoFromOrca } from "./repository-selector.js";
+import { resolveCaller } from "./queue-write.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 async function run(
@@ -424,6 +425,175 @@ async function workspaceForTarget(
   }
   return ok(undefined);
 }
+function projectRecords(value: unknown): readonly Record<string, unknown>[] {
+  if (Array.isArray(value))
+    return value.filter((entry): entry is Record<string, unknown> => isRecord(entry));
+  if (!isRecord(value)) return [];
+  const projects = value.projects;
+  if (Array.isArray(projects)) return projectRecords(projects);
+  if (isRecord(projects)) return projectRecords(projects);
+  return projectRecords(value.result);
+}
+async function projectIdForPath(
+  process: ProcessAdapter,
+  repoPath: string,
+): Promise<string | undefined> {
+  const listed = await run(process, "superset", ["projects", "list", "--json"]);
+  if (listed.kind !== "ok") return undefined;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(listed.value.stdout);
+  } catch {
+    return undefined;
+  }
+  for (const record of projectRecords(payload)) {
+    const path = stringField(record, ["path", "localPath", "repoPath"]);
+    if (path === repoPath) return stringField(record, ["id", "projectId", "project.id"]);
+  }
+  return undefined;
+}
+async function projectNameForPath(
+  process: ProcessAdapter,
+  repoPath: string,
+): Promise<string> {
+  const listed = await run(process, "orca", ["repo", "list", "--json"]);
+  if (listed.kind === "ok") {
+    try {
+      const payload: unknown = JSON.parse(listed.value.stdout);
+      const result = isRecord(payload) && isRecord(payload.result) ? payload.result : {};
+      const repos = Array.isArray(result.repos) ? result.repos : [];
+      for (const entry of repos) {
+        if (isRecord(entry) && entry.path === repoPath) {
+          const name = stringField(entry, ["displayName"]);
+          if (name !== undefined) return name;
+        }
+      }
+    } catch {
+      // Falls through to the repo directory's basename below.
+    }
+  }
+  return basename(repoPath);
+}
+type SupersetProject = { readonly id: string };
+// Mirrors the retired shell's megabrain_ensure_superset_project: reuse a Superset project already
+// registered for this repository path, or register one (importing the repo under its Orca display
+// name, falling back to the directory's own basename).
+async function ensureSupersetProject(
+  process: ProcessAdapter,
+  repoPath: string,
+): Promise<Result<SupersetProject>> {
+  const existing = await projectIdForPath(process, repoPath);
+  if (existing !== undefined) return ok({ id: existing });
+  const name = await projectNameForPath(process, repoPath);
+  const created = await run(process, "superset", [
+    "projects",
+    "create",
+    "--local",
+    "--import",
+    repoPath,
+    "--name",
+    name,
+    "--json",
+  ]);
+  let id: string | undefined;
+  if (created.kind === "ok") {
+    try {
+      const payload: unknown = JSON.parse(created.value.stdout);
+      if (isRecord(payload))
+        id = stringField(payload, ["result.project.id", "result.id", "project.id", "id"]);
+    } catch {
+      // Falls through to a fresh lookup below.
+    }
+  }
+  if (id === undefined) id = await projectIdForPath(process, repoPath);
+  if (id === undefined) return failed(`could not register Superset project for ${repoPath}`);
+  return ok({ id });
+}
+async function workspaceIdForTarget(
+  process: ProcessAdapter,
+  target: string,
+): Promise<string | undefined> {
+  const listed = await run(process, "superset", ["workspaces", "list", "--local", "--json"]);
+  if (listed.kind !== "ok") return undefined;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(listed.value.stdout);
+  } catch {
+    return undefined;
+  }
+  for (const record of workspaceRecords(payload)) {
+    const branch = stringField(record, ["branch", "git.branch"])?.replace(/^refs\/heads\//, "");
+    const path = stringField(record, ["worktreePath", "path", "worktree.path"]);
+    const name = stringField(record, ["name"]);
+    if (target === branch || target === path || target === name)
+      return stringField(record, ["id", "workspaceId", "workspace.id"]);
+  }
+  return undefined;
+}
+async function updateWorkspaceTag(
+  process: ProcessAdapter,
+  id: string,
+  tag: string,
+): Promise<boolean> {
+  const updated = await run(process, "superset", ["workspaces", "update", id, "--tag", tag, "--json"]);
+  return updated.kind === "ok";
+}
+type WorkspaceRegistration = {
+  readonly id: string;
+  readonly tagSet: boolean;
+  readonly tagError: string | null;
+};
+// Mirrors the retired shell's megabrain_workspace_create: an existing workspace for this branch
+// that also needs a parent tag is only re-tagged (never re-created); otherwise a fresh workspace
+// is opened against the branch, then tagged if a parent grouping was requested.
+async function registerSupersetWorkspace(
+  process: ProcessAdapter,
+  project: SupersetProject,
+  branch: string,
+  slug: string,
+  options: { readonly tag?: string },
+): Promise<Result<WorkspaceRegistration>> {
+  const existingId = await workspaceIdForTarget(process, branch);
+  if (existingId !== undefined && options.tag !== undefined) {
+    const tagSet = await updateWorkspaceTag(process, existingId, options.tag);
+    return ok({
+      id: existingId,
+      tagSet,
+      tagError: tagSet ? null : `Superset workspace tag was not set for ${existingId}`,
+    });
+  }
+  const created = await run(process, "superset", [
+    "workspaces",
+    "create",
+    "--local",
+    "--project",
+    project.id,
+    "--branch",
+    branch,
+    "--name",
+    slug,
+    "--json",
+  ]);
+  let id: string | undefined;
+  if (created.kind === "ok") {
+    try {
+      const payload: unknown = JSON.parse(created.value.stdout);
+      if (isRecord(payload))
+        id = stringField(payload, ["result.workspace.id", "result.id", "workspace.id", "id"]);
+    } catch {
+      // Falls through to a fresh lookup below.
+    }
+  }
+  if (id === undefined) id = await workspaceIdForTarget(process, branch);
+  if (id === undefined) return failed("could not create Superset workspace");
+  if (options.tag === undefined) return ok({ id, tagSet: false, tagError: null });
+  const tagSet = await updateWorkspaceTag(process, id, options.tag);
+  return ok({
+    id,
+    tagSet,
+    tagError: tagSet ? null : `Superset workspace tag was not set for ${branch}`,
+  });
+}
 function removalReason(error: string): string {
   const compact = error.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
   try {
@@ -681,6 +851,30 @@ export async function executeWorktreeCreate(
   }
   const copied = await copyEnvFiles(repo.value, path);
   if (copied.kind !== "ok") return copied;
+  let resolvedParent: { branch: string; tag: string } | undefined;
+  if (value.parent !== undefined) {
+    const resolved = await resolveParent(process, repo.value, value.parent);
+    if (resolved.kind !== "ok") return resolved;
+    resolvedParent = resolved.value;
+  }
+  // A caller running inside a Superset terminal registers the new worktree as a Superset
+  // workspace, the way the retired shell's megabrain_worktree_create did for both plain
+  // `worktree create` and `orchestrate spawn`'s own worktree-creation path. A requested parent
+  // tags the new workspace into the same Superset grouping as its parent worktree.
+  const caller = await resolveCaller(environment, process);
+  let workspaceId: string | null = null;
+  let grouping: { set: boolean; error: string | null } = { set: false, error: null };
+  if (caller.host === "superset") {
+    const project = await ensureSupersetProject(process, repo.value);
+    if (project.kind !== "ok") return project;
+    const registered = await registerSupersetWorkspace(process, project.value, branch, name, {
+      tag: resolvedParent?.tag,
+    });
+    if (registered.kind !== "ok") return registered;
+    workspaceId = registered.value.id;
+    if (resolvedParent !== undefined)
+      grouping = { set: registered.value.tagSet, error: registered.value.tagError };
+  }
   let parent: {
     requested: boolean;
     selector?: string;
@@ -701,21 +895,19 @@ export async function executeWorktreeCreate(
     set: false,
     error: null,
   };
-  if (value.parent !== undefined) {
-    const resolved = await resolveParent(process, repo.value, value.parent);
-    if (resolved.kind !== "ok") return resolved;
+  if (resolvedParent !== undefined) {
     const metadata = await run(process, "git", [
       "-C",
       path,
       "config",
       `branch.${branch}.megabrain-parent`,
-      resolved.value.branch,
+      resolvedParent.branch,
     ]);
     parent = {
       requested: true,
       selector: value.parent,
-      branch: resolved.value.branch,
-      tag: resolved.value.tag,
+      branch: resolvedParent.branch,
+      tag: resolvedParent.tag,
       metadata: {
         set: metadata.kind === "ok",
         error:
@@ -724,7 +916,7 @@ export async function executeWorktreeCreate(
             : `Git stack parent metadata was not recorded for ${branch}`,
       },
       lineage: { set: false, error: null },
-      grouping: { set: false, error: null },
+      grouping,
     };
   }
   if (
@@ -762,7 +954,7 @@ export async function executeWorktreeCreate(
   const result = {
     worktree: path,
     branch,
-    workspace: null,
+    workspace: workspaceId,
     reused: false,
     base,
     baseCommit: resolvedBase.value.commit,
