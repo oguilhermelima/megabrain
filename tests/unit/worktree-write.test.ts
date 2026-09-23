@@ -175,6 +175,59 @@ describe("worktree creation: Superset registration", () => {
   });
 });
 
+// resolveParent (src/cli/commands/worktree-write.ts) resolves `--parent branch:X` by searching
+// `git worktree list --porcelain` for a worktree whose branch matches X. When nothing matches it
+// used to leave `path` as the empty string "" and run `git -C "" ...` unchecked — git treats
+// `-C ""` as no -C at all, so both calls silently ran against the *caller's own* cwd instead of
+// failing. And even once refused, executeWorktreeCreate ran `git worktree add` (creating the
+// branch and worktree) before ever validating `--parent`, so a refusal left a worktree behind.
+describe("worktree creation: parent validation happens before any change", () => {
+  function parentValidationProcess(): { process: ProcessAdapter; calls: string[] } {
+    const calls: string[] = [];
+    const result = (stdout = "", exitCode = 0): Result<ProcessOutput> => ok({ stdout, stderr: "", exitCode });
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (command !== "git") return result();
+        // `-C <emptyPath>` reproduces git's real quirk of falling back to the caller's own cwd:
+        // an implementation that ever issues this call with an empty path would see it "succeed"
+        // exactly like a real, unrelated repository would, masking the refusal.
+        if (args[0] === "-C" && args[1] === "" && args.includes("--show-toplevel")) return result("/unrelated/repo\n");
+        if (args[0] === "-C" && args[1] === "" && args.includes("symbolic-ref")) return result("unrelated-branch\n");
+        if (args.includes("--show-toplevel")) return result(`${args[1]}\n`);
+        if (args.includes("show-ref")) return failed("branch does not exist", 1);
+        if (args.includes("worktree") && args.includes("list")) return result(""); // no worktree matches any branch selector
+        if (args.includes("worktree") && args.includes("add")) return result();
+        if (args.includes("--verify")) return result("base-commit\n");
+        return result();
+      },
+      async startDetached() { return failed("unexpected process invocation"); },
+      invocationCount() { return 0; },
+    };
+    return { process, calls };
+  }
+
+  test("refuses an unresolvable branch selector instead of falling back to the caller's own cwd, before creating anything", async () => {
+    const fixture = await creationFixture();
+    await writeFile(join(fixture.state, "worktree-root"), `${join(fixture.root, "shared")}\n`);
+    try {
+      const { process, calls } = parentValidationProcess();
+      const result = await executeWorktreeCreate(
+        ["--repo", fixture.repo, "--branch", "feat/child", "--base", "main", "--parent", "branch:missing", "--json"],
+        { MEGABRAIN_STATE_DIR: fixture.state },
+        process,
+      );
+      expect(result.kind).toBe("failed");
+      if (result.kind !== "failed") return;
+      expect(result.error).toBe("parent worktree could not be resolved: branch:missing");
+      expect(calls.some((call) => call.startsWith("git -C  "))).toBe(false);
+      expect(calls.some((call) => call.includes("worktree add"))).toBe(false);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("worktree creation shared root", () => {
   test("creates a missing shared root and uses its resolved but unreal path", async () => {
     const fixture = await creationFixture();
