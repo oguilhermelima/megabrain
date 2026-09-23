@@ -728,6 +728,10 @@ async function resolveParent(
         break;
       }
     }
+    // WHY: git treats `-C ""` as no -C at all, so an unmatched branch selector must refuse here
+    // rather than let the calls below silently run against the caller's own cwd instead of the
+    // (nonexistent) parent worktree.
+    if (path === "") return failed(`parent worktree could not be resolved: ${selector}`);
   }
   const top = await run(process, "git", [
     "-C",
@@ -817,6 +821,14 @@ export async function executeWorktreeCreate(
   const repo = await repoFromOrca(process, value.repo as string);
   if (repo.kind !== "ok") return repo;
   const branch = value.branch as string;
+  // Validated before anything is created: an unresolvable --parent must refuse with nothing left
+  // behind, not fail after `git worktree add` has already created the branch and worktree.
+  let resolvedParent: { branch: string; tag: string } | undefined;
+  if (value.parent !== undefined) {
+    const resolved = await resolveParent(process, repo.value, value.parent);
+    if (resolved.kind !== "ok") return resolved;
+    resolvedParent = resolved.value;
+  }
   const resolvedBase = await createBase(process, repo.value, value.from ?? value.base);
   if (resolvedBase.kind !== "ok") return resolvedBase;
   const base = resolvedBase.value.ref;
@@ -851,12 +863,6 @@ export async function executeWorktreeCreate(
   }
   const copied = await copyEnvFiles(repo.value, path);
   if (copied.kind !== "ok") return copied;
-  let resolvedParent: { branch: string; tag: string } | undefined;
-  if (value.parent !== undefined) {
-    const resolved = await resolveParent(process, repo.value, value.parent);
-    if (resolved.kind !== "ok") return resolved;
-    resolvedParent = resolved.value;
-  }
   // A caller running inside a Superset terminal registers the new worktree as a Superset
   // workspace, the way the retired shell's megabrain_worktree_create did for both plain
   // `worktree create` and `orchestrate spawn`'s own worktree-creation path. A requested parent
