@@ -80,8 +80,8 @@ describe("agent registry", () => {
     expect(submitKey("codex")).toEqual({ kind: "ok", value: "Tab" });
     expect(interruptKey("claude")).toEqual({ kind: "ok", value: "Escape" });
     expect(interruptKey("codex")).toEqual({ kind: "ok", value: "Escape" });
-    expect(submitKey("agy")).toMatchObject({ kind: "unknown" });
-    expect(interruptKey("agy")).toMatchObject({ kind: "unknown" });
+    expect(submitKey("agy")).toEqual({ kind: "ok", value: "Enter" });
+    expect(interruptKey("agy")).toEqual({ kind: "ok", value: "Escape" });
   });
 
   test("an unknown agent key is unknown rather than Enter", () => {
@@ -108,13 +108,14 @@ describe("agent registry", () => {
     }
   });
 
-  test("an unsupported agent operation is unknown rather than failed", () => {
+  test("an unrecognised agy screen is unknown rather than failed", () => {
     const agent = getAgent("agy");
     expect(agent).toBeDefined();
     const result = agent?.classifyLiveness("anything");
-    expect(result?.kind).toBe("unknown");
-    if (result?.kind === "unknown") expect(result.reason).toBe("liveness-unavailable: agy has no liveness markers");
+    expect(result?.kind).toBe("ok");
+    if (result?.kind === "ok") expect(result.value).toEqual({ status: "unknown", reason: null });
     expect(classifyLiveness("agy", "anything")).toEqual({ status: "unknown", reason: null });
+    expect(classifyLiveness("agy", "").status).toBe("unknown");
   });
 
   test("the real agents preserve current descriptor and liveness answers", () => {
@@ -126,6 +127,37 @@ describe("agent registry", () => {
     expect(resolveParentContext({ aiAgent: "agy_2026-09-21_agent" }).agent).toBe("agy");
     expect(classifyLiveness("codex", "Working (2s)\nesc to interrupt").status).toBe("working");
     expect(classifyLiveness("claude", "❯").status).toBe("idle");
-    expect(classifyLiveness("agy", "").status).toBe("unknown");
+  });
+
+  // Captured verbatim from real Antigravity CLI 1.2.9 (gemini-3.8-flash-low) in an isolated tmux
+  // pane: the composer box renders a bare "> " at the bottom whether the agent is idle or
+  // generating, so idle cannot be told from the box alone — only the "Generating..." spinner line
+  // above it distinguishes the two, and it must be checked first.
+  const AGY_IDLE_SCREEN = [
+    "────────────────────────────────────────────────────────────",
+    "> say the word banana and nothing else",
+    "",
+    "  banana",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────",
+    ">",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "Gemini 3.8 Flash (Low) 1M │ 22k/1M ctx │ 100% left │ 100% left",
+  ].join("\n");
+
+  const AGY_WORKING_SCREEN = [
+    "────────────────────────────────────────────────────────────",
+    "> count slowly from 1 to 50, one number per line, write out each number in",
+    "  words too",
+    "⣽  Generating...",
+    "────────────────────────────────────────────────────────────────────────────────",
+    ">",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "Gemini 3.8 Flash (Low) 1M │ 22k/1M ctx │ 100% left │ 100% left",
+  ].join("\n");
+
+  test("agy liveness is read from the composer's Generating spinner, not the empty box", () => {
+    expect(classifyLiveness("agy", AGY_IDLE_SCREEN)).toEqual({ status: "idle", reason: "terminal shows an empty Antigravity composer" });
+    expect(classifyLiveness("agy", AGY_WORKING_SCREEN)).toEqual({ status: "working", reason: "terminal shows the Generating indicator" });
   });
 });
