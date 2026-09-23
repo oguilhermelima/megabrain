@@ -291,7 +291,7 @@ async function recreate(process: ProcessAdapter, record: TerminalLifecycleRecord
   const recordHost: Host = record.host === "superset" || record.host === "orca" ? record.host : "unknown";
   const created = await createHost(process, recordHost, record.workspaceId, record.worktree, record.title, command);
   if (created.kind !== "ok") return created;
-  const id = hostId(created.value.value);
+  const id = getHost(recordHost)?.terminalIdentity(created.value.value);
   if (id === undefined || !safeTerminalId(id)) return failed(`${record.host} terminal recreate returned no terminal identity`);
   const pidFromResponse = jsonNumber(created.value.value, [["pid"], ["processId"], ["terminal", "pid"], ["result", "terminal", "pid"], ["result", "pid"]]);
   const pid = pidFromResponse ?? await identityFromHost(process, recordHost, record.workspaceId, id, created.value.launch, 10000);
@@ -353,7 +353,7 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     if (resolvedCommand === undefined) return failed(`no --command given and no .superset/config.json run script found in ${path.value}`, 2);
     const created = await createHost(process, currentHost, workspace ?? null, path.value, title, resolvedCommand);
     if (created.kind !== "ok") return created;
-    const id = hostId(created.value.value);
+    const id = getHost(currentHost)?.terminalIdentity(created.value.value);
     if (id === undefined || !safeTerminalId(id)) return failed(`${currentHost} terminal create returned no terminal identity`);
     const pidFromResponse = jsonNumber(created.value.value, [["pid"], ["processId"], ["terminal", "pid"], ["result", "terminal", "pid"]]);
     const pid = pidFromResponse ?? await identityFromHost(process, currentHost, workspace ?? null, id, created.value.launch, 10000);
