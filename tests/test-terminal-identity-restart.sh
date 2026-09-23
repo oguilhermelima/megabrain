@@ -3,6 +3,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+binary="$root/.build/megabrain"
+[ -x "$binary" ] || {
+  printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"
+  exit 0
+}
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal.XXXXXX")"
 fake_bin="$state_dir/bin"
 fake_port_state="$state_dir/fake-port-state"
@@ -166,104 +171,42 @@ export MEGABRAIN_STATE_DIR="$state_dir"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset ORCA_TERMINAL_HANDLE TMUX TMUX_PANE
 
-source "$root/lib/common.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
-source "$root/lib/module-worktree.sh"
+# terminal (lib/module-worktree.sh) is now a full, unconditional binary passthrough for
+# create/restart/close (confirmed by reading it: every subcommand execs .build/megabrain and
+# returns its exit code, no shell fallback) — so this file drives the binary directly instead of
+# sourcing lib/ for a shell wrapper function that would immediately re-exec the same binary.
+# Everything the binary subprocess itself observes goes through real executables on PATH
+# (fake_bin/superset, fake_bin/lsof, fake_bin/ps, fake_bin/pgrep, fake_bin/kill, written above) —
+# a shell *function* named the same cannot be seen by a separate compiled-binary process at all,
+# so the second, function-based copies of those same fixtures that used to sit here (for the old
+# shell terminal to call) were dead weight even before this rewrite; removed rather than
+# kept as unreachable duplicates.
 
-megabrain_superset_available() { return 0; }
-megabrain_workspace_id_for_target() { printf 'workspace-test\n'; }
-megabrain_terminal_identity_token() { printf 'test-token\n'; }
-
-megabrain_superset() {
-  case "${1:-}:${2:-}" in
-    terminals:create)
-      printf '%s' "${6:-}" >"$fake_create_command_file"
-      # Recreate the listener synchronously; restart must observe a bound port,
-      # not race a process that may bind later.
-      if [ "$(cat "$fake_port_state")" = free ] && [ "$fake_port_stuck" = false ] && [ "$fake_port_recreate_listens" = true ]; then
-        fake_port_bind
-        printf 'yes\n' >"$fake_port_recreated_file"
-      fi
-      if [ "$fake_create_returns_identity" = true ]; then
-        printf '{"terminalId":"%s","pid":%s,"port":%s}\n' "$fake_id" "$fake_pid" "$fake_port"
-      else
-        printf '{"terminalId":"%s"}\n' "$fake_id"
-      fi
-      ;;
-    terminals:read)
-      if [ "$fake_identity_read" = true ]; then
-        printf '{"output":"MEGABRAIN_TERMINAL_PID_test-token=%s"}\n' "$fake_pid"
-      else
-        printf '{"output":"terminal started"}\n'
-      fi
-      ;;
-    terminals:list)
-      printf 'yes\n' >"$fake_status_probe_file"
-      if [ "$fake_host_live" = true ]; then
-        if [ "$fake_process_alive" = true ]; then
-          printf '{"terminals":[{"terminalId":"%s","pid":%s,"port":%s,"exited":false}]}\n' "$fake_id" "$fake_pid" "$fake_port"
-        else
-          printf '{"terminals":[{"terminalId":"%s","pid":%s,"port":%s,"exited":true}]}\n' "$fake_id" "$fake_pid" "$fake_port"
-        fi
-      else
-        printf '{"terminals":[]}\n'
-      fi
-      ;;
-    terminals:close)
-      printf 'yes\n' >"$fake_close_called_file"
-      fake_host_live=false
-      printf '{"terminalId":"%s","status":"disposed"}\n' "$fake_id"
-      ;;
-    *) return 1 ;;
-  esac
+terminal() {
+  MEGABRAIN_STATE_DIR="$state_dir" "$binary" terminal "$@"
 }
 
-# The process commands are fake fixtures. The child is the listener and the parent is
-# the process megabrain recorded when it created the terminal. A naive listener-only kill
-# makes the child respawn; killing the recorded root removes the old tree.
-lsof() {
-  if [ "$(cat "$fake_port_state")" = listening ]; then
-    if [ "$(cat "$fake_port_recreated_file")" = yes ]; then
-      printf 'yes\n' >"$fake_port_wait_observed_file"
-    fi
-    printf '101\n'
-  fi
+terminal_dir="$state_dir/terminals"
+dispatch_dir="$state_dir/dispatches"
+
+# Fixture-only replacement for megabrain_dispatch_meta_write (lib/module-orchestrate.sh),
+# which is production-dead (zero callers anywhere in lib/, megabrain, hooks/): writes just enough
+# of the real meta.json shape to prove a returned terminalId round-trips into dispatch metadata.
+write_dispatch_meta() {
+  local id="$1" terminal_id="$2"
+  mkdir -p "$dispatch_dir/$id/messages" "$dispatch_dir/$id/deliveries"
+  jq -n --arg id "$id" --arg terminalId "$terminal_id" '{dispatchId: $id, terminalId: $terminalId, state: "running"}' \
+    >"$dispatch_dir/$id/meta.json"
 }
 
-ps() {
-  if [ "${1:-}" = -o ] && [ "${2:-}" = ppid= ]; then
-    case "${4:-}" in
-      100) printf '1\n' ;;
-      101) printf '100\n' ;;
-      *) printf '1\n' ;;
-    esac
-  fi
-}
-
-pgrep() {
-  if [ "${1:-}" = -P ]; then
-    case "${2:-}" in
-      100) printf '101\n' ;;
-      *) ;;
-    esac
-  fi
-}
-
-kill() {
-  local signal pid
-  signal="$1"
-  pid="$2"
-  fake_killed="$fake_killed $pid"
-  if [ "$pid" = 100 ]; then
-    printf 'gone\n' >"$fake_tree_state"
-    if [ "$fake_port_stuck" = false ]; then
-      fake_port_set_listening free
-    fi
-  elif [ "$pid" = 101 ] && [ "$(cat "$fake_tree_state")" = alive ]; then
-    fail 'listener-only kill respawned the old process tree'
-  fi
-  return 0
+# Fixture-only replacement for megabrain_terminal_record_write (lib/module-worktree.sh), also
+# production-dead (zero callers): writes the same terminal-record shape directly.
+write_terminal_record() {
+  local id="$1" host="$2" pid_json="$3" port_json="$4" root_pid_json="$5"
+  mkdir -p "$terminal_dir"
+  jq -n --arg terminalId "$id" --arg host "$host" --argjson pid "$pid_json" --argjson port "$port_json" --argjson rootPid "$root_pid_json" \
+    '{terminalId: $terminalId, host: $host, workspaceId: "workspace-test", worktree: "'"$root"'", title: null, command: "run", createdAt: "now", pid: $pid, rootPid: $rootPid, port: $port, status: "active"}' \
+    >"$terminal_dir/$id.json"
 }
 
 scenario_create_json_preserves_identity() {
@@ -271,14 +214,13 @@ scenario_create_json_preserves_identity() {
   fake_id=terminal-create
   fake_pid=100
   fake_port=8082
-  output="$(command_terminal create --worktree "$root" --command 'run server' --title "$fake_title" --json)"
+  output="$(terminal create --worktree "$root" --command 'run server' --title "$fake_title" --json)"
   assert_json_true "$output" '.terminalId == "terminal-create" and .pid == 100 and .port == 8082'
-  record="$MEGABRAIN_TERMINAL_DIR/terminal-create.json"
+  record="$terminal_dir/terminal-create.json"
   [ -f "$record" ] || fail 'create did not persist a terminal record'
   dispatch_id=identity-dispatch
-  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal superset superset workspace-test \
-    "$(jq -r '.terminalId' <<<"$output")" "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
-  assert_equal "$(jq -r '.terminalId' "$MEGABRAIN_DISPATCH_DIR/$dispatch_id/meta.json")" terminal-create
+  write_dispatch_meta "$dispatch_id" "$(jq -r '.terminalId' <<<"$output")"
+  assert_equal "$(jq -r '.terminalId' "$dispatch_dir/$dispatch_id/meta.json")" terminal-create
   printf 'create --json returns the identity used by dispatch metadata\n'
 }
 
@@ -290,36 +232,36 @@ scenario_restart_selectors() {
   fake_id=terminal-create
   fake_pid=100
   fake_port=8082
-  output="$(command_terminal restart id:terminal-create --timeout 0 --json)"
+  output="$(terminal restart id:terminal-create --timeout 0 --json)"
   assert_json_true "$output" '.selector == "id:terminal-create" and .killedPid == 100 and .recreated == true'
 
   fake_id=terminal-title
   fake_pid=100
   fake_port=8083
   fake_title='DEV title'
-  command_terminal create --worktree "$root" --command 'run title' --title "$fake_title" --json >/dev/null
+  terminal create --worktree "$root" --command 'run title' --title "$fake_title" --json >/dev/null
   fake_port_set_listening listening
-  output="$(command_terminal restart "title:$fake_title" --timeout 0 --json)"
+  output="$(terminal restart "title:$fake_title" --timeout 0 --json)"
   assert_json_true "$output" '.selector == "title:DEV title" and .recreated == true'
 
   fake_id=terminal-port
   fake_pid=100
   fake_port=8084
-  command_terminal create --worktree "$root" --command 'run port' --title 'DEV port' --json >/dev/null
+  terminal create --worktree "$root" --command 'run port' --title 'DEV port' --json >/dev/null
   fake_port_set_listening listening
-  output="$(command_terminal restart port:8084 --timeout 0 --json)"
+  output="$(terminal restart port:8084 --timeout 0 --json)"
   assert_json_true "$output" '.selector == "port:8084" and .recreated == true'
 
   fake_id=terminal-worktree
   fake_pid=100
   fake_port=8085
-  command_terminal create --worktree "$root" --command 'run worktree' --title 'DEV worktree' --json >/dev/null
+  terminal create --worktree "$root" --command 'run worktree' --title 'DEV worktree' --json >/dev/null
   fake_port_set_listening listening
-  output="$(command_terminal restart "worktree:$root" --timeout 0 --json)"
+  output="$(terminal restart "worktree:$root" --timeout 0 --json)"
   assert_equal "$(jq -r '.selector' <<<"$output")" "worktree:$root"
   assert_json_true "$output" '.recreated == true'
 
-  if failure_output="$(command_terminal restart id:missing --timeout 0 2>&1)"; then
+  if failure_output="$(terminal restart id:missing --timeout 0 2>&1)"; then
     fail 'unresolvable selector unexpectedly succeeded'
   fi
   assert_contains "$failure_output" 'terminal selector could not be resolved'
@@ -339,9 +281,9 @@ scenario_restart_safety_and_wait() {
   printf 'no\n' >"$fake_port_wait_observed_file"
   fake_port_bind
   fake_port_confirm_listening
-  command_terminal create --worktree "$root" --command 'run tree' --title 'DEV tree' --json >/dev/null
+  terminal create --worktree "$root" --command 'run tree' --title 'DEV tree' --json >/dev/null
   fake_port_confirm_listening
-  output="$(command_terminal restart id:terminal-tree --wait-port 8090 --timeout 2 --json)"
+  output="$(terminal restart id:terminal-tree --wait-port 8090 --timeout 2 --json)"
   assert_json_true "$output" '.recreated == true and .port == 8090'
   [ "$(cat "$fake_port_wait_observed_file")" = yes ] || fail 'restart returned without observing the recreated listener'
   [ "$(cat "$fake_tree_state")" = gone ] || fail 'restart did not kill the recorded process root'
@@ -352,9 +294,9 @@ scenario_restart_safety_and_wait() {
   fake_port_stuck=false
   fake_port_recreate_listens=false
   fake_port_set_listening listening
-  command_terminal create --worktree "$root" --command 'run timeout' --title 'DEV timeout' --json >/dev/null
+  terminal create --worktree "$root" --command 'run timeout' --title 'DEV timeout' --json >/dev/null
   fake_port_confirm_listening
-  if failure_output="$(command_terminal restart id:terminal-timeout-listening --wait-port 8091 --timeout 0 2>&1)"; then
+  if failure_output="$(terminal restart id:terminal-timeout-listening --wait-port 8091 --timeout 0 2>&1)"; then
     fail 'a listener that never returns unexpectedly succeeded'
   fi
   assert_contains "$failure_output" 'timed out waiting for port 8091 to listen again'
@@ -365,15 +307,15 @@ scenario_restart_safety_and_wait() {
   fake_port_stuck=true
   fake_port_recreate_listens=true
   fake_port_set_listening listening
-  command_terminal create --worktree "$root" --command 'run timeout' --title 'DEV timeout' --json >/dev/null
-  if failure_output="$(command_terminal restart id:terminal-timeout-free --timeout 0 2>&1)"; then
+  terminal create --worktree "$root" --command 'run timeout' --title 'DEV timeout' --json >/dev/null
+  if failure_output="$(terminal restart id:terminal-timeout-free --timeout 0 2>&1)"; then
     fail 'port-free timeout unexpectedly succeeded'
   fi
   assert_contains "$failure_output" 'timed out waiting for port 8092 to become free'
 
   fake_port_stuck=false
   fake_port_set_listening free
-  if failure_output="$(command_terminal restart port:8092 --timeout 0 2>&1)"; then
+  if failure_output="$(terminal restart port:8092 --timeout 0 2>&1)"; then
     fail 'a non-listening port unexpectedly resolved'
   fi
   assert_contains "$failure_output" 'port 8092 is not listening'
@@ -388,9 +330,9 @@ scenario_create_marker_identity() {
   fake_host_live=true
   fake_create_returns_identity=false
   fake_identity_read=true
-  output="$(command_terminal create --worktree "$root" --command 'run marker' --title 'DEV marker' --port 8086 --json)"
+  output="$(terminal create --worktree "$root" --command 'run marker' --title 'DEV marker' --port 8086 --json)"
   assert_json_true "$output" '.terminalId == "terminal-marker" and .pid == 333 and .rootPid == 333 and .port == 8086'
-  record="$MEGABRAIN_TERMINAL_DIR/terminal-marker.json"
+  record="$terminal_dir/terminal-marker.json"
   assert_equal "$(jq -r '.command' "$record")" 'run marker'
   assert_contains "$(cat "$fake_create_command_file")" 'MEGABRAIN_TERMINAL_PID_'
   printf 'create wraps the command and persists its self-reported root identity\n'
@@ -406,9 +348,9 @@ scenario_restart_marker_identity() {
   fake_create_returns_identity=false
   fake_identity_read=true
   fake_port_set_listening listening
-  output="$(command_terminal create --worktree "$root" --command 'run restart' --port 8088 --json)"
+  output="$(terminal create --worktree "$root" --command 'run restart' --port 8088 --json)"
   fake_port_set_listening listening
-  output="$(command_terminal restart id:terminal-marker-restart --timeout 0 --json)"
+  output="$(terminal restart id:terminal-marker-restart --timeout 0 --json)"
   assert_json_true "$output" '.killedPid == 100 and .recreated == true'
   printf 'restart reaches an identity obtained from the create marker\n'
 }
@@ -421,9 +363,9 @@ scenario_close_lifecycle() {
   fake_host_live=true
   fake_create_returns_identity=true
   printf 'no\n' >"$fake_close_called_file"
-  command_terminal create --worktree "$root" --command 'run close' --port 8089 --json >/dev/null
-  record="$MEGABRAIN_TERMINAL_DIR/terminal-close.json"
-  output="$(command_terminal close id:terminal-close --json)"
+  terminal create --worktree "$root" --command 'run close' --port 8089 --json >/dev/null
+  record="$terminal_dir/terminal-close.json"
+  output="$(terminal close id:terminal-close --json)"
   assert_json_true "$output" '.status == "closed" and .recordRemoved == true and .identity == "recorded"'
   [ "$(cat "$fake_close_called_file")" = yes ] || fail 'close did not call the host'
   [ ! -f "$record" ] || fail 'close did not remove the terminal record'
@@ -431,16 +373,16 @@ scenario_close_lifecycle() {
   fake_id=terminal-no-identity
   fake_host_live=true
   printf 'no\n' >"$fake_close_called_file"
-  megabrain_terminal_record_write terminal-no-identity superset workspace-test "$root" 'DEV no identity' 'run no identity' now null null null
-  output="$(command_terminal close id:terminal-no-identity --json)"
+  write_terminal_record terminal-no-identity superset null null null
+  output="$(terminal close id:terminal-no-identity --json)"
   assert_json_true "$output" '.status == "closed" and .recordRemoved == true and .identity == "unavailable"'
   [ "$(cat "$fake_close_called_file")" = yes ] || fail 'close skipped a host terminal without process identity'
 
   fake_id=terminal-forgotten
   fake_host_live=false
   printf 'no\n' >"$fake_close_called_file"
-  megabrain_terminal_record_write terminal-forgotten superset workspace-test "$root" 'DEV forgotten' 'run forgotten' now 337 8090 337
-  if failure_output="$(command_terminal close id:terminal-forgotten --json 2>/dev/null)"; then
+  write_terminal_record terminal-forgotten superset 337 8090 337
+  if failure_output="$(terminal close id:terminal-forgotten --json 2>/dev/null)"; then
     fail 'close claimed success for a terminal forgotten by the host'
   fi
   assert_json_true "$failure_output" '.status == "stale" and .recordRemoved == true'
