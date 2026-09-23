@@ -34,4 +34,12 @@ describe("acknowledgeDelivery", () => {
   test("refuses a delivery owned by another consumer or generation", () => {
     expect(acknowledgeDelivery("outstanding", "other", 2, "orca/parent", 3)).toEqual({ kind: "failed", error: "delivery delivery refused: outstanding delivery belongs to consumer other generation 2", exitCode: 1 });
   });
+
+  test("explains an unclaimed delivery instead of naming an empty consumer", () => {
+    expect(acknowledgeDelivery("outstanding", "", 0, "orca/parent", 3)).toEqual({
+      kind: "failed",
+      error: "delivery delivery refused: delivery has not been read by this consumer; run megabrain orchestrate watch <dispatch-id> --full first",
+      exitCode: 1,
+    });
+  });
 });
