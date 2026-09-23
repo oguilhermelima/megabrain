@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import {
+  CALLER_IDENTITY_ENV_VARS,
   hasCallerIdentity,
   ownsDispatch,
   resolveCallerIdentity,
@@ -19,6 +20,7 @@ import { executeOrchestrateLiveness, executeOrchestrateRead } from "../../src/cl
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "../../src/cli/commands/orchestrate-parent.js";
+import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -469,5 +471,82 @@ describe("spawn refuses a tmux spawn from an unknown caller host", () => {
     // unknown one.
     if (result.kind === "failed") expect(result.error).not.toContain("unknown caller host");
     expect(process.calls.some((call) => call.command === "tmux")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A child must not inherit its parent's caller identity (tmux copies the spawner's whole
+// environment into a new pane; a host terminal's shell can too).
+// ---------------------------------------------------------------------------
+
+describe("spawn starts children without the parent's identity", () => {
+  test("clears every caller-identity variable on the tmux launch line", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-caller-identity-tmux-clear-`);
+    const dispatchId = "dispatch-clear-tmux";
+    const commandTexts: string[] = [];
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => { commandTexts.push(text); return ok(undefined); },
+      sendKey: async () => ok(undefined),
+    });
+    const worktree: SpawnWorktree = { path: "/work/tree", branch: "feat/example", ownership: "existing", workspaceId: null };
+    const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%1\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(
+        ["--worktree", "/work/tree", "--agent", "claude", "--prompt", "hi", "--tmux", "true"],
+        {
+          MEGABRAIN_STATE_DIR: root,
+          MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
+          MEGABRAIN_SESSION_ID: "parent-1",
+          MEGABRAIN_SESSION_HOST: "orca",
+          MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+          MEGABRAIN_AGENT_READY_TIMEOUT_MS: "50",
+        },
+        process,
+        { resolveWorktree: async () => ok(worktree) },
+      );
+      const commandText = commandTexts.find((text) => !text.startsWith("[megabrain dispatch")) ?? "";
+      expect(commandText).not.toBe("");
+      for (const name of CALLER_IDENTITY_ENV_VARS) expect(commandText).toContain(`-u ${name}`);
+      expect(commandText).toContain("MEGABRAIN_STATE_DIR=");
+      expect(commandText).toContain("MEGABRAIN_DISPATCH_ID=");
+      expect(commandText).toContain("MEGABRAIN_TMUX_SESSION=");
+      expect(commandText).toContain("MEGABRAIN_TMUX_PANE=");
+    } finally {
+      registerTmux(original);
+    }
+  });
+
+  test("clears every caller-identity variable on the host --command launch line", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-caller-identity-host-clear-`);
+    const dispatchId = "dispatch-clear-host";
+    const worktree: SpawnWorktree = { path: "/work/tree", branch: "feat/example", ownership: "existing", workspaceId: null };
+    const process = fakeProcess((command, args) => {
+      if (command === "orca" && args[0] === "terminal" && args[1] === "create") {
+        return ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 });
+      }
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    await executeSpawn(
+      ["--worktree", "/work/tree", "--agent", "claude", "--prompt", "hi", "--tmux", "false"],
+      {
+        MEGABRAIN_STATE_DIR: root,
+        MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
+        MEGABRAIN_SESSION_ID: "parent-1",
+        MEGABRAIN_SESSION_HOST: "orca",
+        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      },
+      process,
+      { resolveWorktree: async () => ok(worktree) },
+    );
+    const sendCall = process.calls.find((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "send" && call.args.some((arg) => arg.includes("MEGABRAIN_DISPATCH_ID")));
+    const text = sendCall?.args[sendCall.args.indexOf("--text") + 1] ?? "";
+    expect(text).not.toBe("");
+    for (const name of CALLER_IDENTITY_ENV_VARS) expect(text).toContain(`-u ${name}`);
+    expect(text).toContain("MEGABRAIN_STATE_DIR=");
+    expect(text).toContain("MEGABRAIN_DISPATCH_ID=");
+    expect(text).toContain("ORCA_TERMINAL_HANDLE='child-terminal'");
   });
 });

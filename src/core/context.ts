@@ -13,6 +13,23 @@ export type ContextEnvironment = CallerEnvironment & {
   readonly parent?: ParentEnvironment;
 };
 
+// The environment variable names resolveCallerIdentity reads to identify a caller. A child
+// launched by `orchestrate spawn` must never inherit these from its parent process — tmux copies
+// the spawner's whole environment into a new pane, and a host terminal's shell can too — or the
+// child would resolve as its parent's own identity and pass the parent's ownership checks. Spawn
+// clears exactly this list (env -u) on both the tmux and the host launch line. Kept as one
+// constant next to the resolver that reads these same names so the two cannot drift apart.
+export const CALLER_IDENTITY_ENV_VARS = [
+  "MEGABRAIN_SESSION_ID",
+  "MEGABRAIN_SESSION_HOST",
+  "CLAUDE_CODE_SESSION_ID",
+  "CODEX_THREAD_ID",
+  "ORCA_STRUCTURED_SESSION",
+  "ORCA_AGENT_SESSION_SPAWN_TOKEN",
+  "ORCA_TERMINAL_HANDLE",
+  "SUPERSET_TERMINAL_ID",
+] as const;
+
 // The caller-identity environment: every field a "who is running this command" decision can draw
 // on, across megabrain context, orchestrate spawn, and every parent/child verb. One shape, one
 // set of field names, so every call site maps its own process.env the same way.
