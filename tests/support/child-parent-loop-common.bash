@@ -372,7 +372,9 @@ run_flow() {
     spawn_choice=false
   fi
   timing_mark 'setup'
-  chain_output="$(command_chain_run loop --parent-agent codex --worktree "$root" --prompt chain-launch --tmux "$spawn_choice" --json)"
+  # command_chain_run no longer exists in shell; `run` is routed to the compiled
+  # binary through command_chain like every other migrated chain verb.
+  chain_output="$(command_chain run loop --parent-agent codex --worktree "$root" --prompt chain-launch --tmux "$spawn_choice" --json)"
   assert_equal "$(printf '%s' "$chain_output" | jq -r '.step')" 1
   assert_equal "$(printf '%s' "$chain_output" | jq -r '.agent')" codex
   dispatch_id="$(printf '%s' "$chain_output" | jq -r '.dispatch.dispatchId // empty')"
