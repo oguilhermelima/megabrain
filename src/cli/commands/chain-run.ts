@@ -152,13 +152,27 @@ function buildSpawnArgs(options: Readonly<{
   return args;
 }
 
-async function updateDispatchChainContext(root: string, dispatchId: string, prompt: string): Promise<void> {
+// Ports the chain half of megabrain_dispatch_meta_write's meta shape (the shell function that
+// used to populate a fresh dispatch's .chain field from the walk's MEGABRAIN_CHAIN_NAME/STEP/
+// TOTAL/REASON/DEFAULT globals — see git show 150d8d4:lib/module-orchestrate.sh) plus
+// megabrain_dispatch_meta_update_chain_context's later .chain.prompt merge, combined into one
+// post-spawn write instead of two: executeSpawn's meta creation has no channel for chain-run.ts
+// to pass this through (its interface is the same CLI-shaped argument list `orchestrate spawn`
+// itself accepts, and --chain is deliberately not one of its options), so the whole {name, step,
+// total, reason, usedDefault, prompt} object is written here immediately after a successful
+// spawn instead. This is what continueRefusedChain reads back to resume a chain after a
+// usage-limit refusal — without it (the state before this fix) meta.chain was always null and
+// that continuation could never fire at all, regardless of the --tmux mapping fixed alongside it.
+async function writeDispatchChainContext(
+  root: string,
+  dispatchId: string,
+  chain: Readonly<{ name: string; step: number; total: number; reason: string; usedDefault: boolean; prompt: string }>,
+): Promise<void> {
   try {
     const path = await dispatchPath(root, dispatchId, "meta.json");
     const meta = await readJson(path);
-    if (meta === undefined || typeof meta.chain !== "object" || meta.chain === null) return;
-    const chain = meta.chain as Record<string, unknown>;
-    await atomicJson(path, { ...meta, chain: { ...chain, prompt }, updatedAt: new Date().toISOString() });
+    if (meta === undefined) return;
+    await atomicJson(path, { ...meta, chain: { ...chain }, updatedAt: new Date().toISOString() });
   } catch { /* best effort, matches megabrain_dispatch_meta_update_chain_context's `|| true` caller */ }
 }
 
@@ -282,7 +296,9 @@ async function walkChainSteps(
         : undefined;
       if (dispatchId !== undefined) {
         await maybeSendUsageNotice(root, dispatchId, config, environment, processAdapter);
-        await updateDispatchChainContext(root, dispatchId, options.prompt);
+        await writeDispatchChainContext(root, dispatchId, {
+          name: reportChain, step: stepNumber, total: steps.length, reason: finalReason, usedDefault, prompt: options.prompt,
+        });
       }
       const body: ReportBody = { ok: true, chain: reportChain, step: stepNumber, totalSteps: steps.length, agent, reason: finalReason, skipped, dispatch: spawnJson };
       return okWithStderr(reportOutput(body, options.json, spawnOutput), undefined, stderrLines.join("") || undefined);
@@ -369,16 +385,17 @@ export async function executeChainRun(
 // Ports megabrain_chain_continue_refused, the shell function hooks/megabrain-turn-end.sh reaches
 // (through megabrain_chain_walk) to resume a chain at its next step after detecting a usage-limit
 // refusal in a dispatch's pane. Reads the same dispatch.chain.{name,step,total,usedDefault,prompt}
-// fields the shell reads, re-selects the same step list (defaultSteps or a named chain, never via
+// fields the shell reads (now actually populated — see writeDispatchChainContext above; the
+// shell's own megabrain_dispatch_meta_write, the only thing that ever wrote them, had lost its
+// last caller before this port even started, so this continuation was already unreachable
+// end-to-end), re-selects the same step list (defaultSteps or a named chain, never via
 // selectChain's own when-matching — the step was already chosen once, at the original chain run),
 // and resumes the shared walkChainSteps loop one step past the refused one.
 //
-// WHY meta.runtime is passed through as the literal string "tmux"/"host" rather than "true"/"false":
-// this mirrors megabrain_chain_continue_refused exactly (`runtime=tmux; ...; megabrain_chain_walk ...
-// "$runtime" ...` feeds that literal into chain_run_spawn's tmux_choice, which becomes `--tmux
-// tmux|host`). executeSpawn's --tmux parser only accepts true/false, so today this value makes the
-// resumed step's spawn fail immediately, recorded as a launch failure like any other. That is a
-// preexisting shell defect, not something this port introduces or corrects — see the lane report.
+// meta.runtime maps to orchestrate spawn's --tmux true/false (not the literal string "tmux"/"host"
+// megabrain_chain_continue_refused passed into chain_run_spawn's tmux_choice, which --tmux's
+// true/false-only parser always rejected): a deliberate behaviour change, not a faithful port of
+// that mapping, since preserving it would keep this continuation permanently unable to spawn.
 export async function continueRefusedChain(
   dispatchId: string,
   environment: ChainRunEnvironment,
@@ -419,7 +436,7 @@ export async function continueRefusedChain(
   const spawn = dependencies.spawn ?? executeSpawn;
   const options: ChainWalkOptions = {
     worktree, repo: undefined, branch: undefined, base: undefined, slug: undefined,
-    prompt, label, tmuxChoice: runtime === "tmux" ? "tmux" : "host",
+    prompt, label, tmuxChoice: runtime === "tmux" ? "true" : "false",
     browser: false, agentArgs: [], json: false,
   };
   return walkChainSteps(

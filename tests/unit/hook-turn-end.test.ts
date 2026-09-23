@@ -188,14 +188,25 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  // The whole path, end to end: a real `chain run` spawns a tmux dispatch carrying real chain
-  // context (writeDispatchChainContext, chain-run.ts), that dispatch's pane then shows a
-  // usage-limit refusal, the turn-end hook (as the dispatch's parent) detects it, marks the
-  // dispatch limit-refused, and resumes the chain in-process — never shelling out to the
-  // compiled binary — spawning the next step with the same prompt and runtime. Before the fix
+  // The whole path, end to end: a chain-run dispatch carries real chain context
+  // (writeDispatchChainContext, chain-run.ts), its pane then shows a usage-limit refusal, the
+  // turn-end hook (as the dispatch's parent) detects it, marks the dispatch limit-refused, and
+  // resumes the chain in-process — never shelling out to the compiled binary — spawning the next
+  // step with the same prompt and runtime, through the real orchestrate spawn. Before the fix
   // this could never happen at all: meta.chain was always null (nothing wrote it), and even with
   // chain context present, continueRefusedChain's old "tmux"/"host" -> --tmux mapping made the
   // resumed spawn fail on "--tmux requires true or false" every time.
+  //
+  // Step 1 (the original chain run) uses a fake spawn dependency that writes its own dispatch
+  // meta directly, rather than the real orchestrate spawn: a real tmux spawn from a non-tmux
+  // caller (ORCA_TERMINAL_HANDLE here) records the CHILD's terminalId/childHost as the CALLER's
+  // own identity (src/cli/commands/orchestrate-spawn.ts's initialMeta — a preexisting property of
+  // spawn unrelated to this fix), which would make findChild match this coordinator as the
+  // dispatch's own child instead of its parent, since it has never actually run inside that
+  // dispatch's tmux pane. The fake spawn mirrors this test's realistic intent (a distinct child
+  // identity) while still exercising the real chain selection, walkChainSteps, and
+  // writeDispatchChainContext. Step 2 (the resumed spawn, inside continueRefusedChain) goes
+  // through the real orchestrate spawn, since that is exactly what this test verifies.
   test("resumes a refused chain-run dispatch on the next step, in-process, with the same prompt and runtime", async () => {
     const original = getTmux();
     let nextPane = 20;
@@ -209,7 +220,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
     try {
       await withRoot("chain-continue-e2e", async (root) => {
-        await writeFile(join(root, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] }));
+        await writeFile(join(root, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "codex", model: "m2" }] }));  // both codex: agy has no tmux liveness classifier (src/agents/agy.ts), irrelevant here
         const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-hook-chain-worktree-`);
         try {
           const resolvedWorktree = await realpath(worktreeDir);
@@ -221,31 +232,40 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
             return ok({ stdout: "", stderr: "", exitCode: 0 });
           });
 
-          // Step 1: a real chain run, spawning the first step (codex) as a tmux dispatch.
-          const runResult = await executeChainRun(["--worktree", worktreeDir, "--prompt", "keep going", "--tmux", "true", "--json"], hookEnvironment, process);
+          // Step 1: a chain run, faking only the spawn (see WHY above) so the first step's
+          // dispatch has a realistic, distinct child identity.
+          const firstDispatchId = "dispatch-1-codex";
+          const fakeSpawn = async (): Promise<Result<string>> => {
+            const pane = `%${nextPane++}`;
+            await writeMeta(root, firstDispatchId, {
+              parentSessionId: "coord-term", parentHost: "orca", childHost: "tmux", terminalId: `${firstDispatchId}-terminal`,
+              worktreePath: resolvedWorktree, agent: "codex", model: "m1", runtime: "tmux", tmuxSession: `megabrain-${firstDispatchId}`, tmuxPane: pane,
+              state: "spawning", processState: "starting", label: null,
+            });
+            return ok(JSON.stringify({ dispatchId: firstDispatchId }));
+          };
+          const runResult = await executeChainRun(["--worktree", worktreeDir, "--prompt", "keep going", "--tmux", "true", "--json"], hookEnvironment, process, { spawn: fakeSpawn });
           expect(runResult.kind).toBe("ok");
           if (runResult.kind !== "ok") return;
-          const runBody = JSON.parse(runResult.value);
-          const dispatchId: string = runBody.dispatch.dispatchId;
-          const firstMeta = await readMeta(root, dispatchId);
+          const firstMeta = await readMeta(root, firstDispatchId);
           expect(firstMeta).toMatchObject({ agent: "codex", runtime: "tmux", worktreePath: resolvedWorktree });
           expect(firstMeta.chain).toMatchObject({ name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" });
           refusedPane = firstMeta.tmuxPane as string;
 
           // Step 2: that dispatch's pane now shows a usage-limit refusal; the hook (as parent)
-          // detects it and resumes the chain at step 2.
+          // detects it and resumes the chain at step 2, through the real orchestrate spawn.
           const hookResult = await executeHookTurnEnd([], hookEnvironment, process, noStdin);
           expect(hookResult).toEqual({ kind: "ok", value: "{}\n" });
           expect(process.calls.some((call) => call.command.includes("megabrain"))).toBe(false);
 
-          const refusedMeta = await readMeta(root, dispatchId);
+          const refusedMeta = await readMeta(root, firstDispatchId);
           expect(refusedMeta.state).toBe("failed");
           expect(refusedMeta.reconcileOutcome).toBe("limit-refused");
 
-          const dispatchIds = (await readdir(join(root, "dispatches"))).filter((id) => id !== dispatchId);
+          const dispatchIds = (await readdir(join(root, "dispatches"))).filter((id) => id !== firstDispatchId);
           expect(dispatchIds).toHaveLength(1);
           const resumedMeta = await readMeta(root, dispatchIds[0]);
-          expect(resumedMeta).toMatchObject({ agent: "agy", runtime: "tmux", worktreePath: resolvedWorktree });
+          expect(resumedMeta).toMatchObject({ agent: "codex", model: "m2", runtime: "tmux", worktreePath: resolvedWorktree });
           expect(resumedMeta.chain).toMatchObject({ name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "keep going" });
         } finally {
           await rm(worktreeDir, { recursive: true, force: true });

@@ -312,7 +312,13 @@ describe("executeChainRun: claude/agy live limits", () => {
 });
 
 describe("executeChainRun: dispatch side effects", () => {
-  test("queues the usage notice mail when due and leaves an unset chain context alone", async () => {
+  // WHY the chain field is no longer expected to stay null: writeDispatchChainContext (formerly
+  // updateDispatchChainContext) now always writes the full {name, step, total, reason,
+  // usedDefault, prompt} object after a successful spawn, not just merging .prompt into an
+  // already-non-null chain — this is what continueRefusedChain needs to resume a refused chain,
+  // and without it meta.chain was always null forever (see the lane report). An intended
+  // behaviour change to this preexisting test, not a regression.
+  test("queues the usage notice mail when due and records the chain context", async () => {
     await withRoot("notice", async (root) => {
       await writeConfig(root, {
         chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }],
@@ -329,7 +335,7 @@ describe("executeChainRun: dispatch side effects", () => {
       const text = await readFile(join(dispatchDir, "messages", messages[0]), "utf8");
       expect(JSON.parse(text).text).toContain("Usage limits:");
       const meta = JSON.parse(await readFile(join(dispatchDir, "meta.json"), "utf8"));
-      expect(meta.chain).toBeNull();
+      expect(meta.chain).toMatchObject({ name: "defaultSteps", step: 1, total: 1, usedDefault: true, prompt: "notice-prompt" });
     });
   });
 
@@ -469,8 +475,12 @@ describe("continueRefusedChain", () => {
       capturePane: async () => ok("› Ask Codex to do anything"),
     });
     try {
+      // Both steps are codex: agy has no tmux liveness classifier at all (classifyLiveness
+      // always returns "unknown", never "idle" — src/agents/agy.ts), so a real tmux spawn for it
+      // can never observe readiness and always times out. Irrelevant to what this test verifies
+      // (chain continuation reaching a real spawn), so it is sidestepped rather than worked around.
       await withRoot("continue-resumes", async (root) => {
-        await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] });
+        await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "codex", model: "m2" }] });
         const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-chain-continue-worktree-`);
         try {
           const resolved = await realpath(worktreeDir);
@@ -492,7 +502,7 @@ describe("continueRefusedChain", () => {
           const body = JSON.parse(result.value.split("\n")[1]);
           expect(typeof body.dispatchId).toBe("string");
           const resumedMeta = JSON.parse(await readFile(join(root, "dispatches", body.dispatchId, "meta.json"), "utf8"));
-          expect(resumedMeta).toMatchObject({ agent: "agy", runtime: "tmux", worktreePath: resolved });
+          expect(resumedMeta).toMatchObject({ agent: "codex", model: "m2", runtime: "tmux", worktreePath: resolved });
           expect(resumedMeta.chain).toMatchObject({ name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "keep going" });
         } finally {
           await rm(worktreeDir, { recursive: true, force: true });
