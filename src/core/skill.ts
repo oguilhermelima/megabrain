@@ -315,6 +315,9 @@ export function skillSyncDoctor(environment: Environment): SkillSyncDoctorReport
 export function shouldReconcileSkillsAtStartup(args: readonly string[]): boolean {
   if (args.includes("--help")) return false;
   if (args[0] === "doctor") return false;
+  // The turn-end hook runs on every agent turn, for every agent, forever — it is the one
+  // hot-path command in this binary. The shell hook it replaces never ran skill reconcile.
+  if (args[0] === "hook") return false;
   return true;
 }
 
