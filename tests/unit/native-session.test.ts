@@ -133,6 +133,29 @@ describe("native Appium session store", () => {
     expect(posts).toHaveLength(1);
   });
 
+  // WHY this exists (see native.ts's own comment above appiumSession): a reused session must
+  // return identical health output to a freshly created one, since both are equally valid
+  // sources for the same live app. The probe-reuse branch of appiumSession returned its result as
+  // `{ sessionId, stored }` directly instead of nested under `{ session: { sessionId, stored } }`
+  // (the shape AppiumSessionAttempt and every other branch use), so nativeHealth's
+  // `session.value.session !== undefined` check never matched a reused session and silently
+  // skipped the /source read -- the tree came back "unknown" on every call after the first.
+  test("reads the accessibility tree from a reused session, not just a freshly created one", async () => {
+    const directory = await fixture();
+    const processAdapter = statefulServerProcessStub();
+
+    const first = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--json"], { MEGABRAIN_STATE_DIR: directory }, processAdapter);
+    const second = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--json"], { MEGABRAIN_STATE_DIR: directory }, processAdapter);
+
+    expect(first.kind).toBe("ok");
+    expect(second.kind).toBe("ok");
+    if (first.kind !== "ok" || second.kind !== "ok") return;
+    const firstTree = (JSON.parse(first.value) as { tree: { count: number | null } }).tree;
+    const secondTree = (JSON.parse(second.value) as { tree: { count: number | null } }).tree;
+    expect(firstTree.count).toBeGreaterThan(0);
+    expect(secondTree).toEqual(firstTree);
+  });
+
   test("sends the complete headless capability set for every new session", async () => {
     const directory = await fixture();
     const processAdapter = processStub();
