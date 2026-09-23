@@ -66,7 +66,11 @@ exit 1
 EOF
 chmod +x "$tmux_drift_bin/tmux"
 printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$MEGABRAIN_STATE_DIR/state.json"
-tmux_drift_json="$(PATH="$tmux_drift_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" HOME="$tmux_drift_home" "$root/.build/megabrain" doctor tmux-runtime --json 2>/dev/null)"
+# WHY: the compiled doctor exits non-zero for a non-ok report (executeDoctor's unhealthy exit
+# code), and that is exactly what this scenario expects — under this file's `set -e`, a plain
+# `var="$(cmd)"` assignment aborts the whole script the instant `cmd` returns non-zero, silently,
+# with no FAIL message. `|| true` keeps the expected non-zero exit from being fatal.
+tmux_drift_json="$(PATH="$tmux_drift_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" HOME="$tmux_drift_home" "$root/.build/megabrain" doctor tmux-runtime --json 2>/dev/null || true)"
 [ "$(printf '%s' "$tmux_drift_json" | jq -r '.status')" != ok ] || fail 'tmux doctor reported ok while all drift fields were false'
 printf 'scenario 2: tmux drift is non-ok\n'
 
