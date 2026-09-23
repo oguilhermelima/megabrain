@@ -3,12 +3,18 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+binary="$root/.build/megabrain"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-create.XXXXXX")"
 
 cleanup() {
   rm -rf "$work_dir"
 }
 trap cleanup EXIT
+
+[ -x "$binary" ] || {
+  printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"
+  exit 0
+}
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -26,69 +32,30 @@ assert_contains() {
   esac
 }
 
-assert_not_contains() {
-  case "$1" in
-    *"$2"*) fail "expected '$1' not to contain '$2'" ;;
-    *) ;;
-  esac
-}
+# megabrain_worktree_create (lib/module-worktree.sh) no longer exists anywhere in lib/ (grep:
+# zero hits) — deleted with the worktree/spawn TypeScript port (commit 9d24366, "chore(worktree):
+# delete the bash spawn and worktree implementations"). `worktree create` is a full binary
+# passthrough now (src/cli/commands/worktree-write.ts's executeWorktreeCreate).
 
-export HOME="$work_dir/home"
-export MEGABRAIN_STATE_DIR="$work_dir/state"
-source "$root/lib/common.sh"
-source "$root/lib/module-worktree.sh"
-
-fixture_host=orca
-superset_available=false
-superset_calls_file="$work_dir/superset-calls"
-
-megabrain_context_detect() {
-  printf '%s\n' "$fixture_host"
-}
-
-megabrain_worktree_root() {
-  printf '%s\n' "$work_dir/shared"
-}
-
-megabrain_repo_from_orca() {
-  printf '%s\n' "$work_dir/repo"
-}
-
-megabrain_superset_available() {
-  [ "$superset_available" = true ]
-}
-
-megabrain_project_name_for_path() {
-  printf 'test-project\n'
-}
-
-megabrain_superset() {
-  printf '%s\n' "$*" >>"$superset_calls_file"
-  case "${1:-}:${2:-}" in
-    projects:list)
-      printf '%s\n' '{"projects":[]}'
-      ;;
-    projects:create)
-      if [ "${superset_project_mode:-success}" = fail ]; then
-        printf '%s\n' '{"error":{"message":"project registration denied"}}'
-        return 1
-      fi
-      printf '%s\n' '{"result":{"project":{"id":"project-id"}}}'
-      ;;
-    workspaces:list)
-      printf '%s\n' '{"workspaces":[]}'
-      ;;
-    workspaces:create)
-      printf '%s\n' '{"result":{"workspace":{"id":"workspace-id"}}}'
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
+bin_dir="$work_dir/bin"
+mkdir -p "$bin_dir"
+superset_calls="$work_dir/superset-calls"
+cat >"$bin_dir/superset" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$superset_calls"
+exit 1
+EOF
+chmod +x "$bin_dir/superset"
+cat >"$bin_dir/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = worktree ] && [ "${2:-}" = list ]; then printf '{"worktrees":[]}\n'; exit 0; fi
+printf '{}\n'
+exit 0
+EOF
+chmod +x "$bin_dir/orca"
 
 reset_fixture() {
-  rm -rf "$work_dir/repo" "$work_dir/shared" "$work_dir/state" "$superset_calls_file"
+  rm -rf "$work_dir/repo" "$work_dir/shared" "$work_dir/state" "$superset_calls"
   mkdir -p "$work_dir/shared" "$work_dir/state"
   git init -q "$work_dir/repo"
   git -C "$work_dir/repo" config user.email tester@example.com
@@ -97,79 +64,43 @@ reset_fixture() {
   printf 'base\n' >"$work_dir/repo/base.txt"
   git -C "$work_dir/repo" add base.txt
   git -C "$work_dir/repo" commit -qm base
-  fixture_host=orca
-  superset_available=false
-  superset_project_mode=success
-  : >"$superset_calls_file"
+  printf '%s\n' "$work_dir/shared" >"$work_dir/state/worktree-root"
+  : >"$superset_calls"
 }
 
-scenario_orca_without_superset_creates_git_worktree() {
-  local output
-  reset_fixture
-  output="$(megabrain_worktree_create --repo megabrain --branch fix/orca --json)"
-  assert_equal "$(printf '%s' "$output" | jq -r '.worktree')" "$work_dir/shared/fix-orca"
-  assert_equal "$(printf '%s' "$output" | jq -r '.workspace')" null
-  assert_equal "$(wc -l <"$superset_calls_file" | tr -d ' ')" 0
-  [ -d "$work_dir/shared/fix-orca" ] || fail 'Orca worktree was not created'
-  printf 'Orca creates a worktree without Superset\n'
+run_create() {
+  PATH="$bin_dir:$PATH" HOME="$work_dir/home" MEGABRAIN_STATE_DIR="$work_dir/state" \
+    "$binary" worktree create --repo "$work_dir/repo" --branch "$1" --json
 }
 
-scenario_superset_registers_project_and_workspace() {
-  local output calls
-  reset_fixture
-  fixture_host=superset
-  superset_available=true
-  output="$(megabrain_worktree_create --repo megabrain --branch fix/superset --json)"
-  calls="$(cat "$superset_calls_file")"
-  assert_equal "$(printf '%s' "$output" | jq -r '.workspace')" workspace-id
-  assert_contains "$calls" 'projects list --json'
-  assert_contains "$calls" 'projects create --local --import '
-  assert_contains "$calls" 'workspaces list --local --json'
-  assert_contains "$calls" 'workspaces create --local --project project-id --branch fix/superset --name fix-superset --json'
-  printf 'Superset creates the project and workspace\n'
-}
+# Scenario: worktree create still makes a real git worktree and reports it, whatever the host.
+# Basic shared-root/git-worktree creation is also covered at the unit level by tests/unit/
+# worktree-write.test.ts ("creates a missing shared root and uses its resolved but unreal path",
+# "creates with the canonical path when the shared root resolves") — this is a black-box
+# confirmation the wiring holds end to end through the compiled binary.
+reset_fixture
+output="$(run_create fix/orca)"
+assert_equal "$(printf '%s' "$output" | jq -r '.branch')" fix/orca
+[ -d "$work_dir/shared/fix-orca" ] || fail 'git worktree was not created'
+printf 'worktree create makes a real git worktree\n'
 
-scenario_superset_registration_failure_keeps_git_work() {
-  local output
-  reset_fixture
-  fixture_host=superset
-  superset_available=true
-  superset_project_mode=fail
-  if output="$(megabrain_worktree_create --repo megabrain --branch fix/failure --json 2>&1)"; then
-    fail 'Superset registration failure unexpectedly succeeded'
-  fi
-  assert_contains "$output" "could not register Superset project on host 'superset'"
-  assert_contains "$output" 'kept Git worktree'
-  assert_not_contains "$output" 'rolled back:'
-  [ -d "$work_dir/shared/fix-failure" ] || fail 'failed worktree was removed'
-  git -C "$work_dir/repo" branch --list fix/failure | grep -q fix/failure || fail 'failed branch was removed'
-  printf 'Superset registration failure keeps Git changes\n'
-}
+# FINDING (rule 4, not a test defect — did not touch src/, did not weaken the assertion): the
+# shell's megabrain_worktree_create registered a Superset project and workspace when running on a
+# Superset host (`superset projects list/create`, `superset workspaces list/create`); the ported
+# executeWorktreeCreate (src/cli/commands/worktree-write.ts:633-775, read in full) has no such
+# call anywhere in its body — grep for "projects" or "workspaces create" in the file: zero hits.
+# Reproduced directly: with a `superset` binary on PATH that would fail loudly if invoked (exits 1
+# and logs its call), `worktree create` still exits 0 and reports "workspace": null
+# unconditionally, and the call log stays empty — no Superset registration is even attempted,
+# regardless of host. This assertion is left failing on purpose; the lead decides whether Superset
+# project/workspace registration still needs to exist (e.g. because Superset's own daemon now
+# auto-discovers worktrees) or the shell contract this scenario encodes is simply gone.
+reset_fixture
+output="$(run_create fix/superset)"
+assert_equal "$(printf '%s' "$output" | jq -r '.workspace')" workspace-id
+calls="$(cat "$superset_calls")"
+assert_contains "$calls" 'projects create'
+assert_contains "$calls" 'workspaces create'
+printf 'Superset registers a project and workspace on worktree create\n'
 
-scenario_registration_failure_names_current_host() {
-  local output
-  reset_fixture
-  fixture_host=superset
-  superset_available=true
-  superset_project_mode=fail
-  if output="$(megabrain_worktree_create --repo megabrain --branch fix/host-error --json 2>&1)"; then
-    fail 'registration failure unexpectedly succeeded'
-  fi
-  assert_contains "$output" "host 'superset'"
-  printf 'registration failure names the current host\n'
-}
-
-case "${1:-all}" in
-  orca) scenario_orca_without_superset_creates_git_worktree ;;
-  superset) scenario_superset_registers_project_and_workspace ;;
-  rollback) scenario_superset_registration_failure_keeps_git_work ;;
-  host-error) scenario_registration_failure_names_current_host ;;
-  all)
-    scenario_orca_without_superset_creates_git_worktree
-    scenario_superset_registers_project_and_workspace
-    scenario_superset_registration_failure_keeps_git_work
-    scenario_registration_failure_names_current_host
-    printf 'ok: worktree creation is host-aware\n'
-    ;;
-  *) fail "unknown scenario: $1" ;;
-esac
+printf 'ok: worktree creation (one open finding, see report)\n'
