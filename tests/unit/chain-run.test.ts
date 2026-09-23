@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
-import { executeChainRun, type ChainRunDependencies } from "../../src/cli/commands/chain-run.js";
+import { continueRefusedChain, executeChainRun, type ChainRunDependencies } from "../../src/cli/commands/chain-run.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -385,5 +385,132 @@ describe("executeChainRun: in-process spawn hand-off", () => {
     } finally {
       registerTmux(original);
     }
+  });
+});
+
+describe("continueRefusedChain", () => {
+  async function writeDispatchMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
+    const dispatchDir = join(root, "dispatches", dispatchId);
+    await mkdir(dispatchDir, { recursive: true });
+    await writeFile(join(dispatchDir, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+  }
+
+  test("refuses a dispatch that was never marked limit-refused", async () => {
+    await withRoot("continue-not-refused", async (root) => {
+      await writeDispatchMeta(root, "d1", { reconcileOutcome: null, chain: null });
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
+      expect(result).toEqual({ kind: "failed", error: "dispatch d1 was not marked limit-refused", exitCode: 1 });
+    });
+  });
+
+  // Every dispatch spawned through the current `orchestrate spawn` never has its .chain field
+  // populated (megabrain_dispatch_meta_write, the shell function that used to set
+  // {name,step,total,usedDefault,prompt} from the chain-walk context, has no caller left — spawn
+  // routes straight to executeSpawn, which hardcodes chain: null). So this is the realistic
+  // production shape for a limit-refused dispatch today, and continuation refuses it exactly like
+  // megabrain_chain_continue_refused does for an empty chain_step.
+  test("refuses a limit-refused dispatch with no chain context (the current production shape)", async () => {
+    await withRoot("continue-no-chain", async (root) => {
+      await writeDispatchMeta(root, "d1", { reconcileOutcome: "limit-refused", chain: null });
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
+      expect(result).toEqual({ kind: "failed", error: "dispatch d1 has no usable chain step", exitCode: 1 });
+    });
+  });
+
+  test("refuses when the chain is already on its last step", async () => {
+    await withRoot("continue-last-step", async (root) => {
+      await writeDispatchMeta(root, "d1", {
+        reconcileOutcome: "limit-refused", worktreePath: "/w",
+        chain: { name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "p" },
+      });
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
+      expect(result).toEqual({ kind: "failed", error: "dispatch d1 has no further chain steps", exitCode: 1 });
+    });
+  });
+
+  test("refuses when the prompt or worktree is missing", async () => {
+    await withRoot("continue-missing-prompt", async (root) => {
+      await writeDispatchMeta(root, "d1", {
+        reconcileOutcome: "limit-refused", worktreePath: "",
+        chain: { name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "p" },
+      });
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
+      expect(result).toEqual({ kind: "failed", error: "dispatch d1 is missing a chain prompt or worktree", exitCode: 1 });
+    });
+  });
+
+  test("refuses when the named chain no longer exists", async () => {
+    await withRoot("continue-missing-chain", async (root) => {
+      await writeConfig(root, { chains: {}, defaultSteps: [] });
+      await writeDispatchMeta(root, "d1", {
+        reconcileOutcome: "limit-refused", worktreePath: "/w",
+        chain: { name: "gone", step: 1, total: 2, usedDefault: false, prompt: "p" },
+      });
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
+      expect(result).toEqual({ kind: "failed", error: "chain not found for dispatch d1: gone", exitCode: 1 });
+    });
+  });
+
+  // WHY this documents a launch failure rather than a successful spawn: continueRefusedChain
+  // forwards the dispatch's own runtime as the literal string "tmux"/"host" into orchestrate
+  // spawn's --tmux flag — a faithful port of megabrain_chain_continue_refused, which feeds
+  // megabrain_chain_walk's tmux_choice positional the same literal (see the WHY comment on
+  // continueRefusedChain in chain-run.ts). --tmux only accepts true/false, so this is a
+  // preexisting shell defect this port preserves rather than fixes: today, no chain continuation
+  // after a usage-limit refusal can ever actually spawn a step, tmux dispatch or host dispatch
+  // alike. What this test proves is everything up to that point: the right chain is re-selected
+  // (defaultSteps here), and the walk resumes at step 2 (one past the refused step 1), not step 1.
+  test("resumes at the step after the refused one, and fails that step on the known --tmux defect", async () => {
+    await withRoot("continue-resumes", async (root) => {
+      await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] });
+      await writeDispatchMeta(root, "d1", {
+        reconcileOutcome: "limit-refused", worktreePath: "/w", runtime: "tmux",
+        chain: { name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" },
+      });
+      // walkChainSteps reports exhaustion via ok(text, exitCode: 1) — the same shape
+      // executeChainRun's own "reports exhaustion when every step is unusable" test asserts on —
+      // never a `failed` Result, so the chain's own reason text is what this checks.
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      expect(result.exitCode).toBe(1);
+      expect(result.value).toContain("chain defaultSteps failed after 2 steps");
+      expect(result.value).toContain("agy launch failed: --tmux requires true or false");
+    });
+  });
+
+  test("accepts a caller-supplied spawn dependency instead of shelling out", async () => {
+    await withRoot("continue-dependency", async (root) => {
+      await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] });
+      await writeDispatchMeta(root, "d1", {
+        reconcileOutcome: "limit-refused", worktreePath: "/w", runtime: "host",
+        chain: { name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" },
+      });
+      // WHY the "continued after limit refusal" reason is absent here: walkChainSteps's shared
+      // final-reason composition only appends the selection reason for a NAMED chain
+      // (`usedDefault ? "used defaultSteps; …" : "…; " + selectionReason`) — a preexisting
+      // asymmetry from megabrain_chain_walk itself, not something continueRefusedChain changes.
+      // The next test below exercises the named-chain branch, where the reason does appear.
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess(), { spawn: okSpawn("dispatch-resumed") });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      expect(result.value).toContain("chain defaultSteps, step 2 of 2");
+      expect(result.value).toContain("reason: used defaultSteps; no earlier steps skipped");
+    });
+  });
+
+  test("carries the continuation reason for a named chain (unlike defaultSteps)", async () => {
+    await withRoot("continue-named-reason", async (root) => {
+      await writeConfig(root, { chains: { mine: { when: {}, steps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] } }, defaultSteps: [] });
+      await writeDispatchMeta(root, "d1", {
+        reconcileOutcome: "limit-refused", worktreePath: "/w", runtime: "host",
+        chain: { name: "mine", step: 1, total: 2, usedDefault: false, prompt: "keep going" },
+      });
+      const result = await continueRefusedChain("d1", environment(root), fakeProcess(), { spawn: okSpawn("dispatch-resumed") });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      expect(result.value).toContain("chain mine, step 2 of 2");
+      expect(result.value).toContain("continued after limit refusal at step 1");
+    });
   });
 });
