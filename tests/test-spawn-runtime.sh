@@ -59,7 +59,12 @@ run_spawn() {
   shift
   mkdir -p "$state"
   printf '%s\n' "$shared_dir" >"$state/worktree-root"
-  MEGABRAIN_STATE_DIR="$state" "$binary" orchestrate spawn --repo "$repo_dir" "$@" --json 2>&1 || true
+  # An explicit caller identity is required: without one, orchestrate spawn refuses before it
+  # ever reaches the host-vs-tmux routing decision under test here ("cannot launch agent from
+  # unknown orchestration host: unknown"). Locally this went unnoticed because the ambient dev
+  # environment happens to export ORCA_TERMINAL_HANDLE already; a clean container has neither.
+  ORCA_TERMINAL_HANDLE="${ORCA_TERMINAL_HANDLE:-parent-terminal}" MEGABRAIN_STATE_DIR="$state" \
+    "$binary" orchestrate spawn --repo "$repo_dir" "$@" --json 2>&1 || true
 }
 
 # Scenario: an explicit --tmux flag always wins, regardless of ambient context.
