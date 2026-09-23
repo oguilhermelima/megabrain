@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { type ChainConfig } from "../../core/chain.js";
 import { readLimit, type LimitAgent, type LimitReading, type LimitWindowName } from "../../core/chain-limits.js";
+import { loadModelRegistry, modelRegistryPaths, type Model } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { executeChainRun } from "./chain-run.js";
@@ -45,15 +46,15 @@ export function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
   } catch { return error(`chain file is not valid JSON: ${path}`); }
 }
 export function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
-  const modelsPath = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json"); let models: Set<string> | undefined; let modelIds: ReadonlyArray<{ agent: string; model: string }> = []; let modelEntries: ReadonlyArray<any> = [];
+  const { template: modelsPath } = modelRegistryPaths(environment); let models: Set<string> | undefined; let modelIds: ReadonlyArray<{ agent: string; model: string }> = []; let modelEntries: ReadonlyArray<Model> = [];
   let modelErrors = ""; let registryNotice: string | undefined;
-  try {
-    if (existsSync(modelsPath)) {
-      const registry = JSON.parse(readFileSync(modelsPath, "utf8")); modelEntries = registry.models ?? []; modelIds = modelEntries.map((entry: any) => ({ agent: entry.agent, model: entry.model })); models = new Set(modelIds.map((entry) => `${entry.agent}/${entry.model}`));
-    } else {
-      registryNotice = `megabrain: model registry not found at ${modelsPath}; model validation was skipped.\n`;
-    }
-  } catch { return error(`model registry is not valid JSON: ${modelsPath}`); }
+  if (!existsSync(modelsPath)) {
+    registryNotice = `megabrain: model registry not found at ${modelsPath}; model validation was skipped.\n`;
+  } else {
+    const loaded = loadModelRegistry(environment);
+    if (loaded.kind === "failed") return error(loaded.error);
+    modelEntries = loaded.registry.models; modelIds = modelEntries.map((entry) => ({ agent: entry.agent, model: entry.model })); models = new Set(modelIds.map((entry) => `${entry.agent}/${entry.model}`));
+  }
   for (const [name, chain] of Object.entries(config.chains)) {
     if (typeof chain !== "object" || chain === null || typeof chain.steps !== "object" || !Array.isArray(chain.steps) || chain.steps.length === 0) return error(`invalid chain ${name}: steps must be a non-empty array`);
     for (const [index, step] of chain.steps.entries()) {
@@ -71,11 +72,12 @@ export function validateConfig(config: ChainConfig, environment: ChainEnvironmen
         modelErrors += `megabrain: invalid chain ${name} step ${index + 1}: model '${record.model}' is not registered for agent '${record.agent}'\n`;
       } else if (models && record.unvalidated !== true) {
         const entry = modelEntries.find((candidate) => candidate.agent === record.agent && candidate.model === record.model);
-        const reasoning = entry?.reasoning ?? {};
+        const reasoning = entry?.reasoning ?? { separateAxis: undefined, levels: undefined };
         if (reasoning.separateAxis === true && typeof record.effort !== "string") modelErrors += `megabrain: model '${record.model}' for agent '${record.agent}' requires a separate reasoning level\n`;
-        else if (reasoning.separateAxis === true && !reasoning.levels?.includes(record.effort)) modelErrors += `megabrain: model '${record.model}' for agent '${record.agent}' does not support reasoning level '${record.effort}'. Supported reasoning levels:\nmegabrain:   ${(reasoning.levels ?? ["none"]).join("\nmegabrain:   ")}\n`;
+        else if (reasoning.separateAxis === true && !reasoning.levels?.includes(String(record.effort))) modelErrors += `megabrain: model '${record.model}' for agent '${record.agent}' does not support reasoning level '${record.effort}'. Supported reasoning levels:\nmegabrain:   ${(reasoning.levels ?? ["none"]).join("\nmegabrain:   ")}\n`;
         else if (reasoning.separateAxis === false && record.effort !== undefined) modelErrors += `megabrain: model '${record.model}' for agent '${record.agent}' has effort as part of the model id; do not supply effort\n`;
-        if (entry?.status === "retired" || entry?.status === "deprecated") process.stderr.write(`Warning: model '${record.model}' for agent '${record.agent}' is ${entry.status}${entry.retirementDate ? ` (retirement date: ${entry.retirementDate})` : ""}.\n`);
+        const status = entry?.status; const retirementDate = entry?.retirementDate;
+        if (status === "retired" || status === "deprecated") process.stderr.write(`Warning: model '${record.model}' for agent '${record.agent}' is ${status}${retirementDate ? ` (retirement date: ${String(retirementDate)})` : ""}.\n`);
       }
     }
   }
@@ -83,11 +85,12 @@ export function validateConfig(config: ChainConfig, environment: ChainEnvironmen
   return preserveStderr(ok(config), registryNotice);
 }
 type ChainWrite = { readonly name: string; readonly definition?: Record<string, unknown>; readonly changed?: boolean };
-export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: string[] } }>> {
-  const path = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json");
-  if (!existsSync(path)) return ok([]);
-  try { const value = JSON.parse(readFileSync(path, "utf8")); return ok(value.models ?? []); }
-  catch { return error(`model registry is not valid JSON: ${path}`); }
+export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: readonly string[] } }>> {
+  const { template } = modelRegistryPaths(environment);
+  if (!existsSync(template)) return ok([]);
+  const loaded = loadModelRegistry(environment);
+  if (loaded.kind === "failed") return error(loaded.error);
+  return ok(loaded.registry.models);
 }
 function validateWriteConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> { return validateConfig(config, environment); }
 function writeConfig(config: ChainConfig, path: string): Result<ChainConfig> {

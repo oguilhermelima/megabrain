@@ -1,3 +1,8 @@
+import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { failed, type Failed } from "./result.js";
+import { resolveStateDirectory, type StateEnvironment } from "./state.js";
+
 export type ModelProvenance = Readonly<Record<string, unknown>>;
 
 export type Model = {
@@ -87,7 +92,7 @@ export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry
   for (const templateModel of template.models) {
     const index = models.findIndex((entry) => entry.agent === templateModel.agent && entry.model === templateModel.model);
     if (index < 0) models.push(templateModel);
-    else if (models[index].provenance.kind !== "curated") models[index] = { ...models[index], reasoning: templateModel.reasoning };
+    else if (models[index].provenance.kind !== "curated") models[index] = { ...models[index], reasoning: templateModel.reasoning, status: templateModel.status };
   }
   return { ...registry, models };
 }
@@ -98,6 +103,64 @@ export function refreshAgyModels(ids: readonly string[], obtainedAt: string): re
     const level = model.endsWith("-high") ? "high" : model.endsWith("-medium") ? "medium" : model.endsWith("-low") ? "low" : "none";
     return { agent: "agy", model, reasoning: { separateAxis: false, levels: [level] }, provenance: { kind: "live", command: "agy models", obtainedAt } };
   });
+}
+
+export type ModelEnvironment = StateEnvironment & Readonly<{
+  readonly MEGABRAIN_ROOT?: string;
+  readonly MEGABRAIN_MODEL_FILE?: string;
+}>;
+
+export function modelRegistryPaths(environment: ModelEnvironment): { readonly template: string; readonly state: string } {
+  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const stateDir = resolveStateDirectory(environment);
+  return { template: resolve(root, ".megabrain/models.json"), state: environment.MEGABRAIN_MODEL_FILE ?? resolve(stateDir, "models.json") };
+}
+
+function isModelEntry(value: unknown): value is Model {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  const reasoning = entry.reasoning;
+  if (typeof entry.agent !== "string" || typeof entry.model !== "string" || typeof entry.provenance !== "object" || entry.provenance === null || typeof reasoning !== "object" || reasoning === null) return false;
+  const reasoningRecord = reasoning as Record<string, unknown>;
+  const levels = reasoningRecord.levels;
+  return typeof reasoningRecord.separateAxis === "boolean" && Array.isArray(levels) && levels.every((level: unknown) => typeof level === "string");
+}
+
+export function parseModelRegistry(text: string): ModelRegistry | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null) return undefined;
+    const registry = value as Record<string, unknown>;
+    return registry.version === 1 && Array.isArray(registry.models) && registry.models.every(isModelEntry) ? value as ModelRegistry : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type LoadedModelRegistry = Readonly<{ readonly kind: "loaded"; readonly registry: ModelRegistry; readonly raw: string; readonly file: string }>;
+
+export function loadModelRegistry(environment: ModelEnvironment): LoadedModelRegistry | Failed {
+  const { template, state } = modelRegistryPaths(environment);
+  try {
+    mkdirSync(resolve(state, ".."), { recursive: true });
+    if (!existsSync(template)) return failed(`model registry template is missing: ${template}`);
+    const templateRaw = readFileSync(template, "utf8");
+    const templateRegistry = parseModelRegistry(templateRaw);
+    if (templateRegistry === undefined) return failed(`model registry template is not valid JSON: ${template}`);
+    if (!existsSync(state)) {
+      copyFileSync(template, state);
+      return { kind: "loaded", registry: templateRegistry, raw: templateRaw, file: state };
+    }
+    const raw = readFileSync(state, "utf8");
+    const registry = parseModelRegistry(raw);
+    if (registry === undefined) return failed(`model registry is not valid JSON: ${state}`);
+    const upgraded = upgradeRegistry(registry, templateRegistry);
+    const upgradedRaw = `${JSON.stringify(upgraded, null, 2)}\n`;
+    if (upgradedRaw !== raw) writeFileSync(state, upgradedRaw);
+    return { kind: "loaded", registry: upgraded, raw: upgradedRaw, file: state };
+  } catch (error: unknown) {
+    return failed(error instanceof Error ? error.message : "could not read model registry");
+  }
 }
 
 export function formatModelList(registry: ModelRegistry): string {
