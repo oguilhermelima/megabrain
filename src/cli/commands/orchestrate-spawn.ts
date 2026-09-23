@@ -476,6 +476,14 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const parentContext = await resolveCaller(environment, process);
   const parentWorkspace = parentWorkspaceId(environment);
   const parentTmux = parentTmuxChannel(environment);
+  // F: a tmux spawn from a caller whose host could not be resolved would otherwise record an
+  // empty owner (parentContext.id === "" with host "unknown") — a dispatch nobody can later
+  // supervise, close or reply to. Refuse before anything is created. The host runtime path
+  // already refuses below (getHost(parentContext.host) === undefined), so this only needs to
+  // cover tmux.
+  if (runtime === "tmux" && parentContext.host === "unknown") {
+    return failed("cannot spawn on tmux from an unknown caller host; run inside a managed terminal or set MEGABRAIN_SESSION_HOST so the dispatch has a supervisable owner");
+  }
   const command = agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
