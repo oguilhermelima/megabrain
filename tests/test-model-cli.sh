@@ -46,8 +46,8 @@ mkdir -p "$home"
 list_output="$(run_binary model list --json)"
 [ -f "$state/models.json" ] || fail 'model list did not initialize the fixture registry'
 assert_equal "$(printf '%s' "$list_output" | jq '.version')" 1
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 10
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 18
+assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 12
+assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 19
 assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "agy")] | length')" 14
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "agy" and .model == "gemini-3.8-flash-high") | .provenance.kind')" live
 printf 'registry-json: binary lists the fixture registry and provenance\n'
