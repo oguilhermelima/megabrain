@@ -4,7 +4,7 @@ import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getAgent } from "../../agents/index.js";
-import { decideSpawnStep, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
+import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
@@ -30,7 +30,6 @@ type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly MEGABRAIN_TMUX_SESSION?: string;
   readonly SUPERSET_WORKSPACE_ID?: string;
   readonly MEGABRAIN_SPAWN_DISPATCH_ID?: string;
-  readonly MEGABRAIN_SPAWN_RUNTIME?: string;
   readonly MEGABRAIN_AGENT_READY_TIMEOUT_MS?: string;
 }>;
 
@@ -136,6 +135,19 @@ function dispatchId(environment: SpawnEnvironment): string {
   return supplied !== undefined && /^[A-Za-z0-9._-]+$/.test(supplied)
     ? supplied
     : `dispatch-${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
+}
+
+// Mirrors the shell's megabrain_runtime_enabled (lib/common.sh): true only when state.json parses
+// and its "tmux-runtime" entry is installed. An absent or unparsable state.json is "not installed",
+// exactly like the shell's own guard, so the auto default falls back to host in either case.
+async function tmuxRuntimeInstalled(environment: SpawnEnvironment): Promise<boolean> {
+  try {
+    const raw = await readFile(`${resolveStateDirectory(environment)}/state.json`, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, { readonly installed?: boolean } | undefined>;
+    return parsed["tmux-runtime"]?.installed === true;
+  } catch {
+    return false;
+  }
 }
 
 // The workspace id a parent may pass down to the child host provider. Unrelated to caller
@@ -472,7 +484,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   });
   if (agentCommand === undefined) return unknown(`agent cannot build a command line: ${options.agent}`);
   if (agentCommand.kind !== "ok") return agentCommand;
-  const runtime: SpawnRuntime = options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host";
+  // An explicit --tmux always wins; omitted, this follows the shell's auto default exactly (see
+  // resolveAutoSpawnRuntime and tmuxRuntimeInstalled) instead of reading MEGABRAIN_SPAWN_RUNTIME,
+  // an environment variable nothing in this codebase ever sets.
+  const runtime: SpawnRuntime = options.tmux === null ? resolveAutoSpawnRuntime(await tmuxRuntimeInstalled(environment)) : options.tmux ? "tmux" : "host";
   // dispatchId does not depend on the worktree, so the wrapped prompt (the payload actually
   // transported, not the raw --prompt) can be built and budgeted before anything is created.
   const id = dispatchId(environment);
