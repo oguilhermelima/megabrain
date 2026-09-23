@@ -21,6 +21,10 @@ import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-repl
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "../../src/cli/commands/orchestrate-parent.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
+import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.js";
+import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/dispatch.js";
+import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
+import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -548,5 +552,48 @@ describe("spawn starts children without the parent's identity", () => {
     expect(text).toContain("MEGABRAIN_STATE_DIR=");
     expect(text).toContain("MEGABRAIN_DISPATCH_ID=");
     expect(text).toContain("ORCA_TERMINAL_HANDLE='child-terminal'");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The remaining hand-rolled chains: orchestrate list, the dispatch owner filter, prune and
+// install-doctor's own-pane safety checks.
+// ---------------------------------------------------------------------------
+
+describe("orchestrate list recognises a structured session as its own caller", () => {
+  test("callerFromEnvironment resolves a structured Claude session instead of unknown", async () => {
+    const environment = { ORCA_STRUCTURED_SESSION: "1", CLAUDE_CODE_SESSION_ID: "test-uuid" };
+    const identity = await callerFromEnvironment(environment, fakeProcess());
+    expect(identity).toEqual({ id: "claude:test-uuid", host: "orca" });
+  });
+
+  test("a dispatch spawned by that structured session is reported owned", async () => {
+    const caller = await callerFromEnvironment({ ORCA_STRUCTURED_SESSION: "1", CLAUDE_CODE_SESSION_ID: "test-uuid" }, fakeProcess());
+    const record = parseDispatchRecord({ dispatchId: "d", parentSessionId: "claude:test-uuid", parentHost: "orca", state: "running", processState: "running", terminalState: "owned" });
+    expect(record.kind).toBe("ok");
+    if (record.kind !== "ok") return;
+    expect(decorateDispatchRecord(record.value, caller).ownedByCaller).toBe(true);
+  });
+
+  test("a dispatch spawned by a different session is not reported owned", async () => {
+    const caller = await callerFromEnvironment({ ORCA_STRUCTURED_SESSION: "1", CLAUDE_CODE_SESSION_ID: "test-uuid" }, fakeProcess());
+    const record = parseDispatchRecord({ dispatchId: "d", parentSessionId: "claude:other-uuid", parentHost: "orca", state: "running", processState: "running", terminalState: "owned" });
+    expect(record.kind).toBe("ok");
+    if (record.kind !== "ok") return;
+    expect(decorateDispatchRecord(record.value, caller).ownedByCaller).toBe(false);
+  });
+});
+
+describe("prune and doctor route their own-pane check through the shared resolver", () => {
+  test("tmuxCallerSession resolves the probed session for a plain tmux caller", async () => {
+    const environment = { TMUX: "server", TMUX_PANE: "%4" };
+    const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "work\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    expect(await tmuxCallerSession(environment, process)).toBe("work");
+  });
+
+  test("callerSession (install-doctor) resolves the same probed session", async () => {
+    const environment = { TMUX: "server", TMUX_PANE: "%4" };
+    const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "work\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    expect(await installDoctorCallerSession(environment, process)).toBe("work");
   });
 });
