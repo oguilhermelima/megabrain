@@ -130,6 +130,47 @@ describe("executeSpawn", () => {
     }
   });
 
+  // Shell parity: megabrain_tmux_send_agent (lib/module-tmux-runtime.sh, last standing at commit
+  // 9d24366^) sent a raw `C-u` immediately before typing the launch command line into a freshly
+  // created/split pane — its own WHY comment: "the child shell can still hold startup noise or a
+  // stray keystroke, and typing onto a non-empty line produced 'mocd <path>' once". That C-u was
+  // scoped to exactly that one call site: megabrain_tmux_send_text (used for the prompt payload
+  // and for nudges into an already-running agent composer) never sent it — "C-u in an agent
+  // composer is not a line kill" is the shell's own reasoning for leaving it out there. This test
+  // proves both halves: the launch command line is preceded by a C-u, and the prompt payload sent
+  // afterward into the now-running agent's composer is not.
+  test("clears stray input with C-u before the launch command line, but never before the prompt", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-clear-stray-`);
+    const dispatchId = "dispatch-clear-stray";
+    const events: string[] = [];
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      sendText: async (_pane, text) => {
+        events.push(text.includes("MEGABRAIN_DISPATCH_ID=") ? "text:launch-command" : text.includes("[megabrain dispatch:") ? "text:prompt" : `text:${text}`);
+        return ok(undefined);
+      },
+    });
+    try {
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/clear-stray", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+        resolveWorktree: async () => ok(worktree("created")),
+      });
+      expect(result.kind).toBe("ok");
+      const launchIndex = events.indexOf("text:launch-command");
+      const promptIndex = events.indexOf("text:prompt");
+      expect(launchIndex).toBeGreaterThanOrEqual(0);
+      expect(promptIndex).toBeGreaterThan(launchIndex);
+      expect(events[launchIndex - 1]).toBe("key:C-u");
+      // No C-u anywhere from the prompt send onward: the composer is a running agent by then.
+      expect(events.slice(promptIndex - 1)).not.toContain("key:C-u");
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("keeps accepting an explicit worktree without repo or branch", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-explicit-worktree-`);
     let receivedTarget: string | undefined;
