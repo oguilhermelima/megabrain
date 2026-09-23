@@ -49,29 +49,23 @@ scenario_terminal_kill_can_run_twice_under_nounset() {
   printf 'terminal kill path can run twice under nounset\n'
 }
 
-scenario_text_doctor_has_leaked_counter_default() {
+# WHY: module_orchestration_doctor is gone (its only production caller, command_install's shell
+# body, was deleted once install routed to the binary), so the property this once proved through
+# that function — MODULE_LEAKED_DISPATCH_SESSIONS is safe to read under `set -u` before anything
+# populates it — is now provided directly by lib/common.sh's own top-level default (`common.sh`
+# sets MODULE_LEAKED_DISPATCH_SESSIONS=0 at source time, before any dispatch scan runs). This
+# scenario now asserts that default directly instead of driving it through a deleted function.
+scenario_leaked_counter_has_a_nounset_safe_default() {
   local output
   if output="$(bash -u -c '
     source "$1/lib/common.sh"
-    source "$1/lib/module-install.sh"
-    megabrain_dispatch_health_counts() {
-      MODULE_UNCERTAIN_DISPATCHES=0
-      MODULE_RETAINED_TERMINALS=0
-      MODULE_PRUNABLE_DISPATCHES=0
-      MODULE_UNCERTAIN_REASONS="[]"
-      MODULE_RETAINED_REASONS="[]"
-    }
-    megabrain_runtime_enabled() { return 1; }
-    megabrain_require_command() { return 1; }
-    megabrain_superset_available() { return 1; }
-    module_orchestration_doctor >/dev/null 2>&1
     printf "%s\n" "$MODULE_LEAKED_DISPATCH_SESSIONS"
   ' _ "$root" 2>&1)"; then
     assert_equal "$output" 0
   else
-    fail "text doctor path aborted under bash -u: $output"
+    fail "leaked-session counter default aborted under bash -u: $output"
   fi
-  printf 'text doctor path has a leaked-session counter default\n'
+  printf 'leaked-session counter has a nounset-safe default\n'
 }
 
 export HOME="$state_root/home"
@@ -255,7 +249,7 @@ scenario_launch_failure_rolls_back_owned_objects() {
 
 case "${SCENARIO:-all}" in
   6) scenario_terminal_kill_can_run_twice_under_nounset ;;
-  7) scenario_text_doctor_has_leaked_counter_default ;;
+  7) scenario_leaked_counter_has_a_nounset_safe_default ;;
   1) scenario_reply_uses_transition_table ;;
   2) scenario_retired_timeout_is_readable ;;
   3) scenario_mark_running_uses_transition_table ;;
@@ -263,7 +257,7 @@ case "${SCENARIO:-all}" in
   5) scenario_launch_failure_rolls_back_owned_objects ;;
   all)
     scenario_terminal_kill_can_run_twice_under_nounset
-    scenario_text_doctor_has_leaked_counter_default
+    scenario_leaked_counter_has_a_nounset_safe_default
     scenario_reply_uses_transition_table
     scenario_retired_timeout_is_readable
     scenario_mark_running_uses_transition_table

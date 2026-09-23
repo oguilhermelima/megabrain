@@ -38,21 +38,36 @@ case "$advice" in
   *) printf 'no operator advice in this environment; stderr stayed empty\n' ;;
 esac
 
-source "$root/lib/common.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
-source "$root/lib/module-tmux-runtime.sh"
-source "$root/lib/module-install.sh"
-megabrain_require_command() { return 1; }
-megabrain_superset_available() { return 1; }
-megabrain_runtime_enabled() { return 0; }
-megabrain_tmux_available() { return 0; }
-module_orchestration_doctor >/dev/null 2>&1 || fail 'tmux-only orchestration was not usable without host CLIs'
-[ "$MODULE_STATUS" = ok ] || fail "tmux-only orchestration doctor status was $MODULE_STATUS"
-case "$MODULE_REASON" in
-  *optional*) ;;
-  *) fail "tmux-only orchestration doctor did not mark host CLIs optional: $MODULE_REASON" ;;
-esac
-printf 'tmux runtime makes absent orchestration CLIs optional\n'
+# WHY: module_orchestration_doctor is gone (the install command and its per-module shell
+# doctor bodies were deleted once install routed to the binary); the compiled doctor already
+# implements this exact "tmux-only" branch, so this drives the compiled binary directly as a
+# black box, with a PATH that offers only a fake tmux and no orca or superset. Invoking
+# .build/megabrain directly (rather than the bash wrapper) means PATH can be replaced outright
+# without also hiding the "env"/"bash" the wrapper's own shebang would need to resolve.
+binary="$root/.build/megabrain"
+if [ -x "$binary" ]; then
+  tmux_only_state="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-doctor-tmux-only.XXXXXX")"
+  tmux_only_bin="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-doctor-tmux-only-bin.XXXXXX")"
+  cat >"$tmux_only_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$tmux_only_bin/tmux"
+  printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$tmux_only_state/state.json"
+  # WHY: /usr/bin:/bin still supplies "which" itself (which the binary's own availability
+  # checks shell out to) without risking a real orca or superset from a developer's PATH.
+  tmux_only_json="$(PATH="$tmux_only_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$tmux_only_state" HOME="$tmux_only_state" "$binary" doctor orchestration --json 2>/dev/null)"
+  tmux_only_status="$(printf '%s' "$tmux_only_json" | jq -r '.status')"
+  tmux_only_reason="$(printf '%s' "$tmux_only_json" | jq -r '.reason')"
+  [ "$tmux_only_status" = ok ] || fail "tmux-only orchestration doctor status was $tmux_only_status"
+  case "$tmux_only_reason" in
+    *optional*) ;;
+    *) fail "tmux-only orchestration doctor did not mark host CLIs optional: $tmux_only_reason" ;;
+  esac
+  rm -rf "$tmux_only_state" "$tmux_only_bin"
+  printf 'tmux runtime makes absent orchestration CLIs optional\n'
+else
+  printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"
+fi
 
 printf 'ok: doctor --json is machine readable for every module\n'

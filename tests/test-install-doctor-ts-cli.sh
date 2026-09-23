@@ -196,26 +196,33 @@ for index in 1 2 3 4 5 6; do
   printf '%s\n' "{\"dispatchId\":\"leaked-$index\",\"state\":\"done\",\"processState\":\"succeeded\",\"terminalState\":\"owned\",\"runtime\":\"tmux\",\"tmuxSession\":\"leaked-$index\",\"parentTmuxSession\":\"parent\"}" >"$work/binary-state/dispatches/leaked-$index/meta.json"
 done
 
-shell_unknown="$work/shell-unknown"
-run_capture "$shell_unknown" env MEGABRAIN_INSTALL_IMPLEMENTATION=shell "$root/megabrain" install unknown-module
+# WHY: MEGABRAIN_INSTALL_IMPLEMENTATION never gated command_install (no such override existed in
+# lib/module-install.sh), and now there is no shell install body left to compare against at all —
+# command_install is an unconditional passthrough to the binary, the same shape as command_native
+# and command_web. So this now proves routing fidelity instead of shell/binary parity: the
+# operator-facing wrapper ($root/megabrain) must answer identically to the binary it forwards to.
+routed_unknown="$work/routed-unknown"
+run_capture "$routed_unknown" "$root/megabrain" install unknown-module
 
 binary_unknown="$work/binary-unknown"
 run_capture "$binary_unknown" "$binary" install unknown-module
 for side in stdout stderr status; do
-  cmp -s "$shell_unknown.$side" "$binary_unknown.$side" || fail "install unknown-module $side differs"
+  cmp -s "$routed_unknown.$side" "$binary_unknown.$side" || fail "install unknown-module $side differs between the wrapper and the binary"
 done
 [ "$(cat "$binary_unknown.status")" -eq 2 ] || fail 'unknown module status was not 2'
 grep -q 'unknown module: unknown-module' "$binary_unknown.stderr" || fail 'unknown module omitted its error'
 
-# An unhealthy hooks fixture must reach the shell installer, whose observable contract is
-# backing up and repairing the operator config. The TypeScript status-only implementation cannot
-# pass this assertion because it does not write either artifact.
+# WHY: GitHub issue 43 ("executeInstall reports status and never installs") is fixed — install
+# now performs a real install, module by module (src/cli/commands/install-doctor.ts's
+# executeInstall). An unhealthy hooks fixture must be backed up and repaired by an --yes install,
+# proven end to end through the operator-facing wrapper.
 install_contract_home="$work/install-contract-home"
 mkdir -p "$install_contract_home/.claude"
 printf '%s\n' '{"hooks":{"Stop":[]}}' >"$install_contract_home/.claude/settings.json"
 cp "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
 export HOME="$install_contract_home"
-run_capture "$work/shell-install-contract" env MEGABRAIN_INSTALL_IMPLEMENTATION=shell "$root/megabrain" install orchestration-hooks --yes
+run_capture "$work/install-contract" "$root/megabrain" install orchestration-hooks --yes
+[ "$(cat "$work/install-contract.status")" -eq 0 ] || fail "install orchestration-hooks --yes did not exit 0: $(cat "$work/install-contract.stdout") $(cat "$work/install-contract.stderr")"
 assert_backup_matches() {
   local path="$1" original="$2" backup
   backup="$(find "$(dirname "$path")" -maxdepth 1 -name "$(basename "$path").megabrain-backup-*" -type f -print -quit)"
@@ -223,16 +230,8 @@ assert_backup_matches() {
   cmp -s "$original" "$backup" || fail "backup for $path differs from original"
 }
 assert_backup_matches "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
-grep -q 'megabrain-turn-end.sh' "$install_contract_home/.claude/settings.json" || fail 'shell install did not repair hooks config'
-
-binary_contract_home="$work/binary-contract-home"
-mkdir -p "$binary_contract_home/.claude"
-cp "$work/install-contract-original.json" "$binary_contract_home/.claude/settings.json"
-export HOME="$binary_contract_home"
-run_capture "$work/binary-install-contract" "$binary" install orchestration-hooks --yes
-[ ! -e "$binary_contract_home/.claude/settings.json.megabrain-backup-"* ] || fail 'status-only binary unexpectedly created an install backup'
-cmp -s "$work/install-contract-original.json" "$binary_contract_home/.claude/settings.json" || fail 'status-only binary changed the install fixture'
-printf 'install contract: shell creates backup and repair; binary leaves fixture unchanged\n'
+grep -q 'megabrain-turn-end.sh' "$install_contract_home/.claude/settings.json" || fail 'install did not repair hooks config'
+printf 'install contract: a real install backs up and repairs the operator config (issue 43)\n'
 export HOME="$work/home"
 
 # A minimal installation record is input to the compiled doctor, which must report content

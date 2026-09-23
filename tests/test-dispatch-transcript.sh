@@ -498,15 +498,15 @@ CAPTURE_AVAILABLE=true
 printf '%s\n' 'doctor-leak' >"$live_sessions"
 write_dispatch doctor-leak done doctor-leak
 write_dispatch doctor-clean done doctor-clean
-megabrain_runtime_enabled() { return 0; }
-megabrain_tmux_available() { return 0; }
-megabrain_require_command() { return 1; }
-megabrain_superset_available() { return 1; }
-module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a healthy tmux-only setup'
+# WHY: this drives megabrain_dispatch_health_counts directly (the dispatch-health scan itself,
+# defined in module-orchestrate.sh) rather than through the deleted module_orchestration_doctor —
+# that wrapper only added the orca/superset/tmux runtime summary around this same counting call,
+# which is not what this scenario is proving.
+megabrain_dispatch_health_counts
 assert_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 1
 printf 'doctor counts one terminal dispatch session leak\n'
 printf '%s\n' >"$live_sessions"
-module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a healthy tmux-only setup without leaks'
+megabrain_dispatch_health_counts
 assert_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
 printf 'doctor reports zero terminal dispatch session leaks when released\n'
 
@@ -524,7 +524,7 @@ megabrain_dispatch_meta_write shared-session parent-terminal superset superset w
   "$root" main codex label done gpt-5 true codex shared-session %99 tmux tmux shared-session %0 workspace-test >/dev/null
 set_old_timestamp shared-session
 : >"$release_log"
-module_orchestration_doctor >/dev/null 2>&1 || fail 'doctor rejected a shared tmux setup'
+megabrain_dispatch_health_counts
 assert_regression_equal "$MODULE_LEAKED_DISPATCH_SESSIONS" 0
 shared_result="$(run_compiled_prune --json)"
 assert_regression_equal "$(printf '%s' "$shared_result" | jq -r '.archived')" 1
