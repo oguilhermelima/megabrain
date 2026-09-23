@@ -7,6 +7,7 @@ import {
   reconcileSkillsAtStartup,
   shouldReconcileSkillsAtStartup,
   skillSyncDoctor,
+  skillTargetPaths,
 } from "../../src/core/skill.js";
 
 type Fixture = {
@@ -165,6 +166,57 @@ describe("reconcileSkillsAtStartup", () => {
       expect(diagnostics ?? "").toContain("skill target is not writable");
     } finally {
       chmodSync(targetDirectory, originalMode);
+    }
+  });
+});
+
+// WHY: tests/test-native-build-cli.sh runs the compiled binary from a repository root and
+// from a subdirectory of it and asserts byte-identical output. Falling back to process.cwd()
+// for the installed skill source, with no MEGABRAIN_ROOT set (as a directly invoked compiled
+// binary sees), made the "installed skill source is missing" diagnostic embed a different
+// path per directory, breaking that parity (reproduced 2026-09-22).
+describe("skill source root resolution", () => {
+  test("does not depend on the caller's working directory when MEGABRAIN_ROOT is unset", () => {
+    const originalCwd = process.cwd();
+    const first = mkdtempSync("/tmp/megabrain-skill-cwd-a-");
+    const second = mkdtempSync("/tmp/megabrain-skill-cwd-b-");
+    const home = mkdtempSync("/tmp/megabrain-skill-cwd-home-");
+    try {
+      process.chdir(first);
+      const scanFromFirst = reconcileSkills({ HOME: home });
+      process.chdir(second);
+      const scanFromSecond = reconcileSkills({ HOME: home });
+      expect(scanFromFirst.failureCount).toBe(1);
+      expect(scanFromSecond.failureCount).toBe(1);
+      expect(scanFromFirst.error).toBe(scanFromSecond.error);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+});
+
+// WHY: the project-local target ($PWD/.claude/skills/megabrain/SKILL.md) is deliberately
+// cwd-relative, matching the shell scan's own $PWD-based lookup; this documents that the fix
+// above (root resolution must ignore cwd) does not also flatten this unrelated, intentionally
+// cwd-sensitive target discovery.
+describe("skillTargetPaths", () => {
+  test("the project-local target is resolved from the caller's cwd, not the installation root", () => {
+    const originalCwd = process.cwd();
+    const withTarget = mkdtempSync("/tmp/megabrain-skill-local-a-");
+    const withoutTarget = mkdtempSync("/tmp/megabrain-skill-local-b-");
+    const home = mkdtempSync("/tmp/megabrain-skill-local-home-");
+    mkdirSync(join(withTarget, ".claude/skills/megabrain"), { recursive: true });
+    writeFileSync(join(withTarget, ".claude/skills/megabrain/SKILL.md"), "local copy\n");
+    try {
+      process.chdir(withTarget);
+      const found = skillTargetPaths({ HOME: home });
+      const resolvedWithTarget = process.cwd();
+      process.chdir(withoutTarget);
+      const notFound = skillTargetPaths({ HOME: home });
+      expect(found).toContain(join(resolvedWithTarget, ".claude/skills/megabrain/SKILL.md"));
+      expect(notFound).toHaveLength(0);
+    } finally {
+      process.chdir(originalCwd);
     }
   });
 });
