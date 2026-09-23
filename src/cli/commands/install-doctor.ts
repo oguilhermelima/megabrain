@@ -1,9 +1,14 @@
-import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, type Dirent } from "node:fs";
+import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { skillSyncDoctor } from "../../core/skill.js";
+import { installSkillSync, skillSyncDoctor } from "../../core/skill.js";
+import { nextBackupPath } from "../../core/tmux.js";
+import { executeTmux } from "./tmux.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 
@@ -404,22 +409,436 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
     : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr };
 }
 
-export async function executeInstall(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
+type InstallOptions = Readonly<{ yes: boolean; browser: string }>;
+
+function isInteractiveTerminal(): boolean {
+  return Boolean(process.stdin.isTTY);
+}
+
+function writeInstalledState(environment: Environment, module: string, installed: boolean, details: string): void {
+  const path = statePath(environment);
+  let state: Record<string, unknown> = {};
+  try {
+    state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    state = {};
+  }
+  const configuredAt = new Date().toISOString();
+  state[module] = { installed, configuredAt, statusSource: "megabrain install", details };
+  state._meta = { kind: "installation-record", recordedAt: configuredAt, source: "megabrain install", liveStatusCommand: "megabrain doctor" };
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
+  } catch {
+    // A best-effort install record must never mask the real install/doctor result.
+  }
+}
+
+async function dateStamp(processAdapter: ProcessAdapter): Promise<string> {
+  const result = await processAdapter.run("date", ["-u", "+%Y%m%dT%H%M%SZ"]);
+  if (result.kind === "ok") return result.value.stdout.trim();
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+async function backupExistingFile(path: string, processAdapter: ProcessAdapter): Promise<Result<string | undefined>> {
+  if (!existsSync(path)) return ok(undefined);
+  const directory = dirname(path);
+  const prefix = `${basename(path)}.megabrain-backup-`;
+  let existingBackups: Set<string>;
+  try {
+    existingBackups = new Set(readdirSync(directory).filter((name) => name.startsWith(prefix)).map((name) => resolve(directory, name)));
+  } catch {
+    existingBackups = new Set();
+  }
+  const stamp = await dateStamp(processAdapter);
+  const backup = nextBackupPath(path, true, stamp, existingBackups);
+  if (backup === undefined) return ok(undefined);
+  try {
+    await copyFile(path, backup);
+  } catch {
+    return failed(`could not back up ${path}`);
+  }
+  return ok(backup);
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${randomUUID()}`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporary, path);
+}
+
+// --- orchestration-hooks -----------------------------------------------------------------
+
+const hookAgents = ["claude", "codex", "agy", "cursor"] as const;
+type HookAgent = (typeof hookAgents)[number];
+
+async function hookAgentAvailable(agent: HookAgent, processAdapter: ProcessAdapter): Promise<boolean> {
+  return agent === "cursor"
+    ? (await available(processAdapter, "cursor")) || (await available(processAdapter, "cursor-agent"))
+    : available(processAdapter, agent);
+}
+
+function hookEntrypointCommand(environment: Environment, agent: HookAgent): string | undefined {
+  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const script = resolve(root, "hooks/megabrain-turn-end.sh");
+  try {
+    if ((statSync(script).mode & 0o111) === 0) return undefined;
+  } catch {
+    return undefined;
+  }
+  return `MEGABRAIN_HOOK_AGENT=${agent} ${script}`;
+}
+
+function hookEntryMatches(entry: unknown): boolean {
+  return typeof entry === "object" && entry !== null &&
+    /(^|\/)megabrain-turn-end\.sh($|\s)/.test(String((entry as Record<string, unknown>).command ?? ""));
+}
+
+function repairStopHooks(existing: Record<string, unknown>, command: string): Record<string, unknown> {
+  const hooksField = existing.hooks;
+  if (hooksField !== undefined && (typeof hooksField !== "object" || hooksField === null || Array.isArray(hooksField))) throw new Error("hooks must be an object");
+  const hooks = (hooksField as Record<string, unknown> | undefined) ?? {};
+  const stopField = hooks.Stop;
+  if (stopField !== undefined && !Array.isArray(stopField)) throw new Error("hooks.Stop must be an array");
+  const stop = (stopField as unknown[] | undefined) ?? [];
+  let seen = false;
+  const entries: unknown[] = [];
+  for (const group of stop) {
+    const record = group !== null && typeof group === "object" ? (group as Record<string, unknown>) : {};
+    const nested = Array.isArray(record.hooks) ? (record.hooks as unknown[]) : [];
+    if (!nested.some(hookEntryMatches)) {
+      entries.push(group);
+      continue;
+    }
+    if (seen) continue;
+    let nestedSeen = false;
+    const nestedEntries: unknown[] = [];
+    for (const entry of nested) {
+      if (hookEntryMatches(entry)) {
+        if (nestedSeen) continue;
+        nestedEntries.push({ ...(entry as Record<string, unknown>), type: "command", command });
+        nestedSeen = true;
+      } else {
+        nestedEntries.push(entry);
+      }
+    }
+    entries.push({ ...record, hooks: nestedEntries });
+    seen = true;
+  }
+  if (!seen) entries.push({ hooks: [{ type: "command", command }] });
+  return { ...existing, hooks: { ...hooks, Stop: entries } };
+}
+
+function repairAfterAgentResponse(existing: Record<string, unknown>, command: string): Record<string, unknown> {
+  const hooksField = existing.hooks;
+  if (hooksField !== undefined && (typeof hooksField !== "object" || hooksField === null || Array.isArray(hooksField))) throw new Error("hooks must be an object");
+  const hooks = (hooksField as Record<string, unknown> | undefined) ?? {};
+  const listField = hooks.afterAgentResponse;
+  if (listField !== undefined && !Array.isArray(listField)) throw new Error("hooks.afterAgentResponse must be an array");
+  const list = (listField as unknown[] | undefined) ?? [];
+  let seen = false;
+  const entries: unknown[] = [];
+  for (const entry of list) {
+    if (hookEntryMatches(entry)) {
+      if (seen) continue;
+      entries.push({ ...(entry as Record<string, unknown>), command, timeout: 10 });
+      seen = true;
+    } else {
+      entries.push(entry);
+    }
+  }
+  if (!seen) entries.push({ command, timeout: 10 });
+  return { ...existing, hooks: { ...hooks, afterAgentResponse: entries }, version: (existing.version as number | undefined) ?? 1 };
+}
+
+async function repairHooksConfig(agent: HookAgent, environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  const path = hookConfig(environment, agent);
+  const command = hookEntrypointCommand(environment, agent);
+  if (command === undefined) return failed(`hook entrypoint is not executable for ${agent}`);
+  let existing: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    const raw = fileText(path);
+    try {
+      existing = raw === undefined ? {} : (JSON.parse(raw) as Record<string, unknown>);
+    } catch {
+      return failed(`${agent} config is not valid JSON: ${path}`);
+    }
+    const backup = await backupExistingFile(path, processAdapter);
+    if (backup.kind !== "ok") return backup;
+  }
+  let updated: Record<string, unknown>;
+  try {
+    updated = agent === "cursor" ? repairAfterAgentResponse(existing, command) : repairStopHooks(existing, command);
+  } catch {
+    return failed(`could not update ${agent} hooks: ${path}`);
+  }
+  try {
+    await writeJsonAtomic(path, updated);
+  } catch {
+    return failed(`could not update ${agent} hooks: ${path}`);
+  }
+  return ok(undefined);
+}
+
+async function installOrchestrationHooks(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  for (const agent of hookAgents) {
+    if (!(await hookAgentAvailable(agent, processAdapter))) continue;
+    const result = await repairHooksConfig(agent, environment, processAdapter);
+    if (result.kind !== "ok") return failed(`orchestration-hooks: ${result.error}`);
+  }
+  return ok(undefined);
+}
+
+async function revertOrchestrationHooks(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  for (const agent of hookAgents) {
+    if (!(await hookAgentAvailable(agent, processAdapter))) continue;
+    const path = hookConfig(environment, agent);
+    const directory = dirname(path);
+    const prefix = `${basename(path)}.megabrain-backup-`;
+    let latest: string | undefined;
+    try {
+      const names = readdirSync(directory).filter((name) => name.startsWith(prefix)).sort();
+      latest = names.length > 0 ? resolve(directory, names[names.length - 1]) : undefined;
+    } catch {
+      latest = undefined;
+    }
+    if (latest === undefined) continue;
+    try {
+      await copyFile(latest, path);
+    } catch {
+      return failed(`could not restore ${agent} hooks from ${latest}`);
+    }
+  }
+  return ok("orchestration-hooks reverted\n");
+}
+
+// --- simulator-native / simulator-tv -------------------------------------------------------
+
+async function installSimulatorNative(processAdapter: ProcessAdapter): Promise<Result<void>> {
+  if (!(await available(processAdapter, "appium"))) {
+    const install = await processAdapter.run("npm", ["install", "-g", "appium"]);
+    if (install.kind !== "ok") return failed("npm install -g appium failed");
+  }
+  if (!(await appiumReady(processAdapter))) {
+    const driver = await processAdapter.run("appium", ["driver", "install", "xcuitest"]);
+    if (driver.kind !== "ok") return failed("appium driver install xcuitest failed");
+  }
+  return ok(undefined);
+}
+
+// --- tv-adb ---------------------------------------------------------------------------------
+
+async function installTvAdb(processAdapter: ProcessAdapter): Promise<Result<void>> {
+  if (await available(processAdapter, "adb")) return ok(undefined);
+  const message = (await available(processAdapter, "brew"))
+    ? "adb is missing. Install Android platform-tools with: brew install android-platform-tools"
+    : "adb is missing. Install Android platform-tools with your OS package manager (for example: apt-get install adb)";
+  return failed(message);
+}
+
+// --- simulator-web ----------------------------------------------------------------------------
+
+type PlaywrightAgent = "claude" | "codex" | "agy";
+const playwrightAgents: readonly PlaywrightAgent[] = ["claude", "codex", "agy"];
+
+async function playwrightRegistered(agent: PlaywrightAgent, configPath: string, processAdapter: ProcessAdapter): Promise<boolean> {
+  if (agent === "codex") {
+    const list = await processAdapter.run("codex", ["mcp", "list", "--json"]);
+    if (list.kind !== "ok") return false;
+    try {
+      const parsed = JSON.parse(list.value.stdout) as Array<{ name?: string; transport?: { command?: string; args?: readonly string[] } }>;
+      return parsed.some((entry) => {
+        const args = (entry.transport?.args ?? []).join(" ");
+        return entry.name === "playwright" && entry.transport?.command === "npx" && args.includes("@playwright/mcp@latest") && args.includes("--config") && args.includes(configPath);
+      });
+    } catch {
+      return false;
+    }
+  }
+  const list = await processAdapter.run(agent, ["mcp", "list"]);
+  if (list.kind !== "ok") return false;
+  const text = list.value.stdout;
+  return text.includes("playwright") && text.includes("@playwright/mcp@latest") && text.includes(`--config ${configPath}`);
+}
+
+async function registerPlaywright(agent: PlaywrightAgent, configPath: string, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  if (await playwrightRegistered(agent, configPath, processAdapter)) return ok(undefined);
+  await processAdapter.run(agent, ["mcp", "remove", "playwright"]);
+  const args = agent === "codex"
+    ? ["mcp", "add", "playwright", "--", "npx", "-y", "@playwright/mcp@latest", "--config", configPath]
+    : ["mcp", "add", "--scope", "user", "playwright", "--", "npx", "-y", "@playwright/mcp@latest", "--config", configPath];
+  const result = await processAdapter.run(agent, args);
+  if (result.kind !== "ok") return failed(`${agent}: playwright MCP registration failed`);
+  return ok(undefined);
+}
+
+async function installSimulatorWeb(environment: Environment, processAdapter: ProcessAdapter, browser: string): Promise<Result<void>> {
+  if (!(await available(processAdapter, "node")) || !(await available(processAdapter, "npm"))) {
+    return failed(`node and npm are required for pinned Playwright 1.62.1`);
+  }
+  const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? (environment.MEGABRAIN_ROOT ? `${environment.MEGABRAIN_ROOT}/scripts/playwright-web.mjs` : "scripts/playwright-web.mjs");
+  if (!existsSync(script)) return failed("node, npm, and the browser setup script are required for simulator-web");
+  if (!(await available(processAdapter, "npx"))) return failed("npx is not on PATH");
+  const versionCheck = await processAdapter.run("npx", ["-y", "@playwright/mcp@latest", "--version"]);
+  if (versionCheck.kind !== "ok") return failed("@playwright/mcp could not be executed by npx");
+  const root = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
+  const install = await processAdapter.run("node", [script, "install", "--root", root, "--browser", browser]);
+  if (install.kind !== "ok") return failed("browser setup failed; run doctor for prerequisites");
+  let manifest: { activeBrowser?: string; profiles?: Record<string, { configPath?: string }> };
+  try {
+    manifest = JSON.parse(readFileSync(resolve(root, "manifest.json"), "utf8")) as typeof manifest;
+  } catch {
+    return failed("browser setup did not write the active MCP config");
+  }
+  const activeBrowser = manifest.activeBrowser ?? "chromium";
+  const configPath = manifest.profiles?.[activeBrowser]?.configPath;
+  if (configPath === undefined || configPath === "") return failed("browser setup did not write the active MCP config");
+  const failedAgents: string[] = [];
+  for (const agent of playwrightAgents) {
+    if (!(await available(processAdapter, agent))) continue;
+    const result = await registerPlaywright(agent, configPath, processAdapter);
+    if (result.kind !== "ok") failedAgents.push(agent);
+  }
+  if (failedAgents.length > 0) return failed(`playwright MCP registration failed for ${failedAgents.join(", ")}`);
+  return ok(undefined);
+}
+
+// --- tmux-runtime -----------------------------------------------------------------------------
+
+async function installTmuxRuntime(environment: Environment, processAdapter: ProcessAdapter, options: InstallOptions): Promise<Result<void>> {
+  if (!(await available(processAdapter, "tmux"))) {
+    const platform = await processAdapter.run("uname", ["-s"]);
+    const os = platform.kind === "ok" ? platform.value.stdout.trim() : "";
+    if (os === "Darwin") {
+      if (!(await available(processAdapter, "brew"))) return failed("tmux is missing. Install it with: brew install tmux");
+      const brew = await processAdapter.run("brew", ["install", "tmux"]);
+      if (brew.kind !== "ok") return failed("brew install tmux failed");
+    } else if (os === "Linux") {
+      return failed("tmux is missing. Install it with your package manager, for example: sudo apt-get install tmux");
+    } else {
+      return failed("tmux is missing. Install tmux with your operating system package manager");
+    }
+  }
+  const tuneArgs = options.yes ? ["tune", "--yes"] : ["tune"];
+  const tuneResult = await executeTmux(tuneArgs, environment, processAdapter);
+  if (tuneResult.kind !== "ok") return failed(tuneResult.kind === "failed" ? tuneResult.error : "tmux tuning failed");
+  const wrapperArgs = options.yes ? ["wrapper", "--yes"] : ["wrapper"];
+  const wrapperResult = await executeTmux(wrapperArgs, environment, processAdapter);
+  if (wrapperResult.kind !== "ok") return failed(wrapperResult.kind === "failed" ? wrapperResult.error : "tmux wrapper failed");
+  // WHY: the tmux-runtime doctor reads this flag back to decide "enabled" vs "disabled"
+  // (report()'s tmux-runtime branch), so it must be recorded before the after-install
+  // doctor re-check below, exactly as the shell set state before its own doctor call.
+  writeInstalledState(environment, "tmux-runtime", true, "tmux runtime enabled");
+  return ok(undefined);
+}
+
+// --- dispatch ----------------------------------------------------------------------------------
+
+async function runInstallStep(module: string, environment: Environment, processAdapter: ProcessAdapter, options: InstallOptions): Promise<Result<void>> {
+  switch (module) {
+    case "orchestration": return ok(undefined);
+    case "worktree": return ok(undefined);
+    case "orchestration-hooks": return installOrchestrationHooks(environment, processAdapter);
+    case "simulator-web": return installSimulatorWeb(environment, processAdapter, options.browser);
+    case "simulator-native": return installSimulatorNative(processAdapter);
+    case "simulator-tv": return installSimulatorNative(processAdapter);
+    case "tv-adb": return installTvAdb(processAdapter);
+    case "tmux-runtime": return installTmuxRuntime(environment, processAdapter, options);
+    case "skill-sync": installSkillSync(environment); return ok(undefined);
+    default: return failed(`unknown module: ${module}`, 2);
+  }
+}
+
+async function installOne(module: string, environment: Environment, processAdapter: ProcessAdapter, options: InstallOptions): Promise<Result<string>> {
+  // WHY: the shell's megabrain_install_one always calls the module's install function first,
+  // unconditionally, and only checks doctor status afterward — it never skips the install step
+  // just because doctor already reports "ok" beforehand. A doctor "ok" can be satisfied by
+  // content that still needs repairing (e.g. orchestration-hooks: a stale, duplicated entry from
+  // a different checkout still matches hookEntryPresent's path-agnostic regex), so skipping here
+  // would silently skip the repair too. "unsupported" is the one status still checked first,
+  // matching where the shell placed that specific refusal (module_simulator_native_install's own
+  // doctor check, before touching npm) — every other module's doctor never reports it.
+  const current = await report(module, environment, processAdapter);
+  if (current.status === "unsupported") return failed(`${module}: ${current.reason}`);
+  const step = await runInstallStep(module, environment, processAdapter, options);
+  if (step.kind !== "ok") {
+    writeInstalledState(environment, module, false, step.error);
+    return failed(`${module}: ${step.error}`);
+  }
+  const after = await report(module, environment, processAdapter);
+  writeInstalledState(environment, module, after.status === "ok", after.reason);
+  const text = `${module}: ${after.status} (${after.reason})\n`;
+  return after.status === "ok" ? ok(text) : failed(text.trim());
+}
+
+async function interactiveInstall(environment: Environment, processAdapter: ProcessAdapter, options: InstallOptions): Promise<Result<string>> {
+  let listing = "Select modules to install (numbers separated by spaces, or all):\n";
+  modules.forEach((id, index) => { listing += `  [${index + 1}] ${id}\n`; });
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolvePrompt) => {
+    rl.question(`${listing}Modules: `, (value) => {
+      rl.close();
+      resolvePrompt(value);
+    });
+  });
+  const trimmed = answer.trim();
+  let selection: readonly string[];
+  if (trimmed === "all") {
+    selection = modules;
+  } else {
+    const tokens = trimmed.split(/\s+/).filter((token) => token.length > 0);
+    const resolved: string[] = [];
+    for (const token of tokens) {
+      const index = Number(token);
+      if (!Number.isInteger(index) || index < 1 || index > modules.length) return failed(`invalid module selection: ${token}`);
+      resolved.push(modules[index - 1]);
+    }
+    selection = resolved;
+  }
+  let exitCode = 0;
+  let text = "";
+  for (const id of selection) {
+    const result = await installOne(id, environment, processAdapter, options);
+    text += result.kind === "ok" ? result.value : `${id}: ${result.kind === "failed" || result.kind === "unknown" ? result.error : "install failed"}\n`;
+    if (result.kind !== "ok") exitCode = 1;
+  }
+  return exitCode === 0 ? ok(text) : failed(text);
+}
+
+export async function executeInstall(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   let module: string | undefined;
+  let yes = false;
+  let revert = false;
+  let browser = "both";
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--yes") continue;
-    if (arg === "--json") continue;
-    if (arg === "--browser") { index += 1; continue; }
-    if (arg === "-h" || arg === "--help") return ok("Usage: megabrain install [module-id] [--browser chromium|firefox|both] [--yes]\n");
+    if (arg === "--yes") { yes = true; continue; }
+    if (arg === "--revert") { revert = true; continue; }
+    if (arg === "--browser") {
+      const value = args[index + 1];
+      if (value === undefined) return failed("install accepts a browser value", 2);
+      browser = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "-h" || arg === "--help") return ok("Usage: megabrain install [module-id] [--browser chromium|firefox|both] [--yes] [--revert]\n");
     if (module !== undefined) return failed("install accepts at most one module id", 2);
     module = arg;
   }
-  if (module === undefined) return failed("install without a module id requires an interactive terminal");
+  const options: InstallOptions = { yes, browser };
+  if (module === undefined) {
+    if (!isInteractiveTerminal()) return failed("install without a module id requires an interactive terminal");
+    return interactiveInstall(environment, processAdapter, options);
+  }
   if (!valid(module)) return failed(`unknown module: ${module}`, 2);
   if (diagnosticModules.includes(module)) return failed(`${module} is a doctor-only diagnostic`, 2);
-  const current = await report(module, environment, process);
-  if (current.status === "unsupported") return failed(`${module}: ${current.reason}`);
-  if (current.status === "ok") return ok(`${module}: already installed\n`);
-  return failed(`${module}: installation prerequisites are unavailable`);
+  if (revert) {
+    if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
+    return revertOrchestrationHooks(environment, processAdapter);
+  }
+  if (module === "simulator-web" && browser !== "chromium" && browser !== "firefox" && browser !== "both") {
+    return failed("browser must be chromium, firefox, or both", 2);
+  }
+  return installOne(module, environment, processAdapter, options);
 }

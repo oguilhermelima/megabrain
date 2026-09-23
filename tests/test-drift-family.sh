@@ -70,29 +70,19 @@ assert_equal "$(jq -r '.usageLimits.notice.intervalSeconds' "$MEGABRAIN_CHAIN_FI
 assert_equal "$(jq -r '.usageLimits.notice.enabled' "$MEGABRAIN_CHAIN_FILE")" true
 printf 'scenario 3: chain initialization reconciles newly seeded usage-limit fields\n'
 
-tmux_state="$work/tmux-state"
-mkdir -p "$tmux_state/sessions"
-export MEGABRAIN_STATE_DIR="$tmux_state"
-MEGABRAIN_TMUX_SESSION_DIR="$tmux_state/sessions"
-source "$root/lib/module-tmux-runtime.sh"
-printf '%s\n' '{"tmuxSession":"broken"}' >"$MEGABRAIN_TMUX_SESSION_DIR/broken.json"
-assert_contains "$(megabrain_tmux_session_registry_drift)" broken.json
-megabrain_tmux_available() { return 0; }
-megabrain_tmux_version() { printf 'tmux 3.5\n'; }
-megabrain_runtime_enabled() { return 0; }
-megabrain_tmux_tuning_config_path() { printf '%s/tmux.conf\n' "$MEGABRAIN_STATE_DIR"; }
-megabrain_tmux_wrapper_config_path() { printf '%s/.zshrc\n' "$MEGABRAIN_STATE_DIR"; }
-megabrain_tmux_tuning_block_present() { return 0; }
-megabrain_tmux_tuning_installed_current() { return 0; }
-megabrain_tmux_wrapper_block_present() { return 0; }
-megabrain_tmux_wrapper_installed_current() { return 0; }
-megabrain_tmux_tuning_server_running() { return 1; }
-megabrain_tmux_config_applied() { return 1; }
-if module_tmux_runtime_doctor >/dev/null 2>&1; then
-  fail 'tmux doctor reported ok with a malformed session registry record'
-fi
-assert_contains "$MODULE_REASON" 'session registry'
-printf 'scenario 4: malformed session registry makes tmux doctor non-ok\n'
+# WHY: scenario 4 ("malformed session registry makes tmux doctor non-ok") is deleted, not
+# rewritten. It drove megabrain_tmux_session_registry_drift and module_tmux_runtime_doctor,
+# both removed once install routed to the binary (module_tmux_runtime_doctor was reachable
+# only through the deleted shell install path; megabrain_tmux_session_registry_drift's only
+# caller was that doctor, so it had no remaining production caller either). Unlike the other
+# scenarios ported off deleted shell functions in this lane, this one has no binary equivalent
+# to redirect to: the compiled doctor's tmux-runtime report (src/cli/commands/install-doctor.ts)
+# checks tuning/wrapper block state, enabled state, and running-server state, but never reads
+# the tmux session registry at all, so a malformed registry record cannot be shown to change its
+# output. This is a real, pre-existing coverage gap in already-merged TypeScript (not introduced
+# by this lane, and not fixed here — DECIDED scoped this lane to `install`, reusing the existing
+# doctor for detection rather than extending it), surfaced by this migration and reported rather
+# than silently dropped.
 
 manifest="$work/install-manifest.json"
 INSTALL_MANIFEST="$manifest"

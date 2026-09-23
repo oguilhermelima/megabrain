@@ -64,11 +64,17 @@ config_path() {
   [ "$1" = tune ] && printf '%s\n' "$fixture/home/.tmux.conf" || printf '%s\n' "$fixture/home/.zshrc"
 }
 
+# WHY: this file originally compared two live implementations — the shell body under
+# MEGABRAIN_TMUX_<VERB>_IMPLEMENTATION=shell, and the compiled binary. Both megabrain_tmux_tune
+# and megabrain_tmux_wrapper are gone now (lib/module-tmux-runtime.sh keeps only command_tmux, an
+# unconditional passthrough with no implementation override left to read), so "shell" below no
+# longer means a second implementation — it means "invoked through the $root/megabrain wrapper"
+# rather than the compiled binary directly. Keeping that side is still worth it: it proves the
+# wrapper's passthrough routes correctly, which is the property DECIDED item C asked for.
 run_side() {
   local side="$1" verb="$2"; shift 2
   local executable="$root/megabrain"
-  local implementation="MEGABRAIN_TMUX_$(printf '%s' "$verb" | tr '[:lower:]' '[:upper:]')_IMPLEMENTATION=shell"
-  [ "$side" = binary ] && executable="$binary" && implementation=""
+  [ "$side" = binary ] && executable="$binary"
   env -i \
     HOME="$fixture/home" \
     PATH="$work/bin:$PATH" \
@@ -77,7 +83,6 @@ run_side() {
     MEGABRAIN_TMUX_CALLS="$work/tmux.calls" \
     MEGABRAIN_TMUX_SERVER="$tmux_server_mode" \
     SHELL=/bin/zsh \
-    ${implementation:+"$implementation"} \
     "$executable" tmux "$verb" "$@"
 }
 

@@ -395,13 +395,6 @@ megabrain_lower() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
-megabrain_validate_module() {
-  case "$1" in
-    orchestration|orchestration-hooks|worktree|simulator-web|simulator-native|simulator-tv|tv-adb|tmux-runtime|skill-sync) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 megabrain_module_ids() {
   printf '%s\n' orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync
 }
