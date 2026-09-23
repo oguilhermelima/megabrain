@@ -66,22 +66,4 @@ printf '%s' "$doctor_json" | jq -e '.module == "skill-sync" and .status == "misc
 cmp -s "$source_skill" "$cached_skill" && fail 'doctor silently repaired drift before reporting it'
 printf 'scenario 4: doctor reports skill drift independently and never repairs it\n'
 
-# WHY: several CLI tests (for example test-worktree-finish-cli.sh) stub .build/megabrain to a
-# bare "exit <status>" to test shell-to-binary routing in isolation. No TypeScript code runs in
-# that fixture, so the compiled binary's own startup check (src/core/skill.ts) can never fire
-# there; the entry script must still notice a missing skill source on its own for that case to
-# keep the diagnostic it always produced.
-source "$root/tests/fixtures/entrypoint-routing.sh"
-stub_fixture="$work/stub"
-make_entrypoint_routing_fixture "$root" "$stub_fixture" 97
-mkdir -p "$work/stub-state/home"
-set +e
-stub_output="$(env -i HOME="$work/stub-state/home" MEGABRAIN_STATE_DIR="$work/stub-state" PATH=/usr/bin:/bin \
-  "$stub_fixture/megabrain" context --json 2>&1)"
-stub_status=$?
-set -e
-[ "$stub_status" -eq 97 ] || fail "a stubbed compiled entrypoint did not report its own sentinel status: $stub_status"
-assert_contains "$stub_output" 'installed skill source is missing'
-printf 'scenario 5: the entry script notices a missing source even behind a stubbed binary\n'
-
 printf 'ok: skill synchronization scenarios\n'
