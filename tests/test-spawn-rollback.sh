@@ -94,7 +94,7 @@ scenario_launch_failure_keeps_worktree() {
 
   set +e
   output="$(env -i HOME="$state/home" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell ORCA_TERMINAL_HANDLE=parent-terminal \
+    ORCA_TERMINAL_HANDLE=parent-terminal \
     ORCA_WAIT_STATUS=1 PATH="$bin:/usr/bin:/bin" "$root/megabrain" orchestrate spawn \
     --repo "$repo" --branch "$branch" --agent codex --model gpt-5 --effort medium \
     --prompt 'write the fixture file' --tmux false --json 2>&1)"
@@ -107,78 +107,27 @@ scenario_launch_failure_keeps_worktree() {
   git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" ||
     fail "launch status $launch_status removed the branch: $output"
   [ -d "$worktree" ] || fail "launch status $launch_status removed the worktree: $output"
-  assert_contains "$output" 'agent launch failed'
+  # "agent launch failed" was the shell wording; the compiled spawn reports one of its own
+  # eleven named prompt-state failure reasons instead (src/core/spawn-plan.ts) — here
+  # readiness-timeout, since the fake orca's "terminal wait" is made to fail.
+  assert_contains "$output" 'readiness-timeout'
   printf 'launch failure keeps the written file, worktree, and branch\n'
 }
 
-scenario_metadata_read_failure_closes_host() {
-  local scenario="$work_dir/metadata-read-failure" state="$work_dir/metadata-read-failure/state"
-  local repo="$work_dir/metadata-read-failure/repo" shared="$work_dir/metadata-read-failure/shared"
-  local close_log dispatch_id meta metadata_read_marker
-  local launch_status
-  mkdir -p "$scenario" "$state" "$shared"
-  make_repo "$repo"
-  close_log="$scenario/close.log"
-  metadata_read_marker="$scenario/meta-read-count"
-
-  export MEGABRAIN_ROOT="$root"
-  export MEGABRAIN_STATE_DIR="$state"
-  export ORCA_TERMINAL_HANDLE=parent-terminal
-  unset SUPERSET_TERMINAL_ID TMUX TMUX_PANE
-  source "$root/lib/common.sh"
-  source "$root/lib/module-context.sh"
-  source "$root/lib/module-orchestrate.sh"
-  source "$root/lib/module-tmux-runtime.sh"
-  source "$root/lib/module-worktree.sh"
-
-  orca() {
-    case "${1:-} ${2:-}" in
-      'terminal create') printf '%s\n' '{"result":{"terminal":{"handle":"child-terminal"}}}' ;;
-      'terminal read') printf '%s\n' '{"text":"ready"}' ;;
-      'terminal wait') return 0 ;;
-      'terminal close') printf '%s\n' "${4:-}" >>"$close_log" ;;
-      'terminal list') printf '%s\n' '{"result":{"terminals":[{"handle":"child-terminal"}]}}' ;;
-      *) return 1 ;;
-    esac
-  }
-  megabrain_dispatch_native_send() {
-    return 0
-  }
-  megabrain_dispatch_meta_read() {
-    local dispatch_id="$1" path count
-    count="$(cat "$metadata_read_marker" 2>/dev/null || printf '0')"
-    count=$((count + 1))
-    printf '%s\n' "$count" >"$metadata_read_marker"
-    [ "$count" -ne 2 ] || return 1
-    path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
-    [ -f "$path" ] || return 1
-    cat "$path"
-  }
-
-  MEGABRAIN_SPAWN_RUNTIME=host
-  MEGABRAIN_SPAWN_CONTEXT=orca
-  set +e
-  megabrain_launch_agent "$repo" '' codex gpt-5 medium prompt label false >/dev/null 2>&1
-  launch_status=$?
-  set -e
-  [ "$launch_status" -ne 0 ] || fail 'metadata read failure unexpectedly succeeded'
-
-  dispatch_id="$(find "$state/dispatches" -name meta.json -print | sed 's#.*/dispatches/##; s#/meta.json$##' | head -n 1)"
-  [ -n "$dispatch_id" ] || fail 'metadata read failure did not leave dispatch metadata'
-  meta="$state/dispatches/$dispatch_id/meta.json"
-  grep -Fx 'child-terminal' "$close_log" >/dev/null || fail 'metadata read failure left the host terminal open'
-  [ "$(jq -r '.state' "$meta")" = failed ] || fail 'metadata read failure did not fail the dispatch'
-  [ "$(jq -r '.stage' "$meta")" = prompt-delivery ] || fail 'metadata read failure did not record its failure stage'
-  [ "$(jq -r '.reason' "$meta")" = metadata-read-failed ] || fail 'metadata read failure did not record its failure reason'
-  printf 'metadata read failure closes the host and records its reason\n'
-}
+# scenario_metadata_read_failure_closes_host is dropped (rule 3): it drove megabrain_launch_agent
+# directly, which no longer exists anywhere in lib/*.sh (issue 45 phases 6-7 replaced it outright
+# with executeSpawn, src/cli/commands/orchestrate-spawn.ts; there was never a staged bash version
+# to fall back to). Its class of failure — an internal step erroring out after the host terminal
+# is created — is covered in TypeScript by the cleanup-on-failure tests under
+# describe("executeSpawn") in tests/unit/spawn.test.ts, in particular "reports cleanup failure
+# alongside the primary host command failure" and "uses host cleanup instead of tmux cleanup";
+# the exact "re-read our own metadata mid-launch" step this scenario targeted does not exist in
+# the compiled spawn (it does not re-read its own just-written meta.json before finishing).
 
 case "${TEST_SCENARIO:-all}" in
   launch) scenario_launch_failure_keeps_worktree ;;
-  metadata) scenario_metadata_read_failure_closes_host ;;
   all)
     scenario_launch_failure_keeps_worktree
-    scenario_metadata_read_failure_closes_host
     ;;
   *) fail "unknown TEST_SCENARIO: ${TEST_SCENARIO:-}" ;;
 esac
