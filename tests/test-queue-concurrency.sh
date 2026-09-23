@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+binary="$root/.build/megabrain"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue.XXXXXX")"
 
 cleanup() {
@@ -12,13 +13,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export MEGABRAIN_STATE_DIR="$state_dir"
-export MEGABRAIN_LOCK_WAIT_SECONDS="${MEGABRAIN_LOCK_WAIT_SECONDS:-120}"
-export ORCA_TERMINAL_HANDLE=parent-terminal
-unset SUPERSET_TERMINAL_ID
-source "$root/lib/common.sh"
-source "$root/lib/module-parent-notify.sh"
-source "$root/lib/module-orchestrate.sh"
+[ -x "$binary" ] || {
+  printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"
+  exit 0
+}
 
 fail() {
   report_writer_failures
@@ -44,7 +42,28 @@ report_writer_failures() {
   done
 }
 
-megabrain_dispatch_meta_write queue-race parent-terminal orca orca "" child-terminal "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
+# megabrain_dispatch_meta_write (production-dead, zero callers anywhere in lib/) and
+# megabrain_dispatch_message_append (no longer exists anywhere in lib/ at all, grep: zero hits)
+# used to seed this fixture and drive the concurrent writes directly as shell functions. Running
+# the original file showed why that is dangerous, not just stale: it reported "0 durable, 20
+# refused" and still printed "ok" — every writer failed on "command not found" (the deleted
+# function), counted as a refusal, and every assertion below passed vacuously on zero files. A
+# green result that cannot tell "everything is broken" from "everything works" is worse than a
+# red one. Rewritten to drive the compiled binary for real (rule 1), matching test-queue-write-
+# cli.sh's run_binary_concurrency but against an orca-hosted dispatch instead of a superset-hosted
+# one — a distinct host path through the same mailbox-locking code.
+mkdir -p "$state_dir/dispatches/queue-race/messages" "$state_dir/dispatches/queue-race/deliveries"
+jq -n '{
+  dispatchId: "queue-race", parentSessionId: "parent-terminal", parentHost: "orca", parentWorkspaceId: null,
+  parentTmuxSession: null, parentTmuxPane: null, childHost: "orca", workspaceId: null,
+  terminalId: "child-terminal", worktreePath: "/work", branch: "main", agent: "codex", agentId: "codex",
+  model: "gpt-5", effort: null, modelHonored: true, modelSubstitution: null, runtime: "host",
+  spawnRuntime: "ide", tmuxSession: null, tmuxPane: null, label: "label", chain: null, state: "running",
+  promptDelivered: false, promptDelivery: "pending", promptDeliveryReason: null, promptPublication: "pending",
+  promptTransport: "pending", promptReceipt: "pending", promptState: "awaiting-publication",
+  processState: "running", terminalState: "owned", terminalReason: null, failureCount: 0, stage: null,
+  reason: null, reconcileOutcome: null, createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
+}' >"$state_dir/dispatches/queue-race/meta.json"
 
 # WHY: a parent reply and a child ask are written by different processes into the same
 # mailbox, so the sequence number and the file name are allocated concurrently. Without
@@ -58,8 +77,9 @@ for i in $(seq 1 "$writers"); do
   (
     stderr_path="$writers_dir/$i.stderr"
     exit_path="$writers_dir/$i.exit"
-    if megabrain_dispatch_message_append queue-race child ask "concurrent body $i" child-terminal \
-      >/dev/null 2>"$stderr_path"; then
+    if env -i HOME="$state_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
+      ORCA_TERMINAL_HANDLE=child-terminal MEGABRAIN_DISPATCH_ID=queue-race \
+      "$binary" ask "concurrent body $i" >/dev/null 2>"$stderr_path"; then
       writer_exit=0
       : > "$writers_dir/$i.written"
     else
@@ -80,6 +100,7 @@ accounted=$((durable + refused))
 assert_equal "$results" "$writers"
 assert_equal "$accounted" "$writers"
 assert_equal "$written" "$durable"
+[ "$durable" -gt 0 ] || fail 'no writer was durable; the scenario proved nothing'
 
 unique_seqs="$(find "$messages_dir" -name '*.json' -exec jq -r '.seq' {} \; | sort -u | wc -l | tr -d ' ')"
 assert_equal "$unique_seqs" "$durable"
