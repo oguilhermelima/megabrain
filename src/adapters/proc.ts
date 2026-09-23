@@ -43,7 +43,7 @@ export function createProcessAdapter(): ProcessAdapter {
         child.exited,
       ]);
       if (exitCode !== 0) {
-        return failed(stderr.trim() || `${command} exited with status ${exitCode}`, exitCode);
+        return failed(stderr.trim() || `${command} exited with status ${exitCode}`, exitCode, stdout);
       }
       return ok({ stdout, stderr, exitCode });
     } catch (error: unknown) {
