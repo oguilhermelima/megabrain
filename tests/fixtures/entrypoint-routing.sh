@@ -14,6 +14,7 @@ make_binary_isolation_fixture() {
   mkdir -p "$fixture_root/.build"
   cp "$source_root/megabrain" "$fixture_root/megabrain.real"
   cp -R "$source_root/lib" "$fixture_root/lib"
+  cp -R "$source_root/skills" "$fixture_root/skills"
   cp "$source_root/.build/megabrain" "$fixture_root/.build/megabrain"
   printf '#!/usr/bin/env bash\nexit %s\n' "$marker_status" >"$fixture_root/megabrain"
   chmod +x "$fixture_root/megabrain" "$fixture_root/megabrain.real" "$fixture_root/.build/megabrain"

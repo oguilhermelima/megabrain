@@ -89,7 +89,7 @@ run_binary() {
 }
 
 setup_listing_fixture() {
-  local repo_one repo_two
+  local repo_two
   setup_common
   repo_one="$state_root/repo-one"
   repo_two="$state_root/repo-two"
@@ -129,18 +129,25 @@ EOF
   : >"$git_log"
 }
 
+# inSharedRoot and the --repo filter including the repository's own main checkout (not just its
+# entries under the shared root) were introduced on purpose by 46b1a10 "fix(worktree): ask git for
+# a named repo" — a named --repo now asks git directly for that repository's worktrees
+# (executeWorktreeList, src/cli/commands/worktree-list.ts) instead of filtering the shared-root
+# listing, so the repository checkout itself (inSharedRoot: false) is now a legitimate member of
+# a filtered result.
 scenario_listing_json_and_repo_filter() {
-  local output expected filtered filtered_expected
+  local output expected filtered filtered_expected repo_one_canonical
   setup_listing_fixture
+  repo_one_canonical="$(cd "$repo_one" && pwd -P)"
   output="$(run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --json)"
   expected="$(jq -n \
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
     --arg two "$fixture_shared_root/two-main" \
     '[
-      {path: $detached, branch: "detached", parent: null, inSuperset: false, pullRequest: null},
-      {path: $one, branch: "feature/one", parent: null, inSuperset: true, pullRequest: null},
-      {path: $two, branch: "feature/two", parent: null, inSuperset: false, pullRequest: null}
+      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null},
+      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null},
+      {path: $two, branch: "feature/two", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null}
     ]')"
   assert_equal "$output" "$expected"
   assert_contains "$output" "$fixture_shared_root/one-detached"
@@ -151,11 +158,13 @@ scenario_listing_json_and_repo_filter() {
 
   filtered="$(run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --repo "$fixture_shared_root/one-main" --json)"
   filtered_expected="$(jq -n \
+    --arg repo "$repo_one_canonical" \
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
     '[
-      {path: $detached, branch: "detached", parent: null, inSuperset: false, pullRequest: null},
-      {path: $one, branch: "feature/one", parent: null, inSuperset: true, pullRequest: null}
+      {path: $repo, branch: "main", parent: null, inSuperset: false, inSharedRoot: false, pullRequest: null},
+      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null},
+      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null}
     ]')"
   assert_equal "$filtered" "$filtered_expected"
   case "$filtered" in

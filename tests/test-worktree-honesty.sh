@@ -26,44 +26,20 @@ assert_contains() {
   esac
 }
 
-assert_json() {
-  printf '%s' "$1" | jq -e "$2" >/dev/null || fail "JSON assertion failed: $2"
-}
-
 file_mode() {
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
 }
 
-export MEGABRAIN_STATE_DIR="$work_dir/state"
-source "$root/lib/common.sh"
-source "$root/lib/module-worktree.sh"
-
-megabrain_superset_available() { return 0; }
-megabrain_context_detect() { printf 'superset\n'; }
-megabrain_workspace_id_for_target() { printf 'workspace-test\n'; }
-megabrain_worktree_root() { printf '%s\n' "$fixture_shared_root"; }
-
-host_records='{"sessions":[]}'
-host_calls=0
-megabrain_superset() {
-  if [ "${1:-}" = terminals ] && [ "${2:-}" = list ]; then
-    host_calls=$((host_calls + 1))
-    printf '%s\n' "$host_records"
-    return 0
-  fi
-  if [ "${1:-}" = terminals ] && [ "${2:-}" = create ]; then
-    host_calls=$((host_calls + 1))
-    printf '%s\n' '{"terminalId":"created-terminal","pid":777}'
-    return 0
-  fi
-  return 1
+run_binary() {
+  MEGABRAIN_ROOT="$root" HOME="$work_dir/home" MEGABRAIN_STATE_DIR="$work_dir/state" \
+    "$root/.build/megabrain" "$@"
 }
 
 setup_git_fixture() {
   local name="$1"
-  rm -rf "$work_dir/repo" "$work_dir/shared" "$MEGABRAIN_STATE_DIR"
-  mkdir -p "$work_dir/shared" "$MEGABRAIN_STATE_DIR"
-  fixture_shared_root="$work_dir/shared"
+  rm -rf "$work_dir/repo" "$work_dir/shared" "$work_dir/state"
+  mkdir -p "$work_dir/shared" "$work_dir/state"
+  printf '%s\n' "$work_dir/shared" >"$work_dir/state/worktree-root"
   git init -q "$work_dir/repo"
   git -C "$work_dir/repo" config user.email tester@example.com
   git -C "$work_dir/repo" config user.name tester
@@ -73,27 +49,34 @@ setup_git_fixture() {
   fixture_branch="fix/$name"
 }
 
+# command_terminal (lib/module-worktree.sh) is a full unconditional passthrough for
+# create/list/restart/close — no shell fallback remains — so this drives the compiled binary
+# directly instead of sourcing lib/ to call it as a shell function.
 scenario_subdirectory_selector_is_refused() {
   local output="" subdir=""
   setup_git_fixture subpath
   mkdir -p "$work_dir/repo/apps/web"
   subdir="$work_dir/repo/apps/web"
-  host_calls=0
-  if output="$(MEGABRAIN_ROOT="$root" command_terminal create --worktree "$subdir" --command 'run server' 2>&1)"; then
+  if output="$(run_binary terminal create --worktree "$subdir" --command 'run server' 2>&1)"; then
     fail 'terminal create accepted a subdirectory selector'
   fi
   assert_contains "$output" 'worktree root'
   assert_contains "$output" 'cd'
-  assert_equal "$host_calls" 0
 
-  if output="$(MEGABRAIN_ROOT="$root" command_terminal restart "worktree:$subdir" 2>&1)"; then
+  if output="$(run_binary terminal restart "worktree:$subdir" 2>&1)"; then
     fail 'terminal restart accepted a subdirectory selector'
   fi
   assert_contains "$output" 'worktree root'
-  assert_equal "$host_calls" 0
   printf 'terminal worktree selectors refuse subdirectories with an actionable hint\n'
 }
 
+# megabrain_worktree_create (lib/module-worktree.sh) no longer exists anywhere in lib/*.sh (issue
+# 45 phases 6-7 replaced it with executeWorktreeCreate, src/cli/commands/worktree-write.ts,
+# reachable only through `worktree create`/`orchestrate spawn`). The env-file copy behaviour is
+# real in that file (isEnvFile at worktree-write.ts:589) and has no bun unit-test coverage
+# (tests/unit/worktree-write.test.ts has no ".env" scenario at all), so this is a rewrite, not a
+# drop: it drives the compiled binary's own `worktree create` — agent-less, so no host/tmux fakes
+# are needed.
 scenario_env_files_are_copied_without_contents() {
   local output="" destination="" root_mode="" local_mode="" symlink_target=""
   setup_git_fixture env-copy
@@ -107,12 +90,9 @@ scenario_env_files_are_copied_without_contents() {
   git -C "$work_dir/repo" add .env.example
   git -C "$work_dir/repo" commit -qm 'add env example'
 
-  megabrain_workspace_id_for_target() { :; }
-  megabrain_ensure_superset_project() { printf '%s\n' '{"id":"project-id","created":false}'; }
-  megabrain_workspace_create() { printf '%s\n' '{"id":"workspace-id","created":true}'; }
-  output="$(megabrain_worktree_create --repo "$work_dir/repo" --branch "$fixture_branch" --json)"
-  destination="$fixture_shared_root/fix-env-copy"
-  assert_json "$output" '.worktree == "'"$destination"'"'
+  output="$(run_binary worktree create --repo "$work_dir/repo" --branch "$fixture_branch" --json)"
+  destination="$(printf '%s' "$output" | jq -r '.worktree')"
+  assert_equal "$(cd "$destination" && pwd -P)" "$(cd "$work_dir/shared/fix-env-copy" && pwd -P)"
   [ -f "$destination/.env" ] || fail 'root .env was not copied'
   [ -f "$destination/apps/web/.env.local" ] || fail 'nested .env.local was not copied'
   cmp -s "$work_dir/repo/.env" "$destination/.env" || fail 'root .env bytes changed'
@@ -133,12 +113,9 @@ scenario_env_files_are_copied_without_contents() {
 scenario_no_env_file_is_normal() {
   local output="" destination=""
   setup_git_fixture no-env
-  megabrain_workspace_id_for_target() { :; }
-  megabrain_ensure_superset_project() { printf '%s\n' '{"id":"project-id","created":false}'; }
-  megabrain_workspace_create() { printf '%s\n' '{"id":"workspace-id","created":true}'; }
-  output="$(megabrain_worktree_create --repo "$work_dir/repo" --branch "$fixture_branch" --json)"
-  destination="$fixture_shared_root/fix-no-env"
-  assert_json "$output" '.worktree == "'"$destination"'"'
+  output="$(run_binary worktree create --repo "$work_dir/repo" --branch "$fixture_branch" --json)"
+  destination="$(printf '%s' "$output" | jq -r '.worktree')"
+  assert_equal "$(cd "$destination" && pwd -P)" "$(cd "$work_dir/shared/fix-no-env" && pwd -P)"
   [ ! -e "$destination/.env" ] || fail 'an absent source env file was invented'
   printf 'a repository without env files still creates its worktree\n'
 }

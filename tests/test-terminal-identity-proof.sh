@@ -26,25 +26,35 @@ assert_equal() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
-unset TMUX TMUX_PANE SUPERSET_TERMINAL_ID ORCA_TERMINAL_HANDLE
+export SUPERSET_TERMINAL_ID=parent-terminal
+unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 
-source "$root/lib/common.sh"
-source "$root/lib/module-tmux-runtime.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
+# megabrain_dispatch_terminal_status (lib/module-orchestrate.sh) has no live production caller
+# left — every caller in lib/ is itself unreachable dead code (megabrain_dispatch_reconcile_one,
+# megabrain_dispatch_release_terminal_process/_tmux_process/_tmux_session — none of these are
+# called from anywhere production reaches). The behaviour it implements is real and ported:
+# terminalStatus (src/cli/commands/orchestrate-terminal.ts) walks the same pane process tree for
+# the same MEGABRAIN_DISPATCH_ID=<dispatch> marker, reachable via `orchestrate liveness`. Its
+# `source` field is only ever set to "tmux" once identity is proven and the pane is captured, so
+# it is the CLI-observable signal this scenario checks: "tmux" for proven, "unknown" otherwise.
 
+# Fixture built directly with jq: no lib/ sourcing.
 create_dispatch() {
-  local dispatch_id="$1" pane="$2"
-  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal tmux tmux workspace terminal \
-    "$root" main codex label running gpt-5 true codex "$session_name" "$pane" tmux tmux >/dev/null
+  local dispatch_id="$1" pane="$2" dir="$state_dir/state/dispatches/$1"
+  mkdir -p "$dir/messages" "$dir/deliveries"
+  jq -n --arg dispatchId "$dispatch_id" --arg worktreePath "$root" --arg session "$session_name" --arg pane "$pane" '{
+    dispatchId: $dispatchId, parentSessionId: "parent-terminal", parentHost: "superset",
+    childHost: "tmux", workspaceId: "workspace", terminalId: "terminal",
+    worktreePath: $worktreePath, branch: "main", agent: "codex", agentId: "codex",
+    model: "gpt-5", modelHonored: true, label: "label", state: "running",
+    runtime: "tmux", spawnRuntime: "tmux", tmuxSession: $session, tmuxPane: $pane,
+    createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
+  }' >"$dir/meta.json"
 }
 
-terminal_status() {
+terminal_identity_source() {
   local dispatch_id="$1"
-  local meta
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id")"
-  megabrain_dispatch_terminal_status "$meta"
-  printf '%s\n' "$MEGABRAIN_TERMINAL_STATUS"
+  "$root/.build/megabrain" orchestrate liveness "$dispatch_id" --json | jq -r '.source'
 }
 
 start_child_with_marker() {
@@ -82,21 +92,21 @@ empty_pane="$(tmux split-window -d -P -F '#{pane_id}' -t "$session_name" bash)"
 if [ "$scenario" = all ] || [ "$scenario" = child ]; then
   create_dispatch child-dispatch "$child_pane"
   start_child_with_marker "$child_pane" child-dispatch
-  assert_equal "$(terminal_status child-dispatch)" proven
+  assert_equal "$(terminal_identity_source child-dispatch)" tmux
   printf 'a shell pane proves identity from its child agent process\n'
 fi
 
 if [ "$scenario" = all ] || [ "$scenario" = different ]; then
   create_dispatch wrong-dispatch "$wrong_pane"
   start_child_with_marker "$wrong_pane" another-dispatch
-  assert_equal "$(terminal_status wrong-dispatch)" unknown
+  assert_equal "$(terminal_identity_source wrong-dispatch)" unknown
   printf 'a child carrying another dispatch id does not prove identity\n'
 fi
 
 if [ "$scenario" = all ] || [ "$scenario" = absent ]; then
   create_dispatch empty-dispatch "$empty_pane"
   start_empty_child "$empty_pane"
-  assert_equal "$(terminal_status empty-dispatch)" unknown
+  assert_equal "$(terminal_identity_source empty-dispatch)" unknown
   printf 'a process tree without the dispatch id remains unproven\n'
 fi
 

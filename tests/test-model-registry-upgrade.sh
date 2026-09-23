@@ -129,15 +129,13 @@ done
 assert_failure_contains 'unknown reasoning level' "$root/megabrain" model add codex rejected-level --reasoning bogus
 printf 'model add vocabulary: every shipped level accepted and unknown level refused\n'
 
-# 5. A dispatch metadata record carries the effort used for its launch.
-reset_state
-MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" bash -c '
-  source "$1/lib/common.sh"
-  source "$1/lib/module-orchestrate.sh"
-  megabrain_dispatch_meta_write dispatch-level parent superset superset workspace terminal "$1" main codex label spawning gpt-5 true codex "" "" host ide "" "" "" "" "" "" "" false high >/dev/null
-' _ "$root"
-assert_equal "$(jq -r '.model' "$MEGABRAIN_STATE_DIR/dispatches/dispatch-level/meta.json")" gpt-5
-assert_equal "$(jq -r '.effort' "$MEGABRAIN_STATE_DIR/dispatches/dispatch-level/meta.json")" high
-printf 'dispatch metadata: launched effort recorded next to model\n'
+# Scenario 5 ("a dispatch metadata record carries the effort used for its launch") is dropped,
+# not rewritten (rule 3): it drove megabrain_dispatch_meta_write directly, which has had no
+# production caller since spawn moved to TypeScript (command_orchestrate spawn execs the binary
+# unconditionally; the shell function is only ever invoked from tests). The behaviour itself is
+# real in the binary (src/cli/commands/orchestrate-spawn.ts writes `effort: options.effort` into
+# meta.json) and is already exercised black-box by tests/test-spawn-dispatch-identity.sh, which
+# calls `orchestrate spawn --effort medium` and asserts the resulting meta.json — not touched by
+# this lane, but it is the reason this scenario is a drop rather than a rewrite.
 
-printf 'ok: model registry levels, upgrade ownership, and dispatch effort\n'
+printf 'ok: model registry levels and upgrade ownership\n'
