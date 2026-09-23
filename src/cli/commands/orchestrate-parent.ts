@@ -4,9 +4,11 @@ import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity } from "../../core/identity.js";
+import { hasCallerIdentity, ownsDispatch, resolveCallerIdentity, type CallerIdentity } from "../../core/context.js";
 import { selectDelivery, type CheckDelivery } from "../../core/check.js";
 import { files, loadDeliveries, loadMessages, migrateDeliveries, readJson, report } from "./check.js";
 import { acknowledgeDelivery, ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
+import { callerEnvironment, resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
@@ -73,13 +75,19 @@ async function waitForWake(path: string, initialSize: number, timeoutMillisecond
   });
 }
 
-async function requireParent(root: string, dispatch: string, environment: ParentQueueEnvironment): Promise<Result<JsonRecord>> {
+// Consumer-identity helper: the string form ("host/id") used for delivery locking, distinct from
+// the ownership check below but drawn from the same resolved caller.
+function consumerSession(caller: CallerIdentity): { readonly sessionHost?: string; readonly sessionId?: string } {
+  const id = caller.id !== "" ? caller.id : caller.terminalId ?? undefined;
+  return { sessionHost: caller.host !== "unknown" ? caller.host : undefined, sessionId: id };
+}
+
+async function requireParent(root: string, dispatch: string, caller: CallerIdentity): Promise<Result<JsonRecord>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
-  const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
-  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-  if (!sessionHost || !sessionId) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  if (meta.parentSessionId !== sessionId || meta.parentHost !== sessionHost) return failed(`dispatch ${dispatch} is owned by ${String(meta.parentHost ?? "")}/${String(meta.parentSessionId ?? "")}, not ${sessionHost}/${sessionId}`);
+  if (!hasCallerIdentity(caller)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  const expectedHost = String(meta.parentHost ?? ""); const expectedId = String(meta.parentSessionId ?? "");
+  if (!ownsDispatch(caller, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${dispatch} is owned by ${expectedHost}/${expectedId}, not ${caller.host}/${caller.id || caller.terminalId || ""}`);
   return ok(meta);
 }
 
@@ -108,10 +116,13 @@ function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): R
 export async function executeOrchestrateWatch(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
   const parsed = parseWatchArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatch, environment); if (parent.kind !== "ok") return parent;
-  const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
-  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-  const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
+  // No ProcessAdapter is threaded through watch, so the caller is resolved without the tmux
+  // probe (the same capability gap this command has always had) — everything else (an explicit
+  // override, an agent session id, a superset/orca terminal handle, or a structured Orca session)
+  // still resolves.
+  const caller = resolveCallerIdentity(callerEnvironment(environment));
+  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatch, caller); if (parent.kind !== "ok") return parent;
+  const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, ...consumerSession(caller) });
   if (identity.kind !== "known") return failed(identity.reason);
   const started = Date.now();
   const wakePath = await dispatchPath(root, parsed.value.dispatch, "nudge.log");
@@ -155,11 +166,10 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
 export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]\n");
   const parsed = parseParentAckArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment); if (parent.kind !== "ok") return parent;
+  const caller = await resolveCaller(environment, process);
+  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, caller); if (parent.kind !== "ok") return parent;
   if (parsed.value.close === true && parent.value.state !== "done" && parent.value.state !== "closed") return ackCloseRefusal(parsed.value.dispatchId, typeof parent.value.state === "string" ? parent.value.state : "", parsed.value.json);
-  const sessionHost = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
-  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-  const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, sessionHost, sessionId });
+  const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, ...consumerSession(caller) });
   if (identity.kind !== "known") return failed(identity.reason);
   const path = await dispatchPath(root, parsed.value.dispatchId, `deliveries/${parsed.value.deliveryId}.json`); const delivery = await readJson(path);
   if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);

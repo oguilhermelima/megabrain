@@ -5,6 +5,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { skillSyncDoctor } from "../../core/skill.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { tmuxCallerPaneSession } from "./queue-write.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
@@ -227,10 +228,12 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
   return result;
 }
 
+// The tmux session this caller is itself physically running in — used only to exclude it from
+// the leaked-dispatch-session count. Physical, not identity: goes through queue-write.js
+// tmuxCallerPaneSession (the raw probe), which an override never suppresses — see the identical
+// note on orchestrate-prune.js tmuxCallerSession.
 export async function callerSession(environment: Environment, process: ProcessAdapter): Promise<string> {
-  if (!environment.TMUX || !environment.TMUX_PANE) return "";
-  const result = await getTmux().sessionForPane(environment.TMUX_PANE, process);
-  return result.kind === "ok" ? result.value : "";
+  return (await tmuxCallerPaneSession(environment, process)) ?? "";
 }
 
 async function appiumReady(process: ProcessAdapter): Promise<boolean> {

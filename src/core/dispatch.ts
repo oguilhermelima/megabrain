@@ -1,5 +1,6 @@
 import { ok, unknown, type Result } from "./result.js";
 import { dispatchStates, processStates, terminalStates, type DispatchStateValue, type ProcessStateValue, type TerminalStateValue } from "./dispatch-states.js";
+import { ownsDispatch, type CallerIdentity } from "./context.js";
 
 export type JsonRecord = { readonly [key: string]: unknown };
 export type UnknownField = { readonly kind: "unknown"; readonly value: string };
@@ -51,7 +52,11 @@ function isKnown<T extends string>(value: T | UnknownField | undefined, expected
 }
 
 export function decorateDispatchRecord(record: DispatchRecord, caller: DispatchCaller): DecoratedDispatch {
-  const ownedByCaller = caller.id.length > 0 && record.parentSessionId === caller.id && record.parentHost === caller.host;
+  // DispatchCaller only carries id/host, not a terminal handle, so ownsDispatch's legacy
+  // terminal-handle fallback is inert here (padded to null) — the id/host comparison it also
+  // does is the same one this used to do inline.
+  const identity: CallerIdentity = { id: caller.id, host: caller.host, terminalId: null, tmuxSession: null, tmuxPane: null };
+  const ownedByCaller = ownsDispatch(identity, { parentHost: record.parentHost ?? "", parentSessionId: record.parentSessionId ?? "" });
   const orphan = isKnown(record.state, "orphaned");
   const uncertain = record.processState === "start-unproven" || record.processState === "stop-unproven" || record.processState === "abandoned" || record.processState === "exited";
   return { ...record.raw, ownedByCaller, orphan, uncertain, reconcileResult: record.raw.reconcileOutcome ?? "unchanged" };

@@ -9,7 +9,8 @@ import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
+import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
+import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, type HostCommand, type HostProvider } from "../../hosts/index.js";
@@ -137,16 +138,30 @@ function dispatchId(environment: SpawnEnvironment): string {
     : `dispatch-${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
 }
 
-function parent(environment: SpawnEnvironment): Readonly<{ id: string; host: string; workspaceId: string | null; tmuxSession: string | null; tmuxPane: string | null }> {
-  const host = environment.MEGABRAIN_SESSION_HOST ?? (environment.ORCA_TERMINAL_HANDLE ? "orca" : environment.SUPERSET_TERMINAL_ID ? "superset" : environment.TMUX ? "tmux" : "unknown");
-  const id = environment.MEGABRAIN_SESSION_ID ?? environment.ORCA_TERMINAL_HANDLE ?? environment.SUPERSET_TERMINAL_ID ?? "";
-  const workspaceId = environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null;
-  return { id, host, workspaceId, tmuxSession: environment.TMUX_PANE ? environment.MEGABRAIN_TMUX_SESSION ?? null : null, tmuxPane: environment.TMUX_PANE ?? null };
+// The workspace id a parent may pass down to the child host provider. Unrelated to caller
+// identity: kept as its own lookup rather than folded into resolveCaller.
+function parentWorkspaceId(environment: SpawnEnvironment): string | null {
+  return environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null;
+}
+
+// The tmux channel to type a notification into for this dispatch's parent. This is the pane the
+// parent itself was launched into (MEGABRAIN_TMUX_SESSION, set by whatever spawned the parent),
+// not a fresh probe of the parent's current caller identity — the two usually agree, but this
+// field exists purely for message delivery, so it stays independent of resolveCaller.
+function parentTmuxChannel(environment: SpawnEnvironment): Readonly<{ tmuxSession: string | null; tmuxPane: string | null }> {
+  return { tmuxSession: environment.TMUX_PANE ? environment.MEGABRAIN_TMUX_SESSION ?? null : null, tmuxPane: environment.TMUX_PANE ?? null };
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
+
+// A tmux pane inherits the whole environment of whatever launched the pane's shell, and a host
+// terminal's shell can too — so without this, a child started by a caller who has
+// CLAUDE_CODE_SESSION_ID / ORCA_STRUCTURED_SESSION / etc. set would inherit them, resolve as its
+// parent's own identity, and pass the parent's ownership checks. `env -u` for each name in
+// CALLER_IDENTITY_ENV_VARS strips them before the launch line's own MEGABRAIN_* assignments run.
+const clearCallerIdentityEnv = `env ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")}`;
 
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
@@ -354,15 +369,20 @@ export async function markRunningIfSpawning(root: string, id: string): Promise<R
   return updateMeta(root, id, { state: "running" });
 }
 
-async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: ReturnType<typeof parent>, runtime: SpawnRuntime, terminalId: string, session: string | null, pane: string | null): Promise<RecordValue> {
+async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, pane: string | null): Promise<RecordValue> {
   const now = new Date().toISOString();
   return {
     dispatchId: id,
+    // The stable owner of this dispatch (D): a caller's own agent-session id when one is
+    // available, otherwise its terminal handle. parentTerminalId is recorded separately so a
+    // caller whose agent session later changes can still be recognised by the terminal it ran in
+    // (see core/context.js ownsDispatch).
     parentSessionId: parentContext.id,
     parentHost: parentContext.host,
-    parentWorkspaceId: parentContext.workspaceId,
-    parentTmuxSession: parentContext.tmuxSession,
-    parentTmuxPane: parentContext.tmuxPane,
+    parentTerminalId: parentContext.terminalId,
+    parentWorkspaceId: parentWorkspace,
+    parentTmuxSession: parentTmux.tmuxSession,
+    parentTmuxPane: parentTmux.tmuxPane,
     childHost: parentContext.host,
     workspaceId: worktree.workspaceId,
     terminalId,
@@ -460,7 +480,17 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
-  const parentContext = parent(environment);
+  const parentContext = await resolveCaller(environment, process);
+  const parentWorkspace = parentWorkspaceId(environment);
+  const parentTmux = parentTmuxChannel(environment);
+  // F: a tmux spawn from a caller whose host could not be resolved would otherwise record an
+  // empty owner (parentContext.id === "" with host "unknown") — a dispatch nobody can later
+  // supervise, close or reply to. Refuse before anything is created. The host runtime path
+  // already refuses below (getHost(parentContext.host) === undefined), so this only needs to
+  // cover tmux.
+  if (runtime === "tmux" && parentContext.host === "unknown") {
+    return failed("cannot spawn on tmux from an unknown caller host; run inside a managed terminal or set MEGABRAIN_SESSION_HOST so the dispatch has a supervisable owner");
+  }
   const command = agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
@@ -497,9 +527,18 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
     terminalId = parentContext.id || "unknown-host-terminal";
   } else {
+    // E: a structured Orca session (ORCA_STRUCTURED_SESSION=1, no ORCA_TERMINAL_HANDLE) now
+    // resolves host "orca" here too (C, resolveCaller shares callerEnvironment with every other
+    // verb), so this branch already launches such a caller through the orca provider below with
+    // no further change. Verified before relying on that: `orca terminal create` takes only
+    // --worktree/--title/--command/--focus (`orca terminal create --help`), and the same CLI's
+    // `orca worktree current` probe — used for the exact same host recognition in `megabrain
+    // context` — already succeeds when run from a structured session (measured, issue #55). The
+    // orca CLI is not scoped to the caller's own terminal; nothing here needed a parent terminal
+    // identity to begin with.
     const host = getHost(parentContext.host);
     if (host === undefined) return failed(`cannot launch agent from unknown orchestration host: ${parentContext.host}`);
-    const created = host.create({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
+    const created = host.create({ workspaceId: worktree.workspaceId ?? parentWorkspace, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
     if (created.kind !== "ok") return created;
     const createdTerminal = await createHostTerminal(host, created.value, process);
     if (createdTerminal.kind !== "ok") return createdTerminal;
@@ -510,7 +549,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const root = resolveStateDirectory(environment);
   const directory = await dispatchPath(root, id, "");
   await mkdir(directory, { recursive: true });
-  const meta = await initialMeta(id, options, worktree, parentContext, runtime, terminalId, session, pane);
+  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, pane);
   await atomicJson(`${directory}/meta.json`, meta);
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };
   let step: SpawnStep = runtime === "tmux" ? "transcript-start" : "prompt-publication";
@@ -523,7 +562,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       outcome = appended.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: "dispatch message append", detail: appended.error } };
     } else if (step === "readiness-wait") {
       const host = getHost(parentContext.host);
-      const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId }, process, readinessTimeoutMs);
+      const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, process, readinessTimeoutMs);
       if (waited === undefined) {
         readinessError = `${parentContext.host} terminal ${terminalId} did not become ready within ${readinessTimeoutMs}ms`;
         outcome = { kind: "failed" };
@@ -537,13 +576,13 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         // The launch line runs in the pane's shell, not the agent composer: it always submits on
         // Enter regardless of the agent's own submit key (Tab for Codex, which the shell reads as
         // completion instead of running the command).
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process);
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
         const identityVariable = host?.terminalIdentityVariable;
-        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} ${command}` });
+        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")} MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} ${command}` });
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
@@ -563,7 +602,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
-        const call = host?.send({ workspaceId: worktree.workspaceId ?? parentContext.workspaceId, terminalId, text: prompt });
+        const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt });
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };

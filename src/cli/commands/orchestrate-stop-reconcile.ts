@@ -5,7 +5,8 @@ import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { appendMessage, atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
+import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
+import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
 import { getHost } from "../../hosts/index.js";
@@ -35,13 +36,13 @@ function normalize(meta: RecordValue): RecordValue {
   };
 }
 
-async function parentMeta(root: string, dispatch: string, env: QueueEnvironment): Promise<Result<RecordValue>> {
+async function parentMeta(root: string, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
-  const host = env.MEGABRAIN_SESSION_HOST ?? (env.SUPERSET_TERMINAL_ID !== undefined ? "superset" : env.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
-  const id = env.MEGABRAIN_SESSION_ID ?? env.SUPERSET_TERMINAL_ID ?? env.ORCA_TERMINAL_HANDLE;
-  if (host === undefined || id === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  if (meta.parentHost !== host || meta.parentSessionId !== id) return failed(`dispatch ${dispatch} is owned by ${value(meta.parentHost)}/${value(meta.parentSessionId)}, not ${host}/${id}`);
+  const current = await resolveCaller(env, process);
+  if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  const expectedHost = value(meta.parentHost); const expectedId = value(meta.parentSessionId);
+  if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${dispatch} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
   return ok(meta);
 }
 
@@ -107,7 +108,8 @@ async function reconcileOne(root: string, dispatch: string, process: ProcessAdap
 export async function executeOrchestrateStop(args: readonly string[], env: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate stop <dispatch-id> [--json]\n");
   const parsed = parseStopArgs(args); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(env); const parent = await parentMeta(root, parsed.value.dispatchId, env); if (parent.kind !== "ok") return parent;
+  const root = resolveStateDirectory(env); const parent = await parentMeta(root, parsed.value.dispatchId, env, process); if (parent.kind !== "ok") return parent;
+  const caller = await resolveCaller(env, process); const session = caller.id || caller.terminalId || "";
   const meta = parent.value; const runtime = value(meta.runtime) || "host"; let status = "unknown"; let interruptStatus: "landed" | "not-landed" = "not-landed"; let reason = ""; let interruptReason = "";
   if (runtime === "tmux") {
     const live = await tmuxLiveness(meta, process); status = live.status;
@@ -117,7 +119,6 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
     if (decision.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${reason || decision.error}`);
     if (affordance.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${affordance.error}`);
     const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with ${affordance.value}`;
-    const session = env.MEGABRAIN_SESSION_ID ?? env.SUPERSET_TERMINAL_ID ?? env.ORCA_TERMINAL_HANDLE ?? "";
     const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
     const sent = await getTmux().sendKey(value(meta.tmuxPane), affordance.value, process); interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
   } else {
@@ -133,14 +134,12 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
     const identity = await terminalStatus(meta, process);
     if (identity === "missing") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is missing; cannot safely interrupt`);
     if (identity !== "proven") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt`);
-    const session = env.MEGABRAIN_SESSION_ID ?? env.SUPERSET_TERMINAL_ID ?? env.ORCA_TERMINAL_HANDLE ?? "";
     const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca`;
     const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
     const sent = await process.run(interrupt.value.command, interrupt.value.args);
     interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
     interruptReason = sent.kind === "failed" ? sent.error : "";
   }
-  const session = env.MEGABRAIN_SESSION_ID ?? env.SUPERSET_TERMINAL_ID ?? env.ORCA_TERMINAL_HANDLE ?? "";
   const resultText = interruptStatus === "landed" ? `interrupt landed for dispatch ${parsed.value.dispatchId}` : `interrupt did not land for dispatch ${parsed.value.dispatchId}${interruptReason === "" ? "" : `: ${interruptReason}`}`;
   const resultAppend = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt-result", resultText, session, env, process); if (resultAppend.kind !== "ok") return resultAppend;
   const output = stopOutput(parsed.value.dispatchId, interruptStatus, parsed.value.json, interruptReason);

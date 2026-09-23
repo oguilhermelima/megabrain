@@ -5,7 +5,7 @@ import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { dispatchArchiveDirectory, dispatchArchiveParentDirectory, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { atomicJson } from "./queue-write.js";
+import { atomicJson, tmuxCallerPaneSession } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 
@@ -107,10 +107,12 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
   return failed("could not release dispatch terminal");
 }
 
+// The tmux session this caller is itself physically running in — used only to avoid pruning the
+// pane the operator is typing into. This is a physical question, not an identity one: an
+// override (MEGABRAIN_SESSION_ID/HOST, a terminal handle) must never suppress the probe, so this
+// goes through queue-write.js tmuxCallerPaneSession (the raw probe), not resolveCaller.
 export async function tmuxCallerSession(environment: Environment, process: ProcessAdapter): Promise<string | undefined> {
-  if (!environment.TMUX || !environment.TMUX_PANE) return undefined;
-  const result = await getTmux().sessionForPane(environment.TMUX_PANE, process);
-  return result.kind === "ok" ? result.value : undefined;
+  return tmuxCallerPaneSession(environment, process);
 }
 
 async function entries(root: string): Promise<Entry[]> {

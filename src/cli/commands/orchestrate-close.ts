@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../core/orchestrate-close.js";
+import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { atomicJson, readJson, type QueueEnvironment } from "./queue-write.js";
+import { atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
@@ -12,20 +13,6 @@ type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
 const absent = (value: string): boolean => /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(value);
 
-export async function caller(environment: QueueEnvironment, process: ProcessAdapter): Promise<{ host?: string; id?: string; tmuxPane?: string; tmuxSession?: string }> {
-  if (environment.TMUX && environment.TMUX_PANE) {
-    let identity: { host: string; id?: string } = environment.SUPERSET_TERMINAL_ID ? { host: "superset", id: environment.SUPERSET_TERMINAL_ID } : environment.ORCA_TERMINAL_HANDLE ? { host: "orca", id: environment.ORCA_TERMINAL_HANDLE } : { host: "tmux" };
-    if (identity.id === undefined) {
-      const session = await getTmux().sessionForPane(environment.TMUX_PANE, process);
-      if (session.kind === "ok") identity = { host: "tmux", id: `${session.value}:${environment.TMUX_PANE}` };
-    }
-    return { ...identity, tmuxPane: environment.TMUX_PANE };
-  }
-  if (environment.SUPERSET_TERMINAL_ID) return { host: "superset", id: environment.SUPERSET_TERMINAL_ID };
-  if (environment.ORCA_TERMINAL_HANDLE) return { host: "orca", id: environment.ORCA_TERMINAL_HANDLE };
-  if (environment.MEGABRAIN_SESSION_ID) return { host: environment.MEGABRAIN_SESSION_HOST ?? "unknown", id: environment.MEGABRAIN_SESSION_ID };
-  return {};
-}
 
 export async function tmuxSessionForEnvironment(environment: QueueEnvironment, process: ProcessAdapter): Promise<string | undefined> {
   if (!environment.TMUX || !environment.TMUX_PANE) return undefined;
@@ -81,14 +68,14 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   if (resolved.kind !== "ok") return { ...resolved, error: `${resolved.error}\nmegabrain: dispatch not found: ${parsed.value.dispatchId}` };
   const path = dispatchFile(resolved.value, "meta");
   const meta = await readJson(path); if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
-  const current = await caller(environment, process);
-  if (current.host === undefined || current.id === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  const current = await resolveCaller(environment, process);
+  if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const expectedHost = text(meta.parentHost); const expectedId = text(meta.parentSessionId);
-  if (current.host !== expectedHost || current.id !== expectedId) return failed(`dispatch ${parsed.value.dispatchId} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id}`);
-  let tmuxSession = current.tmuxSession;
+  if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${parsed.value.dispatchId} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
+  let tmuxSession = current.tmuxSession ?? undefined;
   const callerSession = await tmuxSessionForEnvironment(environment, process);
   if (callerSession !== undefined) tmuxSession = callerSession;
-  const decision = closeDecision(meta, { ...current, tmuxSession }, parsed.value.forceRelease);
+  const decision = closeDecision(meta, { host: current.host, id: current.id, tmuxPane: environment.TMUX_PANE, tmuxSession }, parsed.value.forceRelease);
   if (decision.kind !== "ok") return decision;
   if (decision.value === "retained") return failed(`dispatch ${parsed.value.dispatchId} terminal is retained because identity is unproven; refusing release; verify it manually or rerun with --force-release`);
   if (decision.value === "duplicate") return ok(parsed.value.json ? `${JSON.stringify({ dispatchId: parsed.value.dispatchId, status: "closed", duplicate: true }, null, 2)}\n` : `closed: ${parsed.value.dispatchId}\n`);

@@ -54,16 +54,24 @@ chmod +x "$tmux_bin/tmux"
 tmux_state="$state_dir/tmux-state"
 mkdir -p "$tmux_state/dispatches/tmux-owned"
 printf '%s\n' '{"dispatchId":"tmux-owned","parentSessionId":"tmux-session:%7","parentHost":"tmux","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmux"}' >"$tmux_state/dispatches/tmux-owned/meta.json"
-tmux_output="$(env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
-  MEGABRAIN_SESSION_ID=wrong MEGABRAIN_SESSION_HOST=wrong "$root/.build/megabrain" orchestrate list --json)"
+tmux_output="$(env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
+  "$root/.build/megabrain" orchestrate list --json)"
 printf '%s' "$tmux_output" | jq -e 'length == 1 and .[0].dispatchId == "tmux-owned" and .[0].ownedByCaller == true' >/dev/null ||
   fail "tmux caller identity was not selected: $tmux_output"
-printf 'tmux caller identity follows the shell precedence\n'
+printf 'tmux caller identity is selected when no session override is set\n'
 
 precedence_state="$state_dir/precedence"
 mkdir -p "$precedence_state/dispatches/superset-owned"
 printf '%s\n' '{"dispatchId":"superset-owned","parentSessionId":"caller","parentHost":"superset","state":"running","processState":"running","terminalState":"owned","worktreePath":"/superset"}' >"$precedence_state/dispatches/superset-owned/meta.json"
-precedence_output="$(MEGABRAIN_STATE_DIR="$precedence_state" MEGABRAIN_SESSION_ID=wrong MEGABRAIN_SESSION_HOST=wrong SUPERSET_TERMINAL_ID=caller ORCA_TERMINAL_HANDLE=other "$root/.build/megabrain" orchestrate list --json)"
+precedence_output="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST MEGABRAIN_STATE_DIR="$precedence_state" SUPERSET_TERMINAL_ID=caller ORCA_TERMINAL_HANDLE=other "$root/.build/megabrain" orchestrate list --json)"
 printf '%s' "$precedence_output" | jq -e 'length == 1 and .[0].dispatchId == "superset-owned" and .[0].ownedByCaller == true' >/dev/null ||
-  fail "Superset identity did not win over generic and Orca identities: $precedence_output"
-printf 'Superset identity wins over generic and Orca identities\n'
+  fail "Superset identity did not win over Orca identity when no session override is set: $precedence_output"
+printf 'Superset identity wins over Orca identity when no session override is set\n'
+
+override_state="$state_dir/override"
+mkdir -p "$override_state/dispatches/override-owned"
+printf '%s\n' '{"dispatchId":"override-owned","parentSessionId":"override-caller","parentHost":"override-host","state":"running","processState":"running","terminalState":"owned","worktreePath":"/override"}' >"$override_state/dispatches/override-owned/meta.json"
+override_output="$(MEGABRAIN_STATE_DIR="$override_state" MEGABRAIN_SESSION_ID=override-caller MEGABRAIN_SESSION_HOST=override-host SUPERSET_TERMINAL_ID=live-superset-terminal "$root/.build/megabrain" orchestrate list --json)"
+printf '%s' "$override_output" | jq -e 'length == 1 and .[0].dispatchId == "override-owned" and .[0].ownedByCaller == true' >/dev/null ||
+  fail "an explicit session override did not win over a live Superset marker: $override_output"
+printf 'an explicit session override wins over a live Superset marker\n'
