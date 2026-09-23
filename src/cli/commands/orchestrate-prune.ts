@@ -5,7 +5,7 @@ import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { dispatchArchiveDirectory, dispatchArchiveParentDirectory, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { atomicJson } from "./queue-write.js";
+import { atomicJson, resolveCaller } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 
@@ -107,10 +107,14 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
   return failed("could not release dispatch terminal");
 }
 
+// The tmux session this caller is itself running in — used only to avoid pruning the pane the
+// operator is typing into. Routed through the shared resolver (core/context.js, via
+// queue-write.js resolveCaller) so it agrees with every other command about what "my session"
+// means; a caller with a terminal-handle override is never also a real tmux pane (spawn's own
+// launch line clears TMUX/TMUX_PANE for a host-runtime child), so the two never actually compete.
 export async function tmuxCallerSession(environment: Environment, process: ProcessAdapter): Promise<string | undefined> {
-  if (!environment.TMUX || !environment.TMUX_PANE) return undefined;
-  const result = await getTmux().sessionForPane(environment.TMUX_PANE, process);
-  return result.kind === "ok" ? result.value : undefined;
+  const identity = await resolveCaller(environment, process);
+  return identity.tmuxSession ?? undefined;
 }
 
 async function entries(root: string): Promise<Entry[]> {
