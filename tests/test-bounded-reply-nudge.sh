@@ -132,14 +132,15 @@ chmod +x "$fake_bin/tmux"
 
 # The real production reply path (executeOrchestrateReply -> notifyChild) picks the submit key
 # from the dispatch's own agent (src/agents/claude.ts, codex.ts, agy.ts: claude=Enter, codex=Tab,
-# agy has none) and reports "typed"/"not-typed" purely from whether that send itself succeeded --
+# agy=Enter) and reports "typed"/"not-typed" purely from whether that send itself succeeded --
 # there is no busy-pane inspection, no backspace clearing, and no distinct "queued" nudge status
 # anywhere in notifyChild; it sends unconditionally. The old busy-composer / backspace-clearing /
 # per-affordance "queued" assertions tested a shell nudge system with no surviving counterpart;
 # dropped per rule 3. What is still real and worth proving here: which key each agent's dispatch
-# causes to be sent, that a missing affordance (agy) sends no keys at all and still reports
-# "not-typed" without losing the queued message, and that the message stays durable and
-# attributed regardless of nudge outcome.
+# causes to be sent, that an agent id the registry does not know (src/agents/index.ts's
+# submitKey falls back to unavailableKey when getAgent returns undefined) sends no keys at all
+# and still reports "not-typed" without losing the queued message, and that the message stays
+# durable and attributed regardless of nudge outcome.
 scenario_agent_nudge() {
   local agent="$1" expect_key="$2" expect_nudge="$3"
   local dispatch_id="nudge-$agent"
@@ -166,7 +167,8 @@ scenario_agent_nudge() {
 
 scenario_agent_nudge claude Enter typed
 scenario_agent_nudge codex Tab typed
-scenario_agent_nudge agy none not-typed
+scenario_agent_nudge agy Enter typed
+scenario_agent_nudge ghost-unregistered-agent none not-typed
 
 # The per-pane lock around a queued text-plus-key pair (so two concurrent nudges to the same pane
 # never interleave into one draft) is exercised directly against the real sendTmuxPair in
