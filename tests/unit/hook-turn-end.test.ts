@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeHookTurnEnd, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
 import { appendMessage } from "../../src/cli/commands/queue-write.js";
+import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -187,45 +188,65 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  // WHY this does not assert a new dispatch gets created: megabrain_chain_continue_refused
-  // forwards the dispatch's own runtime as the literal string "tmux"/"host" into orchestrate
-  // spawn's --tmux flag (a faithful port of that shell function, in chain-run.ts's
-  // continueRefusedChain — see the WHY comment there). --tmux only accepts true/false, so the
-  // resumed step's spawn attempt fails every time in the current codebase; this is a preexisting
-  // defect this lane preserves rather than fixes. What this test proves is the WIRING: the hook
-  // reaches continueRefusedChain in-process (never shelling out to the compiled binary) and the
-  // failed continuation does not stop the hook from finishing cleanly.
-  test("attempts a chain continuation in-process after marking a refusal, never shelling out to the compiled binary", async () => {
+  // The whole path, end to end: a real `chain run` spawns a tmux dispatch carrying real chain
+  // context (writeDispatchChainContext, chain-run.ts), that dispatch's pane then shows a
+  // usage-limit refusal, the turn-end hook (as the dispatch's parent) detects it, marks the
+  // dispatch limit-refused, and resumes the chain in-process — never shelling out to the
+  // compiled binary — spawning the next step with the same prompt and runtime. Before the fix
+  // this could never happen at all: meta.chain was always null (nothing wrote it), and even with
+  // chain context present, continueRefusedChain's old "tmux"/"host" -> --tmux mapping made the
+  // resumed spawn fail on "--tmux requires true or false" every time.
+  test("resumes a refused chain-run dispatch on the next step, in-process, with the same prompt and runtime", async () => {
     const original = getTmux();
+    let nextPane = 20;
+    let refusedPane: string | undefined;
     registerTmux({
       ...original,
       id: "tmux",
       sendText: async () => ok(undefined),
       sendKey: async () => ok(undefined),
-      capturePane: async (pane) => (pane === "%9" ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : ok("› Ask Codex to do anything")),
+      capturePane: async (pane) => (pane === refusedPane ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : ok("› Ask Codex to do anything")),
     });
     try {
-      await withRoot("chain-continue", async (root) => {
-        await writeFile(join(root, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "codex", model: "m2" }] }));
+      await withRoot("chain-continue-e2e", async (root) => {
+        await writeFile(join(root, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] }));
         const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-hook-chain-worktree-`);
         try {
-          await writeMeta(root, "d1", {
-            ...parentedBase, state: "running", processState: "running", runtime: "tmux", tmuxPane: "%9",
-            worktreePath: worktreeDir, label: null,
-            chain: { name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" },
-          });
+          const resolvedWorktree = await realpath(worktreeDir);
+          const hookEnvironment = environment(root, { ORCA_TERMINAL_HANDLE: "coord-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
           const process = fakeProcess((command, args) => {
-            if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: "You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n", stderr: "", exitCode: 0 });
-            if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: `${worktreeDir}\n`, stderr: "", exitCode: 0 });
+            if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: `${resolvedWorktree}\n`, stderr: "", exitCode: 0 });
             if (command === "git" && args.includes("symbolic-ref")) return ok({ stdout: "feat/chain\n", stderr: "", exitCode: 0 });
-            if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%20\n", stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: `%${nextPane++}\n`, stderr: "", exitCode: 0 });
             return ok({ stdout: "", stderr: "", exitCode: 0 });
           });
-          const result = await executeHookTurnEnd([], environment(root, { ORCA_TERMINAL_HANDLE: "coord-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" }), process, noStdin);
-          expect(result).toEqual({ kind: "ok", value: "{}\n" });
-          const meta = await readMeta(root, "d1");
-          expect(meta.reconcileOutcome).toBe("limit-refused");
+
+          // Step 1: a real chain run, spawning the first step (codex) as a tmux dispatch.
+          const runResult = await executeChainRun(["--worktree", worktreeDir, "--prompt", "keep going", "--tmux", "true", "--json"], hookEnvironment, process);
+          expect(runResult.kind).toBe("ok");
+          if (runResult.kind !== "ok") return;
+          const runBody = JSON.parse(runResult.value);
+          const dispatchId: string = runBody.dispatch.dispatchId;
+          const firstMeta = await readMeta(root, dispatchId);
+          expect(firstMeta).toMatchObject({ agent: "codex", runtime: "tmux", worktreePath: resolvedWorktree });
+          expect(firstMeta.chain).toMatchObject({ name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" });
+          refusedPane = firstMeta.tmuxPane as string;
+
+          // Step 2: that dispatch's pane now shows a usage-limit refusal; the hook (as parent)
+          // detects it and resumes the chain at step 2.
+          const hookResult = await executeHookTurnEnd([], hookEnvironment, process, noStdin);
+          expect(hookResult).toEqual({ kind: "ok", value: "{}\n" });
           expect(process.calls.some((call) => call.command.includes("megabrain"))).toBe(false);
+
+          const refusedMeta = await readMeta(root, dispatchId);
+          expect(refusedMeta.state).toBe("failed");
+          expect(refusedMeta.reconcileOutcome).toBe("limit-refused");
+
+          const dispatchIds = (await readdir(join(root, "dispatches"))).filter((id) => id !== dispatchId);
+          expect(dispatchIds).toHaveLength(1);
+          const resumedMeta = await readMeta(root, dispatchIds[0]);
+          expect(resumedMeta).toMatchObject({ agent: "agy", runtime: "tmux", worktreePath: resolvedWorktree });
+          expect(resumedMeta.chain).toMatchObject({ name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "keep going" });
         } finally {
           await rm(worktreeDir, { recursive: true, force: true });
         }

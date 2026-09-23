@@ -451,32 +451,56 @@ describe("continueRefusedChain", () => {
     });
   });
 
-  // WHY this documents a launch failure rather than a successful spawn: continueRefusedChain
-  // forwards the dispatch's own runtime as the literal string "tmux"/"host" into orchestrate
-  // spawn's --tmux flag — a faithful port of megabrain_chain_continue_refused, which feeds
-  // megabrain_chain_walk's tmux_choice positional the same literal (see the WHY comment on
-  // continueRefusedChain in chain-run.ts). --tmux only accepts true/false, so this is a
-  // preexisting shell defect this port preserves rather than fixes: today, no chain continuation
-  // after a usage-limit refusal can ever actually spawn a step, tmux dispatch or host dispatch
-  // alike. What this test proves is everything up to that point: the right chain is re-selected
-  // (defaultSteps here), and the walk resumes at step 2 (one past the refused step 1), not step 1.
-  test("resumes at the step after the refused one, and fails that step on the known --tmux defect", async () => {
-    await withRoot("continue-resumes", async (root) => {
-      await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] });
-      await writeDispatchMeta(root, "d1", {
-        reconcileOutcome: "limit-refused", worktreePath: "/w", runtime: "tmux",
-        chain: { name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" },
-      });
-      // walkChainSteps reports exhaustion via ok(text, exitCode: 1) — the same shape
-      // executeChainRun's own "reports exhaustion when every step is unusable" test asserts on —
-      // never a `failed` Result, so the chain's own reason text is what this checks.
-      const result = await continueRefusedChain("d1", environment(root), fakeProcess());
-      expect(result.kind).toBe("ok");
-      if (result.kind !== "ok") return;
-      expect(result.exitCode).toBe(1);
-      expect(result.value).toContain("chain defaultSteps failed after 2 steps");
-      expect(result.value).toContain("agy launch failed: --tmux requires true or false");
+  // Resumes at the step after the refused one (step 2, not step 1) AND actually spawns it, in
+  // process, through the real orchestrate spawn — never shelling out to the compiled binary.
+  // Before the fix, continueRefusedChain forwarded meta.runtime as the literal string
+  // "tmux"/"host" into orchestrate spawn's --tmux flag, which only accepts true/false, so this
+  // step's spawn failed on "--tmux requires true or false" every time; this test used to assert
+  // that failure. Asserting success here instead is an intended behaviour change, not a
+  // regression: preserving the old mapping would have kept chain continuation permanently unable
+  // to spawn anything.
+  test("resumes at the step after the refused one and spawns it for real", async () => {
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
+      capturePane: async () => ok("› Ask Codex to do anything"),
     });
+    try {
+      await withRoot("continue-resumes", async (root) => {
+        await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "agy", model: "m2" }] });
+        const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-chain-continue-worktree-`);
+        try {
+          const resolved = await realpath(worktreeDir);
+          await writeDispatchMeta(root, "d1", {
+            reconcileOutcome: "limit-refused", worktreePath: worktreeDir, runtime: "tmux",
+            chain: { name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" },
+          });
+          const process = fakeProcess((command, args) => {
+            if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: `${resolved}\n`, stderr: "", exitCode: 0 });
+            if (command === "git" && args.includes("symbolic-ref")) return ok({ stdout: "feat/chain\n", stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%30\n", stderr: "", exitCode: 0 });
+            return ok({ stdout: "", stderr: "", exitCode: 0 });
+          });
+          const result = await continueRefusedChain("d1", environment(root, { ORCA_TERMINAL_HANDLE: "coord-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" }), process);
+          expect(result.kind).toBe("ok");
+          if (result.kind !== "ok") return;
+          expect(result.value).toContain("chain defaultSteps, step 2 of 2");
+          expect(process.calls.some((call) => call.command.includes("megabrain"))).toBe(false);
+          const body = JSON.parse(result.value.split("\n")[1]);
+          expect(typeof body.dispatchId).toBe("string");
+          const resumedMeta = JSON.parse(await readFile(join(root, "dispatches", body.dispatchId, "meta.json"), "utf8"));
+          expect(resumedMeta).toMatchObject({ agent: "agy", runtime: "tmux", worktreePath: resolved });
+          expect(resumedMeta.chain).toMatchObject({ name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "keep going" });
+        } finally {
+          await rm(worktreeDir, { recursive: true, force: true });
+        }
+      });
+    } finally {
+      registerTmux(original);
+    }
   });
 
   test("accepts a caller-supplied spawn dependency instead of shelling out", async () => {
