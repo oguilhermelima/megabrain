@@ -43,92 +43,102 @@ if HOME="$install_home" MEGABRAIN_STATE_DIR="$install_state" PATH=/usr/bin:/bin 
 fi
 printf 'scenario 1: failed module install is non-zero\n'
 
-# Scenario 2: reported tmux drift must make the doctor non-ok.
-export MEGABRAIN_STATE_DIR="$state_dir/tmux-state"
-mkdir -p "$MEGABRAIN_STATE_DIR"
+# WHY: scenario 6 (command_orchestrate_list) and scenario 8 (megabrain_state_set) still exercise
+# real shell functions directly, so common.sh and the module-*.sh files stay sourced for them.
 source "$root/lib/common.sh"
 for module in "$root"/lib/module-*.sh; do
   source "$module"
 done
-megabrain_tmux_available() { return 0; }
-megabrain_tmux_version() { printf 'tmux 3.5\n'; }
-megabrain_runtime_enabled() { return 0; }
-megabrain_tmux_tuning_config_path() { printf '%s/tmux.conf\n' "$MEGABRAIN_STATE_DIR"; }
-megabrain_tmux_wrapper_config_path() { printf '%s/.zshrc\n' "$MEGABRAIN_STATE_DIR"; }
-megabrain_tmux_tuning_block_present() { return 1; }
-megabrain_tmux_tuning_installed_current() { return 1; }
-megabrain_tmux_wrapper_block_present() { return 1; }
-megabrain_tmux_wrapper_installed_current() { return 1; }
-megabrain_tmux_tuning_server_running() { return 1; }
-megabrain_tmux_config_applied() { return 1; }
-if module_tmux_runtime_doctor >/dev/null 2>&1; then
-  fail 'tmux doctor reported ok while all drift fields were false'
-fi
+
+# Scenario 2: reported tmux drift must make the doctor non-ok.
+# WHY: module_tmux_runtime_doctor is gone (deleted with the rest of the shell install path once
+# install routed to the binary); the compiled doctor implements this exact tuning/wrapper drift
+# check (src/cli/commands/install-doctor.ts's tmux-runtime branch), so this drives it as a black
+# box instead, with a PATH offering only a fake tmux and no tuning/wrapper files installed.
+export MEGABRAIN_STATE_DIR="$state_dir/tmux-state"
+tmux_drift_home="$state_dir/tmux-drift-home"
+tmux_drift_bin="$state_dir/tmux-drift-bin"
+mkdir -p "$MEGABRAIN_STATE_DIR" "$tmux_drift_home" "$tmux_drift_bin"
+cat >"$tmux_drift_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = -V ] && { printf 'tmux 3.5a\n'; exit 0; }
+exit 1
+EOF
+chmod +x "$tmux_drift_bin/tmux"
+printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$MEGABRAIN_STATE_DIR/state.json"
+# WHY: the compiled doctor exits non-zero for a non-ok report (executeDoctor's unhealthy exit
+# code), and that is exactly what this scenario expects — under this file's `set -e`, a plain
+# `var="$(cmd)"` assignment aborts the whole script the instant `cmd` returns non-zero, silently,
+# with no FAIL message. `|| true` keeps the expected non-zero exit from being fatal.
+tmux_drift_json="$(PATH="$tmux_drift_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" HOME="$tmux_drift_home" "$root/.build/megabrain" doctor tmux-runtime --json 2>/dev/null || true)"
+[ "$(printf '%s' "$tmux_drift_json" | jq -r '.status')" != ok ] || fail 'tmux doctor reported ok while all drift fields were false'
 printf 'scenario 2: tmux drift is non-ok\n'
 
-# Scenario 3: agent CLIs must receive the argument separator.
-command_file="$state_dir/claude-args"
-megabrain_agent_mcp_registered() { return 1; }
-megabrain_remove_playwright() { return 0; }
-claude() {
-  local arg has_separator=false
-  : >"$command_file"
-  for arg in "$@"; do
-    printf '%s\n' "$arg" >>"$command_file"
-    [ "$arg" = -- ] && has_separator=true
-  done
-  if [ "$has_separator" != true ]; then
-    printf "error: unknown option '-y'\n" >&2
-    return 2
-  fi
-  return 0
-}
-if ! megabrain_register_playwright claude "$state_dir/chromium.json" >/dev/null 2>&1; then
-  fail 'Claude MCP registration did not accept the command separator'
+# Scenario 3: agent CLIs must receive the argument separator (defect B from the install lane).
+# WHY: megabrain_register_playwright and module_simulator_web_install are gone (module-web.sh
+# now only keeps command_web, a binary passthrough); this drives the compiled `install
+# simulator-web` as a black box instead, with a fake claude CLI that rejects `-y` unless it
+# arrives after `--`, exactly like the real Claude CLI. install-doctor.ts's registerPlaywright
+# builds that command with `--` before `npx -y ...`, so this proves the binary carries the fix
+# forward end to end, not just at the unit level (see tests/unit/install.test.ts for the
+# unit-level proof, including the failure-propagation half of defect B).
+scenario3_playwright_root="$state_dir/scenario3-playwright-root"
+scenario3_bin="$state_dir/scenario3-bin"
+mkdir -p "$scenario3_bin"
+# WHY: the fake install subcommand must actually write manifest.json (not just exit 0) —
+# otherwise the compiled doctor's initial "already installed" check (which install runs before
+# attempting anything) finds no manifest, so it never reaches this far; and if it instead found
+# a pre-seeded manifest, it would short-circuit to "already installed" before ever registering
+# an agent, which would prove nothing about the -- separator.
+cat >"$scenario3_bin/node" <<'EOF'
+#!/usr/bin/env bash
+args=("$@")
+case " $* " in
+  *"/scripts/playwright-web.mjs install "*)
+    root_dir=""
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      [ "${args[$i]}" = --root ] && root_dir="${args[$((i + 1))]}"
+    done
+    [ -n "$root_dir" ] || exit 1
+    mkdir -p "$root_dir"
+    printf '%s\n' '{"activeBrowser":"chromium","profiles":{"chromium":{"configPath":"'"$root_dir"'/chromium.json"}}}' >"$root_dir/manifest.json"
+    exit 0
+    ;;
+  *"/scripts/playwright-web.mjs doctor "*)
+    printf '{"status":"ok","reason":"browser fixture is ready"}\n'
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+chmod +x "$scenario3_bin/node"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$scenario3_bin/npm"
+chmod +x "$scenario3_bin/npm"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$scenario3_bin/npx"
+chmod +x "$scenario3_bin/npx"
+cat >"$scenario3_bin/claude" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = mcp ] && { [ "${2:-}" = list ] || [ "${2:-}" = remove ]; }; then exit 0; fi
+if [ "${1:-}" = mcp ] && [ "${2:-}" = add ]; then
+  has_separator=false
+  for arg in "$@"; do [ "$arg" = -- ] && has_separator=true; done
+  [ "$has_separator" = true ] || { printf "error: unknown option '-y'\n" >&2; exit 2; }
+  exit 0
 fi
-grep -Fx -- '--' "$command_file" >/dev/null || fail 'Claude registration command omitted --'
+exit 1
+EOF
+chmod +x "$scenario3_bin/claude"
+scenario3_home="$state_dir/scenario3-home"
+mkdir -p "$scenario3_home"
+if scenario3_output="$(PATH="$scenario3_bin:/usr/bin:/bin" HOME="$scenario3_home" \
+  MEGABRAIN_STATE_DIR="$scenario3_home" MEGABRAIN_ROOT="$root" \
+  MEGABRAIN_PLAYWRIGHT_ROOT="$scenario3_playwright_root" \
+  "$root/.build/megabrain" install simulator-web --yes 2>&1)"; then
+  :
+else
+  fail "install simulator-web did not accept the command separator: $scenario3_output"
+fi
 printf 'scenario 3: Claude registration is guarded\n'
-
-# Scenario 4: output from each agent must remain attributable, including the
-# failing CLI's diagnostic text.
-claude() {
-  printf "error: unknown option '-y'\n" >&2
-  return 1
-}
-codex() {
-  printf 'codex CLI output\n'
-  return 0
-}
-combined_registration_output="$(
-  megabrain_register_playwright claude "$state_dir/chromium.json" 2>&1 || true
-  megabrain_register_playwright codex "$state_dir/chromium.json" 2>&1
-)"
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  case "$line" in
-    *claude*|*codex*) ;;
-    *) fail "unattributed MCP registration output: $line" ;;
-  esac
-done <<< "$combined_registration_output"
-assert_contains "$combined_registration_output" "claude: error: unknown option '-y'" \
-  'the failing Claude CLI diagnostic was changed or omitted'
-assert_contains "$combined_registration_output" 'codex: codex CLI output' \
-  'the Codex CLI output was not attributed'
-printf 'scenario 4: MCP registration output is attributable\n'
-
-# Scenario 5: the loop must summarize registered and failed agents.
-megabrain_present_agents() { printf 'claude\ncodex\n'; }
-megabrain_web_local_ready() { return 0; }
-megabrain_playwright_ready() { return 0; }
-megabrain_playwright_active_browser() { printf 'chromium\n'; }
-megabrain_playwright_config_path() { printf '%s/chromium.json\n' "$state_dir"; }
-module_simulator_web_doctor() { return 0; }
-node() { return 0; }
-summary_output="$(module_simulator_web_install false chromium 2>&1 || true)"
-assert_contains "$summary_output" \
-  'Playwright MCP registration summary: registered codex; failed claude' \
-  'MCP registration summary did not identify registered and failed agents'
-printf 'scenario 5: MCP registration summary identifies outcomes\n'
 
 # Scenario 6: the uncertain dispatch set reported by doctor must be selectable.
 dispatch_state="$state_dir/dispatch-state"
@@ -196,20 +206,19 @@ run_chain_edit_cleanup_case edited 0
 run_chain_edit_cleanup_case failure 1
 printf 'scenario 9: chain editor temporary directories are cleaned on unchanged, edited, and failure paths\n'
 
-# Scenario 10: both browser profiles need an explicit active/inactive explanation.
-export MEGABRAIN_STATE_DIR="$state_dir/browser-state"
-MEGABRAIN_PLAYWRIGHT_ROOT="$state_dir/browser-root"
-megabrain_web_local_ready() { return 0; }
-megabrain_playwright_ready() { return 0; }
-megabrain_playwright_active_browser() { printf 'chromium\n'; }
-megabrain_playwright_config_path() { printf '%s/chromium.json\n' "$MEGABRAIN_PLAYWRIGHT_ROOT"; }
-megabrain_present_agents() { return 1; }
-module_simulator_web_doctor() { megabrain_set_status ok 'browser fixture is ready'; return 0; }
-node() { return 0; }
-browser_output="$(module_simulator_web_install false both)"
-assert_contains "$browser_output" 'chromium' 'browser install did not identify the active Chromium profile'
-assert_contains "$browser_output" 'firefox' 'browser install did not explain the Firefox profile'
-printf 'scenario 10: browser profile roles are explicit\n'
+# WHY: scenario 10 ("both browser profiles need an explicit active/inactive explanation") and
+# the former scenario 4/5 (per-agent attributed MCP registration output; a "registered X; failed
+# Y" summary line) are deleted, not rewritten. All three drove module_simulator_web_install and
+# megabrain_register_playwright directly, both removed once install routed to the binary — those
+# functions' user-facing text (an "active chromium; available for firefox-only runs" info line,
+# a per-agent output-attribution prefix, a registered/failed summary line) has no equivalent in
+# installSimulatorWeb (src/cli/commands/install-doctor.ts): it reports which agents failed on
+# outright failure and otherwise returns the compiled doctor's own after-install status line, but
+# it does not reproduce these three shell-only message shapes. This is an intentional
+# simplification of this lane's port, not an accident — DECIDED B only requires that a failed
+# external command is never reported as success, which installSimulatorWeb still satisfies (see
+# tests/unit/install.test.ts and scenario 3 above) — but it is a real loss of message detail
+# worth flagging rather than silently dropping.
 
 # Scenario 11: a failing container test leaves named output outside the stdout pipe.
 if [ "${MEGABRAIN_IN_CONTAINER:-false}" = true ]; then
