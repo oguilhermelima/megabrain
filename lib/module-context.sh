@@ -80,13 +80,6 @@ command_orchestrate() {
       }
       # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
       megabrain_warn_if_typescript_binary_stale
-      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
-        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
-        fi
-      fi
       "$typescript_binary" orchestrate reconcile "$@"
       ;;
     liveness)
@@ -97,13 +90,6 @@ command_orchestrate() {
       }
       # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
       megabrain_warn_if_typescript_binary_stale
-      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
-        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
-        fi
-      fi
       "$typescript_binary" orchestrate liveness "$@"
       ;;
     watch) megabrain_dispatch_watch "$@" ;;
@@ -115,13 +101,6 @@ command_orchestrate() {
       }
       # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
       megabrain_warn_if_typescript_binary_stale
-      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
-        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
-        fi
-      fi
       "$typescript_binary" orchestrate read "$@"
       ;;
     ack|acknowledge) megabrain_dispatch_ack "$@" ;;
@@ -143,13 +122,6 @@ command_orchestrate() {
       }
       # WHY: migrated orchestrate verbs have no shell fallback; freshness remains visible at the boundary.
       megabrain_warn_if_typescript_binary_stale
-      if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-        if [ -n "${SUPERSET_TERMINAL_ID:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$SUPERSET_TERMINAL_ID" MEGABRAIN_SESSION_HOST=superset
-        elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
-          export MEGABRAIN_SESSION_ID="$ORCA_TERMINAL_HANDLE" MEGABRAIN_SESSION_HOST=orca
-        fi
-      fi
       "$typescript_binary" orchestrate stop "$@"
       ;;
     change)
