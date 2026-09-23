@@ -83,15 +83,35 @@ export async function resolveCaller(environment: QueueEnvironment, processAdapte
 // (meta.terminalId / meta.childHost, or meta.tmuxSession / meta.tmuxPane): spawn only ever hands
 // a child a terminal-based identity, never a synthetic session id, so the terminal handle is
 // preferred over a stable agent-session id here even though ownership checks prefer the reverse.
+// Historically this looked up a tmux pane's session via `tmux list-panes -a`, not the
+// `display-message`-based probe resolveCaller shares with every other verb — some deployments'
+// tmux only answers the former. MEASURED regression (tests/test-queue-write-cli.sh): a child
+// with only TMUX/TMUX_PANE set (no override, no terminal handle) could no longer find its own
+// dispatch once this went through resolveCaller alone. The override/superset/orca/agent-session
+// precedence is still resolveCaller's; list-panes is only a fallback for the plain-tmux case it
+// could not resolve.
+async function tmuxSessionViaListPanes(pane: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"]);
+  if (result.kind !== "ok") return undefined;
+  const match = result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[1] === pane);
+  return match?.[0];
+}
+
 async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Session | undefined> {
   const caller = await resolveCaller(environment, processAdapter);
-  if (!hasCallerIdentity(caller)) return undefined;
-  return {
-    host: caller.host,
-    id: caller.terminalId ?? caller.id,
-    ...(caller.tmuxSession !== null ? { tmuxSession: caller.tmuxSession } : {}),
-    ...(caller.tmuxPane !== null ? { tmuxPane: caller.tmuxPane } : {}),
-  };
+  if (hasCallerIdentity(caller)) {
+    return {
+      host: caller.host,
+      id: caller.terminalId ?? caller.id,
+      ...(caller.tmuxSession !== null ? { tmuxSession: caller.tmuxSession } : {}),
+      ...(caller.tmuxPane !== null ? { tmuxPane: caller.tmuxPane } : {}),
+    };
+  }
+  if (environment.TMUX !== undefined && environment.TMUX !== "" && environment.TMUX_PANE !== undefined && environment.TMUX_PANE !== "") {
+    const sessionName = await tmuxSessionViaListPanes(environment.TMUX_PANE, processAdapter);
+    if (sessionName !== undefined) return { host: "tmux", id: `${sessionName}:${environment.TMUX_PANE}`, tmuxSession: sessionName, tmuxPane: environment.TMUX_PANE };
+  }
+  return undefined;
 }
 
 async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
