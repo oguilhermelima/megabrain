@@ -14,7 +14,7 @@ import { getTmux } from "../../hosts/tmux.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
-type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; notice?: string };
+type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
 type State = Record<string, Record<string, unknown>>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
 const diagnosticModules = ["compiled-binary"];
@@ -334,19 +334,19 @@ async function report(module: string, environment: Environment, process: Process
     if (health.uncertainDispatches > 0) suffix += `; unresolved reasons: ${[...new Set(health.uncertainReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
     if (health.retainedTerminals > 0) suffix += `; retained reasons: ${[...new Set(health.retainedReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
     if (health.unrecognisedMessageFiles.length > 0) suffix += `; unrecognised message files: ${health.unrecognisedMessageFiles.join(", ")}`;
+    // Mirrors the shell's megabrain_notice call for the same condition (a dispatch directory with
+    // no meta.json at all). The shell put it on stderr; folded into reason instead, matching the
+    // unrecognisedMessageFiles convention just above, so every reader of this module's report —
+    // not only one polling stderr — sees it, and it survives even when the directory it describes
+    // is gone by the time a later, separate doctor call would otherwise be needed to find it.
+    if (health.untrackedDispatches.length > 0) suffix += `; dispatch directories without metadata: ${health.untrackedDispatches.join(", ")}`;
     if (health.uncertainDispatches > 0 || health.retainedTerminals > 0) {
       status = "misconfigured";
       reason = `dispatch state requires reconciliation${suffix}`;
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
-    // Mirrors the shell's megabrain_notice call for the same condition: a stderr-carried
-    // diagnostic, not folded into the module's own status/reason, since an untracked directory is
-    // not itself a misconfiguration finding.
-    const notice = health.untrackedDispatches.length > 0
-      ? `dispatch directories without metadata: ${health.untrackedDispatches.join(", ")}`
-      : undefined;
     const { unrecognisedMessageFiles: _unrecognisedMessageFiles, untrackedDispatches: _untrackedDispatches, ...counts } = health;
-    return { module, status, reason, ...counts, ...(notice === undefined ? {} : { notice }) };
+    return { module, status, reason, ...counts };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
@@ -425,20 +425,14 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   }
   // An absent compiled binary is an unknown freshness result, not a finding in a fresh clone.
   const unhealthy = values.some((value) => value.status !== "ok" && !(value.module === "compiled-binary" && value.status === "unknown"));
-  // A notice (e.g. an untracked dispatch directory) rides on the Report only long enough to reach
-  // here; like the shell's megabrain_notice, it is stderr commentary, not part of the module's own
-  // status/reason payload, so it is stripped before the report is ever serialized.
-  const notices = values.map((value) => value.notice).filter((value): value is string => value !== undefined);
-  const serializable = values.map(({ notice: _notice, ...rest }) => rest);
-  const text = module === undefined && json ? `${JSON.stringify(serializable, null, 2)}\n` : serializable.map((value) => output(value, json)).join("");
+  const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
   const hook = values.find((value) => value.module === "orchestration-hooks");
-  const codexNotice = hook?.reason.includes("codex: entry-present")
+  const stderr = hook?.reason.includes("codex: entry-present")
     ? "\nCODEX ACTION REQUIRED: the megabrain hook needs one-time trust in Codex.\nOpen a plain terminal, run codex, and choose \"Trust all and continue\".\nOpening Codex through Superset will not complete this step because Superset passes --dangerously-bypass-hook-trust.\n"
     : undefined;
-  const stderr = [codexNotice, ...notices].filter((value): value is string => value !== undefined).join("\n");
-  return stderr === ""
+  return stderr === undefined
     ? { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0 }
-    : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr: stderr.endsWith("\n") ? stderr : `${stderr}\n` };
+    : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr };
 }
 
 type InstallOptions = Readonly<{ yes: boolean; browser: string }>;
