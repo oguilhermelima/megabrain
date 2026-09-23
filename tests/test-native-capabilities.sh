@@ -67,8 +67,9 @@ run_binary "$binary_log"
 
 binary_body="$(sed -n '1p' "$binary_log")"
 [ -n "$binary_body" ] || fail 'binary implementation did not create an Appium request'
-assert_equal "$(printf '%s' "$binary_body" | jq -r '.capabilities.alwaysMatch | keys | sort | join(",")')" 'appium:bundleId,appium:isHeadless,appium:newCommandTimeout,appium:udid,platformName'
+assert_equal "$(printf '%s' "$binary_body" | jq -r '.capabilities.alwaysMatch | keys | sort | join(",")')" 'appium:automationName,appium:bundleId,appium:isHeadless,appium:newCommandTimeout,appium:udid,platformName'
 assert_field "$binary_body" platformName '"iOS"'
+assert_field "$binary_body" 'appium:automationName' '"XCUITest"'
 assert_field "$binary_body" 'appium:isHeadless' true
 assert_field "$binary_body" 'appium:newCommandTimeout' 60
 assert_field "$binary_body" 'appium:udid' '"one"'
