@@ -50,7 +50,7 @@ calls_log="$work_dir/calls.log"
 orca_mode=success
 
 setup_fixture() {
-  local branch="${1:-stack/base}"
+  local branch="${1:-stack/base}" branch_worktree_name
   orca_mode=success
   rm -rf "$work_dir/repo" "$work_dir/shared" "$work_dir/state" "$calls_log"
   mkdir -p "$work_dir/shared" "$work_dir/state"
@@ -62,7 +62,11 @@ setup_fixture() {
   printf 'base\n' >"$repo_dir/base.txt"
   git -C "$repo_dir" add base.txt
   git -C "$repo_dir" commit -qm base
-  git -C "$repo_dir" branch "$branch" 2>/dev/null || true
+  # resolveParent resolves `branch:X` against `git worktree list`, so the parent branch needs a
+  # real attached worktree, not just a dangling branch ref -- otherwise the selector can never
+  # genuinely resolve and a scenario would only pass by accident (see the fixed defect below).
+  branch_worktree_name="$(printf '%s' "$branch" | tr '/' '-')"
+  git -C "$repo_dir" worktree add -q "$work_dir/shared/$branch_worktree_name" -b "$branch" 2>/dev/null || true
   printf '%s\n' "$work_dir/shared" >"$work_dir/state/worktree-root"
   : >"$calls_log"
 }
@@ -87,6 +91,21 @@ printf '{}\n'
 exit 0
 EOF
 chmod +x "$bin_dir/orca"
+# Only reached by the Superset-grouping scenario below, which sets SUPERSET_TERMINAL_ID; every
+# other scenario has no Superset-hosted identity, so executeWorktreeCreate never calls this.
+cat >"$bin_dir/superset" <<EOF
+#!/usr/bin/env bash
+printf 'superset %s\n' "\$*" >>"$calls_log"
+case "\${1:-}:\${2:-}" in
+  projects:list) printf '%s\n' '{"projects":[]}' ;;
+  projects:create) printf '%s\n' '{"result":{"project":{"id":"project-id"}}}' ;;
+  workspaces:list) printf '%s\n' '{"workspaces":[]}' ;;
+  workspaces:create) printf '%s\n' '{"result":{"workspace":{"id":"workspace-id"}}}' ;;
+  workspaces:update) printf '%s\n' '{"ok":true}' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$bin_dir/superset"
 
 # Scenario: without --parent, no Orca lineage call is made.
 # Falsification: a lineage call fires even though nothing requested it.
@@ -110,13 +129,12 @@ printf 'parent sets Orca lineage and records git config metadata\n'
 
 # Scenario: an unresolvable --parent selector is refused with the right message.
 # Falsification: the command succeeds, or refuses with a different reason.
-# Run from a non-git cwd, deliberately: resolveParent (worktree-write.ts:532-579) falls back to
-# the *calling process's own* cwd via `git -C "" rev-parse --show-toplevel` when a branch selector
-# matches no registered worktree (path stays "" and is used unchecked) — from inside any git
-# checkout (this repo included) that silently "resolves" the selector against the caller's
-# unrelated current branch instead of refusing it at all. See the FINDING below, which covers this
-# precisely and also covers the fact that (even once correctly refused) the worktree it "fails" on
-# was already created before the refusal — this scenario only checks the message.
+# Run from a non-git cwd: resolveParent used to fall back to the *calling process's own* cwd via
+# `git -C "" rev-parse --show-toplevel` when a branch selector matched no registered worktree
+# (path stayed "" and was used unchecked) — from inside any git checkout that silently "resolved"
+# the selector against the caller's unrelated current branch instead of refusing it. Fixed by an
+# explicit empty-path guard; the scenario near the end of this file covers the same defect from
+# inside a git checkout, plus the worktree-created-before-validation ordering defect.
 setup_fixture
 non_git_cwd="$work_dir/non-git-cwd"
 mkdir -p "$non_git_cwd"
@@ -145,46 +163,27 @@ assert_contains "$output" '--parent cannot be combined with --no-parent'
 [ ! -e "$work_dir/shared/stack-child" ] || fail 'worktree was created for an invalid option combination'
 printf 'parent flags reject contradictory input\n'
 
-# FINDING (rule 4, not a test defect — did not touch src/, did not weaken the assertion):
-# consistent with the same gap found in tests/test-worktree-create.sh (no Superset project/
-# workspace registration at all any more), executeWorktreeCreate also never calls `superset
-# workspaces update --tag ...` to group a child worktree's Superset workspace under its parent's —
-# megabrain_superset_tag_from_branch (the shell's tag-sanitizing helper) no longer exists at all
-# (grep: zero hits), and grep for "--tag"/"workspaces update" in worktree-write.ts: zero hits. The
-# JSON output always reports parent.grouping as {set: false, error: null}. Left failing on
-# purpose; the lead decides whether Superset workspace grouping is meant to be gone too. Placed
-# last so every other scenario above still runs and reports.
+# Scenario: a caller running inside a Superset terminal tags the new worktree's Superset
+# workspace into its parent's grouping, restoring what the retired shell's
+# megabrain_superset_tag_from_branch/megabrain_workspace_create did.
+# Falsification: parent.grouping.set stays false, or no `workspaces update --tag` call is made.
 setup_fixture
-output="$(run_create --parent "branch:stack/base")"
+output="$(SUPERSET_TERMINAL_ID=parent-terminal run_create --parent "branch:stack/base")"
 assert_equal "$(printf '%s' "$output" | jq -r '.parent.grouping.set')" true
+assert_contains "$(cat "$calls_log")" 'workspaces update'
 printf 'parent sets Superset workspace grouping\n'
 
-# FINDING (rule 4, not a test defect — did not touch src/, did not weaken any assertion): two
-# related defects in resolveParent / executeWorktreeCreate (worktree-write.ts, read in full).
-#
-# (a) resolveParent (lines 532-579) resolves `--parent branch:X` by searching `git worktree list
-# --porcelain` for a worktree whose branch matches X; if none match, `path` is left as the empty
-# string "" and used unchecked in `git -C "" rev-parse --show-toplevel` / `git -C "" symbolic-ref
-# --short HEAD`. Git treats `-C ""` as no -C at all, so both commands run against the *calling
-# process's own* cwd instead of failing — from inside any git checkout (this repo included, or the
-# caller's own worktree in real use) an unresolvable selector silently "resolves" to whatever
-# branch that unrelated repo is on. Reproduced directly: from inside this repo's own checkout,
-# `megabrain worktree create --repo <repo> --branch x --parent branch:definitely-missing --json`
-# exits 0 with parent.branch/parent.tag set to this checkout's own current branch, not a refusal.
-#
-# (b) even once genuinely refused (e.g. from a non-git cwd, as the scenario above does),
-# executeWorktreeCreate calls `git worktree add` (line ~659) before it ever looks at
-# `value.parent` (the `if (value.parent !== undefined)` branch starts at line ~700) — so an
-# unresolvable --parent leaves the git worktree (and branch) behind instead of failing before any
-# change, unlike the shell's preflight-validated contract this file used to assert.
-#
-# Left failing on purpose; the lead decides whether these need an explicit empty-path guard and a
-# parent-preflight-before-worktree-add reorder.
+# Scenario: an unresolvable --parent is refused before any change, even from inside a git
+# checkout (unlike the scenario above, this cwd genuinely is a git repository, so the fix must be
+# the explicit empty-path guard and not an accident of running from a non-git directory).
+# Falsification: the command succeeds by resolving against this checkout's own branch instead of
+# refusing, or the child worktree/branch exist after the refusal.
 setup_fixture
 if output="$(run_create --parent branch:definitely-missing 2>&1)"; then
   fail "unresolvable parent succeeded when run from inside a git checkout: $output"
 fi
+assert_contains "$output" 'parent worktree could not be resolved: branch:definitely-missing'
 [ ! -e "$work_dir/shared/stack-child" ] || fail 'child worktree was created before parent validation'
 printf 'unresolvable parent is refused even from inside a git checkout, before any change\n'
 
-printf 'ok: worktree parent lineage (open findings, see report)\n'
+printf 'ok: worktree parent lineage\n'

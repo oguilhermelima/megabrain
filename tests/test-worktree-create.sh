@@ -40,10 +40,21 @@ assert_contains() {
 bin_dir="$work_dir/bin"
 mkdir -p "$bin_dir"
 superset_calls="$work_dir/superset-calls"
+# Real fake superset executable (not a shell function): worktree create forwards unconditionally
+# to the compiled binary, which spawns this as a real subprocess on PATH. Every case a Superset
+# registration round trip needs (project lookup/creation, workspace lookup/creation) succeeds, the
+# same fixture shape tests/test-worktree-pr.sh's write_superset uses.
 cat >"$bin_dir/superset" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$superset_calls"
-exit 1
+case "\${1:-}:\${2:-}" in
+  projects:list) printf '%s\n' '{"projects":[]}' ;;
+  projects:create) printf '%s\n' '{"result":{"project":{"id":"project-id"}}}' ;;
+  workspaces:list) printf '%s\n' '{"workspaces":[]}' ;;
+  workspaces:create) printf '%s\n' '{"result":{"workspace":{"id":"workspace-id"}}}' ;;
+  workspaces:update) printf '%s\n' '{"ok":true}' ;;
+  *) exit 1 ;;
+esac
 EOF
 chmod +x "$bin_dir/superset"
 cat >"$bin_dir/orca" <<'EOF'
@@ -84,23 +95,18 @@ assert_equal "$(printf '%s' "$output" | jq -r '.branch')" fix/orca
 [ -d "$work_dir/shared/fix-orca" ] || fail 'git worktree was not created'
 printf 'worktree create makes a real git worktree\n'
 
-# FINDING (rule 4, not a test defect — did not touch src/, did not weaken the assertion): the
-# shell's megabrain_worktree_create registered a Superset project and workspace when running on a
-# Superset host (`superset projects list/create`, `superset workspaces list/create`); the ported
-# executeWorktreeCreate (src/cli/commands/worktree-write.ts:633-775, read in full) has no such
-# call anywhere in its body — grep for "projects" or "workspaces create" in the file: zero hits.
-# Reproduced directly: with a `superset` binary on PATH that would fail loudly if invoked (exits 1
-# and logs its call), `worktree create` still exits 0 and reports "workspace": null
-# unconditionally, and the call log stays empty — no Superset registration is even attempted,
-# regardless of host. This assertion is left failing on purpose; the lead decides whether Superset
-# project/workspace registration still needs to exist (e.g. because Superset's own daemon now
-# auto-discovers worktrees) or the shell contract this scenario encodes is simply gone.
+# Scenario: a caller running inside a Superset terminal (SUPERSET_TERMINAL_ID set, matching how
+# Superset launches its own terminals) gets its new worktree registered as a Superset project and
+# workspace. Restores what the retired shell's megabrain_worktree_create did
+# (`superset projects list/create`, `superset workspaces list/create`), which the TS port had
+# dropped entirely (src/cli/commands/worktree-write.ts's executeWorktreeCreate).
+# Falsification: workspace stays null, or no Superset call is ever made.
 reset_fixture
-output="$(run_create fix/superset)"
+output="$(SUPERSET_TERMINAL_ID=parent-terminal run_create fix/superset)"
 assert_equal "$(printf '%s' "$output" | jq -r '.workspace')" workspace-id
 calls="$(cat "$superset_calls")"
 assert_contains "$calls" 'projects create'
 assert_contains "$calls" 'workspaces create'
 printf 'Superset registers a project and workspace on worktree create\n'
 
-printf 'ok: worktree creation (one open finding, see report)\n'
+printf 'ok: worktree creation\n'
