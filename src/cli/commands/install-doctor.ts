@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { pruneDecision, pruneStates } from "../../core/orchestrate-prune.js";
 import { installSkillSync, skillSyncDoctor } from "../../core/skill.js";
 import { nextBackupPath } from "../../core/tmux.js";
 import { executeTmux } from "./tmux.js";
@@ -13,7 +14,7 @@ import { getTmux } from "../../hosts/tmux.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
-type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
+type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; notice?: string };
 type State = Record<string, Record<string, unknown>>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
 const diagnosticModules = ["compiled-binary"];
@@ -176,7 +177,12 @@ function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
   return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
-type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecognisedMessageFiles: string[] };
+type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecognisedMessageFiles: string[]; untrackedDispatches: string[] };
+
+// Mirrors the shell's default prune window (MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS), also the
+// default parsePruneArgs uses for `megabrain orchestrate prune`: a terminal dispatch only counts
+// as prunable once it has been settled for at least this many days.
+const PRUNE_DEFAULT_DAYS = 7;
 
 function messageFiles(directory: string): string[] {
   try {
@@ -189,16 +195,27 @@ function messageFiles(directory: string): string[] {
 }
 
 async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<DispatchHealth> {
-  const result: DispatchHealth = { ...emptyCounts(), unrecognisedMessageFiles: [] };
+  const result: DispatchHealth = { ...emptyCounts(), unrecognisedMessageFiles: [], untrackedDispatches: [] };
   const directory = resolve(resolveStateDirectory(environment), "dispatches");
   if (!existsSync(directory)) return result;
-  const pruneStates = new Set(["closed", "done", "failed", "orphaned", "circuit_broken"]);
+  const pruneStateSet = new Set<string>(pruneStates);
+  const pruneOptions = { olderThan: PRUNE_DEFAULT_DAYS, states: [...pruneStates], mode: "archive" as const, dryRun: false, json: false };
+  const now = new Date();
   const records: Array<Record<string, unknown>> = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "archive") continue;
     result.unrecognisedMessageFiles.push(...messageFiles(resolve(directory, entry.name, "messages")));
+    const metaPath = resolve(directory, entry.name, "meta.json");
+    // Matches the shell scan's own `[ -f meta.json ]` check: a directory with no meta.json at all
+    // is untracked, but one whose meta.json exists and merely fails to parse is not — it still
+    // falls into the catch below, silently excluded from every count, exactly as the shell's jq
+    // scan drops an unparsable record with no separate notice for it.
+    if (!existsSync(metaPath)) {
+      result.untrackedDispatches.push(entry.name);
+      continue;
+    }
     try {
-      const record = JSON.parse(readFileSync(resolve(directory, entry.name, "meta.json"), "utf8")) as Record<string, unknown>;
+      const record = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
       records.push(record);
       const processState = typeof record.processState === "string" ? record.processState : "";
       const reason = processState === "start-unproven" ? "process start was not proven"
@@ -214,6 +231,9 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
         result.retainedTerminals += 1;
         result.retainedReasons.push({ dispatchId, reason: record.terminalReason ?? "terminal identity remains unproven", processState, terminalState: "retained" });
       }
+      if (pruneDecision(record, pruneOptions, now).eligible) {
+        result.prunableDispatches += 1;
+      }
     } catch {
       // Match the shell scan: malformed metadata is not a health record.
     }
@@ -223,7 +243,7 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
   const callerSessionName = await callerSession(environment, process);
   const leaked = new Set<string>();
   for (const record of records) {
-    if (!pruneStates.has(typeof record.state === "string" ? record.state : "")) continue;
+    if (!pruneStateSet.has(typeof record.state === "string" ? record.state : "")) continue;
     if (record.runtime !== "tmux") continue;
     const session = typeof record.tmuxSession === "string" ? record.tmuxSession : "";
     const parent = typeof record.parentTmuxSession === "string" ? record.parentTmuxSession : "";
@@ -319,8 +339,14 @@ async function report(module: string, environment: Environment, process: Process
       reason = `dispatch state requires reconciliation${suffix}`;
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
-    const { unrecognisedMessageFiles: _unrecognisedMessageFiles, ...counts } = health;
-    return { module, status, reason, ...counts };
+    // Mirrors the shell's megabrain_notice call for the same condition: a stderr-carried
+    // diagnostic, not folded into the module's own status/reason, since an untracked directory is
+    // not itself a misconfiguration finding.
+    const notice = health.untrackedDispatches.length > 0
+      ? `dispatch directories without metadata: ${health.untrackedDispatches.join(", ")}`
+      : undefined;
+    const { unrecognisedMessageFiles: _unrecognisedMessageFiles, untrackedDispatches: _untrackedDispatches, ...counts } = health;
+    return { module, status, reason, ...counts, ...(notice === undefined ? {} : { notice }) };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
@@ -399,14 +425,20 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   }
   // An absent compiled binary is an unknown freshness result, not a finding in a fresh clone.
   const unhealthy = values.some((value) => value.status !== "ok" && !(value.module === "compiled-binary" && value.status === "unknown"));
-  const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
+  // A notice (e.g. an untracked dispatch directory) rides on the Report only long enough to reach
+  // here; like the shell's megabrain_notice, it is stderr commentary, not part of the module's own
+  // status/reason payload, so it is stripped before the report is ever serialized.
+  const notices = values.map((value) => value.notice).filter((value): value is string => value !== undefined);
+  const serializable = values.map(({ notice: _notice, ...rest }) => rest);
+  const text = module === undefined && json ? `${JSON.stringify(serializable, null, 2)}\n` : serializable.map((value) => output(value, json)).join("");
   const hook = values.find((value) => value.module === "orchestration-hooks");
-  const stderr = hook?.reason.includes("codex: entry-present")
+  const codexNotice = hook?.reason.includes("codex: entry-present")
     ? "\nCODEX ACTION REQUIRED: the megabrain hook needs one-time trust in Codex.\nOpen a plain terminal, run codex, and choose \"Trust all and continue\".\nOpening Codex through Superset will not complete this step because Superset passes --dangerously-bypass-hook-trust.\n"
     : undefined;
-  return stderr === undefined
+  const stderr = [codexNotice, ...notices].filter((value): value is string => value !== undefined).join("\n");
+  return stderr === ""
     ? { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0 }
-    : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr };
+    : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr: stderr.endsWith("\n") ? stderr : `${stderr}\n` };
 }
 
 type InstallOptions = Readonly<{ yes: boolean; browser: string }>;
