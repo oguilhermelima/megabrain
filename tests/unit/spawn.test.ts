@@ -426,6 +426,91 @@ describe("executeSpawn", () => {
     }
   });
 
+  // A tmux dispatch's own identity (childHost/terminalId) must describe the CHILD's pane, never
+  // the caller that spawned it. Before this fix, terminalId was parentContext.id and childHost
+  // was parentContext.host unconditionally — so a caller that later ran findChild (the turn-end
+  // hook, on every agent turn; `megabrain done`; `megabrain ack`) against its own just-spawned
+  // tmux dispatch would match meta.terminalId === current.id && meta.childHost === current.host,
+  // misidentifying itself as that dispatch's own child. Three spawning contexts, since the
+  // caller's own identity shape differs across them but the fix must hold regardless.
+  describe("tmux child identity never equals the caller's own", () => {
+    test("from a structured Orca session (no terminal handle)", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-identity-`);
+      const dispatchId = "dispatch-structured";
+      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%11\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const original = getTmux();
+      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      try {
+        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_STRUCTURED_SESSION: "1", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
+        expect(result.kind).toBe("ok");
+        const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+        expect(meta.childHost).toBe("tmux");
+        expect(meta.terminalId).toBe(`tmux:megabrain-${dispatchId}:%11`);
+        expect(meta.parentSessionId).toBe("");
+        expect(meta.parentHost).toBe("orca");
+      } finally {
+        registerTmux(original);
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("from an Orca terminal", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-identity-`);
+      const dispatchId = "dispatch-orca-terminal";
+      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%12\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const original = getTmux();
+      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      try {
+        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
+        expect(result.kind).toBe("ok");
+        const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+        expect(meta.childHost).toBe("tmux");
+        expect(meta.terminalId).toBe(`tmux:megabrain-${dispatchId}:%12`);
+        expect(meta.parentSessionId).toBe("coord-orca-term");
+        expect(meta.parentHost).toBe("orca");
+        // The bug this fix corrects: the child's identity must not equal the parent's.
+        expect(meta.terminalId).not.toBe(meta.parentSessionId);
+        expect(meta.childHost).not.toBe(meta.parentHost);
+      } finally {
+        registerTmux(original);
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("from another tmux pane (splits the caller's own session)", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-identity-`);
+      const dispatchId = "dispatch-tmux-parent";
+      const process = processFor([], (command, args) => {
+        if (command === "tmux" && args[0] === "display-message") return ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "split-window") return ok({ stdout: "%13\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      });
+      const original = getTmux();
+      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      try {
+        const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
+        expect(result.kind).toBe("ok");
+        const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
+        expect(meta.childHost).toBe("tmux");
+        expect(meta.tmuxSession).toBe("caller-session");
+        expect(meta.tmuxPane).toBe("%13");
+        // The caller's OWN pane is %0, in the SAME session; the child's identity names its own
+        // split pane %13, never the caller's %0.
+        expect(meta.terminalId).toBe("tmux:caller-session:%13");
+        expect(meta.parentSessionId).toBe("caller-session:%0");
+        expect(meta.parentHost).toBe("tmux");
+        expect(meta.terminalId).not.toBe(meta.parentSessionId);
+      } finally {
+        registerTmux(original);
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   test("returns success while receipt is pending and points to reconcile", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-`);
     const process = processFor([]);

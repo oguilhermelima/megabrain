@@ -264,11 +264,6 @@ megabrain_tmux_send_agent() {
   done
 }
 
-megabrain_tmux_capture_pane() {
-  local pane="$1" start="${2:--2000}"
-  tmux capture-pane -p -t "$pane" -S "$start"
-}
-
 megabrain_tmux_pipe_pane_start() {
   local pane="$1" path="$2" quoted_path
   quoted_path="$(printf '%q' "$path")"
@@ -295,172 +290,11 @@ megabrain_tmux_agent_output_clean() {
   esac
 }
 
-# tmux is only the best-effort transport. Prompt delivery is confirmed by the child via
-# the durable received message in its dispatch queue.
-megabrain_tmux_kill_process_tree() {
-  local pid="$1" child
-  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
-    megabrain_tmux_kill_process_tree "$child"
-  done
-  kill "$pid" 2>/dev/null || true
-}
-
-megabrain_tmux_send_literal() {
-  local pane="$1" text="$2" write_pid started now elapsed write_state write_status
-  case "$MEGABRAIN_TMUX_WRITE_TIMEOUT_SECONDS" in
-    ''|*[!0-9]*) megabrain_error "tmux write timeout must be a non-negative number of seconds"; return 1 ;;
-  esac
-  tmux send-keys -t "$pane" -l "$text" &
-  write_pid=$!
-  started="$(date +%s)"
-  while :; do
-    write_state="$(ps -p "$write_pid" -o stat= 2>/dev/null | tr -d '[:space:]' || true)"
-    case "$write_state" in
-      ''|Z*) break ;;
-    esac
-    now="$(date +%s)"
-    elapsed=$((now - started))
-    if [ "$elapsed" -ge "$MEGABRAIN_TMUX_WRITE_TIMEOUT_SECONDS" ]; then
-      megabrain_tmux_kill_process_tree "$write_pid"
-      wait "$write_pid" 2>/dev/null || true
-      megabrain_error "tmux nudge did not land in pane $pane within ${MEGABRAIN_TMUX_WRITE_TIMEOUT_SECONDS}s"
-      return 1
-    fi
-    sleep "$MEGABRAIN_TMUX_WRITE_POLL_INTERVAL"
-  done
-  if wait "$write_pid" 2>/dev/null; then
-    write_status=0
-  else
-    write_status="$?"
-  fi
-  [ "$write_status" -eq 0 ] || return "$write_status"
-}
-
-megabrain_tmux_nudge_affordance() {
-  case "$1" in
-    claude) printf 'Enter\n' ;;
-    codex) printf 'Tab\n' ;;
-    *) return 1 ;;
-  esac
-}
-
 megabrain_tmux_interrupt_affordance() {
   case "$1" in
     claude|codex) printf 'Escape\n' ;;
     *) return 1 ;;
   esac
-}
-
-megabrain_tmux_agent_for_pane() {
-  local pane="$1" session="" record_path="" record="" agent="" record_match="" record_state="" record_agent="" resolved_agent=""
-  session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null || true)"
-  [ -n "$session" ] || return 1
-  # A worker parent pane is owned by a dispatch, not necessarily by the tmux
-  # session's registered main pane. Prefer this source because it identifies child
-  # panes directly and records the worker's agent.
-  for record_path in "$MEGABRAIN_DISPATCH_DIR"/*/meta.json; do
-    [ -f "$record_path" ] || continue
-    record="$(cat "$record_path" 2>/dev/null || true)"
-    record_match="$(printf '%s' "$record" | jq -r --arg session "$session" --arg pane "$pane" '
-      select(.runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane) |
-      [.state // empty, .agent // empty] | @tsv' 2>/dev/null || true)"
-    while IFS=$'\t' read -r record_state record_agent; do
-      megabrain_dispatch_state_is_open "$record_state" || continue
-      agent="$record_agent"
-    done <<EOF
-$record_match
-EOF
-    [ -n "$agent" ] || continue
-    if [ -n "$resolved_agent" ] && [ "$resolved_agent" != "$agent" ]; then
-      return 1
-    fi
-    resolved_agent="$agent"
-  done
-  if [ -n "$resolved_agent" ]; then
-    printf '%s\n' "$resolved_agent"
-    return 0
-  fi
-
-  # A top-level coordinator is not a dispatch. Its session registry record is the
-  # next authoritative source; an absent record means the agent is unknown, never
-  # an invitation to assume Claude.
-  resolved_agent=""
-  for record_path in "$MEGABRAIN_TMUX_SESSION_DIR"/*.json; do
-    [ -f "$record_path" ] || continue
-    record="$(cat "$record_path" 2>/dev/null || true)"
-    agent="$(printf '%s' "$record" | jq -r --arg session "$session" --arg pane "$pane" '
-      select(.tmuxSession == $session and .tmuxPane == $pane and .role == "main") |
-      .agent // empty' 2>/dev/null || true)"
-    [ -n "$agent" ] || continue
-    if [ -n "$resolved_agent" ] && [ "$resolved_agent" != "$agent" ]; then
-      return 1
-    fi
-    resolved_agent="$agent"
-  done
-  [ -n "$resolved_agent" ] || return 1
-  printf '%s\n' "$resolved_agent"
-}
-
-megabrain_tmux_send_lock_path() {
-  local pane="$1" key lock_dir
-  lock_dir="${MEGABRAIN_STATE_DIR:-${TMPDIR:-/tmp}/megabrain}/tmux-send-locks"
-  key="$(printf '%s' "$pane" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '_')"
-  printf '%s/%s.lock\n' "$lock_dir" "$key"
-}
-
-megabrain_tmux_send_lock_acquire() {
-  local pane="$1" lock
-  lock="$(megabrain_tmux_send_lock_path "$pane")" || return 1
-  mkdir -p "${lock%/*}" || return 1
-  while ! mkdir "$lock" 2>/dev/null; do
-    sleep 0.02
-  done
-  MEGABRAIN_TMUX_SEND_LOCK_PATH="$lock"
-}
-
-megabrain_tmux_send_lock_release() {
-  [ -n "${MEGABRAIN_TMUX_SEND_LOCK_PATH:-}" ] || return 0
-  rmdir "$MEGABRAIN_TMUX_SEND_LOCK_PATH" 2>/dev/null || true
-  MEGABRAIN_TMUX_SEND_LOCK_PATH=""
-}
-
-megabrain_tmux_clear_typed_text() {
-  local pane="$1" text="$2" text_length
-  text_length="${#text}"
-  tmux send-keys -t "$pane" C-e || return 1
-  [ "$text_length" -eq 0 ] || tmux send-keys -N "$text_length" -t "$pane" BSpace || return 1
-}
-
-megabrain_tmux_nudge_text_for_pane() {
-  local pane="$1" text="$2" pane_width text_length
-  pane_width="$(tmux display-message -p -t "$pane" '#{pane_width}' 2>/dev/null || true)"
-  text="$(printf '%s' "$text" | tr '\r\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
-  case "$pane_width" in
-    ''|*[!0-9]*|0)
-      printf '%s\n' "$text"
-      return 0
-      ;;
-  esac
-  text_length="$(printf '%s' "$text" | wc -m | tr -d ' ')"
-  if [ "$text_length" -le "$pane_width" ]; then
-    printf '%s\n' "$text"
-  elif [ "$pane_width" -eq 1 ]; then
-    printf '…\n'
-  else
-    printf '%s…\n' "$(printf '%s' "$text" | cut -c 1-$((pane_width - 1)))"
-  fi
-}
-
-megabrain_tmux_send_nudge() {
-  local pane="$1" text="$2" agent="${MEGABRAIN_TMUX_NUDGE_AGENT:-}"
-  if [ "$#" -ge 3 ]; then
-    agent="$3"
-  fi
-  if [ -z "$agent" ]; then
-    agent="$(megabrain_tmux_agent_for_pane "$pane" 2>/dev/null || true)"
-  fi
-  text="$(megabrain_tmux_nudge_text_for_pane "$pane" "$text")"
-  megabrain_tmux_send_text "$pane" "$text" "$agent" nudge
 }
 
 MEGABRAIN_TMUX_INTERRUPT_STATUS=not-landed
@@ -477,33 +311,6 @@ megabrain_tmux_send_interrupt() {
   fi
   megabrain_tmux_send_lock_release
   [ "$MEGABRAIN_TMUX_INTERRUPT_STATUS" = landed ]
-}
-
-megabrain_tmux_send_text() {
-  local pane="$1" text="$2" agent="${3:-}" mode="${4:-prompt}" affordance rc
-  MEGABRAIN_TMUX_SEND_STATUS=not-typed
-  if [ "$mode" = nudge ]; then
-    affordance="$(megabrain_tmux_nudge_affordance "$agent" 2>/dev/null || true)"
-    # The queue is authoritative. With no measured affordance, do not risk leaving a
-    # pointer in an agent composer; the caller already has the durable message.
-    [ -n "$affordance" ] || return 0
-  else
-    affordance=Enter
-  fi
-
-  # Text and its Enter are one transaction for the pane. This prevents concurrent
-  # nudges from sharing a composer line or consuming one another's submission key.
-  megabrain_tmux_send_lock_acquire "$pane" || return 0
-  rc=0
-  if ! megabrain_tmux_send_literal "$pane" "$text"; then
-    megabrain_tmux_clear_typed_text "$pane" "$text" >/dev/null 2>&1 || rc=1
-  elif ! tmux send-keys -t "$pane" "$affordance"; then
-    megabrain_tmux_clear_typed_text "$pane" "$text" >/dev/null 2>&1 || rc=1
-  else
-    MEGABRAIN_TMUX_SEND_STATUS=queued
-  fi
-  megabrain_tmux_send_lock_release
-  return "$rc"
 }
 
 # A prompt retry only needs another chance to submit the text already accepted by the

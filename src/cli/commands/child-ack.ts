@@ -1,8 +1,8 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { dispatchPath, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
-import { atomicJson, appendMessage, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
+import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { atomicJson, appendMessage, findChild as sharedFindChild, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
@@ -53,32 +53,23 @@ export async function session(environment: QueueEnvironment, processAdapter: Pro
   });
 }
 
-function matches(sessionValue: ChildSession, meta: JsonRecord): boolean {
-  if (sessionValue.tmuxSession && sessionValue.tmuxPane) return meta.runtime === "tmux" && meta.tmuxSession === sessionValue.tmuxSession && meta.tmuxPane === sessionValue.tmuxPane;
-  return meta.terminalId === sessionValue.id && meta.childHost === sessionValue.host;
-}
-
+// Reuses queue-write.ts's findChild (the same "is the current terminal itself a managed
+// dispatch's child" question ask/done/received/the turn-end hook all ask) instead of this file's
+// own former matches()/findChild pair, which had the same gap findChild's own tmux-identity fix
+// closed: a runtime tmux record could still match by terminalId/childHost for a non-tmux-hosted
+// caller, including a legacy record carrying that caller's own id. Two behaviour differences from
+// the deleted implementation, both accepted: the MEGABRAIN_DISPATCH_ID fast path no longer
+// re-checks identity against the resolved dispatch (matching ask/done/received/the hook, none of
+// which did either — MEGABRAIN_DISPATCH_ID is an internal env var a child's own launch line sets,
+// not user input, so the extra check bought little); and a caller whose own resolveCaller-based
+// probe finds no identity now also gets queue-write.ts's `tmux list-panes -a` fallback for a
+// plain-tmux caller (this file's own session() below, kept for its independent test coverage, has
+// no such fallback and never did — a strict improvement, not a loss, matching the same regression
+// tests/test-queue-write-cli.sh already covers for ask/done/received).
 async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildDispatch>> {
-  const current = await session(environment, processAdapter);
-  if (current.kind !== "ok") return current;
-  const direct = environment.MEGABRAIN_DISPATCH_ID;
-  if (direct && /^[A-Za-z0-9._-]+$/.test(direct)) {
-    const meta = await readJson(await dispatchPath(root, direct, "meta.json"));
-    if (meta?.dispatchId === direct && matches(current.value, meta)) return ok({ id: direct, session: current.value });
-  }
-  const found: string[] = [];
-  for (const directory of await liveDispatchDirectories(root)) {
-    const meta = await readJson(`${directory}/meta.json`);
-    if (meta?.dispatchId && matches(current.value, meta)) found.push(meta.dispatchId as string);
-  }
-  if (found.length > 1) {
-    if (current.value.tmuxSession && current.value.tmuxPane) return failed(`tmux identity matches multiple dispatches for session ${current.value.tmuxSession} pane ${current.value.tmuxPane}: ${found[0]}, ${found[1]}`);
-    return failed(`terminal identity matches multiple dispatches for ${current.value.host}/${current.value.id}: ${found[0]}, ${found[1]}`);
-  }
-  const dispatch = found[0];
-  if (dispatch) return ok({ id: dispatch, session: current.value });
-  if (current.value.tmuxSession && current.value.tmuxPane) return failed(`no managed dispatch belongs to tmux session ${current.value.tmuxSession} pane ${current.value.tmuxPane}`);
-  return failed(`no managed dispatch belongs to ${current.value.host}/${current.value.id}`);
+  const found = await sharedFindChild(root, environment, processAdapter);
+  if ("kind" in found) return found;
+  return ok({ id: found.dispatch, session: found.session });
 }
 
 async function lock(path: string): Promise<void> {

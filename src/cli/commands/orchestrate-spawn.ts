@@ -383,7 +383,9 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     parentWorkspaceId: parentWorkspace,
     parentTmuxSession: parentTmux.tmuxSession,
     parentTmuxPane: parentTmux.tmuxPane,
-    childHost: parentContext.host,
+    // A tmux dispatch's childHost names its own runtime ("tmux"), not the caller's host — see the
+    // WHY comment on terminalId's assignment in executeSpawn's tmux branch above.
+    childHost: runtime === "tmux" ? "tmux" : parentContext.host,
     workspaceId: worktree.workspaceId,
     terminalId,
     worktreePath: worktree.path,
@@ -525,7 +527,16 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       if (panes.kind !== "ok" || panes.value[0] === undefined) return failed(`tmux session ${session} has no pane`);
       pane = panes.value[0];
     }
-    terminalId = parentContext.id || "unknown-host-terminal";
+    // The CHILD's own identity, never the caller's: session/pane are always the pane this
+    // dispatch actually runs in (freshly split or created above), even when the split reuses the
+    // caller's own tmux session — the caller's own pane and this dispatch's pane are always
+    // different panes. Before this fix terminalId was parentContext.id (the spawning caller's own
+    // id), which findChild (queue-write.ts) matches against meta.terminalId === current.id &&
+    // meta.childHost === current.host — so a non-tmux-hosted caller that spawned a tmux dispatch
+    // matched its own just-spawned dispatch on its very next findChild call (the turn-end hook,
+    // on every agent turn; `megabrain done`/`ask`/`received`). See initialMeta below for the
+    // matching childHost fix.
+    terminalId = `tmux:${session}:${pane}`;
   } else {
     // E: a structured Orca session (ORCA_STRUCTURED_SESSION=1, no ORCA_TERMINAL_HANDLE) now
     // resolves host "orca" here too (C, resolveCaller shares callerEnvironment with every other

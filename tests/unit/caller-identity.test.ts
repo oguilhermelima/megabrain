@@ -643,3 +643,38 @@ describe("a queue-write child resolves its own tmux session via list-panes when 
     if (result.kind === "ok") expect(result.value).toContain("tmux-target");
   });
 });
+
+// The same self-attribution bug the turn-end hook has (findChild matching a tmux dispatch's
+// terminalId/childHost against the caller that spawned it, which used to equal the caller's own
+// identity) affects `megabrain done` identically, since it goes through the same findChild.
+describe("megabrain done from the parent that spawned a tmux dispatch is not attributed to the child", () => {
+  test("done refuses to attach to a dispatch the coordinator only parents, not is", async () => {
+    const root = await tempStateDir();
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
+      capturePane: async () => ok("› Ask Codex to do anything"),
+    });
+    try {
+      const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-done-no-self-worktree-`);
+      const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+      const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%41\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      });
+      const spawnResult = await executeSpawn(["--worktree", worktreeDir, "--agent", "codex", "--prompt", "keep going", "--tmux", "true", "--json"], environment, process);
+      expect(spawnResult.kind).toBe("ok");
+      // The coordinator (still the same ORCA_TERMINAL_HANDLE, having spawned but never having run
+      // inside the child's own tmux pane) must not be able to call itself done on that dispatch.
+      const doneResult = await executeQueueWrite("done", ["finished"], environment, process);
+      expect(doneResult.kind).toBe("failed");
+      if (doneResult.kind !== "failed") return;
+      expect(doneResult.error).toBe("no managed dispatch belongs to orca/coord-orca-term");
+    } finally {
+      registerTmux(original);
+    }
+  });
+});

@@ -24,10 +24,14 @@ import { executeSpawn } from "./commands/orchestrate-spawn.js";
 import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
 import { executeTmux } from "./commands/tmux.js";
 import { executeChildAck } from "./commands/child-ack.js";
+import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
   readonly processAdapter: ProcessAdapter;
+  // Only the turn-end hook reads stdin, and only lazily (see executeHookTurnEnd) — a default
+  // reader is supplied here rather than at every call site so tests can inject a fake one.
+  readonly readStdin?: () => Promise<string>;
 };
 
 export function route(
@@ -121,6 +125,9 @@ export function route(
   if (command === "worktree" && (commandArgs[0] === "pr" || commandArgs[0] === "open-pr")) { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]\n")); return executeWorktreePr(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "hook" && commandArgs[0] === "turn-end") {
+    return executeHookTurnEnd(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter, dependencies.readStdin ?? readStdinText);
   }
   return Promise.resolve(failed(`unknown command: ${command ?? ""}`, 2));
 }

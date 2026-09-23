@@ -68,15 +68,6 @@ megabrain_resolve_parent_context() {
   fi
 }
 
-megabrain_dispatch_state_is_open() {
-  [ -n "${1:-}" ] || return 1
-  printf '%s\n' "$MEGABRAIN_DISPATCH_OPEN_STATES" | grep -Fx "$1" >/dev/null 2>&1
-}
-
-megabrain_dispatch_open_states_json() {
-  printf '%s\n' "$MEGABRAIN_DISPATCH_OPEN_STATES" | jq -Rsc 'split("\n") | map(select(length > 0))'
-}
-
 megabrain_error() {
   printf 'megabrain: %s\n' "$*" >&2
 }
@@ -148,17 +139,6 @@ megabrain_superset() {
   binary="$(megabrain_superset_binary)"
   [ -n "$binary" ] || return 127
   "$binary" "$@"
-}
-
-# WHY the output is validated instead of the exit status: GNU stat accepts -f and succeeds
-# with filesystem information, so an || fallback never fires on Linux and the answer comes
-# back as a paragraph of text. Each form is tried and kept only if it produced a number.
-megabrain_path_mtime() {
-  local path="$1" mtime
-  mtime="$(stat -c %Y "$path" 2>/dev/null || true)"
-  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime="$(stat -f %m "$path" 2>/dev/null || true)"
-  [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "$mtime"
 }
 
 megabrain_iso_now() {
