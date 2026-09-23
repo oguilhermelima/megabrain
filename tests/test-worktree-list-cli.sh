@@ -123,8 +123,13 @@ assert_contains "$tree_output" "$shared/two"
 printf 'compiled tree output reports both fixture worktrees\n'
 
 (cd "$repo" && repo_output="$(run_binary --repo "$shared/one" --json)" &&
-  printf '%s' "$repo_output" | jq -e --arg one "$shared/one" --arg two "$shared/two" \
-    'map(.path) | sort == ([$one, $two] | sort)' >/dev/null)
+  # A --repo filter deliberately includes the repository's own main checkout alongside its
+  # shared-root worktrees (src/cli/commands/worktree-list.ts:142: entries outside the shared root
+  # are skipped only when no --repo filter is given) — the prior version of this assertion
+  # expected only the two shared worktrees and failed against the binary's real, intentional
+  # output, which is this scenario's actual point ("preserves content from the repository root").
+  printf '%s' "$repo_output" | jq -e --arg one "$shared/one" --arg two "$shared/two" --arg repo "$(cd "$repo" && pwd -P)" \
+    'map(.path) | sort == ([$one, $two, $repo] | sort)' >/dev/null)
 printf 'compiled repo filter preserves content from the repository root\n'
 
 set +e
