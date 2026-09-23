@@ -123,3 +123,31 @@ describe("doctor live state", () => {
     expect(result.reason).toContain("chromium.ublock");
   });
 });
+
+describe("doctor orchestration-hooks entry detection", () => {
+  // Detection must recognise both the legacy megabrain-turn-end.sh path (no longer installed by
+  // this binary, but still found in configs left by an older install) and the current direct
+  // binary command. A legacy match is not "entry-present": it is a distinct, actionable state
+  // that names the fix, because the wrapper script it points at has been deleted.
+  test("reports a legacy megabrain-turn-end.sh entry as needing migration, not entry-present", async () => {
+    const home = mkdtempSync("/tmp/megabrain-doctor-hooks-legacy-");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "MEGABRAIN_HOOK_AGENT=claude /some/checkout/hooks/megabrain-turn-end.sh" }] }] },
+    }));
+    const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
+    expect(result.status).toBe("misconfigured");
+    expect(result.reason).toContain("claude: legacy entry; run megabrain install orchestration-hooks to migrate");
+    expect(result.reason).not.toContain("claude: entry-present");
+  });
+
+  test("reports an entry that already invokes the compiled binary directly as entry-present", async () => {
+    const home = mkdtempSync("/tmp/megabrain-doctor-hooks-binary-");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "MEGABRAIN_HOOK_AGENT=claude /some/checkout/.build/megabrain hook turn-end" }] }] },
+    }));
+    const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
+    expect(result.reason).toContain("claude: entry-present");
+  });
+});
