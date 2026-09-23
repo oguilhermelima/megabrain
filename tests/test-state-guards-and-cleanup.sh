@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-state-guards.XXXXXX")"
 
 cleanup() {
@@ -26,88 +27,35 @@ assert_contains() {
   esac
 }
 
-assert_missing() {
-  [ ! -e "$1" ] || fail "expected path to be absent: $1"
-}
-
-scenario_terminal_kill_can_run_twice_under_nounset() {
-  local output
-  if output="$(bash -u -c '
-    source "$1/lib/common.sh"
-    source "$1/lib/module-worktree.sh"
-    megabrain_terminal_process_children() { :; }
-    kill() { return 0; }
-    megabrain_terminal_kill_process_tree 101
-    megabrain_terminal_kill_process_tree 102
-    printf "%s\n" "$MEGABRAIN_TERMINAL_KILLED_TREE"
-  ' _ "$root" 2>&1)"; then
-    printf '%s' "$output" | jq -e '.[0] == 101 and .[1] == 102' >/dev/null ||
-      fail "terminal kill path recorded the wrong process tree: $output"
-  else
-    fail "terminal kill path aborted under bash -u: $output"
-  fi
-  printf 'terminal kill path can run twice under nounset\n'
-}
-
-# WHY: module_orchestration_doctor is gone (its only production caller, command_install's shell
-# body, was deleted once install routed to the binary), so the property this once proved through
-# that function — MODULE_LEAKED_DISPATCH_SESSIONS is safe to read under `set -u` before anything
-# populates it — is now provided directly by lib/common.sh's own top-level default (`common.sh`
-# sets MODULE_LEAKED_DISPATCH_SESSIONS=0 at source time, before any dispatch scan runs). This
-# scenario now asserts that default directly instead of driving it through a deleted function.
-scenario_leaked_counter_has_a_nounset_safe_default() {
-  local output
-  if output="$(bash -u -c '
-    source "$1/lib/common.sh"
-    printf "%s\n" "$MODULE_LEAKED_DISPATCH_SESSIONS"
-  ' _ "$root" 2>&1)"; then
-    assert_equal "$output" 0
-  else
-    fail "leaked-session counter default aborted under bash -u: $output"
-  fi
-  printf 'leaked-session counter has a nounset-safe default\n'
-}
-
-export HOME="$state_root/home"
 export MEGABRAIN_STATE_DIR="$state_root/state"
-export MEGABRAIN_ROOT="$root"
-export SUPERSET_TERMINAL_ID=parent-terminal
-unset TMUX TMUX_PANE
-
-source "$root/lib/common.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
-source "$root/lib/module-worktree.sh"
-source "$root/lib/module-install.sh"
-
-mkdir -p "$MEGABRAIN_DISPATCH_DIR"
-
-write_old_timestamp() {
-  local dispatch_id="$1" path tmp
-  path="$MEGABRAIN_DISPATCH_DIR/$dispatch_id/meta.json"
-  tmp="$(mktemp "$MEGABRAIN_DISPATCH_DIR/$dispatch_id/.old.XXXXXX")"
-  jq --arg old '2020-01-01T00:00:00Z' '.createdAt = $old | .updatedAt = $old' "$path" >"$tmp"
-  mv -f "$tmp" "$path"
-}
+export HOME="$state_root/home"
+mkdir -p "$MEGABRAIN_STATE_DIR"
 
 write_dispatch() {
   local dispatch_id="$1" state="$2"
-  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal superset superset workspace-test child-terminal \
-    "$root" main codex label "$state" gpt-5 true codex '' '' host ide >/dev/null
+  write_dispatch_meta "$MEGABRAIN_STATE_DIR" "$dispatch_id" state="$state" >/dev/null
 }
+
+# WHY: megabrain_terminal_kill_process_tree (lib/module-worktree.sh) and the doctor's
+# MODULE_LEAKED_DISPATCH_SESSIONS nounset-default check have no production caller left —
+# `megabrain terminal close`/`megabrain doctor` both forward unconditionally to the compiled
+# binary (lib/module-worktree.sh:445-... and lib/module-install.sh:16-25), so command_install's
+# shell body and module_orchestration_doctor (the only callers) are already unreachable dead
+# code. Dropped per rule 3, not rewritten: there is no CLI surface left that exercises either
+# property.
 
 scenario_reply_uses_transition_table() {
   local output failure_output
   write_dispatch orphaned-reply orphaned
-  megabrain_dispatch_native_send() { return 1; }
-
-  output="$(megabrain_dispatch_reply orphaned-reply --text 'resume orphan' --json)"
+  output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" \
+    "$root/.build/megabrain" orchestrate reply orphaned-reply --text 'resume orphan' --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.status')" queued
-  assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/orphaned-reply/meta.json")" running
-  assert_equal "$(jq -r '.type' "$MEGABRAIN_DISPATCH_DIR/orphaned-reply/messages"/*.json)" reply
+  assert_equal "$(jq -r '.state' "$MEGABRAIN_STATE_DIR/dispatches/orphaned-reply/meta.json")" running
+  assert_equal "$(jq -r '.type' "$MEGABRAIN_STATE_DIR/dispatches/orphaned-reply/messages"/*.json)" reply
 
   write_dispatch forbidden-reply failed
-  if failure_output="$(megabrain_dispatch_reply forbidden-reply --text 'must fail' 2>&1)"; then
+  if failure_output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" \
+    "$root/.build/megabrain" orchestrate reply forbidden-reply --text 'must fail' 2>&1)"; then
     fail 'a forbidden reply transition succeeded'
   fi
   assert_contains "$failure_output" 'state failed'
@@ -117,153 +65,98 @@ scenario_reply_uses_transition_table() {
 scenario_retired_timeout_is_readable() {
   local output
   write_dispatch timeout-prunable timeout
-  write_old_timestamp timeout-prunable
-  output="$(command_orchestrate prune --json)"
+  output="$(MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/.build/megabrain" orchestrate prune --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.archived')" 0
   assert_contains "$output" 'timeout-prunable'
-  assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/timeout-prunable/meta.json")" running
+  assert_equal "$(jq -r '.state' "$MEGABRAIN_STATE_DIR/dispatches/timeout-prunable/meta.json")" running
   printf 'retired timeout is normalised and remains open\n'
 }
 
-scenario_mark_running_uses_transition_table() {
-  write_dispatch orphaned-running orphaned
-  megabrain_spawn_mark_running_if_spawning orphaned-running
-  assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/orphaned-running/meta.json")" running
-
-  write_dispatch stalled-running running
-  megabrain_spawn_mark_running_if_spawning stalled-running
-  assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/stalled-running/meta.json")" running
-  printf 'orphaned can return to running\n'
+# scenario_mark_running_uses_transition_table (originally: a direct call to the retired
+# megabrain_spawn_mark_running_if_spawning) is rewritten below: the safety property it tested
+# (an orphaned dispatch returns to "running" once its terminal is proven alive) now lives in
+# reconcileDecision's terminal-proven branch (src/core/orchestrate-reconcile.ts:54: `state ===
+# "spawning" || state === "orphaned"` both map to `state: "running"`), reached through
+# `orchestrate reconcile`, not through a standalone mark-running verb. tests/unit/
+# orchestrate-stop-reconcile.test.ts covers the "proven"+"alive" -> terminal-proven branch, but
+# not with an "orphaned" starting state specifically (its fixture defaults to "running"), so this
+# is driven here as a black-box case to prove the exact transition rather than dropped on a
+# partial citation.
+scenario_orphaned_dispatch_recovers_on_reconcile() {
+  local bin_dir="$state_root/reconcile-bin" output
+  mkdir -p "$bin_dir"
+  # childHost=superset (single "terminals list" call) proves the child terminal directly;
+  # parentHost=orca (single "terminal list" call, matched by "handle") proves the parent is
+  # alive. Mixing hosts keeps each fake a one-shot command instead of chasing superset's
+  # two-step workspaces-then-terminals parent lookup (src/cli/commands/orchestrate-terminal.ts's
+  # parentRecords, non-orca branch).
+  cat >"$bin_dir/superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminals ] && [ "${2:-}" = list ]; then
+  printf '%s\n' '{"sessions":[{"terminalId":"child-orphan-terminal"}]}'
+  exit 0
+fi
+exit 1
+EOF
+  chmod +x "$bin_dir/superset"
+  cat >"$bin_dir/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminal ] && [ "${2:-}" = list ]; then
+  printf '%s\n' '{"result":{"terminals":[{"handle":"parent-terminal"}]}}'
+  exit 0
+fi
+exit 1
+EOF
+  chmod +x "$bin_dir/orca"
+  write_dispatch_meta "$MEGABRAIN_STATE_DIR" orphaned-running \
+    childHost=superset workspaceId=workspace-test terminalId=child-orphan-terminal \
+    parentHost=orca parentSessionId=parent-terminal state=orphaned >/dev/null
+  # hasChildIdentityProof (queue-write.ts) treats a "received" child message as proof of a live
+  # terminal without needing a real process tree, matching how terminalStatus's own "proven"
+  # path is reached in the other reconcile scenarios in this lane.
+  append_dispatch_message "$MEGABRAIN_STATE_DIR" orphaned-running child received 'prompt received' child-orphan-terminal >/dev/null
+  output="$(PATH="$bin_dir:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" \
+    "$root/.build/megabrain" orchestrate reconcile orphaned-running --json)"
+  assert_equal "$(printf '%s' "$output" | jq -r '.state')" running
+  assert_equal "$(printf '%s' "$output" | jq -r '.stage')" terminal-proven
+  assert_equal "$(printf '%s' "$output" | jq -r '.reason')" identity-proven
+  printf 'orphaned dispatch returns to running once reconcile proves its terminal\n'
 }
 
-scenario_missing_meta_is_reported() {
-  local output
-  mkdir -p "$MEGABRAIN_DISPATCH_DIR/dispatch-without-meta/messages"
-  printf '%s\n' 'left behind' >"$MEGABRAIN_DISPATCH_DIR/dispatch-without-meta/messages/0001-child-done.json"
-  megabrain_runtime_enabled() { return 1; }
-  megabrain_require_command() { return 1; }
-  megabrain_superset_available() { return 1; }
-  megabrain_dispatch_health_counts
-  output="${MODULE_UNTRACKED_DISPATCHES:-}"
-  assert_contains "$output" 'dispatch-without-meta'
-  printf 'doctor inventory reports dispatch-without-meta\n'
-}
+# scenario_missing_meta_is_reported (originally: a direct call to the retired
+# megabrain_dispatch_health_counts) is dropped per rule 3: `megabrain doctor` forwards
+# unconditionally to the compiled binary (lib/module-install.sh:16-25) and
+# install-doctor.ts has no "untracked dispatch directory" concept at all (grep for
+# "untrack"/"orphan"/"inventory" near dispatch handling in src/cli/commands/install-doctor.ts:
+# zero hits) — this was shell-only doctor detail with no production caller left to reach it.
 
-setup_fake_superset() {
-  fake_shared_root="$1"
-  mkdir -p "$fake_shared_root" "$state_root/superset"
-  megabrain_superset_available() { return 0; }
-  megabrain_worktree_root() { printf '%s\n' "$fake_shared_root"; }
-  megabrain_context_detect() { printf 'superset\n'; }
-  megabrain_resolve_spawn_runtime() {
-    MEGABRAIN_SPAWN_RUNTIME=ide
-    MEGABRAIN_SPAWN_CONTEXT=superset
-  }
-  megabrain_project_name_for_path() { printf 'fake-project\n'; }
-  megabrain_superset() {
-    local kind="${1:-}" action="${2:-}" project_file="$state_root/superset/project.json" workspace_file="$state_root/superset/workspace.json"
-    case "$kind:$action" in
-      projects:list)
-        if [ -f "$project_file" ]; then
-          jq -n --argjson project "$(cat "$project_file")" '{projects: [$project]}'
-        else
-          printf '{"projects":[]}\n'
-        fi
-        ;;
-      projects:create)
-        printf '%s\n' '{"id":"project-created","path":"'"$test_repo"'"}' >"$project_file"
-        printf '%s\n' '{"result":{"project":{"id":"project-created"}}}'
-        ;;
-      projects:delete)
-        rm -f "$project_file"
-        printf '%s\n' '{"deleted":true}'
-        ;;
-      workspaces:list)
-        if [ -f "$workspace_file" ]; then
-          jq -n --argjson workspace "$(cat "$workspace_file")" '{workspaces: [$workspace]}'
-        else
-          printf '{"workspaces":[]}\n'
-        fi
-        ;;
-      workspaces:create)
-        if [ "${workspace_creation_mode:-success}" = no-id ]; then
-          printf '%s\n' '{}'
-        else
-          printf '%s\n' '{"id":"workspace-created","branch":"feat/test"}' >"$workspace_file"
-          printf '%s\n' '{"result":{"workspace":{"id":"workspace-created"}}}'
-        fi
-        ;;
-      workspaces:delete)
-        rm -f "$workspace_file"
-        printf '%s\n' '{"deleted":true}'
-        ;;
-      *) return 1 ;;
-    esac
-  }
-}
-
-scenario_launch_failure_rolls_back_owned_objects() {
-  local repo_dir shared_root worktree_path output branch
-  test_repo="$state_root/repo"
-  shared_root="$state_root/shared"
-  repo_dir="$test_repo"
-  git init -q "$repo_dir"
-  git -C "$repo_dir" config user.email tester@example.com
-  git -C "$repo_dir" config user.name tester
-  printf 'base\n' >"$repo_dir/base.txt"
-  git -C "$repo_dir" add base.txt
-  git -C "$repo_dir" commit -qm base
-  setup_fake_superset "$shared_root"
-  megabrain_launch_agent() {
-    megabrain_error 'simulated agent launch failure'
-    return 1
-  }
-
-  branch='feat/test'
-  worktree_path="$shared_root/feat-test"
-  if output="$(megabrain_worktree_create --repo "$repo_dir" --branch "$branch" --agent codex --model gpt-5 --effort medium --prompt test --tmux false --orchestrate --json 2>&1)"; then
-    fail 'launch failure unexpectedly succeeded'
-  fi
-  assert_contains "$output" "$worktree_path"
-  assert_contains "$output" 'workspace-created'
-  assert_contains "$output" 'project-created'
-  assert_missing "$worktree_path"
-  git -C "$repo_dir" branch --list "$branch" | grep -q "$branch" && fail 'created branch was not removed'
-  assert_missing "$state_root/superset/workspace.json"
-  assert_missing "$state_root/superset/project.json"
-
-  workspace_creation_mode=no-id
-  branch='feat/no-workspace-id'
-  worktree_path="$shared_root/feat-no-workspace-id"
-  output="$(megabrain_worktree_create --repo "$repo_dir" --branch "$branch" --agent codex --model gpt-5 --effort medium --prompt test --tmux false --orchestrate --json 2>&1 || true)"
-  assert_contains "$output" 'could not create Superset workspace'
-  assert_contains "$output" 'kept Git worktree'
-  assert_contains "$output" 'Superset project: registered'
-  assert_contains "$output" 'Superset workspace: not registered'
-  [ -d "$worktree_path" ] || fail 'worktree was removed after workspace registration failed'
-  git -C "$repo_dir" branch --list "$branch" | grep -q "$branch" || fail 'branch was removed after workspace registration failed'
-  [ -f "$state_root/superset/project.json" ] || fail 'registered project was removed after workspace registration failed'
-  assert_missing "$state_root/superset/workspace.json"
-  printf 'failed launch removes only objects created by this invocation\n'
-}
+# scenario_launch_failure_rolls_back_owned_objects (originally: megabrain_worktree_create
+# --orchestrate, a real shell function with zero production callers now that `megabrain worktree
+# create` forwards unconditionally to the binary — lib/module-worktree.sh:410-418) is dropped as
+# a shell-only entry point per rule 3. The equivalent modern surface is `megabrain orchestrate
+# spawn`, which internally calls executeWorktreeCreate and does clean up the worktree it created
+# and the terminal it opened on a launch failure (src/cli/commands/orchestrate-spawn.ts:425-450,
+# `cleanup()`). FLAG FOR THE LEAD (inferred from reading cleanup(), not from an executed failing
+# test): that function only closes the terminal and, if worktree.ownership === "created", removes
+# the git worktree — it never calls a Superset "workspaces delete" or "projects delete" the way
+# the old shell contract did (the assertions this test used to make: `assert_missing
+# ".../workspace.json"` and `assert_missing ".../project.json"` after a rolled-back launch).
+# tests/unit/spawn.test.ts's cleanup coverage (grep for "workspaces.*delete"/"projects.*delete":
+# zero hits) does not exercise this either. This may be an intentional scope reduction (the same
+# pattern as the install-doctor simplifications already documented in
+# tests/test-real-use-defects.sh), but it may also be an unported piece of the old rollback
+# contract — recommend the lead check whether a launch failure through `orchestrate spawn` today
+# leaves an orphaned Superset workspace/project behind.
 
 case "${SCENARIO:-all}" in
-  6) scenario_terminal_kill_can_run_twice_under_nounset ;;
-  7) scenario_leaked_counter_has_a_nounset_safe_default ;;
   1) scenario_reply_uses_transition_table ;;
   2) scenario_retired_timeout_is_readable ;;
-  3) scenario_mark_running_uses_transition_table ;;
-  4) scenario_missing_meta_is_reported ;;
-  5) scenario_launch_failure_rolls_back_owned_objects ;;
+  3) scenario_orphaned_dispatch_recovers_on_reconcile ;;
   all)
-    scenario_terminal_kill_can_run_twice_under_nounset
-    scenario_leaked_counter_has_a_nounset_safe_default
     scenario_reply_uses_transition_table
     scenario_retired_timeout_is_readable
-    scenario_mark_running_uses_transition_table
-    scenario_missing_meta_is_reported
-    scenario_launch_failure_rolls_back_owned_objects
-    printf 'ok: state guards, dispatch visibility, and launch rollback\n'
+    scenario_orphaned_dispatch_recovers_on_reconcile
+    printf 'ok: state guards and reconcile recovery\n'
     ;;
   *)
     fail "unknown scenario: $SCENARIO"
