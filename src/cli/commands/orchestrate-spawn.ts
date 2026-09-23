@@ -470,7 +470,7 @@ function failureResult(plan: SpawnPlan, detail?: string, cleanupFailures: readon
 }
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <model>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]\n");
+  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]\n");
   const parsed = parseArgs(args);
   if (parsed.kind !== "ok") return parsed;
   const options = parsed.value;
