@@ -65,6 +65,22 @@ describe("registry operations", () => {
     expect(upgraded.models[1].agent).toBe("claude");
   });
 
+  test("carries the template's status into a non-curated row and leaves a curated row alone", () => {
+    const template: ModelRegistry = {
+      version: 1,
+      models: [
+        { agent: "codex", model: "separate", reasoning: { separateAxis: true, levels: ["low", "high"] }, provenance: { kind: "sourced" }, status: "retired" },
+      ],
+    };
+    const sourcedState: ModelRegistry = { ...registry, models: [{ ...registry.models[0], provenance: { kind: "sourced" } }] };
+    const upgraded = upgradeRegistry(sourcedState, template);
+    expect(upgraded.models[0].status).toBe("retired");
+
+    const curatedState: ModelRegistry = { ...registry, models: [{ ...registry.models[0], provenance: { kind: "curated", obtainedAt: "old" } }] };
+    const untouched = upgradeRegistry(curatedState, template);
+    expect(untouched.models[0].status).toBeUndefined();
+  });
+
   test("refreshes agy ids, sorts and infers embedded levels", () => {
     expect(refreshAgyModels(["noise", "gemini-z-high", "gemini-a-low", "gemini-z-high"], "now")).toEqual([
       { agent: "agy", model: "gemini-a-low", reasoning: { separateAxis: false, levels: ["low"] }, provenance: { kind: "live", command: "agy models", obtainedAt: "now" } },

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
+import type { ModelRegistry } from "../../src/core/model.js";
 
 const step = { agent: "codex", model: "m", effort: "high" };
 const config: ChainConfig = {
@@ -29,6 +30,44 @@ describe("chain selection", () => {
   test("reports equal-specificity ambiguity", () => {
     const ambiguous: ChainConfig = { ...config, chains: { a: config.chains.parent, b: config.chains.parent } };
     expect(selectChain(ambiguous, undefined, { agent: "codex" })).toEqual({ kind: "ambiguous", candidates: ["a", "b"] });
+  });
+});
+
+function registry(models: ModelRegistry["models"]): ModelRegistry { return { version: 1, models }; }
+
+describe("chain validation reads the state model registry", () => {
+  test("accepts a model registered only in the state registry (not the template)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "megabrain-chain-registry-root-"));
+    const state = mkdtempSync(join(tmpdir(), "megabrain-chain-registry-state-"));
+    try {
+      mkdirSync(join(root, ".megabrain"), { recursive: true });
+      writeFileSync(join(root, ".megabrain/models.json"), JSON.stringify(registry([
+        { agent: "codex", model: "gpt-5.5", reasoning: { separateAxis: true, levels: ["low"] }, provenance: { kind: "sourced" } },
+      ])));
+      writeFileSync(join(state, "models.json"), JSON.stringify(registry([
+        { agent: "codex", model: "gpt-6-luna", reasoning: { separateAxis: true, levels: ["high"] }, provenance: { kind: "curated", method: "manual curation", obtainedAt: "2026-09-23" } },
+      ])));
+      const environment = { MEGABRAIN_STATE_DIR: state, HOME: state, MEGABRAIN_ROOT: root };
+      const result = await executeChain(["add", "uses-state-model", "--when", "{}", "--steps", JSON.stringify([{ agent: "codex", model: "gpt-6-luna", effort: "high" }])], environment);
+      expect(result.kind).toBe("ok");
+    } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
+  });
+
+  test("accepts a model present only in the template, copied into state the way model.ts copies it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "megabrain-chain-registry-root-"));
+    const state = mkdtempSync(join(tmpdir(), "megabrain-chain-registry-state-"));
+    try {
+      mkdirSync(join(root, ".megabrain"), { recursive: true });
+      writeFileSync(join(root, ".megabrain/models.json"), JSON.stringify(registry([
+        { agent: "codex", model: "gpt-6-luna", reasoning: { separateAxis: true, levels: ["high"] }, provenance: { kind: "sourced" } },
+      ])));
+      const environment = { MEGABRAIN_STATE_DIR: state, HOME: state, MEGABRAIN_ROOT: root };
+      const result = await executeChain(["add", "uses-template-model", "--when", "{}", "--steps", JSON.stringify([{ agent: "codex", model: "gpt-6-luna", effort: "high" }])], environment);
+      expect(result.kind).toBe("ok");
+      // model.ts's readRegistry copies the template into the state file on first
+      // use; validateConfig must go through the same copy, not read the template directly.
+      expect(JSON.parse(readFileSync(join(state, "models.json"), "utf8"))).toEqual(JSON.parse(readFileSync(join(root, ".megabrain/models.json"), "utf8")));
+    } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
   });
 });
 
