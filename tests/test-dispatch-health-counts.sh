@@ -103,29 +103,6 @@ assert_json "$doctor_output" "(.uncertainReasons | sort_by(.dispatchId)) == ($ex
 assert_json "$doctor_output" "(.retainedReasons | sort_by(.dispatchId)) == ($expected_retained | sort_by(.dispatchId))"
 printf 'health counts: uncertain, retained, and leaked-session counts and reasons match\n'
 
-# FINDING (rule 4, not a test defect): `prunableDispatches` is declared in
-# src/cli/commands/install-doctor.ts's Report/emptyCounts (lines 16 and 176) and quoted in the
-# doctor reason string (line 313), but nothing in the file ever increments it — it is always 0.
-# The scenario above has 9 dispatches in a prunable state (closed/done/failed) excluding the one
-# still "running" and the one updated far in the future ("recent-closed", which the shell's
-# megabrain_dispatch_health_counts treats as too recent to prune) — the shell reported 9. This
-# assertion is left failing on purpose per the triage brief's rule 4: do not weaken it, do not
-# touch src/, report it to the lead.
-assert_equal "$(printf '%s' "$doctor_output" | jq -r '.prunableDispatches')" 9
-printf 'health counts: prunable dispatches counted\n'
-
-# FINDING (rule 4): a dispatch directory with no meta.json ("untracked", created above) is
-# silently swallowed by dispatchHealth's try/catch (install-doctor.ts:200-208) with no count and
-# no notice anywhere in stdout or stderr, unlike the shell's explicit
-# "dispatch directories without metadata: untracked" line. Left failing on purpose; see the
-# report.
-doctor_stderr="$(PATH="$wrapper_dir:$PATH" MEGABRAIN_STATE_DIR="$state_dir" "$binary" doctor orchestration --json 2>&1 >/dev/null || true)"
-case "$doctor_output$doctor_stderr" in
-  *'untracked'*) ;;
-  *) fail 'doctor orchestration gave no notice about the untracked dispatch directory' ;;
-esac
-printf 'health counts: untracked dispatch directory surfaced\n'
-
 # Scenario: the tmux session listing is read once per doctor run, not once per dispatch record,
 # so a large dispatch directory does not multiply tmux invocations.
 # Falsification: tmux call count grows with dispatch count instead of staying flat.
@@ -144,5 +121,30 @@ large_count="$(tmux_call_count 100)"
 [ $((large_count - small_count)) -le 1 ] ||
   fail "tmux call count grew from $small_count to $large_count across 10 vs 100 dispatch records"
 printf 'health counts: tmux session listing stays flat at 10 and 100 records (%s, %s)\n' "$small_count" "$large_count"
+
+# FINDING (rule 4, not a test defect): `prunableDispatches` is declared in
+# src/cli/commands/install-doctor.ts's Report/emptyCounts (lines 16 and 176) and quoted in the
+# doctor reason string (line 313), but nothing in the file ever increments it — it is always 0.
+# The first scenario above has 9 dispatches in a prunable state (closed/done/failed) excluding the
+# one still "running" and the one updated far in the future ("recent-closed", which the shell's
+# megabrain_dispatch_health_counts treats as too recent to prune) — the shell reported 9. This
+# assertion is left failing on purpose per the triage brief's rule 4: do not weaken it, do not
+# touch src/, report it to the lead. Placed last so every other scenario above still runs and
+# reports.
+assert_equal "$(printf '%s' "$doctor_output" | jq -r '.prunableDispatches')" 9
+printf 'health counts: prunable dispatches counted\n'
+
+# FINDING (rule 4): a dispatch directory with no meta.json ("untracked", created above) is
+# silently swallowed by dispatchHealth's try/catch (install-doctor.ts:200-208) with no count and
+# no notice anywhere in stdout or stderr, unlike the shell's explicit
+# "dispatch directories without metadata: untracked" line. Left failing on purpose; see the
+# report. Would run after the prunableDispatches finding above if that one did not already stop
+# the script — recorded here for completeness of the report.
+doctor_stderr="$(PATH="$wrapper_dir:$PATH" MEGABRAIN_STATE_DIR="$state_dir" "$binary" doctor orchestration --json 2>&1 >/dev/null || true)"
+case "$doctor_output$doctor_stderr" in
+  *'untracked'*) ;;
+  *) fail 'doctor orchestration gave no notice about the untracked dispatch directory' ;;
+esac
+printf 'health counts: untracked dispatch directory surfaced\n'
 
 printf 'ok: doctor orchestration health counts (with two open findings, see report)\n'
