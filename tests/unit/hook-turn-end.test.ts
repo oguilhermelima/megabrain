@@ -7,6 +7,7 @@ import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeHookTurnEnd, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
 import { appendMessage } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
+import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -404,5 +405,58 @@ describe("executeHookTurnEnd: never fails or blocks the agent", () => {
   test("still resolves ok() when the environment names a state directory that does not exist", async () => {
     const result = await executeHookTurnEnd([], environment("/nowhere/at/all/does-not-exist", { SUPERSET_TERMINAL_ID: "coord-term" }), fakeProcess(), noStdin);
     expect(result).toEqual({ kind: "ok", value: "{}\n" });
+  });
+});
+
+// The parent that spawns a tmux dispatch must never be attributed as that dispatch's own child on
+// its very next turn-end hook run: before the fix, orchestrate spawn recorded the child's
+// terminalId as the caller's own id and childHost as the caller's own host (a bookkeeping
+// shortcut for "who spawned this"), and findChild matched on exactly those two fields — so the
+// coordinator's own hook run would misidentify itself as the dispatch it just spawned, and append
+// a "child stalled" message into that dispatch's own queue. A real spawn (no fake dependency
+// needed here anymore, unlike the chain-continuation scenario above) from an Orca terminal proves
+// the fix holds for the actual production path.
+describe("executeHookTurnEnd: the parent is never mistaken for its own just-spawned tmux child", () => {
+  test("a real tmux spawn is not attributed to itself on the coordinator's next turn-end hook", async () => {
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
+      capturePane: async () => ok("› Ask Codex to do anything"),
+    });
+    try {
+      await withRoot("no-self-attribution", async (root) => {
+        const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-hook-no-self-worktree-`);
+        try {
+          const hookEnvironment = environment(root, { ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
+          const process = fakeProcess((command, args) => {
+            if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%40\n", stderr: "", exitCode: 0 });
+            return ok({ stdout: "", stderr: "", exitCode: 0 });
+          });
+          const spawnResult = await executeSpawn(["--worktree", worktreeDir, "--agent", "codex", "--prompt", "keep going", "--tmux", "true", "--json"], hookEnvironment, process);
+          expect(spawnResult.kind).toBe("ok");
+          if (spawnResult.kind !== "ok") return;
+          const dispatchId: string = JSON.parse(spawnResult.value).dispatchId;
+          const spawnedMeta = await readMeta(root, dispatchId);
+          expect(spawnedMeta.childHost).toBe("tmux");
+          expect(spawnedMeta.terminalId).not.toBe(spawnedMeta.parentSessionId);
+
+          const hookResult = await executeHookTurnEnd([], hookEnvironment, process, noStdin);
+          expect(hookResult).toEqual({ kind: "ok", value: "{}\n" });
+
+          const messages = (await readdir(join(root, "dispatches", dispatchId, "messages"))).filter((name) => name.includes("stalled"));
+          expect(messages).toHaveLength(0);
+          const afterMeta = await readMeta(root, dispatchId);
+          expect(afterMeta.state).toBe("spawning");
+          expect(afterMeta.reconcileOutcome ?? null).toBeNull();
+        } finally {
+          await rm(worktreeDir, { recursive: true, force: true });
+        }
+      });
+    } finally {
+      registerTmux(original);
+    }
   });
 });
