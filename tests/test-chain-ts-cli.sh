@@ -8,17 +8,17 @@ export MEGABRAIN_ROOT="$root"
 export HOME="$state/home"
 mkdir -p "$HOME/.codex/sessions"
 
-compare() {
-  local label="$1"; shift
-  local shell_stdout shell_stderr binary_stdout binary_stderr shell_status binary_status
-  shell_stdout="$state/shell.stdout"; shell_stderr="$state/shell.stderr"
-  binary_stdout="$state/binary.stdout"; binary_stderr="$state/binary.stderr"
-  if MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" "$@" >"$shell_stdout" 2>"$shell_stderr"; then shell_status=0; else shell_status=$?; fi
-  if "$binary" "$@" >"$binary_stdout" 2>"$binary_stderr"; then binary_status=0; else binary_status=$?; fi
-  cmp -s "$shell_stdout" "$binary_stdout" || { printf '%s stdout differs\n' "$label" >&2; return 1; }
-  cmp -s "$shell_stderr" "$binary_stderr" || { printf '%s stderr differs\n' "$label" >&2; return 1; }
-  [ "$shell_status" -eq "$binary_status" ] || { printf '%s status differs\n' "$label" >&2; return 1; }
-}
+# Scenarios "empty list", "missing snapshot limits", "shell-only selection", and "stale snapshot
+# limits" are dropped (rule 3): they compared `$root/megabrain chain … ` under
+# MEGABRAIN_CHAIN_IMPLEMENTATION=shell against the compiled binary, but command_chain
+# (lib/module-chain.sh) execs the binary unconditionally for every subcommand — list, limits,
+# add, edit, delete, repair, run — with no MEGABRAIN_CHAIN_IMPLEMENTATION check anywhere in the
+# file and no shell fallback left to select. The env var is a dead no-op, so every one of those
+# four comparisons was actually the binary against itself through two entry points, not shell vs
+# binary — including "shell-only selection", whose own name is no longer accurate: `chain select`
+# is not a real subcommand of either the shell or the binary (both answer "unknown chain command:
+# select", verified directly), so the comparison proved only that two invocations of the same
+# unknown-command error agree with themselves.
 
 # megabrain_chain_limit_read (lib/module-chain.sh) is gone: it lost its last production caller
 # when hooks/megabrain-turn-end.sh stopped sourcing lib/ and its own chain-continuation path
@@ -42,12 +42,8 @@ binary_codex_reading() {
 
 export MEGABRAIN_STATE_DIR="$state/empty-state"
 mkdir -p "$MEGABRAIN_STATE_DIR"
-compare "empty list" chain list --json
-compare "missing snapshot limits" chain limits --json
-compare "shell-only selection" chain select --json
 
 printf '%s\n' '{"payload":{"rate_limits":{"primary":{"used_percent":42,"window_minutes":300,"resets_at":1}}}}' >"$HOME/.codex/sessions/rollout-stale.jsonl"
-compare "stale snapshot limits" chain limits --json
 touch -t 202001010000 "$HOME/.codex/sessions/rollout-stale.jsonl"
 cp "$root/tests/fixtures/codex-rollout-incomplete-usage.jsonl" "$HOME/.codex/sessions/rollout-incomplete-usage.jsonl"
 binary_incomplete_output="$("$binary" chain limits --json)"
