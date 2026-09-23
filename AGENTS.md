@@ -60,8 +60,8 @@
 - Run megabrain web viewport set|show|devices ....
 - Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape].
 - Run megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG.
-- Run megabrain web capture --url URL --screen NAME [options].
-- Run megabrain web measure --url URL --screen NAME [options].
+- Run megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options].
+- Run megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options].
 - Run megabrain web session save --url URL --output FILE [options].
 - Run megabrain web viewport show [--browser chromium|firefox|both].
 - Run megabrain web userscript install|list|remove ....
