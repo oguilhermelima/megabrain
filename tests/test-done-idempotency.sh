@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-done-idempotency.XXXXXX")"
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
@@ -53,18 +54,21 @@ message_count() {
 
 create_dispatch() {
   local dispatch_id="$1" child_terminal="child-$1"
-  megabrain_dispatch_meta_write "$dispatch_id" parent-terminal superset superset workspace-test \
-    "$child_terminal" "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
+  write_dispatch_meta "$state_dir" "$dispatch_id" \
+    childHost=superset workspaceId=workspace-test terminalId="$child_terminal" state=running >/dev/null
+}
+
+set_dispatch_state() {
+  local dispatch_id="$1" state="$2" path="$state_dir/dispatches/$1/meta.json" tmp
+  tmp="$(mktemp "$state_dir/dispatches/$1/.state.XXXXXX")"
+  jq --arg state "$state" '.state = $state' "$path" >"$tmp"
+  mv -f "$tmp" "$path"
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
 export PATH="$bin_dir:/usr/bin:/bin"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
-
-source "$root/lib/common.sh"
-source "$root/lib/module-orchestrate.sh"
-source "$root/lib/module-parent-notify.sh"
 
 run_child_message() {
   local dispatch_id="$1" type="$2" text="${3:-}"
@@ -93,15 +97,15 @@ assert_equal "$(message_count repeated-done)" 2
 assert_equal "$(delivery_count repeated-done)" 2
 
 export SUPERSET_TERMINAL_ID=parent-terminal
-first_delivery="$(megabrain_dispatch_watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --json)"
+first_delivery="$("$root/.build/megabrain" orchestrate watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 assert_equal "$(jq -r '.messages | length' <<<"$first_delivery")" 1
 assert_equal "$(jq -r '.messages[0].text' <<<"$first_delivery")" 'first completion'
 first_delivery_id="$(jq -r '.deliveryId' <<<"$first_delivery")"
-megabrain_dispatch_ack repeated-done "$first_delivery_id" >/dev/null
-default_after_ack="$(megabrain_dispatch_watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --json)"
+"$root/.build/megabrain" orchestrate ack repeated-done "$first_delivery_id" >/dev/null
+default_after_ack="$("$root/.build/megabrain" orchestrate watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 assert_equal "$(jq -r '.messages | length' <<<"$default_after_ack")" 0
 
-full_delivery="$(megabrain_dispatch_watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --full --json)"
+full_delivery="$("$root/.build/megabrain" orchestrate watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --full --json)"
 assert_equal "$(jq -r '.messages | length' <<<"$full_delivery")" 1
 assert_equal "$(jq -r '.messages[0].text' <<<"$full_delivery")" 'retried completion'
 printf 'repeated done creates one actionable nudge and durable protocol mail\n'
@@ -110,7 +114,7 @@ printf 'repeated done creates one actionable nudge and durable protocol mail\n'
 # transition itself is refused by the settled dispatch contract.
 create_dispatch different-outcome
 export SUPERSET_TERMINAL_ID=child-different-outcome
-megabrain_dispatch_meta_update_state different-outcome failed >/dev/null
+set_dispatch_state different-outcome failed
 different_output_path="$state_dir/different-output"
 if run_child_message different-outcome done 'completion after failure' >"$different_output_path" 2>&1; then
   fail 'done after failed dispatch was accepted'
@@ -121,7 +125,7 @@ assert_equal "$(nudge_count)" 2
 assert_equal "$(message_count different-outcome)" 1
 assert_equal "$(delivery_count different-outcome)" 1
 export SUPERSET_TERMINAL_ID=parent-terminal
-different_delivery="$(megabrain_dispatch_watch different-outcome --timeout 0 --poll-interval 0 --wait-mode poll --json)"
+different_delivery="$("$root/.build/megabrain" orchestrate watch different-outcome --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 assert_equal "$(jq -r '.messages[0].text' <<<"$different_delivery")" 'completion after failure'
 printf 'done after failed dispatch remains a distinct actionable outcome\n'
 
