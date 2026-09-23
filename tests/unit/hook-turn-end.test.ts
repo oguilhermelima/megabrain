@@ -474,3 +474,96 @@ describe("executeHookTurnEnd: the parent is never mistaken for its own just-spaw
     }
   });
 });
+
+// D1: the hook's top gate used to require SUPERSET_TERMINAL_ID or ORCA_TERMINAL_HANDLE — which a
+// real tmux dispatch's agent process never has (orchestrate-spawn.ts's tmux launch line clears
+// every CALLER_IDENTITY_ENV_VARS entry before starting it, and before that fix it inherited the
+// PARENT's handle by accident, which is what let turn-end detection "work" for tmux children
+// pre-L2). A caller that is genuinely inside a tmux pane (TMUX and TMUX_PANE both set) must also
+// pass the gate; a caller with neither a terminal marker nor a tmux pane still exits immediately.
+describe("executeHookTurnEnd: a caller inside a tmux pane passes the top gate", () => {
+  test("a real tmux child's turn ends without done, recorded exactly as a host child's would be", async () => {
+    await withRoot("tmux-child-stalled", async (root) => {
+      await writeMeta(root, "d1", {
+        childHost: "tmux", terminalId: "tmux:work:%3", parentSessionId: "coord-term", parentHost: "orca",
+        runtime: "tmux", tmuxSession: "work", tmuxPane: "%3", state: "running", processState: "running",
+      });
+      const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "display-message" && args.includes("#{session_name}")) return ok({ stdout: "work\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "has-session") return failed("no session");
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      });
+      const childEnvironment = environment(root, { TMUX: "child-tmux-server", TMUX_PANE: "%3" });
+      const result = await executeHookTurnEnd([], childEnvironment, process, noStdin);
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+      const directory = join(root, "dispatches", "d1", "messages");
+      const names = (await readdir(directory)).filter((name) => name.includes("stalled"));
+      expect(names).toHaveLength(1);
+      const recorded = JSON.parse(await readFile(join(directory, names[0]), "utf8"));
+      expect(recorded).toMatchObject({ from: "child", type: "stalled", text: "child turn ended without ask or done", sessionId: "work:%3" });
+    });
+  });
+
+  test("a limit-refused dispatch continues its chain when the parent itself runs inside a tmux pane", async () => {
+    const original = getTmux();
+    let refusedPane: string | undefined;
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
+      capturePane: async (pane) => (pane === refusedPane ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : ok("› Ask Codex to do anything")),
+    });
+    try {
+      await withRoot("tmux-parent-continue", async (root) => {
+        await writeFile(join(root, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }, { agent: "codex", model: "m2" }] }));
+        const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-hook-tmux-parent-worktree-`);
+        try {
+          const resolvedWorktree = await realpath(worktreeDir);
+          // The coordinator itself runs inside tmux pane %0 of session "coord-session" — no
+          // SUPERSET_TERMINAL_ID or ORCA_TERMINAL_HANDLE at all, exactly the shape this lead's own
+          // structured-session-over-tmux setup has.
+          const coordinatorEnvironment = environment(root, { TMUX: "coord-tmux-server", TMUX_PANE: "%0", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
+          let nextPane = 30;
+          const process = fakeProcess((command, args) => {
+            if (command === "tmux" && args[0] === "display-message" && args.includes("#{session_name}")) return ok({ stdout: "coord-session\n", stderr: "", exitCode: 0 });
+            if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: `${resolvedWorktree}\n`, stderr: "", exitCode: 0 });
+            if (command === "git" && args.includes("symbolic-ref")) return ok({ stdout: "feat/chain\n", stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "split-window") return ok({ stdout: `%${nextPane++}\n`, stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: `%${nextPane++}\n`, stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
+            return ok({ stdout: "", stderr: "", exitCode: 0 });
+          });
+
+          const runResult = await executeChainRun(["--worktree", worktreeDir, "--prompt", "keep going", "--tmux", "true", "--json"], coordinatorEnvironment, process);
+          expect(runResult.kind).toBe("ok");
+          if (runResult.kind !== "ok") return;
+          const dispatchId: string = JSON.parse(runResult.value).dispatch.dispatchId;
+          const firstMeta = await readMeta(root, dispatchId);
+          expect(firstMeta.chain).toMatchObject({ name: "defaultSteps", step: 1, total: 2, usedDefault: true, prompt: "keep going" });
+          // The child's own pane must never equal the coordinator's own pane (%0).
+          expect(firstMeta.tmuxPane).not.toBe("%0");
+          refusedPane = firstMeta.tmuxPane as string;
+
+          const hookResult = await executeHookTurnEnd([], coordinatorEnvironment, process, noStdin);
+          expect(hookResult).toEqual({ kind: "ok", value: "{}\n" });
+          expect(process.calls.some((call) => call.command.includes("megabrain"))).toBe(false);
+
+          const refusedMeta = await readMeta(root, dispatchId);
+          expect(refusedMeta.state).toBe("failed");
+          expect(refusedMeta.reconcileOutcome).toBe("limit-refused");
+
+          const dispatchIds = (await readdir(join(root, "dispatches"))).filter((id) => id !== dispatchId);
+          expect(dispatchIds).toHaveLength(1);
+          const resumedMeta = await readMeta(root, dispatchIds[0]);
+          expect(resumedMeta).toMatchObject({ agent: "codex", model: "m2", runtime: "tmux", worktreePath: resolvedWorktree });
+          expect(resumedMeta.chain).toMatchObject({ name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "keep going" });
+        } finally {
+          await rm(worktreeDir, { recursive: true, force: true });
+        }
+      });
+    } finally {
+      registerTmux(original);
+    }
+  });
+});
