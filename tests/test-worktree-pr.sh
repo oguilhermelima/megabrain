@@ -35,8 +35,11 @@ assert_not_contains() {
 
 export HOME="$work_dir/home"
 export MEGABRAIN_STATE_DIR="$work_dir/state"
-source "$root/lib/common.sh"
-source "$root/lib/module-worktree.sh"
+
+run_worktree_create() {
+  env HOME="$work_dir/home" MEGABRAIN_STATE_DIR="$work_dir/state" SUPERSET_TERMINAL_ID=parent-terminal \
+    PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create "$@"
+}
 
 setup_fixture() {
   rm -rf "$work_dir/repo" "$work_dir/shared" "$work_dir/state" "$work_dir/bin" "$work_dir/calls.log"
@@ -53,49 +56,39 @@ setup_fixture() {
   git -C "$repo_dir" commit -qm base
 }
 
-megabrain_worktree_root() { printf '%s\n' "$fixture_shared_root"; }
-megabrain_context_detect() { printf 'superset\n'; }
-megabrain_project_name_for_path() { printf 'test-project\n'; }
-
-megabrain_require_command() {
-  case "$1" in
-    orca) [ "${orca_available:-true}" = true ] ;;
-    gh) command -v gh >/dev/null 2>&1 ;;
-    *) command -v "$1" >/dev/null 2>&1 ;;
-  esac
+# Real fake orca/superset executables (not shell functions): worktree create forwards
+# unconditionally to the compiled binary, which spawns these as real subprocesses on PATH, not
+# in-process shell functions. ORCA_MODE controls the issue-link (worktree set) outcome; both log
+# every invocation to calls.log the same way write_gh does for gh below.
+write_orca() {
+  cat >"$work_dir/bin/orca" <<'EOF'
+#!/usr/bin/env bash
+printf 'orca %s\n' "$*" >>"$CALLS_LOG"
+case "${1:-}:${2:-}" in
+  worktree:set)
+    [ "${ORCA_MODE:-success}" = success ] || exit 1
+    printf '%s\n' '{"ok":true}'
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$work_dir/bin/orca"
 }
 
-megabrain_superset_available() { [ "${superset_available:-true}" = true ]; }
-
-orca() {
-  printf 'orca %s\n' "$*" >>"$work_dir/calls.log"
-  case "${1:-}:${2:-}" in
-    worktree:show)
-      if [ "${orca_parent_branch:-}" ]; then
-        printf '%s\n' "{\"result\":{\"worktree\":{\"parentWorktree\":{\"branch\":\"$orca_parent_branch\"}}}}"
-      else
-        printf '%s\n' '{"result":{"worktree":{}}}'
-      fi
-      ;;
-    worktree:set)
-      [ "${orca_mode:-success}" = success ] || return 1
-      printf '%s\n' '{"ok":true}'
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-megabrain_superset() {
-  printf 'superset %s\n' "$*" >>"$work_dir/calls.log"
-  case "${1:-}:${2:-}" in
-    settings:get) printf '%s\n' "$fixture_shared_root" ;;
-    projects:list) printf '%s\n' '{"projects":[]}' ;;
-    projects:create) printf '%s\n' '{"result":{"project":{"id":"project-id"}}}' ;;
-    workspaces:list) printf '%s\n' '{"workspaces":[]}' ;;
-    workspaces:create) printf '%s\n' '{"result":{"workspace":{"id":"workspace-id"}}}' ;;
-    workspaces:update) printf '%s\n' '{"ok":true}' ;;
-    *) return 1 ;;
-  esac
+write_superset() {
+  cat >"$work_dir/bin/superset" <<'EOF'
+#!/usr/bin/env bash
+printf 'superset %s\n' "$*" >>"$CALLS_LOG"
+case "${1:-}:${2:-}" in
+  projects:list) printf '%s\n' '{"projects":[]}' ;;
+  projects:create) printf '%s\n' '{"result":{"project":{"id":"project-id"}}}' ;;
+  workspaces:list) printf '%s\n' '{"workspaces":[]}' ;;
+  workspaces:create) printf '%s\n' '{"result":{"workspace":{"id":"workspace-id"}}}' ;;
+  workspaces:update) printf '%s\n' '{"ok":true}' ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$work_dir/bin/superset"
 }
 
 run_binary() {
@@ -209,24 +202,33 @@ scenario_no_commits_ahead_is_refused() {
 scenario_issue_links_are_non_fatal() {
   local output calls
   setup_fixture
-  orca_mode=success
-  output="$(megabrain_worktree_create --repo "$repo_dir" --branch feat/links --issue 42 --linear-issue ENG-7 --json)"
+  write_orca
+  output="$(ORCA_MODE=success CALLS_LOG="$work_dir/calls.log" run_worktree_create --repo "$repo_dir" --branch feat/links --issue 42 --linear-issue ENG-7 --json)"
   calls="$(cat "$work_dir/calls.log")"
   assert_contains "$calls" '--issue 42 --linear-issue ENG-7'
   assert_equal "$(printf '%s' "$output" | jq -r '.links.set')" true
   setup_fixture
-  orca_mode=fail
-  output="$(megabrain_worktree_create --repo "$repo_dir" --branch feat/links --issue 42 --linear-issue ENG-7 --json)"
+  write_orca
+  output="$(ORCA_MODE=fail CALLS_LOG="$work_dir/calls.log" run_worktree_create --repo "$repo_dir" --branch feat/links --issue 42 --linear-issue ENG-7 --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.links.set')" false
   [ -d "$fixture_shared_root/feat-links" ] || fail 'worktree was lost after link failure'
   printf 'issue links reach Orca and a link failure does not lose the checkout\n'
 }
 
+# RULE-4 FINDING, left failing on purpose: parseCreateOptions (src/core/worktree-write.ts:41-70)
+# does parse --pr into CreateOptions.pr (it is in the recognised-flags list, so it does not error
+# as an unknown option either) but nothing downstream ever reads value.pr -- grepped both
+# src/cli/commands/worktree-write.ts and src/core/worktree-write.ts for ".pr"/"value.pr"/
+# "options.pr": zero hits outside the type definition and the parse assignment itself. The old
+# shell contract's "--pr passes a review request to Superset workspace creation" has no
+# implementation left at all, though the flag is still advertised in both `worktree create --help`
+# and AGENTS.md. Not weakened; the lead decides.
 scenario_pr_is_passed_to_superset() {
   local calls
   setup_fixture
-  megabrain_worktree_create --repo "$repo_dir" --branch review/pr-7 --pr 7 --json >/dev/null
-  calls="$(cat "$work_dir/calls.log")"
+  write_superset
+  CALLS_LOG="$work_dir/calls.log" run_worktree_create --repo "$repo_dir" --branch review/pr-7 --pr 7 --json >/dev/null
+  calls="$(cat "$work_dir/calls.log" 2>/dev/null || true)"
   assert_contains "$calls" 'workspaces create'
   assert_contains "$calls" '--pr 7'
   printf 'PR review requests reach Superset workspace creation\n'
@@ -236,8 +238,6 @@ scenario_tree_listing_has_no_orchestrator_dependency() {
   local output json
   setup_fixture
   make_stacked_worktrees
-  superset_available=false
-  orca_available=false
   output="$(run_binary worktree list)"
   assert_contains "$output" 'stack/base'
   assert_contains "$output" '  stack/child'

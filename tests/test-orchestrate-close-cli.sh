@@ -2,6 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_binary="$(mktemp -d /tmp/mbclose-binary.XXXXXX)"
 fake_dir="$(mktemp -d /tmp/mbclose-bin.XXXXXX)"
 trap 'rm -rf "$state_binary" "$fake_dir"' EXIT
@@ -18,9 +19,6 @@ printf '%s\n' '{"ok":true}'
 EOF
 chmod +x "$fake_dir/orca"
 
-source "$root/lib/common.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
 export PATH="$fake_dir:$PATH" MEGABRAIN_ROOT="$root" SUPERSET_TERMINAL_ID=parent-terminal
 
 fail() {
@@ -28,21 +26,11 @@ fail() {
   exit 1
 }
 
-orca() {
-  if [ "${MB_CLOSE_MODE:-success}" = failure ]; then
-    printf '%s\n' '{"error":{"message":"terminal close denied by host"}}' >&2
-    return 1
-  fi
-  if [ "${MB_CLOSE_MODE:-success}" = empty ]; then
-    return 1
-  fi
-  printf '%s\n' '{"ok":true}'
-}
-
 make_meta() {
   local state="$1" id="$2"
   export MEGABRAIN_STATE_DIR="$state" MEGABRAIN_DISPATCH_DIR="$state/dispatches"
-  megabrain_dispatch_meta_write "$id" parent-terminal superset orca workspace-test "$id-terminal" "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
+  write_dispatch_meta "$state" "$id" \
+    childHost=orca workspaceId=workspace-test terminalId="$id-terminal" state=running >/dev/null
 }
 run_one() {
   local state="$1" mode="$2" id="$3" out err rc

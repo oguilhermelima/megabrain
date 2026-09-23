@@ -43,13 +43,6 @@ if HOME="$install_home" MEGABRAIN_STATE_DIR="$install_state" PATH=/usr/bin:/bin 
 fi
 printf 'scenario 1: failed module install is non-zero\n'
 
-# WHY: scenario 6 (command_orchestrate_list) and scenario 8 (megabrain_state_set) still exercise
-# real shell functions directly, so common.sh and the module-*.sh files stay sourced for them.
-source "$root/lib/common.sh"
-for module in "$root"/lib/module-*.sh; do
-  source "$module"
-done
-
 # Scenario 2: reported tmux drift must make the doctor non-ok.
 # WHY: module_tmux_runtime_doctor is gone (deleted with the rest of the shell install path once
 # install routed to the binary); the compiled doctor implements this exact tuning/wrapper drift
@@ -141,13 +134,16 @@ fi
 printf 'scenario 3: Claude registration is guarded\n'
 
 # Scenario 6: the uncertain dispatch set reported by doctor must be selectable.
+# WHY: command_orchestrate_list (lib/module-context.sh) has no production caller -- `orchestrate
+# list` forwards unconditionally to the compiled binary (command_orchestrate's own dispatch
+# table) -- so this drives that binary directly instead. filterDispatchRecords treats
+# processState "start-unproven" as uncertain regardless of caller ownership when --uncertain is
+# passed (src/core/dispatch.ts), matching this fixture.
 dispatch_state="$state_dir/dispatch-state"
-export MEGABRAIN_STATE_DIR="$dispatch_state"
-export MEGABRAIN_DISPATCH_DIR="$dispatch_state/dispatches"
-mkdir -p "$MEGABRAIN_DISPATCH_DIR/uncertain/meta" "$MEGABRAIN_DISPATCH_DIR/healthy"
-printf '%s\n' '{"dispatchId":"uncertain","parentSessionId":"","parentHost":"unknown","state":"running","processState":"start-unproven","terminalState":"owned","worktreePath":"/tmp/uncertain"}' >"$MEGABRAIN_DISPATCH_DIR/uncertain/meta.json"
-printf '%s\n' '{"dispatchId":"healthy","parentSessionId":"","parentHost":"unknown","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmp/healthy"}' >"$MEGABRAIN_DISPATCH_DIR/healthy/meta.json"
-uncertain_list="$(command_orchestrate_list --uncertain --json)"
+mkdir -p "$dispatch_state/dispatches/uncertain" "$dispatch_state/dispatches/healthy"
+printf '%s\n' '{"dispatchId":"uncertain","parentSessionId":"","parentHost":"unknown","state":"running","processState":"start-unproven","terminalState":"owned","worktreePath":"/tmp/uncertain"}' >"$dispatch_state/dispatches/uncertain/meta.json"
+printf '%s\n' '{"dispatchId":"healthy","parentSessionId":"","parentHost":"unknown","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmp/healthy"}' >"$dispatch_state/dispatches/healthy/meta.json"
+uncertain_list="$(MEGABRAIN_STATE_DIR="$dispatch_state" "$root/.build/megabrain" orchestrate list --uncertain --json)"
 assert_contains "$uncertain_list" 'uncertain'
 assert_contains "$uncertain_list" 'uncertain' 'orchestrate list --uncertain omitted the doctor-counted dispatch'
 assert_not_contains "$uncertain_list" 'healthy' 'orchestrate list --uncertain included a healthy dispatch'
@@ -159,11 +155,11 @@ assert_contains "$help_output" '--version' 'top-level help omitted the version f
 printf 'scenario 7: help documents the version flag\n'
 
 # Scenario 8: the install record must identify itself as historical rather than live status.
-record_state="$state_dir/record-state"
-export MEGABRAIN_STATE_DIR="$record_state"
-export MEGABRAIN_STATE_FILE="$record_state/state.json"
-megabrain_state_set simulator-web true 'installed' || fail 'could not write installation record'
-jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._meta.liveStatusCommand == "megabrain doctor"' "$MEGABRAIN_STATE_FILE" >/dev/null ||
+# WHY: megabrain_state_set (lib/common.sh) has no production caller -- `megabrain install`
+# forwards unconditionally to the compiled binary, whose own writeInstalledState
+# (src/cli/commands/install-doctor.ts) is the only place that still writes this record. Reuses
+# scenario 3's real, successful `install simulator-web` run instead of hand-writing the record.
+jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._meta.liveStatusCommand == "megabrain doctor"' "$scenario3_home/state.json" >/dev/null ||
   fail 'state.json did not identify its timestamp and live-status command'
 printf 'scenario 8: install record identifies its timestamp\n'
 

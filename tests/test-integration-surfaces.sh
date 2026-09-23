@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/fixtures/a-dispatch-meta.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-integrations.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
@@ -48,7 +49,8 @@ assert_equal "$("$root/megabrain" --version)" "megabrain $manifest_version"
 printf 'command entry points: megabrain and mb report the manifest version\n'
 
 nested_state="$work/nested-state"
-MEGABRAIN_STATE_DIR="$nested_state" bash -c 'source "$1/lib/common.sh"; source "$1/lib/module-orchestrate.sh"; megabrain_dispatch_meta_write nested-dispatch parent-terminal superset superset workspace nested-child "$1" main codex label spawning gpt-5 true codex "" "" host ide >/dev/null' _ "$root"
+write_dispatch_meta "$nested_state" nested-dispatch \
+  childHost=superset workspaceId=workspace terminalId=nested-child worktreePath="$root" state=spawning >/dev/null
 nested_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$nested_state" SUPERSET_TERMINAL_ID=nested-child bash -c 'MEGABRAIN_STATE_DIR="$1" SUPERSET_TERMINAL_ID="$2" "$3" received' _ "$nested_state" nested-child "$root/megabrain")"
 assert_contains "$nested_output" 'received sent: nested-dispatch'
 assert_equal "$(find "$nested_state/dispatches/nested-dispatch/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
