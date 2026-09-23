@@ -28,11 +28,11 @@ function defaultResponseText(environment: HookEnvironment): string {
 // terminal, then a probed tmux pane — nothing else. Deliberately NOT src/core/context.ts's
 // resolveCallerIdentity, which additionally prefers an explicit MEGABRAIN_SESSION_ID override and
 // a Claude/Codex agent-session id ahead of the terminal handle. Those extra tiers exist for the
-// child-facing ask/done/check commands; this hook (like the shell it replaces) is only ever
-// invoked once SUPERSET_TERMINAL_ID or ORCA_TERMINAL_HANDLE is already known to be set (see the
-// gate at the top of executeHookTurnEnd), so using the broader resolver here would let an
-// inherited CLAUDE_CODE_SESSION_ID silently outrank the terminal identity the rest of the
-// dispatch-matching machinery (meta.terminalId / meta.parentSessionId) is keyed on.
+// child-facing ask/done/check commands; this hook is only ever invoked once a terminal marker or a
+// real tmux pane is already known to be present (see the gate at the top of
+// executeHookTurnEnd), so using the broader resolver here would let an inherited
+// CLAUDE_CODE_SESSION_ID silently outrank the terminal identity the rest of the dispatch-matching
+// machinery (meta.terminalId / meta.parentSessionId) is keyed on.
 async function computeSessionId(environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<Readonly<{ id: string; host: string }> | undefined> {
   if (present(environment.SUPERSET_TERMINAL_ID)) return { id: environment.SUPERSET_TERMINAL_ID, host: "superset" };
   if (present(environment.ORCA_TERMINAL_HANDLE)) return { id: environment.ORCA_TERMINAL_HANDLE, host: "orca" };
@@ -237,7 +237,16 @@ export async function executeHookTurnEnd(
   const finish = (text: string): Result<string> => ok(`${text}\n`);
 
   try {
-    if (!present(environment.SUPERSET_TERMINAL_ID) && !present(environment.ORCA_TERMINAL_HANDLE)) {
+    // A caller with neither a terminal marker nor a real tmux pane exits here, cheaply, without
+    // touching the filesystem or spawning a process — the common case for an unmanaged terminal.
+    // A caller genuinely inside a tmux pane (TMUX and TMUX_PANE both set) also passes: a real tmux
+    // dispatch's agent process never has SUPERSET_TERMINAL_ID/ORCA_TERMINAL_HANDLE (orchestrate-
+    // spawn.ts's tmux launch line clears every CALLER_IDENTITY_ENV_VARS entry before starting it),
+    // and neither does a coordinator itself running through the tmux-runtime module. From here,
+    // computeSessionId and findChild already resolve a tmux caller by tmuxSession+tmuxPane.
+    const hasTerminalMarker = present(environment.SUPERSET_TERMINAL_ID) || present(environment.ORCA_TERMINAL_HANDLE);
+    const hasTmuxPane = present(environment.TMUX) && present(environment.TMUX_PANE);
+    if (!hasTerminalMarker && !hasTmuxPane) {
       return finish(defaultText);
     }
 
