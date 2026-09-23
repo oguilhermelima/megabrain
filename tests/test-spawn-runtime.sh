@@ -79,19 +79,31 @@ tmux_false_output="$(run_spawn "$state_root/tmux-false" --branch feat/tmux-false
 assert_contains "$tmux_false_output" 'orca terminal create'
 printf 'explicit --tmux false routes to a host terminal (orca terminal create)\n'
 
-# FINDING (rule 4, not a test defect — did not touch src/, did not weaken the assertion): the
-# shell's megabrain_resolve_spawn_runtime auto-detected the runtime when --tmux was omitted (read
-# the tmux-runtime module's installed flag from state.json, checked tmux availability, and
-# detected an already-managed tmux pane), so a spawn issued from inside a live tmux session picked
-# up "tmux" automatically. The port's runtime decision (orchestrate-spawn.ts:475) is:
-# `options.tmux ?? (environment.MEGABRAIN_SPAWN_RUNTIME === "tmux") ? "tmux" : "host"` — and
-# MEGABRAIN_SPAWN_RUNTIME is never set anywhere in the whole codebase (grep across src/, lib/,
-# megabrain: only that one read site). So omitting --tmux always resolves to "host" now, even from
-# inside an active tmux pane: this assertion expects a tmux pane operation and gets a host
-# terminal attempt instead. Left failing on purpose; the lead decides whether auto-detection needs
-# to come back or --tmux is meant to be required going forward.
-auto_output="$(TMUX=fake-server TMUX_PANE=%1 run_spawn "$state_root/auto" --branch feat/auto --agent codex --model m --prompt p)"
-assert_not_contains "$auto_output" 'orca terminal create'
-printf 'omitting --tmux from an active tmux pane still auto-detects the tmux runtime\n'
+# Scenario: with no --tmux flag, the auto default follows only the tmux-runtime module's
+# installed flag in state.json (lib/common.sh's megabrain_runtime_enabled, read by
+# lib/module-worktree.sh's megabrain_resolve_spawn_runtime) — never ambient tmux presence alone.
+# This replaces an earlier version of this scenario that asserted the opposite (that an active
+# TMUX/TMUX_PANE session by itself auto-selects tmux); that was wrong. Verified by extracting the
+# actual last-standing shell implementation with `git archive 9d24366^` and running
+# `orchestrate spawn` from it directly, outside this repo: with TMUX/TMUX_PANE and
+# ORCA_TERMINAL_HANDLE all set and no tmux-runtime install flag in state.json, the real shell
+# resolved to host and printed `orca terminal create failed for ...` — ambient tmux never flipped
+# it. Only writing `{"tmux-runtime":{"installed":true}}` into that state dir's state.json made the
+# same shell take the tmux path instead.
+auto_installed_state="$state_root/auto-installed"
+mkdir -p "$auto_installed_state"
+printf '{"tmux-runtime":{"installed":true}}\n' >"$auto_installed_state/state.json"
+auto_installed_output="$(run_spawn "$auto_installed_state" --branch feat/auto-installed --agent codex --model m --prompt p)"
+assert_contains "$auto_installed_output" tmux
+assert_not_contains "$auto_installed_output" 'orca terminal create'
+printf 'omitting --tmux with the tmux-runtime module installed takes the tmux path\n'
 
-printf 'ok: spawn runtime resolution (one open finding, see report)\n'
+auto_absent_state="$state_root/auto-absent"
+mkdir -p "$auto_absent_state"
+# No state.json at all: the module has never been installed for this state dir. TMUX/TMUX_PANE
+# are set here too, to prove ambient tmux presence alone still does not flip the default.
+auto_absent_output="$(TMUX=fake-server TMUX_PANE=%1 run_spawn "$auto_absent_state" --branch feat/auto-absent --agent codex --model m --prompt p)"
+assert_contains "$auto_absent_output" 'orca terminal create'
+printf 'omitting --tmux with the module not installed takes the host path, even from inside tmux\n'
+
+printf 'ok: spawn runtime resolution\n'
