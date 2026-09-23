@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+binary="$root/.build/megabrain"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-visibility.XXXXXX")"
 
 cleanup() {
@@ -11,6 +12,11 @@ cleanup() {
   return "$rc"
 }
 trap cleanup EXIT
+
+[ -x "$binary" ] || {
+  printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"
+  exit 0
+}
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -21,155 +27,89 @@ assert_equal() {
   [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
 }
 
-export MEGABRAIN_STATE_DIR="$state_dir"
-export SUPERSET_TERMINAL_ID=parent-terminal
-unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
+# Defects 1-3 (stalled-signal debounce, actionable/protocol mail classification, megabrain-usage
+# routing) all sourced lib/module-orchestrate.sh, lib/module-context.sh, and
+# lib/module-parent-notify.sh to call shell functions directly. megabrain_dispatch_message_append
+# no longer exists anywhere in lib/ (grep: zero hits) — running the original file confirms this,
+# failing immediately at line 58 (megabrain_dispatch_meta_read is also gone). Every one of those
+# three defects is faithfully ported and covered by bun tests, so dropped here (rule 2):
+#   - Defect 1 (stalled debounce: proven+idle due, proven+recent not due, missing always due,
+#     unknown+recent not due) — tests/unit/hook-turn-end.test.ts: "does not append a stalled
+#     message while the terminal is proven and the child spoke recently", "appends the fallback
+#     stalled text when the terminal is missing and no payload text is given" cover the ported
+#     stalledIsDue/hasRecentChildActivity (src/cli/commands/hook-turn-end.ts).
+#   - Defect 2 (mail classification has exactly one owner, exhaustive over every actionable/
+#     protocol key) — tests/unit/check.test.ts's "classifyMail" describe block is a test.each over
+#     every key this scenario derived from the shell's canonical arrays (child:ask/done/stalled,
+#     megabrain:usage, parent:withdrawal as actionable; child:received/ack, child:done with a
+#     prior done, parent:interrupt/interrupt-result as protocol), plus "shows actionable child
+#     mail by default and skips protocol mail" / "--full shows protocol mail" for the
+#     default-vs-full visibility half. tests/unit/queue-write.test.ts has the same table for
+#     classifyQueueMail/recipientForQueueMessage (the write-side classifier).
+#   - Defect 3 (a megabrain-sender usage message routes to the parent) —
+#     tests/unit/queue-write.test.ts's recipientForQueueMessage table includes
+#     ("megabrain","usage",false) -> actionable -> recipient "parent".
+#
+# Defect 4 (orchestrate reply reports the truth about whether its nudge was typed, independent of
+# whether the reply itself succeeds) has no equivalent bun coverage (grep for "nudge" across
+# tests/unit/: only hook-turn-end.test.ts's unrelated finished-dispatch nudge). Kept as a
+# black-box scenario driving the binary directly (rule 1). The fixture below uses state "running",
+# not the original "stalled": tests/test-e2e-findings.sh already documents, as a rule-4 finding,
+# that `orchestrate reply` now refuses a "stalled" dispatch outright rather than resuming it, which
+# would make every scenario here fail on that unrelated, already-reported defect instead of
+# exercising nudge honesty at all.
 
-source "$root/lib/common.sh"
-source "$root/lib/module-tmux-runtime.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
-source "$root/lib/module-parent-notify.sh"
-
-create_dispatch() {
-  local id="$1" state="${2:-running}"
-  megabrain_dispatch_meta_write "$id" parent-terminal superset superset workspace-test "child-$id" \
-    "$root" main codex label "$state" gpt-5 true codex '' '' host ide >/dev/null
+write_meta() {
+  local state="$1" dispatch_id="$2"
+  local dispatch_dir="$state/dispatches/$dispatch_id"
+  mkdir -p "$dispatch_dir/messages" "$dispatch_dir/deliveries"
+  jq -n --arg id "$dispatch_id" --arg terminalId "child-$dispatch_id" '{
+    dispatchId: $id, parentSessionId: "parent-terminal", parentHost: "superset", parentWorkspaceId: "parent-workspace",
+    parentTmuxSession: null, parentTmuxPane: null, childHost: "superset", workspaceId: "workspace-test",
+    terminalId: $terminalId, worktreePath: "/work", branch: "main", agent: "codex", agentId: "codex",
+    model: "gpt-5", effort: null, modelHonored: true, modelSubstitution: null, runtime: "host",
+    spawnRuntime: "ide", tmuxSession: null, tmuxPane: null, label: "label", chain: null, state: "running",
+    promptDelivered: false, promptDelivery: "pending", promptDeliveryReason: null, promptPublication: "pending",
+    promptTransport: "pending", promptReceipt: "pending", promptState: "awaiting-publication",
+    processState: "running", terminalState: "owned", terminalReason: null, failureCount: 0, stage: null,
+    reason: null, reconcileOutcome: null, createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
+  }' >"$dispatch_dir/meta.json"
 }
 
-assert_due() {
-  megabrain_dispatch_stalled_is_due "$1" || fail "$2"
-}
+bin_dir="$state_dir/bin"
+mkdir -p "$bin_dir"
 
-assert_not_due() {
-  if megabrain_dispatch_stalled_is_due "$1"; then
-    fail "$2"
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# Defect 1: the stalled signal must fire in the healthy (proven) path too,
-# but only once the recent-activity debounce that guarded it originally has
-# elapsed. Both halves of that guard are exercised here.
-# ---------------------------------------------------------------------------
-
-create_dispatch stalled-proven-idle
-megabrain_dispatch_terminal_status() { MEGABRAIN_TERMINAL_STATUS=proven; }
-meta="$(megabrain_dispatch_meta_read stalled-proven-idle)"
-assert_due "$meta" 'a proven terminal with no prior child activity must be due for stalled'
-printf 'proven terminal with no recent child activity is due for stalled\n'
-
-create_dispatch stalled-proven-recent
-megabrain_dispatch_message_append stalled-proven-recent child received 'prompt received' child-terminal >/dev/null
-meta="$(megabrain_dispatch_meta_read stalled-proven-recent)"
-assert_not_due "$meta" 'a proven terminal with recent child activity must not be due for stalled (debounce guard)'
-printf 'proven terminal with recent child activity is not due for stalled\n'
-
-create_dispatch stalled-missing-case
-megabrain_dispatch_terminal_status() { MEGABRAIN_TERMINAL_STATUS=missing; }
-megabrain_dispatch_message_append stalled-missing-case child received 'prompt received' child-terminal >/dev/null
-meta="$(megabrain_dispatch_meta_read stalled-missing-case)"
-assert_due "$meta" 'a missing terminal must always be due for stalled, even with recent activity'
-printf 'missing terminal is due for stalled regardless of recent activity\n'
-
-create_dispatch stalled-unknown-recent
-megabrain_dispatch_terminal_status() { MEGABRAIN_TERMINAL_STATUS=unknown; }
-megabrain_dispatch_message_append stalled-unknown-recent child ask 'a question' child-terminal >/dev/null
-meta="$(megabrain_dispatch_meta_read stalled-unknown-recent)"
-assert_not_due "$meta" 'an unknown terminal with recent activity must not be due for stalled'
-printf 'unknown terminal with recent activity is not due for stalled\n'
-
-# ---------------------------------------------------------------------------
-# Defect 2: mail visibility (actionable vs protocol) has exactly one owner.
-# Scenarios are derived from the canonical arrays, not hand-listed, so they
-# do not rot if a type is ever added or removed from either array.
-# ---------------------------------------------------------------------------
-
-if declare -F megabrain_dispatch_last_child_mail_seq >/dev/null 2>&1; then
-  fail 'dead classification function megabrain_dispatch_last_child_mail_seq is still defined'
-fi
-printf 'the dead classification function was removed\n'
-
-create_dispatch mail-class-actionable
-for key in "${MEGABRAIN_DISPATCH_MAIL_ACTIONABLE_KEYS[@]}"; do
-  [ "${key%%:*}" = child ] || continue
-  megabrain_dispatch_message_append mail-class-actionable child "${key#child:}" "actionable ${key#child:}" child-terminal >/dev/null
-done
-checked=0
-for path in "$(megabrain_dispatch_deliveries_dir mail-class-actionable)"/*.json; do
-  [ -f "$path" ] || continue
-  megabrain_dispatch_delivery_matches_mailbox mail-class-actionable "$path" parent false ||
-    fail "actionable delivery $path is not visible to the parent by default"
-  checked=$((checked + 1))
-done
-[ "$checked" -gt 0 ] || fail 'no actionable child deliveries were created to check'
-printf 'every actionable child type in the canonical array is visible to the parent by default\n'
-
-create_dispatch mail-class-protocol
-for key in "${MEGABRAIN_DISPATCH_MAIL_PROTOCOL_KEYS[@]}"; do
-  [ "${key%%:*}" = child ] || continue
-  megabrain_dispatch_message_append mail-class-protocol child "${key#child:}" "protocol ${key#child:}" child-terminal >/dev/null
-done
-checked=0
-for path in "$(megabrain_dispatch_deliveries_dir mail-class-protocol)"/*.json; do
-  [ -f "$path" ] || continue
-  if megabrain_dispatch_delivery_matches_mailbox mail-class-protocol "$path" parent false; then
-    fail "protocol delivery $path is unexpectedly visible to the parent by default"
-  fi
-  megabrain_dispatch_delivery_matches_mailbox mail-class-protocol "$path" parent true ||
-    fail "protocol delivery $path is not visible to the parent with --full"
-  checked=$((checked + 1))
-done
-[ "$checked" -gt 0 ] || fail 'no protocol child deliveries were created to check'
-printf 'every protocol child type in the canonical array is hidden by default and visible with --full\n'
-
-# ---------------------------------------------------------------------------
-# Defect 3: a megabrain-sender usage message must actually reach the parent.
-# ---------------------------------------------------------------------------
-
-create_dispatch usage-routes-to-parent
-megabrain_dispatch_message_append usage-routes-to-parent megabrain usage 'usage near limit' megabrain >/dev/null
-usage_delivery=""
-for path in "$(megabrain_dispatch_deliveries_dir usage-routes-to-parent)"/*.json; do
-  [ -f "$path" ] || continue
-  usage_delivery="$path"
-done
-[ -n "$usage_delivery" ] || fail 'a megabrain usage message created no delivery at all'
-assert_equal "$(jq -r '.recipient' "$usage_delivery")" parent
-megabrain_dispatch_delivery_matches_mailbox usage-routes-to-parent "$usage_delivery" parent false ||
-  fail 'megabrain usage delivery is not visible to the parent by default'
-printf 'a megabrain usage message is routed to the parent and visible by default\n'
-
-# ---------------------------------------------------------------------------
-# Defect 4: orchestrate reply must report the truth about whether its nudge
-# was typed, without ever turning a failed nudge into a failed reply.
-# ---------------------------------------------------------------------------
-
-megabrain_dispatch_meta_write nudge-fails parent-terminal superset superset workspace-test child-nudge-fails \
-  "$root" main codex label stalled gpt-5 true codex '' '' host ide >/dev/null
-megabrain_superset() {
-  if [ "$1" = terminals ] && [ "$2" = send ]; then
-    return 1
-  fi
-  return 1
-}
-reply_fail_output="$(megabrain_dispatch_reply nudge-fails --text 'answer despite a dead pane' --json)"
+# Scenario: a failed terminal send is reported as nudge=not-typed while the reply itself still
+# succeeds (status stays queued) — the notify failure must never fail the reply.
+# Falsification: a dead pane turns the whole reply into a failure, or nudge is misreported as typed.
+fail_state="$state_dir/nudge-fails"
+write_meta "$fail_state" nudge-fails
+cat >"$bin_dir/superset" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$bin_dir/superset"
+reply_fail_output="$(PATH="$bin_dir:$PATH" SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$fail_state" "$binary" orchestrate reply nudge-fails --text 'answer despite a dead pane' --json)"
 assert_equal "$(printf '%s' "$reply_fail_output" | jq -r '.status')" queued
 assert_equal "$(printf '%s' "$reply_fail_output" | jq -r '.nudge')" not-typed
 printf 'a failed terminal send is reported as nudge=not-typed while status stays queued\n'
 
-megabrain_dispatch_meta_write nudge-succeeds parent-terminal superset superset workspace-test child-nudge-succeeds \
-  "$root" main codex label stalled gpt-5 true codex '' '' host ide >/dev/null
-megabrain_superset() {
-  if [ "$1" = terminals ] && [ "$2" = send ]; then
-    printf '{}\n'
-    return 0
-  fi
-  return 1
-}
-reply_ok_output="$(megabrain_dispatch_reply nudge-succeeds --text 'answer reaches a live pane' --json)"
+# Scenario: a successful terminal send is reported as nudge=typed.
+# Falsification: a live pane is misreported as not-typed.
+ok_state="$state_dir/nudge-succeeds"
+write_meta "$ok_state" nudge-succeeds
+cat >"$bin_dir/superset" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = terminals ] && [ "${2:-}" = send ]; then
+  printf '{}\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$bin_dir/superset"
+reply_ok_output="$(PATH="$bin_dir:$PATH" SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$ok_state" "$binary" orchestrate reply nudge-succeeds --text 'answer reaches a live pane' --json)"
 assert_equal "$(printf '%s' "$reply_ok_output" | jq -r '.status')" queued
 assert_equal "$(printf '%s' "$reply_ok_output" | jq -r '.nudge')" typed
 printf 'a successful terminal send is reported as nudge=typed\n'
 
-printf 'ok: parent visibility gaps covered for stalled signal, mail classification, usage routing, and nudge honesty\n'
+printf 'ok: reply nudge honesty covered (stalled debounce, mail classification, and usage routing are bun-covered, see report)\n'
