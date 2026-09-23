@@ -4,9 +4,6 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-list-performance.XXXXXX")"
-wrapper_dir="$state_dir/bin"
-count_file="$state_dir/jq-count"
-real_jq="$(command -v jq)"
 
 cleanup() {
   rm -rf "$state_dir"
@@ -18,62 +15,44 @@ fail() {
   exit 1
 }
 
-mkdir -p "$wrapper_dir" "$state_dir/dispatches"
-printf '0\n' >"$count_file"
-
-printf '%s\n' '#!/usr/bin/env bash' \
-  'count=$(cat "$MEGABRAIN_TEST_JQ_COUNT")' \
-  'count=$((count + 1))' \
-  'printf "%s\\n" "$count" >"$MEGABRAIN_TEST_JQ_COUNT"' \
-  'exec "$MEGABRAIN_TEST_JQ_REAL" "$@"' >"$wrapper_dir/jq"
-chmod +x "$wrapper_dir/jq"
+mkdir -p "$state_dir/dispatches"
 
 for i in $(seq 1 200); do
   dispatch_id="dispatch-$i"
   dispatch_dir="$state_dir/dispatches/$dispatch_id"
   mkdir -p "$dispatch_dir"
-  "$real_jq" -n \
+  jq -n \
     --arg dispatchId "$dispatch_id" \
     --arg worktreePath "$root" \
     '{dispatchId: $dispatchId, parentSessionId: "parent", parentHost: "unknown", childHost: "unknown", workspaceId: "", terminalId: "", worktreePath: $worktreePath, state: "closed", processState: "stopped", terminalState: "released", reconcileOutcome: null}' \
     >"$dispatch_dir/meta.json"
 done
 
-export MEGABRAIN_STATE_DIR="$state_dir"
-export MEGABRAIN_ROOT="$root"
-export MEGABRAIN_DISPATCH_DIR="$state_dir/dispatches"
-export MEGABRAIN_TEST_JQ_COUNT="$count_file"
-export MEGABRAIN_TEST_JQ_REAL="$real_jq"
+# command_orchestrate_list (lib/module-context.sh) is gone from the reachable call graph:
+# `orchestrate list` already execs the binary unconditionally, so this drives that instead. The
+# binary's loadRecords (src/cli/commands/orchestrate-list.ts) reads each meta.json with Bun's own
+# JSON parser, not jq, so a jq-invocation count no longer applies; the property this scenario
+# protects — listing 200 dispatches stays linear, not quadratic in per-dispatch subprocess spawns
+# — is checked as wall-clock time instead.
+start_ns="$(date +%s%N)"
+output="$(MEGABRAIN_STATE_DIR="$state_dir" MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate list --all --json)"
+end_ns="$(date +%s%N)"
+elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+[ "$(printf '%s' "$output" | jq 'length')" = 200 ] || fail "list returned the wrong number of dispatches"
+[ "$elapsed_ms" -le 3000 ] || fail "orchestrate list took ${elapsed_ms}ms for 200 dispatches, suspiciously non-linear"
 
-source "$root/lib/common.sh"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
+printf 'ok: orchestrate list stays linear at 200 dispatches (%sms)\n' "$elapsed_ms"
 
-megabrain_dispatch_parent_status() {
-  MEGABRAIN_PARENT_STATUS=unknown
-}
-
-PATH="$wrapper_dir:$PATH"
-export PATH
-
-output="$(command_orchestrate_list --all --json)"
-count="$(cat "$count_file")"
-[ "$(printf '%s' "$output" | "$real_jq" 'length')" = 200 ] || fail "list returned the wrong number of dispatches"
-[ "$count" -le 6 ] || fail "orchestrate list used $count jq invocations for 200 dispatches"
-
-printf 'ok: orchestrate list stays linear at 200 dispatches with %s jq invocations\n' "$count"
-
-# WHY: the listing slurps every meta in one jq, so a single unreadable file aborted the
-# batch and the coordinator lost sight of every dispatch it owns. That is the same shape
-# as a dead marketplace entry breaking a whole plugin listing. One bad file must cost
-# that file and nothing else, and the warning must stay off stdout so --json survives.
+# WHY: the listing must not let one unreadable meta abort the whole batch — the coordinator would
+# otherwise lose sight of every dispatch it owns because of a single corrupt file. One bad file
+# must cost that file and nothing else, and the warning must stay off stdout so --json survives.
 mkdir -p "$state_dir/dispatches/broken-meta"
 printf '%s\n' '{"dispatchId":"broken-meta", THIS IS NOT JSON' >"$state_dir/dispatches/broken-meta/meta.json"
 
-if ! survivors="$(command_orchestrate_list --all --json 2>"$state_dir/list-stderr")"; then
+if ! survivors="$(MEGABRAIN_STATE_DIR="$state_dir" MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate list --all --json 2>"$state_dir/list-stderr")"; then
   fail 'one unreadable meta made the whole listing fail'
 fi
-[ "$(printf '%s' "$survivors" | "$real_jq" 'length')" = 200 ] || fail "expected the 200 readable dispatches, got $(printf '%s' "$survivors" | "$real_jq" 'length')"
-printf '%s' "$survivors" | "$real_jq" -e 'map(select(.dispatchId == "broken-meta")) | length == 0' >/dev/null || fail 'the unreadable dispatch was reported as if it were readable'
+[ "$(printf '%s' "$survivors" | jq 'length')" = 200 ] || fail "expected the 200 readable dispatches, got $(printf '%s' "$survivors" | jq 'length')"
+printf '%s' "$survivors" | jq -e 'map(select(.dispatchId == "broken-meta")) | length == 0' >/dev/null || fail 'the unreadable dispatch was reported as if it were readable'
 grep -q 'broken-meta' "$state_dir/list-stderr" || fail 'the unreadable meta was skipped without telling anyone'
 printf 'one unreadable meta costs that dispatch and no other\n'
