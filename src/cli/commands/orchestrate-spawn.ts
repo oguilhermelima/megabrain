@@ -9,7 +9,7 @@ import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { type CallerIdentity } from "../../core/context.js";
+import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
 import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
@@ -155,6 +155,13 @@ function parentTmuxChannel(environment: SpawnEnvironment): Readonly<{ tmuxSessio
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
+
+// A tmux pane inherits the whole environment of whatever launched the pane's shell, and a host
+// terminal's shell can too — so without this, a child started by a caller who has
+// CLAUDE_CODE_SESSION_ID / ORCA_STRUCTURED_SESSION / etc. set would inherit them, resolve as its
+// parent's own identity, and pass the parent's ownership checks. `env -u` for each name in
+// CALLER_IDENTITY_ENV_VARS strips them before the launch line's own MEGABRAIN_* assignments run.
+const clearCallerIdentityEnv = `env ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")}`;
 
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
@@ -569,13 +576,13 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         // The launch line runs in the pane's shell, not the agent composer: it always submits on
         // Enter regardless of the agent's own submit key (Tab for Codex, which the shell reads as
         // completion instead of running the command).
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process);
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
         const identityVariable = host?.terminalIdentityVariable;
-        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} ${command}` });
+        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")} MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} ${command}` });
         const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }

@@ -335,7 +335,10 @@ describe("executeSpawn", () => {
       const command = process.calls.find((call) => call.command === "superset" && argsContain(call.args, "MEGABRAIN_DISPATCH_ID"));
       const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
       expect(text).toContain("SUPERSET_TERMINAL_ID='child-terminal'");
-      expect(text).not.toContain("ORCA_TERMINAL_HANDLE");
+      // The launch line now unconditionally clears every caller-identity variable (env -u) before
+      // setting the host's own, so "ORCA_TERMINAL_HANDLE" appears as a -u flag; the test's actual
+      // intent is that it is never *assigned* a value here.
+      expect(text).not.toContain("ORCA_TERMINAL_HANDLE='");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
