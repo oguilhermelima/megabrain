@@ -1,7 +1,17 @@
 import { createProcessAdapter } from "../adapters/proc.js";
+import { reconcileSkillsAtStartup, shouldReconcileSkillsAtStartup } from "../core/skill.js";
 import { route } from "./router.js";
 
-const result = await route(process.argv.slice(2), {
+const commandArguments = process.argv.slice(2);
+
+// WHY: skill cache repair is best-effort runtime hygiene; its stderr diagnostics are useful,
+// but an unwritable plugin cache must not fail an unrelated command such as orchestrate list.
+if (shouldReconcileSkillsAtStartup(commandArguments)) {
+  const skillDiagnostics = await reconcileSkillsAtStartup(process.env);
+  if (skillDiagnostics !== undefined) process.stderr.write(skillDiagnostics);
+}
+
+const result = await route(commandArguments, {
   environment: process.env,
   processAdapter: createProcessAdapter(),
 });
