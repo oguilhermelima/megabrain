@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { checkDispatchTransition } from "../../src/core/dispatch-states.js";
 import {
   decideSpawnStep,
+  resolveAutoSpawnRuntime,
   type SpawnDecisionInput,
   type SpawnPlan,
   type SpawnState,
@@ -201,5 +202,21 @@ describe("spawn step sequencing", () => {
     expect(running.nextStep).toBeNull();
     expect(running.state).toEqual({ dispatch: "running", process: "running", terminal: "owned" });
     expectLegalTransition(initialState, running.state);
+  });
+});
+
+// Mirrors the shell's megabrain_resolve_spawn_runtime "auto" branch exactly (see the WHY comment
+// on resolveAutoSpawnRuntime): the auto default depends solely on the tmux-runtime module's
+// installed flag. Verified empirically against the last standing shell implementation
+// (lib/module-worktree.sh at commit 9d24366^, run directly): a caller sitting inside an active
+// TMUX/TMUX_PANE session, with the module NOT installed, still resolved to "host" and attempted
+// "orca terminal create" — ambient tmux presence alone never flips the default.
+describe("resolveAutoSpawnRuntime", () => {
+  test("picks tmux only when the tmux-runtime module reports itself installed", () => {
+    expect(resolveAutoSpawnRuntime(true)).toBe("tmux");
+  });
+
+  test("picks host when the tmux-runtime module is not installed, regardless of ambient tmux", () => {
+    expect(resolveAutoSpawnRuntime(false)).toBe("host");
   });
 });
