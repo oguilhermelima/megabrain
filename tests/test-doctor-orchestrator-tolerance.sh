@@ -34,7 +34,6 @@ assert_not_contains() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
-source "$root/lib/common.sh"
 
 # WHY: module_orchestration_doctor and its shell-function stubbing (orca(), megabrain_superset(),
 # megabrain_require_command()) are gone — the install command and its per-module shell doctor
