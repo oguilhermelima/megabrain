@@ -75,38 +75,6 @@ fi
 MEGABRAIN_DISPATCH_PROTOCOL="$(megabrain_dispatch_protocol)"
 MEGABRAIN_SUPERSET_PROTOCOL="$MEGABRAIN_DISPATCH_PROTOCOL"
 
-megabrain_dispatch_transition_allowed() {
-  local axis="$1" from="$2" to="$3"
-  case "$axis:$from:$to" in
-    dispatch:spawning:spawning|dispatch:spawning:running|dispatch:spawning:failed|dispatch:spawning:closed) return 0 ;;
-    dispatch:running:running|dispatch:running:waiting_for_reply|dispatch:running:done|dispatch:running:failed|dispatch:running:orphaned|dispatch:running:closed) return 0 ;;
-    dispatch:waiting_for_reply:waiting_for_reply|dispatch:waiting_for_reply:running|dispatch:waiting_for_reply:done|dispatch:waiting_for_reply:failed|dispatch:waiting_for_reply:orphaned|dispatch:waiting_for_reply:closed) return 0 ;;
-    dispatch:done:done|dispatch:done:failed|dispatch:done:orphaned|dispatch:done:closed) return 0 ;;
-    dispatch:failed:failed|dispatch:failed:circuit_broken|dispatch:failed:closed) return 0 ;;
-    dispatch:orphaned:orphaned|dispatch:orphaned:running|dispatch:orphaned:waiting_for_reply|dispatch:orphaned:done|dispatch:orphaned:failed|dispatch:orphaned:circuit_broken|dispatch:orphaned:closed) return 0 ;;
-    # WHY: A child proving it is alive must be able to complete after a stall classification.
-    dispatch:closed:closed|dispatch:circuit_broken:circuit_broken) return 0 ;;
-    process:starting:starting|process:starting:running|process:starting:start-unproven|process:starting:failed|process:starting:stopping|process:starting:stopped|process:starting:stop-unproven|process:starting:abandoned) return 0 ;;
-    process:start-unproven:start-unproven|process:start-unproven:running|process:start-unproven:failed|process:start-unproven:stopping|process:start-unproven:stopped|process:start-unproven:stop-unproven|process:start-unproven:abandoned) return 0 ;;
-    process:running:running|process:running:succeeded|process:running:failed|process:running:stopping|process:running:stopped|process:running:abandoned|process:running:exited) return 0 ;;
-    process:stopping:stopping|process:stopping:stopped|process:stopping:stop-unproven|process:stopping:running|process:stopping:failed|process:stopping:abandoned) return 0 ;;
-    process:stop-unproven:stop-unproven|process:stop-unproven:failed|process:stop-unproven:stopped|process:stop-unproven:abandoned) return 0 ;;
-    process:succeeded:succeeded|process:failed:failed|process:stopped:stopped|process:abandoned:abandoned|process:exited:exited|process:exited:running|process:exited:succeeded) return 0 ;;
-    terminal:owned:owned|terminal:owned:missing|terminal:owned:retained|terminal:owned:released) return 0 ;;
-    terminal:retained:retained|terminal:retained:missing|terminal:retained:released) return 0 ;;
-    terminal:missing:missing|terminal:missing:retained|terminal:missing:released|terminal:released:released) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-megabrain_dispatch_validate_transition() {
-  local axis="$1" from="$2" to="$3"
-  if ! megabrain_dispatch_transition_allowed "$axis" "$from" "$to"; then
-    megabrain_error "illegal $axis state transition: $from -> $to"
-    return 1
-  fi
-}
-
 # A caller that wants to move a dispatch names the destination; the transition table
 # remains the only authority for whether the current state may make that move.
 megabrain_dispatch_require_transition() {
@@ -194,30 +162,6 @@ megabrain_dispatch_messages_dir() { printf '%s/messages\n' "$(megabrain_dispatch
 megabrain_dispatch_cursor_path() { printf '%s/cursor.json\n' "$(megabrain_dispatch_dir "$1")"; }
 megabrain_dispatch_deliveries_dir() { printf '%s/deliveries\n' "$(megabrain_dispatch_dir "$1")"; }
 
-megabrain_dispatch_delivery_path() {
-  local dispatch_id="$1" delivery_id="$2"
-  case "$delivery_id" in
-    ""|*[!A-Za-z0-9._-]*)
-      megabrain_error "invalid delivery id: $delivery_id"
-      return 1
-      ;;
-  esac
-  printf '%s/%s.json\n' "$(megabrain_dispatch_deliveries_dir "$dispatch_id")" "$delivery_id"
-}
-
-megabrain_dispatch_new_delivery_id() {
-  local dispatch_id="$1" candidate suffix counter=0 deliveries_dir
-  deliveries_dir="$(megabrain_dispatch_deliveries_dir "$dispatch_id")" || return 1
-  mkdir -p "$deliveries_dir" || return 1
-  suffix="$(date -u '+%Y%m%d%H%M%S')-$$-${RANDOM:-0}"
-  candidate="delivery-$suffix"
-  while [ -e "$deliveries_dir/$candidate.json" ]; do
-    counter=$((counter + 1))
-    candidate="delivery-$suffix-$counter"
-  done
-  printf '%s\n' "$candidate"
-}
-
 megabrain_dispatch_delivery_write() {
   local dispatch_id="$1" delivery_id="$2" consumer="$3" generation="$4" message_seqs="$5"
   local deliveries_dir path tmp now
@@ -236,31 +180,6 @@ megabrain_dispatch_delivery_write() {
     return 1
   fi
   mv -f "$tmp" "$path"
-}
-
-megabrain_dispatch_delivery_create() {
-  local dispatch_id="$1" recipient="$2" message_seqs="$3"
-  local delivery_id deliveries_dir path tmp now
-  case "$recipient" in
-    parent|child) ;;
-    *) megabrain_error "invalid delivery recipient: $recipient"; return 1 ;;
-  esac
-  deliveries_dir="$(megabrain_dispatch_deliveries_dir "$dispatch_id")" || return 1
-  mkdir -p "$deliveries_dir" || return 1
-  delivery_id="$(megabrain_dispatch_new_delivery_id "$dispatch_id")" || return 1
-  path="$(megabrain_dispatch_delivery_path "$dispatch_id" "$delivery_id")" || return 1
-  now="$(megabrain_iso_now)"
-  tmp="$(mktemp "$deliveries_dir/.delivery.XXXXXX")" || return 1
-  if ! jq -n \
-    --arg id "$delivery_id" --arg dispatchId "$dispatch_id" --arg recipient "$recipient" \
-    --argjson messageSeqs "$message_seqs" --arg now "$now" \
-    '{id: $id, dispatchId: $dispatchId, recipient: $recipient, consumer: null, consumerGeneration: null, messageSeqs: $messageSeqs, status: "outstanding", createdAt: $now, updatedAt: $now, acknowledgedAt: null, fencedAt: null}' \
-    >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-  printf '%s\n' "$delivery_id"
 }
 
 megabrain_dispatch_delivery_claim() {
@@ -384,45 +303,6 @@ megabrain_dispatch_meta_update_prompt() {
     --argjson delivered "$(megabrain_bool_json "$delivered")" --arg delivery "$delivery" --arg reason "$reason" \
     --arg now "$(megabrain_iso_now)" \
     '.promptDelivered = $delivered | .promptDelivery = $delivery | .promptDeliveryReason = (if $reason == "" then null else $reason end) | if $delivery == "delivered" then .promptReceipt = "received" | .promptState = "confirmed" elif $delivery == "not-delivered" then .promptState = "failed" else . end | .updatedAt = $now' \
-    "$path" >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-}
-
-megabrain_dispatch_meta_update_prompt_layers() {
-  local dispatch_id="$1" publication="$2" transport="$3" receipt="$4" prompt_state="$5" reason="${6:-__keep__}"
-  local path tmp
-  case "$publication" in __keep__|pending|published|not-published|unknown) ;; *) megabrain_error "invalid prompt publication state: $publication"; return 1 ;; esac
-  case "$transport" in __keep__|pending|transported|not-transported|unknown) ;; *) megabrain_error "invalid prompt transport state: $transport"; return 1 ;; esac
-  case "$receipt" in __keep__|pending|received|unknown) ;; *) megabrain_error "invalid prompt receipt state: $receipt"; return 1 ;; esac
-  case "$prompt_state" in __keep__|awaiting-publication|awaiting-transport|awaiting-receipt|confirmed|failed|legacy|unknown) ;; *) megabrain_error "invalid prompt state: $prompt_state"; return 1 ;; esac
-  path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
-  tmp="$(mktemp "$(megabrain_dispatch_dir "$dispatch_id")/.meta.XXXXXX")" || return 1
-  if ! jq \
-    --arg publication "$publication" --arg transport "$transport" --arg receipt "$receipt" \
-    --arg promptState "$prompt_state" --arg reason "$reason" --arg now "$(megabrain_iso_now)" '
-      . as $before
-      | if $publication == "__keep__" then . else .promptPublication = $publication end
-      | if $transport == "__keep__" then . else .promptTransport = $transport end
-      | if $receipt == "__keep__" then . else .promptReceipt = $receipt end
-      | if $promptState == "__keep__" then . else .promptState = $promptState end
-      | if $reason == "__keep__" then . elif $reason == "__clear__" then .promptDeliveryReason = null else .promptDeliveryReason = $reason end
-      | if . == $before then . else .updatedAt = $now end
-    ' "$path" >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-}
-
-megabrain_dispatch_meta_update_chain_context() {
-  local dispatch_id="$1" prompt="$2" path tmp
-  path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
-  tmp="$(mktemp "$(megabrain_dispatch_dir "$dispatch_id")/.meta.XXXXXX")" || return 1
-  if ! jq --arg prompt "$prompt" --arg now "$(megabrain_iso_now)" \
-    'if (.chain | type) == "object" then .chain.prompt = $prompt | .updatedAt = $now else . end' \
     "$path" >"$tmp"; then
     rm -f "$tmp"
     return 1
@@ -588,20 +468,6 @@ megabrain_dispatch_stop_transcript() {
   return 0
 }
 
-megabrain_dispatch_meta_read() {
-  local dispatch_id="$1" path
-  path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
-  if [ ! -f "$path" ]; then
-    megabrain_error "dispatch not found: $dispatch_id"
-    return 1
-  fi
-  jq -e . "$path" >/dev/null 2>&1 || { megabrain_error "dispatch metadata is not valid JSON: $dispatch_id"; return 1; }
-  # WHY: stalled and timeout were persisted by older versions on the contract axis;
-  # normalise them before any reader applies the current transition table.
-  megabrain_dispatch_meta_normalize "$dispatch_id" || return 1
-  cat "$path"
-}
-
 megabrain_dispatch_meta_update_state() {
   local dispatch_id="$1" state="$2" path current_state
   path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
@@ -696,39 +562,6 @@ megabrain_dispatch_release_terminal_process() {
   fi
 }
 
-megabrain_dispatch_meta_update_fields() {
-  local dispatch_id="$1" state="$2" process_state="$3" terminal_state="$4"
-  local stage="$5" reason="$6" outcome="$7" terminal_reason="$8" failure_count="$9"
-  local path current_state current_process current_terminal tmp
-  path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
-  current_state="$(jq -r '.state // empty' "$path" 2>/dev/null || true)"
-  current_process="$(jq -r '.processState // empty' "$path" 2>/dev/null || true)"
-  current_terminal="$(jq -r '.terminalState // empty' "$path" 2>/dev/null || true)"
-  [ "$state" = __keep__ ] || megabrain_dispatch_validate_transition dispatch "$current_state" "$state" || return 1
-  [ "$process_state" = __keep__ ] || megabrain_dispatch_validate_transition process "$current_process" "$process_state" || return 1
-  [ "$terminal_state" = __keep__ ] || megabrain_dispatch_validate_transition terminal "$current_terminal" "$terminal_state" || return 1
-  tmp="$(mktemp "$(megabrain_dispatch_dir "$dispatch_id")/.meta.XXXXXX")" || return 1
-  if ! jq \
-    --arg state "$state" --arg processState "$process_state" --arg terminalState "$terminal_state" \
-    --arg stage "$stage" --arg reason "$reason" --arg outcome "$outcome" \
-    --arg terminalReason "$terminal_reason" --arg failureCount "$failure_count" --arg now "$(megabrain_iso_now)" '
-      . as $before
-      | if $state == "__keep__" then . else .state = $state end
-      | if $processState == "__keep__" then . else .processState = $processState end
-      | if $terminalState == "__keep__" then . else .terminalState = $terminalState end
-      | if $stage == "__keep__" then . elif $stage == "__clear__" then .stage = null else .stage = $stage end
-      | if $reason == "__keep__" then . elif $reason == "__clear__" then .reason = null else .reason = $reason end
-      | if $outcome == "__keep__" then . elif $outcome == "__clear__" then .reconcileOutcome = null else .reconcileOutcome = $outcome end
-      | if $terminalReason == "__keep__" then . elif $terminalReason == "__clear__" then .terminalReason = null else .terminalReason = $terminalReason end
-      | if $failureCount == "__keep__" then . else .failureCount = ($failureCount | tonumber) end
-      | if . == $before then . else .updatedAt = $now end
-    ' "$path" >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-}
-
 megabrain_dispatch_meta_update_model_substitution() {
   local dispatch_id="$1" substitution="$2" path tmp
   path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
@@ -752,69 +585,6 @@ megabrain_dispatch_meta_update_terminal_state() {
   megabrain_dispatch_meta_update_fields "$dispatch_id" __keep__ __keep__ "$terminal_state" __keep__ __keep__ __keep__ __keep__ __keep__
 }
 
-megabrain_dispatch_meta_normalize() {
-  local dispatch_id="$1" path tmp
-  path="$(megabrain_dispatch_meta_path "$dispatch_id")" || return 1
-  tmp="$(mktemp "$(megabrain_dispatch_dir "$dispatch_id")/.meta.XXXXXX")" || return 1
-  if ! jq '
-    if .state == "stalled" or .state == "timeout" then .state = "running" else . end
-    | .processState //= (if .state == "spawning" then "starting" elif .state == "running" then "running" elif .state == "done" then "succeeded" elif .state == "failed" then "failed" elif .state == "closed" then "stopped" else "start-unproven" end)
-    | .terminalState //= "owned"
-    | .terminalReason //= null
-    | .failureCount //= 0
-    | .stage //= null
-    | .reason //= null
-    | .reconcileOutcome //= null
-    | .modelSubstitution //= null
-    | .effort //= null
-    | .promptPublication //= "unknown"
-    | .promptTransport //= "unknown"
-    | .promptReceipt //= "unknown"
-    | .promptState //= "legacy"
-  ' "$path" >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if cmp -s "$tmp" "$path"; then
-    rm -f "$tmp"
-  else
-    mv -f "$tmp" "$path"
-  fi
-}
-
-megabrain_dispatch_has_recent_child_activity() {
-  local dispatch_id="$1" messages_dir path modified latest=0 now
-  messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
-  for path in "$messages_dir"/*.json; do
-    [ -f "$path" ] || continue
-    jq -e '.from == "child" and (.type == "received" or .type == "ask" or .type == "done")' "$path" >/dev/null 2>&1 || continue
-    modified="$(megabrain_path_mtime "$path" 2>/dev/null || true)"
-    [[ "$modified" =~ ^[0-9]+$ ]] || continue
-    [ "$modified" -gt "$latest" ] && latest="$modified"
-  done
-  [ "$latest" -gt 0 ] || return 1
-  now="$(date +%s)"
-  [ $((now - latest)) -le "$MEGABRAIN_DISPATCH_LIVE_ACTIVITY_WINDOW_SECONDS" ]
-}
-
-# A proven terminal only tells us the process is alive, not that it is still
-# generating; the turn-end hook only runs once a turn has actually ended. So
-# proven gets the same recent-activity debounce as unknown, instead of an
-# unconditional skip: a live child that just spoke stays silent, but a live
-# child sitting idle after its turn ended is still reported stalled. missing
-# always reports, because there is nothing left to debounce against.
-megabrain_dispatch_stalled_is_due() {
-  local meta="$1" dispatch_id
-  dispatch_id="$(printf '%s' "$meta" | jq -r '.dispatchId // empty' 2>/dev/null)"
-  [ -n "$dispatch_id" ] || return 1
-  megabrain_dispatch_terminal_status "$meta"
-  case "${MEGABRAIN_TERMINAL_STATUS:-unknown}" in
-    missing) return 0 ;;
-    *) megabrain_dispatch_has_recent_child_activity "$dispatch_id" && return 1 ;;
-  esac
-  return 0
-}
-
 megabrain_dispatch_has_child_identity_proof() {
   local dispatch_id="$1" messages_dir path
   messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
@@ -825,48 +595,8 @@ megabrain_dispatch_has_child_identity_proof() {
   return 1
 }
 
-megabrain_dispatch_has_prompt_receipt() {
-  local dispatch_id="$1" messages_dir path
-  messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
-  for path in "$messages_dir"/*.json; do
-    [ -f "$path" ] || continue
-    jq -e '.from == "child" and .type == "received"' "$path" >/dev/null 2>&1 && return 0
-  done
-  return 1
-}
-
 MEGABRAIN_DISPATCH_LIMIT_REFUSAL=false
 MEGABRAIN_DISPATCH_LIMIT_REFUSAL_REASON=""
-
-megabrain_dispatch_limit_refusal_read() {
-  local dispatch_id="$1" meta runtime pane output
-  MEGABRAIN_DISPATCH_LIMIT_REFUSAL=false
-  MEGABRAIN_DISPATCH_LIMIT_REFUSAL_REASON=""
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id" 2>/dev/null || true)"
-  [ -n "$meta" ] || return 1
-  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  [ "$runtime" = tmux ] || return 0
-  pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-  [ -n "$pane" ] || return 0
-  output="$(megabrain_tmux_capture_pane "$pane" -200 2>/dev/null || true)"
-  # WHY: tmux captures echoed input too; a refusal needs both the anchored first
-  # marker and the separate model-switch marker, so prose that merely quotes its
-  # first line cannot trigger the guard.
-  if printf '%s\n' "$output" | grep -E "^You've hit your usage limit for" >/dev/null 2>&1; then
-    case "$output" in
-      *"Switch to another model now,"*)
-        MEGABRAIN_DISPATCH_LIMIT_REFUSAL=true
-        MEGABRAIN_DISPATCH_LIMIT_REFUSAL_REASON="agent refused the dispatch: You've hit your usage limit for"
-        ;;
-    esac
-  fi
-}
-
-megabrain_dispatch_mark_limit_refused() {
-  local dispatch_id="$1" reason="${2:-${MEGABRAIN_DISPATCH_LIMIT_REFUSAL_REASON:-agent refused the dispatch for a usage limit}}"
-  megabrain_dispatch_meta_update_prompt_layers "$dispatch_id" __keep__ __keep__ unknown failed "$reason" >/dev/null 2>&1 || true
-  megabrain_dispatch_meta_update_fields "$dispatch_id" failed failed __keep__ limit-refused "$reason" limit-refused __keep__ __keep__
-}
 
 megabrain_dispatch_wait_for_prompt_receipt() {
   local dispatch_id="$1" timeout="${MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS:-30}" started now
@@ -1122,109 +852,6 @@ megabrain_dispatch_cursor_write() {
 MEGABRAIN_LOCK_WAIT_SECONDS="${MEGABRAIN_LOCK_WAIT_SECONDS:-15}"
 MEGABRAIN_LOCK_STALE_SECONDS="${MEGABRAIN_LOCK_STALE_SECONDS:-30}"
 
-megabrain_dispatch_lock_acquire() {
-  local lock="$1" waited=0 deadline age now
-  deadline=$(( $(date +%s) + MEGABRAIN_LOCK_WAIT_SECONDS ))
-  while ! mkdir "$lock" 2>/dev/null; do
-    now="$(date +%s)"
-    age="$(megabrain_dispatch_path_age_seconds "$lock")"
-    if [ -n "$age" ] && [ "$age" -ge "$MEGABRAIN_LOCK_STALE_SECONDS" ]; then
-      rmdir "$lock" 2>/dev/null || rm -rf "$lock" 2>/dev/null || true
-      continue
-    fi
-    if [ "$now" -ge "$deadline" ]; then
-      megabrain_error "mailbox lock is held by another writer: $lock"
-      return 1
-    fi
-    sleep 0.02
-    waited=$((waited + 1))
-  done
-}
-
-megabrain_dispatch_path_age_seconds() {
-  local path="$1" mtime now
-  mtime="$(megabrain_path_mtime "$path")" || return 0
-  now="$(date +%s)"
-  printf '%s\n' $((now - mtime))
-}
-
-megabrain_dispatch_message_append_locked() {
-  local dispatch_id="$1" from="$2" type="$3" text="$4" session_id="$5"
-  local supersedes_json="${6:-null}"
-  local messages_dir path tmp seq file_name recipient meta notify=false class message_path message_name
-  messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
-  # WHY: the messages directory is ordinary filesystem state; only queue-shaped names may set the next sequence.
-  seq="$(
-    for message_path in "$messages_dir"/*.json; do
-      [ -f "$message_path" ] || continue
-      message_name="${message_path##*/}"
-      if [[ "$message_name" =~ ^[0-9][0-9][0-9][0-9][0-9]*-[^-]+-.+\.json$ ]]; then
-        printf '%s\n' "${message_name%%-*}"
-      fi
-    done | sort -n | tail -n 1
-  )"
-  [ -n "$seq" ] || seq=0
-  seq=$((10#$seq + 1))
-  file_name="$(printf '%04d-%s-%s.json' "$seq" "$from" "$type")"
-  path="$messages_dir/$file_name"
-  tmp="$(mktemp "$messages_dir/.message.XXXXXX")" || return 1
-  if [ "$supersedes_json" = null ]; then
-    if ! jq -n --argjson seq "$seq" --arg from "$from" --arg type "$type" --arg text "$text" \
-      --arg createdAt "$(megabrain_iso_now)" --arg sessionId "$session_id" \
-      '{seq: $seq, from: $from, type: $type, text: $text, createdAt: $createdAt, sessionId: $sessionId}' >"$tmp"; then
-      rm -f "$tmp"
-      return 1
-    fi
-  elif ! jq -n --argjson seq "$seq" --arg from "$from" --arg type "$type" --arg text "$text" \
-    --arg createdAt "$(megabrain_iso_now)" --arg sessionId "$session_id" --argjson supersedes "$supersedes_json" \
-    '{seq: $seq, from: $from, type: $type, text: $text, createdAt: $createdAt, sessionId: $sessionId, supersedes: $supersedes}' >"$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$path"
-  MEGABRAIN_LAST_MESSAGE_SEQ="$seq"
-  MEGABRAIN_LAST_MESSAGE_NUDGE=""
-  case "$from:$type" in
-    parent:reply) recipient=child; notify=true ;;
-    parent:withdrawal|parent:interrupt|parent:interrupt-result) recipient=child ;;
-    *)
-      class="$(megabrain_dispatch_mail_class_for_message "$dispatch_id" "$from:$type" "$seq" 2>/dev/null || true)"
-      case "$class" in
-        actionable) recipient=parent; notify=true ;;
-        protocol) recipient=parent ;;
-        *) recipient='' ;;
-      esac
-      ;;
-  esac
-  if [ -n "$recipient" ]; then
-    # WHY: the message write is the event. Addressing is durable before either side reads it;
-    # the reader claims the delivery and supplies the process-specific fence later.
-    megabrain_dispatch_delivery_create "$dispatch_id" "$recipient" "[$seq]" >/dev/null || return 1
-    meta="$(megabrain_dispatch_meta_read "$dispatch_id" 2>/dev/null || true)"
-    if [ -n "$meta" ] && [ "$notify" = true ]; then
-      if [ "$recipient" = parent ]; then
-        type megabrain_parent_notify_dispatch >/dev/null 2>&1 &&
-          megabrain_parent_notify_dispatch "$meta" >/dev/null 2>&1 || true
-      else
-        megabrain_dispatch_native_send "$meta" "$(megabrain_dispatch_reply_pointer "$dispatch_id")" >/dev/null 2>&1
-        MEGABRAIN_LAST_MESSAGE_NUDGE="${MEGABRAIN_DISPATCH_NATIVE_SEND_STATUS:-not-typed}"
-      fi
-    fi
-  fi
-  printf '%s\n' "$seq"
-}
-
-megabrain_dispatch_message_append() {
-  local dispatch_id="$1" lock
-  lock="$(megabrain_dispatch_messages_dir "$dispatch_id")/.lock"
-  megabrain_dispatch_lock_acquire "$lock" || return 1
-  if ! megabrain_dispatch_message_append_locked "$@"; then
-    rmdir "$lock"
-    return 1
-  fi
-  rmdir "$lock"
-}
-
 megabrain_dispatch_message_paths() {
   local messages_dir="$1" path seq
   for path in "$messages_dir"/*.json; do
@@ -1245,40 +872,6 @@ megabrain_dispatch_last_child_message() {
   done < <(megabrain_dispatch_message_paths "$messages_dir")
   [ -n "$latest_path" ] || return 1
   jq -r '.text // empty' "$latest_path"
-}
-
-megabrain_dispatch_mail_class() {
-  local key="$1" candidate
-  for candidate in "${MEGABRAIN_DISPATCH_MAIL_ACTIONABLE_KEYS[@]}"; do
-    [ "$candidate" = "$key" ] && { printf 'actionable\n'; return 0; }
-  done
-  for candidate in "${MEGABRAIN_DISPATCH_MAIL_PROTOCOL_KEYS[@]}"; do
-    [ "$candidate" = "$key" ] && { printf 'protocol\n'; return 0; }
-  done
-  return 1
-}
-
-megabrain_dispatch_has_prior_child_done() {
-  local dispatch_id="$1" before_seq="${2:-}" messages_dir path candidate_seq
-  messages_dir="$(megabrain_dispatch_messages_dir "$dispatch_id")" || return 1
-  for path in "$messages_dir"/*.json; do
-    [ -f "$path" ] || continue
-    if [ -n "$before_seq" ]; then
-      candidate_seq="$(jq -r '.seq // 0' "$path" 2>/dev/null || true)"
-      [[ "$candidate_seq" =~ ^[0-9]+$ ]] || continue
-      [ "$candidate_seq" -lt "$before_seq" ] || continue
-    fi
-    jq -e '.from == "child" and .type == "done"' "$path" >/dev/null 2>&1 && return 0
-  done
-  return 1
-}
-
-megabrain_dispatch_mail_class_for_message() {
-  local dispatch_id="$1" key="$2" message_seq="${3:-}" classification_key="$2"
-  if [ "$key" = child:done ] && megabrain_dispatch_has_prior_child_done "$dispatch_id" "$message_seq"; then
-    classification_key=child:done-repeat
-  fi
-  megabrain_dispatch_mail_class "$classification_key"
 }
 
 megabrain_dispatch_delivery_mark_superseded() {
@@ -1485,148 +1078,6 @@ megabrain_dispatch_delivery_matches_mailbox() {
     fi
   done < <(megabrain_dispatch_message_paths "$messages_dir")
   return 1
-}
-
-megabrain_dispatch_require_session() {
-  megabrain_session_id >/dev/null
-  if [ -z "${MEGABRAIN_SESSION_ID:-}" ]; then
-    megabrain_error "this command requires a managed terminal identity; run it inside an Orca or Superset terminal"
-    return 1
-  fi
-}
-
-megabrain_dispatch_require_parent() {
-  local dispatch_id="$1" meta expected_id expected_host
-  megabrain_dispatch_require_session || return 1
-  meta="$(megabrain_dispatch_meta_read "$dispatch_id")" || return 1
-  expected_id="$(printf '%s' "$meta" | jq -r '.parentSessionId // empty')"
-  expected_host="$(printf '%s' "$meta" | jq -r '.parentHost // empty')"
-  if [ "$MEGABRAIN_SESSION_ID" != "$expected_id" ] || [ "$MEGABRAIN_SESSION_HOST" != "$expected_host" ]; then
-    megabrain_error "dispatch $dispatch_id is owned by $expected_host/$expected_id, not $MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID"
-    return 1
-  fi
-  printf '%s\n' "$meta"
-}
-
-megabrain_dispatch_find_child() {
-  local tmux_session="" tmux_pane="" tmux_identity=false matches dispatch_id second direct_id direct_path
-  MEGABRAIN_FOUND_DISPATCH=""
-  megabrain_dispatch_require_session || return 1
-  if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
-    tmux_identity=true
-    tmux_pane="$TMUX_PANE"
-    tmux_session="$(megabrain_dispatch_tmux_caller_session || true)"
-  fi
-  direct_id="${MEGABRAIN_DISPATCH_ID:-}"
-  if [ -n "$direct_id" ]; then
-    direct_path="$(megabrain_dispatch_meta_path "$direct_id" 2>/dev/null || true)"
-    if [ -n "$direct_path" ] && [ -f "$direct_path" ]; then
-      # WHY: a tmux child is identified by its session and pane. childHost records
-      # which orchestrator owns the terminal, which is a different condition: an Orca
-      # parent writes childHost=orca while the child own session host is tmux.
-      # Matching one against the other only worked while Superset leaked its
-      # terminal id into the child environment.
-      if [ "$tmux_identity" = true ]; then
-        if [ -n "$tmux_session" ] && jq -e \
-          --arg dispatchId "$direct_id" --arg host "$MEGABRAIN_SESSION_HOST" \
-          --arg session "$tmux_session" --arg pane "$tmux_pane" \
-          '.dispatchId == $dispatchId and .runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane' \
-          "$direct_path" \
-          >/dev/null 2>&1; then
-          MEGABRAIN_FOUND_DISPATCH="$direct_id"
-          return 0
-        fi
-      elif jq -e \
-        --arg dispatchId "$direct_id" --arg id "$MEGABRAIN_SESSION_ID" --arg host "$MEGABRAIN_SESSION_HOST" \
-        '.dispatchId == $dispatchId and .terminalId == $id and .childHost == $host' \
-        "$direct_path" \
-        >/dev/null 2>&1; then
-        MEGABRAIN_FOUND_DISPATCH="$direct_id"
-        return 0
-      fi
-    fi
-  fi
-  # WHY: this runs on every ask, done, check, received and turn-end hook, and the
-  # dispatch directory only grows. Use the exported dispatch id when it is valid, and
-  # retain this batch scan for older or stale environments. Pane identity replaces
-  # terminal identity because tmux shares the host id across panes.
-  if [ "$tmux_identity" = true ]; then
-    [ -n "$tmux_session" ] || {
-      megabrain_error "no managed dispatch belongs to tmux session ${tmux_session:-unknown} pane $tmux_pane"
-      return 1
-    }
-    matches="$(jq -r --arg host "$MEGABRAIN_SESSION_HOST" --arg session "$tmux_session" --arg pane "$tmux_pane" \
-      'select(.runtime == "tmux" and .tmuxSession == $session and .tmuxPane == $pane) | .dispatchId // empty' \
-      "$MEGABRAIN_DISPATCH_DIR"/*/meta.json 2>/dev/null)" || matches=""
-  else
-    matches="$(jq -r --arg id "$MEGABRAIN_SESSION_ID" --arg host "$MEGABRAIN_SESSION_HOST" \
-      'select(.terminalId == $id and .childHost == $host) | .dispatchId // empty' \
-      "$MEGABRAIN_DISPATCH_DIR"/*/meta.json 2>/dev/null)" || matches=""
-  fi
-  dispatch_id="$(printf '%s\n' "$matches" | sed -n '1p')"
-  second="$(printf '%s\n' "$matches" | sed -n '2p')"
-  if [ -n "$second" ]; then
-    if [ "$tmux_identity" = true ]; then
-      megabrain_error "tmux identity matches multiple dispatches for session ${tmux_session:-unknown} pane $tmux_pane: $dispatch_id, $second"
-    else
-      megabrain_error "terminal identity matches multiple dispatches for $MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID: $dispatch_id, $second"
-    fi
-    return 1
-  fi
-  if [ -n "$dispatch_id" ]; then
-    MEGABRAIN_FOUND_DISPATCH="$dispatch_id"
-    return 0
-  fi
-  if [ "$tmux_identity" = true ]; then
-    megabrain_error "no managed dispatch belongs to tmux session ${tmux_session:-unknown} pane $tmux_pane"
-  else
-    megabrain_error "no managed dispatch belongs to $MEGABRAIN_SESSION_HOST/$MEGABRAIN_SESSION_ID"
-  fi
-  return 1
-}
-
-megabrain_dispatch_native_send() {
-  local meta="$1" text="$2" host workspace_id terminal_id runtime tmux_session tmux_pane agent rc
-  MEGABRAIN_DISPATCH_NATIVE_SEND_STATUS=not-typed
-  host="$(printf '%s' "$meta" | jq -r '.childHost')"
-  workspace_id="$(printf '%s' "$meta" | jq -r '.workspaceId // empty')"
-  terminal_id="$(printf '%s' "$meta" | jq -r '.terminalId')"
-  runtime="$(printf '%s' "$meta" | jq -r '.runtime // "host"')"
-  if [ "$runtime" = tmux ]; then
-    tmux_session="$(printf '%s' "$meta" | jq -r '.tmuxSession // empty')"
-    tmux_pane="$(printf '%s' "$meta" | jq -r '.tmuxPane // empty')"
-    agent="$(printf '%s' "$meta" | jq -r '.agent // empty')"
-    [ -n "$tmux_session" ] && [ -n "$tmux_pane" ] || { megabrain_error "tmux dispatch metadata has no session or pane"; return 1; }
-    megabrain_tmux_session_exists "$tmux_session" || { megabrain_error "tmux session is no longer available: $tmux_session"; return 1; }
-    megabrain_tmux_send_nudge "$tmux_pane" "$text" "$agent"
-    rc=$?
-    # WHY: megabrain_tmux_send_text can return 0 after a failed type was merely
-    # cleaned up. MEGABRAIN_TMUX_SEND_STATUS is the only field that says whether
-    # the text actually reached the pane; the return code alone is not trustworthy.
-    [ "${MEGABRAIN_TMUX_SEND_STATUS:-not-typed}" = queued ] && MEGABRAIN_DISPATCH_NATIVE_SEND_STATUS=typed
-    return "$rc"
-  fi
-  case "$host" in
-    superset)
-      megabrain_superset terminals send --workspace "$workspace_id" --terminal "$terminal_id" --text "$text" --json >/dev/null || {
-        megabrain_error "Superset terminals send failed for terminal $terminal_id in workspace $workspace_id"
-        return 1
-      }
-      ;;
-    orca)
-      orca terminal send --terminal "$terminal_id" --text "$text" --enter --json >/dev/null || {
-        megabrain_error "orca terminal send failed for terminal $terminal_id"
-        return 1
-      }
-      ;;
-    *) megabrain_error "unsupported child host: $host"; return 1 ;;
-  esac
-  MEGABRAIN_DISPATCH_NATIVE_SEND_STATUS=typed
-}
-
-megabrain_dispatch_reply_pointer() {
-  local dispatch_id="$1"
-  printf '[megabrain] reply available; run megabrain check\n'
 }
 
 megabrain_dispatch_close_refuse_caller() {

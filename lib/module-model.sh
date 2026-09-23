@@ -72,26 +72,10 @@ megabrain_model_init() {
   fi
 }
 
-megabrain_model_read() {
-  megabrain_model_init || return 1
-  cat "$MEGABRAIN_MODEL_FILE"
-}
-
 megabrain_model_list_ids() {
   local agent="$1" registry
   registry="$(megabrain_model_read)" || return 1
   printf '%s' "$registry" | jq -r --arg agent "$agent" '.models[] | select(.agent == $agent) | .model'
-}
-
-megabrain_model_entry() {
-  local agent="$1" model="$2" registry
-  registry="$(megabrain_model_read)" || return 1
-  printf '%s' "$registry" | jq -c --arg agent "$agent" --arg model "$model" \
-    '.models[] | select(.agent == $agent and .model == $model)' | head -n 1
-}
-
-megabrain_model_known() {
-  [ -n "$(megabrain_model_entry "$1" "$2")" ]
 }
 
 # WHY: The wrapper remains a useful installed entrypoint even before its compiled payload is built.
