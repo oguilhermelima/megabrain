@@ -12,6 +12,9 @@ export function acknowledgeDelivery(
   if (status === "fenced") return failed(`delivery ${deliveryId} refused: delivery is fenced`);
   if (status !== "outstanding" && status !== "superseded") return failed(`delivery ${deliveryId} refused: status is invalid (${status})`);
   if (recordConsumer !== consumer || String(recordGeneration) !== String(generation)) {
+    if (recordConsumer === "") {
+      return failed(`delivery ${deliveryId} refused: delivery has not been read by this consumer; run megabrain orchestrate watch <dispatch-id> --full first`);
+    }
     return failed(`delivery ${deliveryId} refused: outstanding delivery belongs to consumer ${recordConsumer} generation ${recordGeneration}`);
   }
   return ok({ duplicate: false });
