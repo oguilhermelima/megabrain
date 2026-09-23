@@ -18,31 +18,12 @@ write_fixture_binary() {
   chmod +x "$fixture/.build/megabrain"
 }
 
-run_fixture_function() {
-  local fixture="$1" state="$2" function="$3"
-  shift 3
-  env -i HOME="$work/home" PATH="$PATH" MEGABRAIN_ROOT="$fixture" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_ORCHESTRATE_WATCH_IMPLEMENTATION=shell MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION=shell \
-    SUPERSET_TERMINAL_ID=child-terminal bash -c '
-      source "$1/lib/common.sh"
-      source "$1/lib/module-orchestrate.sh"
-      "$2" "${@:3}"
-    ' _ "$fixture" "$function" "$@"
-}
-
-scenario_child_watch_route_preserves_content() {
-  local fixture="$work/watch-route" state="$work/watch-state" output status
-  make_entrypoint_routing_fixture "$root" "$fixture" 73
-  write_fixture_binary "$fixture" '{"verb":"check"}'
-  mkdir -p "$state"
-  set +e
-  output="$(run_fixture_function "$fixture" "$state" megabrain_dispatch_child_check --timeout 0 --poll-interval 0 --wait-mode poll --json 2>"$work/watch.err")"
-  status=$?
-  set -e
-  assert_equal "$status" 73
-  assert_equal "$output" '{"verb":"check"}'
-  printf 'child watch route reaches the compiled binary and preserves content\n'
-}
+# megabrain_dispatch_child_check (the shell function scenario_child_watch_route_preserves_content
+# used to drive) has no production caller left: `megabrain check` forwards straight to the
+# compiled binary from command_check (lib/module-orchestrate.sh:1447-1456), never through the
+# child-check wrapper. That leaves this file's own scenario_check_content_honors_nonblocking_poll
+# below, which drives the binary directly, as the routing+content proof for `check`. Dropped
+# per rule 3.
 
 scenario_child_ack_route_preserves_content() {
   local fixture="$work/ack-route" state="$work/ack-state" output status
@@ -51,7 +32,7 @@ scenario_child_ack_route_preserves_content() {
   mkdir -p "$state"
   set +e
   output="$(env -i HOME="$work/home" PATH="$PATH" MEGABRAIN_ROOT="$fixture" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=child-terminal \
+    SUPERSET_TERMINAL_ID=child-terminal \
     "$fixture/megabrain" ack delivery-fixed --json 2>"$work/ack.err")"
   status=$?
   set -e
@@ -72,29 +53,15 @@ scenario_check_content_honors_nonblocking_poll() {
   printf 'compiled check returns content in one nonblocking poll\n'
 }
 
-scenario_hook_uses_compiled_check() {
-  local fixture="$work/hook-fixture" state="$work/hook-state" log="$work/hook-binary.log" output
-  mkdir -p "$fixture/hooks" "$fixture/.build" "$state/dispatches/hook/messages" "$state/dispatches/hook/deliveries"
-  cp "$root/hooks/megabrain-turn-end.sh" "$fixture/hooks/megabrain-turn-end.sh"
-  cp "$root/megabrain" "$fixture/megabrain"
-  cp -R "$root/lib" "$fixture/lib"
-  printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    'printf "%s\n" "$*" >"$MEGABRAIN_TEST_BINARY_LOG"' \
-    'printf "%s\n" "{\"messages\":[{\"text\":\"compiled hook reply\"}]}"' >"$fixture/.build/megabrain"
-  chmod +x "$fixture/hooks/megabrain-turn-end.sh" "$fixture/megabrain" "$fixture/.build/megabrain"
-  printf '%s\n' '{"dispatchId":"hook","terminalId":"child-terminal","childHost":"superset","runtime":"host","state":"waiting_for_reply"}' >"$state/dispatches/hook/meta.json"
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_TEST_BINARY_LOG="$log" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_HOOK_AGENT=codex \
-    "$fixture/hooks/megabrain-turn-end.sh" '{}')"
-  assert_equal "$(jq -r '.decision' <<<"$output")" block
-  assert_equal "$(jq -r '.reason' <<<"$output")" 'megabrain reply available; run megabrain check and act on it'
-  assert_equal "$(cat "$log")" 'check --timeout 0 --poll-interval 0 --wait-mode poll --json'
-  printf 'turn-end hook reads child mail through the compiled check command\n'
-}
+# scenario_hook_uses_compiled_check (originally: proving the turn-end hook shells out to
+# `megabrain check`) is dropped per rule 2: hooks/megabrain-turn-end.sh no longer shells out to
+# any subcommand at all -- it is a one-line `exec "$MEGABRAIN_HOOK_BINARY" hook turn-end "$@"`
+# (commit 06376e6 and its ancestors), and hook-turn-end.ts resolves the queued reply internally.
+# The exact scenario this used to prove (a queued reply produces {"decision":"block","reason":
+# "megabrain reply available; run megabrain check and act on it"}) is covered by
+# tests/unit/hook-turn-end.test.ts:282, "blocks (reason: reply available) when the parent has
+# queued a reply".
 
-scenario_child_watch_route_preserves_content
 scenario_child_ack_route_preserves_content
 scenario_check_content_honors_nonblocking_poll
-scenario_hook_uses_compiled_check
 printf 'ok: child mailbox route and content contracts\n'
