@@ -102,8 +102,14 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       } else {
         outcome = "exclusive-session";
         if (hasSession.kind === "ok") await getTmux().killSession(session, process);
-        const hostClose = await closeHostTerminal(meta, process);
-        if (hostClose.kind !== "ok") return failed(`could not close dispatch ${parsed.value.dispatchId}: ${hostClose.error}`);
+        // No host-terminal close here: executeSpawn's tmux branch never calls host.create() for
+        // any tmux dispatch (shared-pane or exclusive), so there is never a host terminal
+        // component to close, regardless of session ownership. Before the tmux child-identity fix
+        // (childHost/terminalId used to equal the spawning caller's own identity), this call
+        // "worked" only by accident — closeHostTerminal(meta) resolved to the CALLER's own host
+        // terminal via that shared identity, and either silently no-opped or, worse, attempted to
+        // close the coordinator's own terminal. Now that childHost is correctly "tmux" for tmux
+        // dispatches, getHost("tmux") is undefined and this call would always fail.
       }
     }
   } else {
