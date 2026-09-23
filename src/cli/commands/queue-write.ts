@@ -236,7 +236,7 @@ export async function sendParentPointer(root: string, meta: JsonRecord, pointer:
     if (provider === undefined) return { outcome: "failed", reason: `unsupported parent host: ${host}` };
     const call = provider.send({
       workspaceId: typeof meta.parentWorkspaceId === "string" ? meta.parentWorkspaceId : null,
-      terminalId: typeof meta.parentSessionId === "string" ? meta.parentSessionId : "",
+      terminalId: typeof meta.parentTerminalId === "string" && meta.parentTerminalId !== "" ? meta.parentTerminalId : typeof meta.parentSessionId === "string" ? meta.parentSessionId : "",
       text: pointer,
     });
     if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
