@@ -1212,7 +1212,7 @@ command_chain() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   local subcommand="${1:-}"
   case "$subcommand" in
-    list|limits|add|edit|delete|repair|-h|--help|"")
+    list|limits|add|edit|delete|repair|run|-h|--help|"")
       [ -x "$typescript_binary" ] || {
         megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
         return 1
@@ -1224,7 +1224,6 @@ command_chain() {
   esac
   shift || true
   case "$subcommand" in
-    run) command_chain_run "$@" ;;
     -h|--help|"")
       megabrain_usage_show chain
       ;;
