@@ -12,7 +12,7 @@ import {
   type CallerEnvironment,
   type CallerIdentity,
 } from "../../src/core/context.js";
-import { callerEnvironment, resolveCaller } from "../../src/cli/commands/queue-write.js";
+import { callerEnvironment, executeQueueWrite, resolveCaller } from "../../src/cli/commands/queue-write.js";
 import { executeContext } from "../../src/cli/commands/context.js";
 import { executeSpawn, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
@@ -613,5 +613,33 @@ describe("prune and doctor route their own-pane check through the shared resolve
     const environment = { TMUX: "caller-server", TMUX_PANE: "%0", SUPERSET_TERMINAL_ID: "parent-terminal" };
     const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
     expect(await installDoctorCallerSession(environment, process)).toBe("caller-session");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEASURED regression (tests/test-queue-write-cli.sh, container suite): queue-write's own child
+// self-identification historically probed tmux with `list-panes -a`, not `display-message`
+// (unlike close/child-ack, which always used display-message) — a real deployment's minimal tmux
+// fixture only answers list-panes. Routing this through the shared resolver's display-message-only
+// probe silently dropped that fallback.
+// ---------------------------------------------------------------------------
+
+describe("a queue-write child resolves its own tmux session via list-panes when display-message is unavailable", () => {
+  test("received finds its dispatch through tmux list-panes -a", async () => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "tmux-target", {
+      dispatchId: "tmux-target",
+      runtime: "tmux",
+      tmuxSession: "session-a",
+      tmuxPane: "%1",
+      state: "running",
+      processState: "running",
+    });
+    // Mirrors the shell test's fake tmux binary exactly: only list-panes is implemented;
+    // display-message (and everything else) answers with empty output.
+    const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "session-a\t%1\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const result = await executeQueueWrite("received", [], { MEGABRAIN_STATE_DIR: root, TMUX: "managed", TMUX_PANE: "%1" }, process);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.value).toContain("tmux-target");
   });
 });
