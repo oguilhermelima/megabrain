@@ -124,6 +124,35 @@ describe("worktree creation: Superset registration", () => {
     }
   });
 
+  test("opens the Superset workspace against a pull request when --pr is given", async () => {
+    const fixture = await creationFixture();
+    await writeFile(join(fixture.state, "worktree-root"), `${join(fixture.root, "shared")}\n`);
+    try {
+      const { process, calls } = supersetProcess(fixture.repo, {
+        superset: (args) => {
+          const [group, verb] = args;
+          if (group === "projects" && verb === "list") return jsonResult({ projects: [] });
+          if (group === "projects" && verb === "create") return jsonResult({ result: { project: { id: "project-id" } } });
+          if (group === "workspaces" && verb === "list") return jsonResult({ workspaces: [] });
+          if (group === "workspaces" && verb === "create") return jsonResult({ result: { workspace: { id: "workspace-id" } } });
+          return undefined;
+        },
+      });
+      const result = await executeWorktreeCreate(
+        ["--repo", fixture.repo, "--branch", "review/pr-7", "--base", "main", "--pr", "7", "--json"],
+        { MEGABRAIN_STATE_DIR: fixture.state, SUPERSET_TERMINAL_ID: "parent-terminal" },
+        process,
+      );
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      expect(JSON.parse(result.value).workspace).toBe("workspace-id");
+      expect(calls.some((call) => call.startsWith("superset workspaces create") && call.includes("--pr 7"))).toBe(true);
+      expect(calls.some((call) => call.startsWith("superset workspaces create") && call.includes("--branch"))).toBe(false);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   test("does not contact Superset when the caller is not running inside one", async () => {
     const fixture = await creationFixture();
     await writeFile(join(fixture.state, "worktree-root"), `${join(fixture.root, "shared")}\n`);
