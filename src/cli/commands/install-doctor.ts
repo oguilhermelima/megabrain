@@ -751,9 +751,16 @@ async function runInstallStep(module: string, environment: Environment, processA
 }
 
 async function installOne(module: string, environment: Environment, processAdapter: ProcessAdapter, options: InstallOptions): Promise<Result<string>> {
+  // WHY: the shell's megabrain_install_one always calls the module's install function first,
+  // unconditionally, and only checks doctor status afterward — it never skips the install step
+  // just because doctor already reports "ok" beforehand. A doctor "ok" can be satisfied by
+  // content that still needs repairing (e.g. orchestration-hooks: a stale, duplicated entry from
+  // a different checkout still matches hookEntryPresent's path-agnostic regex), so skipping here
+  // would silently skip the repair too. "unsupported" is the one status still checked first,
+  // matching where the shell placed that specific refusal (module_simulator_native_install's own
+  // doctor check, before touching npm) — every other module's doctor never reports it.
   const current = await report(module, environment, processAdapter);
   if (current.status === "unsupported") return failed(`${module}: ${current.reason}`);
-  if (current.status === "ok") return ok(`${module}: already installed\n`);
   const step = await runInstallStep(module, environment, processAdapter, options);
   if (step.kind !== "ok") {
     writeInstalledState(environment, module, false, step.error);
