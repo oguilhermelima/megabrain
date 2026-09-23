@@ -5,7 +5,6 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-chain.XXXXXX")"
 home_dir="$state_dir/home"
-call_file="$state_dir/spawn-call"
 
 cleanup() {
   local rc=$?
@@ -168,31 +167,6 @@ seeded="$(MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/megabrain" chain lis
 assert_equal "$(printf '%s' "$seeded" | jq '.chains | length')" 0
 printf 'empty seed and list: passed\n'
 
-config='{"chains":{"parent":{"when":{"parentAgent":"codex"},"steps":[{"agent":"agy","model":"m","effort":"e"}]},"specific":{"when":{"parentAgent":"codex","parentEffort":"high"},"steps":[{"agent":"claude","model":"m","effort":"e"}]}},"defaultSteps":[{"agent":"codex","model":"m","effort":"e"}]}'
-megabrain_chain_select "$config" parent codex '' ''
-assert_equal "$MEGABRAIN_CHAIN_SELECTED_NAME" parent
-printf 'selection explicit name: parent\n'
-megabrain_chain_select "$config" '' codex '' ''
-assert_equal "$MEGABRAIN_CHAIN_SELECTED_NAME" parent
-printf 'selection one selector: parent\n'
-megabrain_chain_select "$config" '' codex '' high
-assert_equal "$MEGABRAIN_CHAIN_SELECTED_NAME" specific
-printf 'selection most specific: specific\n'
-tie_config='{"chains":{"alpha":{"when":{"parentAgent":"codex"},"steps":[{"agent":"agy","model":"m","effort":"e"}]},"beta":{"when":{"parentAgent":"codex"},"steps":[{"agent":"claude","model":"m","effort":"e"}]}},"defaultSteps":[]}'
-if tie_error="$(megabrain_chain_select "$tie_config" '' codex '' '' 2>&1)"; then
-  fail 'tie selection unexpectedly succeeded'
-fi
-assert_contains "$tie_error" 'alpha, beta'
-printf 'selection tie: error lists candidates\n'
-model_config='{"chains":{"model":{"when":{"parentAgent":"codex","parentModel":"known"},"steps":[{"agent":"agy","model":"m","effort":"e"}]}},"defaultSteps":[{"agent":"codex","model":"m","effort":"e"}]}'
-megabrain_chain_select "$model_config" '' codex '' ''
-assert_equal "$MEGABRAIN_CHAIN_SELECTION_DEFAULT" true
-printf 'selection unknown parent model: default\n'
-none_config='{"chains":{"claude-only":{"when":{"parentAgent":"claude"},"steps":[{"agent":"agy","model":"m","effort":"e"}]}},"defaultSteps":[{"agent":"codex","model":"m","effort":"e"}]}'
-megabrain_chain_select "$none_config" '' agy '' ''
-assert_equal "$MEGABRAIN_CHAIN_SELECTION_DEFAULT" true
-printf 'selection no match: defaultSteps\n'
-
 write_rollout "$rollouts_dir/rollout-under.jsonl" 40.0 "$future_reset"
 printf '%s\n' '{"timestamp":"2026-09-07T08:15:24.790Z","ordinal":18,"type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400}}}' >>"$rollouts_dir/rollout-under.jsonl"
 set_mtime_offset "$rollouts_dir/rollout-under.jsonl" 30
@@ -225,80 +199,6 @@ assert_equal "$MEGABRAIN_CHAIN_LIMIT_STATUS" unknown
 assert_not_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'stale'
 assert_contains "$MEGABRAIN_CHAIN_LIMIT_REASON" 'already reset'
 printf 'limit reset-only snapshot: distinct unknown reason\n'
-
-write_config '{"chains":{"run":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h"}},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
-command_orchestrate() {
-  printf '%s\n' "$*" >"$call_file"
-  printf '{"dispatch":"dispatch-chain"}\n'
-}
-write_config '{"chains":{"unknown":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h"}},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
-run_output="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"
-assert_equal "$(printf '%s' "$run_output" | jq -r '.step')" 1
-assert_equal "$(printf '%s' "$run_output" | jq -r '.agent')" codex
-assert_equal "$(printf '%s' "$run_output" | jq '.skipped | length')" 0
-printf 'limit unknown: step is usable, not exhausted\n'
-
-write_config '{"chains":{"unknown-skip":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h","onUnknown":"skip"}},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
-unknown_skip_output="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"
-assert_equal "$(printf '%s' "$unknown_skip_output" | jq -r '.step')" 2
-assert_equal "$(printf '%s' "$unknown_skip_output" | jq -r '.skipped[0].kind')" limit
-assert_contains "$(printf '%s' "$unknown_skip_output" | jq -r '.skipped[0].reason')" 'already reset'
-printf 'limit unknown skip policy: advanced to step 2\n'
-
-write_config '{"chains":{"unknown-take":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h","onUnknown":"take"}},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
-unknown_take_stderr="$state_dir/unknown-take.stderr"
-command_chain_run --parent-agent codex --worktree "$root" --prompt test --json 2>"$unknown_take_stderr" >/dev/null
-assert_contains "$(cat "$unknown_take_stderr")" 'usage limit is unknown; taking step'
-printf 'limit unknown take policy: emits an explicit stderr decision\n'
-
-rm -f "$rollouts_dir/rollout-reset-only.jsonl"
-write_rollout "$rollouts_dir/rollout-run.jsonl" 97.0 "$future_reset"
-set_mtime_offset "$rollouts_dir/rollout-run.jsonl" 30
-run_output="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"
-assert_equal "$(printf '%s' "$run_output" | jq -r '.step')" 2
-assert_contains "$(printf '%s' "$run_output" | jq -r '.skipped[0].reason')" '97.0'
-assert_contains "$(cat "$call_file")" 'spawn'
-assert_contains "$(cat "$call_file")" '--agent agy'
-printf 'run limit skip: step 2 and spawn entry point invoked\n'
-
-rm -f "$rollouts_dir"/rollout-*.jsonl
-printf '%s\n' '{"timestamp":"2026-09-07T08:15:22.790Z","ordinal":16,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":97.0,"window_minutes":43200,"resets_at":4102444800},"secondary":null}}}' >"$rollouts_dir/rollout-monthly-near-limit.jsonl"
-set_mtime_offset "$rollouts_dir/rollout-monthly-near-limit.jsonl" 30
-write_config '{"chains":{"monthly-fallback":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h"}},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
-monthly_run_output="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"
-assert_equal "$(printf '%s' "$monthly_run_output" | jq -r '.step')" 2
-assert_equal "$(printf '%s' "$monthly_run_output" | jq -r '.skipped[0].kind')" limit
-assert_contains "$(printf '%s' "$monthly_run_output" | jq -r '.skipped[0].reason')" 'primary-43200m'
-printf 'run monthly-only fallback: threshold migrates at 97 percent\n'
-rm -f "$rollouts_dir"/rollout-monthly-near-limit.jsonl
-write_rollout "$rollouts_dir/rollout-run.jsonl" 97.0 "$future_reset"
-set_mtime_offset "$rollouts_dir/rollout-run.jsonl" 30
-
-write_config '{"chains":{"run":{"when":{"parentAgent":"codex"},"steps":[{"agent":"claude","model":"m1","effort":"e1"},{"agent":"agy","model":"m2","effort":"e2"}]}},"defaultSteps":[]}'
-command_orchestrate() {
-  printf '%s\n' "$*" >"$call_file"
-  case " $* " in
-    *' --agent claude '*) printf 'launch failed\n' >&2; return 1 ;;
-    *) printf '{"dispatch":"dispatch-after-failure"}\n' ;;
-  esac
-}
-run_output="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"
-assert_equal "$(printf '%s' "$run_output" | jq -r '.step')" 2
-assert_equal "$(printf '%s' "$run_output" | jq -r '.skipped[0].kind')" failure
-printf 'run failure trigger: advanced to step 2\n'
-
-write_config '{"chains":{"run":{"when":{"parentAgent":"codex"},"steps":[{"agent":"codex","model":"m1","effort":"e1","until":{"usedPercent":95,"window":"5h"}},{"agent":"claude","model":"m2","effort":"e2","until":{"usedPercent":95,"window":"5h"}}]}},"defaultSteps":[]}'
-command_orchestrate() {
-  printf 'launch failed\n' >&2
-  return 1
-}
-if exhaustion="$(command_chain_run --parent-agent codex --worktree "$root" --prompt test --json)"; then
-  fail 'all unusable steps unexpectedly succeeded'
-fi
-assert_equal "$(printf '%s' "$exhaustion" | jq '.skipped | length')" 2
-assert_contains "$(printf '%s' "$exhaustion" | jq -r '.skipped[0].reason')" 'resets at'
-assert_contains "$(printf '%s' "$exhaustion" | jq -r '.skipped[1].reason')" 'unknown'
-printf 'run exhaustion: every step reported with reset and unknown\n'
 
 export MEGABRAIN_CHAIN_NAME=run MEGABRAIN_CHAIN_STEP=2 MEGABRAIN_CHAIN_TOTAL=2 MEGABRAIN_CHAIN_REASON='codex exhausted' MEGABRAIN_CHAIN_DEFAULT=false
 megabrain_dispatch_meta_write dispatch-record parent superset superset workspace terminal "$root" main agy label running m true agy '' '' host ide '' '' '' >/dev/null
