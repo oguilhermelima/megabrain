@@ -80,9 +80,12 @@ remote_tip_without_head="$(git -C "$work/seed" rev-parse HEAD)"
 
 create_without_origin_head() {
   local branch="$1" output path
+  output="$(run_binary worktree create --repo "$work/repo" --branch "$branch" --json)"
   path="$work/shared/${branch//\//-}"
   json "$output" ".base == \"origin/main\" and .baseCommit == \"$remote_tip_without_head\" and .baseSource == \"remote\""
   assert_equal "$(git -C "$path" rev-parse HEAD)" "$remote_tip_without_head"
+  assert_contains "$output" 'origin/main'
+  assert_contains "$output" "$remote_tip_without_head"
   printf 'binary missing origin HEAD output: %s\n' "$output"
 }
 
