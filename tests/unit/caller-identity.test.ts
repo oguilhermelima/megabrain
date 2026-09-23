@@ -596,4 +596,22 @@ describe("prune and doctor route their own-pane check through the shared resolve
     const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "work\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
     expect(await installDoctorCallerSession(environment, process)).toBe("work");
   });
+
+  // MEASURED regression (tests/test-dispatch-transcript.sh, container suite): a caller with
+  // SUPERSET_TERMINAL_ID set (the parent's own identity override) who is ALSO physically running
+  // inside a tmux pane must still be recognised as "in that pane" by these two physical checks —
+  // an identity override must never suppress the probe. Before the fix this returned undefined/""
+  // instead of the real pane session, and prune then treated the caller's own pane as safe to
+  // release.
+  test("tmuxCallerSession still probes when a terminal-handle override is also present", async () => {
+    const environment = { TMUX: "caller-server", TMUX_PANE: "%0", SUPERSET_TERMINAL_ID: "parent-terminal" };
+    const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    expect(await tmuxCallerSession(environment, process)).toBe("caller-session");
+  });
+
+  test("callerSession (install-doctor) still probes when a terminal-handle override is also present", async () => {
+    const environment = { TMUX: "caller-server", TMUX_PANE: "%0", SUPERSET_TERMINAL_ID: "parent-terminal" };
+    const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    expect(await installDoctorCallerSession(environment, process)).toBe("caller-session");
+  });
 });
