@@ -39,6 +39,7 @@ export function callerEnvironment(environment: QueueEnvironment): CallerEnvironm
     codexThreadId: environment.CODEX_THREAD_ID,
     supersetTerminalId: environment.SUPERSET_TERMINAL_ID,
     orcaTerminalHandle: environment.ORCA_TERMINAL_HANDLE,
+    orcaStructuredSession: environment.ORCA_STRUCTURED_SESSION,
     tmux: environment.TMUX,
     tmuxPane: environment.TMUX_PANE,
   };

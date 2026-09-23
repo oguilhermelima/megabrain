@@ -119,17 +119,18 @@ function callerTerminal(
 // resolution, and every parent/child verb that has to know who is running it. Precedence:
 // MEGABRAIN_SESSION_ID is an explicit override and always wins; then the agent's own session id
 // (Claude, then Codex); then a terminal handle (superset, then orca, then a probed tmux pane);
-// then, host only, a successful orca worktree probe with no stable id; otherwise unknown with no
-// id. The terminal handle is returned separately from id so callers that need it (ownership,
-// notification routing) do not have to re-derive it, and so a caller whose agent session changes
-// while its terminal does not can still be recognised (see ownsDispatch).
+// then, host only, a structured Orca session (ORCA_STRUCTURED_SESSION=1 or a successful orca
+// worktree probe) with no stable id; otherwise unknown with no id. The terminal handle is
+// returned separately from id so callers that need it (ownership, notification routing) do not
+// have to re-derive it, and so a caller whose agent session changes while its terminal does not
+// can still be recognised (see ownsDispatch).
 export function resolveCallerIdentity(environment: CallerEnvironment, probes: CallerProbes = {}): CallerIdentity {
   const terminal = callerTerminal(environment, probes);
   const host = present(environment.megabrainSessionHost)
     ? environment.megabrainSessionHost
     : terminal !== undefined
       ? terminal.host
-      : probes.orcaWorktree === true
+      : environment.orcaStructuredSession === "1" || probes.orcaWorktree === true
         ? "orca"
         : "unknown";
   const id = present(environment.megabrainSessionId)
