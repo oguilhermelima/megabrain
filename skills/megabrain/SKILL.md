@@ -220,7 +220,12 @@ megabrain install [module-id] [--yes] [--revert]
 
 `doctor --json` is machine readable for every module; operator advice goes to stderr so it stays
 out of the JSON. Install `orchestration-hooks` to get the child turn-end safety hook, which
-reports a child whose turn ended without `ask` or `done`.
+reports a child whose turn ended without `ask` or `done`. The installed hook command invokes the
+compiled binary directly — `MEGABRAIN_HOOK_AGENT=<agent> <absolute real path to the binary> hook
+turn-end`, per agent config (Claude's `Stop` hook, Codex/agy `hooks.json`, Cursor's
+`afterAgentResponse`) — there is no wrapper script. `doctor` recognises a legacy entry left by an
+older install (pointing at the now-deleted `hooks/megabrain-turn-end.sh`) and reports it as
+needing migration; `megabrain install orchestration-hooks` replaces it in place.
 
 The installable module ids include `tv-adb` and `skill-sync`. During normal command invocations,
 `skill-sync` compares the shipped skill with each registered agent copy and repairs drift; `--help`
