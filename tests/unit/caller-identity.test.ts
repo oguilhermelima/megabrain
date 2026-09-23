@@ -443,13 +443,21 @@ describe("spawn refuses a tmux spawn from an unknown caller host", () => {
   test("an explicit MEGABRAIN_SESSION_HOST still allows the tmux spawn to proceed past the identity check", async () => {
     const root = await tempStateDir();
     const worktree = await mkdtemp(`${tmpdir()}/megabrain-caller-identity-worktree-`);
-    const process = fakeProcess((command) => command === "tmux" ? ok({ stdout: "%1\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    // capture-pane must answer with an idle composer, or waitForTmuxReadiness polls for the full
+    // default timeout and the test times out on infrastructure unrelated to the assertion below.
+    const process = fakeProcess((command, args) => {
+      if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
+      if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: "❯\n", stderr: "", exitCode: 0 });
+      if (command === "tmux") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
     const environment = {
       MEGABRAIN_STATE_DIR: root,
       MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-g",
       MEGABRAIN_SESSION_ID: "parent-1",
       MEGABRAIN_SESSION_HOST: "orca",
       MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      MEGABRAIN_AGENT_READY_TIMEOUT_MS: "50",
     };
     const result = await executeSpawn(
       ["--worktree", worktree, "--agent", "claude", "--prompt", "hello", "--tmux", "true"],
