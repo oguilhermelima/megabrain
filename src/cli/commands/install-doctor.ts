@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { pruneDecision, pruneStates } from "../../core/orchestrate-prune.js";
 import { installSkillSync, skillSyncDoctor } from "../../core/skill.js";
 import { nextBackupPath } from "../../core/tmux.js";
 import { executeTmux } from "./tmux.js";
@@ -176,7 +177,12 @@ function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
   return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
-type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecognisedMessageFiles: string[] };
+type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecognisedMessageFiles: string[]; untrackedDispatches: string[] };
+
+// Mirrors the shell's default prune window (MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS), also the
+// default parsePruneArgs uses for `megabrain orchestrate prune`: a terminal dispatch only counts
+// as prunable once it has been settled for at least this many days.
+const PRUNE_DEFAULT_DAYS = 7;
 
 function messageFiles(directory: string): string[] {
   try {
@@ -189,16 +195,27 @@ function messageFiles(directory: string): string[] {
 }
 
 async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<DispatchHealth> {
-  const result: DispatchHealth = { ...emptyCounts(), unrecognisedMessageFiles: [] };
+  const result: DispatchHealth = { ...emptyCounts(), unrecognisedMessageFiles: [], untrackedDispatches: [] };
   const directory = resolve(resolveStateDirectory(environment), "dispatches");
   if (!existsSync(directory)) return result;
-  const pruneStates = new Set(["closed", "done", "failed", "orphaned", "circuit_broken"]);
+  const pruneStateSet = new Set<string>(pruneStates);
+  const pruneOptions = { olderThan: PRUNE_DEFAULT_DAYS, states: [...pruneStates], mode: "archive" as const, dryRun: false, json: false };
+  const now = new Date();
   const records: Array<Record<string, unknown>> = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "archive") continue;
     result.unrecognisedMessageFiles.push(...messageFiles(resolve(directory, entry.name, "messages")));
+    const metaPath = resolve(directory, entry.name, "meta.json");
+    // Matches the shell scan's own `[ -f meta.json ]` check: a directory with no meta.json at all
+    // is untracked, but one whose meta.json exists and merely fails to parse is not — it still
+    // falls into the catch below, silently excluded from every count, exactly as the shell's jq
+    // scan drops an unparsable record with no separate notice for it.
+    if (!existsSync(metaPath)) {
+      result.untrackedDispatches.push(entry.name);
+      continue;
+    }
     try {
-      const record = JSON.parse(readFileSync(resolve(directory, entry.name, "meta.json"), "utf8")) as Record<string, unknown>;
+      const record = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
       records.push(record);
       const processState = typeof record.processState === "string" ? record.processState : "";
       const reason = processState === "start-unproven" ? "process start was not proven"
@@ -214,6 +231,9 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
         result.retainedTerminals += 1;
         result.retainedReasons.push({ dispatchId, reason: record.terminalReason ?? "terminal identity remains unproven", processState, terminalState: "retained" });
       }
+      if (pruneDecision(record, pruneOptions, now).eligible) {
+        result.prunableDispatches += 1;
+      }
     } catch {
       // Match the shell scan: malformed metadata is not a health record.
     }
@@ -223,7 +243,7 @@ async function dispatchHealth(environment: Environment, process: ProcessAdapter)
   const callerSessionName = await callerSession(environment, process);
   const leaked = new Set<string>();
   for (const record of records) {
-    if (!pruneStates.has(typeof record.state === "string" ? record.state : "")) continue;
+    if (!pruneStateSet.has(typeof record.state === "string" ? record.state : "")) continue;
     if (record.runtime !== "tmux") continue;
     const session = typeof record.tmuxSession === "string" ? record.tmuxSession : "";
     const parent = typeof record.parentTmuxSession === "string" ? record.parentTmuxSession : "";
@@ -314,12 +334,18 @@ async function report(module: string, environment: Environment, process: Process
     if (health.uncertainDispatches > 0) suffix += `; unresolved reasons: ${[...new Set(health.uncertainReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
     if (health.retainedTerminals > 0) suffix += `; retained reasons: ${[...new Set(health.retainedReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
     if (health.unrecognisedMessageFiles.length > 0) suffix += `; unrecognised message files: ${health.unrecognisedMessageFiles.join(", ")}`;
+    // Mirrors the shell's megabrain_notice call for the same condition (a dispatch directory with
+    // no meta.json at all). The shell put it on stderr; folded into reason instead, matching the
+    // unrecognisedMessageFiles convention just above, so every reader of this module's report —
+    // not only one polling stderr — sees it, and it survives even when the directory it describes
+    // is gone by the time a later, separate doctor call would otherwise be needed to find it.
+    if (health.untrackedDispatches.length > 0) suffix += `; dispatch directories without metadata: ${health.untrackedDispatches.join(", ")}`;
     if (health.uncertainDispatches > 0 || health.retainedTerminals > 0) {
       status = "misconfigured";
       reason = `dispatch state requires reconciliation${suffix}`;
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
-    const { unrecognisedMessageFiles: _unrecognisedMessageFiles, ...counts } = health;
+    const { unrecognisedMessageFiles: _unrecognisedMessageFiles, untrackedDispatches: _untrackedDispatches, ...counts } = health;
     return { module, status, reason, ...counts };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);

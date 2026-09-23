@@ -20,6 +20,16 @@ export type SpawnReason = typeof spawnFailureReasons[keyof typeof spawnFailureRe
 export type SpawnRuntime = "tmux" | "host";
 export type WorktreeOwnership = "created" | "existing" | "unknown";
 
+// Mirrors the shell's megabrain_resolve_spawn_runtime "auto" branch (lib/module-worktree.sh),
+// gated by megabrain_runtime_enabled (lib/common.sh): with no explicit --tmux flag, the runtime is
+// tmux only when the tmux-runtime module reports itself installed in state.json, otherwise host.
+// Verified empirically against the last shell implementation (commit 9d24366^, run directly): an
+// active TMUX/TMUX_PANE session alone does not flip this default — only the module's installed
+// flag does. An explicit --tmux true/false always wins and never reaches this function.
+export function resolveAutoSpawnRuntime(tmuxRuntimeInstalled: boolean): SpawnRuntime {
+  return tmuxRuntimeInstalled ? "tmux" : "host";
+}
+
 export type SpawnFailure = Readonly<{
   readonly call: string;
   readonly detail: string;

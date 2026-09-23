@@ -46,14 +46,28 @@ export function parseParentChangeArgs(args: readonly string[]): Result<ParentRep
   return ok({ dispatchId, text, json, supersede: true });
 }
 
+// Mirrors the shell's megabrain_dispatch_reply_state_allowed exactly: a reply is accepted only
+// where the dispatch state machine (dispatch-states.ts) allows a dispatch:*->running transition.
+// "done" has no such transition (dispatch:done only reaches done/failed/orphaned/closed), so
+// unlike an ask or a check, a reply to a done dispatch is refused there too — there is no
+// idempotent-no-op exception for it in the shell, and there must not be one here.
 export function replyStateError(dispatch: string, state: string, change: boolean): string | undefined {
-  // A done child is already terminal; accepting a reply there is an idempotent no-op for state.
-  const allowed = state === "done" || checkDispatchTransition("dispatch", state, "running").kind === "ok";
+  const allowed = checkDispatchTransition("dispatch", state, "running").kind === "ok";
   if (allowed) return undefined;
-  if (!change && ["failed", "closed", "circuit_broken"].includes(state)) {
+  if (!change && ["done", "failed", "closed", "circuit_broken"].includes(state)) {
     return `dispatch ${dispatch} is settled in state ${state}; open a new dispatch for a reply`;
   }
   return `dispatch ${dispatch} cannot receive a ${change ? "change" : "reply"} in state ${state}`;
+}
+
+// Mirrors the state clause of the shell's megabrain_dispatch_meta_normalize (run on every meta
+// read, before megabrain_dispatch_reply ever saw the state): "stalled" and "timeout" were
+// persisted by older versions on the contract axis and are not themselves recognised transitions
+// in dispatch-states.ts, so a caller that skips this and passes the raw value into
+// replyStateError gets the generic "cannot receive a reply" refusal instead of the shell's
+// accept-and-resume-to-running behaviour.
+export function normalizeDispatchState(state: string): string {
+  return state === "stalled" || state === "timeout" ? "running" : state;
 }
 
 export function supersedeDelivery(status: string, consumer: string | null, sequences: readonly number[], alreadySuperseded: boolean): SupersedeSummary {

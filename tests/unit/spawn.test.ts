@@ -130,6 +130,47 @@ describe("executeSpawn", () => {
     }
   });
 
+  // Shell parity: megabrain_tmux_send_agent (lib/module-tmux-runtime.sh, last standing at commit
+  // 9d24366^) sent a raw `C-u` immediately before typing the launch command line into a freshly
+  // created/split pane — its own WHY comment: "the child shell can still hold startup noise or a
+  // stray keystroke, and typing onto a non-empty line produced 'mocd <path>' once". That C-u was
+  // scoped to exactly that one call site: megabrain_tmux_send_text (used for the prompt payload
+  // and for nudges into an already-running agent composer) never sent it — "C-u in an agent
+  // composer is not a line kill" is the shell's own reasoning for leaving it out there. This test
+  // proves both halves: the launch command line is preceded by a C-u, and the prompt payload sent
+  // afterward into the now-running agent's composer is not.
+  test("clears stray input with C-u before the launch command line, but never before the prompt", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-clear-stray-`);
+    const dispatchId = "dispatch-clear-stray";
+    const events: string[] = [];
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      sendText: async (_pane, text) => {
+        events.push(text.includes("MEGABRAIN_DISPATCH_ID=") ? "text:launch-command" : text.includes("[megabrain dispatch:") ? "text:prompt" : `text:${text}`);
+        return ok(undefined);
+      },
+    });
+    try {
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/clear-stray", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+        resolveWorktree: async () => ok(worktree("created")),
+      });
+      expect(result.kind).toBe("ok");
+      const launchIndex = events.indexOf("text:launch-command");
+      const promptIndex = events.indexOf("text:prompt");
+      expect(launchIndex).toBeGreaterThanOrEqual(0);
+      expect(promptIndex).toBeGreaterThan(launchIndex);
+      expect(events[launchIndex - 1]).toBe("key:C-u");
+      // No C-u anywhere from the prompt send onward: the composer is a running agent by then.
+      expect(events.slice(promptIndex - 1)).not.toContain("key:C-u");
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("keeps accepting an explicit worktree without repo or branch", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-explicit-worktree-`);
     let receivedTarget: string | undefined;
@@ -1312,5 +1353,94 @@ describe("defaultResolveWorktree", () => {
 
     expect(result).toEqual({ kind: "failed", error: "--repo is required to resolve a worktree by name", exitCode: 1 });
     expect(process.calls).toEqual([]);
+  });
+});
+
+// Regression coverage for the shell-parity bug in tests/test-spawn-runtime.sh: omitting --tmux
+// used to always resolve to "host" because MEGABRAIN_SPAWN_RUNTIME (the env var the old
+// expression read) was never set anywhere. These prove the wiring — not just the pure
+// resolveAutoSpawnRuntime decision covered in spawn-plan.test.ts — actually reads the
+// tmux-runtime module's installed flag out of state.json and routes to the matching host command.
+describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
+  test("routes to a tmux pane operation when the tmux-runtime module reports itself installed", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-auto-tmux-`);
+    const state = `${root}/state`;
+    await mkdir(state, { recursive: true });
+    await writeFile(`${state}/state.json`, JSON.stringify({ "tmux-runtime": { installed: true } }));
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
+    try {
+      const process = processFor([]);
+      await executeSpawn(
+        ["--repo", "/repo", "--branch", "feat/auto-tmux", "--agent", "codex", "--prompt", "spawn"],
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        process,
+        { resolveWorktree: async () => ok(worktree("created")) },
+      );
+      expect(process.calls.some((call) => call.command === "tmux")).toBe(true);
+      expect(process.calls.some((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "create")).toBe(false);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("routes to a host terminal (orca terminal create) when the tmux-runtime module is not installed", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-auto-host-`);
+    const state = `${root}/state`;
+    // No state.json at all: the tmux-runtime module has never been installed for this state dir.
+    await mkdir(state, { recursive: true });
+    try {
+      const process = processFor([]);
+      await executeSpawn(
+        ["--repo", "/repo", "--branch", "feat/auto-host", "--agent", "codex", "--prompt", "spawn"],
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-host", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        process,
+        { resolveWorktree: async () => ok(worktree("created")) },
+      );
+      expect(process.calls.some((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "create")).toBe(true);
+      expect(process.calls.some((call) => call.command === "tmux")).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a malformed state.json is treated as not installed, matching the shell's own guard", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-auto-malformed-`);
+    const state = `${root}/state`;
+    await mkdir(state, { recursive: true });
+    await writeFile(`${state}/state.json`, "{ not json");
+    try {
+      const process = processFor([]);
+      await executeSpawn(
+        ["--repo", "/repo", "--branch", "feat/auto-malformed", "--agent", "codex", "--prompt", "spawn"],
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-malformed", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        process,
+        { resolveWorktree: async () => ok(worktree("created")) },
+      );
+      expect(process.calls.some((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "create")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an explicit --tmux still wins over the module's installed flag", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-explicit-over-auto-`);
+    const state = `${root}/state`;
+    await mkdir(state, { recursive: true });
+    await writeFile(`${state}/state.json`, JSON.stringify({ "tmux-runtime": { installed: true } }));
+    try {
+      const process = processFor([]);
+      await executeSpawn(
+        ["--repo", "/repo", "--branch", "feat/explicit-host", "--agent", "codex", "--prompt", "spawn", "--tmux", "false"],
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-explicit-host", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        process,
+        { resolveWorktree: async () => ok(worktree("created")) },
+      );
+      expect(process.calls.some((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "create")).toBe(true);
+      expect(process.calls.some((call) => call.command === "tmux")).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

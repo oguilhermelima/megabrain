@@ -24,6 +24,65 @@ function report(result: Awaited<ReturnType<typeof executeDoctor>>) {
   return JSON.parse(result.value) as { status: string; reason: string; uncertainDispatches: number };
 }
 
+function writeDispatchMeta(stateDir: string, dispatchId: string, dispatchState: string, updatedAt: string, extra: Record<string, unknown> = {}): void {
+  mkdirSync(join(stateDir, "dispatches", dispatchId), { recursive: true });
+  writeFileSync(join(stateDir, "dispatches", dispatchId, "meta.json"), JSON.stringify({
+    dispatchId,
+    state: dispatchState,
+    processState: "running",
+    terminalState: "owned",
+    runtime: "host",
+    createdAt: "2020-01-01T00:00:00Z",
+    updatedAt,
+    ...extra,
+  }));
+}
+
+describe("doctor orchestration health counts (shell parity)", () => {
+  // Mirrors the shell's megabrain_dispatch_health_counts: a dispatch is prunable when its state is
+  // terminal (closed/done/failed/orphaned/circuit_broken) AND its updatedAt (or createdAt when
+  // updatedAt is absent) is at or before now minus the default 7-day window. A still-open
+  // ("running") dispatch and a terminal dispatch updated far in the future are both excluded.
+  test("counts prunable dispatches: terminal and old, excluding open and too-recent", async () => {
+    const state = mkdtempSync("/tmp/megabrain-doctor-prunable-");
+    writeDispatchMeta(state, "old-closed", "closed", "2020-01-01T00:00:00Z");
+    writeDispatchMeta(state, "old-done", "done", "2020-01-01T00:00:00Z");
+    writeDispatchMeta(state, "old-failed", "failed", "2020-01-01T00:00:00Z");
+    writeDispatchMeta(state, "still-running", "running", "2020-01-01T00:00:00Z");
+    writeDispatchMeta(state, "recent-closed", "closed", "2999-01-01T00:00:00Z");
+    const result = report(await executeDoctor(["orchestration", "--json"], {
+      HOME: state,
+      MEGABRAIN_STATE_DIR: state,
+    }, processFor({
+      "orca status --json": "{}",
+      "superset workspaces list --json": "{}",
+    })));
+    expect((result as unknown as { prunableDispatches: number }).prunableDispatches).toBe(3);
+  });
+
+  // Mirrors the shell's untracked-directory scan: a dispatch directory with no meta.json at all
+  // gets a notice naming it, while a directory whose meta.json exists but fails to parse ("broken")
+  // is excluded from that notice (the shell's own `[ -f meta.json ]` check only tests presence).
+  test("surfaces a dispatch directory with no meta.json as untracked, not a malformed one", async () => {
+    const state = mkdtempSync("/tmp/megabrain-doctor-untracked-");
+    mkdirSync(join(state, "dispatches", "untracked", "messages"), { recursive: true });
+    mkdirSync(join(state, "dispatches", "broken"), { recursive: true });
+    writeFileSync(join(state, "dispatches", "broken", "meta.json"), "{ not json");
+    const outcome = await executeDoctor(["orchestration", "--json"], {
+      HOME: state,
+      MEGABRAIN_STATE_DIR: state,
+    }, processFor({
+      "orca status --json": "{}",
+      "superset workspaces list --json": "{}",
+    }));
+    expect(outcome.kind).toBe("ok");
+    const text = outcome.kind === "ok" ? outcome.value : "";
+    const stderr = outcome.kind === "ok" ? (outcome.stderr ?? "") : "";
+    expect(`${text}${stderr}`).toContain("untracked");
+    expect(`${text}${stderr}`).not.toContain("broken");
+  });
+});
+
 describe("doctor live state", () => {
   test("reports uncertain dispatches as misconfigured", async () => {
     const state = mkdtempSync("/tmp/megabrain-doctor-dispatch-");
