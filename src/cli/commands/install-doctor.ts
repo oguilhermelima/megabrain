@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, type Dirent } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync, type Dirent } from "node:fs";
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
@@ -87,27 +87,54 @@ function fileText(path: string): string | undefined {
   }
 }
 
-function hookEntryPresent(agent: string, path: string): boolean {
+// A config entry can name the megabrain turn-end hook in two shapes: the deleted bash wrapper
+// (a checkout-relative "hooks/megabrain-turn-end.sh" path, left behind by an older install) or
+// the current direct invocation of the compiled binary ("<absolute path>/megabrain hook
+// turn-end", with an optional "MEGABRAIN_HOOK_AGENT=<agent> " prefix). "legacy" is still
+// recognised so doctor and install can find and migrate it, even though nothing installs it
+// anymore.
+const legacyHookCommandPattern = /(^|\/)megabrain-turn-end\.sh($|\s)/;
+const hookBinaryCommandPattern = /(^|\/)megabrain hook turn-end($|\s)/;
+
+function hookCommandKind(command: string): "new" | "legacy" | "none" {
+  if (hookBinaryCommandPattern.test(command)) return "new";
+  if (legacyHookCommandPattern.test(command)) return "legacy";
+  return "none";
+}
+
+function hookConfigCommands(agent: string, path: string): string[] {
   try {
     const value = JSON.parse(fileText(path) ?? "") as Record<string, unknown>;
-    const hooks = value.hooks;
+    const hooks = value.hooks as Record<string, unknown> | undefined;
+    const commands: string[] = [];
+    const collect = (entry: unknown): void => {
+      if (typeof entry === "object" && entry !== null) commands.push(String((entry as Record<string, unknown>).command ?? ""));
+    };
     if (agent === "cursor") {
-      const entries = (hooks as Record<string, unknown> | undefined)?.afterAgentResponse;
-      return Array.isArray(entries) && entries.some((entry) =>
-        typeof entry === "object" && entry !== null &&
-        /(^|\/)megabrain-turn-end\.sh($|\s)/.test(String((entry as Record<string, unknown>).command ?? "")));
+      const entries = hooks?.afterAgentResponse;
+      if (Array.isArray(entries)) entries.forEach(collect);
+    } else {
+      const groups = hooks?.Stop;
+      if (Array.isArray(groups)) for (const group of groups) {
+        if (typeof group !== "object" || group === null) continue;
+        const entries = (group as Record<string, unknown>).hooks;
+        if (Array.isArray(entries)) entries.forEach(collect);
+      }
     }
-    const groups = (hooks as Record<string, unknown> | undefined)?.Stop;
-    return Array.isArray(groups) && groups.some((group) => {
-      if (typeof group !== "object" || group === null) return false;
-      const entries = (group as Record<string, unknown>).hooks;
-      return Array.isArray(entries) && entries.some((entry) =>
-        typeof entry === "object" && entry !== null &&
-        /(^|\/)megabrain-turn-end\.sh($|\s)/.test(String((entry as Record<string, unknown>).command ?? "")));
-    });
+    return commands;
   } catch {
-    return false;
+    return [];
   }
+}
+
+// "present": a current, direct-binary entry is installed. "legacy": only the deleted wrapper
+// script's path is present, and the doctor must say so is actionable (run install to migrate).
+// "missing": neither form is present.
+function hookEntryStatus(agent: string, path: string): "present" | "legacy" | "missing" {
+  const kinds = hookConfigCommands(agent, path).map(hookCommandKind);
+  if (kinds.includes("new")) return "present";
+  if (kinds.includes("legacy")) return "legacy";
+  return "missing";
 }
 
 function hookConfig(environment: Environment, agent: string): string {
@@ -368,8 +395,12 @@ async function report(module: string, environment: Environment, process: Process
       }
       const config = name === "claude" ? `${environment.HOME ?? ""}/.claude/settings.json` : name === "codex" ? `${environment.HOME ?? ""}/.codex/hooks.json` : name === "agy" ? `${environment.HOME ?? ""}/.agy/hooks.json` : `${environment.HOME ?? ""}/.cursor/hooks.json`;
       if (!existsSync(config)) { details.push(`${name}: entry-missing (config absent)`); healthy = false; }
-      else if (hookEntryPresent(name, config)) details.push(`${name}: entry-present`);
-      else { details.push(`${name}: entry-missing`); healthy = false; }
+      else {
+        const entryStatus = hookEntryStatus(name, config);
+        if (entryStatus === "present") details.push(`${name}: entry-present`);
+        else if (entryStatus === "legacy") { details.push(`${name}: legacy entry; run megabrain install orchestration-hooks to migrate`); healthy = false; }
+        else { details.push(`${name}: entry-missing`); healthy = false; }
+      }
     }
     status = healthy ? "ok" : "misconfigured";
     reason = `${details.join("; ")}; Codex caveat: Codex shows a \"Hooks need review\" prompt on its next launch.`;
@@ -505,20 +536,28 @@ async function hookAgentAvailable(agent: HookAgent, processAdapter: ProcessAdapt
     : available(processAdapter, agent);
 }
 
+// WHY: same root resolution as skill.ts's skillSource — MEGABRAIN_ROOT when the bash wrapper (or
+// a test) set it, else the compiled binary's own real path, so this never depends on the
+// caller's working directory. The installed command must survive however the binary was
+// launched, so it names the binary's real path (realpathSync), not a symlink that might move or
+// vanish independently of the file it points at.
 function hookEntrypointCommand(environment: Environment, agent: HookAgent): string | undefined {
-  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
-  const script = resolve(root, "hooks/megabrain-turn-end.sh");
+  const root = environment.MEGABRAIN_ROOT ?? dirname(dirname(process.execPath));
+  const binary = resolve(root, ".build/megabrain");
   try {
-    if ((statSync(script).mode & 0o111) === 0) return undefined;
+    if ((statSync(binary).mode & 0o111) === 0) return undefined;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${realpathSync(binary)} hook turn-end`;
   } catch {
     return undefined;
   }
-  return `MEGABRAIN_HOOK_AGENT=${agent} ${script}`;
 }
 
+// Used by repair to find the entry to replace in place, whichever form it currently has: the
+// deleted bash wrapper's path (an older install, or one from a different checkout) or an
+// existing direct-binary command (possibly stale, e.g. pointing at a different checkout).
 function hookEntryMatches(entry: unknown): boolean {
   return typeof entry === "object" && entry !== null &&
-    /(^|\/)megabrain-turn-end\.sh($|\s)/.test(String((entry as Record<string, unknown>).command ?? ""));
+    hookCommandKind(String((entry as Record<string, unknown>).command ?? "")) !== "none";
 }
 
 function repairStopHooks(existing: Record<string, unknown>, command: string): Record<string, unknown> {
@@ -780,9 +819,10 @@ async function installOne(module: string, environment: Environment, processAdapt
   // WHY: the shell's megabrain_install_one always calls the module's install function first,
   // unconditionally, and only checks doctor status afterward — it never skips the install step
   // just because doctor already reports "ok" beforehand. A doctor "ok" can be satisfied by
-  // content that still needs repairing (e.g. orchestration-hooks: a stale, duplicated entry from
-  // a different checkout still matches hookEntryPresent's path-agnostic regex), so skipping here
-  // would silently skip the repair too. "unsupported" is the one status still checked first,
+  // content that still needs repairing (e.g. orchestration-hooks: a stale, duplicated entry
+  // pointing at a different checkout's binary still matches hookCommandKind's path-agnostic
+  // pattern and reads as "present"), so skipping here would silently skip the repair too.
+  // "unsupported" is the one status still checked first,
   // matching where the shell placed that specific refusal (module_simulator_native_install's own
   // doctor check, before touching npm) — every other module's doctor never reports it.
   const current = await report(module, environment, processAdapter);

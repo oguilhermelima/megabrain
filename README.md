@@ -558,7 +558,8 @@ for the agent CLIs it drives.
 - Superset leaves a closed pane visible as `Desconectado` until a human dismisses it, and a
   main-type workspace cannot be pruned from the CLI. tmux has neither limitation.
 - Installing the turn-end hook changes agent hook configuration and can require trusting the next
-  Codex launch once, interactively.
+  Codex launch once, interactively. The installed command invokes the compiled binary directly
+  (`hook turn-end`, by its absolute real path); there is no wrapper script.
 
 ## Troubleshooting
 

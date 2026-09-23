@@ -382,9 +382,10 @@ export async function executeChainRun(
   );
 }
 
-// Ports megabrain_chain_continue_refused, the shell function hooks/megabrain-turn-end.sh reaches
-// (through megabrain_chain_walk) to resume a chain at its next step after detecting a usage-limit
-// refusal in a dispatch's pane. Reads the same dispatch.chain.{name,step,total,usedDefault,prompt}
+// Ports megabrain_chain_continue_refused, the shell function the turn-end hook used to reach
+// (through megabrain_chain_walk, before the hook stopped sourcing lib/ and both functions were
+// deleted) to resume a chain at its next step after detecting a usage-limit refusal in a
+// dispatch's pane. Reads the same dispatch.chain.{name,step,total,usedDefault,prompt}
 // fields the shell reads (now actually populated — see writeDispatchChainContext above; the
 // shell's own megabrain_dispatch_meta_write, the only thing that ever wrote them, had lost its
 // last caller before this port even started, so this continuation was already unreachable

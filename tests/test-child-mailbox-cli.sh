@@ -54,9 +54,11 @@ scenario_check_content_honors_nonblocking_poll() {
 }
 
 # scenario_hook_uses_compiled_check (originally: proving the turn-end hook shells out to
-# `megabrain check`) is dropped per rule 2: hooks/megabrain-turn-end.sh no longer shells out to
-# any subcommand at all -- it is a one-line `exec "$MEGABRAIN_HOOK_BINARY" hook turn-end "$@"`
-# (commit 06376e6 and its ancestors), and hook-turn-end.ts resolves the queued reply internally.
+# `megabrain check`) is dropped per rule 2: the turn-end hook stopped shelling out to any
+# subcommand at all before it was even a wrapper script -- it was a one-line
+# `exec "$MEGABRAIN_HOOK_BINARY" hook turn-end "$@"` (commit 06376e6 and its ancestors), and now
+# there is no wrapper script left at all: agent hook configs invoke the compiled binary's
+# `hook turn-end` command directly, and hook-turn-end.ts resolves the queued reply internally.
 # The exact scenario this used to prove (a queued reply produces {"decision":"block","reason":
 # "megabrain reply available; run megabrain check and act on it"}) is covered by
 # tests/unit/hook-turn-end.test.ts:282, "blocks (reason: reply available) when the parent has

@@ -24,7 +24,7 @@ shell implementation remains.
 | `ask` (guard at line 2955) | `src/cli/commands/queue-write.ts` — `executeQueueWrite("ask", ...)` | yes | 13 (+ shared 35 once in the queue lane) | `megabrain_dispatch_find_child` is also used by child `check`/`ack`; message append, metadata reads/updates, and prompt-receipt synchronization are used by spawn and queue lifecycle. The shared `megabrain_dispatch_child_message` body is counted once with this three-verb lane. |
 | `received` (guard at line 2969) | `src/cli/commands/queue-write.ts` — `executeQueueWrite("received", ...)` | yes | 12 (+ shared 35 once in the queue lane) | Same shared closure as `ask`; in particular, do not delete `megabrain_dispatch_meta_update_*` or `megabrain_dispatch_sync_prompt_receipt`, which spawn reaches directly. |
 | `done` (guard at line 2982) | `src/cli/commands/queue-write.ts` — `executeQueueWrite("done", ...)` | yes | 12 (+ shared 35 once in the queue lane) | Same shared closure as `ask`; the shared shell body is also the only shell implementation behind these three wrappers, so remove it only after all three wrappers are retired together. |
-| `check` (guard at line 2995) | `src/cli/commands/check.ts` — `executeCheck` | yes | 8 | `megabrain_dispatch_child_check` and `megabrain_dispatch_mailbox_watch` must stay: `hooks/megabrain-turn-end.sh:94` calls the child function directly, outside the CLI guard. Delivery matching, claiming, fencing, and reporting therefore remain shell lifecycle code. |
+| `check` (guard at line 2995) | `src/cli/commands/check.ts` — `executeCheck` | yes | 8 | This row's original claim — that `megabrain_dispatch_child_check` and `megabrain_dispatch_mailbox_watch` must stay because `hooks/megabrain-turn-end.sh:94` called the child function directly, outside the CLI guard — is stale on two counts: the turn-end hook stopped sourcing lib/ before that wrapper script was itself deleted, and `src/cli/commands/hook-turn-end.ts` now calls the compiled `executeCheck` directly (see its own comments), not this shell function. Whether either shell helper still has a production caller elsewhere is unverified here and is a question for whoever ports `check`'s remaining shell lifecycle code, not this hooks migration. |
 
 The liveness row is complete for the managed-parent contract exercised by the command. The shell
 also permits an unmanaged caller to read a dispatch without ownership validation, whereas
@@ -92,8 +92,10 @@ Only the `yes` rows are candidates. The following order keeps shared helper deci
    `megabrain_dispatch_child_message` directly as a fixture; they were migrated to drive the
    compiled CLI instead. The claim below that it had no caller outside the three wrappers was about
    *production* callers and was true as written, which did not help the person deleting it.
-4. Remove only the `command_check` dispatch body. Leave `megabrain_dispatch_child_check` and
-   `megabrain_dispatch_mailbox_watch` because the turn-end hook calls them directly.
+4. Remove only the `command_check` dispatch body. The claim that the turn-end hook calls
+   `megabrain_dispatch_child_check` and `megabrain_dispatch_mailbox_watch` directly is stale (see
+   the `check` row above): the hook is a compiled binary now, with no shell script left at all.
+   Re-verify whether either helper still has a caller before removing it.
 5. Remove `orchestrate reply` and the liveness wrapper body. Retain reply/queue helpers and
    `megabrain_dispatch_liveness_read`, which remains a shared shell liveness reader.
 6. Remove the `orchestrate reconcile`, `orchestrate read`, and `orchestrate stop` bodies together
@@ -125,8 +127,9 @@ The following are absence claims from token search, not proof by execution:
 
 All other edges cited above were established by reading the case branches and function bodies,
 including variable-selected owner branches, the `source module-chain.sh` edge in spawn, the
-nested `megabrain_worktree_removal_reason` definition, and the direct hook call in
-`hooks/megabrain-turn-end.sh`.
+nested `megabrain_worktree_removal_reason` definition, and the direct hook call that
+`hooks/megabrain-turn-end.sh` made before it stopped sourcing lib/ and was later deleted
+entirely; that edge no longer exists (see the `check` row above).
 
 ## Unknowns
 

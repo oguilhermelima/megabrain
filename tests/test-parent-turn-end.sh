@@ -3,6 +3,13 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+binary="$root/.build/megabrain"
+
+if [ ! -x "$binary" ]; then
+  printf 'skip: compiled hook binary is missing at %s; run bun run build\n' "$binary"
+  exit 0
+fi
+
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-turn-end.XXXXXX")"
 bin_dir="$state_dir/bin"
 send_log="$state_dir/send.log"
@@ -48,8 +55,9 @@ unset ORCA_TERMINAL_HANDLE TMUX TMUX_PANE
 # megabrain_dispatch_meta_write and megabrain_dispatch_message_append (lib/module-orchestrate.sh)
 # are gone: this hook's turn-end logic now lives entirely in the compiled binary
 # (src/cli/commands/hook-turn-end.ts), and the shell versions of those two functions lost their
-# last production caller. This test still drives hooks/megabrain-turn-end.sh as a black box
-# (run_hook below); it just builds its dispatch fixtures directly with jq instead of through the
+# last production caller. This test still drives the compiled binary's `hook turn-end` command as
+# a black box (run_hook below, replacing the now-deleted hooks/megabrain-turn-end.sh wrapper it
+# used to call); it just builds its dispatch fixtures directly with jq instead of through the
 # deleted shell functions, matching the exact JSON shape megabrain_dispatch_meta_write used to
 # produce (recorded from HEAD before its deletion) and the exact message shape
 # megabrain_dispatch_message_append used to write.
@@ -102,7 +110,7 @@ append_message() {
 }
 
 run_hook() {
-  "$root/hooks/megabrain-turn-end.sh" '{}' >/dev/null
+  "$binary" hook turn-end '{}' >/dev/null
 }
 
 send_count() {

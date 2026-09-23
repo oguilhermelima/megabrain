@@ -77,6 +77,9 @@ for agent in claude codex agy cursor; do
   mkdir -p "$integration_home/.$agent"
   config="$integration_home/.$agent/hooks.json"
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
+  # A legacy entry pointing at the deleted wrapper script in a different (fake, never-created)
+  # checkout — proving install finds and migrates it in place, not just a fresh, unconfigured
+  # agent.
   case "$agent" in
     cursor)
       jq -n --arg command "MEGABRAIN_HOOK_AGENT=$agent $fixture_root/hooks/megabrain-turn-end.sh" \
@@ -99,12 +102,14 @@ for agent in claude codex agy cursor; do
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
   assert_file "$config"
   assert_backup_matches "$config" "$work/${agent}-hooks.json"
-  count="$(jq '[.. | objects | .command? // empty | select(test("megabrain-turn-end[.]sh"))] | length' "$config")"
+  legacy_count="$(jq '[.. | objects | .command? // empty | select(test("megabrain-turn-end[.]sh"))] | length' "$config")"
+  assert_equal "$legacy_count" 0
+  count="$(jq '[.. | objects | .command? // empty | select(test(" hook turn-end$"))] | length' "$config")"
   assert_equal "$count" 1
-  assert_equal "$(jq -r '.. | objects | .command? // empty | select(test("megabrain-turn-end[.]sh"))' "$config")" \
-    "MEGABRAIN_HOOK_AGENT=$agent $root/hooks/megabrain-turn-end.sh"
+  assert_equal "$(jq -r '.. | objects | .command? // empty | select(test(" hook turn-end$"))' "$config")" \
+    "MEGABRAIN_HOOK_AGENT=$agent $root/.build/megabrain hook turn-end"
 done
-printf 'agent hooks: all four updated with backups and one current entry each\n'
+printf 'agent hooks: all four migrated in place from the legacy wrapper, with backups and one current entry each\n'
 
 PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
   "$root/megabrain" install orchestration-hooks --revert >/dev/null
@@ -124,10 +129,10 @@ PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integratio
 for agent in claude codex agy cursor; do
   config="$integration_home/.$agent/hooks.json"
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
-  moved_entry="$(jq -r '.. | objects | .command? // empty | select(test("megabrain-turn-end[.]sh"))' "$config")"
-  assert_equal "$moved_entry" "MEGABRAIN_HOOK_AGENT=$agent $moved_root/hooks/megabrain-turn-end.sh"
-  assert_file "$moved_root/hooks/megabrain-turn-end.sh"
-  [ -x "$moved_root/hooks/megabrain-turn-end.sh" ] || fail 'moved hook is not executable'
+  moved_entry="$(jq -r '.. | objects | .command? // empty | select(test(" hook turn-end$"))' "$config")"
+  assert_equal "$moved_entry" "MEGABRAIN_HOOK_AGENT=$agent $moved_root/.build/megabrain hook turn-end"
+  assert_file "$moved_root/.build/megabrain"
+  [ -x "$moved_root/.build/megabrain" ] || fail 'moved binary is not executable'
 done
 printf 'agent hooks: repair resolved the moved checkout dynamically\n'
 

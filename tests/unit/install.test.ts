@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -83,11 +83,13 @@ describe("executeInstall", () => {
     expect(result.value).toBe('orchestration: ok (usable runtimes: orca; other runtimes are optional; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: 0; leaked dispatch sessions: 0; prunable dispatches: 0)\n');
   });
 
-  test("install repairs and backs up an orchestration-hooks config even when the doctor already reports it ok", async () => {
-    // A stale entry from a different checkout still matches hookEntryPresent's path-agnostic
-    // regex, so the doctor reports "ok" before install ever runs — exactly the state
-    // test-integration-surfaces.sh's fixture reaches (every agent pre-seeded with a
-    // regex-matching but stale, duplicated entry). Install must still repair and back it up.
+  test("install repairs, backs up, and migrates a legacy megabrain-turn-end.sh entry from another checkout", async () => {
+    // A legacy .sh entry from a different checkout still matches the doctor's detection
+    // regex, so it is reported (as a legacy entry needing migration, not "entry-present")
+    // before install ever runs — exactly the state test-integration-surfaces.sh's fixture
+    // reaches (every agent pre-seeded with a regex-matching but stale, duplicated entry).
+    // Install must still repair, back it up, and replace it in place with the direct binary
+    // command — the wrapper script this pointed at no longer exists.
     const home = tmpHome("hooks-already-ok");
     mkdirSync(join(home, ".claude"), { recursive: true });
     const staleCommand = "MEGABRAIN_HOOK_AGENT=claude /some/other/checkout/hooks/megabrain-turn-end.sh";
@@ -102,9 +104,10 @@ describe("executeInstall", () => {
     const backups = readdirSync(join(home, ".claude")).filter((name) => name.startsWith("settings.json.megabrain-backup-"));
     expect(backups.length).toBeGreaterThan(0);
     const written = JSON.parse(readFileSync(configPath, "utf8")) as { hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> } };
-    const matches = written.hooks.Stop[0].hooks.filter((entry) => /megabrain-turn-end\.sh/.test(entry.command));
-    expect(matches).toHaveLength(1);
-    expect(matches[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/hooks/megabrain-turn-end.sh`);
+    expect(written.hooks.Stop[0].hooks.map((entry) => entry.command)).toEqual([
+      "keep",
+      `MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/.build/megabrain hook turn-end`,
+    ]);
   });
 
   test("orchestration and worktree install as a pure doctor alias and fail when nothing is usable", async () => {
@@ -231,8 +234,25 @@ describe("executeInstall", () => {
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     const written = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
     const hooks = written.hooks as { Stop: Array<{ hooks: Array<{ command: string }> }> };
-    expect(hooks.Stop[0].hooks[0].command).toContain("megabrain-turn-end.sh");
-    expect(hooks.Stop[0].hooks[0].command).toContain("MEGABRAIN_HOOK_AGENT=claude");
+    expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/.build/megabrain hook turn-end`);
+  });
+
+  // The installed entry must survive however the binary was launched: a symlinked MEGABRAIN_ROOT
+  // still resolves to the binary's real, canonical path, not the symlink it was reached through.
+  test("orchestration-hooks writes the binary's real path, not the symlink MEGABRAIN_ROOT was reached through", async () => {
+    const home = tmpHome("hooks-realpath");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const aliasRoot = tmpHome("hooks-realpath-alias");
+    mkdirSync(join(aliasRoot, ".build"), { recursive: true });
+    symlinkSync(join(repoRoot, ".build", "megabrain"), join(aliasRoot, ".build", "megabrain"));
+    const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: aliasRoot };
+    const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
+    const written = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
+    const hooks = written.hooks as { Stop: Array<{ hooks: Array<{ command: string }> }> };
+    expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/.build/megabrain hook turn-end`);
   });
 
   test("orchestration-hooks install backs up an existing config, and --revert restores it", async () => {
