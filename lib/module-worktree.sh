@@ -481,26 +481,3 @@ command_terminal() {
     *) megabrain_error "unknown terminal command: $subcommand"; return "$MEGABRAIN_USAGE_ERROR" ;;
   esac
 }
-
-module_worktree_doctor() {
-  if ! megabrain_superset_available; then
-    megabrain_set_status missing "superset CLI is not on PATH and $HOME/.superset/bin/superset is unavailable"
-    return 1
-  fi
-  if ! megabrain_require_command orca; then
-    megabrain_set_status missing "orca CLI is not on PATH"
-    return 1
-  fi
-  local root
-  root="$(megabrain_worktree_root --read-only 2>/dev/null || true)"
-  if [ -z "$root" ]; then
-    megabrain_set_status misconfigured "Superset worktreeBaseDir is unset or unreadable"
-    return 1
-  fi
-  megabrain_set_status ok "$root"
-  return 0
-}
-
-module_worktree_install() {
-  module_worktree_doctor
-}
