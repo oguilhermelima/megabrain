@@ -1202,29 +1202,16 @@ megabrain_tmux_wrapper() {
   fi
 }
 
+# WHY: the wrapper remains a useful installed entrypoint even before its compiled payload is built.
 command_tmux() {
-  local subcommand="${1:-}" typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
-  shift || true
-  case "$subcommand" in
-    tune)
-      if megabrain_should_use_typescript_binary "${MEGABRAIN_TMUX_TUNE_IMPLEMENTATION:-}"; then
-        "$typescript_binary" tmux tune "$@"
-        return $?
-      fi
-      megabrain_tmux_tune "$@"
-      ;;
-    wrapper)
-      if megabrain_should_use_typescript_binary "${MEGABRAIN_TMUX_WRAPPER_IMPLEMENTATION:-}"; then
-        "$typescript_binary" tmux wrapper "$@"
-        return $?
-      fi
-      megabrain_tmux_wrapper "$@"
-      ;;
-    -h|--help|"")
-      megabrain_usage_show tmux-tune tmux-wrapper
-      ;;
-    *) megabrain_error "unknown tmux command: $subcommand"; return "$MEGABRAIN_USAGE_ERROR" ;;
-  esac
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
+    return 1
+  }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
+  "$typescript_binary" tmux "$@"
 }
 
 module_tmux_runtime_doctor() {
