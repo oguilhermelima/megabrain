@@ -95,7 +95,8 @@ export async function terminalStatus(meta: RecordValue, process: ProcessAdapter)
 
 async function parentRecords(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: ParentStatus; readonly records?: unknown }> {
   const host = stringValue(meta.parentHost);
-  const parent = stringValue(meta.parentSessionId);
+  const terminalId = stringValue(meta.parentTerminalId);
+  const parent = terminalId !== "" ? terminalId : stringValue(meta.parentSessionId);
   const provider = getHost(host);
   if (provider === undefined) return { status: "unknown" };
   if (host === "orca") {
