@@ -4,6 +4,11 @@ export const dispatchStates = ["spawning", "running", "waiting_for_reply", "done
 export const processStates = ["starting", "start-unproven", "running", "succeeded", "failed", "stopping", "stopped", "stop-unproven", "abandoned", "exited"] as const;
 export const terminalStates = ["owned", "retained", "missing", "released"] as const;
 
+// The dispatch states a coordinator still expects progress from. Mirrors the shell
+// MEGABRAIN_DISPATCH_OPEN_STATES constant (lib/common.sh): used to decide which dispatches the
+// turn-end hook's parent-notify scan should look at at all.
+export const openDispatchStates = ["spawning", "running", "waiting_for_reply"] as const;
+
 export type DispatchAxis = "dispatch" | "process" | "terminal";
 export type DispatchStateValue = typeof dispatchStates[number];
 export type ProcessStateValue = typeof processStates[number];

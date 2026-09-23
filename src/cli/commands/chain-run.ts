@@ -1,6 +1,6 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { selectChain, type ChainConfig } from "../../core/chain.js";
+import { selectChain, type ChainConfig, type ChainStep } from "../../core/chain.js";
 import { markUsageNoticeSent, readLimit, resetDisplay, usageNoticeDue, usageNoticeReport, type LimitAgent, type LimitReading, type LimitWindowName } from "../../core/chain-limits.js";
 import { resolveParentContext } from "../../core/context.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -10,11 +10,10 @@ import { executeSpawn } from "./orchestrate-spawn.js";
 import { appendMessage, atomicJson, readJson } from "./queue-write.js";
 
 // Ports lib/module-chain.sh's command_chain_run, megabrain_chain_walk, and
-// megabrain_chain_run_spawn for the `chain run` CLI command. The shell versions of
-// these three functions stay in the tree: hooks/megabrain-turn-end.sh reaches
-// megabrain_chain_walk through megabrain_chain_continue_refused to resume a chain
-// after a usage-limit refusal, so this is a second, TypeScript-side implementation
-// of the same contract for the CLI entry point, not a replacement of the shell one.
+// megabrain_chain_run_spawn for the `chain run` CLI command, and (via continueRefusedChain
+// below) megabrain_chain_continue_refused for the turn-end hook's post-refusal chain
+// continuation. Both the CLI command and the hook now go through this file's walkChainSteps;
+// the shell versions of these functions have no remaining production caller.
 
 export type ChainRunEnvironment = ChainEnvironment;
 
@@ -192,57 +191,39 @@ function reportOutput(body: ReportBody, json: boolean, spawnOutput: string | und
   return `chain ${body.chain} failed after ${body.totalSteps} steps, reason: ${body.reason}\n`;
 }
 
-export async function executeChainRun(
-  args: readonly string[],
+// The selected step list plus everything walkChainSteps needs to report which chain it ran:
+// produced once by chain selection (an explicit/selector match, or defaultSteps) for a normal
+// run, and reconstructed from a dispatch's own persisted chain.* fields for a limit-refusal
+// continuation (see continueRefusedChain below) — mirrors MEGABRAIN_CHAIN_SELECTED_STEPS /
+// MEGABRAIN_CHAIN_SELECTED_NAME / MEGABRAIN_CHAIN_SELECTION_DEFAULT / MEGABRAIN_CHAIN_SELECTION_REASON.
+type ChainStepSelection = Readonly<{
+  readonly steps: readonly ChainStep[];
+  readonly reportChain: string;
+  readonly usedDefault: boolean;
+  readonly selectionReason: string;
+}>;
+
+type ChainWalkOptions = Readonly<{
+  worktree: string | undefined; repo: string | undefined; branch: string | undefined; base: string | undefined; slug: string | undefined;
+  prompt: string; label: string | undefined; tmuxChoice: string | undefined; browser: boolean; agentArgs: readonly string[]; json: boolean;
+}>;
+
+// Ports megabrain_chain_walk's loop body: shared by a fresh `chain run` (startIndex 0) and by
+// continueRefusedChain (startIndex = the step that was refused, so the loop resumes one past it —
+// megabrain_chain_walk's own `[ "$index" -gt "$start_index" ] || continue`). A start index at or
+// past the last step, or a caller-supplied empty step list, produces the same "chain has no usable
+// steps" failure megabrain_chain_walk returns for step_count -eq 0.
+async function walkChainSteps(
+  selection: ChainStepSelection,
+  startIndex: number,
+  options: ChainWalkOptions,
   environment: ChainRunEnvironment,
   processAdapter: ProcessAdapter,
-  dependencies: ChainRunDependencies = {},
+  root: string,
+  config: ChainConfig,
+  spawn: NonNullable<ChainRunDependencies["spawn"]>,
 ): Promise<Result<string>> {
-  const parsed = parseArgs(args);
-  if (parsed.kind !== "ok") return parsed;
-  if (parsed.value.help) return ok(usage());
-  const options = parsed.value;
-  if (options.prompt === undefined || options.prompt === "") return failed("--prompt is required for chain run", 2);
-  if (options.worktree === undefined || options.worktree === "") {
-    if (options.repo === undefined || options.repo === "") return failed("--repo is required for chain run unless --worktree is used", 2);
-    if (options.branch === undefined || options.branch === "") return failed("--branch is required for chain run unless --worktree is used", 2);
-  }
-
-  const parentEnvironment = {
-    supersetAgentId: environment.SUPERSET_AGENT_ID,
-    supersetModel: environment.SUPERSET_AGENT_MODEL,
-    supersetEffort: environment.SUPERSET_AGENT_EFFORT,
-    aiAgent: environment.AI_AGENT,
-    aiModel: environment.AI_MODEL,
-    aiEffort: environment.AI_EFFORT,
-    codexSessionId: environment.CODEX_SESSION_ID,
-  };
-  const resolvedParent = resolveParentContext(parentEnvironment);
-  const parentAgent = options.parentAgent ?? (resolvedParent.kind === "resolved" ? resolvedParent.agent : "");
-  const parentModel = options.parentModel ?? resolvedParent.model ?? "";
-  const parentEffort = options.parentEffort ?? resolvedParent.effort ?? "";
-
-  const read = readConfig(environment);
-  if (read.kind !== "ok") return read;
-  const validated = validateConfig(read.value, environment);
-  if (validated.kind !== "ok") return validated;
-  const config = validated.value;
-
-  const selectionName = options.chainOption ?? options.explicitName;
-  const selection = selectChain(config, selectionName, {
-    agent: parentAgent === "" ? undefined : parentAgent,
-    model: parentModel === "" ? undefined : parentModel,
-    effort: parentEffort === "" ? undefined : parentEffort,
-  }, options.selectionSource);
-  if (selection.kind === "not-found") return failed(`chain not found: ${selection.name}; list chains with megabrain chain list`, 1);
-  if (selection.kind === "ambiguous") return failed(`chain selection is ambiguous: candidates: ${selection.candidates.join(", ")}`, 1);
-  const usedDefault = selection.kind === "default";
-  const reportChain = usedDefault ? "defaultSteps" : selection.name;
-  const steps = selection.steps;
-  const selectionReason = selection.reason;
-
-  const root = resolveStateDirectory(environment);
-  const spawn = dependencies.spawn ?? executeSpawn;
+  const { steps, reportChain, usedDefault, selectionReason } = selection;
   const stderrLines: string[] = [];
   const skipped: SkippedEntry[] = [];
 
@@ -254,8 +235,9 @@ export async function executeChainRun(
   }
 
   for (let index = 0; index < steps.length; index += 1) {
-    const step = steps[index];
     const stepNumber = index + 1;
+    if (stepNumber <= startIndex) continue;
+    const step = steps[index];
     const agent = stringField(step, "agent") ?? "";
     const model = stringField(step, "model") ?? "";
     const effort = stringField(step, "effort");
@@ -315,4 +297,139 @@ export async function executeChainRun(
   const reason = skipped.length > 0 ? skipped.map((entry) => entry.reason).join("; ") : "chain has no usable steps; add a chain with megabrain chain add";
   const body: ReportBody = { ok: false, chain: reportChain, totalSteps: steps.length, reason, skipped };
   return okWithStderr(reportOutput(body, options.json, undefined), 1, stderrLines.join("") || undefined);
+}
+
+export async function executeChainRun(
+  args: readonly string[],
+  environment: ChainRunEnvironment,
+  processAdapter: ProcessAdapter,
+  dependencies: ChainRunDependencies = {},
+): Promise<Result<string>> {
+  const parsed = parseArgs(args);
+  if (parsed.kind !== "ok") return parsed;
+  if (parsed.value.help) return ok(usage());
+  const options = parsed.value;
+  if (options.prompt === undefined || options.prompt === "") return failed("--prompt is required for chain run", 2);
+  if (options.worktree === undefined || options.worktree === "") {
+    if (options.repo === undefined || options.repo === "") return failed("--repo is required for chain run unless --worktree is used", 2);
+    if (options.branch === undefined || options.branch === "") return failed("--branch is required for chain run unless --worktree is used", 2);
+  }
+
+  const parentEnvironment = {
+    supersetAgentId: environment.SUPERSET_AGENT_ID,
+    supersetModel: environment.SUPERSET_AGENT_MODEL,
+    supersetEffort: environment.SUPERSET_AGENT_EFFORT,
+    aiAgent: environment.AI_AGENT,
+    aiModel: environment.AI_MODEL,
+    aiEffort: environment.AI_EFFORT,
+    codexSessionId: environment.CODEX_SESSION_ID,
+  };
+  const resolvedParent = resolveParentContext(parentEnvironment);
+  const parentAgent = options.parentAgent ?? (resolvedParent.kind === "resolved" ? resolvedParent.agent : "");
+  const parentModel = options.parentModel ?? resolvedParent.model ?? "";
+  const parentEffort = options.parentEffort ?? resolvedParent.effort ?? "";
+
+  const read = readConfig(environment);
+  if (read.kind !== "ok") return read;
+  const validated = validateConfig(read.value, environment);
+  if (validated.kind !== "ok") return validated;
+  const config = validated.value;
+
+  const selectionName = options.chainOption ?? options.explicitName;
+  const selection = selectChain(config, selectionName, {
+    agent: parentAgent === "" ? undefined : parentAgent,
+    model: parentModel === "" ? undefined : parentModel,
+    effort: parentEffort === "" ? undefined : parentEffort,
+  }, options.selectionSource);
+  if (selection.kind === "not-found") return failed(`chain not found: ${selection.name}; list chains with megabrain chain list`, 1);
+  if (selection.kind === "ambiguous") return failed(`chain selection is ambiguous: candidates: ${selection.candidates.join(", ")}`, 1);
+  const usedDefault = selection.kind === "default";
+  const reportChain = usedDefault ? "defaultSteps" : selection.name;
+
+  const root = resolveStateDirectory(environment);
+  const spawn = dependencies.spawn ?? executeSpawn;
+
+  const walkOptions: ChainWalkOptions = {
+    worktree: options.worktree, repo: options.repo, branch: options.branch, base: options.base, slug: options.slug,
+    prompt: options.prompt, label: options.label, tmuxChoice: options.tmuxChoice,
+    browser: options.browser, agentArgs: options.agentArgs, json: options.json,
+  };
+  return walkChainSteps(
+    { steps: selection.steps, reportChain, usedDefault, selectionReason: selection.reason },
+    0,
+    walkOptions,
+    environment,
+    processAdapter,
+    root,
+    config,
+    spawn,
+  );
+}
+
+// Ports megabrain_chain_continue_refused, the shell function hooks/megabrain-turn-end.sh reaches
+// (through megabrain_chain_walk) to resume a chain at its next step after detecting a usage-limit
+// refusal in a dispatch's pane. Reads the same dispatch.chain.{name,step,total,usedDefault,prompt}
+// fields the shell reads, re-selects the same step list (defaultSteps or a named chain, never via
+// selectChain's own when-matching — the step was already chosen once, at the original chain run),
+// and resumes the shared walkChainSteps loop one step past the refused one.
+//
+// WHY meta.runtime is passed through as the literal string "tmux"/"host" rather than "true"/"false":
+// this mirrors megabrain_chain_continue_refused exactly (`runtime=tmux; ...; megabrain_chain_walk ...
+// "$runtime" ...` feeds that literal into chain_run_spawn's tmux_choice, which becomes `--tmux
+// tmux|host`). executeSpawn's --tmux parser only accepts true/false, so today this value makes the
+// resumed step's spawn fail immediately, recorded as a launch failure like any other. That is a
+// preexisting shell defect, not something this port introduces or corrects — see the lane report.
+export async function continueRefusedChain(
+  dispatchId: string,
+  environment: ChainRunEnvironment,
+  processAdapter: ProcessAdapter,
+  dependencies: ChainRunDependencies = {},
+): Promise<Result<string>> {
+  const root = resolveStateDirectory(environment);
+  const meta = await readJson(await dispatchPath(root, dispatchId, "meta.json"));
+  if (meta === undefined) return failed(`dispatch not found: ${dispatchId}`);
+  if (meta.reconcileOutcome !== "limit-refused") return failed(`dispatch ${dispatchId} was not marked limit-refused`);
+
+  const chain = typeof meta.chain === "object" && meta.chain !== null ? meta.chain as Record<string, unknown> : {};
+  const chainName = typeof chain.name === "string" ? chain.name : "";
+  const chainStep = chain.step;
+  const chainTotal = chain.total;
+  const chainUsedDefault = chain.usedDefault === true;
+  const prompt = typeof chain.prompt === "string" ? chain.prompt : "";
+  const worktree = typeof meta.worktreePath === "string" ? meta.worktreePath : "";
+  const label = typeof meta.label === "string" ? meta.label : undefined;
+  const runtime = typeof meta.runtime === "string" ? meta.runtime : "host";
+
+  if (typeof chainStep !== "number" || !Number.isInteger(chainStep) || chainStep <= 0) return failed(`dispatch ${dispatchId} has no usable chain step`);
+  if (typeof chainTotal !== "number" || !Number.isInteger(chainTotal) || chainTotal <= 0) return failed(`dispatch ${dispatchId} has no usable chain total`);
+  if (prompt === "" || worktree === "") return failed(`dispatch ${dispatchId} is missing a chain prompt or worktree`);
+  if (chainStep >= chainTotal) return failed(`dispatch ${dispatchId} has no further chain steps`);
+
+  const read = readConfig(environment);
+  if (read.kind !== "ok") return read;
+  const validated = validateConfig(read.value, environment);
+  if (validated.kind !== "ok") return validated;
+  const config = validated.value;
+
+  const usesDefault = chainUsedDefault || chainName === "defaultSteps";
+  const reportChain = usesDefault ? "defaultSteps" : chainName;
+  const steps = usesDefault ? config.defaultSteps : config.chains[chainName]?.steps;
+  if (steps === undefined) return failed(`chain not found for dispatch ${dispatchId}: ${chainName}`);
+
+  const spawn = dependencies.spawn ?? executeSpawn;
+  const options: ChainWalkOptions = {
+    worktree, repo: undefined, branch: undefined, base: undefined, slug: undefined,
+    prompt, label, tmuxChoice: runtime === "tmux" ? "tmux" : "host",
+    browser: false, agentArgs: [], json: false,
+  };
+  return walkChainSteps(
+    { steps, reportChain, usedDefault: usesDefault, selectionReason: `continued after limit refusal at step ${chainStep}` },
+    chainStep,
+    options,
+    environment,
+    processAdapter,
+    root,
+    config,
+    spawn,
+  );
 }

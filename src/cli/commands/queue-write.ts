@@ -114,7 +114,11 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
   return undefined;
 }
 
-async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
+// Exported for the turn-end hook (src/cli/commands/hook-turn-end.js), which asks the identical
+// "is the current terminal itself a managed dispatch's child" question megabrain_dispatch_find_child
+// answered in the shell — same MEGABRAIN_DISPATCH_ID fast path, same terminal/tmux matching, same
+// ambiguity and not-found errors.
+export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
   const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const direct = environment.MEGABRAIN_DISPATCH_ID;
@@ -155,7 +159,9 @@ async function readParentTmuxChannel(meta: JsonRecord, processAdapter: ProcessAd
   return { session, pane };
 }
 
-async function parentContextMatches(root: string, meta: JsonRecord, processAdapter: ProcessAdapter): Promise<boolean> {
+// Exported for the turn-end hook, which runs the same state-directory/tmux-context check
+// (megabrain_parent_notify_context_matches) before nudging a parent it found by scanning dispatches.
+export async function parentContextMatches(root: string, meta: JsonRecord, processAdapter: ProcessAdapter): Promise<boolean> {
   const channel = await readParentTmuxChannel(meta, processAdapter);
   if (channel === undefined) return true;
   const context = await getTmux().showEnvironment(channel.session, "MEGABRAIN_STATE_DIR", processAdapter);
@@ -169,7 +175,9 @@ async function parentContextMatches(root: string, meta: JsonRecord, processAdapt
   return true;
 }
 
-async function waiterIsActive(root: string, dispatch: string): Promise<boolean> {
+// Exported for the turn-end hook, which suppresses its own parent nudges the same way
+// (megabrain_parent_notify_waiter_active) when a live `megabrain orchestrate watch` is already polling.
+export async function waiterIsActive(root: string, dispatch: string): Promise<boolean> {
   const path = await dispatchPath(root, dispatch, "waiter.json");
   const waiter = await readJson(path);
   const pid = typeof waiter?.pid === "number" ? waiter.pid : typeof waiter?.pid === "string" ? Number(waiter.pid) : NaN;
@@ -189,14 +197,14 @@ async function appendNotificationOutcome(root: string, dispatch: string, pointer
   finally { await rm(lock, { recursive: true, force: true }); }
 }
 
-async function notifyParent(root: string, meta: JsonRecord, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
-  const pointer = `mail: megabrain orchestrate watch ${dispatch}`;
-  if (!(await parentContextMatches(root, meta, processAdapter))) {
-    return { outcome: "suppressed", reason: "state-directory-mismatch" };
-  }
-  if (await waiterIsActive(root, dispatch)) {
-    return { outcome: "suppressed", reason: "active-waiter" };
-  }
+// The channel-resolution-and-send tail of megabrain_parent_notify: given a pointer line, find the
+// parent's tmux pane or host terminal and deliver it there. No suppression checks here — those
+// (context match, active waiter) are the caller's concern, since megabrain_parent_notify itself
+// carried none either; megabrain_parent_notify_dispatch layered them on for the actionable-mail
+// path, and the turn-end hook's own parent-notify scan layers them on again for its own dispatches.
+// Exported so the hook can reuse this exact delivery mechanism for its own pointer text (a batched
+// "N dispatches finished" line) instead of the fixed "mail: megabrain orchestrate watch" one below.
+export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
   const channel = await readParentTmuxChannel(meta, processAdapter);
   const host = channel === undefined && typeof meta.parentHost === "string" ? meta.parentHost : channel === undefined ? "" : "tmux";
   let result;
@@ -220,6 +228,17 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, en
     result = await processAdapter.run(call.value.command, call.value.args);
   }
   return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
+}
+
+async function notifyParent(root: string, meta: JsonRecord, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
+  const pointer = `mail: megabrain orchestrate watch ${dispatch}`;
+  if (!(await parentContextMatches(root, meta, processAdapter))) {
+    return { outcome: "suppressed", reason: "state-directory-mismatch" };
+  }
+  if (await waiterIsActive(root, dispatch)) {
+    return { outcome: "suppressed", reason: "active-waiter" };
+  }
+  return sendParentPointer(root, meta, pointer, environment, processAdapter);
 }
 
 export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}): Promise<NotificationResult> {
