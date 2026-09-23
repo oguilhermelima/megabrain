@@ -793,83 +793,6 @@ MEGABRAIN_CHAIN_SELECTED_STEPS="[]"
 MEGABRAIN_CHAIN_SELECTION_REASON=""
 MEGABRAIN_CHAIN_SELECTION_DEFAULT=false
 
-megabrain_chain_select() {
-  local config="$1" explicit_name="${2:-}" parent_agent="${3:-}" parent_model="${4:-}" parent_effort="${5:-}" explicit_source="${6:-name}"
-  local chain required actual matched specificity best_specificity=-1 candidates='' count=0 selection_filter selected_steps best_steps='' selector_fields=0
-  MEGABRAIN_CHAIN_SELECTED_NAME=""
-  MEGABRAIN_CHAIN_SELECTED_STEPS='[]'
-  MEGABRAIN_CHAIN_SELECTION_REASON=""
-  MEGABRAIN_CHAIN_SELECTION_DEFAULT=false
-  selection_filter="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/chain-selection.jq"
-  if [ -n "$explicit_name" ]; then
-    if ! selected_steps="$(printf '%s' "$config" | jq -c --arg name "$explicit_name" 'if (.chains | has($name)) then .chains[$name].steps else empty end')"; then
-      megabrain_error "chain not found: $explicit_name; list chains with megabrain chain list"
-      return 1
-    fi
-    [ -n "$selected_steps" ] || {
-      megabrain_error "chain not found: $explicit_name; list chains with megabrain chain list"
-      return 1
-    }
-    MEGABRAIN_CHAIN_SELECTED_NAME="$explicit_name"
-    MEGABRAIN_CHAIN_SELECTED_STEPS="$selected_steps"
-    if [ "$explicit_source" = flag ]; then
-      MEGABRAIN_CHAIN_SELECTION_REASON="explicit --chain requested"
-    else
-      MEGABRAIN_CHAIN_SELECTION_REASON="explicit name given"
-    fi
-    return 0
-  fi
-  while IFS=$'\t' read -r chain required_agent required_model required_effort selected_steps; do
-    matched=true
-    specificity=0
-    for field in parentAgent parentModel parentEffort; do
-      case "$field" in
-        parentAgent) required="$required_agent" ;;
-        parentModel) required="$required_model" ;;
-        parentEffort) required="$required_effort" ;;
-      esac
-      [ "$required" != - ] || continue
-      selector_fields=$((selector_fields + 1))
-      specificity=$((specificity + 1))
-      case "$field" in
-        parentAgent) actual="$parent_agent" ;;
-        parentModel) actual="$parent_model" ;;
-        parentEffort) actual="$parent_effort" ;;
-      esac
-      if [ -z "$actual" ] || [ "$actual" != "$required" ]; then
-        matched=false
-      fi
-    done
-    [ "$matched" = true ] || continue
-    if [ "$specificity" -gt "$best_specificity" ]; then
-      best_specificity="$specificity"
-      candidates="$chain"
-      best_steps="$selected_steps"
-      count=1
-    elif [ "$specificity" -eq "$best_specificity" ]; then
-      candidates="$candidates, $chain"
-      count=$((count + 1))
-    fi
-  done < <(printf '%s' "$config" | jq -r -f "$selection_filter")
-  if [ "$count" -gt 1 ]; then
-    megabrain_error "chain selection is ambiguous: candidates: $candidates"
-    return 1
-  fi
-  if [ "$count" -eq 1 ]; then
-    MEGABRAIN_CHAIN_SELECTED_NAME="$candidates"
-    MEGABRAIN_CHAIN_SELECTED_STEPS="$best_steps"
-    MEGABRAIN_CHAIN_SELECTION_REASON="selector match with $best_specificity field(s)"
-    return 0
-  fi
-  MEGABRAIN_CHAIN_SELECTION_DEFAULT=true
-  if [ "$selector_fields" -gt 0 ] && [ -z "$parent_agent" ]; then
-    MEGABRAIN_CHAIN_SELECTION_REASON="parent agent is unknown; no selector matched; using defaultSteps"
-  else
-    MEGABRAIN_CHAIN_SELECTION_REASON="no selector matched; using defaultSteps"
-  fi
-  MEGABRAIN_CHAIN_SELECTED_STEPS="$(printf '%s' "$config" | jq -c '.defaultSteps')"
-}
-
 megabrain_chain_run_spawn() {
   local worktree="$1" repo="$2" branch="$3" base="$4" slug="$5" prompt="$6" label="$7" tmux_choice="$8" model="$9" effort="${10}" agent="${11}" browser="${12:-false}"
   local -a agent_args=() spawn_args=() arg
@@ -899,14 +822,6 @@ megabrain_chain_run_spawn() {
 megabrain_chain_reset_display() {
   local reset_at="$1"
   date -u -r "$reset_at" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' "$reset_at"
-}
-
-megabrain_chain_clear_dispatch_context() {
-  MEGABRAIN_CHAIN_NAME=""
-  MEGABRAIN_CHAIN_STEP=""
-  MEGABRAIN_CHAIN_TOTAL=""
-  MEGABRAIN_CHAIN_REASON=""
-  MEGABRAIN_CHAIN_DEFAULT=false
 }
 
 MEGABRAIN_CHAIN_WALK_OUTPUT=""
@@ -1111,108 +1026,11 @@ megabrain_chain_continue_refused() {
   megabrain_chain_walk "$worktree" '' '' '' '' "$prompt" "$label" "$runtime" '' '' false false false
 }
 
-command_chain_run() {
-  local explicit_name="" chain_option="" selection_name="" selection_source=name parent_agent="" parent_model="" parent_effort=""
-  local repo="" branch="" base="" slug="" worktree="" prompt="" label="" tmux_choice="" json=false browser=false arg config step_count index step agent model effort until_json threshold window
-  local spawn_output spawn_json spawn_error error_file reason limit_reason reset_text failure_reason final_reason report_chain reasons_json spawn_succeeded dispatch_id walk_status
-  local -a agent_args=()
-  megabrain_resolve_parent_context
-  parent_agent="$MEGABRAIN_PARENT_AGENT"
-  parent_model="$MEGABRAIN_PARENT_MODEL"
-  parent_effort="$MEGABRAIN_PARENT_EFFORT"
-  if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
-    explicit_name="$1"
-    shift
-  fi
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --chain)
-        [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { megabrain_error '--chain requires a non-empty value'; return "$MEGABRAIN_USAGE_ERROR"; }
-        [ -z "$explicit_name" ] || { megabrain_error 'chain run accepts either a positional chain name or --chain, not both'; return "$MEGABRAIN_USAGE_ERROR"; }
-        chain_option="$2"
-        selection_source=flag
-        shift 2
-        ;;
-      --parent-agent) parent_agent="${2:-}"; shift 2 ;;
-      --parent-model) parent_model="${2:-}"; shift 2 ;;
-      --parent-effort) parent_effort="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
-      --branch) branch="${2:-}"; shift 2 ;;
-      --base) base="${2:-}"; shift 2 ;;
-      --name) slug="${2:-}"; shift 2 ;;
-      --worktree) worktree="${2:-}"; shift 2 ;;
-      --prompt) prompt="${2:-}"; shift 2 ;;
-      --label) label="${2:-}"; shift 2 ;;
-      --tmux) tmux_choice="${2:-}"; shift 2 ;;
-      --browser) browser=true; shift ;;
-      --agent-arg)
-        [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { megabrain_error '--agent-arg requires a non-empty value'; return "$MEGABRAIN_USAGE_ERROR"; }
-        agent_args+=("$2")
-        shift 2
-        ;;
-      --json) json=true; shift ;;
-      -h|--help) megabrain_usage_show chain-run; return 0 ;;
-      *) megabrain_error "unknown chain run option: $arg"; return "$MEGABRAIN_USAGE_ERROR" ;;
-    esac
-  done
-  [ -n "$prompt" ] || { megabrain_error '--prompt is required for chain run'; return "$MEGABRAIN_USAGE_ERROR"; }
-  if [ -z "$worktree" ]; then
-    [ -n "$repo" ] || { megabrain_error '--repo is required for chain run unless --worktree is used'; return "$MEGABRAIN_USAGE_ERROR"; }
-    [ -n "$branch" ] || { megabrain_error '--branch is required for chain run unless --worktree is used'; return "$MEGABRAIN_USAGE_ERROR"; }
-  fi
-  config="$(megabrain_chain_read)" || return 1
-  megabrain_chain_validate_config "$config" || return 1
-  selection_name="$explicit_name"
-  if [ -n "$chain_option" ]; then
-    selection_name="$chain_option"
-  fi
-  megabrain_chain_select "$config" "$selection_name" "$parent_agent" "$parent_model" "$parent_effort" "$selection_source" || return 1
-  if [ "${#agent_args[@]}" -gt 0 ]; then
-      if megabrain_chain_walk "$worktree" "$repo" "$branch" "$base" "$slug" "$prompt" "$label" "$tmux_choice" "" "" false false "$browser" "${agent_args[@]}"; then
-      walk_status=0
-    else
-      walk_status="$?"
-    fi
-  elif megabrain_chain_walk "$worktree" "$repo" "$branch" "$base" "$slug" "$prompt" "$label" "$tmux_choice" "" "" false false "$browser"; then
-    walk_status=0
-  else
-    walk_status="$?"
-  fi
-  step_count="$MEGABRAIN_CHAIN_WALK_TOTAL"
-  report_chain="$MEGABRAIN_CHAIN_SELECTED_NAME"
-  [ "$MEGABRAIN_CHAIN_SELECTION_DEFAULT" = true ] && report_chain=defaultSteps
-  reasons_json="$MEGABRAIN_CHAIN_WALK_SKIPPED"
-  if [ "$walk_status" -eq 0 ]; then
-    spawn_output="$MEGABRAIN_CHAIN_WALK_OUTPUT"
-    spawn_json="$MEGABRAIN_CHAIN_WALK_SPAWN_JSON"
-    index="$MEGABRAIN_CHAIN_WALK_STEP"
-    agent="$MEGABRAIN_CHAIN_WALK_AGENT"
-    final_reason="$MEGABRAIN_CHAIN_WALK_REASON"
-    if [ "$json" = true ]; then
-      jq -cn --arg chain "$report_chain" --argjson step "$index" --argjson total "$step_count" --arg reason "$final_reason" --argjson skipped "$reasons_json" --arg agent "$agent" --argjson spawn "$spawn_json" '{ok: true, chain: $chain, step: $step, totalSteps: $total, agent: $agent, reason: $reason, skipped: $skipped, dispatch: $spawn}'
-    else
-      printf 'chain %s, step %s of %s, reason: %s\n' "$report_chain" "$index" "$step_count" "$final_reason"
-      printf '%s\n' "$spawn_output"
-    fi
-    megabrain_chain_clear_dispatch_context
-    return 0
-  fi
-  final_reason="$MEGABRAIN_CHAIN_WALK_REASON"
-  megabrain_chain_clear_dispatch_context
-  if [ "$json" = true ]; then
-    jq -cn --arg chain "$report_chain" --argjson total "$step_count" --arg reason "$final_reason" --argjson skipped "$reasons_json" '{ok: false, chain: $chain, totalSteps: $total, reason: $reason, skipped: $skipped}'
-  else
-    printf 'chain %s failed after %s steps, reason: %s\n' "$report_chain" "$step_count" "$final_reason"
-  fi
-  return 1
-}
-
 command_chain() {
   local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
   local subcommand="${1:-}"
   case "$subcommand" in
-    list|limits|add|edit|delete|repair|-h|--help|"")
+    list|limits|add|edit|delete|repair|run|-h|--help|"")
       [ -x "$typescript_binary" ] || {
         megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
         return 1
@@ -1224,7 +1042,6 @@ command_chain() {
   esac
   shift || true
   case "$subcommand" in
-    run) command_chain_run "$@" ;;
     -h|--help|"")
       megabrain_usage_show chain
       ;;

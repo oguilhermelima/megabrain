@@ -1,16 +1,18 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, unlinkSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, unlinkSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { type ChainConfig } from "../../core/chain.js";
+import { readLimit, type LimitAgent, type LimitReading, type LimitWindowName } from "../../core/chain-limits.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { executeChainRun } from "./chain-run.js";
 
 export type ChainEnvironment = Readonly<Record<string, string | undefined>>;
 const emptyConfig: ChainConfig = { chains: {}, defaultSteps: [] };
 function error<T = string>(message: string, exitCode = 1): Result<T> { return failed(message, exitCode); }
 function json(value: unknown): string { return JSON.stringify(value) + "\n"; }
-function chainPath(environment: ChainEnvironment): string { return environment.MEGABRAIN_CHAIN_FILE ?? resolve(resolveStateDirectory(environment), "chains.json"); }
+export function chainPath(environment: ChainEnvironment): string { return environment.MEGABRAIN_CHAIN_FILE ?? resolve(resolveStateDirectory(environment), "chains.json"); }
 function preserveStderr<T>(result: Result<T>, stderr: string | undefined): Result<T> {
   if (result.kind !== "ok" || stderr === undefined) return result;
   return { ...result, stderr };
@@ -27,7 +29,7 @@ function validatedOutput(valid: Result<ChainConfig>, value: string): Result<stri
   if (valid.kind !== "ok") return valid;
   return preserveStderr(ok(value), valid.stderr);
 }
-function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
+export function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
   const path = chainPath(environment); if (!existsSync(path)) return ok(emptyConfig);
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -42,7 +44,7 @@ function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
     return ok(normalized);
   } catch { return error(`chain file is not valid JSON: ${path}`); }
 }
-function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
+export function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
   const modelsPath = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json"); let models: Set<string> | undefined; let modelIds: ReadonlyArray<{ agent: string; model: string }> = []; let modelEntries: ReadonlyArray<any> = [];
   let modelErrors = ""; let registryNotice: string | undefined;
   try {
@@ -81,7 +83,7 @@ function validateConfig(config: ChainConfig, environment: ChainEnvironment): Res
   return preserveStderr(ok(config), registryNotice);
 }
 type ChainWrite = { readonly name: string; readonly definition?: Record<string, unknown>; readonly changed?: boolean };
-function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: string[] } }>> {
+export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: string[] } }>> {
   const path = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json");
   if (!existsSync(path)) return ok([]);
   try { const value = JSON.parse(readFileSync(path, "utf8")); return ok(value.models ?? []); }
@@ -153,39 +155,43 @@ function formatList(config: ChainConfig, asJson: boolean): string {
   return lines.join("\n") + "\n";
 }
 type LimitRow = { provider: string; window: string; status: string; usedPercent: number | null; resetsAt: string | null; source: string; fetchedAt: number | null; reason: string | null; bucket: string | null; reading: { kind: string; basis: string | null } | null };
-function unknownLimit(provider: string, window: string, reason: string): LimitRow { return { provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: `${provider} ${window} window unknown (${reason})`, bucket: null, reading: null }; }
-function filesUnder(directory: string): string[] {
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => { const path = resolve(directory, entry.name); return entry.isDirectory() ? filesUnder(path) : entry.name.startsWith("rollout-") && entry.name.endsWith(".jsonl") ? [path] : []; });
-}
-function codexRows(environment: ChainEnvironment): LimitRow[] {
-  const directory = environment.MEGABRAIN_CODEX_SESSIONS_DIR ?? resolve(environment.HOME ?? "", ".codex/sessions");
-  const now = Math.floor(Date.now() / 1000); const snapshots: { limits: Record<string, any>; mtime: number }[] = [];
-  for (const path of filesUnder(directory)) {
-    let mtime: number; try { mtime = Math.floor(statSync(path).mtimeMs / 1000); } catch { continue; }
-    if (mtime < now - 604801) continue;
-    for (const line of readFileSync(path, "utf8").split("\n")) { try { const value = JSON.parse(line); const limits = value?.payload?.rate_limits ?? value?.rate_limits; if (limits && typeof limits === "object") snapshots.push({ limits, mtime }); } catch { /* malformed rollout lines are irrelevant */ } }
+const limitAgents = ["codex", "claude", "agy"] as const;
+const limitWindows = ["5h", "weekly"] as const;
+// Maps core/chain-limits.ts's LimitReading (the port of megabrain_chain_limit_read)
+// onto the pre-existing LimitRow shape this command has always returned, so the
+// swap to the shared reader is a behaviour fix (real per-window independence, real
+// liveProviders gating, the shell's rollout-relevance window and scan cap) without
+// changing `chain limits`' output shape. A window can carry more than one bucket
+// (agy's `buckets` array) and this row shape only has room for one per
+// (provider, window); the first bucket the reader reports (the legacy "default"
+// bucket when present, ahead of any named buckets) is what's shown here. That is a
+// real, pre-existing shape limit of this command surfaced now that agy's live data
+// can actually flow through it, not something decided in this change.
+function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitReading): LimitRow {
+  if (reading.status === "unknown") {
+    return { provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: reading.reason, bucket: null, reading: null };
   }
-  snapshots.sort((a, b) => b.mtime - a.mtime); const rows: LimitRow[] = [];
-  let incomplete = false;
-  for (const window of ["5h", "weekly"]) {
-    const minutes = window === "5h" ? 300 : 10080; const chosen = snapshots.find((entry) => Object.values(entry.limits).some((value: any) => value?.window_minutes === minutes)) ?? snapshots[0];
-    if (!chosen) { rows.push(unknownLimit("codex", window, "rollout has no rate limit snapshot")); continue; }
-    let field = Object.entries(chosen.limits).find(([, value]: [string, any]) => value?.window_minutes === minutes)?.[0];
-    if (!field) {
-      const usable = Object.entries(chosen.limits).filter(([, value]: [string, any]) => typeof value?.window_minutes === "number");
-      if (usable.length === 1) field = usable[0]?.[0];
+  const entry = reading.result.windows.find((candidate) => candidate.name === window);
+  const resultReading = reading.result.reading;
+  return {
+    provider, window, status: "current", usedPercent: reading.usedPercent, resetsAt: reading.resetsAt,
+    source: reading.source, fetchedAt: reading.fetchedAt, reason: reading.reason,
+    bucket: entry?.bucket ?? "default",
+    reading: resultReading ? { kind: resultReading.kind, basis: resultReading.basis } : null,
+  };
+}
+async function limits(environment: ChainEnvironment, asJson: boolean, config: ChainConfig, processAdapter: ProcessAdapter): Promise<string> {
+  const root = resolveStateDirectory(environment);
+  const rows: LimitRow[] = [];
+  // Sequential, not parallel: a provider's two windows share one on-disk cache
+  // (chain-limits.ts writes it after the first live fetch), and running them
+  // concurrently would race two live requests instead of reusing the cache for
+  // the second, the same way chain run's own walk reads limits one at a time.
+  for (const provider of limitAgents) {
+    for (const window of limitWindows) {
+      rows.push(rowFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
     }
-    const value: any = field ? chosen.limits[field] : undefined;
-    if (!field || typeof value?.used_percent !== "number" || typeof value?.resets_at !== "number") { incomplete = true; rows.push(unknownLimit("codex", window, field ? `snapshot reports ${field} ${minutes} minutes but its usage data is incomplete` : "requested window is not present")); continue; }
-    if (value.resets_at <= now) { rows.push(unknownLimit("codex", window, `recorded window has already reset at ${value.resets_at} and carries no information about the current window`)); continue; }
-    rows.push({ provider: "codex", window, status: "current", usedPercent: value.used_percent, resetsAt: String(value.resets_at), source: "disk", fetchedAt: chosen.mtime, reason: `codex ${window} window at ${value.used_percent.toFixed(1)} percent`, bucket: "default", reading: { kind: "floor", basis: "last-recorded-turn" } });
   }
-  if (incomplete) for (const row of rows) { row.status = "unknown"; row.usedPercent = null; row.resetsAt = null; row.source = "unknown"; row.fetchedAt = Math.floor(Date.now() / 1000); row.bucket = null; row.reading = null; }
-  return rows;
-}
-function limits(environment: ChainEnvironment, asJson: boolean): string {
-  const rows = [...codexRows(environment), unknownLimit("claude", "5h", "live provider is not enabled"), unknownLimit("claude", "weekly", "live provider is not enabled"), unknownLimit("agy", "5h", "live provider is not enabled"), unknownLimit("agy", "weekly", "live provider is not enabled")];
   if (asJson) return JSON.stringify(rows, null, 2) + "\n";
   const output = ["PROVIDER WINDOW   STATUS    USED         RESET        SOURCE   REASON"];
   for (const row of rows) output.push(`${row.provider.padEnd(8)} ${row.window.padEnd(8)} ${row.status.padEnd(9)} ${(row.usedPercent === null ? "-" : row.usedPercent).toString().padEnd(12)} ${(row.resetsAt ?? "-").padEnd(28)} ${row.source.padEnd(8)} ${row.reason ?? "-"}`);
@@ -194,11 +200,12 @@ function limits(environment: ChainEnvironment, asJson: boolean): string {
 async function execute(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const [subcommand, ...rest] = args; let asJson = false;
   if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, formatList(valid.value, asJson)) : valid; }
-  if (subcommand === "limits") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("limits")); else return error(`unknown chain limits option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, limits(environment, asJson)) : valid; }
+  if (subcommand === "limits") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("limits")); else return error(`unknown chain limits option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); if (valid.kind !== "ok") return valid; return validatedOutput(valid, await limits(environment, asJson, valid.value, processAdapter)); }
   if (subcommand === "add") return Promise.resolve(addChain(rest, environment));
   if (subcommand === "edit") return editChain(rest, environment, processAdapter);
   if (subcommand === "delete") return Promise.resolve(deleteChain(rest, environment));
   if (subcommand === "repair") return Promise.resolve(repairChain(rest, environment));
+  if (subcommand === "run") return executeChainRun(rest, environment, processAdapter);
   if (subcommand === "-h" || subcommand === "--help" || subcommand === undefined) return ok(usage("chain")); return error(`unknown chain command: ${subcommand}`, 2);
 }
 export async function executeChain(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> { return execute(args, environment, processAdapter); }
