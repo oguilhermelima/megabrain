@@ -512,6 +512,15 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
     terminalId = parentContext.id || "unknown-host-terminal";
   } else {
+    // E: a structured Orca session (ORCA_STRUCTURED_SESSION=1, no ORCA_TERMINAL_HANDLE) now
+    // resolves host "orca" here too (C, resolveCaller shares callerEnvironment with every other
+    // verb), so this branch already launches such a caller through the orca provider below with
+    // no further change. Verified before relying on that: `orca terminal create` takes only
+    // --worktree/--title/--command/--focus (`orca terminal create --help`), and the same CLI's
+    // `orca worktree current` probe — used for the exact same host recognition in `megabrain
+    // context` — already succeeds when run from a structured session (measured, issue #55). The
+    // orca CLI is not scoped to the caller's own terminal; nothing here needed a parent terminal
+    // identity to begin with.
     const host = getHost(parentContext.host);
     if (host === undefined) return failed(`cannot launch agent from unknown orchestration host: ${parentContext.host}`);
     const created = host.create({ workspaceId: worktree.workspaceId ?? parentWorkspace, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
