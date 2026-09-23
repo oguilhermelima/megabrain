@@ -2,7 +2,8 @@ import { readdir, rm } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { addSupersedeSummary, parseParentChangeArgs, parseParentReplyArgs, replyStateError, supersedeDelivery, type SupersedeSummary } from "../../core/parent-reply.js";
-import { acquireLock, appendMessage, atomicJson, notifyChild, readJson, type QueueEnvironment } from "./queue-write.js";
+import { acquireLock, appendMessage, atomicJson, notifyChild, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
+import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
@@ -43,13 +44,13 @@ function stopReason(value: string): string {
   return value;
 }
 
-async function requireParent(root: string, dispatch: string, environment: QueueEnvironment): Promise<Result<JsonRecord>> {
+async function requireParent(root: string, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<JsonRecord>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
-  const host = environment.MEGABRAIN_SESSION_HOST ?? (environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined);
-  const id = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-  if (host === undefined || id === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  if (meta.parentSessionId !== id || meta.parentHost !== host) return failed(`dispatch ${dispatch} is owned by ${String(meta.parentHost ?? "")}/${String(meta.parentSessionId ?? "")}, not ${host}/${id}`);
+  const current = await resolveCaller(environment, processAdapter);
+  if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  const expectedHost = String(meta.parentHost ?? ""); const expectedId = String(meta.parentSessionId ?? "");
+  if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${dispatch} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
   return ok(meta);
 }
 
@@ -108,10 +109,11 @@ function outputReply(dispatch: string, json: boolean, nudge: string, summary: Su
 export async function executeOrchestrateReply(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]\n");
   const parsed = parseParentReplyArgs(args); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment); if (parent.kind !== "ok") return parent;
+  const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
   const state = typeof parent.value.state === "string" ? parent.value.state : "";
   const stateError = replyStateError(parsed.value.dispatchId, state, false); if (stateError !== undefined) return failed(stateError);
-  const sessionId = environment.MEGABRAIN_SESSION_ID ?? environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE ?? "";
+  const caller = await resolveCaller(environment, processAdapter);
+  const sessionId = caller.id || caller.terminalId || "";
   let summary: SupersedeSummary = { queued: 0, delivered: 0, deliveredSequences: [] };
   let append: Result<number>;
   if (parsed.value.supersede) {

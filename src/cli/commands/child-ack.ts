@@ -2,10 +2,11 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
-import { atomicJson, appendMessage, readJson, type QueueEnvironment } from "./queue-write.js";
+import { atomicJson, appendMessage, callerEnvironment, readJson, type QueueEnvironment } from "./queue-write.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
+import { hasCallerIdentity, resolveCallerIdentity } from "../../core/context.js";
 import { getTmux } from "../../hosts/tmux.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -35,6 +36,13 @@ function parseArgs(args: readonly string[], environment: QueueEnvironment): Resu
   return ok({ deliveryId, ...(consumer !== undefined ? { consumer } : {}), generation, json });
 }
 
+// The child's own identity, matched against what spawn recorded for it (meta.terminalId /
+// meta.childHost, or meta.tmuxSession / meta.tmuxPane). The tmux branch is a pinned, historical
+// exact-match (a tmux pane always probes, and a probe failure is a hard "tmux session could not
+// be resolved" rather than falling through to another host) — tests/unit/tmux.test.ts depends on
+// this literally. Outside that branch, the shared resolver (core/context.js) now also recognises
+// an explicit override, an agent session id, and a structured Orca session, none of which this
+// function supported before.
 export async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildSession>> {
   if (environment.TMUX && environment.TMUX_PANE) {
     const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
@@ -42,9 +50,9 @@ export async function session(environment: QueueEnvironment, processAdapter: Pro
     const host = environment.SUPERSET_TERMINAL_ID ? "superset" : environment.ORCA_TERMINAL_HANDLE ? "orca" : "tmux";
     return ok({ host, id: `${result.value}:${environment.TMUX_PANE}`, tmuxSession: result.value, tmuxPane: environment.TMUX_PANE });
   }
-  if (environment.SUPERSET_TERMINAL_ID) return ok({ host: "superset", id: environment.SUPERSET_TERMINAL_ID });
-  if (environment.ORCA_TERMINAL_HANDLE) return ok({ host: "orca", id: environment.ORCA_TERMINAL_HANDLE });
-  return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  const caller = resolveCallerIdentity(callerEnvironment(environment));
+  if (!hasCallerIdentity(caller)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  return ok({ host: caller.host, id: caller.terminalId ?? caller.id });
 }
 
 function matches(sessionValue: ChildSession, meta: JsonRecord): boolean {

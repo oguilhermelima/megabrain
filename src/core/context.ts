@@ -7,14 +7,51 @@ export type Context = {
   readonly agentId: string | null;
 };
 
-export type ContextEnvironment = {
-  readonly supersetTerminalId?: string;
-  readonly orcaTerminalHandle?: string;
-  readonly tmux?: string;
-  readonly tmuxPane?: string;
+export type ContextEnvironment = CallerEnvironment & {
   readonly workspaceId?: string;
   readonly agentId?: string;
   readonly parent?: ParentEnvironment;
+};
+
+// The caller-identity environment: every field a "who is running this command" decision can draw
+// on, across megabrain context, orchestrate spawn, and every parent/child verb. One shape, one
+// set of field names, so every call site maps its own process.env the same way.
+export type CallerEnvironment = {
+  readonly megabrainSessionId?: string;
+  readonly megabrainSessionHost?: string;
+  readonly claudeCodeSessionId?: string;
+  readonly codexThreadId?: string;
+  readonly supersetTerminalId?: string;
+  readonly orcaTerminalHandle?: string;
+  readonly orcaStructuredSession?: string;
+  readonly tmux?: string;
+  readonly tmuxPane?: string;
+};
+
+// Probes a caller can supply when it already has the information: the tmux session name (a
+// subprocess lookup) and whether the Orca worktree probe succeeded. Neither is fetched here —
+// core stays free of process/adapter dependencies; a caller either has the probe already or
+// leaves the field undefined and falls through.
+export type CallerProbes = {
+  readonly tmuxSessionName?: string;
+  readonly orcaWorktree?: boolean;
+};
+
+// The resolved identity of whoever is running the current megabrain command: a stable id for
+// ownership comparisons, the host it runs under, and the terminal handle when one exists
+// (recorded separately so a caller whose agent session changed but whose terminal did not can
+// still be recognised against a dispatch that predates the agent-session identity).
+export type CallerIdentity = {
+  readonly id: string;
+  readonly host: string;
+  readonly terminalId: string | null;
+  readonly tmuxSession: string | null;
+  readonly tmuxPane: string | null;
+};
+
+export type DispatchOwnerRecord = {
+  readonly parentHost: string;
+  readonly parentSessionId: string;
 };
 
 export type ParentEnvironment = {
@@ -59,42 +96,74 @@ export function resolveParentContext(environment: ParentEnvironment): ParentReso
   };
 }
 
-function contextForSession(
-  environment: ContextEnvironment,
-  host: string,
-  terminalId: string,
-): Context {
-  const parent = environment.parent === undefined ? undefined : resolveParentContext(environment.parent);
+// The terminal-handle tier of caller identity: superset, then orca, then a probed tmux pane.
+// Shared by resolveCallerIdentity's id and host chains, since a terminal handle answers both at
+// once and the two must never disagree about which terminal they mean.
+function callerTerminal(
+  environment: CallerEnvironment,
+  probes: CallerProbes,
+): Readonly<{ host: string; terminalId: string; tmuxSession: string | null; tmuxPane: string | null }> | undefined {
+  if (present(environment.supersetTerminalId)) {
+    return { host: "superset", terminalId: environment.supersetTerminalId, tmuxSession: null, tmuxPane: null };
+  }
+  if (present(environment.orcaTerminalHandle)) {
+    return { host: "orca", terminalId: environment.orcaTerminalHandle, tmuxSession: null, tmuxPane: null };
+  }
+  if (present(environment.tmux) && present(environment.tmuxPane) && present(probes.tmuxSessionName)) {
+    return { host: "tmux", terminalId: `${probes.tmuxSessionName}:${environment.tmuxPane}`, tmuxSession: probes.tmuxSessionName, tmuxPane: environment.tmuxPane };
+  }
+  return undefined;
+}
+
+// The one caller-identity resolver: used by `megabrain context`, `orchestrate spawn`'s caller
+// resolution, and every parent/child verb that has to know who is running it. Precedence today:
+// MEGABRAIN_SESSION_ID is an explicit override and always wins; then a terminal handle (superset,
+// then orca, then a probed tmux pane); then, host only, a successful orca worktree probe with no
+// stable id; otherwise unknown with no id. The terminal handle is returned separately from id so
+// callers that need it (ownership, notification routing) do not have to re-derive it.
+export function resolveCallerIdentity(environment: CallerEnvironment, probes: CallerProbes = {}): CallerIdentity {
+  const terminal = callerTerminal(environment, probes);
+  const host = present(environment.megabrainSessionHost)
+    ? environment.megabrainSessionHost
+    : terminal !== undefined
+      ? terminal.host
+      : probes.orcaWorktree === true
+        ? "orca"
+        : "unknown";
+  const id = present(environment.megabrainSessionId)
+    ? environment.megabrainSessionId
+    : terminal?.terminalId ?? "";
   return {
+    id,
     host,
-    workspaceId: present(environment.workspaceId) ? environment.workspaceId : null,
-    terminalId,
-    agentId: parent?.kind === "resolved" ? parent.agent : present(environment.agentId) ? environment.agentId : null,
+    terminalId: terminal?.terminalId ?? null,
+    tmuxSession: terminal?.tmuxSession ?? null,
+    tmuxPane: terminal?.tmuxPane ?? null,
   };
+}
+
+// True once resolveCallerIdentity found anything at all to identify the caller by — a stable id
+// or a terminal handle. A caller with neither is refused before any ownership comparison runs.
+export function hasCallerIdentity(caller: CallerIdentity): boolean {
+  return caller.id !== "" || caller.terminalId !== null;
+}
+
+// Ownership: the caller's stable id matches the recorded owner. Host must agree too.
+export function ownsDispatch(caller: CallerIdentity, record: DispatchOwnerRecord): boolean {
+  if (caller.host !== record.parentHost) return false;
+  return caller.id !== "" && caller.id === record.parentSessionId;
 }
 
 export function resolveContext(
   environment: ContextEnvironment,
   probes: ContextProbes,
 ): Context {
-  if (present(environment.supersetTerminalId)) {
-    return contextForSession(environment, "superset", environment.supersetTerminalId);
-  }
-  if (present(environment.orcaTerminalHandle)) {
-    return contextForSession(environment, "orca", environment.orcaTerminalHandle);
-  }
-  if (present(environment.tmux) && present(environment.tmuxPane) && present(probes.tmuxSessionName)) {
-    return contextForSession(environment, "tmux", `${probes.tmuxSessionName}:${environment.tmuxPane}`);
-  }
-  if (probes.orcaWorktree) {
-    const parent = environment.parent === undefined ? undefined : resolveParentContext(environment.parent);
-    return { host: "orca", workspaceId: null, terminalId: null, agentId: parent?.kind === "resolved" ? parent.agent : null };
-  }
+  const caller = resolveCallerIdentity(environment, { tmuxSessionName: probes.tmuxSessionName, orcaWorktree: probes.orcaWorktree });
   const parent = environment.parent === undefined ? undefined : resolveParentContext(environment.parent);
   return {
-    host: "unknown",
+    host: caller.host,
     workspaceId: present(environment.workspaceId) ? environment.workspaceId : null,
-    terminalId: null,
+    terminalId: caller.terminalId,
     agentId: parent?.kind === "resolved" ? parent.agent : present(environment.agentId) ? environment.agentId : null,
   };
 }
