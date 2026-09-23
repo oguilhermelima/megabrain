@@ -13,24 +13,6 @@ type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
 const absent = (value: string): boolean => /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(value);
 
-// Legacy shape, preserved verbatim: a pinned test (tests/unit/tmux.test.ts) depends on this
-// exact partial-object contract, including the "tmux host but no id" answer when the tmux probe
-// fails. Nothing else in this file calls it any more — executeOrchestrateClose's own ownership
-// check goes through the one shared resolver (resolveCaller) below instead.
-export async function caller(environment: QueueEnvironment, process: ProcessAdapter): Promise<{ host?: string; id?: string; tmuxPane?: string; tmuxSession?: string }> {
-  if (environment.TMUX && environment.TMUX_PANE) {
-    let identity: { host: string; id?: string } = environment.SUPERSET_TERMINAL_ID ? { host: "superset", id: environment.SUPERSET_TERMINAL_ID } : environment.ORCA_TERMINAL_HANDLE ? { host: "orca", id: environment.ORCA_TERMINAL_HANDLE } : { host: "tmux" };
-    if (identity.id === undefined) {
-      const session = await getTmux().sessionForPane(environment.TMUX_PANE, process);
-      if (session.kind === "ok") identity = { host: "tmux", id: `${session.value}:${environment.TMUX_PANE}` };
-    }
-    return { ...identity, tmuxPane: environment.TMUX_PANE };
-  }
-  if (environment.SUPERSET_TERMINAL_ID) return { host: "superset", id: environment.SUPERSET_TERMINAL_ID };
-  if (environment.ORCA_TERMINAL_HANDLE) return { host: "orca", id: environment.ORCA_TERMINAL_HANDLE };
-  if (environment.MEGABRAIN_SESSION_ID) return { host: environment.MEGABRAIN_SESSION_HOST ?? "unknown", id: environment.MEGABRAIN_SESSION_ID };
-  return {};
-}
 
 export async function tmuxSessionForEnvironment(environment: QueueEnvironment, process: ProcessAdapter): Promise<string | undefined> {
   if (!environment.TMUX || !environment.TMUX_PANE) return undefined;

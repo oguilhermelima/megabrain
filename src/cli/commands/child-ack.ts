@@ -2,12 +2,11 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
-import { atomicJson, appendMessage, callerEnvironment, readJson, type QueueEnvironment } from "./queue-write.js";
+import { atomicJson, appendMessage, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
-import { hasCallerIdentity, resolveCallerIdentity } from "../../core/context.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { hasCallerIdentity } from "../../core/context.js";
 
 type JsonRecord = Record<string, unknown>;
 type ChildArguments = Readonly<{ deliveryId: string; consumer?: string; generation: number; json: boolean }>;
@@ -37,22 +36,21 @@ function parseArgs(args: readonly string[], environment: QueueEnvironment): Resu
 }
 
 // The child's own identity, matched against what spawn recorded for it (meta.terminalId /
-// meta.childHost, or meta.tmuxSession / meta.tmuxPane). The tmux branch is a pinned, historical
-// exact-match (a tmux pane always probes, and a probe failure is a hard "tmux session could not
-// be resolved" rather than falling through to another host) — tests/unit/tmux.test.ts depends on
-// this literally. Outside that branch, the shared resolver (core/context.js) now also recognises
-// an explicit override, an agent session id, and a structured Orca session, none of which this
-// function supported before.
+// meta.childHost, or meta.tmuxSession / meta.tmuxPane). A real child never carries both a tmux
+// pane and a superset/orca terminal handle at once — spawn's tmux launch line never sets either,
+// and its host launch line clears TMUX/TMUX_PANE before starting the child — so the shared
+// resolver's ordinary superset > orca > tmux precedence is safe here too. Prefers the terminal
+// handle over a stable agent-session id, since spawn only ever hands a child a terminal-based
+// identity.
 export async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildSession>> {
-  if (environment.TMUX && environment.TMUX_PANE) {
-    const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
-    if (result.kind !== "ok") return failed("tmux session could not be resolved");
-    const host = environment.SUPERSET_TERMINAL_ID ? "superset" : environment.ORCA_TERMINAL_HANDLE ? "orca" : "tmux";
-    return ok({ host, id: `${result.value}:${environment.TMUX_PANE}`, tmuxSession: result.value, tmuxPane: environment.TMUX_PANE });
-  }
-  const caller = resolveCallerIdentity(callerEnvironment(environment));
+  const caller = await resolveCaller(environment, processAdapter);
   if (!hasCallerIdentity(caller)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  return ok({ host: caller.host, id: caller.terminalId ?? caller.id });
+  return ok({
+    host: caller.host,
+    id: caller.terminalId ?? caller.id,
+    ...(caller.tmuxSession !== null ? { tmuxSession: caller.tmuxSession } : {}),
+    ...(caller.tmuxPane !== null ? { tmuxPane: caller.tmuxPane } : {}),
+  });
 }
 
 function matches(sessionValue: ChildSession, meta: JsonRecord): boolean {
