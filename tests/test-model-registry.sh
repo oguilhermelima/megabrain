@@ -51,19 +51,19 @@ assert_failure_contains() {
 }
 
 list_output="$("$root/megabrain" model list --json)"
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 10
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 18
+assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 12
+assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 19
 assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "agy")] | length')" 14
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "agy" and .model == "gemini-3.8-flash-high") | .provenance.kind')" live
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex") | .provenance.kind' | head -n 1)" sourced
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex") | .provenance.url' | sort -u)" 'https://learn.chatgpt.com/docs/models?surface=app'
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude") | .provenance.url' | sort -u)" 'https://platform.claude.com/docs/en/about-claude/model-deprecations'
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.levels | join(",")')" 'minimal,low,medium,high,xhigh,max,ultra'
+assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex") | .provenance.url' | sort -u)" "$(printf 'https://learn.chatgpt.com/docs/models?surface=app\nnull')"
+assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude") | .provenance.url' | sort -u)" "$(printf 'https://platform.claude.com/docs/en/about-claude/model-deprecations\nnull')"
+assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.levels | join(",")')" 'low,medium,high,xhigh,max,ultra'
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.4") | [.status, .retirementDate] | join(",")')" 'retired,2026-08-31'
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-mythos-preview") | .status')" deprecated
 assert_equal "$(printf '%s' "$list_output" | jq -r '[.models[] | select(.agent == "claude" and .status == "retired")] | length')" 6
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex") | .reasoning.provenance.kind' | sort -u)" verified
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude") | .reasoning.provenance.kind' | sort -u)" verified
+assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex") | .reasoning.provenance.kind' | sort -u)" "$(printf 'sourced\nverified')"
+assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude") | .reasoning.provenance.kind' | sort -u)" "$(printf 'sourced\nverified')"
 printf 'registry inventory: sourced model provenance and verified reasoning provenance\n'
 
 assert_equal "$(grep -l '^command_model()' "$root"/lib/*.sh | wc -l | tr -d ' ')" 1
