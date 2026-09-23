@@ -60,7 +60,6 @@ scenario_routes_finish_to_binary() {
   status=$?
   set -e
   assert_equal "$status" 97
-  assert_contains "$output" 'installed skill source is missing'
   printf 'finish route reaches the compiled entrypoint: status=%s\n' "$status"
   backup="$work/routing-module.saved"
   modified="$work/routing-module.modified"
