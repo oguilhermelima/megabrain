@@ -58,17 +58,19 @@ printf 'scenario 2: agy plugin validates import source and components\n'
 
 chain_state="$work/chain-state"
 mkdir -p "$chain_state"
-export MEGABRAIN_STATE_DIR="$chain_state"
-source "$root/lib/common.sh"
-source "$root/lib/module-model.sh"
-source "$root/lib/module-chain.sh"
-printf '%s\n' '{"chains":{},"defaultSteps":[],"usageLimits":{"liveProviders":["claude"],"notice":{"enabled":true}}}' >"$MEGABRAIN_CHAIN_FILE"
-megabrain_chain_init
-assert_equal "$(jq -r '.usageLimits.cacheTtlSeconds' "$MEGABRAIN_CHAIN_FILE")" 30
-assert_equal "$(jq -r '.usageLimits.timeoutSeconds' "$MEGABRAIN_CHAIN_FILE")" 5
-assert_equal "$(jq -r '.usageLimits.notice.intervalSeconds' "$MEGABRAIN_CHAIN_FILE")" 3600
-assert_equal "$(jq -r '.usageLimits.notice.enabled' "$MEGABRAIN_CHAIN_FILE")" true
-printf 'scenario 3: chain initialization reconciles newly seeded usage-limit fields\n'
+chain_file="$chain_state/chains.json"
+printf '%s\n' '{"chains":{},"defaultSteps":[],"usageLimits":{"liveProviders":["claude"],"notice":{"enabled":true}}}' >"$chain_file"
+# megabrain_chain_init (lib/module-chain.sh) is gone from the reachable call graph: command_chain
+# execs the binary unconditionally for every subcommand (verified, no shell fallback whatsoever),
+# so this drives the compiled binary's own reconciliation instead. readConfig
+# (src/cli/commands/chain.ts) rewrites the same defaults into the chain file on read, which
+# `chain list` exercises for free.
+MEGABRAIN_STATE_DIR="$chain_state" MEGABRAIN_CHAIN_FILE="$chain_file" "$root/.build/megabrain" chain list --json >/dev/null
+assert_equal "$(jq -r '.usageLimits.cacheTtlSeconds' "$chain_file")" 30
+assert_equal "$(jq -r '.usageLimits.timeoutSeconds' "$chain_file")" 5
+assert_equal "$(jq -r '.usageLimits.notice.intervalSeconds' "$chain_file")" 3600
+assert_equal "$(jq -r '.usageLimits.notice.enabled' "$chain_file")" true
+printf 'scenario 3: chain list reconciles newly seeded usage-limit fields into the chain file\n'
 
 # WHY: scenario 4 ("malformed session registry makes tmux doctor non-ok") is deleted, not
 # rewritten. It drove megabrain_tmux_session_registry_drift and module_tmux_runtime_doctor,
@@ -100,37 +102,56 @@ if ! installer_manifest_matches_selection; then
 fi
 printf 'scenario 5: install manifest compares selected configuration fields\n'
 
+# megabrain_dispatch_reconcile_one (lib/module-orchestrate.sh) has no production caller left
+# (orchestrate reconcile already execs the binary unconditionally), so this drives
+# `orchestrate reconcile`/`orchestrate prune` on the compiled binary instead, with a fake tmux on
+# PATH standing in for "this terminal no longer exists" (has-session refuses every session).
 dispatch_state="$work/dispatch-state"
-export MEGABRAIN_STATE_DIR="$dispatch_state"
-export MEGABRAIN_DISPATCH_DIR="$dispatch_state/dispatches"
-export MEGABRAIN_ROOT="$root"
-source "$root/lib/module-context.sh"
-source "$root/lib/module-orchestrate.sh"
-mkdir -p "$MEGABRAIN_DISPATCH_DIR"
-megabrain_dispatch_meta_write missing-terminal parent-terminal superset superset workspace child-terminal \
-  "$root" main codex label spawning gpt-5 true codex '' '' host ide >/dev/null
-megabrain_dispatch_meta_update_process_state missing-terminal start-unproven
-megabrain_dispatch_meta_update_state missing-terminal running
-megabrain_dispatch_meta_update_terminal_state missing-terminal retained
-megabrain_dispatch_terminal_status() { MEGABRAIN_TERMINAL_STATUS=missing; }
-megabrain_dispatch_reconcile_one missing-terminal
-assert_equal "$(jq -r '.terminalState' "$MEGABRAIN_DISPATCH_DIR/missing-terminal/meta.json")" missing
-assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/missing-terminal/meta.json")" failed
+dispatch_dir="$dispatch_state/dispatches"
+tmux_missing_bin="$work/tmux-missing-bin"
+mkdir -p "$tmux_missing_bin"
+cat >"$tmux_missing_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  has-session) exit 1 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmux_missing_bin/tmux"
 
-megabrain_dispatch_meta_write running-live parent-terminal superset superset workspace child-terminal \
-  "$root" main codex label running gpt-5 true codex '' '' host ide >/dev/null
-old='2020-01-01T00:00:00Z'
-for dispatch_id in missing-terminal running-live; do
-  jq --arg old "$old" '.createdAt=$old | .updatedAt=$old' \
-    "$MEGABRAIN_DISPATCH_DIR/$dispatch_id/meta.json" >"$work/$dispatch_id.json"
-  mv "$work/$dispatch_id.json" "$MEGABRAIN_DISPATCH_DIR/$dispatch_id/meta.json"
-done
-dry_run="$("$root/.build/megabrain" orchestrate prune --dry-run --json)"
+write_scenario6_meta() {
+  local dispatch_id="$1" state="$2" process_state="$3" terminal_state="$4" dir="$dispatch_dir/$1"
+  mkdir -p "$dir/messages" "$dir/deliveries"
+  jq -n --arg dispatchId "$dispatch_id" --arg worktreePath "$root" --arg state "$state" \
+    --arg processState "$process_state" --arg terminalState "$terminal_state" '{
+    dispatchId: $dispatchId, parentSessionId: "parent-terminal", parentHost: "superset",
+    childHost: "superset", workspaceId: "workspace", terminalId: "child-terminal",
+    worktreePath: $worktreePath, branch: "main", agent: "codex", agentId: "codex",
+    model: "gpt-5", modelHonored: true, label: "label", state: $state,
+    processState: $processState, terminalState: $terminalState,
+    runtime: "tmux", spawnRuntime: "tmux", tmuxSession: $dispatchId, tmuxPane: "%99",
+    createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
+  }' >"$dir/meta.json"
+}
+
+write_scenario6_meta missing-terminal running start-unproven retained
+reconcile_result="$(env PATH="$tmux_missing_bin:$PATH" MEGABRAIN_STATE_DIR="$dispatch_state" \
+  "$root/.build/megabrain" orchestrate reconcile missing-terminal --json)"
+assert_equal "$(printf '%s' "$reconcile_result" | jq -r '.terminalState')" missing
+assert_equal "$(printf '%s' "$reconcile_result" | jq -r '.state')" failed
+# reconcile just stamped updatedAt to now; backdate it again so prune's age check treats this
+# record as old debris rather than a fresh change.
+jq '.updatedAt = "2020-01-01T00:00:00Z"' "$dispatch_dir/missing-terminal/meta.json" >"$work/missing-terminal.json"
+mv "$work/missing-terminal.json" "$dispatch_dir/missing-terminal/meta.json"
+
+write_scenario6_meta running-live running running owned
+dry_run="$(env PATH="$tmux_missing_bin:$PATH" MEGABRAIN_STATE_DIR="$dispatch_state" \
+  "$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(jq -r '.archived' <<<"$dry_run")" 1
 assert_equal "$(jq -r '.dryRun' <<<"$dry_run")" true
 assert_contains "$dry_run" 'missing-terminal'
-assert_missing "$MEGABRAIN_DISPATCH_DIR/archive"
-assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/running-live/meta.json")" running
+assert_missing "$dispatch_dir/archive"
+assert_equal "$(jq -r '.state' "$dispatch_dir/running-live/meta.json")" running
 printf 'scenario 6: reconcile settles missing terminals, dry-run lists only terminal debris, and running stays\n'
 
 printf 'ok: drift family scenarios\n'
