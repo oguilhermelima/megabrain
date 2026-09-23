@@ -601,8 +601,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       if (runtime === "tmux") {
         // The launch line runs in the pane's shell, not the agent composer: it always submits on
         // Enter regardless of the agent's own submit key (Tab for Codex, which the shell reads as
-        // completion instead of running the command).
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process);
+        // completion instead of running the command). clearStrayInput=true here, and only here:
+        // this is the one call typing into a still-bare shell prompt, matching the shell's own
+        // megabrain_tmux_send_agent (see the WHY comment on sendTmuxPair).
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process, true);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);

@@ -170,6 +170,15 @@ async function acquireLock(path: string, environment: TmuxSendEnvironment): Prom
   }
 }
 
+// clearStrayInput mirrors the shell's megabrain_tmux_send_agent "command" branch (last standing
+// at lib/module-tmux-runtime.sh, commit 9d24366^): a raw C-u immediately before the text, sent
+// only when typing the initial launch command line into a freshly created/split pane, which can
+// still hold startup noise or a stray keystroke from the shell that just started there. The
+// shell's own reasoning for never doing this anywhere else: "C-u in an agent composer is not a
+// line kill" — every other caller here types into an already-running agent's composer (the
+// prompt payload, a reply, a nudge), where an unreviewed control key is a live risk (an Escape
+// interrupts a working Codex turn) rather than a harmless line-kill. Callers must opt in
+// explicitly per call site; there is no default that could silently reach the wrong one.
 export async function sendTmuxPair(
   root: string,
   pane: string,
@@ -177,6 +186,7 @@ export async function sendTmuxPair(
   key: string,
   environment: TmuxSendEnvironment,
   process: ProcessAdapter,
+  clearStrayInput = false,
 ): Promise<Result<void>> {
   const lock = lockPath(root, pane);
   try {
@@ -187,6 +197,10 @@ export async function sendTmuxPair(
   const acquired = await acquireLock(lock, environment);
   if (acquired.kind !== "ok") return acquired;
   try {
+    if (clearStrayInput) {
+      const cleared = await getTmux().sendKey(pane, "C-u", process);
+      if (cleared.kind !== "ok") return cleared;
+    }
     const sentText = await getTmux().sendText(pane, text, process);
     if (sentText.kind !== "ok") return sentText;
     return await getTmux().sendKey(pane, key, process);
