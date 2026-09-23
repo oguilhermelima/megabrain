@@ -366,8 +366,13 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
   const now = new Date().toISOString();
   return {
     dispatchId: id,
+    // The stable owner of this dispatch (D): a caller's own agent-session id when one is
+    // available, otherwise its terminal handle. parentTerminalId is recorded separately so a
+    // caller whose agent session later changes can still be recognised by the terminal it ran in
+    // (see core/context.js ownsDispatch).
     parentSessionId: parentContext.id,
     parentHost: parentContext.host,
+    parentTerminalId: parentContext.terminalId,
     parentWorkspaceId: parentWorkspace,
     parentTmuxSession: parentTmux.tmuxSession,
     parentTmuxPane: parentTmux.tmuxPane,

@@ -35,6 +35,8 @@ export function callerEnvironment(environment: QueueEnvironment): CallerEnvironm
   return {
     megabrainSessionId: environment.MEGABRAIN_SESSION_ID,
     megabrainSessionHost: environment.MEGABRAIN_SESSION_HOST,
+    claudeCodeSessionId: environment.CLAUDE_CODE_SESSION_ID,
+    codexThreadId: environment.CODEX_THREAD_ID,
     supersetTerminalId: environment.SUPERSET_TERMINAL_ID,
     orcaTerminalHandle: environment.ORCA_TERMINAL_HANDLE,
     tmux: environment.TMUX,

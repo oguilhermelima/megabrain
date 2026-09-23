@@ -116,11 +116,13 @@ function callerTerminal(
 }
 
 // The one caller-identity resolver: used by `megabrain context`, `orchestrate spawn`'s caller
-// resolution, and every parent/child verb that has to know who is running it. Precedence today:
-// MEGABRAIN_SESSION_ID is an explicit override and always wins; then a terminal handle (superset,
-// then orca, then a probed tmux pane); then, host only, a successful orca worktree probe with no
-// stable id; otherwise unknown with no id. The terminal handle is returned separately from id so
-// callers that need it (ownership, notification routing) do not have to re-derive it.
+// resolution, and every parent/child verb that has to know who is running it. Precedence:
+// MEGABRAIN_SESSION_ID is an explicit override and always wins; then the agent's own session id
+// (Claude, then Codex); then a terminal handle (superset, then orca, then a probed tmux pane);
+// then, host only, a successful orca worktree probe with no stable id; otherwise unknown with no
+// id. The terminal handle is returned separately from id so callers that need it (ownership,
+// notification routing) do not have to re-derive it, and so a caller whose agent session changes
+// while its terminal does not can still be recognised (see ownsDispatch).
 export function resolveCallerIdentity(environment: CallerEnvironment, probes: CallerProbes = {}): CallerIdentity {
   const terminal = callerTerminal(environment, probes);
   const host = present(environment.megabrainSessionHost)
@@ -132,7 +134,11 @@ export function resolveCallerIdentity(environment: CallerEnvironment, probes: Ca
         : "unknown";
   const id = present(environment.megabrainSessionId)
     ? environment.megabrainSessionId
-    : terminal?.terminalId ?? "";
+    : present(environment.claudeCodeSessionId)
+      ? `claude:${environment.claudeCodeSessionId}`
+      : present(environment.codexThreadId)
+        ? `codex:${environment.codexThreadId}`
+        : terminal?.terminalId ?? "";
   return {
     id,
     host,
@@ -148,10 +154,14 @@ export function hasCallerIdentity(caller: CallerIdentity): boolean {
   return caller.id !== "" || caller.terminalId !== null;
 }
 
-// Ownership: the caller's stable id matches the recorded owner. Host must agree too.
+// Ownership: the caller's stable id matches the recorded owner, or — for a record written before
+// agent-session ids existed, whose owner is a terminal handle — the caller's current terminal
+// handle matches. Host must agree either way.
 export function ownsDispatch(caller: CallerIdentity, record: DispatchOwnerRecord): boolean {
   if (caller.host !== record.parentHost) return false;
-  return caller.id !== "" && caller.id === record.parentSessionId;
+  if (caller.id !== "" && caller.id === record.parentSessionId) return true;
+  if (caller.terminalId !== null && caller.terminalId === record.parentSessionId) return true;
+  return false;
 }
 
 export function resolveContext(
