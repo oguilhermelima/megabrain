@@ -551,7 +551,7 @@ async function registerSupersetWorkspace(
   project: SupersetProject,
   branch: string,
   slug: string,
-  options: { readonly tag?: string },
+  options: { readonly tag?: string; readonly pr?: string },
 ): Promise<Result<WorkspaceRegistration>> {
   const existingId = await workspaceIdForTarget(process, branch);
   if (existingId !== undefined && options.tag !== undefined) {
@@ -562,14 +562,15 @@ async function registerSupersetWorkspace(
       tagError: tagSet ? null : `Superset workspace tag was not set for ${existingId}`,
     });
   }
+  // --pr opens the workspace against the pull request instead of the branch (the two are
+  // mutually exclusive on the Superset side, matching the retired shell's megabrain_workspace_create).
   const created = await run(process, "superset", [
     "workspaces",
     "create",
     "--local",
     "--project",
     project.id,
-    "--branch",
-    branch,
+    ...(options.pr !== undefined ? ["--pr", options.pr] : ["--branch", branch]),
     "--name",
     slug,
     "--json",
@@ -875,6 +876,7 @@ export async function executeWorktreeCreate(
     if (project.kind !== "ok") return project;
     const registered = await registerSupersetWorkspace(process, project.value, branch, name, {
       tag: resolvedParent?.tag,
+      pr: value.pr,
     });
     if (registered.kind !== "ok") return registered;
     workspaceId = registered.value.id;
