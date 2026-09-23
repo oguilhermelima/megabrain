@@ -101,52 +101,17 @@ megabrain_interactive_modules() {
   done
 }
 
+
+# WHY: the wrapper remains a useful installed entrypoint even before its compiled payload is built.
 command_install() {
-  local module="" selected selected_modules rc=0 assume_yes=false revert=false browser=both arg
-  while [ "$#" -gt 0 ]; do
-    arg="$1"
-    case "$arg" in
-      --yes) assume_yes=true; shift ;;
-      --revert) revert=true; shift ;;
-      --browser)
-        [ "$#" -gt 1 ] || { megabrain_usage_fail install; return "$MEGABRAIN_USAGE_ERROR"; }
-        browser="$2"
-        shift 2
-        ;;
-      -h|--help)
-        megabrain_usage_show install
-        return 0
-        ;;
-      *)
-        if [ -n "$module" ]; then
-          megabrain_error "install accepts at most one module id"
-          return "$MEGABRAIN_USAGE_ERROR"
-        fi
-        module="$arg"
-        shift
-        ;;
-    esac
-  done
-  if [ -n "$module" ]; then
-    megabrain_validate_module "$module" || { megabrain_error "unknown module: $module"; return "$MEGABRAIN_USAGE_ERROR"; }
-    if [ "$revert" = true ]; then
-      megabrain_module_revert "$module"
-      return $?
-    fi
-    megabrain_install_one "$module" "$assume_yes" "$browser"
-    return $?
-  fi
-  if [ ! -t 0 ]; then
-    megabrain_error "install without a module id requires an interactive terminal"
+  local typescript_binary="${MEGABRAIN_ROOT:-}/.build/megabrain"
+  [ -x "$typescript_binary" ] || {
+    megabrain_error "compiled binary is missing: $typescript_binary; run bun run build"
     return 1
-  fi
-  selected_modules="$(megabrain_interactive_modules)" || return 1
-  while IFS= read -r selected; do
-    megabrain_install_one "$selected" "$assume_yes" "$browser" || rc=1
-  done <<EOF
-$selected_modules
-EOF
-  return "$rc"
+  }
+  # WHY: direct binary wrappers must retain the centralized freshness notice after the existence check.
+  megabrain_warn_if_typescript_binary_stale
+  "$typescript_binary" install "$@"
 }
 
 # WHY: the wrapper remains a useful installed entrypoint even before its compiled payload is built.
