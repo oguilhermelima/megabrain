@@ -4,6 +4,8 @@ import { executeChain } from "../../src/cli/commands/chain.js";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ProcessAdapter } from "../../src/adapters/proc.js";
+import { failed, ok } from "../../src/core/result.js";
 
 const step = { agent: "codex", model: "m", effort: "high" };
 const config: ChainConfig = {
@@ -73,4 +75,50 @@ describe("chain command", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
+  // These two prove `chain limits` reads through core/chain-limits.ts (the same
+  // reader chain run uses) instead of its own shortcut: each fails against the
+  // shortcut and passes once limits() is switched over.
+  test("keeps a complete window current even when a sibling window in the same snapshot is incomplete", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    const sessions = join(directory, "sessions"); mkdirSync(sessions);
+    writeFileSync(join(sessions, "rollout-incomplete-usage.jsonl"), readFileSync(join(process.cwd(), "tests/fixtures/codex-rollout-incomplete-usage.jsonl")));
+    try {
+      // The fixture's 5h window is missing used_percent (already proven unknown
+      // above) but its weekly window is complete. The old codexRows shortcut
+      // forced every codex row to unknown whenever any one window was
+      // incomplete; the shared reader resolves each window independently,
+      // matching megabrain_chain_limit_read being called once per window.
+      const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_CODEX_SESSIONS_DIR: sessions });
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const weekly = JSON.parse(result.value).find((entry: { provider: string; window: string }) => entry.provider === "codex" && entry.window === "weekly");
+        expect(weekly).toMatchObject({ status: "current", usedPercent: 18 });
+      }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test("reports a live claude window when the provider is opted in via usageLimits.liveProviders", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    try {
+      // The old codexRows shortcut hardcoded claude/agy as always "not enabled",
+      // ignoring usageLimits.liveProviders and the processAdapter entirely; the
+      // shared reader honours the opt-in and makes the live call.
+      writeFileSync(join(directory, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [], usageLimits: { liveProviders: ["claude"], cacheTtlSeconds: 30, timeoutSeconds: 5, notice: { enabled: false, intervalSeconds: 3600 } } }));
+      const process: ProcessAdapter = {
+        async run(command) {
+          if (command === "security") return ok({ stdout: JSON.stringify({ claudeAiOauth: { accessToken: "token", expiresAt: 9999999999 } }), stderr: "", exitCode: 0 });
+          if (command === "curl") return ok({ stdout: `${JSON.stringify({ five_hour: { utilization: 11.0, resets_at: "2026-09-07T10:00:00Z" }, seven_day: { utilization: 48.0, resets_at: "2026-09-10T16:00:00Z" } })}\nMEGABRAIN_HTTP_STATUS:200`, stderr: "", exitCode: 0 });
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      };
+      const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process);
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        const claude5h = JSON.parse(result.value).find((entry: { provider: string; window: string }) => entry.provider === "claude" && entry.window === "5h");
+        expect(claude5h).toMatchObject({ status: "current", usedPercent: 11, source: "live" });
+      }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
 });
