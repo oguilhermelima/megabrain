@@ -5,7 +5,7 @@ import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { dispatchArchiveDirectory, dispatchArchiveParentDirectory, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { atomicJson, resolveCaller } from "./queue-write.js";
+import { atomicJson, tmuxCallerPaneSession } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 
@@ -107,14 +107,12 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
   return failed("could not release dispatch terminal");
 }
 
-// The tmux session this caller is itself running in — used only to avoid pruning the pane the
-// operator is typing into. Routed through the shared resolver (core/context.js, via
-// queue-write.js resolveCaller) so it agrees with every other command about what "my session"
-// means; a caller with a terminal-handle override is never also a real tmux pane (spawn's own
-// launch line clears TMUX/TMUX_PANE for a host-runtime child), so the two never actually compete.
+// The tmux session this caller is itself physically running in — used only to avoid pruning the
+// pane the operator is typing into. This is a physical question, not an identity one: an
+// override (MEGABRAIN_SESSION_ID/HOST, a terminal handle) must never suppress the probe, so this
+// goes through queue-write.js tmuxCallerPaneSession (the raw probe), not resolveCaller.
 export async function tmuxCallerSession(environment: Environment, process: ProcessAdapter): Promise<string | undefined> {
-  const identity = await resolveCaller(environment, process);
-  return identity.tmuxSession ?? undefined;
+  return tmuxCallerPaneSession(environment, process);
 }
 
 async function entries(root: string): Promise<Entry[]> {

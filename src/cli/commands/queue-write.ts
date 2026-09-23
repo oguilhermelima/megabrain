@@ -50,6 +50,20 @@ async function tmuxSessionNameFor(pane: string, processAdapter: ProcessAdapter):
   return result.kind === "ok" ? result.value : undefined;
 }
 
+// The tmux session the CURRENT process is physically running in, right now — independent of any
+// caller-identity override or agent-session id. For "am I running in this pane/session right
+// now" safety checks (orchestrate prune, install-doctor's leaked-session count), never for
+// identity or ownership: unlike resolveCaller, a MEGABRAIN_SESSION_ID/HOST override or a
+// superset/orca terminal handle set alongside a genuine tmux pane must never suppress this probe
+// — the caller really is in that pane regardless of which identity it also carries. MEASURED
+// regression (tests/test-dispatch-transcript.sh): a caller with SUPERSET_TERMINAL_ID set who was
+// also physically in a tmux pane had that pane wrongly treated as prunable, because resolveCaller
+// let the override skip the probe entirely.
+export async function tmuxCallerPaneSession(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  if (environment.TMUX === undefined || environment.TMUX === "" || environment.TMUX_PANE === undefined || environment.TMUX_PANE === "") return undefined;
+  return tmuxSessionNameFor(environment.TMUX_PANE, processAdapter);
+}
+
 // Resolves the current caller's identity, probing the tmux session name only when nothing of
 // higher precedence (an explicit override, or a superset/orca terminal handle) already answers
 // the host — the same guard the old close.ts caller() used, now shared by every verb instead of
