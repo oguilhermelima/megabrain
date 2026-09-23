@@ -51,6 +51,17 @@ describe("shouldReconcileSkillsAtStartup", () => {
     expect(shouldReconcileSkillsAtStartup(["worktree", "create", "--help"])).toBe(false);
     expect(shouldReconcileSkillsAtStartup(["--help"])).toBe(false);
   });
+
+  // The turn-end hook runs on every agent turn, for every agent, forever — the one command in
+  // this binary that is genuinely hot-path. The old shell hook never ran skill reconcile at all.
+  test("skips when the hook command is first", () => {
+    expect(shouldReconcileSkillsAtStartup(["hook", "turn-end"])).toBe(false);
+    expect(shouldReconcileSkillsAtStartup(["hook"])).toBe(false);
+  });
+
+  test("does not skip hook appearing after the first argument", () => {
+    expect(shouldReconcileSkillsAtStartup(["context", "hook"])).toBe(true);
+  });
 });
 
 describe("reconcileSkills", () => {
