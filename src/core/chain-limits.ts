@@ -4,12 +4,12 @@ import type { ProcessAdapter, ProcessOutput } from "../adapters/proc.js";
 import type { Result } from "./result.js";
 import type { ChainConfig } from "./chain.js";
 
-// Ports lib/module-chain.sh's megabrain_chain_limit_read and everything it reaches
-// (codex rollout scan, claude/agy live usage, the on-disk cache, and the usage
-// notice) for `chain run`'s step-gating. The shell versions stay in place: they
-// are still reached from hooks/megabrain-turn-end.sh (megabrain_chain_continue_refused),
-// so this is a second, TypeScript-side implementation of the same contract, not a
-// replacement of the shell one.
+// Ports lib/module-chain.sh's former megabrain_chain_limit_read and everything it reached
+// (codex rollout scan, claude/agy live usage, the on-disk cache, and the usage notice) for
+// `chain run`'s step-gating. Both the shell reader and its only caller,
+// megabrain_chain_continue_refused (formerly reached from the turn-end hook), are gone: the
+// turn-end hook's own chain-continuation path now calls src/cli/commands/chain-run.ts's
+// continueRefusedChain directly, which reads limits through this module.
 
 export type LimitWindowName = "5h" | "weekly";
 export type LimitAgent = "codex" | "claude" | "agy";

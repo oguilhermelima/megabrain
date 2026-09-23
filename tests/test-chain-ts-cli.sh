@@ -21,8 +21,9 @@ mkdir -p "$HOME/.codex/sessions"
 # unknown-command error agree with themselves.
 
 # megabrain_chain_limit_read (lib/module-chain.sh) is gone: it lost its last production caller
-# when hooks/megabrain-turn-end.sh stopped sourcing lib/ and its own chain-continuation path
-# moved to src/cli/commands/chain-run.ts's continueRefusedChain, which reads limits through
+# when the turn-end hook (then hooks/megabrain-turn-end.sh, since deleted — the compiled binary
+# is invoked directly now) stopped sourcing lib/ and its own chain-continuation path moved to
+# src/cli/commands/chain-run.ts's continueRefusedChain, which reads limits through
 # core/chain-limits.ts — the same reader `chain limits` itself already used. So this no longer
 # compares two implementations; it is a black-box golden test of the binary's own
 # `chain limits --json` row for codex/5h and codex/weekly against a rollout fixture with

@@ -4,8 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-if [ ! -x "$root/.build/megabrain" ]; then
-  printf 'skip: compiled ack-close binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
+binary="$root/.build/megabrain"
+
+if [ ! -x "$binary" ]; then
+  printf 'skip: compiled ack-close binary is missing at %s; run bun run build\n' "$binary"
   exit 0
 fi
 
@@ -238,7 +240,7 @@ set_parent_workspace() {
 hook_state="$work_dir/hook-state"
 make_dispatch "$hook_state" hook-owned done hook-delivery
 set_parent_workspace "$hook_state/dispatches/hook-owned/meta.json"
-"$root/hooks/megabrain-turn-end.sh" '{}' >/dev/null
+"$binary" hook turn-end '{}' >/dev/null
 assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 1
 assert_contains "$(cat "$MEGABRAIN_TEST_SEND_LOG")" 'orchestrate close hook-owned'
 printf 'turn-end hook notices an owned done dispatch with a retained terminal\n'
@@ -250,7 +252,7 @@ set_parent_workspace "$waiter_state/dispatches/hook-waiter/meta.json"
 sleep 30 &
 waiter_pid=$!
 printf '%s\n' "{\"pid\":$waiter_pid}" >"$waiter_state/dispatches/hook-waiter/waiter.json"
-"$root/hooks/megabrain-turn-end.sh" '{}' >/dev/null
+"$binary" hook turn-end '{}' >/dev/null
 assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 0
 kill "$waiter_pid" 2>/dev/null || true
 wait "$waiter_pid" 2>/dev/null || true
@@ -263,7 +265,7 @@ make_dispatch "$foreign_state" hook-foreign done foreign-delivery
 set_parent_workspace "$foreign_state/dispatches/hook-foreign/meta.json"
 jq '.parentSessionId = "other-parent"' "$foreign_state/dispatches/hook-foreign/meta.json" >"$foreign_state/meta.tmp"
 mv "$foreign_state/meta.tmp" "$foreign_state/dispatches/hook-foreign/meta.json"
-"$root/hooks/megabrain-turn-end.sh" '{}' >/dev/null
+"$binary" hook turn-end '{}' >/dev/null
 assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 0
 printf 'turn-end hook suppresses a done dispatch owned by another session\n'
 

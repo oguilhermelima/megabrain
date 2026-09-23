@@ -18,8 +18,9 @@ function present(value: string | undefined): value is string {
 }
 
 // The turn-end hook's default response: `{}` for every agent except Cursor, which needs
-// `{"continue":true}` on every reply (megabrain-turn-end.sh's own MEGABRAIN_HOOK_RESPONSE
-// initialisation, before any later mutation).
+// `{"continue":true}` on every reply (the deleted hooks/megabrain-turn-end.sh wrapper's own
+// MEGABRAIN_HOOK_RESPONSE initialisation, before any later mutation — agent hook configs now
+// invoke this binary's `hook turn-end` command directly).
 function defaultResponseText(environment: HookEnvironment): string {
   return environment.MEGABRAIN_HOOK_AGENT === "cursor" ? '{"continue":true}' : "{}";
 }
@@ -221,12 +222,13 @@ async function tailTranscript(path: string): Promise<string> {
   return truncated.toString("utf8");
 }
 
-// Ports hooks/megabrain-turn-end.sh in full: same inputs (stdin/argv payload, environment), same
-// decisions and side effects, and the same never-fail contract — every branch here ends in
-// finish(), which always resolves ok() (exit 0), because a hook must never block or fail the
-// agent's turn. readStdin is only invoked on the one branch that actually needs the payload (the
-// stalled-child-message branch), exactly like the shell only calling `cat` there — reading stdin
-// eagerly would risk blocking a caller whose stdin is a live terminal on every other branch.
+// Ports the deleted hooks/megabrain-turn-end.sh wrapper in full: same inputs (stdin/argv payload,
+// environment), same decisions and side effects, and the same never-fail contract — every branch
+// here ends in finish(), which always resolves ok() (exit 0), because a hook must never block or
+// fail the agent's turn. readStdin is only invoked on the one branch that actually needs the
+// payload (the stalled-child-message branch), exactly like the shell only calling `cat` there —
+// reading stdin eagerly would risk blocking a caller whose stdin is a live terminal on every
+// other branch.
 export async function executeHookTurnEnd(
   args: readonly string[],
   environment: HookEnvironment,
