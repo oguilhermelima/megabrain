@@ -311,16 +311,25 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     }
   });
 
+  // WHY host-runtime, not tmux: the hook's own top gate (`SUPERSET_TERMINAL_ID ||
+  // ORCA_TERMINAL_HANDLE`, faithfully ported from the shell) means a tmux-runtime dispatch's own
+  // agent process can NEVER reach this "I am a child, is my own turn stalled" path in the first
+  // place — orchestrate-spawn.ts's tmux launch line explicitly clears every
+  // CALLER_IDENTITY_ENV_VARS entry (including both of those) before starting the agent, so it has
+  // neither. Earlier versions of these tests combined a superset-identified caller with a
+  // tmux-runtime dispatch record to exercise stalledIsDue's tmux branch; findChild's tmux-identity
+  // fix correctly makes that combination unmatchable now (a tmux-runtime record can only ever be
+  // matched by tmuxSession+tmuxPane), which is what surfaced that the combination described a
+  // scenario no real dispatch can reach. These now use the host branch of terminalStatus
+  // (hostList, orchestrate-terminal.ts), which is what a real host-runtime child's own hook run
+  // actually exercises.
   test("does not append a stalled message while the terminal is proven and the child spoke recently", async () => {
     await withRoot("not-stalled", async (root) => {
-      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3" });
+      await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
       await appendMessage(root, "d1", "child", "ask", "still thinking", "child-term", childEnv(root), fakeProcess());
-      const process = fakeProcess((command, args) => {
-        if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
-        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%3\n", stderr: "", exitCode: 0 });
-        if (command === "tmux" && args[0] === "display-message") return failed("no pid");
-        return ok({ stdout: "", stderr: "", exitCode: 0 });
-      });
+      const process = fakeProcess((command, args) => command === "superset" && args[0] === "terminals" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ sessions: [{ terminalId: "some-other-terminal" }] }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await executeHookTurnEnd([], childEnv(root), process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
       const messages = await (await import("node:fs/promises")).readdir(join(root, "dispatches", "d1", "messages"));
@@ -330,11 +339,10 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 
   test("appends the fallback stalled text when the terminal is missing and no payload text is given", async () => {
     await withRoot("stalled-missing-terminal", async (root) => {
-      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3" });
-      const process = fakeProcess((command, args) => {
-        if (command === "tmux" && args[0] === "has-session") return failed("no session");
-        return ok({ stdout: "", stderr: "", exitCode: 0 });
-      });
+      await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
+      const process = fakeProcess((command, args) => command === "superset" && args[0] === "terminals" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ sessions: [] }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await executeHookTurnEnd([], childEnv(root), process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
       const directory = join(root, "dispatches", "d1", "messages");
@@ -347,8 +355,10 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 
   test("uses the payload's last_assistant_message, passed as argv[0], over the fallback text", async () => {
     await withRoot("stalled-argv-payload", async (root) => {
-      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3" });
-      const process = fakeProcess((command, args) => (command === "tmux" && args[0] === "has-session" ? failed("no session") : ok({ stdout: "", stderr: "", exitCode: 0 })));
+      await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
+      const process = fakeProcess((command, args) => command === "superset" && args[0] === "terminals" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ sessions: [] }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const payload = JSON.stringify({ last_assistant_message: "here is my final answer" });
       await executeHookTurnEnd([payload], childEnv(root), process, noStdin);
       const directory = join(root, "dispatches", "d1", "messages");
@@ -360,8 +370,10 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 
   test("reads the payload from stdin when no argv payload is given", async () => {
     await withRoot("stalled-stdin-payload", async (root) => {
-      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3" });
-      const process = fakeProcess((command, args) => (command === "tmux" && args[0] === "has-session" ? failed("no session") : ok({ stdout: "", stderr: "", exitCode: 0 })));
+      await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
+      const process = fakeProcess((command, args) => command === "superset" && args[0] === "terminals" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ sessions: [] }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const stdin = async () => JSON.stringify({ lastAssistantMessage: "from stdin" });
       await executeHookTurnEnd([], childEnv(root), process, stdin);
       const directory = join(root, "dispatches", "d1", "messages");
@@ -373,11 +385,13 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 
   test("falls back to the tail of the transcript file when the payload text is empty", async () => {
     await withRoot("stalled-transcript", async (root) => {
-      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3" });
+      await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
       const transcriptPath = join(root, "transcript.jsonl");
       const lines = Array.from({ length: 30 }, (_value, index) => `line ${index}`).join("\n");
       await writeFile(transcriptPath, lines);
-      const process = fakeProcess((command, args) => (command === "tmux" && args[0] === "has-session" ? failed("no session") : ok({ stdout: "", stderr: "", exitCode: 0 })));
+      const process = fakeProcess((command, args) => command === "superset" && args[0] === "terminals" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ sessions: [] }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const payload = JSON.stringify({ transcript_path: transcriptPath });
       await executeHookTurnEnd([payload], childEnv(root), process, noStdin);
       const directory = join(root, "dispatches", "d1", "messages");
@@ -391,7 +405,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 describe("executeHookTurnEnd: never fails or blocks the agent", () => {
   test("still resolves ok() with the default response when every process call throws", async () => {
     await withRoot("throwing", async (root) => {
-      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3" });
+      await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
       const throwing: ProcessAdapter = {
         run: async () => { throw new Error("boom"); },
         startDetached: async () => { throw new Error("boom"); },

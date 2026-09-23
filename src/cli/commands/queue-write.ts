@@ -128,7 +128,11 @@ export async function findChild(root: string, environment: QueueEnvironment, pro
   const matches: string[] = [];
   for (const dispatch of dispatches) {
     const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
-    const matchesTerminal = meta?.terminalId === current.id && meta.childHost === current.host;
+    // A tmux-runtime record is never matched by terminalId/childHost, even one written before
+    // orchestrate-spawn.ts recorded the child's own identity there (when both fields held
+    // whatever caller happened to spawn it) — only a caller actually running in that exact
+    // tmuxSession/tmuxPane can ever be this dispatch's child.
+    const matchesTerminal = meta?.runtime !== "tmux" && meta?.terminalId === current.id && meta.childHost === current.host;
     const matchesTmux = current.host === "tmux" &&
       meta?.runtime === "tmux" &&
       current.tmuxSession !== undefined && current.tmuxPane !== undefined &&
