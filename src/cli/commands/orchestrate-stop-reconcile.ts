@@ -9,7 +9,7 @@ import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironme
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
-import { getHost } from "../../hosts/index.js";
+import { getHost, runHostSend } from "../../hosts/index.js";
 import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 
@@ -136,7 +136,7 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
     if (identity !== "proven") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt`);
     const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca`;
     const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
-    const sent = await process.run(interrupt.value.command, interrupt.value.args);
+    const sent = await runHostSend(host, process, interrupt.value);
     interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
     interruptReason = sent.kind === "failed" ? sent.error : "";
   }

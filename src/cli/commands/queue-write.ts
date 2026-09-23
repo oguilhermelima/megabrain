@@ -6,7 +6,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
-import { getHost } from "../../hosts/index.js";
+import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
@@ -240,7 +240,7 @@ export async function sendParentPointer(root: string, meta: JsonRecord, pointer:
       text: pointer,
     });
     if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
-    result = await processAdapter.run(call.value.command, call.value.args);
+    result = await runHostSend(host, processAdapter, call.value);
   }
   return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
 }
@@ -279,7 +279,7 @@ export async function notifyChild(root: string, meta: JsonRecord, dispatch: stri
       text: pointer,
     });
     if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
-    result = await processAdapter.run(call.value.command, call.value.args);
+    result = await runHostSend(host, processAdapter, call.value);
   }
   return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified" } : { outcome: "failed", reason: result.error };
 }

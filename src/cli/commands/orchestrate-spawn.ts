@@ -13,7 +13,7 @@ import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/contex
 import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
-import { getHost, type HostCommand, type HostProvider } from "../../hosts/index.js";
+import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
@@ -611,7 +611,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const host = getHost(childHost);
         const identityVariable = host?.terminalIdentityVariable;
         const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")} MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} ${command}` });
-        const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
+        const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
     } else if (step === "readiness-output-validation") {
@@ -631,7 +631,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
         const host = getHost(childHost);
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt });
-        const sent = call?.kind === "ok" ? await process.run(call.value.command, call.value.args) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
+        const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       }

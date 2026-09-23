@@ -20,3 +20,4 @@ export function getHost(hostId: string): HostProvider | undefined {
 }
 
 export type { CreateTerminal, HostCommand, HostProvider, SendText, TerminalTarget } from "./types.js";
+export { runHostSend } from "./send.js";
