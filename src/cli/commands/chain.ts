@@ -5,12 +5,13 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { type ChainConfig } from "../../core/chain.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { executeChainRun } from "./chain-run.js";
 
 export type ChainEnvironment = Readonly<Record<string, string | undefined>>;
 const emptyConfig: ChainConfig = { chains: {}, defaultSteps: [] };
 function error<T = string>(message: string, exitCode = 1): Result<T> { return failed(message, exitCode); }
 function json(value: unknown): string { return JSON.stringify(value) + "\n"; }
-function chainPath(environment: ChainEnvironment): string { return environment.MEGABRAIN_CHAIN_FILE ?? resolve(resolveStateDirectory(environment), "chains.json"); }
+export function chainPath(environment: ChainEnvironment): string { return environment.MEGABRAIN_CHAIN_FILE ?? resolve(resolveStateDirectory(environment), "chains.json"); }
 function preserveStderr<T>(result: Result<T>, stderr: string | undefined): Result<T> {
   if (result.kind !== "ok" || stderr === undefined) return result;
   return { ...result, stderr };
@@ -27,7 +28,7 @@ function validatedOutput(valid: Result<ChainConfig>, value: string): Result<stri
   if (valid.kind !== "ok") return valid;
   return preserveStderr(ok(value), valid.stderr);
 }
-function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
+export function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
   const path = chainPath(environment); if (!existsSync(path)) return ok(emptyConfig);
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -42,7 +43,7 @@ function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
     return ok(normalized);
   } catch { return error(`chain file is not valid JSON: ${path}`); }
 }
-function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
+export function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
   const modelsPath = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json"); let models: Set<string> | undefined; let modelIds: ReadonlyArray<{ agent: string; model: string }> = []; let modelEntries: ReadonlyArray<any> = [];
   let modelErrors = ""; let registryNotice: string | undefined;
   try {
@@ -81,7 +82,7 @@ function validateConfig(config: ChainConfig, environment: ChainEnvironment): Res
   return preserveStderr(ok(config), registryNotice);
 }
 type ChainWrite = { readonly name: string; readonly definition?: Record<string, unknown>; readonly changed?: boolean };
-function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: string[] } }>> {
+export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: string[] } }>> {
   const path = resolve(environment.MEGABRAIN_ROOT ?? process.cwd(), ".megabrain/models.json");
   if (!existsSync(path)) return ok([]);
   try { const value = JSON.parse(readFileSync(path, "utf8")); return ok(value.models ?? []); }
@@ -199,6 +200,7 @@ async function execute(args: readonly string[], environment: ChainEnvironment, p
   if (subcommand === "edit") return editChain(rest, environment, processAdapter);
   if (subcommand === "delete") return Promise.resolve(deleteChain(rest, environment));
   if (subcommand === "repair") return Promise.resolve(repairChain(rest, environment));
+  if (subcommand === "run") return executeChainRun(rest, environment, processAdapter);
   if (subcommand === "-h" || subcommand === "--help" || subcommand === undefined) return ok(usage("chain")); return error(`unknown chain command: ${subcommand}`, 2);
 }
 export async function executeChain(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> { return execute(args, environment, processAdapter); }
