@@ -105,4 +105,21 @@ megabrain_main() {
   esac
 }
 
+megabrain_skill_runtime_check=true
+for megabrain_argument in "$@"; do
+  if [ "$megabrain_argument" = --help ]; then
+    megabrain_skill_runtime_check=false
+    break
+  fi
+done
+if [ "${1:-}" = doctor ]; then
+  megabrain_skill_runtime_check=false
+fi
+# WHY: the compiled binary performs the full skill reconcile (scan, hash, repair) at its own
+# startup (src/core/skill.ts) for every real invocation. This notice-only check stays here,
+# with the same exclusions, only because a stubbed binary (several CLI tests routing tests)
+# never runs that TypeScript code; it must never scan targets or write anything, or it would
+# repeat the binary's repair.
+[ "$megabrain_skill_runtime_check" = true ] && megabrain_skill_source_missing_notice
+
 megabrain_main "$@"

@@ -47,6 +47,21 @@ megabrain_skill_source() {
   printf '%s/skills/megabrain/SKILL.md\n' "$root"
 }
 
+# WHY: the full drift scan and repair now live in the compiled binary's own startup
+# (src/core/skill.ts) and run there for every real invocation. This notice-only check stays
+# in the entry script because some CLI tests deliberately stub .build/megabrain to a bare
+# "exit <status>" to test shell-to-binary routing in isolation (see
+# tests/fixtures/entrypoint-routing.sh); no TypeScript code runs in that fixture, so the
+# binary's own check can never fire there. It only reports; it never scans targets, hashes,
+# or writes anything, so it cannot repeat the binary's repair.
+megabrain_skill_source_missing_notice() {
+  local source=''
+  source="$(megabrain_skill_source 2>/dev/null || true)"
+  [ -n "$source" ] || return 0
+  [ -f "$source" ] && return 0
+  printf 'megabrain: installed skill source is missing: %s\n' "$source" >&2
+}
+
 megabrain_skill_target_paths() {
   local target
   for target in \
