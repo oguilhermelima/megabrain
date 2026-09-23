@@ -107,6 +107,26 @@ SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR=
 assert_equal "$(jq -r '.terminalState' "$state3/dispatches/queued-proof/meta.json")" released
 printf 'orchestrate close releases an owned terminal on a settled dispatch\n'
 
+# A fresh, isolated MEGABRAIN_STATE_DIR is required here: without one, model list falls back to
+# resolving state against the real $HOME, reading whatever personal ~/.megabrain/models.json
+# happens to exist on the machine running the test instead of upgrading a fresh copy from this
+# repo's tracked .megabrain/models.json template — the two can disagree (a local state copy can be
+# older than the template). Isolating it is what makes this scenario deterministic.
+model_state="$state_root/model-list"
+mkdir -p "$model_state"
+model_output="$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list)"
+assert_contains "$model_output" 'sourced'
+assert_contains "$model_output" 'verified'
+assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .provenance.kind')" sourced
+assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.kind')" verified
+assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.verified[0]')" xhigh
+printf 'model list separates sourced ids from verified effort spellings\n'
+
+# FINDINGS below are placed last so every scenario above still runs and reports; set -e plus
+# fail()'s immediate exit means the script still stops at the first one reached (rule 4: leave it
+# failing, do not weaken the assertion). Both are documented here regardless of which one a given
+# run actually reaches.
+
 # FINDING (rule 4, not a test defect — did not touch src/, did not weaken the assertion): a reply
 # to a dispatch already "done" is supposed to be refused ("dispatch <id> is settled in state done;
 # open a new dispatch for a reply", queue left empty), matching src/core/parent-reply.ts's own
@@ -142,13 +162,5 @@ stalled_reply_output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR
 assert_equal "$(printf '%s' "$stalled_reply_output" | jq -r '.status // empty' 2>/dev/null)" queued
 assert_equal "$(jq -r '.state' "$state5/dispatches/stalled-reply/meta.json")" running
 printf 'stalled reply: accepted and resumed the dispatch\n'
-
-model_output="$("$root/megabrain" model list)"
-assert_contains "$model_output" 'sourced'
-assert_contains "$model_output" 'verified'
-assert_equal "$("$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .provenance.kind')" sourced
-assert_equal "$("$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.kind')" verified
-assert_equal "$("$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.verified[0]')" xhigh
-printf 'model list separates sourced ids from verified effort spellings\n'
 
 printf 'ok: end to end findings coverage (with two open findings, see report)\n'
