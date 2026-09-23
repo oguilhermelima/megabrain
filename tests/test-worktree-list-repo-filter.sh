@@ -3,11 +3,17 @@
 set -euo pipefail
 
 # Scenarios written before the implementation:
-# 1. A --repo path selects every worktree belonging to a fixture repository.
+# 1. A --repo path selects every worktree belonging to a fixture repository, including the
+#    repository's own checkout.
 # 2. A --repo name resolves through the Orca repository registry to the same entries.
 # 3. The compiled implementation returns the same entries from the repository root and a worktree.
-# Falsification: run both selectors from both working directories and require the two expected
-# worktree paths in every result.
+# Falsification: run both selectors from both working directories and require the repo's own
+# checkout plus the two linked worktree paths in every result.
+#
+# --repo now also returns the repository's own checkout, not just worktrees under the shared
+# root: 46b1a10 (fix(worktree): ask git for a named repo) dropped the inSharedRoot filter
+# whenever --repo is given (src/cli/commands/worktree-list.ts), so `git worktree list` for the
+# selected repository is returned in full rather than intersected with the shared root.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-list-repo-filter.XXXXXX")"
@@ -82,10 +88,10 @@ run_case() {
   fi
   printf '%s: entries=%s status=%s\n' "$label" "$count" "$status"
   assert_equal "$status" 0
-  assert_equal "$count" 2
-  printf '%s' "$output" | jq -e --arg one "$expected_one" --arg two "$expected_two" \
-    'map(.path) | sort == ([$one, $two] | sort)' >/dev/null ||
-    fail "$label did not return the fixture worktrees"
+  assert_equal "$count" 3
+  printf '%s' "$output" | jq -e --arg repo "$repo" --arg one "$expected_one" --arg two "$expected_two" \
+    'map(.path) | sort == ([$repo, $one, $two] | sort)' >/dev/null ||
+    fail "$label did not return the fixture repo checkout and its worktrees"
 }
 
 [ -x "$root/.build/megabrain" ] || fail "compiled worktree list binary is missing at $root/.build/megabrain"
