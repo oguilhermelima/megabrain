@@ -57,13 +57,10 @@ export async function session(environment: QueueEnvironment, processAdapter: Pro
 // dispatch's child" question ask/done/received/the turn-end hook all ask) instead of this file's
 // own former matches()/findChild pair, which had the same gap findChild's own tmux-identity fix
 // closed: a runtime tmux record could still match by terminalId/childHost for a non-tmux-hosted
-// caller, including a legacy record carrying that caller's own id. Two behaviour differences from
-// the deleted implementation, both accepted: the MEGABRAIN_DISPATCH_ID fast path no longer
-// re-checks identity against the resolved dispatch (matching ask/done/received/the hook, none of
-// which did either — MEGABRAIN_DISPATCH_ID is an internal env var a child's own launch line sets,
-// not user input, so the extra check bought little); and a caller whose own resolveCaller-based
-// probe finds no identity now also gets queue-write.ts's `tmux list-panes -a` fallback for a
-// plain-tmux caller (this file's own session() below, kept for its independent test coverage, has
+// caller, including a legacy record carrying that caller's own id. One behaviour difference from
+// the deleted implementation, accepted: a caller whose own resolveCaller-based probe finds no
+// identity now also gets queue-write.ts's `tmux list-panes -a` fallback for a plain-tmux caller
+// (this file's own session() below, kept for its independent test coverage, has
 // no such fallback and never did — a strict improvement, not a loss, matching the same regression
 // tests/test-queue-write-cli.sh already covers for ask/done/received).
 async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildDispatch>> {

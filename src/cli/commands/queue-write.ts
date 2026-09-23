@@ -118,26 +118,37 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
 // "is the current terminal itself a managed dispatch's child" question megabrain_dispatch_find_child
 // answered in the shell — same MEGABRAIN_DISPATCH_ID fast path, same terminal/tmux matching, same
 // ambiguity and not-found errors.
+// A tmux-runtime record is never matched by terminalId/childHost, even one written before
+// orchestrate-spawn.ts recorded the child's own identity there (when both fields held whatever
+// caller happened to spawn it) — only a caller actually running in that exact tmuxSession/tmuxPane
+// can ever be this dispatch's child. Shared by the identity scan below and by the
+// MEGABRAIN_DISPATCH_ID fast path, which must apply the identical ownership rule rather than
+// trusting the named dispatch's existence alone.
+function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boolean {
+  const matchesTerminal = meta?.runtime !== "tmux" && meta?.terminalId === current.id && meta?.childHost === current.host;
+  const matchesTmux = current.host === "tmux" &&
+    meta?.runtime === "tmux" &&
+    current.tmuxSession !== undefined && current.tmuxPane !== undefined &&
+    meta?.tmuxSession === current.tmuxSession && meta?.tmuxPane === current.tmuxPane;
+  return matchesTerminal || matchesTmux;
+}
+
 export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
   const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const direct = environment.MEGABRAIN_DISPATCH_ID;
   const directMeta = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(await dispatchPath(root, direct, "meta.json")) : undefined;
-  const directDispatch = direct !== undefined && directMeta?.dispatchId === direct ? direct : undefined;
+  // The fast path only short-circuits the scan for a dispatch that actually belongs to the
+  // current caller. A stale MEGABRAIN_DISPATCH_ID (inherited by a process from a different
+  // dispatch's environment) still names a real, readable meta.json, so checking existence alone
+  // locked the candidate list to a dispatch that then failed its own ownership check. Falling
+  // back to the identity scan here matches the retired shell implementation.
+  const directDispatch = direct !== undefined && directMeta?.dispatchId === direct && callerOwnsDispatch(directMeta, current) ? direct : undefined;
   const dispatches = directDispatch !== undefined ? [directDispatch] : await readdir(`${root}/dispatches`).catch(() => []);
   const matches: string[] = [];
   for (const dispatch of dispatches) {
     const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
-    // A tmux-runtime record is never matched by terminalId/childHost, even one written before
-    // orchestrate-spawn.ts recorded the child's own identity there (when both fields held
-    // whatever caller happened to spawn it) — only a caller actually running in that exact
-    // tmuxSession/tmuxPane can ever be this dispatch's child.
-    const matchesTerminal = meta?.runtime !== "tmux" && meta?.terminalId === current.id && meta.childHost === current.host;
-    const matchesTmux = current.host === "tmux" &&
-      meta?.runtime === "tmux" &&
-      current.tmuxSession !== undefined && current.tmuxPane !== undefined &&
-      meta.tmuxSession === current.tmuxSession && meta.tmuxPane === current.tmuxPane;
-    if (meta?.dispatchId === dispatch && (matchesTerminal || matchesTmux)) matches.push(dispatch);
+    if (meta?.dispatchId === dispatch && callerOwnsDispatch(meta, current)) matches.push(dispatch);
   }
   if (matches.length > 1) return failed(`terminal identity matches multiple dispatches for ${current.host}/${current.id}: ${matches[0]}, ${matches[1]}`);
   if (matches.length === 0) {

@@ -35,10 +35,19 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$bin_dir/xcrun"
+# commit 21bd3b6 ("fix(native): report why accessibility tree could not be read") made
+# createAppiumSession and the /source read pass -w "\n%{http_code}" and require that trailing
+# status line to parse a response (appiumResponse() in src/cli/commands/native.ts) -- real curl
+# appends it to stdout by default. This fake never emitted it, so createAppiumSession failed its
+# own validation on every call regardless of the fake's JSON body, and nothing was ever persisted:
+# both health calls silently fell back to creating a fresh session. Only the plain session-probe
+# call (`curl -fsS http://.../session/<id>`, no -w) is exempt.
 cat >"$bin_dir/curl" <<'EOF'
 #!/usr/bin/env bash
 set -u
 printf '%s\n' "$*" >>"${NATIVE_SESSION_CURL_LOG:?}"
+has_w=false
+for arg in "$@"; do [ "$arg" = "-w" ] && has_w=true; done
 case "$*" in
   *"-X POST"*)
     count_file="${NATIVE_SESSION_POST_COUNT:?}"
@@ -46,9 +55,15 @@ case "$*" in
     [ -f "$count_file" ] && count="$(cat "$count_file")"
     count=$((count + 1))
     printf '%s\n' "$count" >"$count_file"
-    printf '%s\n' "{\"value\":{\"sessionId\":\"created-$count\"}}"
+    printf '%s' "{\"value\":{\"sessionId\":\"created-$count\"}}"
+    "$has_w" && printf '\n200'
+    printf '\n'
     ;;
-  *"/source"*) printf '%s\n' '<XCUIElementTypeWindow/><XCUIElementTypeButton/>' ;;
+  *"/source"*)
+    printf '%s' '<XCUIElementTypeWindow/><XCUIElementTypeButton/>'
+    "$has_w" && printf '\n200'
+    printf '\n'
+    ;;
   *"/session/"*) printf '%s\n' '{"value":{"id":"live"}}' ;;
   *) exit 1 ;;
 esac
