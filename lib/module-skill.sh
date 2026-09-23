@@ -25,21 +25,6 @@ megabrain_sha256_file() {
   return 1
 }
 
-megabrain_sha256_text() {
-  local value="$1" output=''
-  if megabrain_require_command shasum; then
-    output="$(printf '%s' "$value" | shasum -a 256 2>/dev/null)" || return 1
-    printf '%s\n' "${output%% *}"
-    return 0
-  fi
-  if megabrain_require_command sha256sum; then
-    output="$(printf '%s' "$value" | sha256sum 2>/dev/null)" || return 1
-    printf '%s\n' "${output%% *}"
-    return 0
-  fi
-  return 1
-}
-
 megabrain_skill_hash_file() {
   megabrain_sha256_file "$1"
 }
@@ -96,15 +81,6 @@ megabrain_skill_file_metadata() {
     ''|*[!0-9\ ]*) return 1 ;;
   esac
   printf '%s\n' "$metadata"
-}
-
-megabrain_skill_file_size() {
-  local path="$1" size=''
-  size="$(wc -c <"$path" | tr -d '[:space:]')" || return 1
-  case "$size" in
-    ''|*[!0-9]*) return 1 ;;
-    *) printf '%s\n' "$size" ;;
-  esac
 }
 
 megabrain_skill_write_stamp() {
@@ -275,10 +251,6 @@ megabrain_skill_scan() {
   return "$scan_rc"
 }
 
-megabrain_skill_reconcile() {
-  megabrain_skill_scan true
-}
-
 module_skill_sync_doctor() {
   local scan_rc=0
   megabrain_skill_scan false || scan_rc=1
@@ -299,5 +271,5 @@ module_skill_sync_doctor() {
 }
 
 module_skill_sync_install() {
-  megabrain_skill_reconcile
+  megabrain_skill_scan true
 }

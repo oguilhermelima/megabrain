@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+binary="$root/.build/megabrain"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-skill-sync.XXXXXX")"
 cleanup() {
   local rc=$?
@@ -17,10 +18,6 @@ fail() {
   exit 1
 }
 
-assert_equal() {
-  [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
-}
-
 assert_contains() {
   case "$1" in
     *"$2"*) ;;
@@ -28,91 +25,45 @@ assert_contains() {
   esac
 }
 
+# WHY: skill reconcile now lives in the compiled binary (src/core/skill.ts, unit-tested in
+# tests/unit/skill.test.ts); this file drives the megabrain entry script as a black box to
+# prove the runtime hygiene contract survives the move, not the shell functions that used to
+# implement it.
+[ -x "$binary" ] || { printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"; exit 0; }
+
 export HOME="$work/home"
 export MEGABRAIN_STATE_DIR="$work/state"
+export MEGABRAIN_ROOT="$root"
 mkdir -p "$HOME/.claude/plugins/cache/megabrain-local/megabrain/0.1.0/skills/megabrain"
-
-source "$root/lib/common.sh"
-source "$root/lib/module-skill.sh"
 
 source_skill="$root/skills/megabrain/SKILL.md"
 cached_skill="$HOME/.claude/plugins/cache/megabrain-local/megabrain/0.1.0/skills/megabrain/SKILL.md"
 cp "$source_skill" "$cached_skill"
 printf '\nold cached content\n' >>"$cached_skill"
 
-megabrain_skill_reconcile
-cmp -s "$source_skill" "$cached_skill" || fail 'runtime reconcile did not repair skill drift'
-printf 'scenario 1: drift is detected and repaired\n'
+"$root/megabrain" context --json >"$work/context1.out" 2>"$work/context1.err"
+cmp -s "$source_skill" "$cached_skill" || fail 'an unrelated command did not repair skill drift at startup'
+jq -e '.host != null' "$work/context1.out" >/dev/null || fail 'the reconciled command did not return its normal output'
+printf 'scenario 1: an unrelated command repairs skill drift at startup\n'
 
-hash_calls_file="$work/hash-calls"
-: >"$hash_calls_file"
-megabrain_skill_hash_file() {
-  printf '%s\n' "$1" >>"$hash_calls_file"
-  megabrain_sha256_file "$@"
-}
-megabrain_skill_reconcile
-assert_equal "$(wc -l <"$hash_calls_file" | tr -d '[:space:]')" 0
-printf 'scenario 2: current skill is a no-op\n'
-
-touch -t 200001010000 "$cached_skill"
-: >"$hash_calls_file"
-megabrain_skill_reconcile
-assert_equal "$(wc -l <"$hash_calls_file" | tr -d '[:space:]')" 2
-: >"$hash_calls_file"
-megabrain_skill_reconcile
-assert_equal "$(wc -l <"$hash_calls_file" | tr -d '[:space:]')" 0
-stamp="$(megabrain_skill_stamp_path "$cached_skill")"
-assert_equal "$(sed -n '3p' "$stamp")" "$(megabrain_path_mtime "$source_skill")"
-assert_equal "$(sed -n '4p' "$stamp")" "$(megabrain_skill_file_size "$source_skill")"
-printf 'scenario 3: metadata changes trigger one comparison\n'
-printf 'scenario 4: the stamp records source metadata\n'
+"$root/megabrain" context --json >"$work/context2.out" 2>"$work/context2.err"
+cmp -s "$source_skill" "$cached_skill" || fail 'a current skill target was unexpectedly modified'
+[ ! -s "$work/context2.err" ] || fail 'a current skill target produced unexpected diagnostics'
+printf 'scenario 2: a current skill target is a no-op\n'
 
 printf '\nnew cached content\n' >>"$cached_skill"
 chmod 0555 "$(dirname "$cached_skill")"
-if reconcile_output="$(megabrain_skill_reconcile 2>&1)"; then
-  fail 'unwritable skill target was accepted'
-fi
-assert_contains "$reconcile_output" 'skill target is not writable'
+"$root/megabrain" context --json >"$work/context3.out" 2>"$work/context3.err"
+jq -e '.host != null' "$work/context3.out" >/dev/null || fail 'an unrelated command failed because of an unwritable skill target'
+assert_contains "$(cat "$work/context3.err")" 'skill target is not writable'
 chmod 0755 "$(dirname "$cached_skill")"
-printf 'scenario 5: an unwritable target reports clearly\n'
-
-chmod 0555 "$(dirname "$cached_skill")"
-if context_output="$(HOME="$HOME" MEGABRAIN_STATE_DIR="$work/context-state" "$root/megabrain" context --json 2>"$work/context.err")"; then
-  context_rc=0
-else
-  context_rc=$?
-fi
-assert_equal "$context_rc" 0
-printf '%s' "$context_output" | jq -e '.host != null' >/dev/null ||
-  fail "an unrelated context command did not return JSON: $context_output"
-assert_contains "$(cat "$work/context.err")" 'skill target is not writable'
-chmod 0755 "$(dirname "$cached_skill")"
-printf 'scenario 5b: skill-sync failure does not fail an unrelated command\n'
-
-cp "$source_skill" "$cached_skill"
-rm -rf "$MEGABRAIN_STATE_DIR"
-mkdir -p "$MEGABRAIN_STATE_DIR"
-: >"$hash_calls_file"
-megabrain_skill_reconcile
-assert_equal "$(wc -l <"$hash_calls_file" | tr -d '[:space:]')" 2
-: >"$hash_calls_file"
-megabrain_skill_reconcile
-assert_equal "$(wc -l <"$hash_calls_file" | tr -d '[:space:]')" 0
-printf 'scenario 6: the stamp prevents a repeated target comparison\n'
-
-cp "$source_skill" "$cached_skill"
-printf '\nuncorrected drift\n' >>"$cached_skill"
-: >"$hash_calls_file"
-megabrain_skill_reconcile
-cmp -s "$source_skill" "$cached_skill" || fail 'stamp did not allow a changed skill to be repaired'
-assert_equal "$(wc -l <"$hash_calls_file" | tr -d '[:space:]')" 2
-printf 'scenario 7: changed content is hashed and repaired\n'
+printf 'scenario 3: an unwritable target reports clearly and never fails an unrelated command\n'
 
 printf '\nuncorrected drift\n' >>"$cached_skill"
 doctor_json="$("$root/megabrain" doctor skill-sync --json 2>/dev/null)" || true
 printf '%s' "$doctor_json" | jq -e '.module == "skill-sync" and .status == "misconfigured" and (.reason | contains("skill drift"))' >/dev/null ||
   fail "doctor did not report skill drift as its own condition: $doctor_json"
 cmp -s "$source_skill" "$cached_skill" && fail 'doctor silently repaired drift before reporting it'
-printf 'scenario 8: doctor reports skill drift independently\n'
+printf 'scenario 4: doctor reports skill drift independently and never repairs it\n'
 
 printf 'ok: skill synchronization scenarios\n'

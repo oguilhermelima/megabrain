@@ -105,18 +105,4 @@ megabrain_main() {
   esac
 }
 
-megabrain_skill_runtime_check=true
-for megabrain_argument in "$@"; do
-  if [ "$megabrain_argument" = --help ]; then
-    megabrain_skill_runtime_check=false
-    break
-  fi
-done
-if [ "${1:-}" = doctor ]; then
-  megabrain_skill_runtime_check=false
-fi
-# WHY: skill cache repair is best-effort runtime hygiene; its stderr diagnostics are useful,
-# but an unwritable plugin cache must not fail an unrelated command such as orchestrate list.
-[ "$megabrain_skill_runtime_check" = true ] && megabrain_skill_reconcile || true
-
 megabrain_main "$@"
