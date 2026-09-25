@@ -1,5 +1,7 @@
+import packageJson from "../../package.json" with { type: "json" };
 import { type ProcessAdapter } from "../adapters/proc.js";
 import { failed, ok, type Result } from "../core/result.js";
+import { ROOT_USAGE } from "./usage.js";
 import { executeContext, type Environment } from "./commands/context.js";
 import { executeCheck } from "./commands/check.js";
 import { executeModel } from "./commands/model.js";
@@ -39,6 +41,12 @@ export function route(
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
   const [command, ...commandArgs] = args;
+  if (command === undefined || command === "help" || command === "-h" || command === "--help") {
+    return Promise.resolve(ok(ROOT_USAGE));
+  }
+  if (command === "version" || command === "-V" || command === "--version") {
+    return Promise.resolve(ok(`megabrain ${packageJson.version}\n`));
+  }
   if (command === "context") {
     return executeContext(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
@@ -129,5 +137,5 @@ export function route(
   if (command === "hook" && commandArgs[0] === "turn-end") {
     return executeHookTurnEnd(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter, dependencies.readStdin ?? readStdinText);
   }
-  return Promise.resolve(failed(`unknown command: ${command ?? ""}`, 2));
+  return Promise.resolve(failed(`unknown command: ${command}`, 2));
 }
