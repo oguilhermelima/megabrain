@@ -1,5 +1,5 @@
 export const USAGE_LINES = {
-  "install": "install [module-id] [--browser chromium|firefox|both] [--yes] [--revert]",
+  "install": "install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--agents-md none|global|project] [--modules list|all|none] [--yes] [--browser chromium|firefox|both] [--revert]",
   "doctor": "doctor [module-id] [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
@@ -119,7 +119,7 @@ export const ROOT_USAGE = `Usage: megabrain <command> [options]
 
 Commands:
   version|-V|--version                   Print the megabrain version
-  install [module-id] [--browser ...]   Install one module or choose modules interactively
+  install [options]                    Configure agents, skills, instructions, and modules
   doctor [module-id]                   Check one module or all modules
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)

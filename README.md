@@ -33,26 +33,33 @@ outlives the terminal it was typed in.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/oguilhermelima/megabrain/main/install.sh | bash
+megabrain install --yes
 ```
 
-It downloads the rest itself, asks what to configure, and links `megabrain` into
-`~/.local/bin`. Pass the answers to skip the questions:
+The delivery script downloads megabrain, builds the CLI with Bun, and links it at
+`~/.local/bin/megabrain`. Run `megabrain install` to configure the machine. In a terminal, it
+offers numbered choices for detected agent CLIs, skill scope, the instructions pointer, and
+modules. `--yes` accepts the defaults: agents found on `PATH`, global skill and instructions,
+and the core module set.
 
-The installer requires Bun to compile the CLI after downloading the release archive.
+Choose each part explicitly for non-interactive setup:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/oguilhermelima/megabrain/main/install.sh \
-  | bash -s -- --agents codex --skill global --agents-md global --yes
+megabrain install --agents claude,codex --skill global --agents-md global \
+  --modules orchestration,orchestration-hooks,worktree --yes
 ```
 
-`--agents` names the agent CLIs you already have; the installer refuses one it cannot find on
-PATH rather than configuring something that is not there. Use `none` to configure no agent.
+Use `--agents none`, `--skill none`, `--agents-md none`, or `--modules none` to skip that part.
+`--skill project` installs into each selected agent's project skill directory. The global skill
+and instructions paths follow each agent's own configuration location. An existing megabrain
+plugin or marketplace is offered for removal so the skill is not loaded twice; `--yes` removes
+it automatically.
 
-Absent `--modules`, the installer takes the core set: orchestration, orchestration-hooks,
-worktree, and tmux-runtime when tmux is already on PATH.
+Absent `--modules`, the core set is `orchestration` and `orchestration-hooks`, with
+`tmux-runtime` added when tmux is on `PATH` and `worktree` added when Superset is available.
 
 > [!NOTE]
-> Clone only to work on megabrain itself: `git clone … && ./install.sh` installs from the
+> Clone only to work on megabrain itself: `git clone … && ./install.sh` delivers from the
 > checkout instead of downloading, so your edits are what gets linked.
 
 ### Homebrew

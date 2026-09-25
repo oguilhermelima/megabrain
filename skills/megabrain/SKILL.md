@@ -215,7 +215,7 @@ host already forgot it or process identity was unavailable.
 ```
 megabrain context [--json]           which orchestration host this session is in
 megabrain doctor [module-id] [--json]
-megabrain install [module-id] [--yes] [--revert]
+megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--agents-md none|global|project] [--modules list|all|none] [--yes] [--browser chromium|firefox|both] [--revert]
 ```
 
 `doctor --json` is machine readable for every module; operator advice goes to stderr so it stays
