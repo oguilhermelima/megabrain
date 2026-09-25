@@ -4,6 +4,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-contract.XXXXXX")"
+node_bin="$work_dir/node-bin"
+mkdir -p "$node_bin"
+ln -s "$(command -v node)" "$node_bin/node"
 
 cleanup() {
   rm -rf "$work_dir"
@@ -100,63 +103,30 @@ EOF
 run_impl() {
   local implementation="$1" state="$2" repo="$3" branch="$4"
   shift 4
-  env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
+  env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$work_dir/bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
 }
 
 run_no_orchestrator() {
   local implementation="$1" state="$2" repo="$3" branch="$4"
   shift 4
-  env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
+  env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" "$@"
 }
 
 scenario_orchestrator_free_create_and_list() {
-  local implementation state repo shared output
-  for implementation in shell binary; do
-    state="$work_dir/no-host-$implementation/state"
-    repo="$work_dir/no-host-$implementation/repo"
-    shared="$work_dir/no-host-$implementation/shared"
-    mkdir -p "$state" "$shared"
-    make_repo "$repo"
-    printf '%s\n' "$shared" >"$state/worktree-root"
-    output="$(run_no_orchestrator "$implementation" "$state" "$repo" "feat/no-host-$implementation" --json)" ||
-      fail "$implementation did not create without an orchestrator: $output"
-    assert_equal "$(printf '%s' "$output" | jq -r '.workspace')" null
-    [ -d "$shared/feat-no-host-$implementation" ] || fail "$implementation did not create the worktree"
-    git -C "$repo" branch --list "feat/no-host-$implementation" | grep -q "feat/no-host-$implementation" ||
-      fail "$implementation did not create the branch"
-    output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$root/.build/megabrain" worktree list --json)" ||
-      fail "$implementation did not list without an orchestrator: $output"
-    assert_contains "$output" "feat/no-host-$implementation"
-  done
-  printf 'orchestrator-free create and list work for both implementations\n'
-}
-
-scenario_superset_project_failure_keeps_git_work() {
-  local state="$work_dir/project-failure-shell/state" repo="$work_dir/project-failure-shell/repo" shared="$work_dir/project-failure-shell/shared" output branch=feat/project-failure-shell
+  local state="$work_dir/no-host/state" repo="$work_dir/no-host/repo" shared="$work_dir/no-host/shared" output
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
-  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
-    fail 'shell fallback accepted a project registration failure'
-  fi
-  assert_contains "$output" 'shell worktree implementation no longer exists'
-  [ ! -e "$shared/${branch//\//-}" ] || fail 'shell fallback created a worktree after removal'
-  git -C "$repo" branch --list "$branch" | grep -q "$branch" && fail 'shell fallback created a branch after removal'
-  printf 'project registration scenario refuses the removed shell fallback\n'
-}
-
-scenario_superset_workspace_failure_keeps_git_work() {
-  local state="$work_dir/workspace-failure-shell/state" repo="$work_dir/workspace-failure-shell/repo" shared="$work_dir/workspace-failure-shell/shared" output branch=feat/workspace-failure-shell
-  mkdir -p "$state" "$shared"
-  make_repo "$repo"
-  printf '%s\n' "$shared" >"$state/worktree-root"
-  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
-    fail 'shell fallback accepted a workspace registration failure'
-  fi
-  assert_contains "$output" 'shell worktree implementation no longer exists'
-  [ ! -e "$shared/${branch//\//-}" ] || fail 'shell fallback created a worktree after removal'
-  git -C "$repo" branch --list "$branch" | grep -q "$branch" && fail 'shell fallback created a branch after removal'
-  printf 'workspace registration scenario refuses the removed shell fallback\n'
+  output="$(run_no_orchestrator node "$state" "$repo" feat/no-host --json)" ||
+    fail "Node entrypoint did not create without an orchestrator: $output"
+  assert_equal "$(printf '%s' "$output" | jq -r '.workspace')" null
+  [ -d "$shared/feat-no-host" ] || fail 'Node entrypoint did not create the worktree'
+  git -C "$repo" branch --list feat/no-host | grep -q feat/no-host ||
+    fail 'Node entrypoint did not create the branch'
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary PATH="$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree list --json)" ||
+    fail "Node entrypoint did not list without an orchestrator: $output"
+  assert_contains "$output" feat/no-host
+  printf 'Node entrypoint creates and lists without an orchestrator\n'
 }
 
 scenario_compiled_registration_failure_keeps_git_work() {
@@ -164,7 +134,7 @@ scenario_compiled_registration_failure_keeps_git_work() {
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE=set-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --parent "path:$repo" --json)" ||
+  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE=set-fail PATH="$work_dir/bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --parent "path:$repo" --json)" ||
     fail 'compiled implementation did not keep a worktree after registration failed'
   assert_equal "$(printf '%s' "$output" | jq -r '.parent.lineage.set')" false
   assert_contains "$output" 'Orca parent lineage was not set'
@@ -179,7 +149,7 @@ run_failed_create() {
   touch "$shared/$slug"
   command="$root/.build/megabrain"
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$node_bin:/usr/bin:/bin" "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail "$implementation accepted a failed Git create: $output"
@@ -204,7 +174,7 @@ run_unreadable_branch_check() {
   command="$root/.build/megabrain"
   real_git="$(command -v git)"
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary MEGABRAIN_REAL_GIT="$real_git" MEGABRAIN_SHOW_REF_MARKER="$marker" PATH="$work_dir/unreadable-bin:/usr/bin:/bin" "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary MEGABRAIN_REAL_GIT="$real_git" MEGABRAIN_SHOW_REF_MARKER="$marker" PATH="$work_dir/unreadable-bin:$node_bin:/usr/bin:/bin" "$command" worktree create --repo "$repo" --branch "$branch" --base main --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail "$implementation accepted an unreadable branch check: $output"
@@ -284,7 +254,7 @@ scenario_worktree_create_routes_binary() {
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/.build/megabrain" worktree create --repo "$repo" --branch feat/orphan-routing --base main --json 2>&1)"
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$node_bin:/usr/bin:/bin" "$fixture/.build/megabrain" worktree create --repo "$repo" --branch feat/orphan-routing --base main --json 2>&1)"
   status=$?
   set -e
   assert_equal "$status" 97
@@ -297,7 +267,7 @@ refusal_output() {
   mkdir -p "$state" "$work_dir/refusal-$implementation-$mode/shared"
   printf '%s\n' "$work_dir/refusal-$implementation-$mode/shared" >"$state/worktree-root"
   set +e
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE="$mode" PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch "feat/refusal-$implementation-$mode" --json 2>&1)"
+  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE="$mode" PATH="$work_dir/bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch "feat/refusal-$implementation-$mode" --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail "$implementation accepted $mode repository refusal"
@@ -310,7 +280,7 @@ scenario_repo_selector_refusal_causes() {
   for implementation in shell binary; do
     mkdir -p "$work_dir/absent-$implementation/state" "$work_dir/absent-$implementation/shared"
     printf '%s\n' "$work_dir/absent-$implementation/shared" >"$work_dir/absent-$implementation/state/worktree-root"
-    absent="$(env HOME="$work_dir/absent-$implementation/home" MEGABRAIN_STATE_DIR="$work_dir/absent-$implementation/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch feat/refusal-absent --json 2>&1 || true)"
+    absent="$(env HOME="$work_dir/absent-$implementation/home" MEGABRAIN_STATE_DIR="$work_dir/absent-$implementation/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch feat/refusal-absent --json 2>&1 || true)"
     unresponsive="$(refusal_output "$implementation" unavailable)"
     unmatched="$(refusal_output "$implementation" registry)"
     assert_contains "$absent" 'when orca is not installed'
@@ -327,8 +297,6 @@ scenario_repo_selector_refusal_causes() {
 
 write_orchestrator_stubs
 scenario_orchestrator_free_create_and_list
-scenario_superset_project_failure_keeps_git_work
-scenario_superset_workspace_failure_keeps_git_work
 scenario_compiled_registration_failure_keeps_git_work
 scenario_failed_create_removes_only_new_branch
 scenario_existing_branch_survives_failed_create

@@ -68,9 +68,7 @@ compiled_close() {
   MEGABRAIN_ROOT="$root" "$root/.build/megabrain" orchestrate close "$@"
 }
 
-# `chain run` execs the compiled binary unconditionally (lib/module-chain.sh's command_chain:
-# "migrated chain verbs have no shell fallback"), so it is driven directly here rather than
-# through the shell wrapper.
+# `chain run` runs the Node entrypoint directly.
 compiled_chain_run() {
   "$root/.build/megabrain" chain run "$@"
 }
@@ -169,32 +167,32 @@ child_command() {
   local verb="$1" text="${2:-}"
   if [ "$MEGABRAIN_TEST_RUNTIME" = tmux ]; then
     if [ "$verb" = received ]; then
-      env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/megabrain" "$verb"
+      env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/.build/megabrain" "$verb"
     else
-      env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/megabrain" "$verb" "$text"
+      env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/.build/megabrain" "$verb" "$text"
     fi
   else
     if [ "$verb" = received ]; then
-      env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" "$verb"
+      env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb"
     else
-      env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" "$verb" "$text"
+      env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb" "$text"
     fi
   fi
 }
 
 child_check() {
   if [ "$MEGABRAIN_TEST_RUNTIME" = tmux ]; then
-    env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/megabrain" check --timeout 0 --json
+    env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/.build/megabrain" check --timeout 0 --json
   else
-    env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" check --timeout 0 --json
+    env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json
   fi
 }
 
 child_ack() {
   if [ "$MEGABRAIN_TEST_RUNTIME" = tmux ]; then
-    env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/megabrain" ack "$1" --json
+    env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" TMUX="$child_tmux" TMUX_PANE="$child_pane" "$root/.build/megabrain" ack "$1" --json
   else
-    env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" ack "$1" --json
+    env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ack "$1" --json
   fi
 }
 

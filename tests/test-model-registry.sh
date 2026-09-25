@@ -66,9 +66,6 @@ assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent ==
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude") | .reasoning.provenance.kind' | sort -u)" "$(printf 'sourced\nverified')"
 printf 'registry inventory: sourced model provenance and verified reasoning provenance\n'
 
-assert_equal "$(grep -l '^command_model()' "$root"/lib/*.sh | wc -l | tr -d ' ')" 1
-printf 'dispatcher ownership: one command_model owner\n'
-
 cat >"$bin_dir/agy" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = models ]; then

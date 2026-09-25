@@ -2,6 +2,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-write.XXXXXX")"
+node_bin="$work/node-bin"
+mkdir -p "$node_bin"
+ln -s "$(command -v node)" "$node_bin/node"
 trap 'rm -rf "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_equal() { [ "$1" = "$2" ] || fail "expected '$2', got '$1'"; }
@@ -9,11 +12,11 @@ assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected '$1' to contain '$
 assert_not_contains() { case "$1" in *"$2"*) fail "expected '$1' not to contain '$2'" ;; esac; }
 run_pair() {
   local shell_impl="$1"; shift
-  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" REPO_LIST_PATH="$work/repo" GH_MODE="${GH_MODE:-success}" PATH="$work/bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
+  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" REPO_LIST_PATH="$work/repo" GH_MODE="${GH_MODE:-success}" PATH="$work/bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
 }
 run_pair_no_gh() {
   local shell_impl="$1"; shift
-  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" PATH="/usr/bin:/bin" "$root/.build/megabrain" "$@"
+  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" PATH="$node_bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
 }
 run_pair_from() {
   local directory="$1" shell_impl="$2"; shift 2
@@ -106,20 +109,6 @@ assert_create_json_equal() {
   binary_normalized="$(printf '%s' "$binary_json" | jq -S 'del(.worktree, .branch)')"
   [ "$shell_normalized" = "$binary_normalized" ] || fail "create JSON differs: shell=$shell_normalized binary=$binary_normalized"
 }
-scenario_shell_worktree_override_fails() {
-  local output rc
-  : >"$work/binary.calls"
-  set +e
-  output="$(run_pair shell orchestrate spawn --repo "$work/repo" --branch feat/orchestrate \
-    --agent codex --model gpt-5 --effort medium --prompt spawn-test --tmux false --json 2>&1)"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || fail "shell worktree override unexpectedly succeeded: $output"
-  assert_contains "$output" 'shell worktree implementation no longer exists'
-  [ ! -s "$work/binary.calls" ] || fail 'shell worktree override invoked a binary'
-  printf 'shell worktree override fails before spawning\n'
-}
-
 scenario_orchestrate_spawn_help_uses_own_usage() {
   local output
   output="$(run_pair binary orchestrate spawn --help 2>&1)" ||
@@ -175,7 +164,6 @@ printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 write_fakes
 
 export SUPERSET_TERMINAL_ID=parent-terminal
-scenario_shell_worktree_override_fails
 scenario_orchestrate_spawn_help_uses_own_usage
 unset SUPERSET_TERMINAL_ID
 scenario_repo_name_create

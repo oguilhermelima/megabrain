@@ -7,6 +7,9 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-web-cli.XXXXXX")"
 state="$work/state"
 home="$work/home"
 playwright_root="$work/playwright"
+node_bin="$work/node-bin"
+mkdir -p "$node_bin"
+ln -s "$(command -v node)" "$node_bin/node"
 trap 'rm -rf "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -17,16 +20,14 @@ if [ ! -x "$root/.build/megabrain" ]; then
 fi
 
 mkdir -p "$work/bin" "$home"
-cat >"$work/bin/node" <<'NODE'
-#!/bin/sh
-shift
-printf '%s\n' "$*"
+cat >"$work/playwright-web.mjs" <<'NODE'
+process.stdout.write(process.argv.slice(2).join(" "));
 NODE
-chmod +x "$work/bin/node"
 
 run_binary() {
   MEGABRAIN_STATE_DIR="$state" HOME="$home" MEGABRAIN_PLAYWRIGHT_ROOT="$playwright_root" \
-    PATH="$work/bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
+    MEGABRAIN_PLAYWRIGHT_SCRIPT="$work/playwright-web.mjs" \
+    PATH="$node_bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
 }
 
 assert_equal() {

@@ -64,15 +64,6 @@ assert_contains "$from_output" 'feat/stack'
 assert_contains "$from_output" "$feature_tip"
 printf 'binary --from output: %s\n' "$from_output"
 
-isolation_fixture="$work/isolation-fixture"
-make_binary_isolation_fixture "$root" "$isolation_fixture" 97
-output="$(MEGABRAIN_ROOT="$isolation_fixture" HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" \
-  "$isolation_fixture/.build/megabrain" worktree create --repo "$work/repo" --branch feat/stub-proof --from feat/stack --json 2>&1)" ||
-  fail 'binary create depends on the shell entrypoint'
-json "$output" ".base == \"feat/stack\" and .baseCommit == \"$feature_tip\" and .baseSource == \"explicit\""
-assert_contains "$output" 'base'
-printf 'binary create remains independent of a failing shell entrypoint\n'
-
 git -C "$work/repo" symbolic-ref --delete refs/remotes/origin/HEAD
 printf 'v3\n' >"$work/seed/version"
 git -C "$work/seed" commit -qam v3 && git -C "$work/seed" push -q
