@@ -12,7 +12,6 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
-source "$root/lib/common.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -31,10 +30,16 @@ assert_contains() {
 no_doc_entry=' worktree chain model native-appium '
 
 usage_keys() {
-  awk '/^megabrain_usage_line\(\) \{/ { inside = 1; next }
-       inside && /^\}/ { inside = 0 }
-       inside' "$root/lib/common.sh" |
-    sed -n 's/^    \([a-z][a-z-]*\)).*/\1/p'
+  sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
+    sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p" |
+    cut -f1
+}
+
+expected_usage_line() {
+  local key="$1"
+  sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
+    sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p" |
+    awk -F '\t' -v key="$key" '$1 == key { print $2; exit }'
 }
 
 agents_md="$(cat "$root/AGENTS.md")"
@@ -48,7 +53,8 @@ record_coverage_failure() {
 
 while IFS= read -r key; do
   [ -n "$key" ] || continue
-  line="$(megabrain_usage_line "$key")" || fail "no usage line for key: $key"
+  line="$(expected_usage_line "$key")"
+  [ -n "$line" ] || fail "no usage line for key: $key"
 
   # Keys are the command path with spaces replaced by dashes.
   read -r -a argv <<<"$(printf '%s' "$key" | tr '-' ' ')"
@@ -73,11 +79,11 @@ done < <(usage_keys)
 # A missing argument must quote the same line the help prints, which is the drift
 # that put three different close usages in one file.
 close_error="$("$root/megabrain" orchestrate close 2>&1 || true)"
-assert_contains "$close_error" "Usage: megabrain $(megabrain_usage_line orchestrate-close)" \
+assert_contains "$close_error" "Usage: megabrain $(expected_usage_line orchestrate-close)" \
   "orchestrate close error text drifted from its help text: $close_error"
 
 watch_error="$("$root/megabrain" orchestrate watch 2>&1 || true)"
-assert_contains "$watch_error" "Usage: megabrain $(megabrain_usage_line orchestrate-watch)" \
+assert_contains "$watch_error" "Usage: megabrain $(expected_usage_line orchestrate-watch)" \
   "orchestrate watch error text drifted from its help text: $watch_error"
 
 # The skill is what a fresh agent session actually reads, and it is the piece that
@@ -89,9 +95,9 @@ skill="$root/skills/megabrain/SKILL.md"
 
 skill_key() {
   local first="$1" second="$2"
-  if [ -n "$second" ] && megabrain_usage_line "$first-$second" >/dev/null 2>&1; then
+  if [ -n "$second" ] && [ -n "$(expected_usage_line "$first-$second")" ]; then
     printf '%s-%s\n' "$first" "$second"
-  elif megabrain_usage_line "$first" >/dev/null 2>&1; then
+  elif [ -n "$(expected_usage_line "$first")" ]; then
     printf '%s\n' "$first"
   fi
 }
@@ -100,7 +106,8 @@ usage_top_level_commands() {
   local key line
   while IFS= read -r key; do
     [ -n "$key" ] || continue
-    line="$(megabrain_usage_line "$key")" || fail "no usage line for key: $key"
+    line="$(expected_usage_line "$key")"
+    [ -n "$line" ] || fail "no usage line for key: $key"
     printf '%s\n' "$line" | awk '{print $1}'
   done < <(usage_keys) | sort -u
 }
@@ -114,7 +121,7 @@ skill_covers_usage_key() {
 
   parent="${key%%-*}"
   [ "$parent" != "$key" ] || return 1
-  group_line="$(megabrain_usage_line "$parent" 2>/dev/null || true)"
+  group_line="$(expected_usage_line "$parent")"
   case "$group_line" in
     *'|'*) ;;
     *) return 1 ;;
@@ -131,7 +138,7 @@ while IFS= read -r line; do
   shift
   key="$(skill_key "${1:-}" "${2:-}")"
   [ -n "$key" ] || continue
-  canonical="$(megabrain_usage_line "$key")"
+  canonical="$(expected_usage_line "$key")"
   for flag in $(printf '%s\n' "$line" | grep -oE '\-\-[a-z][a-z-]*' | sort -u); do
     case "$canonical" in
       *"$flag"*) ;;
@@ -147,6 +154,7 @@ done < <(grep -oE '^megabrain [a-z][a-z-]*( [a-z][a-z-]*)?[^|]*' "$skill")
 # concerned. A documented group invocation covers its children only when that
 # group syntax is itself present in the usage table and the skill.
 skill_text="$(cat "$skill")"
+module_ids="$("$root/megabrain" doctor --json 2>/dev/null | jq -r '.[].module' || true)"
 while IFS= read -r key; do
   [ -n "$key" ] || continue
   skill_covers_usage_key "$key" || record_coverage_failure \
@@ -159,7 +167,7 @@ while IFS= read -r module_id; do
     *"$module_id"*) ;;
     *) record_coverage_failure "SKILL.md never names module id '$module_id'" ;;
   esac
-done < <(megabrain_module_ids)
+done <<<"$module_ids"
 
 until_keys_line="$(awk '/\(\$until \| keys\) - \[/ { print; exit }' "$root/lib/chain-validation.jq")"
 [ -n "$until_keys_line" ] || fail "could not find until key schema in chain-validation.jq"
@@ -188,7 +196,7 @@ while IFS= read -r module_id; do
     *"$module_id"*) ;;
     *) record_coverage_failure "README.md never names module id '$module_id'" ;;
   esac
-done < <(megabrain_module_ids)
+done <<<"$module_ids"
 
 # Homebrew is an installation method rather than a command or module, so this
 # is the one deliberately manual anchor in the otherwise derived checks.
