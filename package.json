@@ -3,9 +3,23 @@
   "private": true,
   "version": "0.2.4",
   "type": "module",
+  "bin": {
+    "megabrain": ".build/megabrain",
+    "mb": ".build/megabrain"
+  },
+  "files": [
+    ".build/megabrain",
+    ".megabrain/models.json",
+    "skills/",
+    "scripts/playwright-web.mjs",
+    "tmux/",
+    "bash/",
+    "zsh/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "bun build --compile src/cli/index.ts --outfile .build/megabrain",
-    "build:node": "bun build --target=node src/cli/index.ts --outfile .build/megabrain.mjs",
+    "build": "bun build --target=node src/cli/index.ts --outfile .build/megabrain && chmod 755 .build/megabrain",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { createProcessAdapter } from "../adapters/proc.js";
 import { reconcileSkillsAtStartup, shouldReconcileSkillsAtStartup } from "../core/skill.js";
 import { route } from "./router.js";
