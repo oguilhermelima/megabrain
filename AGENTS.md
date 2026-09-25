@@ -1,7 +1,7 @@
 # megabrain recipes
 
 - Read shared worktree, orchestration, simulator, and browser instructions at https://github.com/oguilhermelima/megabrain/blob/main/AGENTS.md.
-- Run megabrain install [module-id] [--browser chromium|firefox|both] [--yes] [--revert].
+- Run megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--yes] [--browser chromium|firefox|both] [--revert].
 - Run megabrain doctor [module-id] [--json].
 - Run megabrain context [--json].
 - Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json].
@@ -68,4 +68,4 @@
 - Run megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
 - Run megabrain web userscript list.
 - Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
-- Run ./install.sh [--agents claude,codex,agy|none] [--skill none|global|project] [--agents-md none|global|project] [--modules list|all|none] [--yes].
+- Run ./install.sh [--help].

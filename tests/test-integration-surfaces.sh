@@ -140,50 +140,12 @@ install_home="$work/install-home"
 mkdir -p "$install_home/.megabrain-local"
 shared_binary_inode_before="$(ls -di "$root/.build/megabrain" | awk '{print $1}')"
 HOME="$install_home" MEGABRAIN_STATE_DIR="$install_home/state" \
-  "$moved_root/install.sh" --agents none --skill none --agents-md none --modules none --yes >/dev/null
+  "$moved_root/install.sh" >/dev/null
 shared_binary_inode_after="$(ls -di "$root/.build/megabrain" | awk '{print $1}')"
 assert_equal "$shared_binary_inode_after" "$shared_binary_inode_before"
 assert_symlink_target "$install_home/.local/bin/megabrain" "$moved_root/megabrain"
 printf 'installer: megabrain command link is present\n'
 
-installer_source="$work/install-functions.sh"
-sed '$d' "$root/install.sh" >"$installer_source"
-source "$installer_source"
-SOURCE_ROOT="$root"
-installer_bin="$work/installer-bin"
-mkdir -p "$installer_bin"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$installer_bin/tmux"
-chmod +x "$installer_bin/tmux"
-saved_path="$PATH"
-PATH="$installer_bin:$PATH"
-MODULES_REQUEST=""
-INSTALLER_INTERACTIVE=false
-installer_select_modules
-expected_modules='tmux-runtime,orchestration,orchestration-hooks'
-if command -v superset >/dev/null 2>&1 || [ -x "$HOME/.superset/bin/superset" ]; then
-  expected_modules="$expected_modules,worktree"
-fi
-assert_equal "$SELECTED_MODULES" "$expected_modules"
-MODULES_REQUEST=none
-installer_select_modules
-assert_equal "$SELECTED_MODULES" ''
-PATH="$saved_path"
-printf 'installer modules: default core set includes tmux and none stays empty\n'
-
-cache_home="$work/cache-home"
-cached_skill="$cache_home/.claude/plugins/cache/megabrain-local/megabrain/0.1.0/skills/megabrain/SKILL.md"
-mkdir -p "$(dirname "$cached_skill")"
-cp "$root/skills/megabrain/SKILL.md" "$cached_skill"
-saved_home="$HOME"
-export HOME="$cache_home"
-if installer_plugin_cache_stale claude; then
-  fail 'matching cached skill was incorrectly detected as stale'
-fi
-printf '\nfixture edit\n' >>"$cached_skill"
-if ! installer_plugin_cache_stale claude; then
-  fail 'edited cached skill was not detected as stale'
-fi
-export HOME="$saved_home"
-printf 'installer cache: matching fixture is current and edited fixture is stale\n'
+printf 'installer setup: defaults, skill sync, and plugin retirement are covered by TypeScript tests\n'
 
 printf 'ok: current command, state, integration, and installer surfaces\n'

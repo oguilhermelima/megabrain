@@ -14,6 +14,7 @@ import { getTmux } from "../../hosts/tmux.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
+import { runMachineInstall } from "./install-machine.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
@@ -889,6 +890,13 @@ async function interactiveInstall(environment: Environment, processAdapter: Proc
 }
 
 export async function executeInstall(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(usageText("install"));
+  const first = args[0];
+  const machineFlags = new Set(["--agents", "--skill", "--modules", "--yes"]);
+  const machineSetup = args.length === 0 || (first !== undefined && first.startsWith("--") && args.some((arg) => machineFlags.has(arg)));
+  if (machineSetup) {
+    return runMachineInstall(args, environment, processAdapter, (module) => installOne(module, environment, processAdapter, { yes: true, browser: "both" }));
+  }
   let module: string | undefined;
   let yes = false;
   let revert = false;

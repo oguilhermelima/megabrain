@@ -82,10 +82,14 @@ esac
 
 installer_output="$(env -i HOME="$home" PATH="$fake_bin:$clean_path" \
   MEGABRAIN_STATE_DIR="$home/.megabrain" MEGABRAIN_TEST_ARCHIVE="$archive" \
-  bash "$installer" --agents none --skill none --agents-md none --modules none --yes 2>&1)" ||
+  bash "$installer" 2>&1)" ||
   fail "clean installer failed: $installer_output"
 [ -x "$home/.megabrain-local/.build/megabrain" ] ||
   fail 'clean installer did not produce the compiled binary'
+[ ! -e "$home/.claude" ] || fail 'delivery installer configured Claude instead of leaving setup to megabrain install'
+[ ! -e "$home/.codex" ] || fail 'delivery installer configured Codex instead of leaving setup to megabrain install'
+[ ! -e "$home/.gemini" ] || fail 'delivery installer configured agy instead of leaving setup to megabrain install'
+[ ! -e "$home/.megabrain/state.json" ] || fail 'delivery installer wrote machine configuration state'
 model_output="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" \
   "$home/.local/bin/megabrain" model list --json 2>&1)" ||
   fail "clean installer compiled binary could not answer model list: $model_output"
@@ -97,7 +101,7 @@ missing_home="$work/missing-bun-home"
 mkdir -p "$missing_home"
 if missing_bun_output="$(env -i HOME="$missing_home" PATH="$fake_bin:/usr/bin:/bin" \
   MEGABRAIN_STATE_DIR="$missing_home/.megabrain" MEGABRAIN_TEST_ARCHIVE="$archive" \
-  bash "$installer" --agents none --skill none --agents-md none --modules none --yes 2>&1)"; then
+  bash "$installer" 2>&1)"; then
   fail 'installer succeeded without Bun'
 fi
 case "$missing_bun_output" in
@@ -108,6 +112,6 @@ esac
 
 printf 'scenario 1: no-host clean install has a sane context result\n'
 printf 'scenario 2: release tarball commands run from a non-git, read-only root\n'
-printf 'scenario 3: clean installer compiles and runs a ported model command\n'
-printf 'scenario 4: installer refuses before writing when Bun is missing\n'
+printf 'scenario 3: installer only delivers and links the CLI without machine configuration\n'
+printf 'scenario 4: delivery installer refuses before writing when Bun is missing\n'
 printf 'ok: clean install scenarios\n'
