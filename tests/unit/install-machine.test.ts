@@ -1,5 +1,20 @@
-import { describe, expect, test } from "bun:test";
-import { discoverAgentDirectories } from "../../src/cli/commands/install-machine.js";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { discoverAgentDirectories, installAgentSkills } from "../../src/cli/commands/install-machine.js";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+function temporaryDirectory(): string {
+  const directory = mkdtempSync(join(tmpdir(), "megabrain-install-machine-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}
 
 describe("discoverAgentDirectories", () => {
   test("resolves Claude and Codex directories from their documented environment variables", () => {
@@ -38,5 +53,24 @@ describe("discoverAgentDirectories", () => {
 
   test("omits agents whose config cannot be resolved without HOME", () => {
     expect(discoverAgentDirectories({})).toEqual({});
+  });
+
+  test("copies the package skill to selected global or project agent directories", () => {
+    const root = temporaryDirectory();
+    const home = join(root, "home");
+    const project = join(root, "project");
+    const packageSkill = join(root, "package", "skills", "megabrain", "SKILL.md");
+    mkdirSync(join(root, "package", "skills", "megabrain"), { recursive: true });
+    mkdirSync(project, { recursive: true });
+    writeFileSync(packageSkill, "megabrain skill\n");
+    const directories = discoverAgentDirectories({ HOME: home });
+
+    const globalResult = installAgentSkills(packageSkill, ["claude", "agy"], "global", directories, project);
+    expect(globalResult).toEqual([directories.claude?.globalSkill, directories.agy?.globalSkill]);
+    expect(readFileSync(join(home, ".claude/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
+    expect(readFileSync(join(home, ".gemini/config/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
+
+    installAgentSkills(packageSkill, ["codex", "agy"], "project", directories, project);
+    expect(readFileSync(join(project, ".agents/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
   });
 });
