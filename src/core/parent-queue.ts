@@ -1,4 +1,5 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageText } from "./usage.js";
 
 export { acknowledgeDelivery } from "./ack.js";
 
@@ -14,7 +15,7 @@ export type ParentAckArguments = Readonly<{
 export function parseParentAckArgs(args: readonly string[], environmentGeneration = "1"): Result<ParentAckArguments> {
   const dispatchId = args[0] ?? "";
   const deliveryId = args[1] ?? "";
-  if (dispatchId === "" || deliveryId === "") return failed("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--json]\n", 2);
+  if (dispatchId === "" || deliveryId === "") return failed(usageText("orchestrate-ack"), 2);
   let consumer: string | undefined;
   let generation = Number(environmentGeneration);
   let close = false;

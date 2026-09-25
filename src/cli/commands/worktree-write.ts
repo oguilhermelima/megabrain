@@ -28,6 +28,7 @@ import {
 } from "../../core/worktree-write.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { resolveCaller } from "./queue-write.js";
+import { usageMessage, usageText } from "../../core/usage.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 async function run(
@@ -811,9 +812,7 @@ export async function executeWorktreeCreate(
   process = createProcessAdapter(),
 ): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help"))
-    return ok(
-      "Usage: megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]\n",
-    );
+    return ok(usageText("worktree-create"));
   const options = parseCreateOptions(args);
   if (options.kind !== "ok") return options;
   const value: CreateOptions = options.value;
@@ -986,7 +985,7 @@ export async function executeWorktreeFinish(
   if (!value.target)
     return finishRefusal(
       value.json,
-      "Usage: megabrain worktree finish <path|branch|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
+      usageMessage("worktree-finish"),
       "invalid-arguments",
       2,
     );
@@ -1183,7 +1182,7 @@ export async function executeWorktreePr(
   const value: PullRequestOptions = parsed.value;
   if (!value.target)
     return failed(
-      "Usage: megabrain worktree pr <path|branch|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
+      usageMessage("worktree-pr"),
       2,
     );
   const shared = await root(environment, true);

@@ -3,7 +3,7 @@ export const USAGE_LINES = {
   "doctor": "doctor [module-id] [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
-  "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--agent-arg <flag>] [--json]",
+  "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
   "worktree-finish": "worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
