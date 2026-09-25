@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseMachineInstallArgs, resolveDefaultModules, runMachineInstall } from "../../src/cli/commands/install-machine.js";
@@ -83,5 +83,50 @@ describe("machine install options", () => {
     expect(second.kind).toBe("ok");
     if (second.kind === "ok") expect(second.value).toContain("already current; no changes made");
     expect(installedModules).toBe(0);
+  });
+
+  test("installs skills and modules without creating or changing agent instructions", async () => {
+    const root = temporaryDirectory();
+    const home = join(root, "home");
+    const codexHome = join(root, "codex");
+    const claudeConfig = join(root, "claude");
+    const stateDirectory = join(root, "state");
+    const project = join(root, "project");
+    const codexInstructions = join(codexHome, "AGENTS.md");
+    const claudeInstructions = join(claudeConfig, "CLAUDE.md");
+    mkdirSync(project, { recursive: true });
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(claudeConfig, { recursive: true });
+    writeFileSync(codexInstructions, "User-authored Codex instructions\n");
+    writeFileSync(claudeInstructions, "User-authored Claude instructions\n");
+    await Bun.write(join(stateDirectory, "state.json"), JSON.stringify({
+      machineInstall: { agents: [], skill: "none", agentsMd: "project", modules: [], version: "old" },
+    }));
+    const environment = {
+      HOME: home,
+      CODEX_HOME: codexHome,
+      CLAUDE_CONFIG_DIR: claudeConfig,
+      MEGABRAIN_STATE_DIR: stateDirectory,
+    };
+
+    const result = await runMachineInstall(
+      ["--yes", "--agents", "claude,codex,agy", "--skill", "global"],
+      environment,
+      processAdapter(["claude", "codex", "agy"]),
+      async () => ok("installed"),
+      false,
+    );
+
+    expect(result.kind).toBe("ok");
+    expect(existsSync(join(claudeConfig, "skills/megabrain/SKILL.md"))).toBe(true);
+    expect(existsSync(join(codexHome, "skills/megabrain/SKILL.md"))).toBe(true);
+    expect(existsSync(join(home, ".gemini/config/skills/megabrain/SKILL.md"))).toBe(true);
+    expect(existsSync(claudeInstructions)).toBe(true);
+    expect(readFileSync(claudeInstructions, "utf8")).toBe("User-authored Claude instructions\n");
+    expect(readFileSync(codexInstructions, "utf8")).toBe("User-authored Codex instructions\n");
+    expect(existsSync(join(project, "AGENTS.md"))).toBe(false);
+    const state: unknown = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8"));
+    expect(state).toMatchObject({ machineInstall: { agents: ["claude", "codex", "agy"], skill: "global" } });
+    expect(JSON.stringify(state)).not.toContain("agentsMd");
   });
 });
