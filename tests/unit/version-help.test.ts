@@ -22,7 +22,7 @@ describe("CLI root help and version", () => {
     });
   });
 
-  test.each([[], ["help"], ["-h"], ["--help"]] as const)("prints root usage for %j", async (args) => {
+  test.each([[[]], [["help"]], [["-h"]], [["--help"]]] as const)("prints root usage for %j", async (args) => {
     expect(await route(args, dependencies)).toEqual({ kind: "ok", value: rootUsage });
   });
 
