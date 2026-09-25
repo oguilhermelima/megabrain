@@ -68,11 +68,6 @@ export const USAGE_LINES = {
   "web-userscript-remove": "web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]",
 } as const;
 
-const USAGE_ACTION_TEMPLATES = {
-  "web-viewport-action": "web-viewport-{action}",
-  "web-userscript-action": "web-userscript-{action}",
-} as const;
-
 const CHILD_MESSAGE_ERROR_USAGE = {
   ask: 'ask "question" | megabrain ask --text "question"',
   done: 'done "summary" | megabrain done --text "summary"',
@@ -83,6 +78,12 @@ const ADDITIONAL_USAGE_LINES = {
   "native-navigate": "native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]",
   "native-capture": "native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]",
   "native-capture-summary": "native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [options]",
+  "web-error-viewport-set": "web-viewport-set",
+  "web-error-devices": "web-devices",
+  "web-error-session": "web-session",
+  "web-error-userscript-list": "web-userscript-list",
+  "web-error-userscript-action": "web-userscript-{action}",
+  "web-error-viewport-action": "web-viewport-{action}",
 } as const;
 
 const ALL_USAGE_LINES = { ...USAGE_LINES, ...ADDITIONAL_USAGE_LINES } as const;
@@ -103,8 +104,8 @@ export function usageMessage(key: UsageKey): string {
   return `Usage: megabrain ${usageLine(key)}`;
 }
 
-export function usageActionMessage(key: "web-viewport-action" | "web-userscript-action", action: string): string {
-  return `Usage: megabrain ${USAGE_ACTION_TEMPLATES[key].replace("{action}", action)}`;
+export function usageActionMessage(key: "web-error-viewport-action" | "web-error-userscript-action", action: string): string {
+  return `Usage: megabrain ${usageLine(key).replace("{action}", action)}`;
 }
 
 export function childMessageErrorUsage(type: keyof typeof CHILD_MESSAGE_ERROR_USAGE): string {
