@@ -1,0 +1,47 @@
+Usage: megabrain <command> [options]
+
+Commands:
+  version|-V|--version                   Print the megabrain version
+  install [module-id] [--browser ...]   Install one module or choose modules interactively
+  doctor [module-id]                   Check one module or all modules
+  context [--json]                     Detect the current orchestration host
+  worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
+  worktree finish ...                  Finish a shared worktree
+  worktree list [--repo <name|path>]   List shared-root worktrees
+  worktree adopt <path|branch>         Register an existing worktree in Superset
+  terminal create ...                  Open a terminal in the current orchestrator
+  terminal list [--worktree <path>]    List terminals created by megabrain
+  terminal restart <selector> ...      Restart a terminal created by megabrain
+  terminal close <selector> ...        Close a terminal created by megabrain
+  orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
+  orchestrate list [--all|--orphans|--uncertain] [--json]  List managed dispatches
+  orchestrate prune ...                Archive or delete old terminal dispatches
+  orchestrate reconcile <dispatch-id>  Reconcile an open dispatch without respawning
+  orchestrate liveness <dispatch-id>     Read execution state from a dispatch terminal
+  orchestrate watch <dispatch-id> ...  Watch a dispatch file channel for child messages
+  orchestrate read <dispatch-id> ...   Read a tmux dispatch pane
+  orchestrate ack <dispatch-id> ...    Acknowledge a delivery batch
+  orchestrate reply <dispatch-id> ...  Queue a reply for a child dispatch (--supersede replaces old replies)
+  orchestrate stop <dispatch-id> ...   Interrupt a working child without closing its pane
+  orchestrate change <dispatch-id> ... Replace queued direction and interrupt the child
+  orchestrate close <dispatch-id> ...  Close a Superset dispatch terminal
+  chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
+  model list|add|refresh ...            Manage the versioned model registry
+  web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
+  ask "question"                       Ask the direct coordinator from a child dispatch
+  done "summary"                        Mark a child dispatch done
+  check [options]                       Check for replies from the direct coordinator
+  ack <delivery-id> [options]          Acknowledge a child reply delivery
+  received                            Confirm receipt of a dispatch prompt
+  native sim list <phone|tv> ...       List available Apple simulators
+  native runtime list ...              List installed or known Apple runtimes
+  native runtime install ...           Install an Apple simulator runtime
+  native appium start|stop|status      Manage the shared Appium server
+  native build <phone|tv> ...          Build, install and launch a native app
+  native sim ensure <phone|tv> ...     Boot a requested Apple simulator
+  native app reload <phone|tv> ...     Terminate and deep-link an app
+  native health <phone|tv> ...         Check whether an app is rendering
+  tv connect <ip> [--port <port>]      Connect an Android TV over adb
+  tv disconnect [<ip>]                 Disconnect an Android TV
+  tmux tune [--yes|--dry-run|--revert] Tune global tmux configuration
+  tmux wrapper [--yes|--dry-run|--revert] Install the agent tmux wrapper
