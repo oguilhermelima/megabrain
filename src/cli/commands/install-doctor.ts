@@ -49,7 +49,11 @@ function compiledBinaryHealth(environment: Environment): { status: string; reaso
   const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const binary = resolve(root, ".build/megabrain");
   const source = resolve(root, "src");
-  if (!existsSync(source)) return { status: "ok", reason: "source tree is absent; compiled binary freshness is not applicable" };
+  if (!existsSync(source)) {
+    return existsSync(binary)
+      ? { status: "ok", reason: "source tree is absent; compiled binary freshness is not applicable" }
+      : { status: "not-applicable", reason: "source tree is absent; compiled binary freshness is not applicable" };
+  }
   if (!existsSync(binary)) return { status: "unknown", reason: "compiled binary is not present; freshness cannot be determined" };
   try {
     const newer = newerSource(source, statSync(binary).mtimeMs);
