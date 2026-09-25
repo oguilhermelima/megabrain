@@ -4,7 +4,7 @@
 - Run megabrain install [module-id] [--browser chromium|firefox|both] [--yes] [--revert].
 - Run megabrain doctor [module-id] [--json].
 - Run megabrain context [--json].
-- Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--agent-arg <flag>] [--json].
+- Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json].
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json].
 - Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json].
 - Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json].
@@ -25,8 +25,8 @@
 - Run megabrain orchestrate stop <dispatch-id> [--json].
 - Run megabrain orchestrate change <dispatch-id> --text <text> [--json].
 - Run megabrain orchestrate close <dispatch-id> [--force-release] [--json].
-- Run megabrain ask "question".
-- Run megabrain done "summary".
+- Run megabrain ask "question" | megabrain ask --text "question".
+- Run megabrain done "summary" | megabrain done --text "summary".
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.
 - Run megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json].
 - Run megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json].

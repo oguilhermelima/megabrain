@@ -3,7 +3,7 @@ export const USAGE_LINES = {
   "doctor": "doctor [module-id] [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
-  "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--agent-arg <flag>] [--json]",
+  "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
   "worktree-finish": "worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
@@ -24,8 +24,8 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id> [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id> --text <text> [--json]",
   "orchestrate-close": "orchestrate close <dispatch-id> [--force-release] [--json]",
-  "ask": "ask \"question\"",
-  "done": "done \"summary\"",
+  "ask": "ask \"question\" | megabrain ask --text \"question\"",
+  "done": "done \"summary\" | megabrain done --text \"summary\"",
   "received": "received",
   "check": "check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
   "ack": "ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]",
@@ -73,6 +73,12 @@ const ADDITIONAL_USAGE_LINES = {
   "native-navigate": "native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]",
   "native-capture": "native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]",
   "native-capture-summary": "native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [options]",
+  "web-error-viewport-set": "web-viewport-set",
+  "web-error-devices": "web-devices",
+  "web-error-session": "web-session",
+  "web-error-userscript-list": "web-userscript-list",
+  "web-error-userscript-action": "web-userscript-{action}",
+  "web-error-viewport-action": "web-viewport-{action}",
 } as const;
 
 const ALL_USAGE_LINES = { ...USAGE_LINES, ...ADDITIONAL_USAGE_LINES } as const;
@@ -91,6 +97,14 @@ export function usageText(key: UsageKey): string {
 
 export function usageMessage(key: UsageKey): string {
   return `Usage: megabrain ${usageLine(key)}`;
+}
+
+export function usageActionMessage(key: "web-error-viewport-action" | "web-error-userscript-action", action: string): string {
+  return `Usage: megabrain ${usageLine(key).replace("{action}", action)}`;
+}
+
+export function childMessageErrorUsage(type: "ask" | "done"): string {
+  return usageText(type);
 }
 
 export function usageGroup(keys: readonly UsageKey[]): string {

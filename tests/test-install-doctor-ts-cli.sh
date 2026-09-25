@@ -230,7 +230,7 @@ assert_backup_matches() {
   cmp -s "$original" "$backup" || fail "backup for $path differs from original"
 }
 assert_backup_matches "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
-grep -q "MEGABRAIN_HOOK_AGENT=claude $root/.build/megabrain hook turn-end" "$install_contract_home/.claude/settings.json" \
+grep -q "MEGABRAIN_HOOK_AGENT=claude '$root/.build/megabrain' hook turn-end" "$install_contract_home/.claude/settings.json" \
   || fail 'install did not write the direct binary hook command'
 printf 'install contract: a real install backs up and repairs the operator config (issue 43)\n'
 export HOME="$work/home"

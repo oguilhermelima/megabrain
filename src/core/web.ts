@@ -1,3 +1,5 @@
+import { usageActionMessage, usageMessage, type UsageKey } from "./usage.js";
+
 export type WebPlan =
   | { readonly kind: "run"; readonly command: string; readonly args: readonly string[] }
   | { readonly kind: "help" }
@@ -5,8 +7,12 @@ export type WebPlan =
 
 const viewportFlags = new Set(["--viewport", "--device", "--category", "--orientation", "--width", "--height"]);
 
-function usage(message: string): WebPlan {
-  return { kind: "usage", message };
+function usage(key: UsageKey): WebPlan {
+  return { kind: "usage", message: usageMessage(key) };
+}
+
+function usageAction(key: "web-error-viewport-action" | "web-error-userscript-action", action: string): WebPlan {
+  return { kind: "usage", message: usageActionMessage(key, action) };
 }
 
 function collectFlags(args: readonly string[], allowed: ReadonlySet<string>): { args: string[]; rest: string[] } | WebPlan {
@@ -17,7 +23,7 @@ function collectFlags(args: readonly string[], allowed: ReadonlySet<string>): { 
     if (arg === "-h" || arg === "--help") return { kind: "help" };
     if (allowed.has(arg)) {
       const value = args[index + 1];
-      if (value === undefined || value.length === 0) return usage("Usage: megabrain web-viewport-set");
+      if (value === undefined || value.length === 0) return usage("web-error-viewport-set");
       collected.push(arg, value);
       index += 1;
     } else {
@@ -39,13 +45,13 @@ function planDevices(args: readonly string[]): WebPlan {
     if (arg === "-h" || arg === "--help") return { kind: "help" };
     if (arg === "--filter" || arg === "--orientation" || arg === "--devices-file") {
       const value = remaining[index + 1];
-      if (value === undefined || value.length === 0) return usage("Usage: megabrain web-devices");
+      if (value === undefined || value.length === 0) return usage("web-error-devices");
       options.push(arg, value);
       index += 1;
     } else if (filter.length === 0) {
       filter = arg;
     } else {
-      return usage("Usage: megabrain web-devices");
+      return usage("web-error-devices");
     }
   }
   return { kind: "run", command: "device-list", args: ["--filter", filter, ...options] };
@@ -60,14 +66,14 @@ function planUserscript(args: readonly string[]): WebPlan {
     if (arg === "-h" || arg === "--help") return { kind: "help" };
     if (arg === "--userscripts" || viewportFlags.has(arg)) {
       const value = tail[index + 1];
-      if (value === undefined || value.length === 0) return usage(`Usage: megabrain web-userscript-${action}`);
+      if (value === undefined || value.length === 0) return usageAction("web-error-userscript-action", action);
       options.push(arg, value);
       index += 1;
     } else if (name.length === 0) name = arg;
-    else return usage(`Usage: megabrain web-userscript-${action}`);
+    else return usageAction("web-error-userscript-action", action);
   }
-  if ((action === "install" || action === "remove") && name.length === 0) return usage(`Usage: megabrain web-userscript-${action}`);
-  if (action === "list" && name.length > 0) return usage("Usage: megabrain web-userscript-list");
+  if ((action === "install" || action === "remove") && name.length === 0) return usageAction("web-error-userscript-action", action);
+  if (action === "list" && name.length > 0) return usage("web-error-userscript-list");
   if (action !== "install" && action !== "list" && action !== "remove") return { kind: "help" };
   return { kind: "run", command: `userscript-${action}`, args: action === "list" ? options : ["--file", name, ...options] };
 }
@@ -77,7 +83,9 @@ function planViewport(args: readonly string[]): WebPlan {
   const allowed = new Set(["--browser", "--filter", ...viewportFlags]);
   const parsed = collectFlags(tail, allowed);
   if ("kind" in parsed) return parsed;
-  if (parsed.rest.length > 0) return usage(`Usage: megabrain web-viewport-${action || "set"}`);
+  if (parsed.rest.length > 0) {
+    return usageAction("web-error-viewport-action", action || "set");
+  }
   if (action === "set") return { kind: "run", command: "viewport-set", args: parsed.args };
   if (action === "show") return { kind: "run", command: "viewport-show", args: parsed.args };
   if (action === "devices") return { kind: "run", command: "device-list", args: parsed.args };
@@ -95,9 +103,9 @@ export function planWeb(args: readonly string[]): WebPlan {
   }
   if (command === "session") {
     if (tail[0] === "-h" || tail[0] === "--help") return { kind: "help" };
-    if (tail[0] !== "save") return usage("Usage: megabrain web-session");
+    if (tail[0] !== "save") return usage("web-error-session");
     return { kind: "run", command: "session-save", args: tail.slice(1) };
   }
   if (viewportFlags.has(command)) return { kind: "run", command: "viewport-set", args };
-  return usage(`unknown web command: ${command}`);
+  return { kind: "usage", message: `unknown web command: ${command}` };
 }

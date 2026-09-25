@@ -107,7 +107,7 @@ for agent in claude codex agy cursor; do
   count="$(jq '[.. | objects | .command? // empty | select(test(" hook turn-end$"))] | length' "$config")"
   assert_equal "$count" 1
   assert_equal "$(jq -r '.. | objects | .command? // empty | select(test(" hook turn-end$"))' "$config")" \
-    "MEGABRAIN_HOOK_AGENT=$agent $root/.build/megabrain hook turn-end"
+    "MEGABRAIN_HOOK_AGENT=$agent '$root/.build/megabrain' hook turn-end"
 done
 printf 'agent hooks: all four migrated in place from the legacy wrapper, with backups and one current entry each\n'
 
@@ -130,7 +130,7 @@ for agent in claude codex agy cursor; do
   config="$integration_home/.$agent/hooks.json"
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
   moved_entry="$(jq -r '.. | objects | .command? // empty | select(test(" hook turn-end$"))' "$config")"
-  assert_equal "$moved_entry" "MEGABRAIN_HOOK_AGENT=$agent $moved_root/.build/megabrain hook turn-end"
+  assert_equal "$moved_entry" "MEGABRAIN_HOOK_AGENT=$agent '$moved_root/.build/megabrain' hook turn-end"
   assert_file "$moved_root/.build/megabrain"
   [ -x "$moved_root/.build/megabrain" ] || fail 'moved binary is not executable'
 done
