@@ -5,7 +5,6 @@ export type AgentDirectories = Readonly<{
   readonly config: string;
   readonly globalSkill: string;
   readonly projectSkill: string;
-  readonly globalInstructions: string;
 }>;
 export type MachineAgentDirectories = Readonly<Partial<Record<MachineAgent, AgentDirectories>>>;
 export type AgentEnvironment = Readonly<Record<string, string | undefined>>;
@@ -26,19 +25,16 @@ export function discoverAgentDirectories(environment: AgentEnvironment): Machine
       config: claudeConfig,
       globalSkill: join(claudeConfig, "skills", "megabrain", "SKILL.md"),
       projectSkill: join(".claude", "skills", "megabrain", "SKILL.md"),
-      globalInstructions: join(claudeConfig, "CLAUDE.md"),
     },
     codex: {
       config: codexConfig,
       globalSkill: join(codexConfig, "skills", "megabrain", "SKILL.md"),
       projectSkill: join(".agents", "skills", "megabrain", "SKILL.md"),
-      globalInstructions: join(codexConfig, "AGENTS.md"),
     },
     agy: {
       config: agyConfig,
       globalSkill: join(agyConfig, "skills", "megabrain", "SKILL.md"),
       projectSkill: join(".agents", "skills", "megabrain", "SKILL.md"),
-      globalInstructions: join(agyConfig, "AGENTS.md"),
     },
   };
 }

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -31,83 +31,20 @@ export function installAgentSkills(
   return installed;
 }
 
-function updateInstructionFile(path: string, pointer: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  let content = "";
-  let mode = 0o600;
-  if (existsSync(path)) {
-    if (lstatSync(path).isSymbolicLink()) throw new Error(`refusing to replace symbolic link: ${path}`);
-    content = readFileSync(path, "utf8");
-    mode = statSync(path).mode;
-  }
-
-  const lines = content.split("\n");
-  const pointerIndex = lines.findIndex((line) => /^# megabrain recipes(?:\s|$)/.test(line));
-  let next: string;
-  if (pointerIndex >= 0) {
-    let pointerInserted = false;
-    const updatedLines: string[] = [];
-    for (const line of lines) {
-      if (line === pointer || /^# megabrain recipes(?:\s|$)/.test(line)) {
-        if (!pointerInserted) updatedLines.push(pointer);
-        pointerInserted = true;
-      } else {
-        updatedLines.push(line);
-      }
-    }
-    next = updatedLines.join("\n");
-  } else {
-    const separator = content.length === 0 ? "" : content.endsWith("\n") ? "" : "\n";
-    next = `${content}${separator}${pointer}\n`;
-  }
-  if (next === content) return;
-
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, next, { mode });
-    renameSync(temporary, path);
-  } catch (cause: unknown) {
-    try { unlinkSync(temporary); } catch { /* preserve the original failure */ }
-    throw cause;
-  }
-}
-
-export function installAgentInstructions(
-  agents: readonly MachineAgent[],
-  mode: "global" | "project" | "none",
-  directories: MachineAgentDirectories,
-  projectDirectory: string,
-  pointer: string,
-): string[] {
-  if (mode === "none") return [];
-  const targets = mode === "project"
-    ? [join(projectDirectory, "AGENTS.md")]
-    : agents.map((agent) => {
-      const entry = directories[agent];
-      if (entry === undefined) throw new Error(`could not resolve ${agent} configuration directory`);
-      return entry.globalInstructions;
-    });
-  for (const target of targets) updateInstructionFile(target, pointer);
-  return targets;
-}
-
 const agents = ["claude", "codex", "agy"] as const;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime"] as const;
 type SkillMode = "none" | "global" | "project";
-type InstructionMode = SkillMode;
 type MachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
-  readonly agentsMd: InstructionMode;
   readonly modules: readonly string[];
   readonly yes: boolean;
   readonly provided: boolean;
 }>;
-type MachineArguments = Omit<MachineSelection, "agents" | "modules" | "skill" | "agentsMd" | "provided"> & Readonly<{
+type MachineArguments = Omit<MachineSelection, "agents" | "modules" | "skill" | "provided"> & Readonly<{
   readonly agents?: readonly MachineAgent[];
   readonly modules?: readonly string[];
   readonly skill?: SkillMode;
-  readonly agentsMd?: InstructionMode;
   readonly provided: boolean;
 }>;
 type ParseFailure = Readonly<{ kind: "failed"; error: string; exitCode: 2 }>;
@@ -139,14 +76,13 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
   let selectedAgents: readonly MachineAgent[] | undefined;
   let selectedModules: readonly string[] | undefined;
   let skill: SkillMode | undefined;
-  let agentsMd: InstructionMode | undefined;
   let yes = false;
   let provided = false;
   const seen = new Set<string>();
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--yes") { yes = true; continue; }
-    if (arg !== "--agents" && arg !== "--skill" && arg !== "--agents-md" && arg !== "--modules") {
+    if (arg !== "--agents" && arg !== "--skill" && arg !== "--modules") {
       return { kind: "failed", error: `unknown install option: ${arg}`, exitCode: 2 };
     }
     if (seen.has(arg)) return { kind: "failed", error: `${arg} may only be specified once`, exitCode: 2 };
@@ -163,16 +99,15 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
       const parsed = parseModules(value);
       if ("kind" in parsed) return parsed;
       selectedModules = parsed as readonly string[];
-    } else if (arg === "--skill" || arg === "--agents-md") {
+    } else if (arg === "--skill") {
       if (value !== "none" && value !== "global" && value !== "project") {
         return { kind: "failed", error: `${arg} must be none, global, or project`, exitCode: 2 };
       }
       const mode = value as SkillMode;
-      if (arg === "--skill") skill = mode;
-      else agentsMd = mode;
+      skill = mode;
     }
   }
-  return { agents: selectedAgents, modules: selectedModules, skill, agentsMd, yes, provided };
+  return { agents: selectedAgents, modules: selectedModules, skill, yes, provided };
 }
 
 export async function resolveDefaultModules(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<readonly string[]> {
@@ -295,7 +230,6 @@ function readMachineState(path: string): Record<string, unknown> | undefined {
 type PersistedMachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
-  readonly agentsMd: InstructionMode;
   readonly modules: readonly string[];
   readonly version: string;
 }>;
@@ -305,7 +239,7 @@ function sameSelection(left: unknown, right: PersistedMachineSelection): boolean
 }
 
 function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection): void {
-  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, agentsMd: selection.agentsMd, modules: selection.modules, version: packageJson.version } };
+  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, modules: selection.modules, version: packageJson.version } };
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
@@ -327,7 +261,7 @@ export async function runMachineInstall(
   const parsed = parseMachineInstallArgs(args);
   if ("kind" in parsed) return parsed;
   if (!interactive && !parsed.yes && !parsed.provided) {
-    return failed("install setup requires a terminal, --yes, or explicit --agents, --skill, --agents-md, or --modules flags");
+    return failed("install setup requires a terminal, --yes, or explicit --agents, --skill, or --modules flags");
   }
 
   const defaults = await resolveDefaultModules(environment, processAdapter);
@@ -335,13 +269,12 @@ export async function runMachineInstall(
   const detected = parsed.agents ?? availableAgents;
   const selectedAgents = parsed.agents ?? (interactive && !parsed.yes ? await askMany("Select agents", detected, detected) as MachineAgent[] : detected);
   const skill: SkillMode = parsed.skill ?? (interactive && !parsed.yes ? await ask("Install the skill?", ["none", "global", "project"], "global") as SkillMode : "global");
-  const agentsMd: InstructionMode = parsed.agentsMd ?? (interactive && !parsed.yes ? await ask("Add the instructions pointer?", ["none", "global", "project"], "global") as InstructionMode : "global");
   const modulesToInstall = parsed.modules ?? (interactive && !parsed.yes ? await askMany("Select modules", modules, defaults) : defaults);
-  const selection: MachineSelection = { agents: selectedAgents, skill, agentsMd, modules: modulesToInstall, yes: parsed.yes, provided: parsed.provided };
+  const selection: MachineSelection = { agents: selectedAgents, skill, modules: modulesToInstall, yes: parsed.yes, provided: parsed.provided };
   const statePath = join(resolveStateDirectory(environment), "state.json");
   const state = readMachineState(statePath);
   if (state === undefined) return failed(`could not read valid megabrain state at ${statePath}`);
-  const recordedSelection = { agents: selectedAgents, skill, agentsMd, modules: modulesToInstall, version: packageJson.version };
+  const recordedSelection = { agents: selectedAgents, skill, modules: modulesToInstall, version: packageJson.version };
   if (sameSelection(state.machineInstall, recordedSelection)) return ok("machine configuration already current; no changes made\n");
 
   try {
@@ -353,11 +286,6 @@ export async function runMachineInstall(
     if (skill !== "none") {
       const installed = installAgentSkills(join(root, "skills/megabrain/SKILL.md"), selectedAgents, skill, directories, process.cwd());
       for (const path of installed) process.stdout.write(`skill installed at ${path}\n`);
-    }
-    if (agentsMd !== "none") {
-      const pointer = "# megabrain recipes";
-      const installed = installAgentInstructions(selectedAgents, agentsMd, directories, process.cwd(), pointer);
-      for (const path of installed) process.stdout.write(`instructions updated at ${path}\n`);
     }
     for (const module of modulesToInstall) {
       const result = await installModule(module);

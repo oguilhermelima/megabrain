@@ -31,14 +31,14 @@ function processAdapter(available: readonly string[] = []): ProcessAdapter {
 
 describe("machine install options", () => {
   test("parses explicit selection options and rejects malformed combinations", () => {
-    expect(parseMachineInstallArgs(["--agents", "claude,agy", "--skill", "project", "--agents-md", "none", "--modules", "worktree,tmux-runtime"])).toEqual({
+    expect(parseMachineInstallArgs(["--agents", "claude,agy", "--skill", "project", "--modules", "worktree,tmux-runtime"])).toEqual({
       agents: ["claude", "agy"],
       skill: "project",
-      agentsMd: "none",
       modules: ["worktree", "tmux-runtime"],
       yes: false,
       provided: true,
     });
+    expect(parseMachineInstallArgs(["--agents-md", "global"])).toMatchObject({ kind: "failed", error: "unknown install option: --agents-md" });
     expect(parseMachineInstallArgs(["--modules", "none,worktree"]).kind).toBe("failed");
     expect(parseMachineInstallArgs(["--agents", "gemini"]).kind).toBe("failed");
   });
@@ -67,7 +67,7 @@ describe("machine install options", () => {
       installedModules += 1;
       return ok("installed");
     };
-    const args = ["--yes", "--agents", "none", "--skill", "none", "--agents-md", "none", "--modules", "none"];
+    const args = ["--yes", "--agents", "none", "--skill", "none", "--modules", "none"];
     const environment = { HOME: home, MEGABRAIN_STATE_DIR: stateDirectory };
 
     const first = await runMachineInstall(args, environment, processAdapter(), installModule, false);
@@ -76,7 +76,7 @@ describe("machine install options", () => {
     const state: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(state).toMatchObject({
       orchestration: { installed: true },
-      machineInstall: { agents: [], skill: "none", agentsMd: "none", modules: [], version: expect.any(String) },
+      machineInstall: { agents: [], skill: "none", modules: [], version: expect.any(String) },
     });
 
     const second = await runMachineInstall(args, environment, processAdapter(), installModule, false);

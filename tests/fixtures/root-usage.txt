@@ -2,7 +2,7 @@ Usage: megabrain <command> [options]
 
 Commands:
   version|-V|--version                   Print the megabrain version
-  install [options]                    Configure agents, skills, instructions, and modules
+  install [options]                    Configure agents, skills, and modules
   doctor [module-id]                   Check one module or all modules
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)

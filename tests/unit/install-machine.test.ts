@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installAgentInstructions, installAgentSkills } from "../../src/cli/commands/install-machine.js";
+import { installAgentSkills } from "../../src/cli/commands/install-machine.js";
 import { discoverAgentDirectories } from "../../src/core/agent-directories.js";
 import { skillTargetPaths } from "../../src/core/skill.js";
 
@@ -30,13 +30,11 @@ describe("discoverAgentDirectories", () => {
       config: "/custom/claude",
       globalSkill: "/custom/claude/skills/megabrain/SKILL.md",
       projectSkill: ".claude/skills/megabrain/SKILL.md",
-      globalInstructions: "/custom/claude/CLAUDE.md",
     });
     expect(directories.codex).toEqual({
       config: "/custom/codex",
       globalSkill: "/custom/codex/skills/megabrain/SKILL.md",
       projectSkill: ".agents/skills/megabrain/SKILL.md",
-      globalInstructions: "/custom/codex/AGENTS.md",
     });
   });
 
@@ -49,7 +47,6 @@ describe("discoverAgentDirectories", () => {
       config: "/home/example/.gemini/config",
       globalSkill: "/home/example/.gemini/config/skills/megabrain/SKILL.md",
       projectSkill: ".agents/skills/megabrain/SKILL.md",
-      globalInstructions: "/home/example/.gemini/config/AGENTS.md",
     });
   });
 
@@ -77,26 +74,4 @@ describe("discoverAgentDirectories", () => {
     expect(readFileSync(join(project, ".agents/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
   });
 
-  test("inserts and updates the megabrain pointer without changing other instructions", () => {
-    const root = temporaryDirectory();
-    const home = join(root, "home");
-    const project = join(root, "project");
-    mkdirSync(project, { recursive: true });
-    const directories = discoverAgentDirectories({ HOME: home });
-    const pointer = "# megabrain recipes";
-    const projectFile = join(project, "AGENTS.md");
-    writeFileSync(projectFile, "# Existing rules\n\nKeep this text.\n");
-
-    installAgentInstructions(["claude", "codex", "agy"], "global", directories, project, pointer);
-    installAgentInstructions([], "project", directories, project, pointer);
-
-    expect(readFileSync(join(home, ".claude/CLAUDE.md"), "utf8")).toBe(`${pointer}\n`);
-    expect(readFileSync(join(home, ".codex/AGENTS.md"), "utf8")).toBe(`${pointer}\n`);
-    expect(readFileSync(join(home, ".gemini/config/AGENTS.md"), "utf8")).toBe(`${pointer}\n`);
-    expect(readFileSync(projectFile, "utf8")).toBe(`# Existing rules\n\nKeep this text.\n${pointer}\n`);
-
-    writeFileSync(projectFile, "# megabrain recipes old\n\nKeep this text.\n");
-    installAgentInstructions([], "project", directories, project, pointer);
-    expect(readFileSync(projectFile, "utf8")).toBe(`${pointer}\n\nKeep this text.\n`);
-  });
 });
