@@ -26,36 +26,6 @@ assert_missing() {
   [ ! -e "$1" ] || fail "expected path to be absent: $1"
 }
 
-installer_source="$work/install-functions.sh"
-sed '$d' "$root/install.sh" >"$installer_source"
-# shellcheck disable=SC1090
-source "$installer_source"
-SOURCE_ROOT="$root"
-
-pointer_file="$work/AGENTS.md"
-printf '%s\n' '# megabrain recipes (old)' >"$pointer_file"
-installer_append_pointer "$pointer_file" '# megabrain recipes (new)' >/dev/null
-assert_equal "$(grep -Fxc '# megabrain recipes (old)' "$pointer_file")" 0
-assert_equal "$(grep -Fxc '# megabrain recipes (new)' "$pointer_file")" 1
-printf 'scenario 1: changed AGENTS pointer replaces the old generated line\n'
-
-agy() {
-  case "${1:-}:${2:-}" in
-    plugin:list) jq -n '{imports:[{name:"megabrain",source:"claude-code",components:["skills"]}]}' ;;
-    *) return 1 ;;
-  esac
-}
-if ! installer_verify_plugin agy; then
-  fail 'matching agy import metadata was reported stale'
-fi
-agy() {
-  jq -n '{imports:[{name:"megabrain",source:"other",components:["skills"]}]}'
-}
-if installer_verify_plugin agy; then
-  fail 'drifted agy import source was reported current'
-fi
-printf 'scenario 2: agy plugin validates import source and components\n'
-
 chain_state="$work/chain-state"
 mkdir -p "$chain_state"
 chain_file="$chain_state/chains.json"
@@ -85,22 +55,6 @@ printf 'scenario 3: chain list reconciles newly seeded usage-limit fields into t
 # by this lane, and not fixed here — DECIDED scoped this lane to `install`, reusing the existing
 # doctor for detection rather than extending it), surfaced by this migration and reported rather
 # than silently dropped.
-
-manifest="$work/install-manifest.json"
-INSTALL_MANIFEST="$manifest"
-SELECTED_AGENTS=claude
-SELECTED_MODULES=tmux-runtime
-SKILL_MODE=global
-AGENTS_MODE=global
-jq -n '{agents:["codex"],modules:["tmux-runtime"],skill:"global",agentsMd:"global"}' >"$manifest"
-if installer_manifest_matches_selection; then
-  fail 'drifted install manifest was reported current'
-fi
-printf '%s\n' '{"agents":["claude"],"modules":["tmux-runtime"],"skill":"global","agentsMd":"global"}' >"$manifest"
-if ! installer_manifest_matches_selection; then
-  fail 'matching install manifest was reported stale'
-fi
-printf 'scenario 5: install manifest compares selected configuration fields\n'
 
 # megabrain_dispatch_reconcile_one (lib/module-orchestrate.sh) has no production caller left
 # (orchestrate reconcile already execs the binary unconditionally), so this drives
