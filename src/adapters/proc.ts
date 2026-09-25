@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { failed, ok, type Result } from "../core/result.js";
 
 export type ProcessOutput = {
@@ -12,36 +13,27 @@ export type ProcessAdapter = {
   invocationCount(): number;
 };
 
-type Subprocess = {
-  readonly stdout: ReadableStream<Uint8Array>;
-  readonly stderr: ReadableStream<Uint8Array>;
-  readonly exited: Promise<number>;
-};
-
-declare const Bun: {
-  spawn(command: readonly string[], options: {
-    readonly stdout: "pipe";
-    readonly stderr: "pipe";
-  }): Subprocess;
-  spawn(command: readonly string[], options: {
-    readonly stdout: "ignore";
-    readonly stderr: "ignore";
-    readonly detached: true;
-  }): Subprocess & { readonly pid: number; readonly unref: () => void };
-};
-
 export function createProcessAdapter(): ProcessAdapter {
   let count = 0;
 
   async function run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<ProcessOutput>> {
     count += 1;
     try {
-      const child = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe", ...(options?.cwd ? { cwd: options.cwd } : {}), ...(options?.env ? { env: { ...process.env, ...options.env } } : {}) } as never);
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
+      const child = spawn(command, [...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
+        ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+      child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code) => resolve(code ?? 1));
+      });
       if (exitCode !== 0) {
         return failed(stderr.trim() || `${command} exited with status ${exitCode}`, exitCode, stdout);
       }
@@ -55,7 +47,12 @@ export function createProcessAdapter(): ProcessAdapter {
   async function startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>> {
     count += 1;
     try {
-      const child = Bun.spawn([command, ...args], { stdout: "ignore", stderr: "ignore", detached: true });
+      const child = spawn(command, [...args], { stdio: "ignore", detached: true });
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+      if (child.pid === undefined) return failed(`${command}: process could not be started`);
       child.unref();
       return ok({ pid: child.pid });
     } catch (error: unknown) {
