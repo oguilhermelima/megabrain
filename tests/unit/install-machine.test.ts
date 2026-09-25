@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installAgentSkills } from "../../src/cli/commands/install-machine.js";
+import { installAgentInstructions, installAgentSkills } from "../../src/cli/commands/install-machine.js";
 import { discoverAgentDirectories } from "../../src/core/agent-directories.js";
 import { skillTargetPaths } from "../../src/core/skill.js";
 
@@ -75,5 +75,28 @@ describe("discoverAgentDirectories", () => {
 
     installAgentSkills(packageSkill, ["codex", "agy"], "project", directories, project);
     expect(readFileSync(join(project, ".agents/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
+  });
+
+  test("inserts and updates the megabrain pointer without changing other instructions", () => {
+    const root = temporaryDirectory();
+    const home = join(root, "home");
+    const project = join(root, "project");
+    mkdirSync(project, { recursive: true });
+    const directories = discoverAgentDirectories({ HOME: home });
+    const pointer = "# megabrain recipes";
+    const projectFile = join(project, "AGENTS.md");
+    writeFileSync(projectFile, "# Existing rules\n\nKeep this text.\n");
+
+    installAgentInstructions(["claude", "codex", "agy"], "global", directories, project, pointer);
+    installAgentInstructions([], "project", directories, project, pointer);
+
+    expect(readFileSync(join(home, ".claude/CLAUDE.md"), "utf8")).toBe(`${pointer}\n`);
+    expect(readFileSync(join(home, ".codex/AGENTS.md"), "utf8")).toBe(`${pointer}\n`);
+    expect(readFileSync(join(home, ".gemini/config/AGENTS.md"), "utf8")).toBe(`${pointer}\n`);
+    expect(readFileSync(projectFile, "utf8")).toBe(`${pointer}\n# Existing rules\n\nKeep this text.\n`);
+
+    writeFileSync(projectFile, "# megabrain recipes old\n\nKeep this text.\n");
+    installAgentInstructions([], "project", directories, project, pointer);
+    expect(readFileSync(projectFile, "utf8")).toBe(`${pointer}\n\nKeep this text.\n`);
   });
 });
