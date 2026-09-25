@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { modelRegistryPaths } from "../../src/core/model.js";
 import { reconcileSkills } from "../../src/core/skill.js";
 import { executeWeb } from "../../src/cli/commands/web.js";
@@ -27,6 +27,13 @@ describe("package root resolution", () => {
     if (packageRootModule === undefined) return;
     const override = "/tmp/megabrain-root-override";
     expect(packageRootModule.resolvePackageRoot("file:///missing/module.js", override)).toBe(override);
+  });
+
+  test("resolves compiled Bun bundle paths from the executable location", () => {
+    expect(packageRootModule).toBeDefined();
+    if (packageRootModule === undefined) return;
+    expect(packageRootModule.resolvePackageRoot("file:///$bunfs/root/megabrain/src/core/package-root.js"))
+      .toBe(dirname(dirname(process.execPath)));
   });
 
   test("reports the package name and module URL when no root exists", () => {
