@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-install-doctor.XXXXXX")"
 binary="$root/.build/megabrain"
+export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
 modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync)
 trap 'rm -rf "$work"' EXIT
 
@@ -59,7 +60,7 @@ if [[ "${1:-}" = */scripts/playwright-web.mjs ]] && [ "${2:-}" = doctor ]; then
   printf '%s\n' '{"status":"unknown","reason":"chromium.ublock: installed 2026.907.2003, expected 2026.914.1325"}'
   exit 0
 fi
-exec /usr/bin/node "$@"
+exec "$MEGABRAIN_TEST_REAL_NODE" "$@"
 EOF
 chmod +x "$work/bin/node"
 cat >"$work/bin/tmux" <<'EOF'
@@ -230,7 +231,8 @@ assert_backup_matches() {
   cmp -s "$original" "$backup" || fail "backup for $path differs from original"
 }
 assert_backup_matches "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
-grep -q "MEGABRAIN_HOOK_AGENT=claude '$root/.build/megabrain' hook turn-end" "$install_contract_home/.claude/settings.json" \
+node_executable="$(node -p 'process.execPath')"
+grep -q "MEGABRAIN_HOOK_AGENT=claude '$node_executable' '$root/.build/megabrain' hook turn-end" "$install_contract_home/.claude/settings.json" \
   || fail 'install did not write the direct binary hook command'
 printf 'install contract: a real install backs up and repairs the operator config (issue 43)\n'
 export HOME="$work/home"

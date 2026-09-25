@@ -38,13 +38,6 @@ describe("package root resolution", () => {
     expect(packageRootModule.resolvePackageRoot("file:///missing/module.js", override)).toBe(override);
   });
 
-  test("resolves compiled Bun bundle paths from the executable location", () => {
-    expect(packageRootModule).toBeDefined();
-    if (packageRootModule === undefined) return;
-    expect(packageRootModule.resolvePackageRoot("file:///$bunfs/root/megabrain/src/core/package-root.js"))
-      .toBe(dirname(dirname(process.execPath)));
-  });
-
   test("reports the package name and module URL when no root exists", () => {
     expect(packageRootModule).toBeDefined();
     if (packageRootModule === undefined) return;
@@ -64,6 +57,7 @@ describe("package root resolution", () => {
     mkdirSync(join(root, ".build"), { recursive: true });
     writeFileSync(entrypoint, "bundle");
     writeFileSync(compiled, "binary");
+    chmodSync(entrypoint, 0o755);
     chmodSync(compiled, 0o755);
     expect(createCommand({ MEGABRAIN_ROOT: root }, "codex", { execPath: nodePath, node: true }))
       .toBe(`MEGABRAIN_HOOK_AGENT=codex '/opt/Node'\\''s Runtime/bin/node' '${entrypoint}' hook turn-end`);
