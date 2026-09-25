@@ -78,18 +78,11 @@ assert_status_and_path "$(cat "$output")" "$status" "$fixture/apps/tv/app.json"
 
 routing_fixture="$work/routing-fixture"
 make_entrypoint_routing_fixture "$root" "$routing_fixture" 99
-routing_root="$(cd "$routing_fixture" && pwd -P)"
-if MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" MEGABRAIN_NATIVE_WORKTREE="$work" "$routing_fixture/megabrain" native build tv >"$work/routed-output" 2>&1; then
+if MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" MEGABRAIN_NATIVE_WORKTREE="$work" "$routing_fixture/.build/megabrain" native build tv >"$work/routed-output" 2>&1; then
   binary_status=0
 else
   binary_status=$?
 fi
 [ "$binary_status" -eq 99 ] || { printf 'native operator entrypoint returned status %s\n' "$binary_status" >&2; exit 1; }
 
-rm -f "$routing_fixture/.build/megabrain"
-if missing_binary_output="$(MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" MEGABRAIN_NATIVE_WORKTREE="$work" "$routing_fixture/megabrain" native build tv 2>&1)"; then
-  fail 'native command unexpectedly ran without the compiled binary'
-fi
-assert_contains "$missing_binary_output" "compiled binary is missing: $routing_root/.build/megabrain; run bun run build"
-
-printf 'ok: compiled native build scenarios resolve paths and refuse a missing binary\n'
+printf 'ok: Node native build scenarios resolve paths and use the entrypoint directly\n'

@@ -24,7 +24,7 @@ scenario_wrapper_keeps_caller_session_for_verb() {
   write_env_capture_binary "$fixture"
   output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" \
     ORCA_TERMINAL_HANDLE=term_2997abc \
-    "$fixture/megabrain" orchestrate "$verb" some-dispatch --json)"
+    "$fixture/.build/megabrain" orchestrate "$verb" some-dispatch --json)"
   assert_equal "$output" "MEGABRAIN_SESSION_ID= MEGABRAIN_SESSION_HOST="
   printf 'orchestrate %s leaves MEGABRAIN_SESSION_ID for the binary to resolve\n' "$verb"
 }

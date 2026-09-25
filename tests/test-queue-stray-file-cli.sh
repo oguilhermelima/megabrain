@@ -54,7 +54,7 @@ shell_state="$work_dir/shell-state"
 binary_state="$work_dir/binary-state"
 make_dispatch "$shell_state"
 make_dispatch "$binary_state"
-shell_output="$(run_reply shell "$shell_state" "$root/megabrain")" || fail 'shell allocation failed beside stray files'
+shell_output="$(run_reply shell "$shell_state" "$root/.build/megabrain")" || fail 'shell allocation failed beside stray files'
 binary_output="$(run_reply binary "$binary_state" "$root/.build/megabrain")" || fail 'binary allocation failed beside stray files'
 [ "$shell_output" = "$binary_output" ] || fail "allocation output differs: shell=$shell_output binary=$binary_output"
 [ -f "$shell_state/dispatches/queue/messages/0008-parent-reply.json" ] || fail 'shell did not allocate the next valid sequence'
@@ -68,7 +68,7 @@ boundary_shell_state="$work_dir/boundary-shell-state"
 boundary_binary_state="$work_dir/boundary-binary-state"
 make_dispatch "$boundary_shell_state" false true
 make_dispatch "$boundary_binary_state" false true
-boundary_shell_output="$(run_reply shell "$boundary_shell_state" "$root/megabrain")" || fail 'shell boundary allocation failed'
+boundary_shell_output="$(run_reply shell "$boundary_shell_state" "$root/.build/megabrain")" || fail 'shell boundary allocation failed'
 boundary_binary_output="$(run_reply binary "$boundary_binary_state" "$root/.build/megabrain")" || fail 'binary boundary allocation failed'
 [ "$boundary_shell_output" = "$boundary_binary_output" ] || fail "boundary output differs: shell=$boundary_shell_output binary=$boundary_binary_output"
 for implementation in shell binary; do

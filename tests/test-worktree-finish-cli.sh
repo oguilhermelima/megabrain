@@ -56,7 +56,7 @@ scenario_routes_finish_to_binary() {
   set +e
   output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
-    "$fixture/megabrain" worktree finish missing --json 2>&1)"
+    "$fixture/.build/megabrain" worktree finish missing --json 2>&1)"
   status=$?
   set -e
   assert_equal "$status" 97
@@ -69,7 +69,7 @@ scenario_routes_finish_to_binary() {
   set +e
   output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
-    "$fixture/megabrain" worktree finish missing --json 2>&1)"
+    "$fixture/.build/megabrain" worktree finish missing --json 2>&1)"
   status=$?
   set -e
   [ "$status" -ne 97 ] || fail 'deleted finish route still reached the compiled entrypoint'
@@ -78,7 +78,7 @@ scenario_routes_finish_to_binary() {
   set +e
   output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
-    "$fixture/megabrain" worktree finish missing --json 2>&1)"
+    "$fixture/.build/megabrain" worktree finish missing --json 2>&1)"
   status=$?
   set -e
   assert_equal "$status" 97

@@ -3,8 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-# WHY: the wrapper canonicalizes its source with pwd -P, so the fixture expectation must use the
-# same real path while leaving command output untouched for comparison.
+# WHY: the Node bundle resolves package assets independently of the caller's current directory.
 work="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/megabrain-root-export.XXXXXX")" && pwd -P)"
 fixture="$work/repo"
 state="$work/state"
@@ -19,22 +18,24 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
   exit 0
 }
 
-# The fixture is the installed wrapper's checkout. Keeping it outside the repository makes the
-# red and green runs prove the child process contract without writing the checkout build.
+# The fixture is an installed package copy kept outside the repository.
 mkdir -p "$fixture/.build" "$state" "$unrelated" "$work/home" "$work/bin"
-cp "$root/megabrain" "$fixture/megabrain"
-cp -R "$root/lib" "$fixture/lib"
-cp -R "$root/src" "$fixture/src"
+cp "$root/.build/megabrain" "$fixture/.build/megabrain"
+cp "$root/package.json" "$fixture/package.json"
 cp -R "$root/scripts" "$fixture/scripts"
 cp -R "$root/skills" "$fixture/skills"
 cp -R "$root/.megabrain" "$fixture/.megabrain"
 cp "$binary_source" "$fixture/.build/megabrain"
-chmod +x "$fixture/megabrain" "$fixture/.build/megabrain"
+chmod +x "$fixture/.build/megabrain"
 
-# web devices must resolve the script but must not launch a browser in this contract.
+# The fixture Node captures the Playwright script invocation while still running the CLI bundle.
+real_node="$(command -v node)"
 cat >"$work/bin/node" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*"
+case "${1:-}" in
+  */scripts/playwright-web.mjs) printf '%s\n' "$*"; exit 0 ;;
+esac
+exec "$MEGABRAIN_TEST_REAL_NODE" "$@"
 EOF
 chmod +x "$work/bin/node"
 
@@ -58,9 +59,10 @@ run_from_unrelated() {
   if output_file_value="$(cd "$unrelated" && env -i \
     HOME="$work/home" \
     PATH="$work/bin:/usr/bin:/bin" \
+    MEGABRAIN_TEST_REAL_NODE="$real_node" \
     MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_PLAYWRIGHT_ROOT="$work/playwright" \
-    "$fixture/megabrain" "$@" 2>&1)"; then
+    "$fixture/.build/megabrain" "$@" 2>&1)"; then
     exit_code=0
   else
     exit_code=$?
@@ -89,40 +91,6 @@ model_status="$(run_from_unrelated "$model_output" model list --json)"
 jq -e '.version == 1 and (.models | length > 0)' "$model_output" >/dev/null ||
   fail "model list did not read the checkout registry: $(cat "$model_output")"
 printf 'model reads checkout registry outside the repository\n'
-
-# Scenario: doctor assesses the compiled artifact at the checkout root.
-# Falsification: an unexported root reports an absent artifact and still exits 0.
-doctor_output="$work/doctor.out"
-doctor_status="$(run_from_unrelated "$doctor_output" doctor compiled-binary --json)"
-[ "$doctor_status" -eq 0 ] || [ "$doctor_status" -eq 1 ] ||
-  fail "doctor returned unexpected status $doctor_status: $(cat "$doctor_output")"
-jq -e '.module == "compiled-binary" and (.reason | test("compiled binary is (current|stale)"))' "$doctor_output" >/dev/null ||
-  fail "doctor did not assess the checkout binary: $(cat "$doctor_output")"
-if grep -F 'compiled binary is not present' "$doctor_output" >/dev/null; then
-  fail 'doctor skipped freshness by resolving the binary against the unrelated directory'
-fi
-printf 'doctor assesses checkout binary outside the repository\n'
-
-# Scenario: doctor reports unknown freshness without an artifact and does not fail a fresh clone.
-# Falsification: treating absence as ok hides the unknown state, while treating it as a finding
-# returns non-zero for a checkout that has not been built yet.
-absent_root="$work/absent-repo"
-mkdir -p "$absent_root/src"
-absent_output="$work/absent-doctor.out"
-if env -i \
-  HOME="$work/home" \
-  PATH="$work/bin:/usr/bin:/bin" \
-  MEGABRAIN_ROOT="$absent_root" \
-  MEGABRAIN_STATE_DIR="$state/absent" \
-  "$fixture/.build/megabrain" doctor compiled-binary --json >"$absent_output" 2>&1; then
-  absent_status=0
-else
-  absent_status=$?
-fi
-[ "$absent_status" -eq 0 ] || fail "doctor failed an absent-binary check: $(cat "$absent_output")"
-jq -e '.module == "compiled-binary" and .status == "unknown" and (.reason | contains("freshness cannot be determined"))' "$absent_output" >/dev/null ||
-  fail "doctor did not report unknown freshness: $(cat "$absent_output")"
-printf 'doctor reports unknown freshness without an artifact\n'
 
 # Scenario: chain validation reads the checkout model registry outside the repository.
 # Falsification: without the exported root, the invalid model is accepted because validation is

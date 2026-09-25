@@ -26,7 +26,7 @@ scenario_route_reaches_compiled_binary() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_route_binary "$fixture" "$marker"
   set +e
-  output="$(env MEGABRAIN_STATE_DIR="$work/route-state-$verb" "$fixture/megabrain" "$@" 2>"$work/route-$verb.err")"
+  output="$(env MEGABRAIN_STATE_DIR="$work/route-state-$verb" "$fixture/.build/megabrain" "$@" 2>"$work/route-$verb.err")"
   status=$?
   set -e
   assert_equal "$status" 73

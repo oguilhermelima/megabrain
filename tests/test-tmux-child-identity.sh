@@ -88,7 +88,7 @@ create_tmux_meta() {
 # and dispatch_orca below share the same pane.
 send_child_message() {
   local pane="$1" dispatch_id="$2" text="$3" output="$4" command_text
-  command_text="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_id") $(printf '%q' "$root/megabrain") ask $(printf '%q' "$text") >$(printf '%q' "$output") 2>&1"
+  command_text="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_id") $(printf '%q' "$root/.build/megabrain") ask $(printf '%q' "$text") >$(printf '%q' "$output") 2>&1"
   tmux_cmd send-keys -t "$pane" -l "$command_text"
   tmux_cmd send-keys -t "$pane" Enter
   wait_for_file "$output"
@@ -166,17 +166,17 @@ assert_equal "$(jq -r '.text' "$message_without_host")" child-without-host
 [ "$(find "$state_dir/dispatches/$dispatch_two/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch two received an extra message"
 
 wrong_parent_output=""
-if wrong_parent_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=other-parent "$root/megabrain" orchestrate watch "$dispatch_one" --timeout 0 --poll-interval 0 --json 2>&1)"; then
+if wrong_parent_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=other-parent "$root/.build/megabrain" orchestrate watch "$dispatch_one" --timeout 0 --poll-interval 0 --json 2>&1)"; then
   fail "wrong parent read dispatch one"
 fi
 assert_contains "$wrong_parent_output" "owned by superset/$parent_id"
-if wrong_parent_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=other-parent "$root/megabrain" orchestrate watch "$dispatch_two" --timeout 0 --poll-interval 0 --json 2>&1)"; then
+if wrong_parent_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=other-parent "$root/.build/megabrain" orchestrate watch "$dispatch_two" --timeout 0 --poll-interval 0 --json 2>&1)"; then
   fail "wrong parent read dispatch two"
 fi
 assert_contains "$wrong_parent_output" "owned by superset/$parent_id"
 
-delivery_one="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/megabrain" orchestrate watch "$dispatch_one" --timeout 0 --poll-interval 0 --json)"
-delivery_two="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/megabrain" orchestrate watch "$dispatch_two" --timeout 0 --poll-interval 0 --json)"
+delivery_one="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/.build/megabrain" orchestrate watch "$dispatch_one" --timeout 0 --poll-interval 0 --json)"
+delivery_two="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/.build/megabrain" orchestrate watch "$dispatch_two" --timeout 0 --poll-interval 0 --json)"
 delivery_id_one="$(jq -r '.deliveryId' <<<"$delivery_one")"
 delivery_id_two="$(jq -r '.deliveryId' <<<"$delivery_two")"
 [ "$delivery_id_one" != null ] || fail "dispatch one did not create a delivery"
@@ -184,7 +184,7 @@ delivery_id_two="$(jq -r '.deliveryId' <<<"$delivery_two")"
 assert_equal "$(jq -r '.messages[0].text' <<<"$delivery_one")" child-one
 assert_equal "$(jq -r '.messages[0].text' <<<"$delivery_two")" child-two
 
-env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/megabrain" orchestrate ack "$dispatch_one" "$delivery_id_one" --json >/dev/null
+env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/.build/megabrain" orchestrate ack "$dispatch_one" "$delivery_id_one" --json >/dev/null
 assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_one/deliveries/$delivery_id_one.json")" acknowledged
 assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_two/deliveries/$delivery_id_two.json")" outstanding
 
@@ -204,7 +204,7 @@ stale_done="$state_dir/stale.done"
 # terminal, not a tmux pane. Adjusted to the message the current code actually produces for a
 # truly stale pane, while keeping the property that matters: a dead pane reference is refused,
 # and dispatch_one's message count does not grow.
-stale_command="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_one") TMUX_PANE=$(printf '%q' "$stale_pane") $(printf '%q' "$root/megabrain") ask stale-message >$(printf '%q' "$stale_output") 2>&1; printf 'done\n' >$(printf '%q' "$stale_done")"
+stale_command="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_one") TMUX_PANE=$(printf '%q' "$stale_pane") $(printf '%q' "$root/.build/megabrain") ask stale-message >$(printf '%q' "$stale_output") 2>&1; printf 'done\n' >$(printf '%q' "$stale_done")"
 tmux_cmd send-keys -t "$tmux_pane_two" -l "$stale_command"
 tmux_cmd send-keys -t "$tmux_pane_two" Enter
 wait_for_file "$stale_done"
@@ -216,7 +216,7 @@ write_dispatch_meta "$state_dir" "$tab_dispatch" \
   parentSessionId=tab-parent parentHost=superset childHost=superset workspaceId="$workspace_id" \
   terminalId=tab-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
   state=running model=gpt-5 modelHonored=true runtime=host >/dev/null
-env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=tab-terminal MEGABRAIN_DISPATCH_ID="$tab_dispatch" "$root/megabrain" ask tab-message >/dev/null
+env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=tab-terminal MEGABRAIN_DISPATCH_ID="$tab_dispatch" "$root/.build/megabrain" ask tab-message >/dev/null
 tab_message="$(find "$state_dir/dispatches/$tab_dispatch/messages" -name '*.json' -print -quit)"
 assert_equal "$(jq -r '.text' "$tab_message")" tab-message
 

@@ -30,7 +30,7 @@ run_capture() {
   local side="$1" state="$2" out="$3" err="$4"; shift 4
   local status
   if [ "$side" = shell ]; then
-    if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" "$@" >"$out" 2>"$err"; then status=0; else status=$?; fi
+    if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/.build/megabrain" "$@" >"$out" 2>"$err"; then status=0; else status=$?; fi
   else
     if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" "$binary" "$@" >"$out" 2>"$err"; then status=0; else status=$?; fi
   fi
@@ -72,7 +72,7 @@ chmod +x "$editor"
 for side in shell binary; do
   state="$work/success-$side"; make_fixture "$state"
   if [ "$side" = shell ]; then
-    env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR="$editor" MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/megabrain" chain edit existing --json >"$work/$side.out" 2>"$work/$side.err"
+    env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR="$editor" MEGABRAIN_CHAIN_IMPLEMENTATION=shell "$root/.build/megabrain" chain edit existing --json >"$work/$side.out" 2>"$work/$side.err"
   else
     env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR="$editor" "$binary" chain edit existing --json >"$work/$side.out" 2>"$work/$side.err"
   fi
@@ -91,7 +91,7 @@ for verb in add edit delete repair; do
     delete) args=(chain delete existing --json) ;;
     repair) args=(chain repair existing --step 1 --model gpt-5.6-luna --effort medium --json) ;;
   esac
-  if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR=true "$routing_fixture/megabrain" "${args[@]}" >"$work/stub-$verb.out" 2>"$work/stub-$verb.err"; then
+  if env MEGABRAIN_STATE_DIR="$state" HOME="$state/home" EDITOR=true "$routing_fixture/.build/megabrain" "${args[@]}" >"$work/stub-$verb.out" 2>"$work/stub-$verb.err"; then
     fail "operator chain entrypoint bypassed the compiled implementation for $verb"
   else
     status=$?

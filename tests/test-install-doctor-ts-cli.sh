@@ -126,7 +126,7 @@ export MEGABRAIN_TEST_NOW='2026-09-16T02:00:00Z'
 # implementation. A failing binary makes an accidental shell fallback visible.
 routing_fixture="$work/routing-fixture"
 make_entrypoint_routing_fixture "$root" "$routing_fixture" 42
-run_capture "$work/routed-doctor" env MEGABRAIN_STATE_DIR="$work/routed-state" "$routing_fixture/megabrain" doctor orchestration
+run_capture "$work/routed-doctor" env MEGABRAIN_STATE_DIR="$work/routed-state" "$routing_fixture/.build/megabrain" doctor orchestration
 [ "$(cat "$work/routed-doctor.status")" -eq 42 ] || fail 'operator doctor was not served by the binary'
 
 # Keep the absent-environment contract: inspection branches must report their own content when every source is absent.
@@ -200,9 +200,9 @@ done
 # lib/module-install.sh), and now there is no shell install body left to compare against at all —
 # command_install is an unconditional passthrough to the binary, the same shape as command_native
 # and command_web. So this now proves routing fidelity instead of shell/binary parity: the
-# operator-facing wrapper ($root/megabrain) must answer identically to the binary it forwards to.
+# operator-facing wrapper ($root/.build/megabrain) must answer identically to the binary it forwards to.
 routed_unknown="$work/routed-unknown"
-run_capture "$routed_unknown" "$root/megabrain" install unknown-module
+run_capture "$routed_unknown" "$root/.build/megabrain" install unknown-module
 
 binary_unknown="$work/binary-unknown"
 run_capture "$binary_unknown" "$binary" install unknown-module
@@ -221,7 +221,7 @@ mkdir -p "$install_contract_home/.claude"
 printf '%s\n' '{"hooks":{"Stop":[]}}' >"$install_contract_home/.claude/settings.json"
 cp "$install_contract_home/.claude/settings.json" "$work/install-contract-original.json"
 export HOME="$install_contract_home"
-run_capture "$work/install-contract" "$root/megabrain" install orchestration-hooks --yes
+run_capture "$work/install-contract" "$root/.build/megabrain" install orchestration-hooks --yes
 [ "$(cat "$work/install-contract.status")" -eq 0 ] || fail "install orchestration-hooks --yes did not exit 0: $(cat "$work/install-contract.stdout") $(cat "$work/install-contract.stderr")"
 assert_backup_matches() {
   local path="$1" original="$2" backup

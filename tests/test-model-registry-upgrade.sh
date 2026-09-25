@@ -71,7 +71,7 @@ write_old_registry() {
 
 # 1. A fresh registry accepts every Claude level in the template and refuses an unknown one.
 reset_state
-list_output="$($root/megabrain model list --json)"
+list_output="$($root/.build/megabrain model list --json)"
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .provenance.kind')" sourced
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.kind')" verified
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.command')" /Users/gui/.local/bin/codex
@@ -84,20 +84,20 @@ printf 'fresh registry: model documentation and reasoning evidence stay distinct
 claude_model="$(jq -r '.models[] | select(.agent == "claude") | .model' "$template" | head -n 1)"
 claude_levels="$(jq -r --arg model "$claude_model" '.models[] | select(.agent == "claude" and .model == $model) | .reasoning.levels[]' "$template" | sort -u)"
 for level in $claude_levels; do
-  "$root/megabrain" chain add "fresh-claude-$level" \
+  "$root/.build/megabrain" chain add "fresh-claude-$level" \
     --when '{"parentAgent":"codex"}' \
     --steps "$(jq -nc --arg model "$claude_model" --arg effort "$level" '[{agent:"claude",model:$model,effort:$effort}]')" >/dev/null
 done
-assert_failure_contains 'does not support reasoning level' "$root/megabrain" chain add fresh-claude-bogus \
+assert_failure_contains 'does not support reasoning level' "$root/.build/megabrain" chain add fresh-claude-bogus \
   --when '{"parentAgent":"codex"}' \
   --steps "$(jq -nc --arg model "$claude_model" '[{agent:"claude",model:$model,effort:"bogus"}]')"
 printf 'fresh registry: Claude levels accepted and unknown level refused\n'
 
 # 2. An old registry gains missing template entries and corrected reasoning levels.
 reset_state
-"$root/megabrain" model list --json >/dev/null
+"$root/.build/megabrain" model list --json >/dev/null
 write_old_registry
-upgraded="$("$root/megabrain" model list --json)"
+upgraded="$("$root/.build/megabrain" model list --json)"
 assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "agy")] | length')" 14
 assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "codex")] | length')" 12
 assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "claude")] | length')" 19
@@ -111,10 +111,10 @@ printf 'registry upgrade: missing entries added and corrected levels applied\n'
 
 # 3. A model added with model add is curated and wins over the template during upgrade.
 reset_state
-"$root/megabrain" model add codex operator-model --reasoning high >/dev/null
+"$root/.build/megabrain" model add codex operator-model --reasoning high >/dev/null
 curated_before="$(jq -c '.models[] | select(.agent == "codex" and .model == "operator-model")' "$MEGABRAIN_STATE_DIR/models.json")"
 write_old_registry
-upgraded="$("$root/megabrain" model list --json)"
+upgraded="$("$root/.build/megabrain" model list --json)"
 curated_after="$(printf '%s' "$upgraded" | jq -c '.models[] | select(.agent == "codex" and .model == "operator-model")')"
 assert_equal "$curated_after" "$curated_before"
 assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.model == "operator-model") | .provenance.kind')" curated
@@ -124,9 +124,9 @@ printf 'curated registry entry: levels and provenance survive upgrade\n'
 # 4. model add accepts every level shipped by the template and refuses an unknown one.
 reset_state
 for level in $(jq -r '.models[].reasoning.levels[]' "$template" | sort -u); do
-  "$root/megabrain" model add codex "accepted-$level" --reasoning "$level" >/dev/null
+  "$root/.build/megabrain" model add codex "accepted-$level" --reasoning "$level" >/dev/null
 done
-assert_failure_contains 'unknown reasoning level' "$root/megabrain" model add codex rejected-level --reasoning bogus
+assert_failure_contains 'unknown reasoning level' "$root/.build/megabrain" model add codex rejected-level --reasoning bogus
 printf 'model add vocabulary: every shipped level accepted and unknown level refused\n'
 
 # Scenario 5 ("a dispatch metadata record carries the effort used for its launch") is dropped,

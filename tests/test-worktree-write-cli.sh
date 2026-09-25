@@ -9,11 +9,11 @@ assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected '$1' to contain '$
 assert_not_contains() { case "$1" in *"$2"*) fail "expected '$1' not to contain '$2'" ;; esac; }
 run_pair() {
   local shell_impl="$1"; shift
-  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" REPO_LIST_PATH="$work/repo" GH_MODE="${GH_MODE:-success}" PATH="$work/bin:/usr/bin:/bin" "$root/megabrain" "$@"
+  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" REPO_LIST_PATH="$work/repo" GH_MODE="${GH_MODE:-success}" PATH="$work/bin:/usr/bin:/bin" "$root/.build/megabrain" "$@"
 }
 run_pair_no_gh() {
   local shell_impl="$1"; shift
-  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" PATH="/usr/bin:/bin" "$root/megabrain" "$@"
+  env HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION="$shell_impl" INVOCATION_LOG="$work/${shell_impl}.calls" PATH="/usr/bin:/bin" "$root/.build/megabrain" "$@"
 }
 run_pair_from() {
   local directory="$1" shell_impl="$2"; shift 2

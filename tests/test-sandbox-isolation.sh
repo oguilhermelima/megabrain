@@ -24,7 +24,7 @@ mkdir -p "$sandbox/home" "$sandbox/state"
 run_sandboxed() {
   env HOME="$sandbox/home" \
     MEGABRAIN_STATE_DIR="$sandbox/state" \
-    "$root/megabrain" "$@"
+    "$root/.build/megabrain" "$@"
 }
 
 # Everything outside the sandbox that megabrain is known to write to. A command that

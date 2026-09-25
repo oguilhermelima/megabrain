@@ -59,7 +59,7 @@ describe("package root resolution", () => {
     if (createCommand === undefined) return;
     const root = mkdtempSync("/tmp/megabrain-hook-root-");
     const nodePath = "/opt/Node's Runtime/bin/node";
-    const entrypoint = join(root, ".build/megabrain.mjs");
+    const entrypoint = join(root, ".build/megabrain");
     const compiled = join(root, ".build/megabrain");
     mkdirSync(join(root, ".build"), { recursive: true });
     writeFileSync(entrypoint, "bundle");

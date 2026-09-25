@@ -47,26 +47,26 @@ jq -n --arg dispatchId "$dispatch_id" --arg worktreePath "$root" --arg now "$(no
 ) &
 
 child_delivery="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" \
-  SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" check --timeout 3 --poll-interval 1 --json)"
+  SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 3 --poll-interval 1 --json)"
 assert_equal "$(printf '%s' "$child_delivery" | jq -r '.messages[0].type')" reply
 child_delivery_id="$(printf '%s' "$child_delivery" | jq -r '.deliveryId')"
 [ -n "$child_delivery_id" ] || fail 'child did not receive a delivery id'
 
 child_ack="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" \
-  SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" ack "$child_delivery_id" --json)"
+  SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ack "$child_delivery_id" --json)"
 assert_equal "$(printf '%s' "$child_ack" | jq -r '.duplicate')" false
 [ ! -e "$dispatch_dir/nudge.log" ] ||
   fail 'child ack woke the coordinator instead of staying protocol-only'
 
 parent_delivery="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" \
-  SUPERSET_TERMINAL_ID=parent-terminal "$root/megabrain" orchestrate watch "$dispatch_id" \
+  SUPERSET_TERMINAL_ID=parent-terminal "$root/.build/megabrain" orchestrate watch "$dispatch_id" \
   --timeout 1 --poll-interval 1 --wait-mode poll --full --json)"
 assert_equal "$(printf '%s' "$parent_delivery" | jq -r '.messages[0].type')" ack
 assert_equal "$(printf '%s' "$parent_delivery" | jq -r '.messages[0].text')" "$child_delivery_id"
 parent_delivery_id="$(printf '%s' "$parent_delivery" | jq -r '.deliveryId')"
 
 env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=parent-terminal \
-  "$root/megabrain" orchestrate ack "$dispatch_id" "$parent_delivery_id" --json >/dev/null
+  "$root/.build/megabrain" orchestrate ack "$dispatch_id" "$parent_delivery_id" --json >/dev/null
 
 assert_equal "$(find "$dispatch_dir/messages" -name '*-child-ack.json' | wc -l | tr -d ' ')" 1
 printf 'child reply acknowledgement reaches the coordinator queue without an ack loop\n'

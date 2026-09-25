@@ -38,7 +38,7 @@ install_home="$state_dir/install-home"
 install_state="$state_dir/install-state"
 mkdir -p "$install_home" "$install_state"
 if HOME="$install_home" MEGABRAIN_STATE_DIR="$install_state" PATH=/usr/bin:/bin \
-  "$root/megabrain" install tv-adb --yes >"$state_dir/install.out" 2>&1; then
+  "$root/.build/megabrain" install tv-adb --yes >"$state_dir/install.out" 2>&1; then
   fail 'a failed tv-adb install exited successfully'
 fi
 printf 'scenario 1: failed module install is non-zero\n'
@@ -150,7 +150,7 @@ assert_not_contains "$uncertain_list" 'healthy' 'orchestrate list --uncertain in
 printf 'scenario 6: uncertain dispatches are selectable\n'
 
 # Scenario 7: the version command must be discoverable from top-level help.
-help_output="$("$root/megabrain" --help)"
+help_output="$("$root/.build/megabrain" --help)"
 assert_contains "$help_output" '--version' 'top-level help omitted the version flag'
 printf 'scenario 7: help documents the version flag\n'
 

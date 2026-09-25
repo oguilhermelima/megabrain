@@ -25,7 +25,7 @@ assert_contains() {
 
 run_wrapper() { # run_wrapper <home> <login shell>
   env HOME="$1" SHELL="$2" MEGABRAIN_STATE_DIR="$1/state" \
-    "$root/megabrain" tmux wrapper --yes 2>&1
+    "$root/.build/megabrain" tmux wrapper --yes 2>&1
 }
 
 # WHY: the wrapper is a zsh function sourced from .zshrc. On a machine whose login shell is

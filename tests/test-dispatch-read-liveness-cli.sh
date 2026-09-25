@@ -39,7 +39,7 @@ chmod +x "$work/bin/orca"
 
 host_shell="$work/host-shell"; host_binary="$work/host-binary"
 write_host_fixture "$host_shell"; write_host_fixture "$host_binary"
-shell_output="$(run_side shell read "$host_shell" "$root/megabrain" host-read --json)"
+shell_output="$(run_side shell read "$host_shell" "$root/.build/megabrain" host-read --json)"
 if [ ! -x "$root/.build/megabrain" ]; then
   printf 'skip: compiled read/liveness binary is missing at %s; run bun run build\n' "$root/.build/megabrain"
   exit 0
@@ -64,7 +64,7 @@ chmod +x "$work/bin/tmux"
 
 for frame in working idle usage-limit transport-error unknown; do
   state="$work/$frame"; write_tmux_fixture "$state" "$frame"
-  shell_output="$(run_side shell liveness "$state" "$root/megabrain" live --json 2>&1)"; shell_status=$?
+  shell_output="$(run_side shell liveness "$state" "$root/.build/megabrain" live --json 2>&1)"; shell_status=$?
   binary_output="$(run_side binary liveness "$state" "$root/.build/megabrain" live --json 2>&1)"; binary_status=$?
   [ "$shell_status" -eq "$binary_status" ] || fail "liveness status differs for $frame"
   [ "$shell_output" = "$binary_output" ] || fail "liveness output differs for $frame"
@@ -72,7 +72,7 @@ done
 printf 'tmux liveness agrees for five frame classes\n'
 
 set +e
-missing_shell="$(run_side shell read "$work/missing" "$root/megabrain" missing --json 2>&1)"; missing_shell_status=$?
+missing_shell="$(run_side shell read "$work/missing" "$root/.build/megabrain" missing --json 2>&1)"; missing_shell_status=$?
 missing_binary="$(run_side binary read "$work/missing" "$root/.build/megabrain" missing --json 2>&1)"; missing_binary_status=$?
 set -e
 [ "$missing_shell_status" -eq "$missing_binary_status" ] || fail 'missing dispatch status differs'

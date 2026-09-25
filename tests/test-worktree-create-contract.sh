@@ -136,7 +136,7 @@ scenario_superset_project_failure_keeps_git_work() {
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
-  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
+  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-project SUPERSET_MODE=project-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
     fail 'shell fallback accepted a project registration failure'
   fi
   assert_contains "$output" 'shell worktree implementation no longer exists'
@@ -150,7 +150,7 @@ scenario_superset_workspace_failure_keeps_git_work() {
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
-  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
+  if output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=contract-workspace SUPERSET_MODE=workspace-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --json 2>&1)"; then
     fail 'shell fallback accepted a workspace registration failure'
   fi
   assert_contains "$output" 'shell worktree implementation no longer exists'
@@ -164,7 +164,7 @@ scenario_compiled_registration_failure_keeps_git_work() {
   mkdir -p "$state" "$shared"
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
-  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE=set-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/megabrain" worktree create --repo "$repo" --branch "$branch" --parent "path:$repo" --json)" ||
+  output="$(env HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary ORCA_MODE=set-fail PATH="$work_dir/bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo "$repo" --branch "$branch" --parent "path:$repo" --json)" ||
     fail 'compiled implementation did not keep a worktree after registration failed'
   assert_equal "$(printf '%s' "$output" | jq -r '.parent.lineage.set')" false
   assert_contains "$output" 'Orca parent lineage was not set'
@@ -284,7 +284,7 @@ scenario_worktree_create_routes_binary() {
   make_repo "$repo"
   printf '%s\n' "$shared" >"$state/worktree-root"
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/megabrain" worktree create --repo "$repo" --branch feat/orphan-routing --base main --json 2>&1)"
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin "$fixture/.build/megabrain" worktree create --repo "$repo" --branch feat/orphan-routing --base main --json 2>&1)"
   status=$?
   set -e
   assert_equal "$status" 97

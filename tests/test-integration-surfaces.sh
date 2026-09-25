@@ -42,16 +42,16 @@ assert_backup_matches() {
   cmp -s "$original" "$backup" || fail "backup for $path differs from original"
 }
 
-assert_contains "$("$root/megabrain" --version)" megabrain
-assert_contains "$("$root/mb" --version)" megabrain
-manifest_version="$(jq -r '.version' "$root/.claude-plugin/plugin.json")"
-assert_equal "$("$root/megabrain" --version)" "megabrain $manifest_version"
+assert_contains "$("$root/.build/megabrain" --version)" megabrain
+assert_contains "$("$root/.build/megabrain" --version)" megabrain
+manifest_version="$(jq -r '.version' "$root/package.json")"
+assert_equal "$("$root/.build/megabrain" --version)" "megabrain $manifest_version"
 printf 'command entry points: megabrain and mb report the manifest version\n'
 
 nested_state="$work/nested-state"
 write_dispatch_meta "$nested_state" nested-dispatch \
   childHost=superset workspaceId=workspace terminalId=nested-child worktreePath="$root" state=spawning >/dev/null
-nested_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$nested_state" SUPERSET_TERMINAL_ID=nested-child bash -c 'MEGABRAIN_STATE_DIR="$1" SUPERSET_TERMINAL_ID="$2" "$3" received' _ "$nested_state" nested-child "$root/megabrain")"
+nested_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$nested_state" SUPERSET_TERMINAL_ID=nested-child bash -c 'MEGABRAIN_STATE_DIR="$1" SUPERSET_TERMINAL_ID="$2" "$3" received' _ "$nested_state" nested-child "$root/.build/megabrain")"
 assert_contains "$nested_output" 'received sent: nested-dispatch'
 assert_equal "$(find "$nested_state/dispatches/nested-dispatch/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
 assert_equal "$(jq -r '.state' "$nested_state/dispatches/nested-dispatch/meta.json")" running
@@ -62,13 +62,13 @@ mkdir -p "$integration_home"
 printf 'export EXISTING=1\n' >"$integration_home/.zshrc"
 original_zshrc="$work/original-zshrc"
 cp "$integration_home/.zshrc" "$original_zshrc"
-HOME="$integration_home" "$root/megabrain" tmux wrapper --yes >/dev/null
-HOME="$integration_home" "$root/megabrain" tmux tune --yes >/dev/null
+HOME="$integration_home" "$root/.build/megabrain" tmux wrapper --yes >/dev/null
+HOME="$integration_home" "$root/.build/megabrain" tmux tune --yes >/dev/null
 grep -Fxc '# >>> megabrain tmux wrapper >>>' "$integration_home/.zshrc" | grep -Fx 1
 grep -Fxc '# >>> megabrain tmux tuning >>>' "$integration_home/.tmux.conf" | grep -Fx 1
 assert_backup_matches "$integration_home/.zshrc" "$original_zshrc"
-HOME="$integration_home" "$root/megabrain" tmux wrapper --revert >/dev/null
-HOME="$integration_home" "$root/megabrain" tmux tune --revert >/dev/null
+HOME="$integration_home" "$root/.build/megabrain" tmux wrapper --revert >/dev/null
+HOME="$integration_home" "$root/.build/megabrain" tmux tune --revert >/dev/null
 cmp -s "$original_zshrc" "$integration_home/.zshrc" || fail 'zshrc was not restored by reverse operation'
 printf 'marked integrations: backed up, replaced once, and reverted\n'
 
@@ -96,7 +96,7 @@ for agent in claude codex agy cursor; do
   chmod +x "$work/bin/$agent"
 done
 PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
-  "$root/megabrain" install orchestration-hooks --yes >/dev/null
+  "$root/.build/megabrain" install orchestration-hooks --yes >/dev/null
 for agent in claude codex agy cursor; do
   config="$integration_home/.$agent/hooks.json"
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
@@ -112,7 +112,7 @@ done
 printf 'agent hooks: all four migrated in place from the legacy wrapper, with backups and one current entry each\n'
 
 PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
-  "$root/megabrain" install orchestration-hooks --revert >/dev/null
+  "$root/.build/megabrain" install orchestration-hooks --revert >/dev/null
 for agent in claude codex agy cursor; do
   config="$integration_home/.$agent/hooks.json"
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
@@ -125,7 +125,7 @@ mkdir -p "$(dirname "$moved_root")"
 cp -Rp "$root" "$moved_root"
 moved_root="$(cd -P "$moved_root" && pwd -P)"
 PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
-  "$moved_root/megabrain" install orchestration-hooks --yes >/dev/null
+  "$moved_root/.build/megabrain" install orchestration-hooks --yes >/dev/null
 for agent in claude codex agy cursor; do
   config="$integration_home/.$agent/hooks.json"
   [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
@@ -136,16 +136,4 @@ for agent in claude codex agy cursor; do
 done
 printf 'agent hooks: repair resolved the moved checkout dynamically\n'
 
-install_home="$work/install-home"
-mkdir -p "$install_home/.megabrain-local"
-shared_binary_inode_before="$(ls -di "$root/.build/megabrain" | awk '{print $1}')"
-HOME="$install_home" MEGABRAIN_STATE_DIR="$install_home/state" \
-  "$moved_root/install.sh" >/dev/null
-shared_binary_inode_after="$(ls -di "$root/.build/megabrain" | awk '{print $1}')"
-assert_equal "$shared_binary_inode_after" "$shared_binary_inode_before"
-assert_symlink_target "$install_home/.local/bin/megabrain" "$moved_root/megabrain"
-printf 'installer: megabrain command link is present\n'
-
-printf 'installer setup: defaults, skill sync, and plugin retirement are covered by TypeScript tests\n'
-
-printf 'ok: current command, state, integration, and installer surfaces\n'
+printf 'ok: current Node command, state, and integration surfaces\n'

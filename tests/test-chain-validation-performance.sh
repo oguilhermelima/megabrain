@@ -56,14 +56,14 @@ prepare_state() {
   mkdir -p "$case_dir/home" "$case_dir/state"
   export HOME="$case_dir/home"
   export MEGABRAIN_STATE_DIR="$case_dir/state"
-  PATH="$path_without_wrapper" "$root/megabrain" model list --json >/dev/null
+  PATH="$path_without_wrapper" "$root/.build/megabrain" model list --json >/dev/null
   printf '%s\n' "$config" >"$MEGABRAIN_STATE_DIR/chains.json"
 }
 
 # 1. Keep the operator-facing location details from validation failures.
 invalid_config="{\"chains\":{\"broken-chain\":{\"when\":{\"parentAgent\":\"codex\"},\"steps\":[{\"agent\":\"agy\",\"model\":\"gemini-3.8-flash-high\",\"unexpected\":true}]}},\"defaultSteps\":[],$usage_limits}"
 prepare_state invalid "$invalid_config"
-if invalid_output="$(PATH="$path_without_wrapper" "$root/megabrain" chain list --json 2>&1)"; then
+if invalid_output="$(PATH="$path_without_wrapper" "$root/.build/megabrain" chain list --json 2>&1)"; then
   fail 'invalid chain unexpectedly passed validation'
 fi
 assert_contains "$invalid_output" 'invalid chain broken-chain step 1: unsupported field unexpected'
@@ -71,12 +71,12 @@ printf 'invalid chain: chain, step, and field are named\n'
 
 valid_policy_config="{\"chains\":{\"policy\":{\"when\":{\"parentAgent\":\"codex\"},\"steps\":[{\"agent\":\"codex\",\"model\":\"gpt-5.6-luna\",\"effort\":\"high\",\"until\":{\"usedPercent\":95,\"window\":\"5h\",\"onUnknown\":\"skip\"}}]}},\"defaultSteps\":[],$usage_limits}"
 prepare_state valid-policy "$valid_policy_config"
-PATH="$path_without_wrapper" "$root/megabrain" chain list --json >/dev/null
+PATH="$path_without_wrapper" "$root/.build/megabrain" chain list --json >/dev/null
 printf 'onUnknown skip policy: accepted\n'
 
 invalid_policy_config="{\"chains\":{\"broken-policy\":{\"when\":{\"parentAgent\":\"codex\"},\"steps\":[{\"agent\":\"codex\",\"model\":\"gpt-5.6-luna\",\"effort\":\"high\",\"until\":{\"usedPercent\":95,\"window\":\"5h\",\"onUnknown\":\"defer\"}}]}},\"defaultSteps\":[],$usage_limits}"
 prepare_state invalid-policy "$invalid_policy_config"
-if invalid_policy_output="$(PATH="$path_without_wrapper" "$root/megabrain" chain list --json 2>&1)"; then
+if invalid_policy_output="$(PATH="$path_without_wrapper" "$root/.build/megabrain" chain list --json 2>&1)"; then
   fail 'invalid onUnknown policy unexpectedly passed validation'
 fi
 assert_contains "$invalid_policy_output" 'until.onUnknown'
@@ -84,7 +84,7 @@ printf 'onUnknown invalid policy: rejected with a named field\n'
 
 # 2. Pin the exact JSON bytes for multiple chains and default steps.
 prepare_state several "$several_chains"
-list_output="$(PATH="$path_without_wrapper" "$root/megabrain" chain list --json)"
+list_output="$(PATH="$path_without_wrapper" "$root/.build/megabrain" chain list --json)"
 assert_equal "$list_output" "$expected_list"
 printf 'chain list JSON: byte-identical shape for several chains\n'
 
@@ -95,7 +95,7 @@ count_chain_list() {
   export MEGABRAIN_TEST_JQ_REAL="$real_jq"
   export MEGABRAIN_TEST_JQ_COUNT="$case_dir/jq-count"
   printf '0\n' >"$MEGABRAIN_TEST_JQ_COUNT"
-  PATH="$wrapper_dir:$path_without_wrapper" "$root/megabrain" chain list --json >/dev/null
+  PATH="$wrapper_dir:$path_without_wrapper" "$root/.build/megabrain" chain list --json >/dev/null
   cat "$MEGABRAIN_TEST_JQ_COUNT"
 }
 

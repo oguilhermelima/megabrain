@@ -25,7 +25,7 @@ scenario_route_reaches_compiled_binary() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" "$content"
   set +e
-  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$implementation_name=shell" "$fixture/megabrain" "$@" 2>"$work/state-$name.err")"
+  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$implementation_name=shell" "$fixture/.build/megabrain" "$@" 2>"$work/state-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -39,7 +39,7 @@ scenario_route_reaches_compiled_binary_default() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" "$content"
   set +e
-  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$fixture/megabrain" "$@" 2>"$work/state-$name.err")"
+  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$fixture/.build/megabrain" "$@" 2>"$work/state-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -74,7 +74,7 @@ scenario_worktree_list_route_marker() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   set +e
   output="$(env MEGABRAIN_STATE_DIR="$work/route-worktree-list-state" \
-    MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary "$fixture/megabrain" worktree list --json 2>"$work/route-worktree-list.err")"
+    MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary "$fixture/.build/megabrain" worktree list --json 2>"$work/route-worktree-list.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -88,7 +88,7 @@ scenario_worktree_write_route_marker() {
   write_fixture_binary "$fixture" WORKTREE_WRITE_BINARY
   set +e
   output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary \
-    MEGABRAIN_STATE_DIR="$work/route-worktree-write-state" "$fixture/megabrain" \
+    MEGABRAIN_STATE_DIR="$work/route-worktree-write-state" "$fixture/.build/megabrain" \
     worktree create --repo fixture --branch feat/route --json 2>"$work/route-worktree-write.err")"
   status=$?
   set -e
@@ -103,7 +103,7 @@ scenario_spawn_route_marker() {
   write_fixture_binary "$fixture" SPAWN_BINARY
   set +e
   output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary \
-    MEGABRAIN_STATE_DIR="$work/route-spawn-state" "$fixture/megabrain" \
+    MEGABRAIN_STATE_DIR="$work/route-spawn-state" "$fixture/.build/megabrain" \
     orchestrate spawn --repo fixture --branch feat/route --json 2>"$work/route-spawn.err")"
   status=$?
   set -e
@@ -117,7 +117,7 @@ scenario_shell_worktree_write_override_fails() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   set +e
   output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell \
-    MEGABRAIN_STATE_DIR="$work/route-shell-override-state" "$fixture/megabrain" \
+    MEGABRAIN_STATE_DIR="$work/route-shell-override-state" "$fixture/.build/megabrain" \
     orchestrate spawn --repo fixture --branch feat/route --json 2>&1)"
   status=$?
   set -e
@@ -404,7 +404,7 @@ scenario_falsification_is_red_for_each_route() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" BROKEN
   set +e
-  output="$(MEGABRAIN_STATE_DIR="$work/falsification-state-$name" "$fixture/megabrain" "$@" 2>"$work/falsification-$name.err")"
+  output="$(MEGABRAIN_STATE_DIR="$work/falsification-state-$name" "$fixture/.build/megabrain" "$@" 2>"$work/falsification-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -419,7 +419,7 @@ scenario_removed_route_falsification() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" BROKEN
   set +e
-  output="$(env "$implementation_name=shell" MEGABRAIN_STATE_DIR="$work/falsification-removed-state-$name" "$fixture/megabrain" "$@" 2>"$work/falsification-removed-$name.err")"
+  output="$(env "$implementation_name=shell" MEGABRAIN_STATE_DIR="$work/falsification-removed-state-$name" "$fixture/.build/megabrain" "$@" 2>"$work/falsification-removed-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -435,7 +435,7 @@ scenario_worktree_list_falsification() {
   set +e
   output="$(env MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary \
     MEGABRAIN_STATE_DIR="$work/falsification-removed-worktree-list-state" \
-    "$fixture/megabrain" worktree list --json 2>"$work/falsification-removed-worktree-list.err")"
+    "$fixture/.build/megabrain" worktree list --json 2>"$work/falsification-removed-worktree-list.err")"
   status=$?
   set -e
   assert_equal "$status" 73

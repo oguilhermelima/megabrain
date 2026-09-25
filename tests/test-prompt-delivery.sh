@@ -81,13 +81,13 @@ write_dispatch_meta "$state_dir" outside-repository \
   parentSessionId=parent-terminal parentHost=superset childHost=superset workspaceId=workspace-test \
   terminalId=outside-terminal worktreePath="$outside" branch=main agent=codex agentId=codex \
   label=label state=spawning model=gpt-5 modelHonored=true runtime=host spawnRuntime=ide >/dev/null
-(cd "$outside" && env -u TMUX -u TMUX_PANE -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/megabrain" received >/dev/null)
+(cd "$outside" && env -u TMUX -u TMUX_PANE -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/.build/megabrain" received >/dev/null)
 assert_equal "$(find "$state_dir/dispatches/outside-repository/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
 printf 'dispatch receipt works from a non-checkout directory\n'
 
 create_dispatch optional-receipt spawning command-terminal
 received_output="$(env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=command-terminal MEGABRAIN_STATE_DIR="$state_dir" \
-  "$root/megabrain" received)"
+  "$root/.build/megabrain" received)"
 assert_equal "$received_output" 'received sent: optional-receipt'
 received_message="$state_dir/dispatches/optional-receipt/messages/0001-child-received.json"
 [ -f "$received_message" ] || fail 'received command did not leave a durable message'

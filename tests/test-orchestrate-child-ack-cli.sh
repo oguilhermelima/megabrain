@@ -28,7 +28,7 @@ make_entrypoint_routing_fixture "$root" "$routing_fixture" 73
 mkdir -p "$routing_state"
 set +e
 env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$routing_state" \
-  SUPERSET_TERMINAL_ID=child-terminal "$routing_fixture/megabrain" ack delivery-fixed --json \
+  SUPERSET_TERMINAL_ID=child-terminal "$routing_fixture/.build/megabrain" ack delivery-fixed --json \
   >"$routing_state.stdout" 2>"$routing_state.stderr"
 routing_status=$?
 set -e
@@ -48,7 +48,7 @@ run_shell() {
   set +e
   output="$(env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=child-terminal \
-    "$root/megabrain" ack $args 2>"$state.stderr")"
+    "$root/.build/megabrain" ack $args 2>"$state.stderr")"
   status=$?
   set -e
   error="$(cat "$state.stderr")"
