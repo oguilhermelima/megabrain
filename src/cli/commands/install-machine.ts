@@ -192,6 +192,57 @@ async function detectAgents(processAdapter: ProcessAdapter): Promise<readonly Ma
   return found;
 }
 
+async function listOutput(processAdapter: ProcessAdapter, command: string, args: readonly string[]): Promise<string> {
+  const result = await processAdapter.run(command, args);
+  return result.kind === "ok" ? result.value.stdout : "";
+}
+
+function hasAgyMegabrainImport(output: string): boolean {
+  try {
+    const value: unknown = JSON.parse(output);
+    if (typeof value !== "object" || value === null || !("imports" in value) || !Array.isArray(value.imports)) return false;
+    return value.imports.some((entry: unknown) => typeof entry === "object" && entry !== null && "name" in entry && entry.name === "megabrain");
+  } catch {
+    return false;
+  }
+}
+
+export async function retireLegacyChannels(
+  availableAgents: readonly MachineAgent[],
+  processAdapter: ProcessAdapter,
+  yes: boolean,
+  interactive: boolean,
+): Promise<Result<string>> {
+  const messages: string[] = [];
+  for (const agent of availableAgents) {
+    const pluginOutput = await listOutput(processAdapter, agent, agent === "agy" ? ["plugin", "list"] : ["plugin", "list"]);
+    const marketplaceOutput = agent === "agy" ? "" : await listOutput(processAdapter, agent, ["plugin", "marketplace", "list"]);
+    const pluginFound = agent === "agy"
+      ? hasAgyMegabrainImport(pluginOutput)
+      : /megabrain(?:@megabrain-local|\s+installed\b)/i.test(pluginOutput);
+    const marketplaceFound = /megabrain-local/i.test(marketplaceOutput);
+    for (const [artifact, found] of [["plugin", pluginFound], ["marketplace", marketplaceFound]] as const) {
+      if (!found) continue;
+      const shouldRemove = yes || (interactive && await ask(`Remove the legacy ${agent} megabrain ${artifact}?`, ["no", "yes"], "no") === "yes");
+      if (!shouldRemove) {
+        messages.push(`${agent} ${artifact} retained; rerun with --yes to remove it`);
+        continue;
+      }
+      const args = artifact === "marketplace"
+        ? ["plugin", "marketplace", "remove", "megabrain-local"]
+        : agent === "claude"
+          ? ["plugin", "uninstall", "megabrain@megabrain-local"]
+          : agent === "codex"
+            ? ["plugin", "remove", "megabrain@megabrain-local"]
+            : ["plugin", "uninstall", "megabrain"];
+      const removal = await processAdapter.run(agent, args);
+      if (removal.kind !== "ok") return failed(`could not remove ${agent} megabrain ${artifact}: ${removal.error}`);
+      messages.push(`${agent} ${artifact} removed`);
+    }
+  }
+  return ok(messages.length === 0 ? "no legacy plugin registrations found\n" : `${messages.join("\n")}\n`);
+}
+
 async function ask(label: string, options: readonly string[], defaultValue: string): Promise<string> {
   const reader = createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -280,7 +331,8 @@ export async function runMachineInstall(
   }
 
   const defaults = await resolveDefaultModules(environment, processAdapter);
-  const detected = parsed.agents ?? await detectAgents(processAdapter);
+  const availableAgents = await detectAgents(processAdapter);
+  const detected = parsed.agents ?? availableAgents;
   const selectedAgents = parsed.agents ?? (interactive && !parsed.yes ? await askMany("Select agents", detected, detected) as MachineAgent[] : detected);
   const skill: SkillMode = parsed.skill ?? (interactive && !parsed.yes ? await ask("Install the skill?", ["none", "global", "project"], "global") as SkillMode : "global");
   const agentsMd: InstructionMode = parsed.agentsMd ?? (interactive && !parsed.yes ? await ask("Add the instructions pointer?", ["none", "global", "project"], "global") as InstructionMode : "global");
@@ -294,6 +346,8 @@ export async function runMachineInstall(
 
   try {
     if (!modulesToInstall.includes("tmux-runtime")) delete state["tmux-runtime"];
+    const retired = await retireLegacyChannels(availableAgents, processAdapter, parsed.yes, interactive);
+    if (retired.kind !== "ok") return retired;
     const directories = discoverAgentDirectories(environment);
     const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
     if (skill !== "none") {
@@ -310,7 +364,7 @@ export async function runMachineInstall(
       if (result.kind !== "ok") return failed(`could not install megabrain module ${module}: ${result.error}`);
     }
     writeMachineState(statePath, state, selection);
-    return ok(`machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${modulesToInstall.join(",") || "none"}\n`);
+    return ok(`${retired.value}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${modulesToInstall.join(",") || "none"}\n`);
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "machine configuration failed");
   }
