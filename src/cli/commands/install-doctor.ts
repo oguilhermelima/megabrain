@@ -48,19 +48,75 @@ function fileText(path: string): string | undefined {
   }
 }
 
-// A config entry can name the megabrain turn-end hook in two shapes: the deleted bash wrapper
-// (a checkout-relative "hooks/megabrain-turn-end.sh" path, left behind by an older install) or
-// the current direct invocation of the compiled binary ("<absolute path>/megabrain hook
-// turn-end", with an optional "MEGABRAIN_HOOK_AGENT=<agent> " prefix). "legacy" is still
-// recognised so doctor and install can find and migrate it, even though nothing installs it
-// anymore.
+// Keep recognizing old hook scripts so install can migrate them, alongside direct entrypoint
+// commands used by existing checkouts and Node-plus-bundle commands written by current installs.
 const legacyHookCommandPattern = /(^|\/)megabrain-turn-end\.sh($|\s)/;
-const hookBinaryCommandPattern = /(^|\/)megabrain(?:\.mjs)?['"]?\s+hook turn-end($|\s)/;
+const hookEntrypointCommandPattern = /(^|\/)megabrain(?:\.mjs)?['"]?\s+hook turn-end($|\s)/;
 
 function hookCommandKind(command: string): "new" | "legacy" | "none" {
-  if (hookBinaryCommandPattern.test(command)) return "new";
+  if (hookEntrypointCommandPattern.test(command)) return "new";
   if (legacyHookCommandPattern.test(command)) return "legacy";
   return "none";
+}
+
+function shellWords(command: string): string[] | undefined {
+  const words: string[] = [];
+  let word = "";
+  let active = false;
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  const finish = (): void => {
+    if (active) words.push(word);
+    word = "";
+    active = false;
+  };
+  for (const character of command) {
+    if (escaped) {
+      word += character;
+      active = true;
+      escaped = false;
+    } else if (quote === "'") {
+      if (character === "'") quote = undefined;
+      else word += character;
+    } else if (quote === '"') {
+      if (character === '"') quote = undefined;
+      else if (character === "\\") escaped = true;
+      else word += character;
+    } else if (character === "\\") {
+      escaped = true;
+      active = true;
+    } else if (character === "'" || character === '"') {
+      quote = character;
+      active = true;
+    } else if (/\s/.test(character)) {
+      finish();
+    } else {
+      word += character;
+      active = true;
+    }
+  }
+  if (escaped || quote !== undefined) return undefined;
+  finish();
+  return words;
+}
+
+function hookPathIssue(agent: string, command: string): string | undefined {
+  const words = shellWords(command);
+  if (words === undefined) return undefined;
+  const args = words.filter((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+  if (args.at(-2) !== "hook" || args.at(-1) !== "turn-end") return undefined;
+  if (args.length >= 4 && /^node(?:\.exe)?$/i.test(basename(args[0] ?? ""))) {
+    const interpreter = args[0] ?? "";
+    const entrypoint = args[1] ?? "";
+    if (!existsSync(interpreter)) return `${agent}: interpreter missing (${interpreter}); run megabrain install`;
+    if (!existsSync(entrypoint)) return `${agent}: entrypoint missing (${entrypoint}); run megabrain install`;
+  } else {
+    const entrypoint = args[0] ?? "";
+    if (basename(entrypoint) === "megabrain" && !existsSync(entrypoint)) {
+      return `${agent}: entrypoint missing (${entrypoint}); run megabrain install`;
+    }
+  }
+  return undefined;
 }
 
 function hookConfigCommands(agent: string, path: string): string[] {
@@ -88,7 +144,7 @@ function hookConfigCommands(agent: string, path: string): string[] {
   }
 }
 
-// "present": a current, direct-binary entry is installed. "legacy": only the deleted wrapper
+// "present": a current, direct-entrypoint command is installed. "legacy": only the deleted wrapper
 // script's path is present, and the doctor must say so is actionable (run install to migrate).
 // "missing": neither form is present.
 function hookEntryStatus(agent: string, path: string): "present" | "legacy" | "missing" {
@@ -356,7 +412,14 @@ async function report(module: string, environment: Environment, process: Process
       if (!existsSync(config)) { details.push(`${name}: entry-missing (config absent)`); healthy = false; }
       else {
         const entryStatus = hookEntryStatus(name, config);
-        if (entryStatus === "present") details.push(`${name}: entry-present`);
+        if (entryStatus === "present") {
+          const issue = hookConfigCommands(name, config)
+            .filter((command) => hookCommandKind(command) === "new")
+            .map((command) => hookPathIssue(name, command))
+            .find((value) => value !== undefined);
+          if (issue === undefined) details.push(`${name}: entry-present`);
+          else { details.push(issue); healthy = false; }
+        }
         else if (entryStatus === "legacy") { details.push(`${name}: legacy entry; run megabrain install orchestration-hooks to migrate`); healthy = false; }
         else { details.push(`${name}: entry-missing`); healthy = false; }
       }
