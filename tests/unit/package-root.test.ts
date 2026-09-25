@@ -22,6 +22,15 @@ describe("package root resolution", () => {
     expect(packageRootModule.resolvePackageRoot(new URL(`file://${nested}`).href)).toBe(root);
   });
 
+  test("resolves a scoped package root ending in megabrain", () => {
+    expect(packageRootModule).toBeDefined();
+    if (packageRootModule === undefined) return;
+    const root = mkdtempSync("/tmp/megabrain-scoped-package-root-");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@oguilhermelima/megabrain" }));
+    const nested = join(root, "node_modules/@oguilhermelima/megabrain/src/cli/index.js");
+    expect(packageRootModule.resolvePackageRoot(new URL(`file://${nested}`).href)).toBe(root);
+  });
+
   test("uses the explicit root override before inspecting the module path", () => {
     expect(packageRootModule).toBeDefined();
     if (packageRootModule === undefined) return;
