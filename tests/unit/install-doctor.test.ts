@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { executeDoctor } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
@@ -114,7 +114,7 @@ describe("doctor live state", () => {
       MEGABRAIN_STATE_DIR: state,
       MEGABRAIN_PLAYWRIGHT_ROOT: root,
     }, processFor({
-      [`node scripts/playwright-web.mjs doctor --root ${root}`]: JSON.stringify({
+      [`node ${resolve("scripts/playwright-web.mjs")} doctor --root ${root}`]: JSON.stringify({
         status: "unknown",
         reason: "chromium.ublock: installed 2026.907.2003, expected 2026.914.1325",
       }),
