@@ -151,3 +151,15 @@ describe("doctor orchestration-hooks entry detection", () => {
     expect(result.reason).toContain("claude: entry-present");
   });
 });
+
+describe("compiled binary freshness in installed packages", () => {
+  test("reports freshness as not applicable when the package has no source tree", async () => {
+    const root = mkdtempSync("/tmp/megabrain-doctor-installed-package-");
+    const result = report(await executeDoctor(["compiled-binary", "--json"], {
+      MEGABRAIN_ROOT: root,
+    }, processFor({})));
+
+    expect(result.status).toBe("not-applicable");
+    expect(result.reason).toContain("freshness is not applicable");
+  });
+});
