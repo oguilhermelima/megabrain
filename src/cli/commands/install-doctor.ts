@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, type Dirent } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync, type Dirent } from "node:fs";
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
@@ -95,7 +95,7 @@ function fileText(path: string): string | undefined {
 // recognised so doctor and install can find and migrate it, even though nothing installs it
 // anymore.
 const legacyHookCommandPattern = /(^|\/)megabrain-turn-end\.sh($|\s)/;
-const hookBinaryCommandPattern = /(^|\/)megabrain hook turn-end($|\s)/;
+const hookBinaryCommandPattern = /(^|\/)megabrain(?:\.mjs)?['"]?\s+hook turn-end($|\s)/;
 
 function hookCommandKind(command: string): "new" | "legacy" | "none" {
   if (hookBinaryCommandPattern.test(command)) return "new";
@@ -557,7 +557,7 @@ export function hookEntrypointCommand(
   const binary = resolve(root, ".build/megabrain");
   try {
     if ((statSync(binary).mode & 0o111) === 0) return undefined;
-    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} hook turn-end`;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(realpathSync(binary))} hook turn-end`;
   } catch {
     return undefined;
   }
