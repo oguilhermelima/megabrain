@@ -53,7 +53,7 @@ describe("executeInstall", () => {
     const result = await executeInstall([], { HOME: tmpHome("no-tty") }, fakeProcess());
     expect(result.kind).toBe("failed");
     if (result.kind !== "failed") throw new Error("expected failure");
-    expect(result.error).toBe("install without a module id requires an interactive terminal");
+    expect(result.error).toBe("install setup requires a terminal, --yes, or explicit --agents, --skill, --agents-md, or --modules flags");
   });
 
   test("refuses an unknown module id", async () => {
