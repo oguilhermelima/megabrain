@@ -150,6 +150,16 @@ describe("doctor orchestration-hooks entry detection", () => {
     const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
     expect(result.reason).toContain("claude: entry-present");
   });
+
+  test("reports a quoted Node bundle hook as entry-present", async () => {
+    const home = mkdtempSync("/tmp/megabrain-doctor-hooks-node-");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "MEGABRAIN_HOOK_AGENT=claude '/opt/Node Runtime/bin/node' '/opt/megabrain package/.build/megabrain.mjs' hook turn-end" }] }] },
+    }));
+    const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
+    expect(result.reason).toContain("claude: entry-present");
+  });
 });
 
 describe("compiled binary freshness in installed packages", () => {

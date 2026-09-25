@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { modelRegistryPaths } from "../../src/core/model.js";
 import { reconcileSkills } from "../../src/core/skill.js";
@@ -42,7 +42,7 @@ describe("package root resolution", () => {
     expect(createCommand).toBeDefined();
     if (createCommand === undefined) return;
     const root = mkdtempSync("/tmp/megabrain-hook-root-");
-    const nodePath = "/opt/Node Runtime/bin/node";
+    const nodePath = "/opt/Node's Runtime/bin/node";
     const entrypoint = join(root, ".build/megabrain.mjs");
     const compiled = join(root, ".build/megabrain");
     mkdirSync(join(root, ".build"), { recursive: true });
@@ -50,9 +50,9 @@ describe("package root resolution", () => {
     writeFileSync(compiled, "binary");
     chmodSync(compiled, 0o755);
     expect(createCommand({ MEGABRAIN_ROOT: root }, "codex", { execPath: nodePath, node: true }))
-      .toBe(`MEGABRAIN_HOOK_AGENT=codex '${nodePath}' '${entrypoint}' hook turn-end`);
+      .toBe(`MEGABRAIN_HOOK_AGENT=codex '/opt/Node'\\''s Runtime/bin/node' '${entrypoint}' hook turn-end`);
     expect(createCommand({ MEGABRAIN_ROOT: root }, "codex", { execPath: compiled, node: false }))
-      .toBe(`MEGABRAIN_HOOK_AGENT=codex '${compiled}' hook turn-end`);
+      .toBe(`MEGABRAIN_HOOK_AGENT=codex '${realpathSync(compiled)}' hook turn-end`);
   });
 });
 
