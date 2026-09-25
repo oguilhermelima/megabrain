@@ -68,8 +68,8 @@ megabrain_usage_line() {
     orchestrate-stop) printf 'orchestrate stop <dispatch-id> [--json]' ;;
     orchestrate-change) printf 'orchestrate change <dispatch-id> --text <text> [--json]' ;;
     orchestrate-close) printf 'orchestrate close <dispatch-id> [--force-release] [--json]' ;;
-    ask) printf 'ask "question"' ;;
-    done) printf 'done "summary"' ;;
+    ask) printf 'ask "question" | megabrain ask --text "question"' ;;
+    done) printf 'done "summary" | megabrain done --text "summary"' ;;
     received) printf 'received' ;;
     check) printf 'check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]' ;;
     ack) printf 'ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]' ;;

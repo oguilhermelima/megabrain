@@ -25,8 +25,8 @@
 - Run megabrain orchestrate stop <dispatch-id> [--json].
 - Run megabrain orchestrate change <dispatch-id> --text <text> [--json].
 - Run megabrain orchestrate close <dispatch-id> [--force-release] [--json].
-- Run megabrain ask "question".
-- Run megabrain done "summary".
+- Run megabrain ask "question" | megabrain ask --text "question".
+- Run megabrain done "summary" | megabrain done --text "summary".
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.
 - Run megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json].
 - Run megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json].

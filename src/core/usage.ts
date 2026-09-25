@@ -24,8 +24,8 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id> [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id> --text <text> [--json]",
   "orchestrate-close": "orchestrate close <dispatch-id> [--force-release] [--json]",
-  "ask": "ask \"question\"",
-  "done": "done \"summary\"",
+  "ask": "ask \"question\" | megabrain ask --text \"question\"",
+  "done": "done \"summary\" | megabrain done --text \"summary\"",
   "received": "received",
   "check": "check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
   "ack": "ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]",
@@ -68,11 +68,6 @@ export const USAGE_LINES = {
   "web-userscript-remove": "web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]",
 } as const;
 
-const CHILD_MESSAGE_ERROR_USAGE = {
-  ask: 'ask "question" | megabrain ask --text "question"',
-  done: 'done "summary" | megabrain done --text "summary"',
-} as const;
-
 const ADDITIONAL_USAGE_LINES = {
   "native-eval": "native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]",
   "native-navigate": "native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]",
@@ -108,8 +103,8 @@ export function usageActionMessage(key: "web-error-viewport-action" | "web-error
   return `Usage: megabrain ${usageLine(key).replace("{action}", action)}`;
 }
 
-export function childMessageErrorUsage(type: keyof typeof CHILD_MESSAGE_ERROR_USAGE): string {
-  return `Usage: megabrain ${CHILD_MESSAGE_ERROR_USAGE[type]}\n`;
+export function childMessageErrorUsage(type: "ask" | "done"): string {
+  return usageText(type);
 }
 
 export function usageGroup(keys: readonly UsageKey[]): string {
