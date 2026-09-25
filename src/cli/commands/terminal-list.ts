@@ -5,6 +5,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { formatTerminalList, processStatus, type HostTerminal, type TerminalRecord } from "../../core/terminal-list.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { getHost } from "../../hosts/index.js";
+import { usageText } from "../../core/usage.js";
 
 export type TerminalListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -89,7 +90,7 @@ export async function executeTerminalList(args: readonly string[], environment: 
     const arg = args[index];
     if (arg === "--json") json = true;
     else if (arg === "--worktree") worktree = args[++index];
-    else if (arg === "-h" || arg === "--help") return ok("Usage: megabrain terminal list [--worktree <path>] [--json]\n");
+    else if (arg === "-h" || arg === "--help") return ok(usageText("terminal-list"));
     else return failed(`unknown terminal list option: ${arg}`, 2);
   }
   const filter = worktree === undefined ? undefined : await selector(process, worktree);

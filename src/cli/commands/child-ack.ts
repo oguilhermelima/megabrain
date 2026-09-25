@@ -7,13 +7,14 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
 import { hasCallerIdentity } from "../../core/context.js";
+import { usageText } from "../../core/usage.js";
 
 type JsonRecord = Record<string, unknown>;
 type ChildArguments = Readonly<{ deliveryId: string; consumer?: string; generation: number; json: boolean }>;
 type ChildSession = Readonly<{ host: string; id: string; tmuxSession?: string; tmuxPane?: string }>;
 type ChildDispatch = Readonly<{ id: string; session: ChildSession }>;
 
-const usage = "Usage: megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]\n";
+const usage = usageText("ack");
 
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
 function integer(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) ? value : undefined; }

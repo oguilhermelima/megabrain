@@ -12,6 +12,7 @@ import { callerEnvironment, resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { usageText } from "../../core/usage.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -93,7 +94,7 @@ async function requireParent(root: string, dispatch: string, caller: CallerIdent
 
 function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly json: boolean }> {
   const dispatch = args[0] ?? "";
-  if (dispatch === "") return failed("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n", 2);
+  if (dispatch === "") return failed(usageText("orchestrate-watch"), 2);
   let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = Number(environmentGeneration); let full = false; let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
@@ -114,7 +115,7 @@ function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): R
 }
 
 export async function executeOrchestrateWatch(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-watch"));
   const parsed = parseWatchArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
   // No ProcessAdapter is threaded through watch, so the caller is resolved without the tmux
   // probe (the same capability gap this command has always had) — everything else (an explicit
@@ -164,7 +165,7 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
 }
 
 export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-ack"));
   const parsed = parseParentAckArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
   const caller = await resolveCaller(environment, process);
   const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, caller); if (parent.kind !== "ok") return parent;

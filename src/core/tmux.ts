@@ -1,4 +1,5 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageGroup, usageText } from "./usage.js";
 
 export type TmuxVerb = "tune" | "wrapper";
 export type TmuxOptions = Readonly<{
@@ -32,9 +33,9 @@ export function parseTmuxOptions(verb: TmuxVerb, args: readonly string[]): Resul
 }
 
 export function tmuxUsage(verb?: TmuxVerb): string {
-  if (verb === "tune") return "Usage: megabrain tmux tune [--yes] [--dry-run] [--revert] [--json]\n";
-  if (verb === "wrapper") return "Usage: megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json]\n";
-  return "Usage: megabrain tmux tune [--yes] [--dry-run] [--revert] [--json]\n       megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json]\n";
+  if (verb === "tune") return usageText("tmux-tune");
+  if (verb === "wrapper") return usageText("tmux-wrapper");
+  return usageGroup(["tmux-tune", "tmux-wrapper"]);
 }
 
 export function countExactLines(content: string, line: string): number {

@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 manifest="$root/.claude-plugin/plugin.json"
+package_manifest="$root/package.json"
 template="$root/Formula/megabrain.rb.in"
 output=""
 formula_output=""
@@ -103,10 +104,11 @@ archive_release_tree() {
 }
 
 [ -f "$manifest" ] || fail "manifest is missing: $manifest"
+[ -f "$package_manifest" ] || fail "package metadata is missing: $package_manifest"
 [ -f "$template" ] || fail "formula template is missing: $template"
+version="$(jq -er '.version | strings | select(length > 0)' "$package_manifest")" ||
+  fail "could not read a version from $package_manifest"
 validate_release_versions
-version="$(jq -er '.version | strings | select(length > 0)' "$manifest")" ||
-  fail "could not read a version from $manifest"
 case "$tag" in
   -h|--help)
     print_help

@@ -2,6 +2,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { resolveContext, type Context, type ContextEnvironment } from "../../core/context.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -93,7 +94,7 @@ export async function executeContext(
     if (arg === "--json") {
       json = true;
     } else if (arg === "-h" || arg === "--help") {
-      return ok("Usage: megabrain context [--json]\n");
+      return ok(usageText("context"));
     } else {
       return failed(`unknown context option: ${arg}`, 2);
     }

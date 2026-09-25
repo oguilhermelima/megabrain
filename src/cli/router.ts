@@ -1,5 +1,7 @@
+import packageJson from "../../package.json" with { type: "json" };
 import { type ProcessAdapter } from "../adapters/proc.js";
 import { failed, ok, type Result } from "../core/result.js";
+import { ROOT_USAGE } from "../core/usage.js";
 import { executeContext, type Environment } from "./commands/context.js";
 import { executeCheck } from "./commands/check.js";
 import { executeModel } from "./commands/model.js";
@@ -25,6 +27,7 @@ import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
 import { executeTmux } from "./commands/tmux.js";
 import { executeChildAck } from "./commands/child-ack.js";
 import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
+import { usageTable, usageText } from "../core/usage.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -39,6 +42,17 @@ export function route(
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
   const [command, ...commandArgs] = args;
+  if (command === "__usage-table") return Promise.resolve(ok(usageTable()));
+  if (command === undefined || command === "help" || command === "-h" || command === "--help") {
+    return Promise.resolve(ok(ROOT_USAGE));
+  }
+  if (command === "version" || command === "-V" || command === "--version") {
+    return Promise.resolve(ok(`megabrain ${packageJson.version}\n`));
+  }
+  const helpIndex = commandArgs.findIndex((argument) => argument === "-h" || argument === "--help");
+  if (helpIndex === 0 && command === "worktree") {
+    return Promise.resolve(ok(usageText("worktree")));
+  }
   if (command === "context") {
     return executeContext(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
@@ -120,14 +134,14 @@ export function route(
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
-  if (command === "worktree" && commandArgs[0] === "create") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--agent-arg <flag>] [--json]\n")); return executeWorktreeCreate(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
-  if (command === "worktree" && commandArgs[0] === "finish") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]\n")); return executeWorktreeFinish(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
-  if (command === "worktree" && (commandArgs[0] === "pr" || commandArgs[0] === "open-pr")) { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok("Usage: megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]\n")); return executeWorktreePr(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
+  if (command === "worktree" && commandArgs[0] === "create") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-create"))); return executeWorktreeCreate(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
+  if (command === "worktree" && commandArgs[0] === "finish") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-finish"))); return executeWorktreeFinish(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
+  if (command === "worktree" && (commandArgs[0] === "pr" || commandArgs[0] === "open-pr")) { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-pr"))); return executeWorktreePr(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "hook" && commandArgs[0] === "turn-end") {
     return executeHookTurnEnd(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter, dependencies.readStdin ?? readStdinText);
   }
-  return Promise.resolve(failed(`unknown command: ${command ?? ""}`, 2));
+  return Promise.resolve(failed(`unknown command: ${command}`, 2));
 }

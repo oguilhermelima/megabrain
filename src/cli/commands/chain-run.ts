@@ -8,6 +8,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { readConfig, validateConfig, type ChainEnvironment } from "./chain.js";
 import { executeSpawn } from "./orchestrate-spawn.js";
 import { appendMessage, atomicJson, readJson } from "./queue-write.js";
+import { usageText } from "../../core/usage.js";
 
 // Ports lib/module-chain.sh's command_chain_run, megabrain_chain_walk, and
 // megabrain_chain_run_spawn for the `chain run` CLI command, and (via continueRefusedChain
@@ -45,7 +46,7 @@ type ParsedArgs = {
 };
 
 function usage(): string {
-  return "Usage: megabrain chain run [name] [--chain <name>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--repo <name|path>] [--branch <branch>] [--base <ref>] [--name <slug>] [--worktree <path>] [--prompt <text>] [--label <text>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]\n";
+  return usageText("chain-run");
 }
 
 function errorLine(text: string): string {

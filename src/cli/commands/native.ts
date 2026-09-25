@@ -10,6 +10,7 @@ import { nativeSessionFor, removeNativeSession, replaceNativeSession, type Nativ
 import { createNativeSessionStore } from "../../adapters/native-session-store.js";
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../core/native-cdp.js";
 import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord, type NativeCaptureScreenRecord } from "../../core/native-capture.js";
+import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Config = { readonly surfaces?: Record<string, Record<string, string>> };
@@ -74,7 +75,7 @@ async function installedRuntimes(processAdapter: ProcessAdapter): Promise<Result
   try { return runtimesFromSimctl(JSON.parse(result.value.stdout)); } catch { return error("simctl returned invalid runtime data"); }
 }
 
-function nativeBuildUsage(): string { return "Usage: megabrain native build <phone|tv> [--runtime <version>] [--json]\n"; }
+function nativeBuildUsage(): string { return usageText("native-build"); }
 function buildConfigError(kind: NativeKind): Result<string> {
   return error(`app path is required for ${kind}; pass surfaces.${kind}.appPath in .megabrain/native.json`);
 }
@@ -448,7 +449,7 @@ function cdpArguments(args: readonly string[], environment: Environment): Result
   return ok({ kind: kind.value, timeoutMs: timeout.value * 1000, expression: expressionParts.join(" ") });
 }
 async function nativeEval(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]\n");
+  if (args.includes("-h") || args.includes("--help")) return ok(usageText("native-eval"));
   const parsed = cdpArguments(args, environment); if (parsed.kind !== "ok") return parsed;
   const root = await nativeWorktreeRoot(environment, processAdapter);
   const loaded = config(root); if (loaded.kind !== "ok") return loaded;
@@ -562,7 +563,7 @@ function pendingNavigationCount(message: string): number | undefined {
   return match === null ? undefined : Number(match[1]);
 }
 async function nativeNavigate(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n");
+  if (args.includes("-h") || args.includes("--help")) return ok(usageText("native-navigate"));
   const parsed = cdpArguments(args, environment); if (parsed.kind !== "ok") return parsed;
   const path = parsed.value.expression;
   if (!path.startsWith("/")) return error(`native navigate requires an absolute route path: ${path}`, 2);

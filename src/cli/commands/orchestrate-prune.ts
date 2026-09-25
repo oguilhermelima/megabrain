@@ -8,6 +8,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson, tmuxCallerPaneSession } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { usageText } from "../../core/usage.js";
 
 type RecordValue = Record<string, unknown>;
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -129,7 +130,7 @@ async function entries(root: string): Promise<Entry[]> {
 }
 
 export async function executeOrchestratePrune(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-prune"));
   const parsed = parsePruneArgs(args); if (parsed.kind !== "ok") return parsed;
   const options: PruneOptions = parsed.value; const root = resolveStateDirectory(environment); const now = new Date(); const month = now.toISOString().slice(0, 7);
   const archived: Array<{ dispatchId: string; path: string }> = []; const deleted: string[] = []; const skipped: Array<{ dispatchId: string; state: string | null; reason: string }> = [];

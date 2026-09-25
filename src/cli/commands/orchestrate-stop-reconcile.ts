@@ -12,6 +12,7 @@ import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } f
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { usageText } from "../../core/usage.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -106,7 +107,7 @@ async function reconcileOne(root: string, dispatch: string, process: ProcessAdap
 }
 
 export async function executeOrchestrateStop(args: readonly string[], env: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate stop <dispatch-id> [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-stop"));
   const parsed = parseStopArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(env); const parent = await parentMeta(root, parsed.value.dispatchId, env, process); if (parent.kind !== "ok") return parent;
   const caller = await resolveCaller(env, process); const session = caller.id || caller.terminalId || "";
@@ -147,10 +148,10 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
 }
 
 export async function executeOrchestrateReconcile(args: readonly string[], env: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate reconcile <dispatch-id> [--all] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-reconcile"));
   let dispatch = ""; let all = false; let json = false;
   for (const arg of args) { if (arg === "--all") all = true; else if (arg === "--json") json = true; else if (dispatch === "") dispatch = arg; else return failed(`unknown reconcile option: ${arg}`, 2); }
-  const root = resolveStateDirectory(env); const ids = all ? (await readdir(`${root}/dispatches`, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory() && entry.name !== "archive").map((entry) => entry.name) : [dispatch]; if (!all && dispatch === "") return failed("Usage: megabrain orchestrate reconcile <dispatch-id> [--all] [--json]\n", 2);
+  const root = resolveStateDirectory(env); const ids = all ? (await readdir(`${root}/dispatches`, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory() && entry.name !== "archive").map((entry) => entry.name) : [dispatch]; if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
   const entries: RecordValue[] = [];
   for (const id of ids) {
     if (await readJson(await dispatchPath(root, id, "meta.json")) === undefined) { if (all) continue; return failed(`dispatch not found: ${id}`); }

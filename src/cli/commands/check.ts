@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { dispatchDeliveryFile, dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { usageText } from "../../core/usage.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -136,7 +137,7 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
     else if (arg === "--generation") generation = Number(args[++index]);
     else if (arg === "--full") full = true;
     else if (arg === "--json") json = true;
-    else if (arg === "-h" || arg === "--help") return ok("Usage: megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]\n");
+    else if (arg === "-h" || arg === "--help") return ok(usageText("check"));
     else return failed(`unknown check option: ${arg}`, 2);
   }
   if (!Number.isInteger(timeout) || timeout < 0) return failed("--timeout must be a non-negative number of seconds", 2);

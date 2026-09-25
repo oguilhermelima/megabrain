@@ -7,6 +7,7 @@ import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
+import { usageText } from "../../core/usage.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -107,7 +108,7 @@ function outputReply(dispatch: string, json: boolean, nudge: string, summary: Su
 }
 
 export async function executeOrchestrateReply(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-reply"));
   const parsed = parseParentReplyArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
   // The shell normalizes a persisted "stalled"/"timeout" state to "running" on every meta read
@@ -138,7 +139,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
 }
 
 export async function executeOrchestrateChange(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate change <dispatch-id> --text <text> [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-change"));
   const parsed = parseParentChangeArgs(args); if (parsed.kind !== "ok") return parsed;
   const reply = await executeOrchestrateReply([parsed.value.dispatchId, "--text", parsed.value.text, "--supersede", "--json"], environment, processAdapter);
   if (reply.kind !== "ok") return reply;

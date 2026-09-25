@@ -1,5 +1,6 @@
 import { failed, ok, type Result } from "./result.js";
 import { checkDispatchTransition } from "./dispatch-states.js";
+import { usageText } from "./usage.js";
 
 export type ParentReplyArguments = Readonly<{
   readonly dispatchId: string;
@@ -16,7 +17,7 @@ export type SupersedeSummary = Readonly<{
 
 export function parseParentReplyArgs(args: readonly string[]): Result<ParentReplyArguments> {
   const dispatchId = args[0] ?? "";
-  if (dispatchId === "") return failed("Usage: megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]\n", 2);
+  if (dispatchId === "") return failed(usageText("orchestrate-reply"), 2);
   let text = "";
   let json = false;
   let supersede = false;
@@ -33,7 +34,7 @@ export function parseParentReplyArgs(args: readonly string[]): Result<ParentRepl
 
 export function parseParentChangeArgs(args: readonly string[]): Result<ParentReplyArguments> {
   const dispatchId = args[0] ?? "";
-  if (dispatchId === "") return failed("Usage: megabrain orchestrate change <dispatch-id> --text <text> [--json]\n", 2);
+  if (dispatchId === "") return failed(usageText("orchestrate-change"), 2);
   let text = "";
   let json = false;
   for (let index = 1; index < args.length; index += 1) {

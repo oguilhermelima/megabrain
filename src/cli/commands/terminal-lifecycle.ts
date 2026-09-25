@@ -6,6 +6,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../core/terminal-lifecycle.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
+import { usageText } from "../../core/usage.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type JsonObject = { readonly [key: string]: unknown };
@@ -174,9 +175,9 @@ async function save(env: Environment, record: TerminalLifecycleRecord): Promise<
 function output(value: unknown, json: boolean): string { return json ? `${JSON.stringify(value, null, 2)}\n` : `${String(value)}\n`; }
 
 function help(operation: string): string {
-  if (operation === "create") return "Usage: megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]\nWithout --command, use the worktree .superset/config.json run script.\nSuperset tabs are not titled; only Orca tabs are.\n";
-  if (operation === "close") return "Usage: megabrain terminal close <selector> [--json]\n";
-  return "Usage: megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]\n";
+  if (operation === "create") return `${usageText("terminal-create")}Without --command, use the worktree .superset/config.json run script.\nSuperset tabs are not titled; only Orca tabs are.\n`;
+  if (operation === "close") return usageText("terminal-close");
+  return usageText("terminal-restart");
 }
 
 function shellQuote(value: string): string { return `'${value.replace(/'/g, "'\\''")}'`; }
