@@ -1,44 +1,25 @@
-import { join } from "node:path";
+import { copyFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { discoverAgentDirectories, type MachineAgent, type MachineAgentDirectories } from "../../core/agent-directories.js";
 
-export type MachineAgent = "claude" | "codex" | "agy";
-export type AgentDirectories = Readonly<{
-  readonly config: string;
-  readonly globalSkill: string;
-  readonly projectSkill: string;
-  readonly globalInstructions: string;
-}>;
-export type MachineAgentDirectories = Readonly<Partial<Record<MachineAgent, AgentDirectories>>>;
-type Environment = Readonly<Record<string, string | undefined>>;
+export { discoverAgentDirectories } from "../../core/agent-directories.js";
 
-export function discoverAgentDirectories(environment: Environment): MachineAgentDirectories {
-  const home = environment.HOME;
-  if (home === undefined || home.length === 0) return {};
-
-  const claudeConfig = environment.CLAUDE_CONFIG_DIR || join(home, ".claude");
-  const codexConfig = environment.CODEX_HOME || join(home, ".codex");
-  // agy 1.2.x embeds its customization docs in the CLI binary: its configDir is the user's
-  // .gemini/config directory, and skills live under configDir/skills. The binary documentation
-  // names no environment override, so this path is derived from HOME.
-  const agyConfig = join(home, ".gemini", "config");
-
-  return {
-    claude: {
-      config: claudeConfig,
-      globalSkill: join(claudeConfig, "skills", "megabrain", "SKILL.md"),
-      projectSkill: join(".claude", "skills", "megabrain", "SKILL.md"),
-      globalInstructions: join(claudeConfig, "CLAUDE.md"),
-    },
-    codex: {
-      config: codexConfig,
-      globalSkill: join(codexConfig, "skills", "megabrain", "SKILL.md"),
-      projectSkill: join(".agents", "skills", "megabrain", "SKILL.md"),
-      globalInstructions: join(codexConfig, "AGENTS.md"),
-    },
-    agy: {
-      config: agyConfig,
-      globalSkill: join(agyConfig, "skills", "megabrain", "SKILL.md"),
-      projectSkill: join(".agents", "skills", "megabrain", "SKILL.md"),
-      globalInstructions: join(agyConfig, "AGENTS.md"),
-    },
-  };
+export function installAgentSkills(
+  source: string,
+  agents: readonly MachineAgent[],
+  mode: "global" | "project" | "none",
+  directories: MachineAgentDirectories,
+  projectDirectory: string,
+): string[] {
+  if (mode === "none") return [];
+  const installed: string[] = [];
+  for (const agent of agents) {
+    const entry = directories[agent];
+    if (entry === undefined) throw new Error(`could not resolve ${agent} configuration directory`);
+    const target = mode === "global" ? entry.globalSkill : join(projectDirectory, entry.projectSkill);
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    installed.push(target);
+  }
+  return installed;
 }

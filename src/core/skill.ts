@@ -17,6 +17,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { resolveStateDirectory } from "./state.js";
 import { resolvePackageRoot } from "./package-root.js";
+import { discoverAgentDirectories } from "./agent-directories.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -107,22 +108,27 @@ function skillSource(environment: Environment): string {
 
 export function skillTargetPaths(environment: Environment): string[] {
   const home = environment.HOME ?? "";
-  const targets: string[] = [];
+  const targets = new Set<string>();
+  const directories = discoverAgentDirectories(environment);
+  for (const agent of Object.values(directories)) {
+    if (agent === undefined) continue;
+    for (const target of [agent.globalSkill, resolve(agent.projectSkill)]) {
+      if (existsSync(target)) targets.add(target);
+    }
+  }
   for (const agent of [".claude", ".codex"]) {
     const cache = `${home}/${agent}/plugins/cache/megabrain-local/megabrain`;
     try {
       for (const entry of readdirSync(cache, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         const target = `${cache}/${entry.name}/skills/megabrain/SKILL.md`;
-        if (existsSync(target)) targets.push(target);
+        if (existsSync(target)) targets.add(target);
       }
     } catch {
       // An absent agent cache has no registered copies.
     }
   }
-  const localTarget = resolve(".claude/skills/megabrain/SKILL.md");
-  if (existsSync(localTarget)) targets.push(localTarget);
-  return targets;
+  return [...targets];
 }
 
 function reconcileTarget(
