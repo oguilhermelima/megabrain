@@ -401,7 +401,7 @@ export async function runMachineInstall(
   const skillsConfigured = previous !== undefined;
   if (skillsConfigured && pendingModules.length === 0) {
     const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed none\n`;
-    return ok(`${legacyInstructions.value}${defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : ""}machine configuration already current; no changes made\n${summary}`, defaultSkips.length > 0 ? 1 : undefined);
+    return ok(`${legacyInstructions.value}${defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : ""}machine configuration already current; no changes made\n${summary}`);
   }
 
   try {
@@ -434,7 +434,7 @@ export async function runMachineInstall(
     const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed ${failures.map((failure) => failure.split(":", 1)[0]).join(", ") || "none"}\n`;
     const skipped = defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : "";
     if (failures.length > 0) return failed(`${legacyInstructions.value}${retired.value}${skipped}${failures.join("\n")}\n${summary}`);
-    return ok(`${legacyInstructions.value}${retired.value}${skipped}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${configuredModules.join(", ") || "none"}\n${summary}`, defaultSkips.length > 0 ? 1 : undefined);
+    return ok(`${legacyInstructions.value}${retired.value}${skipped}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${configuredModules.join(", ") || "none"}\n${summary}`);
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "machine configuration failed");
   }
