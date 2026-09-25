@@ -38,22 +38,21 @@ megabrain install --yes
 
 The delivery script downloads megabrain, builds the CLI with Bun, and links it at
 `~/.local/bin/megabrain`. Run `megabrain install` to configure the machine. In a terminal, it
-offers numbered choices for detected agent CLIs, skill scope, the instructions pointer, and
-modules. `--yes` accepts the defaults: agents found on `PATH`, global skill and instructions,
-and the core module set.
+offers numbered choices for detected agent CLIs, skill scope, and modules. `--yes` accepts the
+defaults: agents found on `PATH`, global skill, and the core module set.
 
 Choose each part explicitly for non-interactive setup:
 
 ```sh
-megabrain install --agents claude,codex --skill global --agents-md global \
+megabrain install --agents claude,codex --skill global \
   --modules orchestration,orchestration-hooks,worktree --yes
 ```
 
-Use `--agents none`, `--skill none`, `--agents-md none`, or `--modules none` to skip that part.
+Use `--agents none`, `--skill none`, or `--modules none` to skip that part.
 `--skill project` installs into each selected agent's project skill directory. The global skill
-and instructions paths follow each agent's own configuration location. An existing megabrain
-plugin or marketplace is offered for removal so the skill is not loaded twice; `--yes` removes
-it automatically.
+paths follow each agent's own configuration location. An existing megabrain plugin or
+marketplace is offered for removal so the skill is not loaded twice; `--yes` removes it
+automatically.
 
 Absent `--modules`, the core set is `orchestration` and `orchestration-hooks`, with
 `tmux-runtime` added when tmux is on `PATH` and `worktree` added when Superset is available.
