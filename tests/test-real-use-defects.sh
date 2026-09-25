@@ -5,6 +5,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export MEGABRAIN_ROOT="$root"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-real-use.XXXXXX")"
+node_bin="$state_dir/node-bin"
+mkdir -p "$node_bin"
+ln -s "$(command -v node)" "$node_bin/node"
 
 cleanup() {
   local rc=$?
@@ -78,33 +81,24 @@ printf 'scenario 2: tmux drift is non-ok\n'
 scenario3_playwright_root="$state_dir/scenario3-playwright-root"
 scenario3_bin="$state_dir/scenario3-bin"
 mkdir -p "$scenario3_bin"
-# WHY: the fake install subcommand must actually write manifest.json (not just exit 0) —
-# otherwise the compiled doctor's initial "already installed" check (which install runs before
-# attempting anything) finds no manifest, so it never reaches this far; and if it instead found
-# a pre-seeded manifest, it would short-circuit to "already installed" before ever registering
-# an agent, which would prove nothing about the -- separator.
-cat >"$scenario3_bin/node" <<'EOF'
-#!/usr/bin/env bash
-args=("$@")
-case " $* " in
-  *"/scripts/playwright-web.mjs install "*)
-    root_dir=""
-    for ((i = 0; i < ${#args[@]}; i++)); do
-      [ "${args[$i]}" = --root ] && root_dir="${args[$((i + 1))]}"
-    done
-    [ -n "$root_dir" ] || exit 1
-    mkdir -p "$root_dir"
-    printf '%s\n' '{"activeBrowser":"chromium","profiles":{"chromium":{"configPath":"'"$root_dir"'/chromium.json"}}}' >"$root_dir/manifest.json"
-    exit 0
-    ;;
-  *"/scripts/playwright-web.mjs doctor "*)
-    printf '{"status":"ok","reason":"browser fixture is ready"}\n'
-    exit 0
-    ;;
-esac
-exit 1
+scenario3_playwright_script="$state_dir/scenario3-playwright-web.mjs"
+cat >"$scenario3_playwright_script" <<'EOF'
+import { mkdirSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+const rootIndex = args.indexOf("--root");
+const root = rootIndex >= 0 ? args[rootIndex + 1] : "";
+if (args[0] === "install" && root) {
+  mkdirSync(root, { recursive: true });
+  writeFileSync(`${root}/manifest.json`, JSON.stringify({
+    activeBrowser: "chromium",
+    profiles: { chromium: { configPath: `${root}/chromium.json` } },
+  }));
+} else if (args[0] === "doctor") {
+  process.stdout.write(JSON.stringify({ status: "ok", reason: "browser fixture is ready" }));
+} else {
+  process.exitCode = 1;
+}
 EOF
-chmod +x "$scenario3_bin/node"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$scenario3_bin/npm"
 chmod +x "$scenario3_bin/npm"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$scenario3_bin/npx"
@@ -123,9 +117,10 @@ EOF
 chmod +x "$scenario3_bin/claude"
 scenario3_home="$state_dir/scenario3-home"
 mkdir -p "$scenario3_home"
-if scenario3_output="$(PATH="$scenario3_bin:/usr/bin:/bin" HOME="$scenario3_home" \
+if scenario3_output="$(PATH="$scenario3_bin:$node_bin:/usr/bin:/bin" HOME="$scenario3_home" \
   MEGABRAIN_STATE_DIR="$scenario3_home" MEGABRAIN_ROOT="$root" \
   MEGABRAIN_PLAYWRIGHT_ROOT="$scenario3_playwright_root" \
+  MEGABRAIN_PLAYWRIGHT_SCRIPT="$scenario3_playwright_script" \
   "$root/.build/megabrain" install simulator-web --yes 2>&1)"; then
   :
 else
