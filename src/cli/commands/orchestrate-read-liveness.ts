@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { classifyLiveness, type LivenessResult } from "../../core/liveness.js";
 import { formatDispatchRead, renderTranscript } from "../../core/dispatch-read.js";
@@ -58,7 +59,7 @@ export async function executeOrchestrateRead(args: readonly string[], environmen
   const metaResult = await parentMeta(id, environment, process); if (metaResult.kind !== "ok") return metaResult; const { handle, meta } = metaResult.value; const runtime = stringValue(meta.runtime) || "host";
   const cap = transcriptCap(environment);
   let output = ""; let source: "tmux" | "file" | "host"; let truncated = false; let pane = "";
-  if (runtime === "tmux") { pane = stringValue(meta.tmuxPane); const live = await capture(pane, lines, process); if (live.kind === "ok") { output = live.value; source = "tmux"; } else { const file = await Bun.file(dispatchFile(handle, "transcript")).text().catch(() => undefined); if (file === undefined) return failed(`could not read tmux pane ${pane} and no persisted transcript exists`); const rendered = renderTranscript(file, cap); output = rendered.text; truncated = rendered.truncated; source = "file"; } }
+  if (runtime === "tmux") { pane = stringValue(meta.tmuxPane); const live = await capture(pane, lines, process); if (live.kind === "ok") { output = live.value; source = "tmux"; } else { const file = await readFile(dispatchFile(handle, "transcript"), "utf8").catch(() => undefined); if (file === undefined) return failed(`could not read tmux pane ${pane} and no persisted transcript exists`); const rendered = renderTranscript(file, cap); output = rendered.text; truncated = rendered.truncated; source = "file"; } }
   else { const host = await hostRead(meta, process); if (host.kind !== "ok") return host; output = host.value; source = "host"; }
   return ok(formatDispatchRead({ dispatchId: id, pane, source, truncated, text: output }, json, cap));
 }
