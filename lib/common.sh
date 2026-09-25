@@ -43,7 +43,7 @@ megabrain_version() {
 # each site carried its own copy.
 megabrain_usage_line() {
   case "$1" in
-    install) printf 'install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--agents-md none|global|project] [--modules list|all|none] [--yes] [--browser chromium|firefox|both] [--revert]' ;;
+    install) printf 'install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--yes] [--browser chromium|firefox|both] [--revert]' ;;
     doctor) printf 'doctor [module-id] [--json]' ;;
     context) printf 'context [--json]' ;;
     worktree) printf 'worktree create|pr|finish|list|adopt ...' ;;
