@@ -39,7 +39,6 @@ type NodeDatabase = Readonly<{
 }>;
 
 const SQLITE_WARNING = "SQLite is an experimental feature and might change at any time";
-let sqliteWarningObserved = false;
 
 function openRuntimeDatabase(path: string): DatabaseAdapter {
   const require = createRequire(import.meta.url);
@@ -62,18 +61,25 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
     };
   }
 
-  if (!sqliteWarningObserved) {
-    const onWarning = (warning: Error): void => {
-      if (warning.name === "ExperimentalWarning" && warning.message === SQLITE_WARNING) {
-        sqliteWarningObserved = true;
-        process.off("warning", onWarning);
-      } else {
-        console.warn(warning);
-      }
-    };
-    process.on("warning", onWarning);
+  const originalEmitWarning = process.emitWarning;
+  let sqlite: { readonly DatabaseSync: new (path: string) => NodeDatabase };
+  try {
+    process.emitWarning = ((warning: unknown, ...args: unknown[]): void => {
+      const message = typeof warning === "string" ? warning : warning instanceof Error ? warning.message : undefined;
+      const options = args[0];
+      const type = typeof options === "string"
+        ? options
+        : typeof options === "object" && options !== null && "type" in options
+          ? options.type
+          : undefined;
+      if (type === "ExperimentalWarning" && message === SQLITE_WARNING) return;
+      Reflect.apply(originalEmitWarning, process, [warning, ...args]);
+    }) as typeof process.emitWarning;
+    sqlite = require("node:sqlite") as typeof sqlite;
+  } finally {
+    process.emitWarning = originalEmitWarning;
   }
-  const { DatabaseSync } = require("node:sqlite") as { readonly DatabaseSync: new (path: string) => NodeDatabase };
+  const { DatabaseSync } = sqlite;
   const database = new DatabaseSync(path);
   return {
     run: (sql, parameters) => {
