@@ -47,7 +47,10 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
     const { Database } = require("bun:sqlite") as { readonly Database: new (path: string) => BunDatabase };
     const database = new Database(path);
     return {
-      run: (sql, parameters) => database.run(sql, parameters),
+      run: (sql, parameters) => {
+        if (parameters === undefined) database.run(sql);
+        else database.run(sql, parameters);
+      },
       query: <T>(sql: string) => {
         const statement = database.query(sql);
         return {
