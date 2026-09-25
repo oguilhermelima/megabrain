@@ -110,13 +110,31 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
   return { agents: selectedAgents, modules: selectedModules, skill, yes, provided };
 }
 
-export async function resolveDefaultModules(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<readonly string[]> {
-  const defaults = ["orchestration", "orchestration-hooks"];
+type DefaultModuleSelection = Readonly<{
+  readonly modules: readonly string[];
+  readonly skipped: readonly Readonly<{ module: string; reason: string }>[];
+}>;
+
+async function resolveDefaultModuleSelection(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<DefaultModuleSelection> {
+  const defaults: string[] = [];
+  const skipped: { module: string; reason: string }[] = [];
   const has = async (command: string): Promise<boolean> => (await processAdapter.run("which", [command])).kind === "ok";
-  if (await has("tmux")) defaults.unshift("tmux-runtime");
+  const tmux = await has("tmux");
+  const orca = await has("orca");
+  const supersetOnPath = await has("superset");
+  if (tmux) defaults.unshift("tmux-runtime");
   const homeSuperset = environment.HOME === undefined ? "" : join(environment.HOME, ".superset/bin/superset");
-  if (await has("superset") || (homeSuperset.length > 0 && existsSync(homeSuperset))) defaults.push("worktree");
-  return defaults;
+  const superset = supersetOnPath || (homeSuperset.length > 0 && existsSync(homeSuperset));
+  if (orca || supersetOnPath || tmux) defaults.push("orchestration");
+  else skipped.push({ module: "orchestration", reason: "no orca, superset, or tmux runtime detected" });
+  defaults.push("orchestration-hooks");
+  if (superset && orca) defaults.push("worktree");
+  else if (superset && !orca) skipped.push({ module: "worktree", reason: "orca CLI is not on PATH" });
+  return { modules: defaults, skipped };
+}
+
+export async function resolveDefaultModules(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<readonly string[]> {
+  return (await resolveDefaultModuleSelection(environment, processAdapter)).modules;
 }
 
 async function detectAgents(processAdapter: ProcessAdapter): Promise<readonly MachineAgent[]> {
@@ -311,16 +329,32 @@ function readMachineState(path: string): Record<string, unknown> | undefined {
 type PersistedMachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
+  /** Modules requested for this machine install. */
+  readonly requestedModules: readonly string[];
+  /** Modules that completed successfully, in request order. */
   readonly modules: readonly string[];
   readonly version: string;
 }>;
 
-function sameSelection(left: unknown, right: PersistedMachineSelection): boolean {
-  return typeof left === "object" && left !== null && JSON.stringify(left) === JSON.stringify(right);
+function matchingMachineInstall(left: unknown, right: PersistedMachineSelection): PersistedMachineSelection | undefined {
+  if (typeof left !== "object" || left === null || Array.isArray(left)) return undefined;
+  const value = left as Record<string, unknown>;
+  if (value.agents === undefined || JSON.stringify(value.agents) !== JSON.stringify(right.agents)) return undefined;
+  if (value.skill !== right.skill || value.version !== right.version || !Array.isArray(value.modules)) return undefined;
+  const requestedModules = Array.isArray(value.requestedModules) ? value.requestedModules : value.modules;
+  if (JSON.stringify(requestedModules) !== JSON.stringify(right.requestedModules)) return undefined;
+  if (!value.modules.every((module): module is string => typeof module === "string" && right.requestedModules.includes(module))) return undefined;
+  return {
+    agents: right.agents,
+    skill: right.skill,
+    requestedModules: right.requestedModules,
+    modules: value.modules as string[],
+    version: right.version,
+  };
 }
 
-function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection): void {
-  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, modules: selection.modules, version: packageJson.version } };
+function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection, configuredModules: readonly string[]): void {
+  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version } };
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
@@ -345,20 +379,30 @@ export async function runMachineInstall(
     return failed("install setup requires a terminal, --yes, or explicit --agents, --skill, or --modules flags");
   }
 
-  const defaults = await resolveDefaultModules(environment, processAdapter);
+  const defaults = await resolveDefaultModuleSelection(environment, processAdapter);
   const availableAgents = await detectAgents(processAdapter);
   const detected = parsed.agents ?? availableAgents;
   const selectedAgents = parsed.agents ?? (interactive && !parsed.yes ? await askMany("Select agents", detected, detected) as MachineAgent[] : detected);
   const skill: SkillMode = parsed.skill ?? (interactive && !parsed.yes ? await ask("Install the skill?", ["none", "global", "project"], "global") as SkillMode : "global");
-  const modulesToInstall = parsed.modules ?? (interactive && !parsed.yes ? await askMany("Select modules", modules, defaults) : defaults);
+  const modulesToInstall = parsed.modules ?? (interactive && !parsed.yes ? await askMany("Select modules", modules, defaults.modules) : defaults.modules);
+  const defaultSkips = parsed.modules === undefined
+    ? defaults.skipped.filter(({ module }) => !modulesToInstall.includes(module)).map(({ module, reason }) => `${module} skipped: ${reason}`)
+    : [];
   const selection: MachineSelection = { agents: selectedAgents, skill, modules: modulesToInstall, yes: parsed.yes, provided: parsed.provided };
   const statePath = join(resolveStateDirectory(environment), "state.json");
   const state = readMachineState(statePath);
   if (state === undefined) return failed(`could not read valid megabrain state at ${statePath}`);
-  const recordedSelection = { agents: selectedAgents, skill, modules: modulesToInstall, version: packageJson.version };
+  const recordedSelection: PersistedMachineSelection = { agents: selectedAgents, skill, requestedModules: modulesToInstall, modules: modulesToInstall, version: packageJson.version };
+  const previous = matchingMachineInstall(state.machineInstall, recordedSelection);
   const legacyInstructions = await retireLegacyInstructions(environment, process.cwd(), parsed.yes, interactive);
   if (legacyInstructions.kind !== "ok") return legacyInstructions;
-  if (sameSelection(state.machineInstall, recordedSelection)) return ok(`${legacyInstructions.value}machine configuration already current; no changes made\n`);
+  const configuredModules = [...(previous?.modules ?? [])];
+  const pendingModules = modulesToInstall.filter((module) => !configuredModules.includes(module));
+  const skillsConfigured = previous !== undefined;
+  if (skillsConfigured && pendingModules.length === 0) {
+    const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed none\n`;
+    return ok(`${legacyInstructions.value}${defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : ""}machine configuration already current; no changes made\n${summary}`);
+  }
 
   try {
     if (!modulesToInstall.includes("tmux-runtime")) delete state["tmux-runtime"];
@@ -366,16 +410,31 @@ export async function runMachineInstall(
     if (retired.kind !== "ok") return retired;
     const directories = discoverAgentDirectories(environment);
     const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
-    if (skill !== "none") {
+    if (!skillsConfigured && skill !== "none") {
       const installed = installAgentSkills(join(root, "skills/megabrain/SKILL.md"), selectedAgents, skill, directories, process.cwd());
       for (const path of installed) process.stdout.write(`skill installed at ${path}\n`);
     }
-    for (const module of modulesToInstall) {
-      const result = await installModule(module);
-      if (result.kind !== "ok") return failed(`could not install megabrain module ${module}: ${result.error}`);
+    // Record the selected skill configuration before attempting modules so a failed module does
+    // not make a later run rewrite the skill files that already succeeded.
+    writeMachineState(statePath, state, selection, configuredModules);
+    const failures: string[] = [];
+    for (const module of pendingModules) {
+      try {
+        const result = await installModule(module);
+        if (result.kind !== "ok") {
+          failures.push(`${module}: ${result.kind === "failed" ? result.error : result.reason}`);
+          continue;
+        }
+        configuredModules.push(module);
+        writeMachineState(statePath, state, selection, configuredModules);
+      } catch (error: unknown) {
+        failures.push(`${module}: ${error instanceof Error ? error.message : "module installation failed"}`);
+      }
     }
-    writeMachineState(statePath, state, selection);
-    return ok(`${legacyInstructions.value}${retired.value}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${modulesToInstall.join(",") || "none"}\n`);
+    const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed ${failures.map((failure) => failure.split(":", 1)[0]).join(", ") || "none"}\n`;
+    const skipped = defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : "";
+    if (failures.length > 0) return failed(`${legacyInstructions.value}${retired.value}${skipped}${failures.join("\n")}\n${summary}`);
+    return ok(`${legacyInstructions.value}${retired.value}${skipped}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${configuredModules.join(", ") || "none"}\n${summary}`);
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "machine configuration failed");
   }

@@ -54,8 +54,10 @@ paths follow each agent's own configuration location. An existing megabrain plug
 marketplace is offered for removal so the skill is not loaded twice; `--yes` removes it
 automatically.
 
-Absent `--modules`, the core set is `orchestration` and `orchestration-hooks`, with
-`tmux-runtime` added when tmux is on `PATH` and `worktree` added when Superset is available.
+Absent `--modules`, `orchestration-hooks` is always selected and `orchestration` is selected only
+when Orca, Superset, or tmux is detected on `PATH`. `tmux-runtime` is added when tmux is on `PATH`;
+`worktree` is added when Superset and Orca are available. Modules omitted because a prerequisite is
+missing are reported with the reason. Explicitly naming a module with `--modules` always attempts it.
 
 > [!NOTE]
 > Clone only to work on megabrain itself: `git clone … && ./install.sh` delivers from the

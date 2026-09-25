@@ -43,11 +43,95 @@ describe("machine install options", () => {
     expect(parseMachineInstallArgs(["--agents", "gemini"]).kind).toBe("failed");
   });
 
-  test("uses install.sh's module defaults and only adds detected integrations", async () => {
-    expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter())).toEqual(["orchestration", "orchestration-hooks"]);
-    expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter(["tmux", "superset"]))).toEqual([
+  test("omits default modules whose detectable runtime prerequisites are absent", async () => {
+    expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter())).toEqual(["orchestration-hooks"]);
+    expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter(["tmux", "superset", "orca"]))).toEqual([
       "tmux-runtime", "orchestration", "orchestration-hooks", "worktree",
     ]);
+    expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter(["superset"]))).toEqual([
+      "orchestration", "orchestration-hooks",
+    ]);
+  });
+
+  test("keeps installing after a module fails, persists successes, and retries only failures", async () => {
+    const root = temporaryDirectory();
+    const home = join(root, "home");
+    const stateDirectory = join(root, "state");
+    const skill = join(home, ".claude/skills/megabrain/SKILL.md");
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: stateDirectory };
+    const args = ["--yes", "--agents", "claude", "--modules", "orchestration,worktree"];
+    const calls: string[] = [];
+    let orchestrationFailures = 1;
+    const installModule = async (module: string) => {
+      calls.push(module);
+      if (module === "orchestration" && orchestrationFailures > 0) {
+        orchestrationFailures -= 1;
+        return failed("no orchestration runtime is available");
+      }
+      return ok("installed");
+    };
+
+    const first = await runMachineInstall(args, environment, processAdapter(["claude"]), installModule, false);
+    expect(first.kind).toBe("failed");
+    if (first.kind === "failed") {
+      expect(first.error).toContain("orchestration: no orchestration runtime is available");
+      expect(first.error).toContain("machine install summary: configured worktree; failed orchestration");
+    }
+    expect(calls).toEqual(["orchestration", "worktree"]);
+    expect(existsSync(skill)).toBe(true);
+    const firstState = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8")) as Record<string, unknown>;
+    expect(firstState.machineInstall).toMatchObject({
+      agents: ["claude"],
+      skill: "global",
+      modules: ["worktree"],
+      requestedModules: ["orchestration", "worktree"],
+    });
+
+    writeFileSync(skill, "keep the already configured skill\n");
+    const second = await runMachineInstall(args, environment, processAdapter(["claude"]), installModule, false);
+    expect(second.kind).toBe("ok");
+    expect(calls).toEqual(["orchestration", "worktree", "orchestration"]);
+    expect(readFileSync(skill, "utf8")).toBe("keep the already configured skill\n");
+
+    const third = await runMachineInstall(args, environment, processAdapter(["claude"]), installModule, false);
+    expect(third.kind).toBe("ok");
+    if (third.kind === "ok") expect(third.value).toContain("already current; no changes made");
+    expect(calls).toEqual(["orchestration", "worktree", "orchestration"]);
+  });
+
+  test("reports default modules skipped for missing prerequisites and explicit selection still attempts them", async () => {
+    const root = temporaryDirectory();
+    const environment = { HOME: join(root, "home"), MEGABRAIN_STATE_DIR: join(root, "state") };
+    let attempts = 0;
+    const installModule = async (module: string) => {
+      attempts += 1;
+      return module === "orchestration" ? failed("no orchestration runtime is available") : ok("installed");
+    };
+
+    const defaultResult = await runMachineInstall(["--yes", "--agents", "none"], environment, processAdapter(), installModule, false);
+    expect(defaultResult.kind).toBe("ok");
+    if (defaultResult.kind === "ok") {
+      expect(defaultResult.value).toContain("orchestration skipped: no orca, superset, or tmux runtime detected");
+      expect(defaultResult.exitCode ?? 0).toBe(0);
+    }
+    expect(attempts).toBe(1);
+
+    const noOp = await runMachineInstall(["--yes", "--agents", "none"], environment, processAdapter(), installModule, false);
+    expect(noOp.kind).toBe("ok");
+    if (noOp.kind === "ok") {
+      expect(noOp.value).toContain("orchestration skipped: no orca, superset, or tmux runtime detected");
+      expect(noOp.value).toContain("already current; no changes made");
+      expect(noOp.exitCode ?? 0).toBe(0);
+    }
+    expect(attempts).toBe(1);
+
+    const explicit = await runMachineInstall(["--yes", "--agents", "none", "--modules", "orchestration"], environment, processAdapter(), installModule, false);
+    expect(explicit.kind).toBe("failed");
+    if (explicit.kind === "failed") {
+      expect(explicit.error).toContain("failed orchestration");
+      expect(explicit.exitCode).toBe(1);
+    }
+    expect(attempts).toBe(2);
   });
 
   test("requires --yes or explicit setup flags when input is not interactive", async () => {
