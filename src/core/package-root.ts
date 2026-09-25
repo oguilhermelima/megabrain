@@ -6,7 +6,8 @@ function isMegabrainPackage(path: string): boolean {
   try {
     const metadata: unknown = JSON.parse(readFileSync(path, "utf8"));
     return typeof metadata === "object" && metadata !== null &&
-      "name" in metadata && metadata.name === "megabrain";
+      "name" in metadata && typeof metadata.name === "string" &&
+      (metadata.name === "megabrain" || metadata.name.endsWith("/megabrain"));
   } catch {
     return false;
   }
