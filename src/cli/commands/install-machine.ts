@@ -311,16 +311,32 @@ function readMachineState(path: string): Record<string, unknown> | undefined {
 type PersistedMachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
+  /** Modules requested for this machine install. */
+  readonly requestedModules: readonly string[];
+  /** Modules that completed successfully, in request order. */
   readonly modules: readonly string[];
   readonly version: string;
 }>;
 
-function sameSelection(left: unknown, right: PersistedMachineSelection): boolean {
-  return typeof left === "object" && left !== null && JSON.stringify(left) === JSON.stringify(right);
+function matchingMachineInstall(left: unknown, right: PersistedMachineSelection): PersistedMachineSelection | undefined {
+  if (typeof left !== "object" || left === null || Array.isArray(left)) return undefined;
+  const value = left as Record<string, unknown>;
+  if (value.agents === undefined || JSON.stringify(value.agents) !== JSON.stringify(right.agents)) return undefined;
+  if (value.skill !== right.skill || value.version !== right.version || !Array.isArray(value.modules)) return undefined;
+  const requestedModules = Array.isArray(value.requestedModules) ? value.requestedModules : value.modules;
+  if (JSON.stringify(requestedModules) !== JSON.stringify(right.requestedModules)) return undefined;
+  if (!value.modules.every((module): module is string => typeof module === "string" && right.requestedModules.includes(module))) return undefined;
+  return {
+    agents: right.agents,
+    skill: right.skill,
+    requestedModules: right.requestedModules,
+    modules: value.modules as string[],
+    version: right.version,
+  };
 }
 
-function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection): void {
-  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, modules: selection.modules, version: packageJson.version } };
+function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection, configuredModules: readonly string[]): void {
+  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version } };
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
@@ -355,10 +371,17 @@ export async function runMachineInstall(
   const statePath = join(resolveStateDirectory(environment), "state.json");
   const state = readMachineState(statePath);
   if (state === undefined) return failed(`could not read valid megabrain state at ${statePath}`);
-  const recordedSelection = { agents: selectedAgents, skill, modules: modulesToInstall, version: packageJson.version };
+  const recordedSelection: PersistedMachineSelection = { agents: selectedAgents, skill, requestedModules: modulesToInstall, modules: modulesToInstall, version: packageJson.version };
+  const previous = matchingMachineInstall(state.machineInstall, recordedSelection);
   const legacyInstructions = await retireLegacyInstructions(environment, process.cwd(), parsed.yes, interactive);
   if (legacyInstructions.kind !== "ok") return legacyInstructions;
-  if (sameSelection(state.machineInstall, recordedSelection)) return ok(`${legacyInstructions.value}machine configuration already current; no changes made\n`);
+  const configuredModules = [...(previous?.modules ?? [])];
+  const pendingModules = modulesToInstall.filter((module) => !configuredModules.includes(module));
+  const skillsConfigured = previous !== undefined;
+  if (skillsConfigured && pendingModules.length === 0) {
+    const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed none\n`;
+    return ok(`${legacyInstructions.value}machine configuration already current; no changes made\n${summary}`);
+  }
 
   try {
     if (!modulesToInstall.includes("tmux-runtime")) delete state["tmux-runtime"];
@@ -366,16 +389,30 @@ export async function runMachineInstall(
     if (retired.kind !== "ok") return retired;
     const directories = discoverAgentDirectories(environment);
     const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
-    if (skill !== "none") {
+    if (!skillsConfigured && skill !== "none") {
       const installed = installAgentSkills(join(root, "skills/megabrain/SKILL.md"), selectedAgents, skill, directories, process.cwd());
       for (const path of installed) process.stdout.write(`skill installed at ${path}\n`);
     }
-    for (const module of modulesToInstall) {
-      const result = await installModule(module);
-      if (result.kind !== "ok") return failed(`could not install megabrain module ${module}: ${result.error}`);
+    // Record the selected skill configuration before attempting modules so a failed module does
+    // not make a later run rewrite the skill files that already succeeded.
+    writeMachineState(statePath, state, selection, configuredModules);
+    const failures: string[] = [];
+    for (const module of pendingModules) {
+      try {
+        const result = await installModule(module);
+        if (result.kind !== "ok") {
+          failures.push(`${module}: ${result.kind === "failed" ? result.error : result.reason}`);
+          continue;
+        }
+        configuredModules.push(module);
+        writeMachineState(statePath, state, selection, configuredModules);
+      } catch (error: unknown) {
+        failures.push(`${module}: ${error instanceof Error ? error.message : "module installation failed"}`);
+      }
     }
-    writeMachineState(statePath, state, selection);
-    return ok(`${legacyInstructions.value}${retired.value}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${modulesToInstall.join(",") || "none"}\n`);
+    const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed ${failures.map((failure) => failure.split(":", 1)[0]).join(", ") || "none"}\n`;
+    if (failures.length > 0) return failed(`${legacyInstructions.value}${retired.value}${failures.join("\n")}\n${summary}`);
+    return ok(`${legacyInstructions.value}${retired.value}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${configuredModules.join(", ") || "none"}\n${summary}`);
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "machine configuration failed");
   }
