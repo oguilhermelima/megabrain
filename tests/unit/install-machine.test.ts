@@ -93,7 +93,7 @@ describe("discoverAgentDirectories", () => {
     expect(readFileSync(join(home, ".claude/CLAUDE.md"), "utf8")).toBe(`${pointer}\n`);
     expect(readFileSync(join(home, ".codex/AGENTS.md"), "utf8")).toBe(`${pointer}\n`);
     expect(readFileSync(join(home, ".gemini/config/AGENTS.md"), "utf8")).toBe(`${pointer}\n`);
-    expect(readFileSync(projectFile, "utf8")).toBe(`${pointer}\n# Existing rules\n\nKeep this text.\n`);
+    expect(readFileSync(projectFile, "utf8")).toBe(`# Existing rules\n\nKeep this text.\n\n${pointer}\n`);
 
     writeFileSync(projectFile, "# megabrain recipes old\n\nKeep this text.\n");
     installAgentInstructions([], "project", directories, project, pointer);
