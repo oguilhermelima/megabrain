@@ -10,7 +10,7 @@ describe("parseParentAckArgs", () => {
   });
 
   test("rejects missing identifiers and invalid generation", () => {
-    expect(parseParentAckArgs([])).toEqual({ kind: "failed", error: "Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--json]\n", exitCode: 2 });
+    expect(parseParentAckArgs([])).toEqual({ kind: "failed", error: "Usage: megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]\n", exitCode: 2 });
     expect(parseParentAckArgs(["dispatch", "delivery", "--generation", "0"])).toEqual({ kind: "failed", error: "--generation must be a positive number", exitCode: 2 });
   });
 });
