@@ -13,6 +13,13 @@ export type ProcessAdapter = {
   invocationCount(): number;
 };
 
+function missingExecutable(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ("code" in error && error.code === "ENOENT") return true;
+  return "message" in error && typeof error.message === "string" &&
+    /^Executable not found in \$PATH:/.test(error.message);
+}
+
 export function createProcessAdapter(): ProcessAdapter {
   let count = 0;
 
@@ -39,6 +46,7 @@ export function createProcessAdapter(): ProcessAdapter {
       }
       return ok({ stdout, stderr, exitCode });
     } catch (error: unknown) {
+      if (missingExecutable(error)) return failed(`${command}: executable not found`);
       const message = error instanceof Error ? error.message : "process could not be started";
       return failed(`${command}: ${message}`);
     }
