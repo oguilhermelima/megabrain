@@ -50,6 +50,52 @@ describe("machine install options", () => {
     ]);
   });
 
+  test("keeps installing after a module fails, persists successes, and retries only failures", async () => {
+    const root = temporaryDirectory();
+    const home = join(root, "home");
+    const stateDirectory = join(root, "state");
+    const skill = join(home, ".claude/skills/megabrain/SKILL.md");
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: stateDirectory };
+    const args = ["--yes", "--agents", "claude", "--modules", "orchestration,worktree"];
+    const calls: string[] = [];
+    let orchestrationFailures = 1;
+    const installModule = async (module: string) => {
+      calls.push(module);
+      if (module === "orchestration" && orchestrationFailures > 0) {
+        orchestrationFailures -= 1;
+        return failed("no orchestration runtime is available");
+      }
+      return ok("installed");
+    };
+
+    const first = await runMachineInstall(args, environment, processAdapter(["claude"]), installModule, false);
+    expect(first.kind).toBe("failed");
+    if (first.kind === "failed") {
+      expect(first.error).toContain("orchestration: no orchestration runtime is available");
+      expect(first.error).toContain("machine install summary: configured worktree; failed orchestration");
+    }
+    expect(calls).toEqual(["orchestration", "worktree"]);
+    expect(existsSync(skill)).toBe(true);
+    const firstState = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8")) as Record<string, unknown>;
+    expect(firstState.machineInstall).toMatchObject({
+      agents: ["claude"],
+      skill: "global",
+      modules: ["worktree"],
+      requestedModules: ["orchestration", "worktree"],
+    });
+
+    writeFileSync(skill, "keep the already configured skill\n");
+    const second = await runMachineInstall(args, environment, processAdapter(["claude"]), installModule, false);
+    expect(second.kind).toBe("ok");
+    expect(calls).toEqual(["orchestration", "worktree", "orchestration"]);
+    expect(readFileSync(skill, "utf8")).toBe("keep the already configured skill\n");
+
+    const third = await runMachineInstall(args, environment, processAdapter(["claude"]), installModule, false);
+    expect(third.kind).toBe("ok");
+    if (third.kind === "ok") expect(third.value).toContain("already current; no changes made");
+    expect(calls).toEqual(["orchestration", "worktree", "orchestration"]);
+  });
+
   test("requires --yes or explicit setup flags when input is not interactive", async () => {
     const result = await runMachineInstall([], { HOME: "/tmp/home" }, processAdapter(), async () => ok(""), false);
     expect(result.kind).toBe("failed");
