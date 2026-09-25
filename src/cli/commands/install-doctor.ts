@@ -48,8 +48,8 @@ function compiledBinaryHealth(environment: Environment): { status: string; reaso
   const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const binary = resolve(root, ".build/megabrain");
   const source = resolve(root, "src");
+  if (!existsSync(source)) return { status: "not-applicable", reason: "source tree is absent; compiled binary freshness is not applicable" };
   if (!existsSync(binary)) return { status: "unknown", reason: "compiled binary is not present; freshness cannot be determined" };
-  if (!existsSync(source)) return { status: "ok", reason: "source tree is absent; compiled binary freshness is unknown" };
   try {
     const newer = newerSource(source, statSync(binary).mtimeMs);
     return newer === undefined
@@ -456,7 +456,7 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
     if (binary.status !== "ok") values.push(binary);
   }
   // An absent compiled binary is an unknown freshness result, not a finding in a fresh clone.
-  const unhealthy = values.some((value) => value.status !== "ok" && !(value.module === "compiled-binary" && value.status === "unknown"));
+  const unhealthy = values.some((value) => value.status !== "ok" && !(value.module === "compiled-binary" && (value.status === "unknown" || value.status === "not-applicable")));
   const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
   const hook = values.find((value) => value.module === "orchestration-hooks");
   const stderr = hook?.reason.includes("codex: entry-present")
