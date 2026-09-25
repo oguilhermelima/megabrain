@@ -110,12 +110,27 @@ describe("machine install options", () => {
 
     const defaultResult = await runMachineInstall(["--yes", "--agents", "none"], environment, processAdapter(), installModule, false);
     expect(defaultResult.kind).toBe("ok");
-    if (defaultResult.kind === "ok") expect(defaultResult.value).toContain("orchestration skipped: no orca, superset, or tmux runtime detected");
+    if (defaultResult.kind === "ok") {
+      expect(defaultResult.value).toContain("orchestration skipped: no orca, superset, or tmux runtime detected");
+      expect(defaultResult.exitCode ?? 0).toBe(0);
+    }
+    expect(attempts).toBe(1);
+
+    const noOp = await runMachineInstall(["--yes", "--agents", "none"], environment, processAdapter(), installModule, false);
+    expect(noOp.kind).toBe("ok");
+    if (noOp.kind === "ok") {
+      expect(noOp.value).toContain("orchestration skipped: no orca, superset, or tmux runtime detected");
+      expect(noOp.value).toContain("already current; no changes made");
+      expect(noOp.exitCode ?? 0).toBe(0);
+    }
     expect(attempts).toBe(1);
 
     const explicit = await runMachineInstall(["--yes", "--agents", "none", "--modules", "orchestration"], environment, processAdapter(), installModule, false);
     expect(explicit.kind).toBe("failed");
-    if (explicit.kind === "failed") expect(explicit.error).toContain("failed orchestration");
+    if (explicit.kind === "failed") {
+      expect(explicit.error).toContain("failed orchestration");
+      expect(explicit.exitCode).toBe(1);
+    }
     expect(attempts).toBe(2);
   });
 
