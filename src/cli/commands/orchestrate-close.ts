@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../core/orchestrate-close.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
@@ -28,7 +28,7 @@ function errorText(result: { readonly error?: string; readonly value?: { readonl
 async function preserveTranscript(directory: string, meta: RecordValue, process: ProcessAdapter): Promise<void> {
   if (text(meta.runtime) !== "tmux") return;
   const path = `${directory}/transcript`;
-  if (await Bun.file(path).exists()) return;
+  if (await access(path).then(() => true, () => false)) return;
   const pane = text(meta.tmuxPane);
   if (pane === "") return;
   const captured = await getTmux().capturePane(pane, 200, process);
