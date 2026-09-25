@@ -3,8 +3,9 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
-import { readFile, rename, writeFile, unlink } from "node:fs/promises";
+import { readFile, readdir, rename, writeFile, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { dispatchDeliveryFile, dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getTmux } from "../../hosts/tmux.js";
 
@@ -23,7 +24,14 @@ function number(value: unknown): number | undefined { return typeof value === "n
 export async function files(path: string): Promise<string[]> {
   const result: string[] = [];
   try {
-    for await (const entry of new Bun.Glob("**/*.json").scan({ cwd: path, absolute: true })) result.push(entry);
+    async function walk(directory: string): Promise<void> {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const entryPath = `${directory}/${entry.name}`;
+        if (entry.isDirectory()) await walk(entryPath);
+        else if (entry.isFile() && entry.name.endsWith(".json")) result.push(entryPath);
+      }
+    }
+    await walk(resolve(path));
   } catch {
     return [];
   }

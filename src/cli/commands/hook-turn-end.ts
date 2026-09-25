@@ -303,5 +303,10 @@ export async function executeHookTurnEnd(
 }
 
 export function readStdinText(): Promise<string> {
-  return Bun.stdin.text().catch(() => "");
+  return (async () => {
+    let text = "";
+    process.stdin.setEncoding("utf8");
+    for await (const chunk of process.stdin) text += chunk;
+    return text;
+  })().catch(() => "");
 }
