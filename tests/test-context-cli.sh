@@ -63,6 +63,7 @@ compare_case no-agent "$absent_shell" "$absent_binary"
 
 missing_root="$work_dir/missing-binary-root"
 mkdir -p "$missing_root"
+missing_root="$(cd -P "$missing_root" && pwd -P)"
 cp "$root/megabrain" "$missing_root/megabrain"
 cp -R "$root/lib" "$missing_root/lib"
 if missing_output="$(MEGABRAIN_STATE_DIR="$work_dir/missing-state" "$missing_root/megabrain" context --json 2>&1)"; then
