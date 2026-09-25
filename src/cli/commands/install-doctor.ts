@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync, type Dirent } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, type Dirent } from "node:fs";
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
@@ -12,6 +12,7 @@ import { nextBackupPath } from "../../core/tmux.js";
 import { executeTmux } from "./tmux.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
+import { resolvePackageRoot } from "../../core/package-root.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
@@ -44,7 +45,7 @@ function newerSource(directory: string, binaryMtime: number): string | undefined
 }
 
 function compiledBinaryHealth(environment: Environment): { status: string; reason: string } {
-  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const binary = resolve(root, ".build/megabrain");
   const source = resolve(root, "src");
   if (!existsSync(binary)) return { status: "unknown", reason: "compiled binary is not present; freshness cannot be determined" };
@@ -184,7 +185,7 @@ function tmuxFileState(environment: Environment): { tuningBlock: boolean; tuning
   const wrapperSource = bash ? "source ~/.megabrain/bash/megabrain-agent-tmux.bash" : "source ~/.megabrain/zsh/megabrain-agent-tmux.zsh";
   const tuning = fileText(`${home}/.tmux.conf`) ?? "";
   const wrapper = fileText(wrapperConfig) ?? "";
-  const repo = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const repo = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const tuningInstalled = fileText(`${home}/.megabrain/tmux/megabrain.tmux.conf`);
   const wrapperInstalled = fileText(`${home}/.megabrain/${bash ? "bash/megabrain-agent-tmux.bash" : "zsh/megabrain-agent-tmux.zsh"}`);
   const block = (text: string, start: string, end: string, source: string) =>
@@ -331,7 +332,7 @@ async function report(module: string, environment: Environment, process: Process
       const root = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
       if (!existsSync(resolve(root, "manifest.json"))) reason = "browser profiles are not installed; run megabrain install simulator-web";
       else {
-        const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? (environment.MEGABRAIN_ROOT ? `${environment.MEGABRAIN_ROOT}/scripts/playwright-web.mjs` : "scripts/playwright-web.mjs");
+        const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? join(resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT), "scripts/playwright-web.mjs");
         const checked = await process.run("node", [script, "doctor", "--root", root]);
         if (checked.kind !== "ok") reason = "browser profile doctor could not read its manifest";
         else {
@@ -536,17 +537,27 @@ async function hookAgentAvailable(agent: HookAgent, processAdapter: ProcessAdapt
     : available(processAdapter, agent);
 }
 
-// WHY: same root resolution as skill.ts's skillSource — MEGABRAIN_ROOT when the bash wrapper (or
-// a test) set it, else the compiled binary's own real path, so this never depends on the
-// caller's working directory. The installed command must survive however the binary was
-// launched, so it names the binary's real path (realpathSync), not a symlink that might move or
-// vanish independently of the file it points at.
-function hookEntrypointCommand(environment: Environment, agent: HookAgent): string | undefined {
-  const root = environment.MEGABRAIN_ROOT ?? dirname(dirname(process.execPath));
+type HookRuntime = Readonly<{ execPath: string; node: boolean }>;
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function hookEntrypointCommand(
+  environment: Environment,
+  agent: HookAgent,
+  runtime: HookRuntime = { execPath: process.execPath, node: process.versions.bun === undefined },
+): string | undefined {
+  const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
+  if (runtime.node) {
+    const bundle = resolve(root, ".build/megabrain.mjs");
+    if (!existsSync(bundle)) return undefined;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} ${shellQuote(bundle)} hook turn-end`;
+  }
   const binary = resolve(root, ".build/megabrain");
   try {
     if ((statSync(binary).mode & 0o111) === 0) return undefined;
-    return `MEGABRAIN_HOOK_AGENT=${agent} ${realpathSync(binary)} hook turn-end`;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} hook turn-end`;
   } catch {
     return undefined;
   }
@@ -742,7 +753,7 @@ async function installSimulatorWeb(environment: Environment, processAdapter: Pro
   if (!(await available(processAdapter, "node")) || !(await available(processAdapter, "npm"))) {
     return failed(`node and npm are required for pinned Playwright 1.62.1`);
   }
-  const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? (environment.MEGABRAIN_ROOT ? `${environment.MEGABRAIN_ROOT}/scripts/playwright-web.mjs` : "scripts/playwright-web.mjs");
+  const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? join(resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT), "scripts/playwright-web.mjs");
   if (!existsSync(script)) return failed("node, npm, and the browser setup script are required for simulator-web");
   if (!(await available(processAdapter, "npx"))) return failed("npx is not on PATH");
   const versionCheck = await processAdapter.run("npx", ["-y", "@playwright/mcp@latest", "--version"]);

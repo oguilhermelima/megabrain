@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { resolveStateDirectory } from "./state.js";
+import { resolvePackageRoot } from "./package-root.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -99,16 +100,8 @@ function writeStamp(stateDir: string, target: string, sourceHash: string, target
   }
 }
 
-// WHY: when MEGABRAIN_ROOT is unset (a compiled binary invoked directly, without the bash
-// wrapper that normally exports it), the installation root must not depend on the caller's
-// working directory the way the bash wrapper's BASH_SOURCE-based resolution never did either.
-// process.execPath is the compiled binary's own absolute path (not the caller's cwd, and not
-// affected by a relative invocation or a symlink), and the binary always lives at
-// "<root>/.build/megabrain", so its grandparent directory is the root. Falling back to
-// process.cwd() instead made "megabrain native build tv" report a different missing-source
-// path depending on which directory it ran from (reproduced 2026-09-22).
 function skillSource(environment: Environment): string {
-  const root = environment.MEGABRAIN_ROOT ?? dirname(dirname(process.execPath));
+  const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   return join(root, "skills/megabrain/SKILL.md");
 }
 

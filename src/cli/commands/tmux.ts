@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { resolvePackageRoot } from "../../core/package-root.js";
 import { blockPresent, nextBackupPath, parseTmuxOptions, removeManagedBlock, rewriteManagedBlock, shellFor, TMUX_TUNE_END, TMUX_TUNE_SOURCE, TMUX_TUNE_START, tmuxUsage, tunePlan, validateManagedConfig, wrapperPlan, wrapperSource, TMUX_WRAPPER_END, TMUX_WRAPPER_START, type TmuxOptions, type TmuxVerb } from "../../core/tmux.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -30,7 +31,7 @@ function home(environment: Environment): string {
 }
 
 function root(environment: Environment): string {
-  return environment.MEGABRAIN_ROOT ?? process.cwd();
+  return resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
 }
 
 function readPath(path: string): Promise<FileReading> {
