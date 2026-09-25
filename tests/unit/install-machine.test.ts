@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverAgentDirectories, installAgentSkills } from "../../src/cli/commands/install-machine.js";
+import { installAgentSkills } from "../../src/cli/commands/install-machine.js";
+import { discoverAgentDirectories } from "../../src/core/agent-directories.js";
+import { skillTargetPaths } from "../../src/core/skill.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -69,6 +71,7 @@ describe("discoverAgentDirectories", () => {
     expect(globalResult).toEqual([directories.claude?.globalSkill, directories.agy?.globalSkill]);
     expect(readFileSync(join(home, ".claude/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
     expect(readFileSync(join(home, ".gemini/config/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
+    expect(skillTargetPaths({ HOME: home })).toContain(join(home, ".gemini/config/skills/megabrain/SKILL.md"));
 
     installAgentSkills(packageSkill, ["codex", "agy"], "project", directories, project);
     expect(readFileSync(join(project, ".agents/skills/megabrain/SKILL.md"), "utf8")).toBe("megabrain skill\n");
