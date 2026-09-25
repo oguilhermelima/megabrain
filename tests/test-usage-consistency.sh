@@ -37,9 +37,9 @@ usage_keys() {
 
 expected_usage_line() {
   local key="$1"
-  sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
+    sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
     sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p" |
-    awk -F '\t' -v key="$key" '$1 == key { print $2; exit }'
+    awk -F '\t' -v key="$key" '$1 == key { value = $2 } END { print value }'
 }
 
 agents_md="$(cat "$root/AGENTS.md")"
