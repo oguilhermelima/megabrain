@@ -181,11 +181,8 @@ describe("reconcileSkillsAtStartup", () => {
   });
 });
 
-// WHY: tests/test-native-build-cli.sh runs the compiled binary from a repository root and
-// from a subdirectory of it and asserts byte-identical output. Falling back to process.cwd()
-// for the installed skill source, with no MEGABRAIN_ROOT set (as a directly invoked compiled
-// binary sees), made the "installed skill source is missing" diagnostic embed a different
-// path per directory, breaking that parity (reproduced 2026-09-22).
+// WHY: the skill is shipped beside the running module, so its source must stay available from
+// unrelated caller directories. CWD still controls project-local skill targets below.
 describe("skill source root resolution", () => {
   test("does not depend on the caller's working directory when MEGABRAIN_ROOT is unset", () => {
     const originalCwd = process.cwd();
@@ -197,9 +194,10 @@ describe("skill source root resolution", () => {
       const scanFromFirst = reconcileSkills({ HOME: home });
       process.chdir(second);
       const scanFromSecond = reconcileSkills({ HOME: home });
-      expect(scanFromFirst.failureCount).toBe(1);
-      expect(scanFromSecond.failureCount).toBe(1);
-      expect(scanFromFirst.error).toBe(scanFromSecond.error);
+      expect(scanFromFirst.failureCount).toBe(0);
+      expect(scanFromSecond.failureCount).toBe(0);
+      expect(scanFromFirst.error).toBeUndefined();
+      expect(scanFromSecond.error).toBeUndefined();
     } finally {
       process.chdir(originalCwd);
     }

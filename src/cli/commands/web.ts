@@ -1,6 +1,8 @@
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { planWeb, type WebPlan } from "../../core/web.js";
+import { resolvePackageRoot } from "../../core/package-root.js";
+import { join } from "node:path";
 
 export type WebEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -51,10 +53,10 @@ export async function executeWeb(
   const plan = planWeb(args);
   if (plan.kind === "help") return ok(helpFor(args));
   if (plan.kind === "usage") return failed(plan.message, 2);
-  const root = environment.MEGABRAIN_ROOT ?? ".";
+  const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? join(resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT), "scripts/playwright-web.mjs");
   const playwrightRoot = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
   const userscriptsRoot = `${environment.HOME ?? ""}/.megabrain/userscripts`;
-  const invocation = [root.endsWith("/") ? `${root}scripts/playwright-web.mjs` : `${root}/scripts/playwright-web.mjs`, ...scriptArgs(plan, playwrightRoot, userscriptsRoot)];
+  const invocation = [script, ...scriptArgs(plan, playwrightRoot, userscriptsRoot)];
   const result = await processAdapter.run("node", invocation);
   if (result.kind !== "ok") return result;
   return ok(result.value.stdout);

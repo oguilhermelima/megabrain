@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from
 import { resolve } from "node:path";
 import { failed, type Failed } from "./result.js";
 import { resolveStateDirectory, type StateEnvironment } from "./state.js";
+import { resolvePackageRoot } from "./package-root.js";
 
 export type ModelProvenance = Readonly<Record<string, unknown>>;
 
@@ -111,7 +112,7 @@ export type ModelEnvironment = StateEnvironment & Readonly<{
 }>;
 
 export function modelRegistryPaths(environment: ModelEnvironment): { readonly template: string; readonly state: string } {
-  const root = environment.MEGABRAIN_ROOT ?? process.cwd();
+  const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const stateDir = resolveStateDirectory(environment);
   return { template: resolve(root, ".megabrain/models.json"), state: environment.MEGABRAIN_MODEL_FILE ?? resolve(stateDir, "models.json") };
 }

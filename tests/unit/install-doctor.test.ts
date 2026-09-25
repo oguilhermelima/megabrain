@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { executeDoctor } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
@@ -114,7 +114,7 @@ describe("doctor live state", () => {
       MEGABRAIN_STATE_DIR: state,
       MEGABRAIN_PLAYWRIGHT_ROOT: root,
     }, processFor({
-      [`node scripts/playwright-web.mjs doctor --root ${root}`]: JSON.stringify({
+      [`node ${resolve("scripts/playwright-web.mjs")} doctor --root ${root}`]: JSON.stringify({
         status: "unknown",
         reason: "chromium.ublock: installed 2026.907.2003, expected 2026.914.1325",
       }),
@@ -149,5 +149,27 @@ describe("doctor orchestration-hooks entry detection", () => {
     }));
     const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
     expect(result.reason).toContain("claude: entry-present");
+  });
+
+  test("reports a quoted Node bundle hook as entry-present", async () => {
+    const home = mkdtempSync("/tmp/megabrain-doctor-hooks-node-");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "MEGABRAIN_HOOK_AGENT=claude '/opt/Node Runtime/bin/node' '/opt/megabrain package/.build/megabrain.mjs' hook turn-end" }] }] },
+    }));
+    const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
+    expect(result.reason).toContain("claude: entry-present");
+  });
+});
+
+describe("compiled binary freshness in installed packages", () => {
+  test("reports freshness as not applicable when the package has no source tree", async () => {
+    const root = mkdtempSync("/tmp/megabrain-doctor-installed-package-");
+    const result = report(await executeDoctor(["compiled-binary", "--json"], {
+      MEGABRAIN_ROOT: root,
+    }, processFor({})));
+
+    expect(result.status).toBe("not-applicable");
+    expect(result.reason).toContain("freshness is not applicable");
   });
 });

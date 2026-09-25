@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -37,6 +37,15 @@ function fakeProcess(handlers: Record<string, Handler | string> = {}, unavailabl
 
 function tmpHome(prefix: string): string {
   return mkdtempSync(join("/tmp", `megabrain-install-${prefix}-`));
+}
+
+function compiledRoot(prefix: string): { readonly root: string; readonly binary: string } {
+  const root = tmpHome(`${prefix}-root`);
+  const binary = join(root, ".build/megabrain");
+  mkdirSync(join(root, ".build"), { recursive: true });
+  writeFileSync(binary, "compiled megabrain fixture\n");
+  chmodSync(binary, 0o755);
+  return { root, binary };
 }
 
 describe("executeInstall", () => {
@@ -91,13 +100,14 @@ describe("executeInstall", () => {
     // Install must still repair, back it up, and replace it in place with the direct binary
     // command — the wrapper script this pointed at no longer exists.
     const home = tmpHome("hooks-already-ok");
+    const entrypoint = compiledRoot("hooks-already-ok");
     mkdirSync(join(home, ".claude"), { recursive: true });
     const staleCommand = "MEGABRAIN_HOOK_AGENT=claude /some/other/checkout/hooks/megabrain-turn-end.sh";
     const original = { hooks: { Stop: [{ hooks: [{ type: "command", command: "keep" }, { type: "command", command: staleCommand }, { type: "command", command: staleCommand }] }] } };
     const configPath = join(home, ".claude", "settings.json");
     writeFileSync(configPath, JSON.stringify(original));
     const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: repoRoot };
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: entrypoint.root };
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
@@ -106,7 +116,7 @@ describe("executeInstall", () => {
     const written = JSON.parse(readFileSync(configPath, "utf8")) as { hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> } };
     expect(written.hooks.Stop[0].hooks.map((entry) => entry.command)).toEqual([
       "keep",
-      `MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/.build/megabrain hook turn-end`,
+      `MEGABRAIN_HOOK_AGENT=claude '${realpathSync(entrypoint.binary)}' hook turn-end`,
     ]);
   });
 
@@ -226,15 +236,16 @@ describe("executeInstall", () => {
 
   test("orchestration-hooks repairs an available agent's hook config and leaves an unavailable agent untouched", async () => {
     const home = tmpHome("hooks-install");
+    const entrypoint = compiledRoot("hooks-install");
     mkdirSync(join(home, ".claude"), { recursive: true });
     const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: repoRoot };
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: entrypoint.root };
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     const written = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
     const hooks = written.hooks as { Stop: Array<{ hooks: Array<{ command: string }> }> };
-    expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/.build/megabrain hook turn-end`);
+    expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude '${realpathSync(entrypoint.binary)}' hook turn-end`);
   });
 
   // The installed entry must survive however the binary was launched: a symlinked MEGABRAIN_ROOT
@@ -243,8 +254,9 @@ describe("executeInstall", () => {
     const home = tmpHome("hooks-realpath");
     mkdirSync(join(home, ".claude"), { recursive: true });
     const aliasRoot = tmpHome("hooks-realpath-alias");
+    const canonical = compiledRoot("hooks-realpath-canonical");
     mkdirSync(join(aliasRoot, ".build"), { recursive: true });
-    symlinkSync(join(repoRoot, ".build", "megabrain"), join(aliasRoot, ".build", "megabrain"));
+    symlinkSync(canonical.binary, join(aliasRoot, ".build", "megabrain"));
     const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
     const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: aliasRoot };
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
@@ -252,16 +264,17 @@ describe("executeInstall", () => {
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     const written = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
     const hooks = written.hooks as { Stop: Array<{ hooks: Array<{ command: string }> }> };
-    expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude ${repoRoot}/.build/megabrain hook turn-end`);
+    expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude '${realpathSync(canonical.binary)}' hook turn-end`);
   });
 
   test("orchestration-hooks install backs up an existing config, and --revert restores it", async () => {
     const home = tmpHome("hooks-revert");
+    const entrypoint = compiledRoot("hooks-revert");
     mkdirSync(join(home, ".claude"), { recursive: true });
     const original = { hooks: { Stop: [{ hooks: [{ type: "command", command: "echo original" }] }] } };
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify(original));
     const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: repoRoot };
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: entrypoint.root };
     const installResult = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
     expect(installResult.kind).toBe("ok");
     const afterInstall = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
