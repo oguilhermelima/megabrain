@@ -4,6 +4,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { failed, ok, type Result } from "../../core/result.js";
 import { formatWorktreeList, parseGitWorktrees, parseParentConfig, parsePullRequests, parseWorkspacePaths, type GitWorktree, type ParentConfig, type WorktreeListEntry } from "../../core/worktree-list.js";
 import { repoFromOrca } from "./repository-selector.js";
+import { usageText } from "../../core/usage.js";
 
 export type WorktreeListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -109,7 +110,7 @@ function parentFromOrca(value: unknown): Map<string, string> {
 export async function executeWorktreeList(args: readonly string[], environment: WorktreeListEnvironment, process: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
   const options = optionResult(args);
   if (options.kind !== "ok") return options;
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]\n");
+  if (args.includes("-h") || args.includes("--help")) return ok(usageText("worktree-list"));
   const root = await sharedRoot(environment);
   if (root.kind !== "ok") return root;
   let filter: string | undefined;

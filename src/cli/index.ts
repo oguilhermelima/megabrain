@@ -1,7 +1,7 @@
 import { createProcessAdapter } from "../adapters/proc.js";
 import { reconcileSkillsAtStartup, shouldReconcileSkillsAtStartup } from "../core/skill.js";
 import { route } from "./router.js";
-import { ROOT_USAGE } from "./usage.js";
+import { ROOT_USAGE } from "../core/usage.js";
 
 const commandArguments = process.argv.slice(2);
 

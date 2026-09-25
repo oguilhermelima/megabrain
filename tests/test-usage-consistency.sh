@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-usage.XXXXXX")"
+binary="$root/.build/megabrain"
 
 cleanup() {
   rm -rf "$state_dir"
@@ -13,10 +14,26 @@ trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 
+[ -x "$binary" ] || { printf 'FAIL: compiled TypeScript binary is missing: %s\n' "$binary" >&2; exit 1; }
+"$binary" __usage-table > "$state_dir/typescript-usage.tsv" || {
+  printf 'FAIL: could not read the TypeScript usage table from the binary\n' >&2
+  exit 1
+}
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+
+bash_usage_table() {
+  sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
+    sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p"
+}
+
+bash_usage_table > "$state_dir/bash-usage.tsv"
+if ! diff -u "$state_dir/bash-usage.tsv" "$state_dir/typescript-usage.tsv"; then
+  fail "the bash usage table differs from the TypeScript table returned by the binary"
+fi
 
 assert_contains() {
   case "$1" in
@@ -30,16 +47,12 @@ assert_contains() {
 no_doc_entry=' worktree chain model native-appium '
 
 usage_keys() {
-  sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
-    sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p" |
-    cut -f1
+  cut -f1 "$state_dir/typescript-usage.tsv"
 }
 
 expected_usage_line() {
   local key="$1"
-    sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
-    sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p" |
-    awk -F '\t' -v key="$key" '$1 == key { value = $2 } END { print value }'
+  awk -F '\t' -v key="$key" '$1 == key { value = $2 } END { print value }' "$state_dir/typescript-usage.tsv"
 }
 
 agents_md="$(cat "$root/AGENTS.md")"
@@ -58,7 +71,7 @@ while IFS= read -r key; do
 
   # Keys are the command path with spaces replaced by dashes.
   read -r -a argv <<<"$(printf '%s' "$key" | tr '-' ' ')"
-  if ! help_output="$("$root/megabrain" "${argv[@]}" --help 2>&1)"; then
+  if ! help_output="$("$binary" "${argv[@]}" --help 2>&1)"; then
     fail "megabrain ${argv[*]} --help exited non-zero"
   fi
   assert_contains "$help_output" "Usage: megabrain $line" \
@@ -78,11 +91,11 @@ done < <(usage_keys)
 
 # A missing argument must quote the same line the help prints, which is the drift
 # that put three different close usages in one file.
-close_error="$("$root/megabrain" orchestrate close 2>&1 || true)"
+close_error="$("$binary" orchestrate close 2>&1 || true)"
 assert_contains "$close_error" "Usage: megabrain $(expected_usage_line orchestrate-close)" \
   "orchestrate close error text drifted from its help text: $close_error"
 
-watch_error="$("$root/megabrain" orchestrate watch 2>&1 || true)"
+watch_error="$("$binary" orchestrate watch 2>&1 || true)"
 assert_contains "$watch_error" "Usage: megabrain $(expected_usage_line orchestrate-watch)" \
   "orchestrate watch error text drifted from its help text: $watch_error"
 
@@ -154,7 +167,7 @@ done < <(grep -oE '^megabrain [a-z][a-z-]*( [a-z][a-z-]*)?[^|]*' "$skill")
 # concerned. A documented group invocation covers its children only when that
 # group syntax is itself present in the usage table and the skill.
 skill_text="$(cat "$skill")"
-module_ids="$("$root/megabrain" doctor --json 2>/dev/null | jq -r '.[].module' || true)"
+module_ids="$("$binary" doctor --json 2>/dev/null | jq -r '.[].module' || true)"
 while IFS= read -r key; do
   [ -n "$key" ] || continue
   skill_covers_usage_key "$key" || record_coverage_failure \

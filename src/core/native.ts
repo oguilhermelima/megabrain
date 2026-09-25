@@ -1,4 +1,5 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageGroup, usageText } from "./usage.js";
 
 export type NativePlatform = "iOS" | "tvOS";
 export type NativeRuntime = { readonly platform: NativePlatform; readonly version: string; readonly build: string; readonly identifier: string };
@@ -53,19 +54,19 @@ export function evaluateNativeHealth(readings: NativeHealth): NativeHealthResult
 
 export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health" | "crashes" | "eval" | "navigate" | "capture" | "runtime-list" | "runtime-install" | "build"): string {
   const lines = {
-    native: "Usage: megabrain native sim list <phone|tv> [--json]\n       megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n       megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n       megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [options]\n       megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n       megabrain native crashes <phone|tv> [--last N] [--json]\n       megabrain native build <phone|tv> [--runtime <version>] [--json]\n       megabrain native appium start|stop|status\n",
-    list: "Usage: megabrain native sim list <phone|tv> [--json]\n",
-    ensure: "Usage: megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]\n",
-    reload: "Usage: megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]\n",
-    appium: "Usage: megabrain native appium start|stop|status\n",
-    eval: "Usage: megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]\n",
-    navigate: "Usage: megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]\n",
-    capture: "Usage: megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]\n",
-    health: "Usage: megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]\n",
-    crashes: "Usage: megabrain native crashes <phone|tv> [--last N] [--json]\n",
-    "runtime-list": "Usage: megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]\n",
-    "runtime-install": "Usage: megabrain native runtime install <ios|tvos> <version> [--json]\n",
-    build: "Usage: megabrain native build <phone|tv> [--runtime <version>] [--json]\n",
+    native: usageGroup(["native-sim-list", "native-sim-ensure", "native-app-reload", "native-eval", "native-navigate", "native-capture-summary", "native-health", "native-crashes", "native-build", "native-appium"]),
+    list: usageText("native-sim-list"),
+    ensure: usageText("native-sim-ensure"),
+    reload: usageText("native-app-reload"),
+    appium: usageText("native-appium"),
+    eval: usageText("native-eval"),
+    navigate: usageText("native-navigate"),
+    capture: usageText("native-capture"),
+    health: usageText("native-health"),
+    crashes: usageText("native-crashes"),
+    "runtime-list": usageText("native-runtime-list"),
+    "runtime-install": usageText("native-runtime-install"),
+    build: usageText("native-build"),
   } as const;
   return lines[topic];
 }

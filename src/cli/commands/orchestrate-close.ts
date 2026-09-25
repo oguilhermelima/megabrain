@@ -8,6 +8,7 @@ import { atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./qu
 import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { usageText } from "../../core/usage.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -61,7 +62,7 @@ async function closeHostTerminal(meta: RecordValue, process: ProcessAdapter): Pr
 }
 
 export async function executeOrchestrateClose(args: readonly string[], environment: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain orchestrate close <dispatch-id> [--force-release] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-close"));
   const parsed = parseCloseArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);
   const resolved = await resolveDispatchDirectory(root, parsed.value.dispatchId);

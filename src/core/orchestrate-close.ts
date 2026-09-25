@@ -1,4 +1,5 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageText } from "./usage.js";
 
 export type CloseArguments = Readonly<{ dispatchId: string; forceRelease: boolean; json: boolean }>;
 export type CloseDecision = "close" | "duplicate" | "retained" | "caller";
@@ -24,7 +25,7 @@ export function hostCloseReason(raw: string): string {
 
 export function parseCloseArgs(args: readonly string[]): Result<CloseArguments> {
   const dispatchId = args[0] ?? "";
-  if (dispatchId === "") return failed("Usage: megabrain orchestrate close <dispatch-id> [--force-release] [--json]\n", 2);
+  if (dispatchId === "") return failed(usageText("orchestrate-close"), 2);
   let forceRelease = false;
   let json = false;
   for (let index = 1; index < args.length; index += 1) {

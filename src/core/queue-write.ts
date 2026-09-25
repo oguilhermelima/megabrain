@@ -1,19 +1,24 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageText } from "./usage.js";
 
 export type QueueMailClass = "actionable" | "protocol" | undefined;
 export type QueueRecipient = "parent" | "child" | undefined;
 
 export function childMessageUsage(type: "received" | "ask" | "done"): string {
-  if (type === "received") return "Usage: megabrain received\n";
+  return usageText(type);
+}
+
+function childMessageErrorUsage(type: "received" | "ask" | "done"): string {
+  if (type === "received") return usageText(type);
   const value = type === "ask" ? "question" : "summary";
   return `Usage: megabrain ${type} \"${value}\" | megabrain ${type} --text \"${value}\"\n`;
 }
 
 export function parseChildMessage(type: string, args: readonly string[]): Result<string> {
-  if (type === "received") return args.length === 0 ? ok("prompt received") : failed(childMessageUsage(type), 2);
+  if (type === "received") return args.length === 0 ? ok("prompt received") : failed(childMessageErrorUsage(type), 2);
   if (type === "ask" || type === "done") {
     const text = args[0] === "--text" ? args.length === 2 ? args[1] : "" : args.length === 1 ? args[0] : "";
-    return text !== "" ? ok(text) : failed(childMessageUsage(type), 2);
+    return text !== "" ? ok(text) : failed(childMessageErrorUsage(type), 2);
   }
   return failed(`unsupported child message type: ${type}`, 2);
 }

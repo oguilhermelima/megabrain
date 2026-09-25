@@ -4,6 +4,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { formatAdopt, parseAdoptOptions, type AdoptResult } from "../../core/worktree-adopt.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { usageText } from "../../core/usage.js";
 
 export type AdoptEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -51,7 +52,7 @@ async function selectorPath(process: ProcessAdapter, target: string, root: strin
 export async function executeWorktreeAdopt(args: readonly string[], environment: AdoptEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   const options = parseAdoptOptions(args);
   if (options.kind !== "ok") return options;
-  if (options.value.target.length === 0) return ok("Usage: megabrain worktree adopt <path|branch> [--json]\n");
+  if (options.value.target.length === 0) return ok(usageText("worktree-adopt"));
   const root = await sharedRoot(environment);
   if (root.kind !== "ok") return root;
   const path = await selectorPath(process, options.value.target, root.value);

@@ -4,6 +4,7 @@ import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, pars
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller } from "./queue-write.js";
+import { usageText } from "../../core/usage.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -77,7 +78,7 @@ function parseArgs(args: readonly string[]): Result<{ options: DispatchListOptio
 export async function executeOrchestrateList(args: readonly string[], environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   const parsedArgs = parseArgs(args);
   if (parsedArgs.kind !== "ok") return parsedArgs;
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain orchestrate list [--all|--orphans|--uncertain] [--json]\n");
+  if (args.includes("-h") || args.includes("--help")) return ok(usageText("orchestrate-list"));
   const root = resolveStateDirectory(environment);
   const caller = await callerFromEnvironment(environment, process);
   const records = await loadRecords(root);

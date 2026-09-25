@@ -2,17 +2,12 @@ import { writeFileSync } from "node:fs";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, validateReasoning } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
 function usage(key: "model" | "model-list" | "model-add" | "model-refresh"): string {
-  const lines = {
-    model: "model list|add|refresh ...",
-    "model-list": "model list [--json]",
-    "model-add": "model add <agent> <model> --reasoning <levels>",
-    "model-refresh": "model refresh <agent>",
-  };
-  return `Usage: megabrain ${lines[key]}\n`;
+  return usageText(key);
 }
 
 function errorResult(message: string, exitCode = 1): Result<string> { return failed(message, exitCode); }

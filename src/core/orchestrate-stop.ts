@@ -1,11 +1,12 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageText } from "./usage.js";
 
 export type StopArguments = Readonly<{ dispatchId: string; json: boolean }>;
 export type StopDecision = "interrupt";
 
 export function parseStopArgs(args: readonly string[]): Result<StopArguments> {
   const dispatchId = args[0] ?? "";
-  if (dispatchId === "") return failed("Usage: megabrain orchestrate stop <dispatch-id> [--json]\n", 2);
+  if (dispatchId === "") return failed(usageText("orchestrate-stop"), 2);
   let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];

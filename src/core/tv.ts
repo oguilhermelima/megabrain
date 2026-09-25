@@ -1,11 +1,12 @@
 import { failed, ok, type Result } from "./result.js";
+import { usageGroup, usageText } from "./usage.js";
 
 export type TvRequest = { readonly operation: "connect" | "disconnect"; readonly ip?: string; readonly port: string } | { readonly operation: "help" };
 
 export function tvUsage(operation?: "connect" | "disconnect"): string {
-  if (operation === "connect") return "Usage: megabrain tv connect <ip> [--port <port>]\n";
-  if (operation === "disconnect") return "Usage: megabrain tv disconnect [<ip>]\n";
-  return "Usage: megabrain tv connect <ip> [--port <port>]\n       megabrain tv disconnect [<ip>]\n";
+  if (operation === "connect") return usageText("tv-connect");
+  if (operation === "disconnect") return usageText("tv-disconnect");
+  return usageGroup(["tv-connect", "tv-disconnect"]);
 }
 
 export function parseTv(args: readonly string[]): Result<TvRequest> {
