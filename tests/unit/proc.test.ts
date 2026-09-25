@@ -16,4 +16,12 @@ describe("createProcessAdapter", () => {
     const result = await process.run("sh", ["-c", "echo hi"]);
     expect(result.kind).toBe("ok");
   });
+
+  test("normalizes a missing executable across runtimes", async () => {
+    const process = createProcessAdapter();
+    const result = await process.run("megabrain-test-command-that-is-not-installed", []);
+    expect(result.kind).toBe("failed");
+    if (result.kind !== "failed") return;
+    expect(result.error).toBe("megabrain-test-command-that-is-not-installed: executable not found");
+  });
 });
