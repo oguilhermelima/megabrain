@@ -3,8 +3,9 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
-import { rename, unlink } from "node:fs/promises";
+import { readFile, readdir, rename, writeFile, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { dispatchDeliveryFile, dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getTmux } from "../../hosts/tmux.js";
 
@@ -13,7 +14,7 @@ type JsonRecord = Record<string, unknown>;
 
 export async function readJson(path: string): Promise<JsonRecord | undefined> {
   try {
-    const value: unknown = await Bun.file(path).json();
+    const value: unknown = JSON.parse(await readFile(path, "utf8"));
     return typeof value === "object" && value !== null ? value as JsonRecord : undefined;
   } catch { return undefined; }
 }
@@ -23,7 +24,14 @@ function number(value: unknown): number | undefined { return typeof value === "n
 export async function files(path: string): Promise<string[]> {
   const result: string[] = [];
   try {
-    for await (const entry of new Bun.Glob("**/*.json").scan({ cwd: path, absolute: true })) result.push(entry);
+    async function walk(directory: string): Promise<void> {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const entryPath = `${directory}/${entry.name}`;
+        if (entry.isDirectory()) await walk(entryPath);
+        else if (entry.isFile() && entry.name.endsWith(".json")) result.push(entryPath);
+      }
+    }
+    await walk(resolve(path));
   } catch {
     return [];
   }
@@ -103,7 +111,7 @@ export async function migrateDeliveries(root: string, dispatch: string, messages
     if (recipient === undefined) continue;
     const id = `delivery-${Date.now()}-${message.seq}`;
     const value = { id, dispatchId: dispatch, recipient, consumer: null, consumerGeneration: null, messageSeqs: [message.seq], status: "outstanding", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), acknowledgedAt: null, fencedAt: null };
-    await Bun.write(`${directory}/${id}.json`, `${JSON.stringify(value)}\n`);
+    await writeFile(`${directory}/${id}.json`, `${JSON.stringify(value)}\n`);
   }
 }
 
@@ -168,7 +176,7 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
       const temporaryPath = `${path}.${randomUUID()}.tmp`;
       const claimed = { ...selected.delivery, consumer: resolvedConsumer, consumerGeneration: generation, updatedAt: new Date().toISOString() };
       try {
-        await Bun.write(temporaryPath, `${JSON.stringify(claimed)}\n`);
+        await writeFile(temporaryPath, `${JSON.stringify(claimed)}\n`);
         await rename(temporaryPath, path);
       } catch (error: unknown) {
         await unlink(temporaryPath).catch(() => undefined);

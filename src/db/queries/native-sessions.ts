@@ -18,7 +18,7 @@ function insert(db: DatabaseHandle, session: NativeSession): void {
 }
 
 export function listNativeSessions(db: DatabaseHandle): NativeSession[] {
-  return db.db.query<NativeSessionRow, []>("SELECT udid, bundle_id, session_id FROM native_sessions ORDER BY rowid").all().map((row) => ({
+  return db.db.query<NativeSessionRow>("SELECT udid, bundle_id, session_id FROM native_sessions ORDER BY rowid").all().map((row) => ({
     udid: row.udid,
     bundleId: row.bundle_id,
     sessionId: row.session_id,
@@ -37,7 +37,7 @@ export function replaceNativeSessions(db: DatabaseHandle, sessions: readonly Nat
 export function importNativeSessions(db: DatabaseHandle, jsonPath: string): void {
   db.db.run("BEGIN IMMEDIATE");
   try {
-    const marker = db.db.query<{ value: string }, [string]>("SELECT value FROM native_sessions_meta WHERE key = ?").get(IMPORT_MARKER);
+    const marker = db.db.query<{ value: string }>("SELECT value FROM native_sessions_meta WHERE key = ?").get(IMPORT_MARKER);
     if (marker === null) {
       if (listNativeSessions(db).length === 0) {
         try {

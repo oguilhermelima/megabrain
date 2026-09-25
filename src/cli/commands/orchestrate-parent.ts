@@ -26,7 +26,7 @@ async function lock(path: string): Promise<void> {
 
 async function writeAtomic(path: string, value: JsonRecord): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
-  try { await Bun.write(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
+    try { await writeFile(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
 }
 
 async function registerWaiter(root: string, dispatch: string, parent: JsonRecord): Promise<void> {

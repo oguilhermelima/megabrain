@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, parseDispatchRecord, type DispatchCaller, type DispatchListOptions, type DispatchRecord } from "../../core/dispatch.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -22,8 +22,8 @@ async function metadataPaths(dispatchRoot: string): Promise<string[]> {
   async function add(parent: string, entries: string[]): Promise<void> {
     for (const entry of entries) {
       const path = `${parent}/${entry}`;
-      const stat = await Bun.file(path).exists();
-      if (stat && entry === "meta.json") paths.push(path);
+      const exists = await access(path).then(() => true, () => false);
+      if (exists && entry === "meta.json") paths.push(path);
     }
   }
   const direct = (await readdir(dispatchRoot, { withFileTypes: true }).catch(() => []))
@@ -48,7 +48,7 @@ async function loadRecords(root: string): Promise<DispatchRecord[]> {
   const records: DispatchRecord[] = [];
   for (const path of await metadataPaths(`${root}/dispatches`)) {
     try {
-      const parsed = parseDispatchRecord(await Bun.file(path).json());
+      const parsed = parseDispatchRecord(JSON.parse(await readFile(path, "utf8")) as unknown);
       if (parsed.kind === "ok") records.push(parsed.value);
       else console.error(`skipping unreadable dispatch metadata: ${path}`);
     } catch {
