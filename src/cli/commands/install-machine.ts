@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -178,6 +178,87 @@ export async function retireLegacyChannels(
   return ok(messages.length === 0 ? "no legacy plugin registrations found\n" : `${messages.join("\n")}\n`);
 }
 
+const legacyInstructionsHeading = "# megabrain recipes";
+
+function instructionLines(content: string): string[] {
+  return content.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+}
+
+function lineContent(line: string): string {
+  return line.replace(/\r?\n$/, "");
+}
+
+function removeLegacyInstructionsHeading(path: string): "missing" | "absent" | "followed" | "removed" {
+  if (!existsSync(path)) return "missing";
+  if (lstatSync(path).isSymbolicLink()) throw new Error(`refusing to replace symbolic link: ${path}`);
+
+  const content = readFileSync(path, "utf8");
+  const lines = instructionLines(content);
+  const headingIndex = lines.findIndex((line) => lineContent(line) === legacyInstructionsHeading);
+  if (headingIndex < 0) return "absent";
+  const trailingLines = lines.slice(headingIndex + 1);
+  if (trailingLines.some((line) => lineContent(line).trim().length > 0)) return "followed";
+
+  const removeBlankLine = trailingLines.length > 0 && lineContent(trailingLines[0] ?? "").trim().length === 0 ? 1 : 0;
+  const next = removeBlankLine === 1
+    ? [...lines.slice(0, headingIndex), ...lines.slice(headingIndex + 2)].join("")
+    : [...lines.slice(0, headingIndex), ...lines.slice(headingIndex + 1)].join("");
+  if (next === content) return "absent";
+
+  const mode = statSync(path).mode;
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, next, { mode });
+    renameSync(temporary, path);
+  } catch (cause: unknown) {
+    try { unlinkSync(temporary); } catch { /* preserve the original failure */ }
+    throw cause;
+  }
+  return "removed";
+}
+
+export async function retireLegacyInstructions(
+  environment: AgentEnvironment,
+  projectDirectory: string,
+  yes: boolean,
+  interactive: boolean,
+): Promise<Result<string>> {
+  const home = environment.HOME;
+  const targets = [
+    ...(home === undefined || home.length === 0 ? [] : [join(home, ".codex", "AGENTS.md"), join(home, ".agy", "AGENTS.md")]),
+    join(projectDirectory, "AGENTS.md"),
+  ];
+  const messages: string[] = [];
+  try {
+    for (const path of targets) {
+      if (!existsSync(path)) continue;
+      if (lstatSync(path).isSymbolicLink()) return failed(`refusing to replace symbolic link: ${path}`);
+      const content = readFileSync(path, "utf8");
+      if (!instructionLines(content).some((line) => lineContent(line) === legacyInstructionsHeading)) continue;
+
+      const lines = instructionLines(content);
+      const headingIndex = lines.findIndex((line) => lineContent(line) === legacyInstructionsHeading);
+      const hasFollowingContent = lines.slice(headingIndex + 1).some((line) => lineContent(line).trim().length > 0);
+      if (hasFollowingContent) {
+        messages.push(`${path}: retained; content follows the heading`);
+        continue;
+      }
+
+      const shouldRemove = yes || (interactive && await ask(`Remove the legacy instructions heading from ${path}?`, ["no", "yes"], "no") === "yes");
+      if (!shouldRemove) {
+        messages.push(`${path}: legacy heading found; rerun with --yes to remove it`);
+        continue;
+      }
+      const result = removeLegacyInstructionsHeading(path);
+      if (result === "removed") messages.push(`${path}: legacy instructions heading removed`);
+      else if (result === "followed") messages.push(`${path}: retained; content follows the heading`);
+    }
+  } catch (error: unknown) {
+    return failed(error instanceof Error ? error.message : "could not retire legacy instructions heading");
+  }
+  return ok(messages.length === 0 ? "" : `${messages.join("\n")}\n`);
+}
+
 async function ask(label: string, options: readonly string[], defaultValue: string): Promise<string> {
   const reader = createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -275,7 +356,9 @@ export async function runMachineInstall(
   const state = readMachineState(statePath);
   if (state === undefined) return failed(`could not read valid megabrain state at ${statePath}`);
   const recordedSelection = { agents: selectedAgents, skill, modules: modulesToInstall, version: packageJson.version };
-  if (sameSelection(state.machineInstall, recordedSelection)) return ok("machine configuration already current; no changes made\n");
+  const legacyInstructions = await retireLegacyInstructions(environment, process.cwd(), parsed.yes, interactive);
+  if (legacyInstructions.kind !== "ok") return legacyInstructions;
+  if (sameSelection(state.machineInstall, recordedSelection)) return ok(`${legacyInstructions.value}machine configuration already current; no changes made\n`);
 
   try {
     if (!modulesToInstall.includes("tmux-runtime")) delete state["tmux-runtime"];
@@ -292,7 +375,7 @@ export async function runMachineInstall(
       if (result.kind !== "ok") return failed(`could not install megabrain module ${module}: ${result.error}`);
     }
     writeMachineState(statePath, state, selection);
-    return ok(`${retired.value}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${modulesToInstall.join(",") || "none"}\n`);
+    return ok(`${legacyInstructions.value}${retired.value}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${modulesToInstall.join(",") || "none"}\n`);
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "machine configuration failed");
   }
