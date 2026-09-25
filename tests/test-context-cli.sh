@@ -26,7 +26,6 @@ run_shell() {
     HOME="$work_dir/home" \
     PATH="/usr/bin:/bin" \
     MEGABRAIN_STATE_DIR="$work_dir/state" \
-    MEGABRAIN_CONTEXT_IMPLEMENTATION=shell \
     "$root/megabrain" context --json
 }
 
@@ -46,15 +45,15 @@ compare_case() {
 
 mkdir -p "$work_dir/home"
 
-superset_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_CONTEXT_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=terminal SUPERSET_WORKSPACE_ID=workspace SUPERSET_AGENT_ID=claude "$root/megabrain" context --json)"
+superset_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" SUPERSET_TERMINAL_ID=terminal SUPERSET_WORKSPACE_ID=workspace SUPERSET_AGENT_ID=claude "$root/megabrain" context --json)"
 superset_binary="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" SUPERSET_TERMINAL_ID=terminal SUPERSET_WORKSPACE_ID=workspace SUPERSET_AGENT_ID=claude "$root/.build/megabrain" context --json)"
 compare_case superset "$superset_shell" "$superset_binary"
 
-ai_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_CONTEXT_IMPLEMENTATION=shell AI_AGENT=claude-code_1-2-3_agent AI_MODEL=model AI_EFFORT=high "$root/megabrain" context --json)"
+ai_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" AI_AGENT=claude-code_1-2-3_agent AI_MODEL=model AI_EFFORT=high "$root/megabrain" context --json)"
 ai_binary="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" AI_AGENT=claude-code_1-2-3_agent AI_MODEL=model AI_EFFORT=high "$root/.build/megabrain" context --json)"
 compare_case recognized-ai-agent "$ai_shell" "$ai_binary"
 
-unknown_agent_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" MEGABRAIN_CONTEXT_IMPLEMENTATION=shell AI_AGENT=unknown-shape "$root/megabrain" context --json)"
+unknown_agent_shell="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" AI_AGENT=unknown-shape "$root/megabrain" context --json)"
 unknown_agent_binary="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir/state" AI_AGENT=unknown-shape "$root/.build/megabrain" context --json)"
 compare_case unrecognized-ai-agent "$unknown_agent_shell" "$unknown_agent_binary"
 
@@ -62,4 +61,16 @@ absent_shell="$(run_shell)"
 absent_binary="$(run_binary)"
 compare_case no-agent "$absent_shell" "$absent_binary"
 
-printf 'ok: context implementations agree across all branches\n'
+missing_root="$work_dir/missing-binary-root"
+mkdir -p "$missing_root"
+cp "$root/megabrain" "$missing_root/megabrain"
+cp -R "$root/lib" "$missing_root/lib"
+if missing_output="$(MEGABRAIN_STATE_DIR="$work_dir/missing-state" "$missing_root/megabrain" context --json 2>&1)"; then
+  fail "context succeeded without the compiled binary: $missing_output"
+fi
+case "$missing_output" in
+  *"compiled binary is missing: $missing_root/.build/megabrain; run bun run build"*) ;;
+  *) fail "context did not report the missing compiled binary: $missing_output" ;;
+esac
+
+printf 'ok: context routing and missing-binary scenarios\n'

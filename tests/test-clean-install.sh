@@ -72,8 +72,13 @@ case "$version_output" in
   "megabrain $version") ;;
   *) fail "clean install returned an unexpected version: $version_output" ;;
 esac
-context_json="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" "$release_root/megabrain" context --json)"
-printf '%s' "$context_json" | jq -e '.host == "unknown"' >/dev/null || fail 'clean install context failed'
+if context_output="$(env -i HOME="$home" PATH="$clean_path" MEGABRAIN_STATE_DIR="$home/.megabrain" "$release_root/megabrain" context --json 2>&1)"; then
+  fail "clean install context succeeded without the compiled binary: $context_output"
+fi
+case "$context_output" in
+  *'compiled binary is missing: '*'.build/megabrain; run bun run build'*) ;;
+  *) fail "clean install context did not report the missing compiled binary: $context_output" ;;
+esac
 
 installer_output="$(env -i HOME="$home" PATH="$fake_bin:$clean_path" \
   MEGABRAIN_STATE_DIR="$home/.megabrain" MEGABRAIN_TEST_ARCHIVE="$archive" \
