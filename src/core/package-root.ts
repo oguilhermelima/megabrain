@@ -15,8 +15,6 @@ function isMegabrainPackage(path: string): boolean {
 
 export function resolvePackageRoot(moduleUrl: string, override?: string): string {
   if (override !== undefined && override.length > 0) return override;
-  if (moduleUrl.startsWith("file:///$bunfs/")) return dirname(dirname(process.execPath));
-
   let directory: string;
   try {
     directory = dirname(fileURLToPath(moduleUrl));

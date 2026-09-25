@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync, type Dirent } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
@@ -20,52 +20,6 @@ export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
 type State = Record<string, Record<string, unknown>>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
-const diagnosticModules = ["compiled-binary"];
-const valid = (module: string): boolean => modules.includes(module) || diagnosticModules.includes(module);
-
-function newerSource(directory: string, binaryMtime: number): string | undefined {
-  let entries: Dirent<string>[];
-  try {
-    entries = readdirSync(directory, { withFileTypes: true, encoding: "utf8" }).sort((left, right) => left.name.localeCompare(right.name));
-  } catch {
-    return undefined;
-  }
-  for (const entry of entries) {
-    const path = resolve(directory, entry.name);
-    if (entry.isDirectory()) {
-      const nested = newerSource(path, binaryMtime);
-      if (nested !== undefined) return nested;
-    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
-      try {
-        if (statSync(path).mtimeMs > binaryMtime) return path;
-      } catch {
-        // A source that disappears during the scan cannot establish staleness.
-      }
-    }
-  }
-  return undefined;
-}
-
-function compiledBinaryHealth(environment: Environment): { status: string; reason: string } {
-  const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
-  const binary = resolve(root, ".build/megabrain");
-  const source = resolve(root, "src");
-  if (!existsSync(source)) {
-    return existsSync(binary)
-      ? { status: "ok", reason: "source tree is absent; compiled binary freshness is not applicable" }
-      : { status: "not-applicable", reason: "source tree is absent; compiled binary freshness is not applicable" };
-  }
-  if (!existsSync(binary)) return { status: "unknown", reason: "compiled binary is not present; freshness cannot be determined" };
-  try {
-    const newer = newerSource(source, statSync(binary).mtimeMs);
-    return newer === undefined
-      ? { status: "ok", reason: "compiled binary is current" }
-      : { status: "misconfigured", reason: `compiled binary is stale; newer source: ${newer}; run bun run build` };
-  } catch {
-    return { status: "ok", reason: "compiled binary freshness could not be checked" };
-  }
-}
-
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
 }
@@ -318,9 +272,7 @@ async function tmuxServerState(process: ProcessAdapter): Promise<{ running: bool
 async function report(module: string, environment: Environment, process: ProcessAdapter): Promise<Report> {
   let status = "missing";
   let reason = "module is not installed";
-  if (module === "compiled-binary") {
-    ({ status, reason } = compiledBinaryHealth(environment));
-  } else if (module === "simulator-native" || module === "simulator-tv") {
+  if (module === "simulator-native" || module === "simulator-tv") {
     const platform = await process.run("uname", ["-s"]);
     const darwin = platform.kind === "ok" && platform.value.stdout.trim() === "Darwin";
     if (!darwin) { status = "unsupported"; reason = "macOS only"; }
@@ -452,17 +404,12 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
     else if (module !== undefined) return failed("doctor accepts at most one module id", 2);
     else module = arg;
   }
-  if (module !== undefined && !valid(module)) return failed(`unknown module: ${module}`, 2);
+  if (module !== undefined && !modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   const values: Report[] = [];
   for (const id of module === undefined ? modules : [module]) {
     values.push(await report(id, environment, process));
   }
-  if (module === undefined) {
-    const binary = await report("compiled-binary", environment, process);
-    if (binary.status !== "ok") values.push(binary);
-  }
-  // An absent compiled binary is an unknown freshness result, not a finding in a fresh clone.
-  const unhealthy = values.some((value) => value.status !== "ok" && !(value.module === "compiled-binary" && (value.status === "unknown" || value.status === "not-applicable")));
+  const unhealthy = values.some((value) => value.status !== "ok");
   const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
   const hook = values.find((value) => value.module === "orchestration-hooks");
   const stderr = hook?.reason.includes("codex: entry-present")
@@ -555,15 +502,18 @@ export function hookEntrypointCommand(
   runtime: HookRuntime = { execPath: process.execPath, node: process.versions.bun === undefined },
 ): string | undefined {
   const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
+  const entrypoint = resolve(root, ".build/megabrain");
   if (runtime.node) {
-    const bundle = resolve(root, ".build/megabrain.mjs");
-    if (!existsSync(bundle)) return undefined;
-    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} ${shellQuote(bundle)} hook turn-end`;
+    try {
+      if ((statSync(entrypoint).mode & 0o111) === 0) return undefined;
+    } catch {
+      return undefined;
+    }
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} ${shellQuote(entrypoint)} hook turn-end`;
   }
-  const binary = resolve(root, ".build/megabrain");
   try {
-    if ((statSync(binary).mode & 0o111) === 0) return undefined;
-    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(realpathSync(binary))} hook turn-end`;
+    if ((statSync(entrypoint).mode & 0o111) === 0) return undefined;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(realpathSync(entrypoint))} hook turn-end`;
   } catch {
     return undefined;
   }
@@ -921,8 +871,7 @@ export async function executeInstall(args: readonly string[], environment: Envir
     if (!isInteractiveTerminal()) return failed("install without a module id requires an interactive terminal");
     return interactiveInstall(environment, processAdapter, options);
   }
-  if (!valid(module)) return failed(`unknown module: ${module}`, 2);
-  if (diagnosticModules.includes(module)) return failed(`${module} is a doctor-only diagnostic`, 2);
+  if (!modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   if (revert) {
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
     return revertOrchestrationHooks(environment, processAdapter);
