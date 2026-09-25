@@ -13,6 +13,7 @@ import { executeTmux } from "./tmux.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
+import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
@@ -442,7 +443,7 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   let json = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
-    else if (arg === "-h" || arg === "--help") return ok("Usage: megabrain doctor [module-id] [--json]\n");
+    else if (arg === "-h" || arg === "--help") return ok(usageText("doctor"));
     else if (module !== undefined) return failed("doctor accepts at most one module id", 2);
     else module = arg;
   }
@@ -899,7 +900,7 @@ export async function executeInstall(args: readonly string[], environment: Envir
       index += 1;
       continue;
     }
-    if (arg === "-h" || arg === "--help") return ok("Usage: megabrain install [module-id] [--browser chromium|firefox|both] [--yes] [--revert]\n");
+    if (arg === "-h" || arg === "--help") return ok(usageText("install"));
     if (module !== undefined) return failed("install accepts at most one module id", 2);
     module = arg;
   }

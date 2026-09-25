@@ -68,6 +68,16 @@ export const USAGE_LINES = {
   "web-userscript-remove": "web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]",
 } as const;
 
+const USAGE_ACTION_TEMPLATES = {
+  "web-viewport-action": "web-viewport-{action}",
+  "web-userscript-action": "web-userscript-{action}",
+} as const;
+
+const CHILD_MESSAGE_ERROR_USAGE = {
+  ask: 'ask "question" | megabrain ask --text "question"',
+  done: 'done "summary" | megabrain done --text "summary"',
+} as const;
+
 const ADDITIONAL_USAGE_LINES = {
   "native-eval": "native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]",
   "native-navigate": "native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]",
@@ -91,6 +101,14 @@ export function usageText(key: UsageKey): string {
 
 export function usageMessage(key: UsageKey): string {
   return `Usage: megabrain ${usageLine(key)}`;
+}
+
+export function usageActionMessage(key: "web-viewport-action" | "web-userscript-action", action: string): string {
+  return `Usage: megabrain ${USAGE_ACTION_TEMPLATES[key].replace("{action}", action)}`;
+}
+
+export function childMessageErrorUsage(type: keyof typeof CHILD_MESSAGE_ERROR_USAGE): string {
+  return `Usage: megabrain ${CHILD_MESSAGE_ERROR_USAGE[type]}\n`;
 }
 
 export function usageGroup(keys: readonly UsageKey[]): string {

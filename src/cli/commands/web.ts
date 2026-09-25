@@ -2,31 +2,24 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { failed, ok, type Result } from "../../core/result.js";
 import { planWeb, type WebPlan } from "../../core/web.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
+import { usageText } from "../../core/usage.js";
 import { join } from "node:path";
 
 export type WebEnvironment = Readonly<Record<string, string | undefined>>;
 
 function usage(): string {
-  return "Usage: megabrain web [--device SLUG|--category NAME|--viewport WxH] ...\n";
+  return usageText("web");
 }
 
 function helpFor(args: readonly string[]): string {
   const action = args[1]?.startsWith("-") === true ? undefined : args[1];
   const key = args[0] === "session" ? "web-session" : args[0] === "viewport" ? (action === undefined ? "web-viewport" : `web-viewport-${action}`) : args[0] === "userscript" ? (action === undefined ? "web-userscript" : `web-userscript-${action}`) : `web-${args[0] ?? ""}`;
-  const lines: Readonly<Record<string, string>> = {
-    "web-viewport": "Usage: megabrain web viewport set|show|devices ...\n",
-    "web-userscript": "Usage: megabrain web userscript install|list|remove ...\n",
-    "web-capture": "Usage: megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]\n",
-    "web-measure": "Usage: megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]\n",
-    "web-session": "Usage: megabrain web session save --url URL --output FILE [options]\n",
-    "web-viewport-set": "Usage: megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape]\n",
-    "web-viewport-show": "Usage: megabrain web viewport show [--browser chromium|firefox|both]\n",
-    "web-devices": "Usage: megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG\n",
-    "web-userscript-install": "Usage: megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]\n",
-    "web-userscript-list": "Usage: megabrain web userscript list\n",
-    "web-userscript-remove": "Usage: megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]\n",
-  };
-  return lines[key] ?? usage();
+  const usageKeys = new Set([
+    "web-viewport", "web-userscript", "web-capture", "web-measure", "web-session",
+    "web-viewport-set", "web-viewport-show", "web-devices", "web-userscript-install",
+    "web-userscript-list", "web-userscript-remove",
+  ]);
+  return usageKeys.has(key) ? usageText(key as keyof typeof import("../../core/usage.js").USAGE_LINES) : usage();
 }
 
 function scriptArgs(plan: Extract<WebPlan, { kind: "run" }>, playwrightRoot: string, userscriptsRoot: string): string[] {

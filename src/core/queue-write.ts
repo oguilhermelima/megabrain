@@ -1,5 +1,5 @@
 import { failed, ok, type Result } from "./result.js";
-import { usageText } from "./usage.js";
+import { childMessageErrorUsage as usageFromTable, usageText } from "./usage.js";
 
 export type QueueMailClass = "actionable" | "protocol" | undefined;
 export type QueueRecipient = "parent" | "child" | undefined;
@@ -10,8 +10,7 @@ export function childMessageUsage(type: "received" | "ask" | "done"): string {
 
 function childMessageErrorUsage(type: "received" | "ask" | "done"): string {
   if (type === "received") return usageText(type);
-  const value = type === "ask" ? "question" : "summary";
-  return `Usage: megabrain ${type} \"${value}\" | megabrain ${type} --text \"${value}\"\n`;
+  return usageFromTable(type);
 }
 
 export function parseChildMessage(type: string, args: readonly string[]): Result<string> {
