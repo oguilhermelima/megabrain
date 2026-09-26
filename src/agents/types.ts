@@ -22,6 +22,7 @@ export type Agent = Readonly<{
   readonly id: string;
   readonly matchesDescriptor: (descriptor: string) => boolean;
   readonly classifyLiveness: (output: string) => Result<LivenessResult>;
+  readonly firstRunDialog?: RegExp;
   readonly commandLine?: (options: AgentCommandOptions) => Result<string>;
   readonly submitKey?: () => Result<SubmitKey>;
   readonly interruptKey?: () => Result<InterruptKey>;

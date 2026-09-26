@@ -24,6 +24,11 @@ export function hasLivenessClassifier(agent: string): boolean {
   return result.kind !== "unknown" || !result.reason.startsWith(`${LIVENESS_UNAVAILABLE}:`);
 }
 
+export function isFirstRunDialog(agentId: string, output: string): boolean {
+  const dialog = getAgent(agentId)?.firstRunDialog;
+  return dialog?.test(output) ?? false;
+}
+
 export async function waitForStableIdle(
   agentId: string,
   timeoutMs: number,

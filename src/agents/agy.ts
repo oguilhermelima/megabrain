@@ -6,14 +6,17 @@ import { ok } from "../core/result.js";
 // the "Generating..." spinner line above it is what distinguishes them, and it must be checked
 // first since it is present on both screens.
 const markers: readonly AgentMarker[] = [
-  { status: "working", first: /Generating\.\.\./, reason: "terminal shows the Generating indicator" },
+  { status: "working", first: /^[ \t]*[\u2800-\u28ff][ \t]+Generating\.*$/m, reason: "terminal shows the Generating indicator" },
   { status: "idle", first: /^>\s*$/m, reason: "terminal shows an empty Antigravity composer" },
 ];
+
+const trustDialog = /^Do you trust the contents of this project\?\r?\nAntigravity CLI requires permission to read, edit, and execute files here\.\r?\n> Yes, I trust this folder\r?\n  No, exit\r?\n  ↑\/↓ Navigate · enter Confirm$/m;
 
 export const agy: Agent = {
   id: "agy",
   matchesDescriptor: (descriptor) => descriptor === "agy" || /^agy_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
+  firstRunDialog: trustDialog,
   commandLine: ({ model, agentArgs }) => {
     const parts = ["agy", "--dangerously-skip-permissions"];
     if (model !== null) parts.push("--model", doubleQuote(model));
