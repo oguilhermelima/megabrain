@@ -62,6 +62,18 @@ describe("host providers", () => {
     expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
   });
 
+  test("orca readiness classifies the captured Claude screen as idle", async () => {
+    const captured = await readFile(new URL("../fixtures/orca-terminal-screen-claude-idle.json", import.meta.url), "utf8");
+    const response = JSON.parse(captured) as { result: { terminal: { tail: string[] } } };
+    const process = processFor(Array.from({ length: 20 }, () => captured));
+    const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "claude");
+
+    expect(classifyLiveness("claude", response.result.terminal.tail.join("\n")).status).toBe("idle");
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
+  });
+
   test("orca readiness continues to accept a string terminal tail", async () => {
     const process = processFor(Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } })));
     const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
