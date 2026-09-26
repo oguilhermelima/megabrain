@@ -1,5 +1,5 @@
 export const USAGE_LINES = {
-  "install": "install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--yes] [--browser chromium|firefox|both] [--revert]",
+  "install": "install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert]",
   "doctor": "doctor [module-id] [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
