@@ -129,6 +129,12 @@ describe("agent registry", () => {
     expect(classifyLiveness("claude", "❯").status).toBe("idle");
   });
 
+  test("Claude recognizes its placeholder composer without treating typed text as idle", () => {
+    expect(classifyLiveness("claude", "❯ Try \"fix typecheck errors\"").status).toBe("idle");
+    expect(classifyLiveness("claude", "❯ fix the bug").status).toBe("unknown");
+    expect(classifyLiveness("claude", "❯ Try \"fix typecheck errors\"\nWorking\nesc to interrupt").status).toBe("working");
+  });
+
   // Captured verbatim from real Antigravity CLI 1.2.9 (gemini-3.8-flash-low) in an isolated tmux
   // pane: the composer box renders a bare "> " at the bottom whether the agent is idle or
   // generating, so idle cannot be told from the box alone — only the "Generating..." spinner line

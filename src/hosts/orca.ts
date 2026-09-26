@@ -43,7 +43,7 @@ export const orca: HostProvider = {
     return waitForStableIdle(agentId, timeoutMs, async () => {
       const call = orca.read({ workspaceId, terminalId });
       if (call.kind !== "ok") return call;
-      const result = await process.run(call.value.command, call.value.args);
+      const result = await process.run(call.value.command, [...call.value.args, "--screen"]);
       return result.kind === "ok" ? terminalTail(result.value.stdout) : failed(result.error, result.exitCode);
     }, timeoutError);
   },

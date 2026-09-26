@@ -36,7 +36,7 @@ const fourthHost: HostProvider = {
 };
 
 describe("host providers", () => {
-  test("orca readiness waits for a stable idle composer from terminal text", async () => {
+  test("orca readiness waits for a stable idle composer from the rendered screen", async () => {
     const orca = getHost("orca");
     const process = processFor([
       JSON.stringify({ result: { terminal: { tail: ["Working (2s)", "esc to interrupt"] } } }),
@@ -46,18 +46,32 @@ describe("host providers", () => {
 
     expect(result).toEqual({ kind: "ok", value: undefined });
     expect(process.calls.length).toBeGreaterThan(10);
-    expect(process.calls.every((call) => call.args[1] === "read")).toBe(true);
-    expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] });
+    expect(process.calls.every((call) => call.args[1] === "read" && call.args.includes("--screen"))).toBe(true);
+    expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json", "--screen"] });
   });
 
   test("orca readiness classifies the captured Codex screen as idle", async () => {
-    const captured = await readFile(new URL("../fixtures/orca-terminal-read-codex-idle.json", import.meta.url), "utf8");
+    const captured = await readFile(new URL("../fixtures/orca-terminal-screen-codex-idle.json", import.meta.url), "utf8");
     const response = JSON.parse(captured) as { result: { terminal: { tail: string[] } } };
     const process = processFor(Array.from({ length: 20 }, () => captured));
     const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
 
     expect(classifyLiveness("codex", response.result.terminal.tail.join("\n")).status).toBe("idle");
     expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
+  });
+
+  test("orca readiness classifies the captured Claude screen as idle", async () => {
+    const captured = await readFile(new URL("../fixtures/orca-terminal-screen-claude-idle.json", import.meta.url), "utf8");
+    const response = JSON.parse(captured) as { result: { terminal: { tail: string[] } } };
+    const process = processFor(Array.from({ length: 20 }, () => captured));
+    const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "claude");
+
+    expect(classifyLiveness("claude", response.result.terminal.tail.join("\n")).status).toBe("idle");
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
   });
 
   test("orca readiness continues to accept a string terminal tail", async () => {
@@ -82,7 +96,7 @@ describe("host providers", () => {
     const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 0, "codex");
 
     expect(result).toEqual({ kind: "failed", error: "orca terminal terminal-child did not become ready within 0ms", exitCode: 1 });
-    expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] }]);
+    expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json", "--screen"] }]);
   });
 
   test("superset readiness polls until two consecutive non-empty reads are identical", async () => {

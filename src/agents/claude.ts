@@ -4,7 +4,7 @@ import { ok } from "../core/result.js";
 const markers: readonly AgentMarker[] = [
   { status: "pending-check", first: /Messages to be submitted after next tool call/, second: /press esc to interrupt and send immediately/, reason: "terminal is waiting to submit queued messages" },
   { status: "working", first: /Working/, second: /esc to interrupt/, reason: "terminal shows the working indicator" },
-  { status: "idle", first: /^\s*❯\s*$/m, reason: "terminal shows an empty Claude composer" },
+  { status: "idle", first: /^[ \t]*❯(?:[ \t\u00a0]+Try "[^"\r\n]*")?[ \t\u00a0]*$/m, reason: "terminal shows an empty or placeholder Claude composer" },
   { status: "blocked", first: /API Error:/, second: /authentication/, reason: "terminal shows an authentication error" },
 ];
 
