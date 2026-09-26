@@ -34,10 +34,25 @@ const fourthHost: HostProvider = {
 };
 
 describe("host providers", () => {
-  test("orca readiness builds the native wait call with its terminal and timeout", async () => {
+  test("orca readiness waits for a stable idle composer from terminal text", async () => {
+    const orca = getHost("orca");
+    const process = processFor([
+      JSON.stringify({ result: { terminal: { tail: "Working (2s)\\nesc to interrupt" } } }),
+      JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } }),
+      JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } }),
+    ]);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
+
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls.length).toBeGreaterThan(2);
+    expect(process.calls.every((call) => call.args[1] === "read")).toBe(true);
+    expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] });
+  });
+
+  test("orca readiness falls back to native wait when the agent has no liveness classifier", async () => {
     const orca = getHost("orca");
     const process = processFor([]);
-    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "unknown-agent");
 
     expect(result).toEqual({ kind: "ok", value: undefined });
     expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "wait", "--terminal", "terminal-child", "--for", "tui-idle", "--timeout-ms", "3210"] }]);
