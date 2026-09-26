@@ -1,0 +1,33 @@
+{
+  "id": "02e2e092-7bac-4a02-b22b-b3195eb900bf",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_07beaed5-03e7-47f5-b0ff-5f4fd0c50827",
+      "status": "running",
+      "tail": [
+        "╭───────────────────────────────────────────────────╮",
+        "│ >_ OpenAI Codex (v0.157.0)                        │",
+        "│                                                   │",
+        "│ model:       GPT-6-Luna medium   /model to change │",
+        "│ directory:   ~/…/Worktrees/chore-readiness-probe  │",
+        "│ permissions: YOLO mode                            │",
+        "╰───────────────────────────────────────────────────╯",
+        "                                                                      Tip: Use /keymap to configure keyboard shortcuts.",
+        "› Ask Codex to do anything",
+        "  GPT-6-Luna medium · Context 100% left · weekly 69% left · 5h 85% left",
+        "  ? for shortcuts                                                                             ⚠ 2 warnings · f2 to view"
+      ],
+      "truncated": false,
+      "limited": false,
+      "oldestCursor": "0",
+      "nextCursor": "2",
+      "latestCursor": "2",
+      "returnedLineCount": 11,
+      "source": "screen"
+    }
+  },
+  "_meta": {
+    "runtimeId": "232f966a-5b46-4d52-8dcc-564671cc54a2"
+  }
+}
