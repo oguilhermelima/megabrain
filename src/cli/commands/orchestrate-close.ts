@@ -84,6 +84,10 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   if (resolved.kind !== "ok") return { ...resolved, error: `${resolved.error}\nmegabrain: dispatch not found: ${parsed.value.dispatchId}` };
   const path = dispatchFile(resolved.value, "meta");
   const meta = await readJson(path); if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+  if (resolved.value.archived) {
+    const message = `dispatch ${parsed.value.dispatchId} is archived; nothing to close`;
+    return ok(parsed.value.json ? `${JSON.stringify({ dispatchId: parsed.value.dispatchId, status: "archived", message }, null, 2)}\n` : `${message}\n`);
+  }
   const current = await resolveCaller(environment, process);
   if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const expectedHost = text(meta.parentHost); const expectedId = text(meta.parentSessionId);

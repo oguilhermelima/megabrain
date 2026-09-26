@@ -4,7 +4,7 @@ import { parseStopArgs, stopDecision, stopOutput } from "../../core/orchestrate-
 import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { dispatchIsArchived, dispatchPath } from "../../adapters/dispatch-store.js";
 import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
@@ -40,6 +40,7 @@ function normalize(meta: RecordValue): RecordValue {
 async function parentMeta(root: string, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
+  if (await dispatchIsArchived(root, dispatch)) return failed(`dispatch ${dispatch} is archived; refusing to change it`);
   const current = await resolveCaller(env, process);
   if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const expectedHost = value(meta.parentHost); const expectedId = value(meta.parentSessionId);
@@ -154,6 +155,7 @@ export async function executeOrchestrateReconcile(args: readonly string[], env: 
   const root = resolveStateDirectory(env); const ids = all ? (await readdir(`${root}/dispatches`, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory() && entry.name !== "archive").map((entry) => entry.name) : [dispatch]; if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
   const entries: RecordValue[] = [];
   for (const id of ids) {
+    if (await dispatchIsArchived(root, id)) return failed(`dispatch ${id} is archived; refusing to reconcile it`);
     if (await readJson(await dispatchPath(root, id, "meta.json")) === undefined) { if (all) continue; return failed(`dispatch not found: ${id}`); }
     const result = await reconcileOne(root, id, process); if (result.kind !== "ok") return result; entries.push(result.value);
   }

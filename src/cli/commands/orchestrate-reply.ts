@@ -5,7 +5,7 @@ import { addSupersedeSummary, normalizeDispatchState, parseParentChangeArgs, par
 import { acquireLock, appendMessage, atomicJson, notifyChild, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { dispatchIsArchived, dispatchPath } from "../../adapters/dispatch-store.js";
 import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
 import { usageText } from "../../core/usage.js";
 
@@ -48,6 +48,7 @@ function stopReason(value: string): string {
 async function requireParent(root: string, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<JsonRecord>> {
   const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
+  if (await dispatchIsArchived(root, dispatch)) return failed(`dispatch ${dispatch} is archived; refusing to change it`);
   const current = await resolveCaller(environment, processAdapter);
   if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const expectedHost = String(meta.parentHost ?? ""); const expectedId = String(meta.parentSessionId ?? "");

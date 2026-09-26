@@ -11,7 +11,7 @@ import { acknowledgeDelivery, ackCloseRefusal, parseParentAckArgs } from "../../
 import { callerEnvironment, resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { dispatchPath } from "../../adapters/dispatch-store.js";
+import { dispatchIsArchived, dispatchPath } from "../../adapters/dispatch-store.js";
 import { usageText } from "../../core/usage.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
@@ -169,6 +169,7 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   const parsed = parseParentAckArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
   const caller = await resolveCaller(environment, process);
   const root = resolveStateDirectory(environment); const parent = await requireParent(root, parsed.value.dispatchId, caller); if (parent.kind !== "ok") return parent;
+  if (parsed.value.close === true && await dispatchIsArchived(root, parsed.value.dispatchId)) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to close it`);
   if (parsed.value.close === true && parent.value.state !== "done" && parent.value.state !== "closed") return ackCloseRefusal(parsed.value.dispatchId, typeof parent.value.state === "string" ? parent.value.state : "", parsed.value.json);
   const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, ...consumerSession(caller) });
   if (identity.kind !== "known") return failed(identity.reason);
