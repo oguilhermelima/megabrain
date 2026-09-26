@@ -50,6 +50,7 @@ export PATH="$fake_bin:$PATH"
 unset TMUX TMUX_PANE MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID
 
 tmux_cmd new-session -d -s "$parent_session" -c "$parent_dir" -x 120 -y 40 bash
+tmux_cmd set-environment -g PATH "$PATH"
 parent_pane="$(tmux_cmd display-message -p -t "$parent_session" '#{pane_id}')"
 export TMUX="$(tmux_cmd display-message -p -t "$parent_pane" '#{socket_path},#{pid},#{session_id}')"
 export TMUX_PANE="$parent_pane"
@@ -111,6 +112,22 @@ assert_equal "$(tmux_cmd list-panes -t "$session" -F '#{pane_id}' | wc -l | tr -
 "$root/.build/megabrain" orchestrate close "${dispatches[4]}" >/dev/null
 if tmux_cmd has-session -t "$session" >/dev/null 2>&1; then fail "Megabrain worktree session survived its last child"; fi
 printf 'close order: first four panes removed; final pane removed with session\n'
+
+wrapper_session="mbpane-wrapper"
+tmux_cmd new-session -d -s "$wrapper_session" -c "$worktree" -x 120 -y 40 bash
+wrapper_pane="$(tmux_cmd display-message -p -t "$wrapper_session" '#{pane_id}')"
+mkdir -p "$state/sessions"
+jq -n --arg session "$wrapper_session" --arg path "$worktree" --arg pane "$wrapper_pane" '{tmuxSession:$session,workingDirectory:$path,tmuxPane:$pane,agent:"codex",role:"main",host:"test",createdAt:"now"}' > "$state/sessions/$wrapper_session.json"
+wrapper_dispatch="dispatch-wrapper-session-child"
+wrapper_output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$wrapper_dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt wrapper --tmux true --json)"
+wrapper_meta="$state/dispatches/$wrapper_dispatch/meta.json"
+assert_equal "$(jq -r '.tmuxSession' "$wrapper_meta")" "$wrapper_session"
+assert_equal "$(jq -r '.tmuxSessionOwned' "$wrapper_meta")" false
+"$root/.build/megabrain" orchestrate close "$wrapper_dispatch" >/dev/null
+tmux_cmd has-session -t "$wrapper_session" || fail "closing a dispatch killed its wrapper session"
+tmux_cmd display-message -p -t "$wrapper_pane" '#{pane_id}' >/dev/null || fail "closing a dispatch killed the wrapper pane"
+assert_equal "$(tmux_cmd list-panes -s -t "$wrapper_session" -F '#{pane_id}' | wc -l | tr -d ' ')" 1
+printf 'wrapper session: child pane closed; wrapper pane and session remained\n'
 
 # A logical Orca caller with real tmux markers still uses its current pane when the target is its
 # own checkout, even with tmux explicitly disabled.
