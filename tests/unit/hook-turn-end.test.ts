@@ -527,10 +527,15 @@ describe("executeHookTurnEnd: a caller inside a tmux pane passes the top gate", 
           let nextPane = 30;
           const process = fakeProcess((command, args) => {
             if (command === "tmux" && args[0] === "display-message" && args.includes("#{session_name}")) return ok({ stdout: "coord-session\n", stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "display-message" && args.includes("#{pane_current_path}")) return ok({ stdout: `${resolvedWorktree}\n`, stderr: "", exitCode: 0 });
             if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: `${resolvedWorktree}\n`, stderr: "", exitCode: 0 });
             if (command === "git" && args.includes("symbolic-ref")) return ok({ stdout: "feat/chain\n", stderr: "", exitCode: 0 });
             if (command === "tmux" && args[0] === "split-window") return ok({ stdout: `%${nextPane++}\n`, stderr: "", exitCode: 0 });
-            if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: `%${nextPane++}\n`, stderr: "", exitCode: 0 });
+            if (command === "tmux" && args[0] === "list-panes") {
+              const format = args[args.indexOf("-F") + 1] ?? "";
+              const stdout = format.includes("|") ? "%0|@0|0|0|0|80|80\n" : "%0\n";
+              return ok({ stdout, stderr: "", exitCode: 0 });
+            }
             if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
             return ok({ stdout: "", stderr: "", exitCode: 0 });
           });
