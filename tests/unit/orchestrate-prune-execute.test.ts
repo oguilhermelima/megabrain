@@ -27,13 +27,15 @@ async function fixture(meta: Record<string, unknown>): Promise<{ root: string; d
 }
 
 const env = (root: string) => ({ MEGABRAIN_STATE_DIR: root });
+const unprovenHost = () => fakeProcess((command, args) => command === "orca" && args[0] === "terminal" && args[1] === "close"
+  ? failed("terminal close denied", 1)
+  : ok({ stdout: "[]\n", stderr: "", exitCode: 0 }));
 
 describe("orchestrate prune terminal proof", () => {
   test("keeps a host dispatch when a valid listing omits its terminal and records the reason", async () => {
     const f = await fixture({ childHost: "orca", runtime: "host", terminalId: "child-terminal", workspaceId: "workspace" });
     try {
-      const process = fakeProcess(() => ok({ stdout: "[]\n", stderr: "", exitCode: 0 }));
-      const result = await executeOrchestratePrune(["--json"], env(f.root), process);
+      const result = await executeOrchestratePrune(["--json"], env(f.root), unprovenHost());
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
@@ -54,7 +56,7 @@ describe("orchestrate prune terminal proof", () => {
   test("reports unproven terminals in text under a separate kept heading", async () => {
     const f = await fixture({ dispatchId: "text-dispatch", childHost: "orca", runtime: "host", terminalId: "child-terminal" });
     try {
-      const result = await executeOrchestratePrune([], env(f.root), fakeProcess(() => ok({ stdout: "[]", stderr: "", exitCode: 0 })));
+      const result = await executeOrchestratePrune([], env(f.root), unprovenHost());
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(result.value).toContain("kept: terminal not proven gone\nkept: text-dispatch (terminal is absent from the host listing)");
     } finally { await rm(f.root, { recursive: true, force: true }); }
@@ -64,7 +66,7 @@ describe("orchestrate prune terminal proof", () => {
     const f = await fixture({ childHost: "orca", runtime: "host", terminalId: "child-terminal" });
     try {
       const before = await readFile(f.metaPath);
-      const result = await executeOrchestratePrune(["--dry-run", "--json"], env(f.root), fakeProcess(() => ok({ stdout: "[]", stderr: "", exitCode: 0 })));
+      const result = await executeOrchestratePrune(["--dry-run", "--json"], env(f.root), unprovenHost());
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") {
@@ -87,9 +89,15 @@ describe("orchestrate prune terminal proof", () => {
       const result = await executeOrchestratePrune(["--json"], env(f.root), process);
 
       expect(result.kind).toBe("ok");
-      if (result.kind === "ok") expect((JSON.parse(result.value) as Record<string, unknown>).archived).toBe(1);
+      let archivePath = "";
+      if (result.kind === "ok") {
+        const output = JSON.parse(result.value) as { archived: number; archivedDispatches: Array<{ path: string }> };
+        expect(output.archived).toBe(1);
+        archivePath = output.archivedDispatches[0]?.path ?? "";
+      }
       expect(await readdir(join(f.root, "dispatches"))).not.toContain("dispatch-1");
-      expect(await readdir(join(f.root, "archive"))).toHaveLength(1);
+      expect(archivePath).not.toBe("");
+      expect(await readFile(join(archivePath, "meta.json"), "utf8")).toContain("stale-terminal");
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

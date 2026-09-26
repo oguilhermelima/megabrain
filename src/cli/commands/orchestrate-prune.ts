@@ -8,6 +8,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { atomicJson, tmuxCallerPaneSession } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { hostCloseReason, isHostTerminalAbsent } from "../../core/orchestrate-close.js";
 import { usageText } from "../../core/usage.js";
 
 type RecordValue = Record<string, unknown>;
@@ -47,7 +48,7 @@ async function childIdentityProof(directory: string): Promise<boolean> {
   return names.some((name) => name.includes("-child-"));
 }
 
-async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
+async function reconcileEntry(entry: Entry, process: ProcessAdapter, persist: boolean): Promise<RecordValue> {
   const state = text(entry.meta.state);
   const processState = text(entry.meta.processState);
   const terminalState = text(entry.meta.terminalState);
@@ -62,7 +63,7 @@ async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<Re
   const decision = reconcileDecision(entry.meta, proven ? "proven" : terminal, parent);
   if (decision.outcome === "unchanged") return entry.meta;
   const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  await atomicJson(`${entry.directory}/meta.json`, next);
+  if (persist) await atomicJson(`${entry.directory}/meta.json`, next);
   return next;
 }
 
@@ -72,40 +73,51 @@ function hostTerminalArgs(meta: RecordValue): { readonly command: string; readon
   return call?.kind === "ok" ? { ...call.value, host } : undefined;
 }
 
-async function releaseBeforePrune(meta: RecordValue, environment: Environment, process: ProcessAdapter): Promise<Result<void>> {
+type ReleaseResult = { readonly kind: "gone" } | { readonly kind: "unproven"; readonly reason: string };
+const gone: ReleaseResult = { kind: "gone" };
+const unproven = (reason: string): ReleaseResult => ({ kind: "unproven", reason });
+
+async function releaseBeforePrune(meta: RecordValue, environment: Environment, process: ProcessAdapter, dryRun: boolean): Promise<ReleaseResult> {
   const terminalState = text(meta.terminalState);
-  if (terminalState === "released" || terminalState === "missing") return ok(undefined);
-  if (terminalState === "retained") return failed("terminal identity is unproven");
+  if (terminalState === "released" || terminalState === "missing") return gone;
+  if (terminalState === "retained") return unproven(text(meta.terminalReason) || "terminal identity is unproven");
   if (text(meta.runtime) === "tmux") {
     const session = await getTmux().sessionExists(text(meta.tmuxSession), process);
-    if (session.kind !== "ok") return ok(undefined);
+    if (session.kind === "ok" && !session.value) return gone;
+    if (session.kind !== "ok") return unproven(session.error);
     const panes = await getTmux().panesForSession(text(meta.tmuxSession), process);
-    if (panes.kind !== "ok") return failed("terminal identity is unproven");
-    if (!panes.value.includes(text(meta.tmuxPane))) return ok(undefined);
+    if (panes.kind !== "ok") return unproven(panes.error);
+    if (!panes.value.includes(text(meta.tmuxPane))) return gone;
     const sessionName = text(meta.tmuxSession);
-    if (sessionName === text(meta.parentTmuxSession)) return ok(undefined);
+    if (sessionName === text(meta.parentTmuxSession)) return unproven("terminal shares the parent tmux session");
     if (environment.TMUX && environment.TMUX_PANE) {
       const caller = await tmuxCallerSession(environment, process);
-      if (caller !== undefined && caller === sessionName) return ok(undefined);
+      if (caller !== undefined && caller === sessionName) return unproven("terminal is in the calling tmux session");
     }
+    if (dryRun) return gone;
     const paneIds = panes.value;
     const released = paneIds.length > 1
       ? await getTmux().killPane(text(meta.tmuxPane), process)
       : await getTmux().killSession(sessionName, process);
-    return released.kind === "ok" ? ok(undefined) : failed("could not release dispatch terminal");
+    return released.kind === "ok" ? gone : unproven("could not release dispatch terminal");
   }
   const listing = hostTerminalArgs(meta);
-  if (listing === undefined) return failed("terminal identity is unproven");
+  if (listing === undefined) return unproven("terminal identity is unproven: host listing is unavailable");
   const terminals = await process.run(listing.command, listing.args);
-  if (terminals.kind !== "ok") return failed("terminal identity is unproven");
+  if (terminals.kind !== "ok") return unproven(`terminal identity is unproven: ${terminals.error}`);
   let parsed: unknown;
-  try { parsed = JSON.parse(terminals.value.stdout); } catch { return failed("terminal identity is unproven"); }
-  if (!containsTerminal(parsed, listing.host, text(meta.terminalId))) return ok(undefined);
+  try { parsed = JSON.parse(terminals.value.stdout); } catch { return unproven("terminal identity is unproven: host listing is invalid"); }
+  const listed = containsTerminal(parsed, listing.host, text(meta.terminalId));
+  if (!listed && dryRun) return unproven("terminal is absent from the host listing");
+  if (dryRun) return gone;
   const close = getHost(listing.host)?.close({ workspaceId: text(meta.workspaceId) || null, terminalId: text(meta.terminalId) });
-  if (close === undefined || close.kind !== "ok") return failed("could not release dispatch terminal");
+  if (close === undefined || close.kind !== "ok") return unproven(listed ? "could not release dispatch terminal" : "terminal is absent from the host listing");
   const closed = await process.run(close.value.command, close.value.args);
-  if (closed.kind === "ok" || /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(closed.error)) return ok(undefined);
-  return failed("could not release dispatch terminal");
+  if (closed.kind === "ok") return gone;
+  const closeOutput = closed.kind === "failed" && closed.stdout?.trim() ? closed.stdout : closed.error;
+  const reason = hostCloseReason(closeOutput);
+  if (isHostTerminalAbsent(reason)) return gone;
+  return unproven(listed ? `could not release dispatch terminal: ${reason}` : "terminal is absent from the host listing");
 }
 
 // The tmux session this caller is itself physically running in — used only to avoid pruning the
@@ -116,13 +128,13 @@ export async function tmuxCallerSession(environment: Environment, process: Proce
   return tmuxCallerPaneSession(environment, process);
 }
 
-async function entries(root: string): Promise<Entry[]> {
+async function entries(root: string, persist: boolean): Promise<Entry[]> {
   const result: Entry[] = [];
   for (const directory of await liveDispatchDirectories(root)) {
     try {
       const parsed = JSON.parse(await readFile(`${directory}/meta.json`, "utf8")) as RecordValue;
       const meta = normalizeMetadata(parsed);
-      if (meta !== parsed) await atomicJson(`${directory}/meta.json`, meta);
+      if (meta !== parsed && persist) await atomicJson(`${directory}/meta.json`, meta);
       if (typeof meta.dispatchId === "string") result.push({ id: meta.dispatchId, meta, directory });
     } catch { /* shell ignores unreadable metadata */ }
   }
@@ -133,24 +145,32 @@ export async function executeOrchestratePrune(args: readonly string[], environme
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-prune"));
   const parsed = parsePruneArgs(args); if (parsed.kind !== "ok") return parsed;
   const options: PruneOptions = parsed.value; const root = resolveStateDirectory(environment); const now = new Date(); const month = now.toISOString().slice(0, 7);
-  const archived: Array<{ dispatchId: string; path: string }> = []; const deleted: string[] = []; const skipped: Array<{ dispatchId: string; state: string | null; reason: string }> = [];
-  for (const entry of await entries(root)) {
+  const archived: Array<{ dispatchId: string; path: string }> = []; const deleted: string[] = []; const skipped: Array<{ dispatchId: string; state: string | null; reason: string }> = []; const terminalNotProvenGone: Array<{ dispatchId: string; reason: string }> = [];
+  for (const entry of await entries(root, !options.dryRun)) {
     let meta = entry.meta;
-    try { meta = await reconcileEntry(entry, process); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
+    try { meta = await reconcileEntry(entry, process, !options.dryRun); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
     const decision = pruneDecision(meta, options, now);
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
-    if (!options.dryRun) {
-      const released = await releaseBeforePrune(meta, environment, process);
-      if (released.kind !== "ok") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.error }); continue; }
+    const released = await releaseBeforePrune(meta, environment, process, options.dryRun);
+    if (released.kind === "unproven") {
+      terminalNotProvenGone.push({ dispatchId: entry.id, reason: released.reason });
+      if (!options.dryRun) await atomicJson(`${entry.directory}/meta.json`, {
+        ...meta,
+        terminalState: "retained",
+        terminalReason: released.reason,
+        updatedAt: new Date().toISOString(),
+      }).catch(() => undefined);
+      continue;
     }
     if (options.mode === "archive") {
       const target = dispatchArchiveDirectory(root, month, entry.id); archived.push({ dispatchId: entry.id, path: target });
       if (!options.dryRun) { try { await mkdir(dispatchArchiveParentDirectory(root, month), { recursive: true }); await rename(entry.directory, target); } catch { archived.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not archive dispatch" }); } }
     } else { deleted.push(entry.id); if (!options.dryRun) { try { await rm(entry.directory, { recursive: true, force: true }); } catch { deleted.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not delete dispatch" }); } } }
   }
-  const result = { mode: options.mode, dryRun: options.dryRun, olderThanDays: options.olderThan, archived, deleted, skipped };
-  if (options.json) return ok(json({ ...result, archived: archived.length, deleted: deleted.length, skipped: skipped.length, archivedDispatches: archived, deletedDispatches: deleted, skippedDispatches: skipped }));
+  const result = { mode: options.mode, dryRun: options.dryRun, olderThanDays: options.olderThan, archived, deleted, skipped, terminalNotProvenGone };
+  if (options.json) return ok(json({ ...result, archived: archived.length, deleted: deleted.length, skipped: skipped.length, terminalNotProvenGone: terminalNotProvenGone.length, archivedDispatches: archived, deletedDispatches: deleted, skippedDispatches: skipped, terminalNotProvenGoneDispatches: terminalNotProvenGone }));
   const lines = [`mode: ${options.mode}`, `dry-run: ${options.dryRun}`, `older-than-days: ${options.olderThan}`];
   for (const item of options.mode === "archive" ? archived : deleted.map((dispatchId) => ({ dispatchId }))) lines.push(`${options.dryRun ? "would" : ""} ${options.mode}: ${item.dispatchId}`.replace(/^ /, ""));
+  if (terminalNotProvenGone.length > 0) lines.push("kept: terminal not proven gone", ...terminalNotProvenGone.map((item) => `kept: ${item.dispatchId} (${item.reason})`));
   lines.push(`skipped: ${skipped.length}`, ...skipped.map((item) => `skipped: ${item.dispatchId} (${item.reason})`)); return ok(`${lines.join("\n")}\n`);
 }
