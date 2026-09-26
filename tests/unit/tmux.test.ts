@@ -194,7 +194,7 @@ describe("tmux identity provider", () => {
     const process: ProcessAdapter = {
       async run(command, args) {
         calls.push({ command, args: [...args] });
-        if (args[0] === "list-panes") return ok({ stdout: "%0\t@1\t0\t0\t0\t59\t120\n", stderr: "", exitCode: 0 });
+        if (args[0] === "list-panes") return ok({ stdout: "%0|@1|0|0|0|59|120\n", stderr: "", exitCode: 0 });
         if (args[0] === "split-window") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       },
@@ -202,6 +202,7 @@ describe("tmux identity provider", () => {
       invocationCount() { return calls.length; },
     };
     expect(await splitTmuxWorktreePane("worktree", "/work/tree", process, "%0")).toEqual({ kind: "ok", value: "%1" });
+    expect(calls[0]?.args.at(-1)).toBe("#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}");
     expect(calls.slice(1)).toEqual([
       { command: "tmux", args: ["split-window", "-d", "-h", "-p", "50", "-t", "%0", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] },
       { command: "tmux", args: ["resize-pane", "-t", "%0", "-x", "60"] },
@@ -210,7 +211,7 @@ describe("tmux identity provider", () => {
 
   test("stacks later children in the right column and starts a new window at four panes", async () => {
     const calls: Call[] = [];
-    let rows = "%0\t@1\t0\t0\t0\t59\t120\n%1\t@1\t0\t60\t0\t59\t120\n%2\t@1\t0\t60\t14\t59\t120\n";
+    let rows = "%0|@1|0|0|0|59|120\n%1|@1|0|60|0|59|120\n%2|@1|0|60|14|59|120\n";
     const process: ProcessAdapter = {
       async run(command, args) {
         calls.push({ command, args: [...args] });
@@ -224,7 +225,7 @@ describe("tmux identity provider", () => {
     };
     expect(await splitTmuxWorktreePane("worktree", "/work/tree", process)).toEqual({ kind: "ok", value: "%3" });
     expect(calls[1]).toEqual({ command: "tmux", args: ["split-window", "-d", "-v", "-t", "%2", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] });
-    rows += "%3\t@1\t0\t60\t28\t59\t120\n";
+    rows += "%3|@1|0|60|28|59|120\n";
     calls.length = 0;
     expect(await splitTmuxWorktreePane("worktree", "/work/tree", process)).toEqual({ kind: "ok", value: "%4" });
     expect(calls[1]).toEqual({ command: "tmux", args: ["new-window", "-d", "-t", "worktree", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] });
