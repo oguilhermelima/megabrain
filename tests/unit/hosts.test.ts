@@ -37,14 +37,13 @@ describe("host providers", () => {
   test("orca readiness waits for a stable idle composer from terminal text", async () => {
     const orca = getHost("orca");
     const process = processFor([
-      JSON.stringify({ result: { terminal: { tail: "Working (2s)\\nesc to interrupt" } } }),
-      JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } }),
-      JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } }),
+      JSON.stringify({ result: { terminal: { tail: "Working (2s)\nesc to interrupt" } } }),
+      ...Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } })),
     ]);
     const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
 
     expect(result).toEqual({ kind: "ok", value: undefined });
-    expect(process.calls.length).toBeGreaterThan(2);
+    expect(process.calls.length).toBeGreaterThan(10);
     expect(process.calls.every((call) => call.args[1] === "read")).toBe(true);
     expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] });
   });
