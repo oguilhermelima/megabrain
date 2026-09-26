@@ -60,7 +60,7 @@ const provider: TmuxProvider = {
       : unavailable(`existence of session ${session}`);
   },
   panesForSession: async (session, process) => {
-    const result = await process.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
+    const result = await process.run("tmux", ["list-panes", "-s", "-t", session, "-F", "#{pane_id}"]);
     if (result.kind !== "ok") return unavailable(`panes for session ${session}`);
     return ok(result.value.stdout.split("\n").filter((pane) => pane.length > 0));
   },
@@ -159,7 +159,7 @@ type TmuxPaneLayout = Readonly<{
 function parsePaneLayouts(output: string): readonly TmuxPaneLayout[] {
   const panes: TmuxPaneLayout[] = [];
   for (const line of output.split("\n")) {
-    const [pane, window, windowIndex, left, top, width, windowWidth] = line.split("\t");
+    const [pane, window, windowIndex, left, top, width, windowWidth] = line.split("|");
     const numbers = [windowIndex, left, top, width, windowWidth].map(Number);
     if (pane === undefined || pane === "" || window === undefined || numbers.some((value) => !Number.isFinite(value))) continue;
     panes.push({ pane, window, windowIndex: numbers[0]!, left: numbers[1]!, top: numbers[2]!, width: numbers[3]!, windowWidth: numbers[4]! });
@@ -173,8 +173,8 @@ export async function splitTmuxWorktreePane(
   process: ProcessAdapter,
   callerPane?: string,
 ): Promise<Result<string>> {
-  const format = "#{pane_id}\t#{window_id}\t#{window_index}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{window_width}";
-  const listed = await process.run("tmux", ["list-panes", "-a", "-t", session, "-F", format]);
+  const format = "#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}";
+  const listed = await process.run("tmux", ["list-panes", "-s", "-t", session, "-F", format]);
   if (listed.kind !== "ok") return failed(listed.error, listed.exitCode);
   const panes = parsePaneLayouts(listed.value.stdout);
   const caller = callerPane === undefined ? undefined : panes.find((pane) => pane.pane === callerPane);

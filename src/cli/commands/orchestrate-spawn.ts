@@ -388,6 +388,7 @@ type TmuxTarget = Readonly<{
   readonly session: string;
   readonly pane: string;
   readonly sessionOwned: boolean;
+  readonly sessionCreated: boolean;
   readonly hostTerminalId: string | null;
   readonly hostTerminalHost: string | null;
   readonly warning: string | null;
@@ -412,6 +413,7 @@ async function openWorktreeTmuxTarget(
         session: existing.session,
         pane: split.value,
         sessionOwned: existing.record.megabrainOwned === true,
+        sessionCreated: false,
         hostTerminalId: stringValue(existing.record.hostTerminalId) || null,
         hostTerminalHost: stringValue(existing.record.hostTerminalHost) || null,
         warning: null,
@@ -459,7 +461,7 @@ async function openWorktreeTmuxTarget(
     const directory = `${root}/sessions`;
     await mkdir(directory, { recursive: true });
     await atomicJson(`${directory}/${encodeURIComponent(session)}.json`, record);
-    return ok({ session, pane: panes.value[0], sessionOwned: true, hostTerminalId, hostTerminalHost, warning });
+    return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId, hostTerminalHost, warning });
   } finally {
     await acquired.value();
   }
@@ -664,6 +666,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   let session: string | null = null;
   let pane: string | null = null;
   let sessionOwned = true;
+  let sessionCreatedBySpawn = false;
   let hostTerminalId: string | null = null;
   let hostTerminalHost: string | null = null;
   let tmuxHostWarning: string | null = null;
@@ -689,6 +692,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       session = target.value.session;
       pane = target.value.pane;
       sessionOwned = target.value.sessionOwned;
+      sessionCreatedBySpawn = target.value.sessionCreated;
       hostTerminalId = target.value.hostTerminalId;
       hostTerminalHost = target.value.hostTerminalHost;
       tmuxHostWarning = target.value.warning;
@@ -815,7 +819,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       if (marked.kind !== "ok") return marked;
     }
     if (plan.action === "fail") {
-      const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
+      const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
