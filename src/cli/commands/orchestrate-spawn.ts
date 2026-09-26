@@ -358,7 +358,7 @@ async function existingTmuxSessionForWorktree(root: string, worktreePath: string
     const panes = await getTmux().panesForSession(session, process);
     if (panes.kind !== "ok" || !panes.value.includes(pane)) continue;
     const record = await readJson(`${sessionDirectory}/${encodeURIComponent(session)}.json`);
-    return { session, record: record ?? {} };
+    return { session, record: { ...meta, ...(record ?? {}) } };
   }
   return undefined;
 }
@@ -420,6 +420,7 @@ async function attachHostToWorktreeSession(
     ...record,
     tmuxSession: session,
     workingDirectory: await canonicalPath(worktree.path),
+    megabrainOwned: record.megabrainOwned === true || record.tmuxSessionOwned === true,
     hostTerminalId: terminalId,
     hostTerminalHost: host,
     workspaceId: worktree.workspaceId ?? parentWorkspace,
@@ -456,7 +457,7 @@ async function openWorktreeTmuxTarget(
       return ok({
         session: existing.session,
         pane: split.value,
-        sessionOwned: existing.record.megabrainOwned === true,
+        sessionOwned: existing.record.megabrainOwned === true || existing.record.tmuxSessionOwned === true || existing.session === `megabrain-${stringValue(existing.record.dispatchId)}`,
         sessionCreated: false,
         hostTerminalId: attached.terminalId,
         hostTerminalHost: attached.host,
