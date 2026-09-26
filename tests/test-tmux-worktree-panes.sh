@@ -36,6 +36,26 @@ tmux_cmd() {
 }
 
 mkdir -p "$state" "$fake_bin" "$parent_dir"
+export REAL_TMUX="$(command -v tmux)"
+export TMUX_TEST_SOCKET="$socket"
+cat > "$fake_bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+command_name=""
+target=""
+previous=""
+for arg in "$@"; do
+  [ -n "$command_name" ] || case "$arg" in new-session) command_name="$arg" ;; esac
+  if [ "$previous" = -s ]; then target="$arg"; fi
+  previous="$arg"
+done
+"$REAL_TMUX" "$@"
+status=$?
+if [ "$command_name" = new-session ] && [ -n "$target" ]; then
+  "$REAL_TMUX" -f /dev/null -L "$TMUX_TEST_SOCKET" set-environment -t "$target" PATH "$PATH"
+fi
+exit "$status"
+EOF
+chmod +x "$fake_bin/tmux"
 cat > "$fake_bin/codex" <<'EOF'
 #!/usr/bin/env bash
 stty -echo -icanon
@@ -48,9 +68,10 @@ export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=0
 export MEGABRAIN_AGENT_READY_TIMEOUT_MS=5000
 export PATH="$fake_bin:$PATH"
 unset TMUX TMUX_PANE MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID
+unset -f codex 2>/dev/null || true
 
 tmux_cmd new-session -d -s "$parent_session" -c "$parent_dir" -x 120 -y 40 bash
-tmux_cmd set-environment -g PATH "$PATH"
+tmux_cmd set-option -g default-command 'exec /bin/bash'
 parent_pane="$(tmux_cmd display-message -p -t "$parent_session" '#{pane_id}')"
 export TMUX="$(tmux_cmd display-message -p -t "$parent_pane" '#{socket_path},#{pid},#{session_id}')"
 export TMUX_PANE="$parent_pane"
@@ -61,10 +82,17 @@ for index in 1 2 3 4 5; do
   dispatch="dispatch-pane-child-$index"
   output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt "child $index" --tmux true --json 2>&1 || true)"
   if ! jq -e '.dispatchId' <<<"$output" >/dev/null 2>&1; then
+    transcript="$state/dispatches/$dispatch/transcript"
+    [ ! -f "$transcript" ] || cat "$transcript" >&2
     if [ -n "$session" ]; then
       printf 'pane state after failed spawn %s:\n' "$index" >&2
       tmux_cmd list-panes -s -t "$session" -F '#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}' >&2 || true
       while IFS='|' read -r _window pane_id _command _path; do tmux_cmd capture-pane -p -t "$pane_id" -S -20 >&2 || true; done < <(tmux_cmd list-panes -s -t "$session" -F '#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}')
+    else
+      printf 'tmux state after first failed spawn:\n' >&2
+      tmux_cmd list-sessions -F '#{session_name}' >&2 || true
+      tmux_cmd list-panes -a -F '#{session_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}' >&2 || true
+      while IFS='|' read -r _session _window pane_id _command _path; do tmux_cmd capture-pane -p -t "$pane_id" -S -20 >&2 || true; done < <(tmux_cmd list-panes -a -F '#{session_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}')
     fi
     fail "spawn $index failed: $output"
   fi
