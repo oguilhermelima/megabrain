@@ -10,7 +10,7 @@ const markers: readonly AgentMarker[] = [
   { status: "idle", first: /^>\s*$/m, reason: "terminal shows an empty Antigravity composer" },
 ];
 
-const trustDialog = /^Do you trust the contents of this project\?\r?\nAntigravity CLI requires permission to read, edit, and execute files here\.\r?\n> Yes, I trust this folder\r?\n  No, exit\r?\n  ↑\/↓ Navigate · enter Confirm$/m;
+const trustDialog = /^[ \t]*Do you trust the contents of this project\?[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*Antigravity CLI requires permission to read, edit, and execute files here\.[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*> Yes, I trust this folder[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*No, exit[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*↑\/↓ Navigate · enter Confirm[ \t]*$/m;
 
 export const agy: Agent = {
   id: "agy",
