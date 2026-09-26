@@ -15,6 +15,7 @@ import { tmuxCallerPaneSession } from "./queue-write.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
 import { runMachineInstall } from "./install-machine.js";
+import { discoverAgentDirectories } from "../../core/agent-directories.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
@@ -154,11 +155,9 @@ function hookEntryStatus(agent: string, path: string): "present" | "legacy" | "m
   return "missing";
 }
 
-function hookConfig(environment: Environment, agent: string): string {
-  const home = environment.HOME ?? "";
-  return agent === "claude" ? `${home}/.claude/settings.json`
-    : agent === "codex" ? `${home}/.codex/hooks.json`
-      : agent === "agy" ? `${home}/.agy/hooks.json` : `${home}/.cursor/hooks.json`;
+function hookConfig(environment: Environment, agent: HookAgent): string {
+  const config = discoverAgentDirectories(environment)[agent]?.config ?? join(environment.HOME ?? "", ".cursor");
+  return join(config, agent === "claude" ? "settings.json" : "hooks.json");
 }
 
 function configuredWorktreeRoot(environment: Environment, raw: string): string {
@@ -586,8 +585,21 @@ export function hookEntrypointCommand(
 // deleted bash wrapper's path (an older install, or one from a different checkout) or an
 // existing direct-binary command (possibly stale, e.g. pointing at a different checkout).
 function hookEntryMatches(entry: unknown): boolean {
-  return typeof entry === "object" && entry !== null &&
-    hookCommandKind(String((entry as Record<string, unknown>).command ?? "")) !== "none";
+  if (typeof entry !== "object" || entry === null) return false;
+  const command = String((entry as Record<string, unknown>).command ?? "");
+  return /(?:^|\s)MEGABRAIN_HOOK_AGENT=(?:claude|codex|agy|cursor)(?:\s|$)/.test(command) && hookCommandKind(command) !== "none";
+}
+
+function hasHookEntry(existing: Record<string, unknown>, agent: HookAgent): boolean {
+  const hooks = existing.hooks;
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return false;
+  const value = hooks as Record<string, unknown>;
+  if (agent === "cursor") return Array.isArray(value.afterAgentResponse) && value.afterAgentResponse.some(hookEntryMatches);
+  return Array.isArray(value.Stop) && value.Stop.some((group) => {
+    if (typeof group !== "object" || group === null || Array.isArray(group)) return false;
+    const entries = (group as Record<string, unknown>).hooks;
+    return Array.isArray(entries) && entries.some(hookEntryMatches);
+  });
 }
 
 function repairStopHooks(existing: Record<string, unknown>, command: string): Record<string, unknown> {
@@ -659,8 +671,15 @@ async function repairHooksConfig(agent: HookAgent, environment: Environment, pro
     } catch {
       return failed(`${agent} config is not valid JSON: ${path}`);
     }
-    const backup = await backupExistingFile(path, processAdapter);
-    if (backup.kind !== "ok") return backup;
+  }
+  if (existsSync(path) && !hasHookEntry(existing, agent)) {
+    const prefix = `${basename(path)}.megabrain-backup-`;
+    let hasBackup = false;
+    try { hasBackup = readdirSync(dirname(path)).some((name) => name.startsWith(prefix)); } catch { /* the backup helper reports a write failure */ }
+    if (!hasBackup) {
+      const backup = await backupExistingFile(path, processAdapter);
+      if (backup.kind !== "ok") return backup;
+    }
   }
   let updated: Record<string, unknown>;
   try {
