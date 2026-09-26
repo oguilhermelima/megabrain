@@ -63,6 +63,34 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
     }
   });
 
+  test("closes a last pane from an unregistered legacy dispatch record", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-legacy-session-`);
+    const calls: { command: string; args: readonly string[] }[] = [];
+    let sessionAlive = true;
+    try {
+      await mkdir(join(root, "dispatches", "legacy-d"), { recursive: true });
+      await writeFile(join(root, "dispatches", "legacy-d", "meta.json"), JSON.stringify({
+        dispatchId: "legacy-d", parentSessionId: "coord-orca-term", parentHost: "orca", childHost: "tmux",
+        terminalId: "tmux:legacy-session:%5", runtime: "tmux", tmuxSession: "legacy-session", tmuxPane: "%5",
+        parentTmuxSession: null, state: "running", processState: "running", terminalState: "owned",
+      }));
+      const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%5\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "has-session") return sessionAlive
+          ? ok({ stdout: "", stderr: "", exitCode: 0 })
+          : failed("can't find session", 1);
+        if (command === "tmux" && args[0] === "kill-session") sessionAlive = false;
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      }, calls);
+      const result = await executeOrchestrateClose(["legacy-d"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+      expect(result.kind).toBe("ok");
+      expect(calls.some((call) => call.command === "tmux" && call.args[0] === "kill-session")).toBe(true);
+      expect(sessionAlive).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("closes only a child pane in a wrapper-owned session", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-close-wrapper-session-`);
     const calls: { command: string; args: readonly string[] }[] = [];
