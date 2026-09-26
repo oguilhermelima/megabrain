@@ -531,6 +531,9 @@ describe("spawn starts children without the parent's identity", () => {
       if (command === "orca" && args[0] === "terminal" && args[1] === "create") {
         return ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 });
       }
+      if (command === "orca" && args[0] === "terminal" && args[1] === "read") {
+        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: "❯" } } }), stderr: "", exitCode: 0 });
+      }
       return ok({ stdout: "", stderr: "", exitCode: 0 });
     });
     await executeSpawn(

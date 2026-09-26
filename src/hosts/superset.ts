@@ -44,7 +44,7 @@ export const superset: HostProvider = {
       ?? stringValue(resultTerminal.id)
       ?? stringValue(root.id);
   },
-  readiness: async ({ workspaceId, terminalId }, process: ProcessAdapter, timeoutMs) => {
+  readiness: async ({ workspaceId, terminalId }, process: ProcessAdapter, timeoutMs, _agentId) => {
     const target = workspace(workspaceId);
     if (target.kind !== "ok") return target.kind === "unknown" ? unknown(target.reason) : failed(target.error, target.exitCode);
     const attempts = Math.max(1, Math.ceil(Math.max(0, timeoutMs) / 100));

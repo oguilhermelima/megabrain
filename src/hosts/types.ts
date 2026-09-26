@@ -30,7 +30,7 @@ export type HostProvider = Readonly<{
   readonly create: (input: CreateTerminal) => Result<HostCommand>;
   readonly terminalIdentity: (value: unknown) => string | undefined;
   readonly terminalIdentityVariable?: string;
-  readonly readiness: (input: TerminalTarget, process: ProcessAdapter, timeoutMs: number) => Promise<Result<void>>;
+  readonly readiness: (input: TerminalTarget, process: ProcessAdapter, timeoutMs: number, agentId: string) => Promise<Result<void>>;
   readonly list: (input: Pick<TerminalTarget, "workspaceId">) => Result<HostCommand>;
   readonly read: (input: TerminalTarget) => Result<HostCommand>;
   readonly close: (input: TerminalTarget) => Result<HostCommand>;

@@ -34,13 +34,36 @@ const fourthHost: HostProvider = {
 };
 
 describe("host providers", () => {
-  test("orca readiness builds the native wait call with its terminal and timeout", async () => {
+  test("orca readiness waits for a stable idle composer from terminal text", async () => {
+    const orca = getHost("orca");
+    const process = processFor([
+      JSON.stringify({ result: { terminal: { tail: "Working (2s)\nesc to interrupt" } } }),
+      ...Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } })),
+    ]);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
+
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.every((call) => call.args[1] === "read")).toBe(true);
+    expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] });
+  });
+
+  test("orca readiness falls back to native wait when the agent has no liveness classifier", async () => {
     const orca = getHost("orca");
     const process = processFor([]);
-    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "unknown-agent");
 
     expect(result).toEqual({ kind: "ok", value: undefined });
     expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "wait", "--terminal", "terminal-child", "--for", "tui-idle", "--timeout-ms", "3210"] }]);
+  });
+
+  test("orca readiness times out when the screen never shows idle", async () => {
+    const orca = getHost("orca");
+    const process = processFor([JSON.stringify({ result: { terminal: { tail: "Working (2s)\nesc to interrupt" } } })]);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 0, "codex");
+
+    expect(result).toEqual({ kind: "failed", error: "orca terminal terminal-child did not become ready within 0ms", exitCode: 1 });
+    expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] }]);
   });
 
   test("superset readiness polls until two consecutive non-empty reads are identical", async () => {
