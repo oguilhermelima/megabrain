@@ -151,6 +151,14 @@ describe("agent registry", () => {
     }
   });
 
+  test("agy recognises the trust dialog in a real tmux capture and the Orca capture", async () => {
+    const tmuxTrust = await readFile(new URL("../fixtures/tmux-capture-agy-trust.txt", import.meta.url), "utf8");
+    const orcaCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+
+    expect(isFirstRunDialog("agy", tmuxTrust)).toBe(true);
+    expect(isFirstRunDialog("agy", orcaCapture.result.terminal.tail.join("\n"))).toBe(true);
+  });
+
   test("agy only declares the exact preselected trust dialog", async () => {
     const capture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
     const trust = capture.result.terminal.tail.join("\n");

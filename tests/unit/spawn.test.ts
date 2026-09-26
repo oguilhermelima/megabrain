@@ -1064,6 +1064,59 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("tmux readiness answers agy's captured trust dialog once, then reaches idle", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-agy-trust-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-agy-trust";
+    const trust = await readFile(new URL("../fixtures/tmux-capture-agy-trust.txt", import.meta.url), "utf8");
+    const idleCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-idle.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+    const idle = idleCapture.result.terminal.tail.join("\n");
+    let captureCalls = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        if (text.startsWith("[megabrain dispatch")) {
+          const directory = `${root}/dispatches/${dispatchId}`;
+          await mkdir(`${directory}/messages`, { recursive: true });
+          await writeFile(`${directory}/messages/9999-child-received.json`, JSON.stringify({ type: "received", from: "child" }));
+        }
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        return ok(captureCalls === 1 ? trust : idle);
+      },
+    };
+    registerTmux(fake);
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "agy", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
+      }, process, options(worktree("existing")));
+
+      expect(result.kind).toBe("ok");
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:"))).toEqual([
+        "key:C-u",
+        "text:command",
+        "key:Enter", // submit the launch command
+        "key:Enter", // answer the trust dialog once
+        "text:prompt",
+        "key:Enter", // submit the prompt after readiness
+      ]);
+      expect(captureCalls).toBeGreaterThan(1);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("fails with a tmux readiness timeout and sends no prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-timeout-`);
     const events: string[] = [];
