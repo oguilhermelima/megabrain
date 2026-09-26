@@ -18,15 +18,45 @@ _megabrain_tmux_wrap() {
   local bin
   bin="$(command -v "$agent" 2>/dev/null || true)"
   [[ -n $bin ]] || { command $agent "$@"; return; }
-  # Every argument is quoted individually so it survives into the child command intact.
   local cmd part
-  cmd="$(printf '%q' "$bin")"
-  for part in "$@"; do
-    cmd="$cmd $(printf '%q' "$part")"
-  done
   local session="megabrain-${agent}-$$"
-  local pane cwd state_dir sessions_dir record_path temp host
-  if ! tmux new-session -d -A -s "$session" -c "$PWD" "$cmd" \; set -g mouse on \; set -g status off; then
+  local pane cwd state_dir sessions_dir record_path temp host name version major minor
+  local -a identity_names caller_names session_env command_parts unset_names caller_values
+  identity_names=(ORCA_TERMINAL_HANDLE ORCA_WORKSPACE_ID ORCA_WORKTREE_ID ORCA_TAB_ID ORCA_PANE_KEY
+    SUPERSET_TERMINAL_ID SUPERSET_WORKSPACE_ID MEGABRAIN_STATE_DIR)
+  while IFS= read -r name; do
+    case " ${identity_names[*]} " in *" $name "*) ;; *) identity_names+=("$name") ;; esac
+  done < <({ env; tmux show-environment -g 2>/dev/null || true; } | sed -nE 's/^(ORCA_AGENT_HOOK_[A-Za-z0-9_]+)=.*/\1/p')
+  while IFS= read -r name; do caller_names+=("$name"); done < <(env | sed 's/=.*//')
+
+  version="$(tmux -V 2>/dev/null | sed -E 's/^tmux ([0-9]+)\.([0-9]+).*/\1 \2/')"
+  major=0 minor=0
+  if [[ $version =~ ^[0-9]+[[:space:]]+[0-9]+$ ]]; then read -r major minor <<<"$version"; fi
+  session_env=()
+  unset_names=() caller_values=()
+  for name in "${identity_names[@]}"; do
+    case " ${caller_names[*]} " in
+      *" $name "*)
+        if (( major >= 3 )); then
+          session_env+=(-e "$name=${!name}")
+        else
+          caller_values+=("$name=${!name}")
+        fi
+        ;;
+      *) unset_names+=("$name") ;;
+    esac
+  done
+  command_parts=(env)
+  for name in "${unset_names[@]}"; do command_parts+=(-u "$name"); done
+  command_parts+=("${caller_values[@]}")
+  command_parts+=("$bin" "$@")
+  cmd=""
+  for part in "${command_parts[@]}"; do
+    if [[ -n $cmd ]]; then cmd+=" "; fi
+    cmd+="$(printf '%q' "$part")"
+  done
+  # -A keeps the existing session and its original identity when this name is reattached.
+  if ! tmux new-session -d -A "${session_env[@]}" -s "$session" -c "$PWD" "$cmd" \; set -g mouse on \; set -g status off; then
     command $agent "$@"
     return
   fi
