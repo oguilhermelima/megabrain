@@ -1,0 +1,24 @@
+{
+  "id": "4b99e99d-b04f-43a6-a1ec-91d1b6205ddd",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_19cdd282-dc26-4d8d-a7e2-c9b3f912d7dc",
+      "status": "running",
+      "tail": [
+        "╭───────────────────────────────────────────────────╮",
+        "│ >_ OpenAI Codex (v0.157.0)                        │",
+        "│                                                   │",
+        "│ model:       GPT-6-Luna medium   /model to change │",
+        "│ directory:   ~/…/Worktrees/chore-readiness-probe  │",
+        "│ permissions: YOLO mode                            │",
+        "╰───────────────────────────────────────────────────╯",
+        "                                                     Tip: Use /skills to list available skills or ask Codex to use one.",
+        "› Ask Codex to do anything",
+        "  GPT-6-Luna medium · Context 100% left · weekly 70% left · 5h 87% left",
+        "  ? for shortcuts                                                                             ⚠ 2 warnings · f2 to view"
+      ],
+      "truncated": false
+    }
+  }
+}

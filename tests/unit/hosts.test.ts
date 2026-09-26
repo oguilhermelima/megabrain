@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { hostCloseCommand } from "../../src/cli/commands/orchestrate-close.js";
 import { hostCommand } from "../../src/cli/commands/orchestrate-terminal.js";
 import { getHost, registerHost, unregisterHost, type HostProvider } from "../../src/hosts/index.js";
 import { failed, ok } from "../../src/core/result.js";
+import { classifyLiveness } from "../../src/core/liveness.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -37,8 +39,8 @@ describe("host providers", () => {
   test("orca readiness waits for a stable idle composer from terminal text", async () => {
     const orca = getHost("orca");
     const process = processFor([
-      JSON.stringify({ result: { terminal: { tail: "Working (2s)\nesc to interrupt" } } }),
-      ...Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } })),
+      JSON.stringify({ result: { terminal: { tail: ["Working (2s)", "esc to interrupt"] } } }),
+      ...Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: ["› Ask Codex to do anything"] } } })),
     ]);
     const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
 
@@ -46,6 +48,23 @@ describe("host providers", () => {
     expect(process.calls.length).toBeGreaterThan(10);
     expect(process.calls.every((call) => call.args[1] === "read")).toBe(true);
     expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] });
+  });
+
+  test("orca readiness classifies the captured Codex screen as idle", async () => {
+    const captured = await readFile(new URL("../fixtures/orca-terminal-read-codex-idle.json", import.meta.url), "utf8");
+    const response = JSON.parse(captured) as { result: { terminal: { tail: string[] } } };
+    const process = processFor(Array.from({ length: 20 }, () => captured));
+    const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
+
+    expect(classifyLiveness("codex", response.result.terminal.tail.join("\n")).status).toBe("idle");
+    expect(result).toEqual({ kind: "ok", value: undefined });
+  });
+
+  test("orca readiness continues to accept a string terminal tail", async () => {
+    const process = processFor(Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } })));
+    const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
+
+    expect(result).toEqual({ kind: "ok", value: undefined });
   });
 
   test("orca readiness falls back to native wait when the agent has no liveness classifier", async () => {
@@ -59,7 +78,7 @@ describe("host providers", () => {
 
   test("orca readiness times out when the screen never shows idle", async () => {
     const orca = getHost("orca");
-    const process = processFor([JSON.stringify({ result: { terminal: { tail: "Working (2s)\nesc to interrupt" } } })]);
+    const process = processFor([JSON.stringify({ result: { terminal: { tail: ["Working (2s)", "esc to interrupt"] } } })]);
     const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 0, "codex");
 
     expect(result).toEqual({ kind: "failed", error: "orca terminal terminal-child did not become ready within 0ms", exitCode: 1 });
