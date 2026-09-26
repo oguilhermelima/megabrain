@@ -38,7 +38,7 @@ describe("retireLegacyChannels", () => {
       "agy plugin uninstall megabrain": "",
     });
 
-    const result = await retireLegacyChannels(["claude", "codex", "agy"], cli.adapter, true, false);
+    const result = await retireLegacyChannels(["claude", "codex", "agy"], cli.adapter, true, undefined);
 
     expect(result.kind).toBe("ok");
     expect(cli.calls).toContain("claude plugin uninstall megabrain@megabrain-local");
@@ -57,7 +57,7 @@ describe("retireLegacyChannels", () => {
       "agy plugin list": '{"imports":[]}\n',
     });
 
-    const result = await retireLegacyChannels(["claude", "codex", "agy"], cli.adapter, true, false);
+    const result = await retireLegacyChannels(["claude", "codex", "agy"], cli.adapter, true, undefined);
 
     expect(result.kind).toBe("ok");
     expect(cli.calls.some((call) => call.includes("uninstall") || call.includes("marketplace remove") || call.includes("plugin remove"))).toBe(false);
@@ -80,7 +80,7 @@ describe("retireLegacyInstructions", () => {
       writeFileSync(agyFile, "# megabrain recipes\n");
       writeFileSync(projectFile, "Project rules\n# megabrain recipes\n");
 
-      const result = await retireLegacyInstructions({ HOME: home }, project, true, false);
+      const result = await retireLegacyInstructions({ HOME: home }, project, true, undefined);
 
       expect(result.kind).toBe("ok");
       expect(readFileSync(codexFile, "utf8")).toBe("Keep these rules.\n");
@@ -107,7 +107,7 @@ describe("retireLegacyInstructions", () => {
       mkdirSync(project, { recursive: true });
       writeFileSync(codexFile, original);
 
-      const result = await retireLegacyInstructions({ HOME: home }, project, true, false);
+      const result = await retireLegacyInstructions({ HOME: home }, project, true, undefined);
 
       expect(result.kind).toBe("ok");
       expect(readFileSync(codexFile, "utf8")).toBe(original);
@@ -128,7 +128,7 @@ describe("retireLegacyInstructions", () => {
       mkdirSync(project, { recursive: true });
       writeFileSync(codexFile, original);
 
-      const result = await retireLegacyInstructions({ HOME: home }, project, false, false);
+      const result = await retireLegacyInstructions({ HOME: home }, project, false, undefined);
 
       expect(result.kind).toBe("ok");
       expect(readFileSync(codexFile, "utf8")).toBe(original);
