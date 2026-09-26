@@ -4,13 +4,11 @@
   "workspaces": {
     "": {
       "name": "megabrain",
-      "dependencies": {
-        "ws": "^8.21.3",
-      },
       "devDependencies": {
         "@types/bun": "1.4.2",
         "@types/ws": "^8.18.1",
         "typescript": "7.0.2",
+        "ws": "^8.21.3",
       },
     },
   },

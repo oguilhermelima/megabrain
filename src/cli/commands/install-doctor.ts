@@ -726,9 +726,13 @@ async function installSimulatorNative(processAdapter: ProcessAdapter): Promise<R
 
 async function installTvAdb(processAdapter: ProcessAdapter): Promise<Result<void>> {
   if (await available(processAdapter, "adb")) return ok(undefined);
-  const message = (await available(processAdapter, "brew"))
+  const platform = await processAdapter.run("uname", ["-s"]);
+  const os = platform.kind === "ok" ? platform.value.stdout.trim()
+    : process.platform === "darwin" ? "Darwin" : process.platform === "linux" ? "Linux" : "";
+  const brewAvailable = os === "Darwin" && await available(processAdapter, "brew");
+  const message = brewAvailable
     ? "adb is missing. Install Android platform-tools with: brew install android-platform-tools"
-    : "adb is missing. Install Android platform-tools with your OS package manager (for example: apt-get install adb)";
+    : "adb is missing. Install Android platform-tools with your OS package manager (for example: apt install adb)";
   return failed(message);
 }
 
@@ -810,7 +814,7 @@ async function installTmuxRuntime(environment: Environment, processAdapter: Proc
       const brew = await processAdapter.run("brew", ["install", "tmux"]);
       if (brew.kind !== "ok") return failed("brew install tmux failed");
     } else if (os === "Linux") {
-      return failed("tmux is missing. Install it with your package manager, for example: sudo apt-get install tmux");
+      return failed("tmux is missing. Install it with your package manager, for example: apt install tmux");
     } else {
       return failed("tmux is missing. Install tmux with your operating system package manager");
     }
