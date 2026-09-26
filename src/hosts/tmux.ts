@@ -7,6 +7,7 @@ export type TmuxSendEnvironment = Readonly<Record<string, string | undefined>>;
 export type TmuxProvider = Readonly<{
   readonly id: string;
   readonly sessionForPane: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
+  readonly paneCurrentPath?: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
   readonly sessionExists: (session: string, process: ProcessAdapter) => Promise<Result<boolean>>;
   readonly panesForSession: (session: string, process: ProcessAdapter) => Promise<Result<readonly string[]>>;
   readonly panePid: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
@@ -43,6 +44,12 @@ const provider: TmuxProvider = {
     if (result.kind !== "ok") return unavailable(`session for pane ${pane}`);
     const session = result.value.stdout.trim();
     return session.length > 0 ? ok(session) : unavailable(`session for pane ${pane}`);
+  },
+  paneCurrentPath: async (pane, process) => {
+    const result = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{pane_current_path}"]);
+    if (result.kind !== "ok") return unavailable(`working directory for pane ${pane}`);
+    const path = result.value.stdout.trim();
+    return path.length > 0 ? ok(path) : unavailable(`working directory for pane ${pane}`);
   },
   sessionExists: async (session, process) => {
     const result = await process.run("tmux", ["has-session", "-t", session]);
@@ -122,6 +129,13 @@ export async function splitTmuxWindow(
   process: ProcessAdapter,
 ): Promise<Result<string>> {
   const result = await process.run("tmux", ["split-window", "-d", "-t", session, "-c", worktreePath, "-P", "-F", "#{pane_id}"]);
+  if (result.kind !== "ok") return failed(result.error, result.exitCode);
+  const pane = result.value.stdout.trim();
+  return pane.length > 0 ? ok(pane) : failed(`tmux split for session ${session} returned no pane`);
+}
+
+export async function splitTmuxPane(session: string, targetPane: string, worktreePath: string, process: ProcessAdapter): Promise<Result<string>> {
+  const result = await process.run("tmux", ["split-window", "-d", "-h", "-t", targetPane, "-c", worktreePath, "-P", "-F", "#{pane_id}"]);
   if (result.kind !== "ok") return failed(result.error, result.exitCode);
   const pane = result.value.stdout.trim();
   return pane.length > 0 ? ok(pane) : failed(`tmux split for session ${session} returned no pane`);

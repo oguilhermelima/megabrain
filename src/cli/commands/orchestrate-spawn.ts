@@ -14,7 +14,8 @@ import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironme
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
-import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
+import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxPane, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
+import { decideTmuxPlacement } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
@@ -471,16 +472,29 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   // An explicit --tmux always wins; omitted, this follows the shell's auto default exactly (see
   // resolveAutoSpawnRuntime and tmuxRuntimeInstalled) instead of reading MEGABRAIN_SPAWN_RUNTIME,
   // an environment variable nothing in this codebase ever sets.
-  const runtime: SpawnRuntime = options.tmux === null ? resolveAutoSpawnRuntime(await tmuxRuntimeInstalled(environment)) : options.tmux ? "tmux" : "host";
-  // dispatchId does not depend on the worktree, so the wrapped prompt (the payload actually
-  // transported, not the raw --prompt) can be built and budgeted before anything is created.
+  const selectedRuntime: SpawnRuntime = options.tmux === null ? resolveAutoSpawnRuntime(await tmuxRuntimeInstalled(environment)) : options.tmux ? "tmux" : "host";
   const id = dispatchId(environment);
-  const prompt = finalPrompt(options, id);
-  const budget = validatePromptBudget(prompt, runtime);
-  if (budget.kind !== "ok") return budget;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
+  const callerInTmux = Boolean(environment.TMUX && environment.TMUX_PANE);
+  let sameWorktree = false;
+  if (callerInTmux) {
+    const callerPath = await getTmux().paneCurrentPath?.(environment.TMUX_PANE!, process);
+    if (callerPath?.kind === "ok") {
+      const [callerRealPath, targetRealPath] = await Promise.all([
+        realpath(callerPath.value).catch(() => callerPath.value),
+        realpath(worktree.path).catch(() => worktree.path),
+      ]);
+      sameWorktree = callerRealPath === targetRealPath;
+    }
+  }
+  const placement = decideTmuxPlacement({ callerInTmux, sameWorktree, tmuxRuntimeSelected: selectedRuntime === "tmux", existingSession: false });
+  const runtime: SpawnRuntime = placement.kind === "host" ? "host" : "tmux";
+  // Runtime selection depends on same-worktree tmux placement, so budget after resolving it.
+  const prompt = finalPrompt(options, id);
+  const budget = validatePromptBudget(prompt, runtime);
+  if (budget.kind !== "ok") return budget;
   const parentContext = await resolveCaller(environment, process);
   const parentWorkspace = parentWorkspaceId(environment);
   const parentTmux = parentTmuxChannel(environment);
@@ -502,14 +516,14 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   let terminalCreateAttempts: number | undefined;
 
   if (runtime === "tmux") {
-    if (parentContext.host === "tmux" && environment.TMUX_PANE !== undefined) {
+    if (placement.kind === "caller-window" && environment.TMUX_PANE !== undefined) {
       const current = await getTmux().sessionForPane(environment.TMUX_PANE, process);
       if (current.kind === "ok") {
         session = current.value;
         sessionOwned = false;
         const waited = await waitForTmuxSession(session, process);
         if (waited.kind !== "ok") return waited;
-        const split = await splitTmuxWindow(session, worktree.path, process);
+        const split = await splitTmuxPane(session, environment.TMUX_PANE, worktree.path, process);
         if (split.kind !== "ok") return split;
         pane = split.value;
       }
