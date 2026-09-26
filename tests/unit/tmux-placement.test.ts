@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
@@ -54,6 +54,43 @@ describe("tmux placement", () => {
       expect(meta).toMatchObject({ runtime: "tmux", parentHost: "orca", tmuxSession: "caller-session", tmuxPane: "%child" });
       expect(calls.some((call) => call.command === "tmux" && call.args[0] === "split-window" && call.args.includes("%caller"))).toBe(true);
       expect(calls.some((call) => call.command === "orca" && call.args[1] === "create")).toBe(false);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("opens an Orca attach tab when reusing an existing wrapper session", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-wrapper-reuse-`);
+    const state = `${root}/state`;
+    const calls: { command: string; args: readonly string[] }[] = [];
+    await mkdir(`${state}/sessions`, { recursive: true });
+    await writeFile(`${state}/sessions/wrapper-session.json`, JSON.stringify({
+      tmuxSession: "wrapper-session", workingDirectory: "/work/tree", tmuxPane: "%main", role: "main",
+    }));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (command === "tmux" && args[0] === "list-panes" && String(args.at(-1)).includes("window_id")) return ok({ stdout: "%main|@1|0|0|0|59|120\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%main\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "split-window") return ok({ stdout: "%child\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: "› Ask Codex to do anything\n", stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "create") return ok({ stdout: JSON.stringify({ handle: "wrapper-attach-tab" }), stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    const original = getTmux();
+    registerTmux({ ...original, sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok("› Ask Codex to do anything") });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], {
+        MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "orca-parent", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-wrapper-reuse", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+      }, process, { resolveWorktree: async () => ok({ path: "/work/tree", branch: "main", ownership: "existing", workspaceId: null }) });
+      expect(result.kind).toBe("ok");
+      const meta = JSON.parse(await readFile(`${state}/dispatches/dispatch-wrapper-reuse/meta.json`, "utf8")) as Record<string, unknown>;
+      expect(meta).toMatchObject({ tmuxSession: "wrapper-session", tmuxSessionOwned: false, tmuxHostTerminalId: "wrapper-attach-tab", tmuxHostTerminalHost: "orca" });
+      expect(calls.some((call) => call.command === "orca" && call.args.includes("tmux attach -t 'wrapper-session'"))).toBe(true);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
