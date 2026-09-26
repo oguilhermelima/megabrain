@@ -1,0 +1,38 @@
+{
+  "id": "9c91da2c-6167-4318-856e-d8de9633f50f",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_8df74e33-a62f-4a09-a5a6-d6f2f63aa1ef",
+      "status": "running",
+      "tail": [
+        "cd '/var/folders/01/pdv69_497hscv2q58cjmzly00000gn/T/tmp.VxglIQxolJ/fresh-agy-dir' && MEGABRAIN_NO_TMUX=1 agy --dangerou",
+        "sly-skip-permissions --model gemini-3.8-flash-low",
+        "➜  megabrain cd '/var/folders/01/pdv69_497hscv2q58cjmzly00000gn/T/tmp.VxglIQxolJ/fresh-agy-dir' && MEGABRAIN_NO_TMUX=1 a",
+        "gy --dangerously-skip-permissions --model gemini-3.8-flash-low",
+        "      ▄▀▀▄        Antigravity CLI 1.2.10",
+        "     ▀▀▀▀▀▀       guilhermeoliveiralima7@gmail.com (Google AI Pro)",
+        "    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)",
+        "   ▄▀▀    ▀▀▄     /var/folders/01/pdv69_497hscv2q58cjmzly00000gn/T/tmp.VxglIQxolJ/fresh-agy-dir",
+        "  ▄▀▀      ▀▀▄",
+        "────────────────────────────────────────────────────────────",
+        "> count slowly from 1 to 40, one number per line",
+        "⡿  Generating...",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        ">",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "Gemini 3.8 Flash (Low) │ 0 ctx │ 100% left │ 56% left"
+      ],
+      "truncated": false,
+      "limited": false,
+      "oldestCursor": "0",
+      "nextCursor": "102",
+      "latestCursor": "102",
+      "returnedLineCount": 16,
+      "source": "screen"
+    }
+  },
+  "_meta": {
+    "runtimeId": "8b6afb67-a642-4511-8f71-f79c752cf870"
+  }
+}
