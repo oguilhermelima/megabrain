@@ -43,14 +43,74 @@ describe("machine install options", () => {
     expect(parseMachineInstallArgs(["--agents", "gemini"]).kind).toBe("failed");
   });
 
+  test("parses the tmux runtime choice as yes or no", () => {
+    expect(parseMachineInstallArgs(["--tmux", "yes"])).toMatchObject({ tmux: "yes", provided: true });
+    expect(parseMachineInstallArgs(["--tmux", "no"])).toMatchObject({ tmux: "no", provided: true });
+    expect(parseMachineInstallArgs(["--tmux", "maybe"]).kind).toBe("failed");
+    expect(parseMachineInstallArgs(["--tmux", "yes", "--tmux", "no"]).kind).toBe("failed");
+  });
+
   test("omits default modules whose detectable runtime prerequisites are absent", async () => {
     expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter())).toEqual(["orchestration-hooks"]);
     expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter(["tmux", "superset", "orca"]))).toEqual([
-      "tmux-runtime", "orchestration", "orchestration-hooks", "worktree",
+      "orchestration", "orchestration-hooks", "worktree",
     ]);
     expect(await resolveDefaultModules({ HOME: "/home/example" }, processAdapter(["superset"]))).toEqual([
       "orchestration", "orchestration-hooks",
     ]);
+  });
+
+  test("--yes selects tmux when available, records the choice, and a matching rerun is a no-op", async () => {
+    const root = temporaryDirectory();
+    const environment = { HOME: join(root, "home"), MEGABRAIN_STATE_DIR: join(root, "state") };
+    const calls: string[] = [];
+    const installModule = async (module: string) => { calls.push(module); return ok("installed"); };
+    const args = ["--yes", "--agents", "none"];
+    const withTmux = processAdapter(["tmux"]);
+
+    const first = await runMachineInstall(args, environment, withTmux, installModule, false);
+    expect(first.kind).toBe("ok");
+    expect(calls).toContain("tmux-runtime");
+    const state = JSON.parse(readFileSync(join(environment.MEGABRAIN_STATE_DIR, "state.json"), "utf8")) as Record<string, any>;
+    expect(state.machineInstall.modules).toContain("tmux-runtime");
+
+    const second = await runMachineInstall(args, environment, withTmux, installModule, false);
+    expect(second.kind).toBe("ok");
+    if (second.kind === "ok") expect(second.value).toContain("already current; no changes made");
+    expect(calls.filter((module) => module === "tmux-runtime")).toHaveLength(1);
+  });
+
+  test("does not select or ask about tmux when it is absent and reports that it was not found", async () => {
+    const root = temporaryDirectory();
+    const environment = { HOME: join(root, "home"), MEGABRAIN_STATE_DIR: join(root, "state") };
+    const calls: string[] = [];
+    const result = await runMachineInstall(
+      ["--yes", "--agents", "none"], environment, processAdapter(),
+      async (module) => { calls.push(module); return ok("installed"); }, false,
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.value).toContain("tmux was not found");
+    expect(calls).not.toContain("tmux-runtime");
+  });
+
+  test("--tmux no reverts an installed wrapper with --yes and records a stable no-op selection", async () => {
+    const root = temporaryDirectory();
+    const home = join(root, "home");
+    const stateDirectory = join(root, "state");
+    const shellConfig = join(home, ".zshrc");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(stateDirectory, { recursive: true });
+    writeFileSync(shellConfig, "# user config\n# >>> megabrain tmux wrapper >>>\nsource ~/.megabrain/zsh/megabrain-agent-tmux.zsh\n# <<< megabrain tmux wrapper <<<\n");
+    writeFileSync(join(stateDirectory, "state.json"), JSON.stringify({ "tmux-runtime": { installed: true } }));
+    const environment = { HOME: home, SHELL: "/bin/zsh", MEGABRAIN_STATE_DIR: stateDirectory };
+    const args = ["--yes", "--agents", "none", "--tmux", "no"];
+    const result = await runMachineInstall(args, environment, processAdapter(["tmux"]), async () => ok("installed"), false);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.value).toContain("tmux runtime reverted");
+    expect(readFileSync(shellConfig, "utf8")).toBe("# user config\n");
+    const second = await runMachineInstall(args, environment, processAdapter(["tmux"]), async () => ok("installed"), false);
+    expect(second.kind).toBe("ok");
+    if (second.kind === "ok") expect(second.value).toContain("already current; no changes made");
   });
 
   test("keeps installing after a module fails, persists successes, and retries only failures", async () => {
