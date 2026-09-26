@@ -62,6 +62,29 @@ describe("orchestrate close: stale host terminal", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("reports the host code and message printed on stdout", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-host-error-`);
+    try {
+      await mkdir(join(root, "dispatches", "denied"), { recursive: true });
+      await writeFile(join(root, "dispatches", "denied", "meta.json"), JSON.stringify({
+        dispatchId: "denied", parentSessionId: "coord-orca-term", parentHost: "orca",
+        childHost: "orca", terminalId: "denied-child-terminal", workspaceId: "workspace",
+        runtime: "host", state: "running", processState: "running", terminalState: "owned",
+      }));
+      const process = {
+        async run() { return failed("orca exited with status 1", 1, '{"error":{"code":"PERMISSION_DENIED","message":"terminal close denied by host"}}'); },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      } satisfies ProcessAdapter;
+
+      const result = await executeOrchestrateClose(["denied"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+
+      expect(result).toEqual({ kind: "failed", error: "could not close dispatch denied: PERMISSION_DENIED: terminal close denied by host", exitCode: 1 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // executeSpawn's tmux branch never calls host.create() for any tmux dispatch (shared-pane or
