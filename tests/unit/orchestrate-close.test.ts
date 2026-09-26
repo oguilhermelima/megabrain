@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../src/core/orchestrate-close.js";
@@ -24,6 +24,66 @@ describe("orchestrate close", () => {
   test("extracts and defaults host close reasons", () => {
     expect(hostCloseReason('{"error":{"message":"terminal close denied"}}')).toBe("terminal close denied");
     expect(hostCloseReason("\n\r")).toBe("the host gave no reason");
+  });
+});
+
+describe("orchestrate close: stale host terminal", () => {
+  test("releases and closes a dispatch when Orca reports the terminal is gone", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-stale-host-`);
+    try {
+      const directory = join(root, "dispatches", "stale");
+      await mkdir(directory, { recursive: true });
+      const metaPath = join(directory, "meta.json");
+      await writeFile(metaPath, JSON.stringify({
+        dispatchId: "stale", parentSessionId: "coord-orca-term", parentHost: "orca",
+        childHost: "orca", terminalId: "stale-child-terminal", workspaceId: "workspace",
+        runtime: "host", state: "spawning", processState: "starting", terminalState: "owned",
+      }));
+      const process = {
+        async run(command: string, args: readonly string[]) {
+          if (command === "orca" && args.slice(0, 3).join(" ") === "terminal close --terminal") {
+            return failed("orca exited with status 1", 1, '{"code":"terminal_handle_stale","message":"terminal_handle_stale"}');
+          }
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      } satisfies ProcessAdapter;
+
+      const result = await executeOrchestrateClose(["stale"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(result.value).toContain("terminal was already gone");
+      const updated = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
+      expect(updated.state).toBe("closed");
+      expect(updated.terminalState).toBe("released");
+      expect(updated.processState).toBe("stopped");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the host code and message printed on stdout", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-host-error-`);
+    try {
+      await mkdir(join(root, "dispatches", "denied"), { recursive: true });
+      await writeFile(join(root, "dispatches", "denied", "meta.json"), JSON.stringify({
+        dispatchId: "denied", parentSessionId: "coord-orca-term", parentHost: "orca",
+        childHost: "orca", terminalId: "denied-child-terminal", workspaceId: "workspace",
+        runtime: "host", state: "running", processState: "running", terminalState: "owned",
+      }));
+      const process = {
+        async run() { return failed("orca exited with status 1", 1, '{"error":{"code":"PERMISSION_DENIED","message":"terminal close denied by host"}}'); },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      } satisfies ProcessAdapter;
+
+      const result = await executeOrchestrateClose(["denied"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+
+      expect(result).toEqual({ kind: "failed", error: "could not close dispatch denied: PERMISSION_DENIED: terminal close denied by host", exitCode: 1 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
