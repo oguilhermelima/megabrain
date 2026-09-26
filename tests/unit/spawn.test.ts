@@ -30,7 +30,11 @@ function processFor(events: string[], behavior: (command: string, args: readonly
     async run(command, args) {
       calls.push({ command, args: [...args] });
       events.push(`${command} ${args.join(" ")}`);
-      return await behavior(command, args);
+      const result = await behavior(command, args);
+      if (command === "orca" && args[0] === "terminal" && args[1] === "read" && result.kind === "ok" && result.value.stdout === "") {
+        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: `${codexIdleOutput}\n${claudeIdleOutput}` } } }), stderr: "", exitCode: 0 });
+      }
+      return result;
     },
     async startDetached() { return failed("not used"); },
     invocationCount() { return calls.length; },
@@ -785,8 +789,8 @@ describe("executeSpawn", () => {
     const dispatchId = "dispatch-readiness-timeout";
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
       ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
-      : command === "orca" && args[1] === "wait"
-        ? failed("terminal remained busy")
+      : command === "orca" && args[1] === "read"
+        ? ok({ stdout: JSON.stringify({ result: { terminal: { tail: "Working (2s)\\nesc to interrupt" } } }), stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "timeout", "--tmux", "false"], {
@@ -795,8 +799,9 @@ describe("executeSpawn", () => {
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "1234",
       }, process, options(worktree("existing")));
       expect(result).toEqual({ kind: "failed", error: "readiness-timeout: orca terminal child-terminal did not become ready within 1234ms", exitCode: 1 });
-      const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "send" || call.args[1] === "wait"));
-      expect(hostCalls.map((call) => call.args[1])).toEqual(["send", "wait"]);
+      const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "send" || call.args[1] === "read"));
+      expect(hostCalls[0]?.args[1]).toBe("send");
+      expect(hostCalls.filter((call) => call.args[1] === "read").length).toBeGreaterThan(1);
       expect(hostCalls.filter((call) => call.args[1] === "send")).toHaveLength(1);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
       expect(meta.reason).toBe("readiness-timeout");
@@ -817,13 +822,12 @@ describe("executeSpawn", () => {
         MEGABRAIN_SESSION_HOST: "orca",
         MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
-      const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "wait" || call.args[1] === "send"));
-      const sequence = hostCalls.map((call) => {
-        if (call.args[1] === "wait") return "readiness";
-        const text = call.args[call.args.indexOf("--text") + 1] ?? "";
-        return text.includes("MEGABRAIN_DISPATCH_ID") ? "command" : "prompt";
-      });
-      expect(sequence).toEqual(["command", "readiness", "prompt"]);
+      const hostCalls = process.calls.filter((call) => call.command === "orca");
+      const commandIndex = hostCalls.findIndex((call) => call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
+      const readinessIndexes = hostCalls.flatMap((call, index) => call.args[1] === "read" ? [index] : []);
+      const promptIndex = hostCalls.findIndex((call) => call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").startsWith("[megabrain dispatch"));
+      expect(commandIndex).toBeLessThan(readinessIndexes[0] ?? -1);
+      expect(readinessIndexes[readinessIndexes.length - 1] ?? -1).toBeLessThan(promptIndex);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -57,6 +57,15 @@ describe("host providers", () => {
     expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "wait", "--terminal", "terminal-child", "--for", "tui-idle", "--timeout-ms", "3210"] }]);
   });
 
+  test("orca readiness times out when the screen never shows idle", async () => {
+    const orca = getHost("orca");
+    const process = processFor([JSON.stringify({ result: { terminal: { tail: "Working (2s)\nesc to interrupt" } } })]);
+    const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 0, "codex");
+
+    expect(result).toEqual({ kind: "failed", error: "orca terminal terminal-child did not become ready within 0ms", exitCode: 1 });
+    expect(process.calls).toEqual([{ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json"] }]);
+  });
+
   test("superset readiness polls until two consecutive non-empty reads are identical", async () => {
     const superset = getHost("superset");
     const process = processFor([JSON.stringify({ text: "starting" }), JSON.stringify({ text: "ready" }), JSON.stringify({ text: "ready" })]);
