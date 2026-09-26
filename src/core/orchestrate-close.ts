@@ -11,8 +11,11 @@ export function hostCloseReason(raw: string): string {
     if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
       const error = parsed.error;
       if (typeof error === "object" && error !== null) {
-        if ("message" in error && typeof error.message === "string") extracted = error.message;
-        else if ("code" in error && typeof error.code === "string") extracted = error.code;
+        const code = "code" in error && typeof error.code === "string" ? error.code : "";
+        const message = "message" in error && typeof error.message === "string" ? error.message : "";
+        if (code !== "" && message !== "") extracted = code === message ? code : `${code}: ${message}`;
+        else if (message !== "") extracted = message;
+        else if (code !== "") extracted = code;
       } else if (typeof error === "string") extracted = error;
     }
     if (extracted === undefined && typeof parsed === "object" && parsed !== null && "message" in parsed && typeof parsed.message === "string") extracted = parsed.message;

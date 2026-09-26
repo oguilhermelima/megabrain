@@ -14,7 +14,7 @@ type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
 const absent = (value: string): boolean => {
   const detail = value.replaceAll("_", " ");
-  return /not found|does not exist|no such|already closed|already gone|already deleted|404|terminal handle stale|can't find (?:session|pane)|no server running/i.test(detail);
+  return /not found|does not exist|no such|already closed|already gone|already deleted|404|terminal handle stale/i.test(detail);
 };
 
 
@@ -107,11 +107,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       outcome = "shared-pane";
       if (hasSession.kind === "ok" && hasSession.value) {
         const panes = await getTmux().panesForSession(session, process);
-        if (panes.kind === "ok" && panes.value.includes(pane)) {
-          if ((await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
-        } else if (panes.kind === "ok") outcome = "absent";
-      } else if (hasSession.kind === "ok") {
-        outcome = "absent";
+        if (panes.kind === "ok" && panes.value.includes(pane) && (await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
       }
     } else {
       let paneCount = 0;
@@ -139,7 +135,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       } else if (paneExists) {
         return failed(`refusing to close the last pane in unowned tmux session ${session}`);
       } else {
-        outcome = "absent";
+        outcome = sessionOwned ? "exclusive-session" : "exclusive-pane";
       }
 
       const finalSession = sessionWasKilled ? ok(false) : await getTmux().sessionExists(session, process);
