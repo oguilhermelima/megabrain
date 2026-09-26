@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-tmux-cli.XXXXXX")"
+work="$(cd "$work" && pwd -P)"
 binary="$root/.build/megabrain"
 trap 'rm -rf "$work"' EXIT
 
