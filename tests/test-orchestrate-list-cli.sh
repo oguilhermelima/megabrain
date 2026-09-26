@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Agent sessions inherit caller markers from the host. Keep each identity scenario isolated;
+# scenarios that exercise a specific identity set their intended markers inline.
+unset MEGABRAIN_SESSION_ID MEGABRAIN_SESSION_HOST CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID \
+  ORCA_STRUCTURED_SESSION ORCA_AGENT_SESSION_SPAWN_TOKEN ORCA_TERMINAL_HANDLE SUPERSET_TERMINAL_ID
+
 # Scenarios written before implementation: archived records are hidden by default and included
 # with an explicit marker when requested, alongside plain/JSON parity, selection flags, malformed
 # records, and an empty inventory.
@@ -16,7 +21,7 @@ write_fixture() {
   printf '%s\n' '{"dispatchId":"orphan","parentSessionId":"caller","parentHost":"host","state":"orphaned","processState":"running","terminalState":"owned","worktreePath":"/orphan"}' >"$root_dir/dispatches/orphan/meta.json"
   printf '%s\n' '{"dispatchId":"uncertain","parentSessionId":"caller","parentHost":"host","state":"running","processState":"exited","terminalState":"owned","worktreePath":"/uncertain"}' >"$root_dir/dispatches/uncertain/meta.json"
   printf '%s\n' '{"dispatchId":"future","parentSessionId":"caller","parentHost":"host","state":"future","processState":"mystery","terminalState":"owned","worktreePath":"/future"}' >"$root_dir/dispatches/future/meta.json"
-  printf '%s\n' '{"dispatchId":"archived","parentSessionId":"other-session","parentHost":"host","state":"done","processState":"succeeded","terminalState":"released","worktreePath":"/archived"}' >"$root_dir/dispatches/archive/2026-09-14/archived/meta.json"
+  printf '%s\n' '{"dispatchId":"archived","parentSessionId":"caller","parentHost":"host","state":"done","processState":"succeeded","terminalState":"released","worktreePath":"/archived"}' >"$root_dir/dispatches/archive/2026-09-14/archived/meta.json"
   printf '%s\n' '{not json' >"$root_dir/dispatches/broken/meta.json"
 }
 run_side() {
@@ -66,7 +71,7 @@ chmod +x "$tmux_bin/tmux"
 tmux_state="$state_dir/tmux-state"
 mkdir -p "$tmux_state/dispatches/tmux-owned"
 printf '%s\n' '{"dispatchId":"tmux-owned","parentSessionId":"tmux-session:%7","parentHost":"tmux","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmux"}' >"$tmux_state/dispatches/tmux-owned/meta.json"
-tmux_output="$(env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
+tmux_output="$(env PATH="$tmux_bin:$PATH" MEGABRAIN_STATE_DIR="$tmux_state" TMUX=1 TMUX_PANE=%7 \
   "$root/.build/megabrain" orchestrate list --json)"
 printf '%s' "$tmux_output" | jq -e 'length == 1 and .[0].dispatchId == "tmux-owned" and .[0].ownedByCaller == true' >/dev/null ||
   fail "tmux caller identity was not selected: $tmux_output"
