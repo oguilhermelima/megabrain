@@ -70,6 +70,21 @@ describe("interactive machine install", () => {
     expect(state.machineInstall).toMatchObject({ agents: ["codex"], skill: "global", tmux: "yes" });
   });
 
+  test("modules whose prerequisite is missing are offered as unavailable and never preselected", async () => {
+    const env = environment();
+    let offered: readonly { module: string; selectedByDefault: boolean; unavailable?: boolean; skippedReason: string | undefined }[] = [];
+    const prompter = scriptedPrompter({ agents: [], modules: [] }, []);
+    await runMachineInstall([], env, processAdapter(["claude", "tmux"]), async () => ok("installed"), true, async () => ok("reverted"), () => ({
+      ...prompter(),
+      modules: async (choices) => { offered = choices; return []; },
+    }));
+
+    const adb = offered.find((choice) => choice.module === "tv-adb");
+    expect(adb).toMatchObject({ unavailable: true, selectedByDefault: false, skippedReason: "needs adb from Android platform-tools" });
+    expect(offered.find((choice) => choice.module === "worktree")).toMatchObject({ unavailable: true, skippedReason: "needs Orca and Superset" });
+    expect(offered.find((choice) => choice.module === "orchestration")).toMatchObject({ unavailable: false, selectedByDefault: true });
+  });
+
   test("declining the review changes nothing", async () => {
     const env = environment();
     const installed: string[] = [];
