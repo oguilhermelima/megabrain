@@ -605,7 +605,10 @@ function hasHookEntry(existing: Record<string, unknown>, agent: HookAgent): bool
   const hooks = existing.hooks;
   if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return false;
   const value = hooks as Record<string, unknown>;
-  const matchesAgent = (entry: unknown): boolean => hookEntryAgent(entry) === agent && hookEntryMatches(entry);
+  const matchesAgent = (entry: unknown): boolean => {
+    if (hookEntryAgent(entry) !== agent || !hookEntryMatches(entry)) return false;
+    return hookCommandKind(String((entry as Record<string, unknown>).command ?? "")) === "new";
+  };
   if (agent === "cursor") return Array.isArray(value.afterAgentResponse) && value.afterAgentResponse.some(matchesAgent);
   return Array.isArray(value.Stop) && value.Stop.some((group) => {
     if (typeof group !== "object" || group === null || Array.isArray(group)) return false;
