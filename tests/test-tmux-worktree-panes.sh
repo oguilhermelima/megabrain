@@ -38,6 +38,7 @@ tmux_cmd() {
 mkdir -p "$state" "$fake_bin" "$parent_dir"
 cat > "$fake_bin/codex" <<'EOF'
 #!/usr/bin/env bash
+stty -echo -icanon
 printf '› Ask Codex to do anything\n'
 exec sleep 300
 EOF
