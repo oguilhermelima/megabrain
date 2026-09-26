@@ -218,7 +218,7 @@ fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
   profiles: { chromium: { configPath, userDataDir: profile } },
 }));
 NODE
-MEGABRAIN_PLAYWRIGHT_ROOT="$viewport_root" "$root/megabrain" web viewport set --browser chromium --width 390 --height 844 >/dev/null
+MEGABRAIN_PLAYWRIGHT_ROOT="$viewport_root" "$root/.build/megabrain" web viewport set --browser chromium --width 390 --height 844 >/dev/null
 persisted_viewport="$(jq -c '.browser.contextOptions.viewport' "$viewport_root/chromium.json")"
 [ "$persisted_viewport" = '{"width":390,"height":844}' ] || fail "persisted viewport was not honoured: $persisted_viewport"
 printf 'ok: viewport defaults, persistence, overrides, presets, validation, and doctor scenarios\n'

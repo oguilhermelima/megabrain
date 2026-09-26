@@ -14,9 +14,9 @@ trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 
-[ -x "$binary" ] || { printf 'FAIL: compiled TypeScript binary is missing: %s\n' "$binary" >&2; exit 1; }
+[ -x "$binary" ] || { printf 'FAIL: Node entrypoint is missing: %s\n' "$binary" >&2; exit 1; }
 "$binary" __usage-table > "$state_dir/typescript-usage.tsv" || {
-  printf 'FAIL: could not read the TypeScript usage table from the binary\n' >&2
+  printf 'FAIL: could not read the TypeScript usage table from the Node entrypoint\n' >&2
   exit 1
 }
 
@@ -24,16 +24,6 @@ fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
-
-bash_usage_table() {
-  sed -n '/^megabrain_usage_line() {/,/^}/p' "$root/lib/common.sh" |
-    sed -n "s/^    \([a-z][a-z-]*\)) printf '\([^']*\)' ;;$/\1\t\2/p"
-}
-
-bash_usage_table > "$state_dir/bash-usage.tsv"
-if ! diff -u "$state_dir/bash-usage.tsv" "$state_dir/typescript-usage.tsv"; then
-  fail "the bash usage table differs from the TypeScript table returned by the binary"
-fi
 
 assert_contains() {
   case "$1" in
@@ -182,19 +172,6 @@ while IFS= read -r module_id; do
   esac
 done <<<"$module_ids"
 
-until_keys_line="$(awk '/\(\$until \| keys\) - \[/ { print; exit }' "$root/lib/chain-validation.jq")"
-[ -n "$until_keys_line" ] || fail "could not find until key schema in chain-validation.jq"
-until_keys="$(printf '%s\n' "$until_keys_line" | awk -F '[' '{print $2}' | awk -F ']' '{print $1}' | tr -d '"' | tr ',' '\n' | sed 's/^ *//;s/ *$//')"
-while IFS= read -r until_key; do
-  [ -n "$until_key" ] || continue
-  case "$skill_text" in
-    *"$until_key"*) ;;
-    *) record_coverage_failure "SKILL.md never names until key '$until_key'" ;;
-  esac
-done <<EOF
-$until_keys
-EOF
-
 while IFS= read -r top_level; do
   [ -n "$top_level" ] || continue
   case "$readme_md" in
@@ -211,11 +188,11 @@ while IFS= read -r module_id; do
   esac
 done <<<"$module_ids"
 
-# Homebrew is an installation method rather than a command or module, so this
-# is the one deliberately manual anchor in the otherwise derived checks.
+# npm is an installation method rather than a command or module, so this is the
+# one deliberately manual anchor in the otherwise derived checks.
 case "$readme_md" in
-  *Homebrew*) ;;
-  *) record_coverage_failure "README.md never names the Homebrew installation method" ;;
+  *'npm install -g'*) ;;
+  *) record_coverage_failure "README.md never names the npm installation method" ;;
 esac
 
 if [ "${#coverage_failures[@]}" -gt 0 ]; then

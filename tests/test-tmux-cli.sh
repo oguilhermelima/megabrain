@@ -68,12 +68,12 @@ config_path() {
 # MEGABRAIN_TMUX_<VERB>_IMPLEMENTATION=shell, and the compiled binary. Both megabrain_tmux_tune
 # and megabrain_tmux_wrapper are gone now (lib/module-tmux-runtime.sh keeps only command_tmux, an
 # unconditional passthrough with no implementation override left to read), so "shell" below no
-# longer means a second implementation — it means "invoked through the $root/megabrain wrapper"
+# longer means a second implementation — it means "invoked through the $root/.build/megabrain wrapper"
 # rather than the compiled binary directly. Keeping that side is still worth it: it proves the
 # wrapper's passthrough routes correctly, which is the property DECIDED item C asked for.
 run_side() {
   local side="$1" verb="$2"; shift 2
-  local executable="$root/megabrain"
+  local executable="$root/.build/megabrain"
   [ "$side" = binary ] && executable="$binary"
   env -i \
     HOME="$fixture/home" \

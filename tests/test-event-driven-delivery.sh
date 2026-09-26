@@ -183,7 +183,7 @@ mkdir -p "$state_dir/dispatches/legacy-queue/messages"
 jq -n '{seq: 1, from: "child", type: "ask", text: "legacy question", createdAt: "2026-09-10T00:00:00Z", sessionId: "child-legacy-queue"}' \
   >"$state_dir/dispatches/legacy-queue/messages/0001-child-ask.json"
 export SUPERSET_TERMINAL_ID=parent-terminal
-legacy_output="$("$root/megabrain" orchestrate watch legacy-queue --timeout 0 --poll-interval 0 --wait-mode poll --json)"
+legacy_output="$("$root/.build/megabrain" orchestrate watch legacy-queue --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 assert_equal "$(delivery_count legacy-queue)" 1
 assert_equal "$(jq -r '.messages[0].text' <<<"$legacy_output")" 'legacy question'
 printf 'legacy actionable mail is migrated before watch reads it\n'

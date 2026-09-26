@@ -82,8 +82,8 @@ scenario_route_reaches_binary() {
   for operation in create restart close; do
     set +e
     case "$operation" in
-      create) env MEGABRAIN_STATE_DIR="$work/route-$operation" "$fixture/megabrain" terminal create --command run >"$work/route-$operation.out" 2>&1 ;;
-      *) env MEGABRAIN_STATE_DIR="$work/route-$operation" "$fixture/megabrain" terminal "$operation" id:terminal >"$work/route-$operation.out" 2>&1 ;;
+      create) env MEGABRAIN_STATE_DIR="$work/route-$operation" "$fixture/.build/megabrain" terminal create --command run >"$work/route-$operation.out" 2>&1 ;;
+      *) env MEGABRAIN_STATE_DIR="$work/route-$operation" "$fixture/.build/megabrain" terminal "$operation" id:terminal >"$work/route-$operation.out" 2>&1 ;;
     esac
     status=$?
     set -e

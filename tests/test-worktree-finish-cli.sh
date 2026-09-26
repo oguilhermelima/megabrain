@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Scenarios written before implementation:
-# 1. The worktree finish wrapper routes to the compiled entrypoint.
+# 1. The Node entrypoint handles the worktree finish command.
 # 2. A recorded parent supplies the merge base and its source in the JSON answer.
 # 3. An unmerged branch is refused with the exact structured message, and --force has the
 #    same override semantics as the shell contract.
@@ -22,6 +22,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-finish-cli.XXXXXX")"
 work="$(cd "$work" && pwd -P)"
+node_bin="$work/node-bin"
+mkdir -p "$node_bin"
+ln -s "$(command -v node)" "$node_bin/node"
 trap 'rm -rf "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -44,45 +47,8 @@ setup_repo() {
 
 run_binary() {
   local state="$1"; shift
-  env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" PATH="/usr/bin:/bin" \
+  env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" PATH="$node_bin:/usr/bin:/bin" \
     "$root/.build/megabrain" "$@"
-}
-
-scenario_routes_finish_to_binary() {
-  local fixture="$work/routing" state="$work/routing-state" output status backup modified
-  source "$root/tests/fixtures/entrypoint-routing.sh"
-  make_entrypoint_routing_fixture "$root" "$fixture" 97
-  mkdir -p "$state/home"
-  set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
-    "$fixture/megabrain" worktree finish missing --json 2>&1)"
-  status=$?
-  set -e
-  assert_equal "$status" 97
-  printf 'finish route reaches the compiled entrypoint: status=%s\n' "$status"
-  backup="$work/routing-module.saved"
-  modified="$work/routing-module.modified"
-  cp "$fixture/lib/module-worktree.sh" "$backup"
-  awk '$0 !~ /^    finish\) megabrain_worktree_finish / { print }' "$backup" >"$modified"
-  mv "$modified" "$fixture/lib/module-worktree.sh"
-  set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
-    "$fixture/megabrain" worktree finish missing --json 2>&1)"
-  status=$?
-  set -e
-  [ "$status" -ne 97 ] || fail 'deleted finish route still reached the compiled entrypoint'
-  assert_contains "$output" 'unknown worktree command: finish'
-  cp "$backup" "$fixture/lib/module-worktree.sh"
-  set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" \
-    MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH=/usr/bin:/bin \
-    "$fixture/megabrain" worktree finish missing --json 2>&1)"
-  status=$?
-  set -e
-  assert_equal "$status" 97
-  printf 'finish route deletion exposes the shell dispatcher and restoration reaches binary: status=%s\n' "$status"
 }
 
 scenario_recorded_parent_controls_base() {
@@ -215,7 +181,7 @@ scenario_invalid_json_refusal() {
   mkdir -p "$state/home"
   message='unknown worktree finish option: --unexpected'
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" PATH="/usr/bin:/bin" \
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" PATH="$node_bin:/usr/bin:/bin" \
     "$root/.build/megabrain" worktree finish --json --unexpected 2>"$work/invalid.err")"
   status=$?
   set -e
@@ -249,7 +215,7 @@ EOF
   chmod +x "$bin/orca"
   child="$shared/orca"
   git -C "$repo" worktree add -q "$child" -b feat/orca main
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" ORCA_LOG="$work/orca.log" ORCA_REPO="$repo" PATH="$bin:/usr/bin:/bin" \
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" ORCA_LOG="$work/orca.log" ORCA_REPO="$repo" PATH="$bin:$node_bin:/usr/bin:/bin" \
     "$root/.build/megabrain" worktree finish "$child" --json)" ||
     fail "Orca removal finish failed: $output"
   printf '%s' "$output" | jq -e '.deleted == true and .branch == "feat/orca"' >/dev/null ||
@@ -282,7 +248,7 @@ EOF
   chmod +x "$bin/superset"
   child="$shared/superset"
   git -C "$repo" worktree add -q "$child" -b feat/superset main
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" SUPERSET_LOG="$work/superset.log" SUPERSET_REPO="$repo" SUPERSET_PATH="$child" PATH="$bin:/usr/bin:/bin" \
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" SUPERSET_LOG="$work/superset.log" SUPERSET_REPO="$repo" SUPERSET_PATH="$child" PATH="$bin:$node_bin:/usr/bin:/bin" \
     "$root/.build/megabrain" worktree finish "$child" --json)" ||
     fail "Superset removal finish failed: $output"
   printf '%s' "$output" | jq -e '.deleted == true and .branch == "feat/superset"' >/dev/null ||
@@ -315,7 +281,7 @@ EOF
   chmod +x "$bin/orca"
   child="$shared/host-branch"
   git -C "$repo" worktree add -q "$child" -b feat/host-branch main
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" ORCA_REPO="$repo" ORCA_BRANCH=feat/host-branch PATH="$bin:/usr/bin:/bin" \
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" ORCA_REPO="$repo" ORCA_BRANCH=feat/host-branch PATH="$bin:$node_bin:/usr/bin:/bin" \
     "$root/.build/megabrain" worktree finish "$child" --delete-branch --force --json 2>"$work/host-branch.err")" ||
     fail "host remover that deleted the branch was reported as failure: $output"
   printf '%s' "$output" | jq -e '.deleted == true and .branch == "feat/host-branch" and .branchDeleted == false and .error == null and .refusal == null' >/dev/null ||
@@ -345,7 +311,7 @@ EOF
   child="$shared/branch-failure"
   git -C "$repo" worktree add -q "$child" -b feat/branch-failure main
   set +e
-  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" FAIL_GIT_REPO="$repo" FAIL_GIT_BRANCH=feat/branch-failure PATH="$bin:/usr/bin:/bin" \
+  output="$(env -i HOME="$state/home" MEGABRAIN_STATE_DIR="$state" FAIL_GIT_REPO="$repo" FAIL_GIT_BRANCH=feat/branch-failure PATH="$bin:$node_bin:/usr/bin:/bin" \
     "$root/.build/megabrain" worktree finish "$child" --delete-branch --force --json 2>"$work/branch-failure.err")"
   rc=$?
   set -e
@@ -411,7 +377,6 @@ scenario_refused_removal_preserves_worktree_and_branch() {
 }
 
 [ -x "$root/.build/megabrain" ] || { printf 'skip: compiled finish binary is missing at %s; run bun run build\n' "$root/.build/megabrain"; exit 0; }
-scenario_routes_finish_to_binary
 scenario_recorded_parent_controls_base
 scenario_unmerged_refusal_and_force
 scenario_missing_parent_warns_and_refuses

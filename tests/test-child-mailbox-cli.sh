@@ -33,7 +33,7 @@ scenario_child_ack_route_preserves_content() {
   set +e
   output="$(env -i HOME="$work/home" PATH="$PATH" MEGABRAIN_ROOT="$fixture" MEGABRAIN_STATE_DIR="$state" \
     SUPERSET_TERMINAL_ID=child-terminal \
-    "$fixture/megabrain" ack delivery-fixed --json 2>"$work/ack.err")"
+    "$fixture/.build/megabrain" ack delivery-fixed --json 2>"$work/ack.err")"
   status=$?
   set -e
   assert_equal "$status" 73

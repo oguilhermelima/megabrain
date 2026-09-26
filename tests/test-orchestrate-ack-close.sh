@@ -112,9 +112,9 @@ run_parent_ack() {
   # resolved "id" is not always the plain SUPERSET_TERMINAL_ID value once a persistent session id
   # is available) to happen to match.
   if [ "$close" = true ]; then
-    output="$("$root/megabrain" orchestrate ack "$dispatch_id" "$delivery_id" --consumer superset/parent-terminal --generation 1 --close --json 2>"$state_dir/error")"
+    output="$("$root/.build/megabrain" orchestrate ack "$dispatch_id" "$delivery_id" --consumer superset/parent-terminal --generation 1 --close --json 2>"$state_dir/error")"
   else
-    output="$("$root/megabrain" orchestrate ack "$dispatch_id" "$delivery_id" --consumer superset/parent-terminal --generation 1 --json 2>"$state_dir/error")"
+    output="$("$root/.build/megabrain" orchestrate ack "$dispatch_id" "$delivery_id" --consumer superset/parent-terminal --generation 1 --json 2>"$state_dir/error")"
   fi
   rc=$?
   set -e
@@ -130,7 +130,7 @@ run_child_ack() {
   export MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION="$implementation"
   export SUPERSET_TERMINAL_ID=child-terminal
   set +e
-  output="$("$root/megabrain" ack "$delivery_id" --close 2>"$state_dir/error")"
+  output="$("$root/.build/megabrain" ack "$delivery_id" --close 2>"$state_dir/error")"
   rc=$?
   set -e
   CHILD_OUTPUT="$output"

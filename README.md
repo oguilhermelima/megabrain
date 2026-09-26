@@ -5,7 +5,7 @@
 A local orchestrator that spawns agents, keeps the conversation with them durable, and tears them
 down when the work is done.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) ![Shell](https://img.shields.io/badge/shell-bash%203.2%2B-lightgrey.svg) ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue.svg) ![Agents](https://img.shields.io/badge/agents-codex%20%7C%20claude%20%7C%20agy-orange.svg)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) ![Node](https://img.shields.io/badge/node-%3E%3D22.13.0-green.svg) ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue.svg) ![Agents](https://img.shields.io/badge/agents-codex%20%7C%20claude%20%7C%20agy-orange.svg)
 
 [Why](#why) · [Install](#install) · [Chains](#chains-choosing-who-does-the-work) · [Orchestration](#orchestration-the-conversation-that-outlives-the-terminal) · [Where it runs](#where-it-runs) · [Devices](#devices-and-browsers) · [Examples](#examples) · [Testing](#testing) · [Limits](#limits)
 
@@ -32,14 +32,13 @@ outlives the terminal it was typed in.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/oguilhermelima/megabrain/main/install.sh | bash
+npm install -g megabrain
 megabrain install --yes
 ```
 
-The delivery script downloads megabrain, builds the CLI with Bun, and links it at
-`~/.local/bin/megabrain`. Run `megabrain install` to configure the machine. In a terminal, it
-offers numbered choices for detected agent CLIs, skill scope, and modules. `--yes` accepts the
-defaults: agents found on `PATH`, global skill, and the core module set.
+The package requires Node.js 22.13 or newer. Run `megabrain install` to configure the machine. In a
+terminal, it offers numbered choices for detected agent CLIs, skill scope, and modules. `--yes`
+accepts the defaults: agents found on `PATH`, global skill, and the core module set.
 
 Choose each part explicitly for non-interactive setup:
 
@@ -59,22 +58,13 @@ when Orca, Superset, or tmux is detected on `PATH`. `tmux-runtime` is added when
 `worktree` is added when Superset and Orca are available. Modules omitted because a prerequisite is
 missing are reported with the reason. Explicitly naming a module with `--modules` always attempts it.
 
-> [!NOTE]
-> Clone only to work on megabrain itself: `git clone … && ./install.sh` delivers from the
-> checkout instead of downloading, so your edits are what gets linked.
-
-### Homebrew
-
-The personal tap installs the CLI:
+## Development
 
 ```sh
-brew tap oguilhermelima/megabrain
-brew install oguilhermelima/megabrain/megabrain
+bun install
+bun run build
+npm link
 ```
-
-This is a tap formula, not a Homebrew-core package. Homebrew cannot write to an agent's home
-directory, so it installs the CLI and megabrain keeps the agent skill synchronized at runtime.
-That is why a `brew upgrade` also keeps registered agent copies of the skill current.
 
 ```sh
 megabrain doctor          # what is installed and what is missing

@@ -68,4 +68,3 @@
 - Run megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
 - Run megabrain web userscript list.
 - Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
-- Run ./install.sh [--help].

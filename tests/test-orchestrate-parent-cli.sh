@@ -64,7 +64,7 @@ scenario_route_reaches_binary() {
   set +e
   env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_SKIP_BINARY_FRESHNESS_CHECK=true SUPERSET_TERMINAL_ID=parent-terminal \
-    "$fixture/megabrain" orchestrate "$verb" route-dispatch route-delivery --timeout 0 --poll-interval 0 --json \
+    "$fixture/.build/megabrain" orchestrate "$verb" route-dispatch route-delivery --timeout 0 --poll-interval 0 --json \
     >"$state.stdout" 2>"$state.stderr"
   status=$?
   set -e

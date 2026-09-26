@@ -4,6 +4,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-shell-removal.XXXXXX")"
+node_bin="$work/node-bin"
+mkdir -p "$node_bin"
+ln -s "$(command -v node)" "$node_bin/node"
 trap 'rm -rf "$work"' EXIT
 
 source "$root/tests/fixtures/entrypoint-routing.sh"
@@ -25,7 +28,7 @@ scenario_route_reaches_compiled_binary() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" "$content"
   set +e
-  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$implementation_name=shell" "$fixture/megabrain" "$@" 2>"$work/state-$name.err")"
+  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$implementation_name=shell" "$fixture/.build/megabrain" "$@" 2>"$work/state-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -39,7 +42,7 @@ scenario_route_reaches_compiled_binary_default() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" "$content"
   set +e
-  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$fixture/megabrain" "$@" 2>"$work/state-$name.err")"
+  output="$(env MEGABRAIN_STATE_DIR="$work/state-$name" "$fixture/.build/megabrain" "$@" 2>"$work/state-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -74,7 +77,7 @@ scenario_worktree_list_route_marker() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   set +e
   output="$(env MEGABRAIN_STATE_DIR="$work/route-worktree-list-state" \
-    MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary "$fixture/megabrain" worktree list --json 2>"$work/route-worktree-list.err")"
+    MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary "$fixture/.build/megabrain" worktree list --json 2>"$work/route-worktree-list.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -88,7 +91,7 @@ scenario_worktree_write_route_marker() {
   write_fixture_binary "$fixture" WORKTREE_WRITE_BINARY
   set +e
   output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary \
-    MEGABRAIN_STATE_DIR="$work/route-worktree-write-state" "$fixture/megabrain" \
+    MEGABRAIN_STATE_DIR="$work/route-worktree-write-state" "$fixture/.build/megabrain" \
     worktree create --repo fixture --branch feat/route --json 2>"$work/route-worktree-write.err")"
   status=$?
   set -e
@@ -103,27 +106,13 @@ scenario_spawn_route_marker() {
   write_fixture_binary "$fixture" SPAWN_BINARY
   set +e
   output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary \
-    MEGABRAIN_STATE_DIR="$work/route-spawn-state" "$fixture/megabrain" \
+    MEGABRAIN_STATE_DIR="$work/route-spawn-state" "$fixture/.build/megabrain" \
     orchestrate spawn --repo fixture --branch feat/route --json 2>"$work/route-spawn.err")"
   status=$?
   set -e
   assert_equal "$status" 73
   assert_equal "$output" SPAWN_BINARY
   printf 'orchestrate-spawn route reaches the compiled binary and preserves its marker status\n'
-}
-
-scenario_shell_worktree_write_override_fails() {
-  local fixture="$work/route-shell-override" output status
-  make_entrypoint_routing_fixture "$root" "$fixture" 73
-  set +e
-  output="$(env MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=shell \
-    MEGABRAIN_STATE_DIR="$work/route-shell-override-state" "$fixture/megabrain" \
-    orchestrate spawn --repo fixture --branch feat/route --json 2>&1)"
-  status=$?
-  set -e
-  [ "$status" -ne 0 ] || fail 'shell worktree override unexpectedly succeeded'
-  assert_contains "$output" 'shell worktree implementation no longer exists'
-  printf 'shell worktree override fails clearly after removal\n'
 }
 
 write_dispatch_fixture() {
@@ -135,7 +124,7 @@ write_dispatch_fixture() {
 run_binary_content() {
   local state="$1" dispatch="$2" verb="$3" output
   shift 3
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb" "$@")"
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb" "$@")"
   printf '%s' "$output"
 }
 
@@ -165,20 +154,20 @@ scenario_compiled_content_contracts() {
 
   state="$work/content-check"
   write_dispatch_fixture "$state" check
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --poll-interval 0 --consumer content --generation 2 --full --json)"
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --poll-interval 0 --consumer content --generation 2 --full --json)"
   assert_json "$output" '.dispatchId == "check" and .status == "empty" and .messages == []'
   printf 'check content includes the compiled empty-mailbox result\n'
 
   state="$work/content-reply"
   write_dispatch_fixture "$state" reply unknown
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate reply reply --text 'reply content' --json)"
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate reply reply --text 'reply content' --json)"
   assert_json "$output" '.dispatchId == "reply" and .status == "queued" and .nudge == "not-typed"'
   assert_equal "$(jq -r '.text' "$state/dispatches/reply/messages"/*.json)" 'reply content'
   printf 'reply content includes the queued response and status\n'
 
   state="$work/content-liveness"
   write_dispatch_fixture "$state" liveness unknown
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate liveness liveness --json)"
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate liveness liveness --json)"
   assert_json "$output" '.dispatchId == "liveness" and .dispatchState == "running" and .terminalLiveness == "unknown" and .source == "unknown"'
   printf 'liveness content includes the compiled state result\n'
 }
@@ -209,7 +198,7 @@ scenario_compiled_argument_forms() {
 scenario_change_reports_actual_interrupt_outcome() {
   local state="$work/content-change" output
   write_dispatch_fixture "$state" change superset
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
     "$root/.build/megabrain" orchestrate change change --text 'replacement content' --json)"
   assert_json "$output" '.dispatchId == "change" and .queueChanged == true and .interrupted == false and (.reason | contains("Superset"))'
@@ -239,7 +228,7 @@ scenario_worktree_pr_content() {
   printf '%s\n' "$shared" >"$state/worktree-root"
   printf '#!/usr/bin/env bash\nprintf "https://example.test/pull/7\\n"\n' >"$bin/gh"
   chmod +x "$bin/gh"
-  output="$(env -i HOME="$work/home" PATH="$bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$bin:$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     "$root/.build/megabrain" worktree pr "$shared/feature" --json)"
   assert_json "$output" '.branch == "feature/pr" and .base == "main" and .url == "https://example.test/pull/7"'
   printf 'worktree pr content reports the created pull request\n'
@@ -252,7 +241,7 @@ scenario_worktree_list_content() {
   setup_repo "$repo"
   git -C "$repo" worktree add -q "$shared/feature" -b feature/list
   printf '%s\n' "$shared" >"$state/worktree-root"
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     "$root/.build/megabrain" worktree list --json)"
   printf '%s' "$output" | jq -e --arg path "$shared/feature" \
     'length == 1 and .[0].path == $path and .[0].branch == "feature/list" and .[0].pullRequest == null' >/dev/null ||
@@ -284,7 +273,7 @@ scenario_worktree_adopt_content() {
   git -C "$repo" worktree add -q "$shared/adopted" -b feature/adopt
   printf '%s\n' "$shared" >"$state/worktree-root"
   write_superset_fixture "$bin/superset" "$repo"
-  output="$(env -i HOME="$work/home" PATH="$bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$bin:$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     "$root/.build/megabrain" worktree adopt "$shared/adopted" --json)"
   assert_json "$output" '.worktree == "'"$shared/adopted"'" and .branch == "feature/adopt" and .workspace == "workspace-7"'
   printf 'worktree adopt content registers the fixture worktree\n'
@@ -300,7 +289,7 @@ run_from_unrelated_directory() {
   local directory="$1"
   shift
   mkdir -p "$directory"
-  (cd "$directory" && env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" "$@")
+  (cd "$directory" && env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" "$@")
 }
 
 scenario_chain_content_contracts() {
@@ -348,7 +337,7 @@ EOF
 printf '%s\n' '{"terminals":[{"terminalId":"terminal-7","pid":777,"status":"active"}]}'
 EOF
   chmod +x "$bin/superset"
-  output="$(env -i HOME="$work/home" PATH="$bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$bin:$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     "$root/.build/megabrain" terminal list --json)"
   assert_json "$output" 'length == 1 and .[0].terminalId == "terminal-7" and .[0].status == "alive" and .[0].command == "run content"'
   printf 'terminal list content classifies the recorded live terminal\n'
@@ -372,13 +361,13 @@ case "${MEGABRAIN_TEST_TERMINAL_MODE:-identity}" in
 esac
 EOF
   chmod +x "$bin/superset"
-  output="$(env -i HOME="$work/home" PATH="$bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$bin:$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_TEST_TERMINAL_MODE=identity "$root/.build/megabrain" terminal list --json)"
   assert_json "$output" 'any(.[]; .terminalId == "terminal-unverified" and .status == "unknown") and any(.[]; .terminalId == "terminal-proven" and .status == "alive")'
-  output="$(env -i HOME="$work/home" PATH="$bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$bin:$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_TEST_TERMINAL_MODE=dead "$root/.build/megabrain" terminal list --json)"
   assert_json "$output" 'any(.[]; .terminalId == "terminal-proven" and .status == "dead")'
-  output="$(env -i HOME="$work/home" PATH="$bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$bin:$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_TEST_TERMINAL_MODE=stale "$root/.build/megabrain" terminal list --json)"
   assert_json "$output" 'all(.[]; .status == "stale")'
   printf 'terminal list content distinguishes identity mismatch, dead, and stale terminals\n'
@@ -389,7 +378,7 @@ scenario_terminal_list_rejects_subdirectory_selector() {
   mkdir -p "$subdir" "$state"
   setup_repo "$repo"
   set +e
-  output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
+  output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" \
     "$root/.build/megabrain" terminal list --worktree "$subdir" --json 2>&1)"
   status=$?
   set -e
@@ -404,7 +393,7 @@ scenario_falsification_is_red_for_each_route() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" BROKEN
   set +e
-  output="$(MEGABRAIN_STATE_DIR="$work/falsification-state-$name" "$fixture/megabrain" "$@" 2>"$work/falsification-$name.err")"
+  output="$(MEGABRAIN_STATE_DIR="$work/falsification-state-$name" "$fixture/.build/megabrain" "$@" 2>"$work/falsification-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -419,7 +408,7 @@ scenario_removed_route_falsification() {
   make_entrypoint_routing_fixture "$root" "$fixture" 73
   write_fixture_binary "$fixture" BROKEN
   set +e
-  output="$(env "$implementation_name=shell" MEGABRAIN_STATE_DIR="$work/falsification-removed-state-$name" "$fixture/megabrain" "$@" 2>"$work/falsification-removed-$name.err")"
+  output="$(env "$implementation_name=shell" MEGABRAIN_STATE_DIR="$work/falsification-removed-state-$name" "$fixture/.build/megabrain" "$@" 2>"$work/falsification-removed-$name.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -435,7 +424,7 @@ scenario_worktree_list_falsification() {
   set +e
   output="$(env MEGABRAIN_WORKTREE_LIST_IMPLEMENTATION=binary \
     MEGABRAIN_STATE_DIR="$work/falsification-removed-worktree-list-state" \
-    "$fixture/megabrain" worktree list --json 2>"$work/falsification-removed-worktree-list.err")"
+    "$fixture/.build/megabrain" worktree list --json 2>"$work/falsification-removed-worktree-list.err")"
   status=$?
   set -e
   assert_equal "$status" 73
@@ -455,7 +444,6 @@ scenario_falsification_is_red_for_each_route terminal-list '{"verb":"terminal-li
 scenario_worktree_list_route_marker
 scenario_worktree_write_route_marker
 scenario_spawn_route_marker
-scenario_shell_worktree_write_override_fails
 scenario_removed_route_falsification queue-ask MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"ask"}' ask route-question
 scenario_removed_route_falsification queue-received MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"received"}' received
 scenario_removed_route_falsification queue-done MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION '{"verb":"done"}' done route-summary

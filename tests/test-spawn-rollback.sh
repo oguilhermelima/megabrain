@@ -95,7 +95,7 @@ scenario_launch_failure_keeps_worktree() {
   set +e
   output="$(env -i HOME="$state/home" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
     ORCA_TERMINAL_HANDLE=parent-terminal \
-    ORCA_WAIT_STATUS=1 PATH="$bin:/usr/bin:/bin" "$root/megabrain" orchestrate spawn \
+    ORCA_WAIT_STATUS=1 PATH="$bin:/usr/bin:/bin" "$root/.build/megabrain" orchestrate spawn \
     --repo "$repo" --branch "$branch" --agent codex --model gpt-5 --effort medium \
     --prompt 'write the fixture file' --tmux false --json 2>&1)"
   launch_status=$?

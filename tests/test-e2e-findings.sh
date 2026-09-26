@@ -82,7 +82,7 @@ printf 'dispatch list uses metadata without host calls\n'
 state2="$state_root/done-ask"
 write_meta "$state2" stalled-done parent-terminal running
 SUPERSET_TERMINAL_ID=stalled-done-terminal MEGABRAIN_STATE_DIR="$state2" MEGABRAIN_DISPATCH_ID=stalled-done \
-  "$root/megabrain" done 'completed after recovery' >/dev/null
+  "$root/.build/megabrain" done 'completed after recovery' >/dev/null
 assert_equal "$(jq -r '.state' "$state2/dispatches/stalled-done/meta.json")" done
 printf 'done is accepted from the open dispatch contract\n'
 
@@ -114,12 +114,12 @@ printf 'orchestrate close releases an owned terminal on a settled dispatch\n'
 # older than the template). Isolating it is what makes this scenario deterministic.
 model_state="$state_root/model-list"
 mkdir -p "$model_state"
-model_output="$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list)"
+model_output="$(MEGABRAIN_STATE_DIR="$model_state" "$root/.build/megabrain" model list)"
 assert_contains "$model_output" 'sourced'
 assert_contains "$model_output" 'verified'
-assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .provenance.kind')" sourced
-assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.kind')" verified
-assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.verified[0]')" xhigh
+assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/.build/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .provenance.kind')" sourced
+assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/.build/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.kind')" verified
+assert_equal "$(MEGABRAIN_STATE_DIR="$model_state" "$root/.build/megabrain" model list --json | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-5.6-luna") | .reasoning.provenance.verified[0]')" xhigh
 printf 'model list separates sourced ids from verified effort spellings\n'
 
 # FINDINGS below are placed last so every scenario above still runs and reports; set -e plus

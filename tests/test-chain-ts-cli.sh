@@ -9,7 +9,7 @@ export HOME="$state/home"
 mkdir -p "$HOME/.codex/sessions"
 
 # Scenarios "empty list", "missing snapshot limits", "shell-only selection", and "stale snapshot
-# limits" are dropped (rule 3): they compared `$root/megabrain chain … ` under
+# limits" are dropped (rule 3): they compared `$root/.build/megabrain chain … ` under
 # MEGABRAIN_CHAIN_IMPLEMENTATION=shell against the compiled binary, but command_chain
 # (lib/module-chain.sh) execs the binary unconditionally for every subcommand — list, limits,
 # add, edit, delete, repair, run — with no MEGABRAIN_CHAIN_IMPLEMENTATION check anywhere in the

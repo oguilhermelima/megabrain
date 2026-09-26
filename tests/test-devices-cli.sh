@@ -58,7 +58,7 @@ routing_fixture="$work_dir/routing-fixture"
 make_entrypoint_routing_fixture "$root" "$routing_fixture" 42
 set +e
 env PATH="$work_dir/bin:$PATH" MEGABRAIN_STATE_DIR="$work_dir/routing-state" \
-  "$routing_fixture/megabrain" tv connect x >"$work_dir/routed-tv.out" 2>&1
+  "$routing_fixture/.build/megabrain" tv connect x >"$work_dir/routed-tv.out" 2>&1
 routing_status=$?
 set -e
 [ "$routing_status" -eq 42 ] || {

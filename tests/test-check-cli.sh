@@ -50,7 +50,7 @@ capture_absent() {
 
 absent_shell_output="$work_dir/absent-shell.output"
 absent_binary_output="$work_dir/absent-binary.output"
-capture_absent shell "$work_dir/absent-shell-state" "$root/megabrain" "$absent_shell_output" "$work_dir/absent-shell.status"
+capture_absent shell "$work_dir/absent-shell-state" "$root/.build/megabrain" "$absent_shell_output" "$work_dir/absent-shell.status"
 capture_absent binary "$work_dir/absent-binary-state" "$root/.build/megabrain" "$absent_binary_output" "$work_dir/absent-binary.status"
 [ "$(cat "$absent_shell_output")" = "$(cat "$absent_binary_output")" ] || {
   printf 'FAIL: absent dispatch check output differs\n' >&2
@@ -69,7 +69,7 @@ shell_state="$work_dir/shell-state"
 binary_state="$work_dir/binary-state"
 write_fixture "$shell_state"
 write_fixture "$binary_state"
-shell_output="$(run_side shell "$shell_state" "$root/megabrain")"
+shell_output="$(run_side shell "$shell_state" "$root/.build/megabrain")"
 binary_output="$(run_side binary "$binary_state" "$root/.build/megabrain")"
 [ "$shell_output" = "$binary_output" ] || { printf 'FAIL: shell and binary check output differ\n' >&2; exit 1; }
 printf 'check agrees between shell and binary\n'
@@ -78,7 +78,7 @@ shell_default_home="$work_dir/shell-home"
 binary_default_home="$work_dir/binary-home"
 write_fixture "$shell_default_home/.megabrain"
 write_fixture "$binary_default_home/.megabrain"
-shell_output="$(env -i HOME="$shell_default_home" PATH="/usr/bin:/bin" MEGABRAIN_CHECK_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" check --timeout 0 --json)"
+shell_output="$(env -i HOME="$shell_default_home" PATH="/usr/bin:/bin" MEGABRAIN_CHECK_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"
 binary_output="$(env -i HOME="$binary_default_home" PATH="/usr/bin:/bin" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"
 [ "$shell_output" = "$binary_output" ] || { printf 'FAIL: default state directory differs\n' >&2; exit 1; }
 printf 'check default state directory agrees\n'
@@ -101,12 +101,12 @@ run_ack() {
   local state_dir="$1" delivery_id="$2"
   env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state_dir" \
     MEGABRAIN_CONSUMER_ID=shared-consumer MEGABRAIN_CONSUMER_GENERATION=7 \
-    SUPERSET_TERMINAL_ID=child-terminal "$root/megabrain" ack "$delivery_id" --json
+    SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ack "$delivery_id" --json
 }
 
 handoff_state="$work_dir/handoff-state"
 write_fixture "$handoff_state"
-shell_claim="$(run_claim shell "$handoff_state" "$root/megabrain")"
+shell_claim="$(run_claim shell "$handoff_state" "$root/.build/megabrain")"
 shell_delivery_id="$(printf '%s' "$shell_claim" | jq -r '.deliveryId')"
 binary_replay="$(run_claim binary "$handoff_state" "$root/.build/megabrain")"
 assert_equal "$(printf '%s' "$binary_replay" | jq -r '.replayed')" true
@@ -117,7 +117,7 @@ handoff_state="$work_dir/handoff-state-reverse"
 write_fixture "$handoff_state"
 binary_claim="$(run_claim binary "$handoff_state" "$root/.build/megabrain")"
 binary_delivery_id="$(printf '%s' "$binary_claim" | jq -r '.deliveryId')"
-shell_replay="$(run_claim shell "$handoff_state" "$root/megabrain")"
+shell_replay="$(run_claim shell "$handoff_state" "$root/.build/megabrain")"
 assert_equal "$(printf '%s' "$shell_replay" | jq -r '.replayed')" true
 run_ack "$handoff_state" "$binary_delivery_id" >/dev/null
 assert_equal "$(jq -r '.status' "$handoff_state/dispatches/check/deliveries/$binary_delivery_id.json")" acknowledged
@@ -131,7 +131,7 @@ write_fixture "$side_binary_state"
 side_shell_claim="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$side_shell_state" \
   MEGABRAIN_CHECK_IMPLEMENTATION=shell MEGABRAIN_SESSION_HOST=parent-host \
   MEGABRAIN_SESSION_ID=parent-session SUPERSET_TERMINAL_ID=child-terminal \
-  "$root/megabrain" check --timeout 0 --json)"
+  "$root/.build/megabrain" check --timeout 0 --json)"
 side_binary_claim="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$side_binary_state" \
   MEGABRAIN_SESSION_HOST=parent-host MEGABRAIN_SESSION_ID=parent-session \
   SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"

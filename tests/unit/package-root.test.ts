@@ -22,18 +22,20 @@ describe("package root resolution", () => {
     expect(packageRootModule.resolvePackageRoot(new URL(`file://${nested}`).href)).toBe(root);
   });
 
+  test("resolves a scoped package root ending in megabrain", () => {
+    expect(packageRootModule).toBeDefined();
+    if (packageRootModule === undefined) return;
+    const root = mkdtempSync("/tmp/megabrain-scoped-package-root-");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@oguilhermelima/megabrain" }));
+    const nested = join(root, "node_modules/@oguilhermelima/megabrain/src/cli/index.js");
+    expect(packageRootModule.resolvePackageRoot(new URL(`file://${nested}`).href)).toBe(root);
+  });
+
   test("uses the explicit root override before inspecting the module path", () => {
     expect(packageRootModule).toBeDefined();
     if (packageRootModule === undefined) return;
     const override = "/tmp/megabrain-root-override";
     expect(packageRootModule.resolvePackageRoot("file:///missing/module.js", override)).toBe(override);
-  });
-
-  test("resolves compiled Bun bundle paths from the executable location", () => {
-    expect(packageRootModule).toBeDefined();
-    if (packageRootModule === undefined) return;
-    expect(packageRootModule.resolvePackageRoot("file:///$bunfs/root/megabrain/src/core/package-root.js"))
-      .toBe(dirname(dirname(process.execPath)));
   });
 
   test("reports the package name and module URL when no root exists", () => {
@@ -50,11 +52,12 @@ describe("package root resolution", () => {
     if (createCommand === undefined) return;
     const root = mkdtempSync("/tmp/megabrain-hook-root-");
     const nodePath = "/opt/Node's Runtime/bin/node";
-    const entrypoint = join(root, ".build/megabrain.mjs");
+    const entrypoint = join(root, ".build/megabrain");
     const compiled = join(root, ".build/megabrain");
     mkdirSync(join(root, ".build"), { recursive: true });
     writeFileSync(entrypoint, "bundle");
     writeFileSync(compiled, "binary");
+    chmodSync(entrypoint, 0o755);
     chmodSync(compiled, 0o755);
     expect(createCommand({ MEGABRAIN_ROOT: root }, "codex", { execPath: nodePath, node: true }))
       .toBe(`MEGABRAIN_HOOK_AGENT=codex '/opt/Node'\\''s Runtime/bin/node' '${entrypoint}' hook turn-end`);

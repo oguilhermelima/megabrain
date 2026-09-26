@@ -6,7 +6,8 @@ function isMegabrainPackage(path: string): boolean {
   try {
     const metadata: unknown = JSON.parse(readFileSync(path, "utf8"));
     return typeof metadata === "object" && metadata !== null &&
-      "name" in metadata && metadata.name === "megabrain";
+      "name" in metadata && typeof metadata.name === "string" &&
+      (metadata.name === "megabrain" || metadata.name.endsWith("/megabrain"));
   } catch {
     return false;
   }
@@ -14,8 +15,6 @@ function isMegabrainPackage(path: string): boolean {
 
 export function resolvePackageRoot(moduleUrl: string, override?: string): string {
   if (override !== undefined && override.length > 0) return override;
-  if (moduleUrl.startsWith("file:///$bunfs/")) return dirname(dirname(process.execPath));
-
   let directory: string;
   try {
     directory = dirname(fileURLToPath(moduleUrl));

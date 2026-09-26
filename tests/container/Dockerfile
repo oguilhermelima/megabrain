@@ -10,8 +10,15 @@ RUN apt-get update \
      bash jq git tmux procps ca-certificates curl tar nodejs unzip \
   && rm -rf /var/lib/apt/lists/*
 
+# Debian bookworm's nodejs is below the package's Node 22.13 runtime floor.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+  && bash /tmp/nodesource_setup.sh \
+  && apt-get install -y --no-install-recommends nodejs \
+  && node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 13)) process.exit(1)' \
+  && rm /tmp/nodesource_setup.sh
+
 # Install the pinned host-compatible Bun release so the copied checkout can
-# compile its contract-test binary inside the Linux container.
+# build its Node bundle inside the Linux container.
 ENV BUN_INSTALL=/opt/bun
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.14 \
   && chmod -R a+rx "$BUN_INSTALL" \

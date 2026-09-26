@@ -6,6 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
 [ -x "$binary" ] || { printf 'skip: compiled doctor binary is missing at %s; run bun run build\n' "$binary"; exit 0; }
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-state-doctor.XXXXXX")"
+export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
 
 cleanup() {
   local rc=$?
@@ -52,6 +53,9 @@ exit 0
 EOF
 cat >"$state_root/bin/node" <<'EOF'
 #!/usr/bin/env bash
+case "${1:-}" in
+  */.build/megabrain) exec "$MEGABRAIN_TEST_REAL_NODE" "$@" ;;
+esac
 printf '%s\n' '{"status":"unknown","reason":"latest extension versions unavailable"}'
 EOF
 chmod +x "$state_root/bin/npx" "$state_root/bin/npm" "$state_root/bin/node"

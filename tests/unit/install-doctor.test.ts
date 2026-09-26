@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeDoctor } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -143,33 +143,61 @@ describe("doctor orchestration-hooks entry detection", () => {
 
   test("reports an entry that already invokes the compiled binary directly as entry-present", async () => {
     const home = mkdtempSync("/tmp/megabrain-doctor-hooks-binary-");
+    const entrypoint = join(home, "checkout/.build/megabrain");
+    mkdirSync(join(home, "checkout/.build"), { recursive: true });
+    writeFileSync(entrypoint, "#!/usr/bin/env node\n");
+    chmodSync(entrypoint, 0o755);
     mkdirSync(join(home, ".claude"), { recursive: true });
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
-      hooks: { Stop: [{ hooks: [{ type: "command", command: "MEGABRAIN_HOOK_AGENT=claude /some/checkout/.build/megabrain hook turn-end" }] }] },
+      hooks: { Stop: [{ hooks: [{ type: "command", command: `MEGABRAIN_HOOK_AGENT=claude ${entrypoint} hook turn-end` }] }] },
     }));
     const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
     expect(result.reason).toContain("claude: entry-present");
   });
 
-  test("reports a quoted Node bundle hook as entry-present", async () => {
+  test("reports a quoted extensionless Node entrypoint hook as entry-present", async () => {
     const home = mkdtempSync("/tmp/megabrain-doctor-hooks-node-");
+    const node = join(home, "Node Runtime/bin/node");
+    const entrypoint = join(home, "megabrain package/.build/megabrain");
+    mkdirSync(join(home, "Node Runtime/bin"), { recursive: true });
+    mkdirSync(join(home, "megabrain package/.build"), { recursive: true });
+    writeFileSync(node, "node");
+    writeFileSync(entrypoint, "bundle");
     mkdirSync(join(home, ".claude"), { recursive: true });
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
-      hooks: { Stop: [{ hooks: [{ type: "command", command: "MEGABRAIN_HOOK_AGENT=claude '/opt/Node Runtime/bin/node' '/opt/megabrain package/.build/megabrain.mjs' hook turn-end" }] }] },
+      hooks: { Stop: [{ hooks: [{ type: "command", command: `MEGABRAIN_HOOK_AGENT=claude '${node}' '${entrypoint}' hook turn-end` }] }] },
     }));
     const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
     expect(result.reason).toContain("claude: entry-present");
   });
-});
 
-describe("compiled binary freshness in installed packages", () => {
-  test("reports freshness as not applicable when the package has no source tree", async () => {
-    const root = mkdtempSync("/tmp/megabrain-doctor-installed-package-");
-    const result = report(await executeDoctor(["compiled-binary", "--json"], {
-      MEGABRAIN_ROOT: root,
-    }, processFor({})));
+  test("reports when the Node interpreter path has disappeared", async () => {
+    const home = mkdtempSync("/tmp/megabrain-doctor-hooks-missing-node-");
+    const entrypoint = join(home, "checkout/.build/megabrain");
+    mkdirSync(join(home, "checkout/.build"), { recursive: true });
+    writeFileSync(entrypoint, "bundle");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: `MEGABRAIN_HOOK_AGENT=claude '${join(home, "old-node/bin/node")}' '${entrypoint}' hook turn-end` }] }] },
+    }));
+    const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
+    expect(result.status).toBe("misconfigured");
+    expect(result.reason).toContain("claude: interpreter missing");
+    expect(result.reason).toContain("megabrain install");
+  });
 
-    expect(result.status).toBe("not-applicable");
-    expect(result.reason).toContain("freshness is not applicable");
+  test("reports when the Node entrypoint path has disappeared", async () => {
+    const home = mkdtempSync("/tmp/megabrain-doctor-hooks-missing-entrypoint-");
+    const node = join(home, "Node Runtime/bin/node");
+    mkdirSync(join(home, "Node Runtime/bin"), { recursive: true });
+    writeFileSync(node, "node");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: `MEGABRAIN_HOOK_AGENT=claude '${node}' '${join(home, "deleted/.build/megabrain")}' hook turn-end` }] }] },
+    }));
+    const result = report(await executeDoctor(["orchestration-hooks", "--json"], { HOME: home }, processFor({})));
+    expect(result.status).toBe("misconfigured");
+    expect(result.reason).toContain("claude: entrypoint missing");
+    expect(result.reason).toContain("megabrain install");
   });
 });
