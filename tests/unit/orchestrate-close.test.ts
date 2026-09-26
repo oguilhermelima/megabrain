@@ -108,7 +108,7 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
       const result = await executeOrchestrateClose(["d3"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
       expect(result.kind).toBe("ok");
       expect(calls.filter((call) => (call.command === "tmux" || call.command === "orca") && call.args[0] !== "capture-pane").map((call) => [call.command, call.args[0]])).toEqual([
-        ["tmux", "has-session"], ["tmux", "list-panes"], ["tmux", "kill-session"], ["tmux", "has-session"], ["orca", "terminal"],
+        ["tmux", "has-session"], ["tmux", "list-panes"], ["tmux", "kill-session"], ["orca", "terminal"],
       ]);
     } finally {
       await rm(root, { recursive: true, force: true });
