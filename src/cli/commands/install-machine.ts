@@ -122,6 +122,8 @@ type DefaultModuleSelection = Readonly<{
   readonly tmuxAvailable: boolean;
   readonly orcaAvailable: boolean;
   readonly supersetAvailable: boolean;
+  /** Modules whose own prerequisite is missing here, with what is missing; megabrain cannot install it for them. */
+  readonly unavailable: Readonly<Record<string, string>>;
 }>;
 
 async function resolveDefaultModuleSelection(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<DefaultModuleSelection> {
@@ -139,7 +141,18 @@ async function resolveDefaultModuleSelection(environment: AgentEnvironment, proc
   if (!tmux) skipped.push({ module: "tmux-runtime", reason: "tmux was not found" });
   if (superset && orca) defaults.push("worktree");
   else if (superset && !orca) skipped.push({ module: "worktree", reason: "orca CLI is not on PATH" });
-  return { modules: defaults, skipped, tmuxAvailable: tmux, orcaAvailable: orca, supersetAvailable: superset };
+  const unavailable: Record<string, string> = {};
+  if (!(superset && orca)) unavailable.worktree = "needs Orca and Superset";
+  if (!await has("adb")) unavailable["tv-adb"] = "needs adb from Android platform-tools";
+  const platform = await processAdapter.run("uname", ["-s"]);
+  const darwin = platform.kind === "ok" && platform.value.stdout.trim() === "Darwin";
+  const xcode = darwin && await has("xcrun");
+  if (!xcode) {
+    const reason = darwin ? "needs Xcode" : "macOS only";
+    unavailable["simulator-native"] = reason;
+    unavailable["simulator-tv"] = reason;
+  }
+  return { modules: defaults, skipped, tmuxAvailable: tmux, orcaAvailable: orca, supersetAvailable: superset, unavailable };
 }
 
 export async function resolveDefaultModules(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<readonly string[]> {
@@ -411,11 +424,18 @@ async function installMachine(
   const selectable = modules.filter((module) => module !== "tmux-runtime");
   let modulesToInstall = [...(parsed.modules ?? (ui === undefined
     ? defaults.modules
-    : await ui.modules(selectable.map((module): ModuleChoice => ({
-      module,
-      selectedByDefault: (lastModules ?? defaults.modules).includes(module),
-      skippedReason: defaults.skipped.find((entry) => entry.module === module)?.reason,
-    })))))];
+    : await ui.modules(selectable.map((module): ModuleChoice => {
+      // Orchestration needs somewhere to open children; the tmux answer above can provide it.
+      const unavailableReason = module === "orchestration"
+        ? (defaults.orcaAvailable || defaults.supersetAvailable || tmux === "yes" ? undefined : "needs Orca, Superset or tmux")
+        : defaults.unavailable[module];
+      return {
+        module,
+        selectedByDefault: unavailableReason === undefined && (lastModules ?? defaults.modules).includes(module),
+        skippedReason: unavailableReason,
+        unavailable: unavailableReason !== undefined,
+      };
+    }))))];
   if (tmux === "yes" && !modulesToInstall.includes("tmux-runtime")) modulesToInstall.unshift("tmux-runtime");
   if (tmux === "no") modulesToInstall = modulesToInstall.filter((module) => module !== "tmux-runtime");
   const defaultSkips = [
@@ -488,7 +508,7 @@ async function installMachine(
         if (result.kind !== "ok") {
           const reason = result.kind === "failed" ? result.error : result.reason;
           failures.push(`${module}: ${reason}`);
-          step?.fail(`${moduleLabel(module)}: ${reason}`);
+          step?.fail(`${moduleLabel(module)}: ${reason.startsWith(`${module}: `) ? reason.slice(module.length + 2) : reason}`);
           continue;
         }
         configuredModules.push(module);
@@ -506,7 +526,8 @@ async function installMachine(
     }
     if (ui !== undefined) {
       const next = tmux === "yes" ? "Open a new terminal tab so agents start inside tmux." : "Run megabrain doctor any time to check the setup.";
-      ui.outro(failures.length === 0 ? `All set. ${next}` : `Finished with ${failures.length} failed module${failures.length === 1 ? "" : "s"}; rerun megabrain install to retry just those.`);
+      const missed = failures.map((failure) => moduleLabel(failure.split(":", 1)[0] ?? "")).join(", ");
+      ui.outro(failures.length === 0 ? `All set. ${next}` : `Everything else is set up. ${missed} ${failures.length === 1 ? "was" : "were"} not; fix what is shown above and run megabrain install again, or leave ${failures.length === 1 ? "it" : "them"} unselected.`);
       return ok("", failures.length === 0 ? undefined : 1);
     }
     const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed ${failures.map((failure) => failure.split(":", 1)[0]).join(", ") || "none"}\n`;

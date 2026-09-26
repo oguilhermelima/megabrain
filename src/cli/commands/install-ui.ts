@@ -12,7 +12,7 @@ export class SetupCancelled extends Error {
 }
 
 export type AgentChoice = Readonly<{ agent: MachineAgent; installed: boolean; configDir: string | undefined }>;
-export type ModuleChoice = Readonly<{ module: string; selectedByDefault: boolean; skippedReason: string | undefined }>;
+export type ModuleChoice = Readonly<{ module: string; selectedByDefault: boolean; skippedReason: string | undefined; unavailable?: boolean }>;
 export type HostSummary = Readonly<{ orca: boolean; superset: boolean; tmux: boolean }>;
 export type ReviewPlan = Readonly<{
   agents: readonly MachineAgent[];
@@ -49,7 +49,7 @@ const MODULE_INFO: Readonly<Record<string, Readonly<{ label: string; hint: strin
   "orchestration-hooks": { label: "Turn-end hooks", hint: "tell the parent when a child finishes its turn", group: "Agents" },
   worktree: { label: "Shared worktrees", hint: "one worktree folder for Orca and Superset", group: "Agents" },
   "simulator-web": { label: "Web browsers", hint: "Playwright Chromium and Firefox for web testing", group: "Testing" },
-  "simulator-native": { label: "iOS simulators", hint: "Appium with the XCUITest driver (macOS)", group: "Testing" },
+  "simulator-native": { label: "iOS simulators", hint: "Appium with the XCUITest driver", group: "Testing" },
   "simulator-tv": { label: "Apple TV simulator", hint: "tvOS on the shared XCUITest toolchain", group: "Testing" },
   "tv-adb": { label: "Android TV", hint: "physical or emulated device over adb", group: "Testing" },
 };
@@ -122,21 +122,33 @@ export function createClackPrompter(): MachinePrompter {
       return answer ? "yes" : "no";
     },
     modules: async (choices) => {
-      const groups: Record<string, { value: string; label: string; hint: string }[]> = {};
-      for (const choice of choices) {
-        const info = MODULE_INFO[choice.module];
-        const group = info?.group ?? "Other";
-        const hint = choice.skippedReason === undefined ? info?.hint ?? "" : `${info?.hint ?? ""} · ${choice.skippedReason}`;
-        (groups[group] ??= []).push({ value: choice.module, label: info?.label ?? choice.module, hint });
+      // One short question per group: plain multiselect is the prompt that can show an option as
+      // unavailable (struck through, with why) and keep "a = all" from ever selecting it.
+      const groupOrder = ["Agents", "Testing"];
+      const titles: Readonly<Record<string, string>> = { Agents: "Agent tooling", Testing: "Testing surfaces" };
+      const picked: string[] = [];
+      for (const group of groupOrder) {
+        const members = choices.filter((choice) => (MODULE_INFO[choice.module]?.group ?? "Agents") === group);
+        if (members.length === 0) continue;
+        const selectable = members.filter((choice) => choice.unavailable !== true);
+        if (selectable.length === 0) {
+          clack.log.info(`${titles[group] ?? group}: ${members.map((choice) => `${moduleLabel(choice.module)} ${off(`(${choice.skippedReason ?? "unavailable"})`)}`).join(", ")}`);
+          continue;
+        }
+        const answer = settled(await clack.multiselect<string>({
+          message: `${titles[group] ?? group} ${dim("(a = all)")}`,
+          options: members.map((choice) => ({
+            value: choice.module,
+            label: moduleLabel(choice.module),
+            hint: choice.unavailable === true ? choice.skippedReason ?? "unavailable" : MODULE_INFO[choice.module]?.hint ?? "",
+            disabled: choice.unavailable === true,
+          })),
+          initialValues: members.filter((choice) => choice.selectedByDefault && choice.unavailable !== true).map((choice) => choice.module),
+          required: false,
+        }));
+        picked.push(...answer);
       }
-      return settled(await clack.groupMultiselect<string>({
-        message: `What else should megabrain set up? ${dim("(select a group to toggle all of it)")}`,
-        options: groups,
-        initialValues: choices.filter((choice) => choice.selectedByDefault).map((choice) => choice.module),
-        selectableGroups: true,
-        groupSpacing: 1,
-        required: false,
-      }));
+      return picked;
     },
     confirm: async (message, initial) => settled(await clack.confirm({ message, initialValue: initial })),
     review: async (plan) => {

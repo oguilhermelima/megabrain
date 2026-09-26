@@ -39,8 +39,9 @@ megabrain install --yes
 The package requires Node.js 22.13 or newer. Run `megabrain install` to configure the machine. In a
 terminal it opens a guided setup: it shows which agents, workspace apps and tmux it found, then asks
 which agents get the skill, where the skill lives, whether agents run inside tmux, and which modules
-to set up, grouped as agents and testing. Arrows move, space toggles, `a` selects every agent, and
-selecting a group header toggles the whole group. A summary is shown before anything changes, and
+to set up, as agent tooling and testing surfaces. Arrows move, space toggles and `a` selects every
+option in a list. An option whose prerequisite is missing here, such as Android TV without `adb` or
+the iOS simulators without Xcode, is shown struck through with the reason and cannot be selected. A summary is shown before anything changes, and
 declining it or pressing Ctrl+C leaves the machine as it was. A rerun starts from the previous
 answers and says so when there is nothing to change. The tmux question appears when tmux is on
 `PATH` and defaults to yes. `--yes` accepts the defaults without asking: agents found on `PATH`,
