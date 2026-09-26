@@ -53,7 +53,11 @@ const provider: TmuxProvider = {
   },
   sessionExists: async (session, process) => {
     const result = await process.run("tmux", ["has-session", "-t", session]);
-    return result.kind === "ok" ? ok(true) : unavailable(`existence of session ${session}`);
+    if (result.kind === "ok") return ok(true);
+    const detail = result.kind === "failed" ? result.error : "";
+    return /can't find session|session not found|no such session/i.test(detail)
+      ? ok(false)
+      : unavailable(`existence of session ${session}`);
   },
   panesForSession: async (session, process) => {
     const result = await process.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
