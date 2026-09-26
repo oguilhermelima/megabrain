@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { defaultResolveWorktree, executeSpawn, markRunningIfSpawning, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
+import { tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -466,7 +467,7 @@ describe("executeSpawn", () => {
       expect(result.exitCode).toBe(0);
       expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
       const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
-      expect(meta).toMatchObject({ dispatchId, state: "running", promptDelivery: "delivered", promptState: "confirmed", runtime: "tmux", tmuxSession: `megabrain-${dispatchId}`, tmuxPane: "%9" });
+      expect(meta).toMatchObject({ dispatchId, state: "running", promptDelivery: "delivered", promptState: "confirmed", runtime: "tmux", tmuxSession: tmuxWorktreeSessionName("/work/tree"), tmuxPane: "%9" });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -484,7 +485,7 @@ describe("executeSpawn", () => {
     test("from a structured Orca session (no terminal handle)", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-identity-`);
       const dispatchId = "dispatch-structured";
-      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%11\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%11\n", stderr: "", exitCode: 0 }) : command === "orca" && args[1] === "create" ? ok({ stdout: JSON.stringify({ handle: "orca-attach-terminal" }), stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
       try {
@@ -493,7 +494,7 @@ describe("executeSpawn", () => {
         expect(result.kind).toBe("ok");
         const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
         expect(meta.childHost).toBe("tmux");
-        expect(meta.terminalId).toBe(`tmux:megabrain-${dispatchId}:%11`);
+        expect(meta.terminalId).toBe(`tmux:${tmuxWorktreeSessionName("/work/tree") }:%11`);
         expect(meta.parentSessionId).toBe("");
         expect(meta.parentHost).toBe("orca");
       } finally {
@@ -505,7 +506,7 @@ describe("executeSpawn", () => {
     test("from an Orca terminal", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-identity-`);
       const dispatchId = "dispatch-orca-terminal";
-      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%12\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%12\n", stderr: "", exitCode: 0 }) : command === "orca" && args[1] === "create" ? ok({ stdout: JSON.stringify({ handle: "orca-attach-terminal" }), stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
       try {
@@ -514,12 +515,38 @@ describe("executeSpawn", () => {
         expect(result.kind).toBe("ok");
         const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
         expect(meta.childHost).toBe("tmux");
-        expect(meta.terminalId).toBe(`tmux:megabrain-${dispatchId}:%12`);
+        expect(meta.terminalId).toBe(`tmux:${tmuxWorktreeSessionName("/work/tree") }:%12`);
+        expect(meta).toMatchObject({ tmuxHostTerminalId: "orca-attach-terminal", tmuxHostTerminalHost: "orca" });
+        expect(process.calls.some((call) => call.command === "orca" && call.args.includes(`tmux attach -t '${tmuxWorktreeSessionName("/work/tree")}'`))).toBe(true);
         expect(meta.parentSessionId).toBe("coord-orca-term");
         expect(meta.parentHost).toBe("orca");
         // The bug this fix corrects: the child's identity must not equal the parent's.
         expect(meta.terminalId).not.toBe(meta.parentSessionId);
         expect(meta.childHost).not.toBe(meta.parentHost);
+      } finally {
+        registerTmux(original);
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("continues the tmux child when the optional Orca attach terminal cannot be opened", async () => {
+      const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-attach-failure-`);
+      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+        ? ok({ stdout: "%15\n", stderr: "", exitCode: 0 })
+        : command === "orca" && args[1] === "create"
+          ? failed("orca is unavailable", 1)
+          : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const original = getTmux();
+      registerTmux({ ...original, sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      try {
+        const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
+          MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-attach-failure", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+        }, process, options(worktree("existing")));
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error(result.error);
+        expect(result.value).toContain("tmux attach terminal was not opened");
+        const meta = JSON.parse(await readFile(`${root}/dispatches/dispatch-attach-failure/meta.json`, "utf8")) as Record<string, unknown>;
+        expect(meta).toMatchObject({ runtime: "tmux", tmuxPane: "%15", tmuxHostTerminalId: null, tmuxHostTerminalHost: null });
       } finally {
         registerTmux(original);
         await rm(root, { recursive: true, force: true });
