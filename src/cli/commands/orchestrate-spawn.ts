@@ -213,7 +213,13 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
 // TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
 // failing outright, since the composer may still settle before the overall deadline.
 async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Result<void>> {
-  return waitForStableIdle(agentId, timeoutMs, () => getTmux().capturePane(pane, 200, process), `tmux pane ${pane} did not become ready within ${timeoutMs}ms`);
+  return waitForStableIdle(
+    agentId,
+    timeoutMs,
+    () => getTmux().capturePane(pane, 200, process),
+    `tmux pane ${pane} did not become ready within ${timeoutMs}ms`,
+    () => getTmux().sendKey(pane, "Enter", process),
+  );
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {

@@ -74,6 +74,33 @@ describe("host providers", () => {
     expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
   });
 
+  test("orca readiness answers the captured agy trust dialog once, then waits for idle", async () => {
+    const trust = await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8");
+    const idle = await readFile(new URL("../fixtures/orca-terminal-screen-agy-idle.json", import.meta.url), "utf8");
+    const calls: Call[] = [];
+    let reads = 0;
+    const fakeHost = {
+      calls,
+      async run(command: string, args: readonly string[]) {
+        calls.push({ command, args: [...args] });
+        if (args[0] === "terminal" && args[1] === "read") {
+          reads += 1;
+          return ok<ProcessOutput>({ stdout: reads === 1 ? trust : idle, stderr: "", exitCode: 0 });
+        }
+        return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    } satisfies ProcessAdapter & { readonly calls: readonly Call[] };
+    const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, fakeHost, 1300, "agy");
+
+    expect(result).toEqual({ kind: "ok", value: undefined });
+    expect(calls.filter((call) => call.args[0] === "terminal" && call.args[1] === "send")).toEqual([
+      { command: "orca", args: ["terminal", "send", "--terminal", "terminal-child", "--text", "", "--enter", "--json"] },
+    ]);
+    expect(reads).toBeGreaterThan(1);
+  });
+
   test("orca readiness continues to accept a string terminal tail", async () => {
     const process = processFor(Array.from({ length: 20 }, () => JSON.stringify({ result: { terminal: { tail: "› Ask Codex to do anything" } } })));
     const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");

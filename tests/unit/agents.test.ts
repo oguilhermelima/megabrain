@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { resolveParentContext } from "../../src/core/context.js";
-import { classifyLiveness } from "../../src/core/liveness.js";
+import { classifyLiveness, isFirstRunDialog } from "../../src/core/liveness.js";
 import { commandLine, getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
 import { ok, type Result } from "../../src/core/result.js";
 
@@ -135,35 +136,33 @@ describe("agent registry", () => {
     expect(classifyLiveness("claude", "❯ Try \"fix typecheck errors\"\nWorking\nesc to interrupt").status).toBe("working");
   });
 
-  // Captured verbatim from real Antigravity CLI 1.2.9 (gemini-3.8-flash-low) in an isolated tmux
-  // pane: the composer box renders a bare "> " at the bottom whether the agent is idle or
-  // generating, so idle cannot be told from the box alone — only the "Generating..." spinner line
-  // above it distinguishes the two, and it must be checked first.
-  const AGY_IDLE_SCREEN = [
-    "────────────────────────────────────────────────────────────",
-    "> say the word banana and nothing else",
-    "",
-    "  banana",
-    "",
-    "────────────────────────────────────────────────────────────────────────────────",
-    ">",
-    "────────────────────────────────────────────────────────────────────────────────",
-    "Gemini 3.8 Flash (Low) 1M │ 22k/1M ctx │ 100% left │ 100% left",
-  ].join("\n");
+  test("agy classifies captured trust, idle, and working screens", async () => {
+    const screen = async (name: string) => {
+      const capture = JSON.parse(await readFile(new URL(`../fixtures/orca-terminal-screen-agy-${name}.json`, import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+      return capture.result.terminal.tail.join("\n");
+    };
+    const trust = await screen("trust");
+    expect(classifyLiveness("agy", trust).status).toBe("unknown");
+    expect(isFirstRunDialog("agy", trust)).toBe(true);
+    expect(classifyLiveness("agy", await screen("idle")).status).toBe("idle");
+    for (const name of ["working-1", "working-2", "working-3"]) {
+      const captured = await screen(name);
+      if (captured.includes("Generating")) expect(classifyLiveness("agy", captured).status).toBe("working");
+    }
+  });
 
-  const AGY_WORKING_SCREEN = [
-    "────────────────────────────────────────────────────────────",
-    "> count slowly from 1 to 50, one number per line, write out each number in",
-    "  words too",
-    "⣽  Generating...",
-    "────────────────────────────────────────────────────────────────────────────────",
-    ">",
-    "────────────────────────────────────────────────────────────────────────────────",
-    "Gemini 3.8 Flash (Low) 1M │ 22k/1M ctx │ 100% left │ 100% left",
-  ].join("\n");
+  test("agy recognises the trust dialog in a real tmux capture and the Orca capture", async () => {
+    const tmuxTrust = await readFile(new URL("../fixtures/tmux-capture-agy-trust.txt", import.meta.url), "utf8");
+    const orcaCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
 
-  test("agy liveness is read from the composer's Generating spinner, not the empty box", () => {
-    expect(classifyLiveness("agy", AGY_IDLE_SCREEN)).toEqual({ status: "idle", reason: "terminal shows an empty Antigravity composer" });
-    expect(classifyLiveness("agy", AGY_WORKING_SCREEN)).toEqual({ status: "working", reason: "terminal shows the Generating indicator" });
+    expect(isFirstRunDialog("agy", tmuxTrust)).toBe(true);
+    expect(isFirstRunDialog("agy", orcaCapture.result.terminal.tail.join("\n"))).toBe(true);
+  });
+
+  test("agy only declares the exact preselected trust dialog", async () => {
+    const capture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+    const trust = capture.result.terminal.tail.join("\n");
+    expect(isFirstRunDialog("agy", trust.replace("> Yes, I trust this folder", "> No, exit"))).toBe(false);
+    expect(isFirstRunDialog("agy", "Do you trust the contents of this project?\n> Yes, I trust this folder")).toBe(false);
   });
 });

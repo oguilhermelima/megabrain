@@ -24,17 +24,30 @@ export function hasLivenessClassifier(agent: string): boolean {
   return result.kind !== "unknown" || !result.reason.startsWith(`${LIVENESS_UNAVAILABLE}:`);
 }
 
+export function isFirstRunDialog(agentId: string, output: string): boolean {
+  const dialog = getAgent(agentId)?.firstRunDialog;
+  return dialog?.test(output) ?? false;
+}
+
 export async function waitForStableIdle(
   agentId: string,
   timeoutMs: number,
   read: () => Promise<Result<string>>,
   timeoutError: string,
+  answerFirstRunDialog?: () => Promise<Result<void>>,
 ): Promise<Result<void>> {
   const started = Date.now();
   let stableSince: number | null = null;
+  let firstRunDialogAnswered = false;
   while (true) {
     const captured = await read();
-    const idle = captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle";
+    const dialog = captured.kind === "ok" && isFirstRunDialog(agentId, captured.value);
+    if (dialog && answerFirstRunDialog !== undefined && !firstRunDialogAnswered) {
+      firstRunDialogAnswered = true;
+      const answered = await answerFirstRunDialog();
+      if (answered.kind !== "ok") return answered;
+    }
+    const idle = captured.kind === "ok" && !dialog && classifyLiveness(agentId, captured.value).status === "idle";
     if (idle) {
       if (stableSince === null) stableSince = Date.now();
       else if (Date.now() - stableSince >= TMUX_READINESS_STABLE_MS) return ok(undefined);
