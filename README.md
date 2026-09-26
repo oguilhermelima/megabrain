@@ -239,6 +239,20 @@ IDE gives you cards, tabs and shared worktrees, and tmux gives you cheap panes a
 **And tmux stands alone.** With neither app installed, a session inside tmux identifies itself by
 its own session and pane, so the whole delegate-supervise-close loop works on a bare Linux box.
 
+### Where dispatched children open
+
+When the caller is inside tmux and dispatches to its own checkout, the child opens in the caller's
+current window, to the right of the caller's pane. This works even when the tmux runtime module is
+not installed. For another checkout, the tmux runtime reuses a live session registered for that
+worktree or creates one shared by its dispatches. From Orca or Superset, Megabrain also opens a
+host terminal attached to the worktree session when one is not already recorded; if the host cannot
+open that tab, the child still runs in tmux and the spawn output includes a warning.
+
+The main pane keeps the left half of each window. Children stack vertically in the right half;
+after four panes, the next child starts in a new window of the same session. Closing a child removes
+its pane. Megabrain closes its worktree session and attached host tab after the last child leaves;
+wrapper sessions and the caller's pane stay open.
+
 ### The shell wrapper: every agent starts in tmux
 
 `megabrain tmux wrapper` installs a shell function for `claude`, `codex` and `agy`, so typing the
