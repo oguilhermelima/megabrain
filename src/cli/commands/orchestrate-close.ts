@@ -12,7 +12,10 @@ import { usageText } from "../../core/usage.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
-const absent = (value: string): boolean => /not found|does not exist|no such|already closed|already gone|already deleted|404/i.test(value);
+const absent = (value: string): boolean => {
+  const detail = value.replaceAll("_", " ");
+  return /not found|does not exist|no such|already closed|already gone|already deleted|404|terminal handle stale|can't find (?:session|pane)|no server running/i.test(detail);
+};
 
 
 export async function tmuxSessionForEnvironment(environment: QueueEnvironment, process: ProcessAdapter): Promise<string | undefined> {
@@ -21,8 +24,9 @@ export async function tmuxSessionForEnvironment(environment: QueueEnvironment, p
   return result.kind === "ok" ? result.value : undefined;
 }
 
-function errorText(result: { readonly error?: string; readonly value?: { readonly stderr: string } }): string {
-  const raw = result.error ?? result.value?.stderr ?? "";
+function errorText(result: { readonly error?: string; readonly stdout?: string; readonly value?: { readonly stderr: string } }): string {
+  const stdout = result.stdout ?? "";
+  const raw = stdout.trim() !== "" ? stdout : result.error ?? result.value?.stderr ?? "";
   return hostCloseReason(/^(?:orca|megabrain_superset) exited with status \d+$/.test(raw) ? "" : raw);
 }
 
@@ -103,7 +107,11 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       outcome = "shared-pane";
       if (hasSession.kind === "ok" && hasSession.value) {
         const panes = await getTmux().panesForSession(session, process);
-        if (panes.kind === "ok" && panes.value.includes(pane) && (await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
+        if (panes.kind === "ok" && panes.value.includes(pane)) {
+          if ((await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
+        } else if (panes.kind === "ok") outcome = "absent";
+      } else if (hasSession.kind === "ok") {
+        outcome = "absent";
       }
     } else {
       let paneCount = 0;
@@ -131,7 +139,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       } else if (paneExists) {
         return failed(`refusing to close the last pane in unowned tmux session ${session}`);
       } else {
-        outcome = sessionOwned ? "exclusive-session" : "exclusive-pane";
+        outcome = "absent";
       }
 
       const finalSession = sessionWasKilled ? ok(false) : await getTmux().sessionExists(session, process);
@@ -150,6 +158,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   } else {
     const hostClose = await closeHostTerminal(meta, process);
     if (hostClose.kind !== "ok") return failed(`could not close dispatch ${parsed.value.dispatchId}: ${hostClose.error}`);
+    if (hostClose.value === "absent") outcome = "absent";
   }
   const now = new Date().toISOString();
   const processState = text(meta.processState);

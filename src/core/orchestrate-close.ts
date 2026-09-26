@@ -49,9 +49,11 @@ export function closeDecision(meta: Readonly<Record<string, unknown>>, caller: R
 
 export function closeOutput(dispatchId: string, json: boolean, runtime: string, host: string, outcome: string): string {
   if (!json) {
+    if (outcome === "absent") return `closed: ${dispatchId}\nterminal was already gone.\n`;
     const message = outcome === "shared-pane" ? "tmux pane removed; the shared tmux session and host terminal tab were kept." : outcome === "exclusive-pane" ? "tmux pane removed; the exclusive tmux session and host terminal tab were kept for remaining panes." : outcome === "exclusive-session" ? "last tmux pane removed; the exclusive tmux session and host terminal tab were closed." : host === "superset" ? "Superset leaves the pane visible as Desconectado until the human dismisses it with the pane X." : "";
     return `closed: ${dispatchId}\n${message === "" ? "" : `${message}\n`}`;
   }
+  if (outcome === "absent") return `${JSON.stringify({ dispatchId, status: "closed", message: "terminal was already gone" }, null, 2)}\n`;
   const message = runtime === "tmux" && outcome === "shared-pane" ? "tmux pane removed; the shared tmux session and host terminal tab were kept." : runtime === "tmux" && outcome === "exclusive-pane" ? "tmux pane removed; the exclusive tmux session and host terminal tab were kept for remaining panes." : runtime === "tmux" && outcome === "exclusive-session" ? "last tmux pane removed; the exclusive tmux session and host terminal tab were closed." : host === "superset" ? "Superset leaves the pane visible as Desconectado until the human dismisses it with the pane X." : undefined;
   return `${JSON.stringify(message === undefined ? { dispatchId, status: "closed" } : { dispatchId, status: "closed", message }, null, 2)}\n`;
 }
