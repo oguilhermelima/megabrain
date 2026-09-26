@@ -50,7 +50,7 @@ async function loadRecords(root: string): Promise<DispatchRecord[]> {
   for (const entry of await metadataPaths(`${root}/dispatches`)) {
     try {
       const parsed = parseDispatchRecord(JSON.parse(await readFile(entry.path, "utf8")) as unknown);
-      if (parsed.kind === "ok") records.push(entry.archived ? { ...parsed.value, raw: { ...parsed.value.raw, archived: true } } : parsed.value);
+      if (parsed.kind === "ok") records.push({ ...parsed.value, raw: { ...parsed.value.raw, archived: entry.archived } });
       else console.error(`skipping unreadable dispatch metadata: ${entry.path}`);
     } catch {
       console.error(`skipping unreadable dispatch metadata: ${entry.path}`);
