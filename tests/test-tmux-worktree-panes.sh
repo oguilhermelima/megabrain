@@ -58,7 +58,14 @@ panes=()
 for index in 1 2 3 4 5; do
   dispatch="dispatch-pane-child-$index"
   output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt "child $index" --tmux true --json 2>&1 || true)"
-  if ! jq -e '.dispatchId' <<<"$output" >/dev/null 2>&1; then fail "spawn $index failed: $output"; fi
+  if ! jq -e '.dispatchId' <<<"$output" >/dev/null 2>&1; then
+    if [ -n "$session" ]; then
+      printf 'pane state after failed spawn %s:\n' "$index" >&2
+      tmux_cmd list-panes -s -t "$session" -F '#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}' >&2 || true
+      while IFS='|' read -r _window pane_id _command _path; do tmux_cmd capture-pane -p -t "$pane_id" -S -20 >&2 || true; done < <(tmux_cmd list-panes -s -t "$session" -F '#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}')
+    fi
+    fail "spawn $index failed: $output"
+  fi
   dispatches+=("$dispatch")
   meta="$state/dispatches/$dispatch/meta.json"
   [ -f "$meta" ] || fail "spawn $index did not write metadata"
@@ -69,8 +76,9 @@ for index in 1 2 3 4 5; do
 done
 
 window_counts="$(tmux_cmd list-windows -t "$session" -F '#{window_index}:#{window_panes}')"
+geometry="$(tmux_cmd list-panes -s -t "$session" -F '#{window_index}|#{pane_id}|#{pane_left}|#{pane_width}|#{pane_top}|#{window_width}|#{pane_current_path}')"
+printf 'session geometry before assertions: %s\n%s\n' "$session" "$geometry"
 assert_equal "$window_counts" $'0:4\n1:1'
-geometry="$(tmux_cmd list-panes -a -t "$session" -F '#{window_index}|#{pane_id}|#{pane_left}|#{pane_width}|#{pane_top}|#{window_width}|#{pane_current_path}')"
 main_row="$(tmux_cmd list-panes -t "$session:0" -F '#{pane_id}|#{pane_left}|#{pane_width}|#{pane_top}|#{window_width}|#{pane_current_path}' | sort -t '|' -k2,2n -k4,4n | head -n 1)"
 IFS='|' read -r main_pane main_left main_width _main_top main_window_width main_path <<<"$main_row"
 assert_equal "$main_left" 0
@@ -94,7 +102,7 @@ printf 'geometry fifth child: window=%s pane=%s\n' "$fifth_window" "${panes[4]}"
 
 for index in 1 2 3 4; do
   "$root/.build/megabrain" orchestrate close "${dispatches[$((index - 1))]}" >/dev/null
-  remaining="$(tmux_cmd list-panes -a -t "$session" -F '#{pane_id}')"
+  remaining="$(tmux_cmd list-panes -s -t "$session" -F '#{pane_id}')"
   case " $remaining " in *" ${panes[$((index - 1))]} "*) fail "closed child pane ${panes[$((index - 1))]} is still present" ;; esac
   tmux_cmd has-session -t "$session" || fail "worktree session ended before its last child closed"
 done

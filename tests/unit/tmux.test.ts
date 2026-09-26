@@ -202,6 +202,7 @@ describe("tmux identity provider", () => {
       invocationCount() { return calls.length; },
     };
     expect(await splitTmuxWorktreePane("worktree", "/work/tree", process, "%0")).toEqual({ kind: "ok", value: "%1" });
+    expect(calls[0]?.args).toEqual(["list-panes", "-s", "-t", "worktree", "-F", "#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}"]);
     expect(calls[0]?.args.at(-1)).toBe("#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}");
     expect(calls.slice(1)).toEqual([
       { command: "tmux", args: ["split-window", "-d", "-h", "-p", "50", "-t", "%0", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] },
