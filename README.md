@@ -37,14 +37,15 @@ megabrain install --yes
 ```
 
 The package requires Node.js 22.13 or newer. Run `megabrain install` to configure the machine. In a
-terminal, it offers numbered choices for detected agent CLIs, skill scope, and modules. `--yes`
-accepts the defaults: agents found on `PATH`, global skill, and the core module set.
+terminal, it offers numbered choices for detected agent CLIs, skill scope, whether agents should
+run inside tmux, and modules. The tmux question appears when tmux is on `PATH` and defaults to yes.
+`--yes` accepts the defaults: agents found on `PATH`, global skill, and tmux when available.
 
 Choose each part explicitly for non-interactive setup:
 
 ```sh
 megabrain install --agents claude,codex --skill global \
-  --modules orchestration,orchestration-hooks,worktree --yes
+  --modules orchestration,orchestration-hooks,worktree --tmux no --yes
 ```
 
 Use `--agents none`, `--skill none`, or `--modules none` to skip that part.
@@ -54,9 +55,13 @@ marketplace is offered for removal so the skill is not loaded twice; `--yes` rem
 automatically.
 
 Absent `--modules`, `orchestration-hooks` is always selected and `orchestration` is selected only
-when Orca, Superset, or tmux is detected on `PATH`. `tmux-runtime` is added when tmux is on `PATH`;
-`worktree` is added when Superset and Orca are available. Modules omitted because a prerequisite is
-missing are reported with the reason. Explicitly naming a module with `--modules` always attempts it.
+when Orca, Superset, or tmux is detected on `PATH`. `worktree` is added when Superset and Orca are
+available. `--tmux yes|no` enables or disables the tmux runtime and agent wrapper. With tmux on
+`PATH`, `--yes` selects yes. If tmux is missing, the question is skipped and the summary reports that
+it was not found. Choosing no on a machine with the runtime installed offers to remove its agent
+wrapper; `--yes` performs that revert.
+Modules omitted because a prerequisite is missing are reported with the reason. Explicitly naming a
+module with `--modules` always attempts it unless `--tmux no` excludes `tmux-runtime`.
 
 ## Development
 

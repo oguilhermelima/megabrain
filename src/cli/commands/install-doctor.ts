@@ -909,10 +909,17 @@ async function interactiveInstall(environment: Environment, processAdapter: Proc
 export async function executeInstall(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("install"));
   const first = args[0];
-  const machineFlags = new Set(["--agents", "--skill", "--modules", "--yes"]);
+  const machineFlags = new Set(["--agents", "--skill", "--modules", "--tmux", "--yes"]);
   const machineSetup = args.length === 0 || (first !== undefined && first.startsWith("--") && args.some((arg) => machineFlags.has(arg)));
   if (machineSetup) {
-    return runMachineInstall(args, environment, processAdapter, (module) => installOne(module, environment, processAdapter, { yes: true, browser: "both" }));
+    return runMachineInstall(
+      args,
+      environment,
+      processAdapter,
+      (module) => installOne(module, environment, processAdapter, { yes: true, browser: "both" }),
+      undefined,
+      () => executeTmux(["wrapper", "--revert"], environment, processAdapter),
+    );
   }
   let module: string | undefined;
   let yes = false;
