@@ -42,7 +42,7 @@ describe("tmux identity provider", () => {
     expect(process.calls).toEqual([
       { command: "tmux", args: ["display-message", "-p", "-t", "%4", "#{session_name}"] },
       { command: "tmux", args: ["has-session", "-t", "work"] },
-      { command: "tmux", args: ["list-panes", "-t", "work", "-F", "#{pane_id}"] },
+      { command: "tmux", args: ["list-panes", "-s", "-t", "work", "-F", "#{pane_id}"] },
       { command: "tmux", args: ["display-message", "-p", "-t", "%4", "#{pane_pid}"] },
     ]);
   });
