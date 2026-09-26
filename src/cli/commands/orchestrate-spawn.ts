@@ -384,6 +384,49 @@ async function acquireWorktreeSessionLock(root: string, worktreePath: string): P
   return failed(`timed out waiting for tmux session lock for ${worktreePath}`);
 }
 
+async function attachHostToWorktreeSession(
+  root: string,
+  session: string,
+  record: RecordValue,
+  worktree: SpawnWorktree,
+  parentContext: CallerIdentity,
+  parentWorkspace: string | null,
+  options: SpawnOptions,
+  process: ProcessAdapter,
+): Promise<Readonly<{ terminalId: string | null; host: string | null; warning: string | null }>> {
+  let terminalId = stringValue(record.hostTerminalId) || stringValue(record.tmuxHostTerminalId) || null;
+  let host = stringValue(record.hostTerminalHost) || stringValue(record.tmuxHostTerminalHost) || null;
+  let warning: string | null = null;
+  if ((parentContext.host === "orca" || parentContext.host === "superset") && terminalId === null) {
+    const provider = getHost(parentContext.host);
+    if (provider === undefined) warning = `tmux attach terminal was not opened: ${parentContext.host} host is unavailable`;
+    else {
+      const command = `tmux attach -t ${shellQuote(session)}`;
+      const call = provider.create({ workspaceId: worktree.workspaceId ?? parentWorkspace, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}`, command });
+      if (call.kind !== "ok") warning = `tmux attach terminal was not opened: ${call.kind === "failed" ? call.error : call.reason}`;
+      else {
+        const created = await createHostTerminal(provider, call.value, process);
+        if (created.kind !== "ok") warning = `tmux attach terminal was not opened: ${created.error}`;
+        else {
+          terminalId = created.value.terminalId;
+          host = parentContext.host;
+        }
+      }
+    }
+  }
+  const directory = `${root}/sessions`;
+  await mkdir(directory, { recursive: true });
+  await atomicJson(`${directory}/${encodeURIComponent(session)}.json`, {
+    ...record,
+    tmuxSession: session,
+    workingDirectory: await canonicalPath(worktree.path),
+    hostTerminalId: terminalId,
+    hostTerminalHost: host,
+    workspaceId: worktree.workspaceId ?? parentWorkspace,
+  });
+  return { terminalId, host, warning };
+}
+
 type TmuxTarget = Readonly<{
   readonly session: string;
   readonly pane: string;
@@ -409,14 +452,15 @@ async function openWorktreeTmuxTarget(
     if (existing !== undefined) {
       const split = await splitTmuxWorktreePane(existing.session, worktree.path, process);
       if (split.kind !== "ok") return split;
+      const attached = await attachHostToWorktreeSession(root, existing.session, existing.record, worktree, parentContext, parentWorkspace, options, process);
       return ok({
         session: existing.session,
         pane: split.value,
         sessionOwned: existing.record.megabrainOwned === true,
         sessionCreated: false,
-        hostTerminalId: stringValue(existing.record.hostTerminalId) || null,
-        hostTerminalHost: stringValue(existing.record.hostTerminalHost) || null,
-        warning: null,
+        hostTerminalId: attached.terminalId,
+        hostTerminalHost: attached.host,
+        warning: attached.warning,
       });
     }
 
@@ -428,40 +472,14 @@ async function openWorktreeTmuxTarget(
     const panes = await getTmux().panesForSession(session, process);
     if (panes.kind !== "ok" || panes.value[0] === undefined) return failed(`tmux session ${session} has no pane`);
 
-    let hostTerminalId: string | null = null;
-    let hostTerminalHost: string | null = null;
-    let warning: string | null = null;
-    if (parentContext.host === "orca" || parentContext.host === "superset") {
-      const host = getHost(parentContext.host);
-      if (host === undefined) warning = `tmux attach terminal was not opened: ${parentContext.host} host is unavailable`;
-      else {
-        const command = `tmux attach -t ${shellQuote(session)}`;
-        const call = host.create({ workspaceId: worktree.workspaceId ?? parentWorkspace, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}`, command });
-        if (call.kind !== "ok") warning = `tmux attach terminal was not opened: ${call.kind === "failed" ? call.error : call.reason}`;
-        else {
-          const terminal = await createHostTerminal(host, call.value, process);
-          if (terminal.kind !== "ok") warning = `tmux attach terminal was not opened: ${terminal.error}`;
-          else {
-            hostTerminalId = terminal.value.terminalId;
-            hostTerminalHost = parentContext.host;
-          }
-        }
-      }
-    }
-
-    const record = {
+    const record: RecordValue = {
       tmuxSession: session,
       workingDirectory: await canonicalPath(worktree.path),
       megabrainOwned: true,
-      hostTerminalId,
-      hostTerminalHost,
-      workspaceId: worktree.workspaceId ?? parentWorkspace,
       createdAt: new Date().toISOString(),
     };
-    const directory = `${root}/sessions`;
-    await mkdir(directory, { recursive: true });
-    await atomicJson(`${directory}/${encodeURIComponent(session)}.json`, record);
-    return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId, hostTerminalHost, warning });
+    const attached = await attachHostToWorktreeSession(root, session, record, worktree, parentContext, parentWorkspace, options, process);
+    return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId: attached.terminalId, hostTerminalHost: attached.host, warning: attached.warning });
   } finally {
     await acquired.value();
   }
