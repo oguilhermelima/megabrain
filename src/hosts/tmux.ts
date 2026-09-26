@@ -114,8 +114,9 @@ export async function createTmuxSession(
   worktreePath: string,
   command: string | undefined,
   process: ProcessAdapter,
+  reuseExisting = true,
 ): Promise<Result<void>> {
-  const args = ["new-session", "-d", "-A", "-s", session, "-c", worktreePath];
+  const args = ["new-session", "-d", ...(reuseExisting ? ["-A"] : []), "-s", session, "-c", worktreePath];
   // Omitting the trailing command lets tmux start its configured default-shell (which follows
   // $SHELL) instead of hardcoding one; a caller that wants a specific command still can.
   if (command !== undefined) args.push(command);
