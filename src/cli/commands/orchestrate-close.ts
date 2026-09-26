@@ -118,7 +118,8 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       }
       const recordPath = `${root}/sessions/${encodeURIComponent(session)}.json`;
       const sessionRecord = await readJson(recordPath);
-      const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${parsed.value.dispatchId}`;
+      const legacyUnregisteredSession = meta.tmuxSessionOwned === undefined && sessionRecord === undefined;
+      const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${parsed.value.dispatchId}` || legacyUnregisteredSession;
       if (paneExists && paneCount > 1) {
         outcome = "exclusive-pane";
         if ((await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
