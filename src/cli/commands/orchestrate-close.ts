@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../core/orchestrate-close.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
@@ -61,6 +61,17 @@ async function closeHostTerminal(meta: RecordValue, process: ProcessAdapter): Pr
   return absent(reason) ? ok("absent") : failed(reason);
 }
 
+async function closeRecordedTmuxHost(hostId: string, terminalId: string, workspaceId: string | null, process: ProcessAdapter): Promise<Result<void>> {
+  const provider = getHost(hostId);
+  if (provider === undefined) return failed(`cannot close recorded ${hostId} terminal ${terminalId}: host is unavailable`);
+  const call = provider.close({ workspaceId, terminalId });
+  if (call.kind === "failed") return call;
+  if (call.kind === "unknown") return unknown(call.reason);
+  const result = await process.run(call.value.command, call.value.args);
+  if (result.kind === "ok" || absent(errorText(result))) return ok(undefined);
+  return failed(`could not close recorded ${hostId} terminal ${terminalId}: ${errorText(result)}`, result.exitCode);
+}
+
 export async function executeOrchestrateClose(args: readonly string[], environment: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-close"));
   const parsed = parseCloseArgs(args); if (parsed.kind !== "ok") return parsed;
@@ -90,27 +101,50 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     const hasSession = await getTmux().sessionExists(session, process);
     if (shared) {
       outcome = "shared-pane";
-      if (hasSession.kind === "ok" && (await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
+      if (hasSession.kind === "ok" && hasSession.value) {
+        const panes = await getTmux().panesForSession(session, process);
+        if (panes.kind === "ok" && panes.value.includes(pane) && (await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
+      }
     } else {
       let paneCount = 0;
-      if (hasSession.kind === "ok") {
+      let paneExists = false;
+      let sessionWasKilled = false;
+      if (hasSession.kind === "ok" && hasSession.value) {
         const panes = await getTmux().panesForSession(session, process);
-        if (panes.kind === "ok") paneCount = panes.value.length;
+        if (panes.kind === "ok") {
+          paneCount = panes.value.length;
+          paneExists = panes.value.includes(pane);
+        }
       }
-      if (paneCount > 1) {
+      const recordPath = `${root}/sessions/${encodeURIComponent(session)}.json`;
+      const sessionRecord = await readJson(recordPath);
+      const legacyUnregisteredSession = meta.tmuxSessionOwned === undefined && sessionRecord === undefined;
+      const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${parsed.value.dispatchId}` || legacyUnregisteredSession;
+      if (paneExists && paneCount > 1) {
         outcome = "exclusive-pane";
         if ((await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
-      } else {
+      } else if (paneExists && sessionOwned) {
         outcome = "exclusive-session";
-        if (hasSession.kind === "ok") await getTmux().killSession(session, process);
-        // No host-terminal close here: executeSpawn's tmux branch never calls host.create() for
-        // any tmux dispatch (shared-pane or exclusive), so there is never a host terminal
-        // component to close, regardless of session ownership. Before the tmux child-identity fix
-        // (childHost/terminalId used to equal the spawning caller's own identity), this call
-        // "worked" only by accident — closeHostTerminal(meta) resolved to the CALLER's own host
-        // terminal via that shared identity, and either silently no-opped or, worse, attempted to
-        // close the coordinator's own terminal. Now that childHost is correctly "tmux" for tmux
-        // dispatches, getHost("tmux") is undefined and this call would always fail.
+        const killed = await getTmux().killSession(session, process);
+        if (killed.kind !== "ok") return failed(`could not close tmux session ${session}: ${killed.error}`);
+        sessionWasKilled = true;
+      } else if (paneExists) {
+        return failed(`refusing to close the last pane in unowned tmux session ${session}`);
+      } else {
+        outcome = sessionOwned ? "exclusive-session" : "exclusive-pane";
+      }
+
+      const finalSession = sessionWasKilled ? ok(false) : await getTmux().sessionExists(session, process);
+      const sessionGone = finalSession.kind === "ok" && !finalSession.value;
+      if (sessionOwned && sessionGone) {
+        const hostTerminalId = text(meta.tmuxHostTerminalId) || text(sessionRecord?.hostTerminalId);
+        const hostTerminalHost = text(meta.tmuxHostTerminalHost) || text(sessionRecord?.hostTerminalHost);
+        const workspaceId = text(meta.workspaceId) || text(sessionRecord?.workspaceId);
+        if (hostTerminalId !== "" && hostTerminalHost !== "") {
+          const closed = await closeRecordedTmuxHost(hostTerminalHost, hostTerminalId, workspaceId === "" ? null : workspaceId, process);
+          if (closed.kind !== "ok") return closed;
+        }
+        await rm(recordPath, { force: true }).catch(() => undefined);
       }
     }
   } else {

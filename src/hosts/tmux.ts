@@ -7,6 +7,7 @@ export type TmuxSendEnvironment = Readonly<Record<string, string | undefined>>;
 export type TmuxProvider = Readonly<{
   readonly id: string;
   readonly sessionForPane: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
+  readonly paneCurrentPath?: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
   readonly sessionExists: (session: string, process: ProcessAdapter) => Promise<Result<boolean>>;
   readonly panesForSession: (session: string, process: ProcessAdapter) => Promise<Result<readonly string[]>>;
   readonly panePid: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
@@ -44,12 +45,22 @@ const provider: TmuxProvider = {
     const session = result.value.stdout.trim();
     return session.length > 0 ? ok(session) : unavailable(`session for pane ${pane}`);
   },
+  paneCurrentPath: async (pane, process) => {
+    const result = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{pane_current_path}"]);
+    if (result.kind !== "ok") return unavailable(`working directory for pane ${pane}`);
+    const path = result.value.stdout.trim();
+    return path.length > 0 ? ok(path) : unavailable(`working directory for pane ${pane}`);
+  },
   sessionExists: async (session, process) => {
     const result = await process.run("tmux", ["has-session", "-t", session]);
-    return result.kind === "ok" ? ok(true) : unavailable(`existence of session ${session}`);
+    if (result.kind === "ok") return ok(true);
+    const detail = result.kind === "failed" ? result.error : "";
+    return /can't find session|session not found|no such session/i.test(detail)
+      ? ok(false)
+      : unavailable(`existence of session ${session}`);
   },
   panesForSession: async (session, process) => {
-    const result = await process.run("tmux", ["list-panes", "-t", session, "-F", "#{pane_id}"]);
+    const result = await process.run("tmux", ["list-panes", "-s", "-t", session, "-F", "#{pane_id}"]);
     if (result.kind !== "ok") return unavailable(`panes for session ${session}`);
     return ok(result.value.stdout.split("\n").filter((pane) => pane.length > 0));
   },
@@ -107,8 +118,9 @@ export async function createTmuxSession(
   worktreePath: string,
   command: string | undefined,
   process: ProcessAdapter,
+  reuseExisting = true,
 ): Promise<Result<void>> {
-  const args = ["new-session", "-d", "-A", "-s", session, "-c", worktreePath];
+  const args = ["new-session", "-d", ...(reuseExisting ? ["-A"] : []), "-s", session, "-c", worktreePath];
   // Omitting the trailing command lets tmux start its configured default-shell (which follows
   // $SHELL) instead of hardcoding one; a caller that wants a specific command still can.
   if (command !== undefined) args.push(command);
@@ -125,6 +137,73 @@ export async function splitTmuxWindow(
   if (result.kind !== "ok") return failed(result.error, result.exitCode);
   const pane = result.value.stdout.trim();
   return pane.length > 0 ? ok(pane) : failed(`tmux split for session ${session} returned no pane`);
+}
+
+export async function splitTmuxPane(session: string, targetPane: string, worktreePath: string, process: ProcessAdapter): Promise<Result<string>> {
+  const result = await process.run("tmux", ["split-window", "-d", "-h", "-t", targetPane, "-c", worktreePath, "-P", "-F", "#{pane_id}"]);
+  if (result.kind !== "ok") return failed(result.error, result.exitCode);
+  const pane = result.value.stdout.trim();
+  return pane.length > 0 ? ok(pane) : failed(`tmux split for session ${session} returned no pane`);
+}
+
+type TmuxPaneLayout = Readonly<{
+  readonly pane: string;
+  readonly window: string;
+  readonly windowIndex: number;
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly windowWidth: number;
+}>;
+
+function parsePaneLayouts(output: string): readonly TmuxPaneLayout[] {
+  const panes: TmuxPaneLayout[] = [];
+  for (const line of output.split("\n")) {
+    const [pane, window, windowIndex, left, top, width, windowWidth] = line.split("|");
+    const numbers = [windowIndex, left, top, width, windowWidth].map(Number);
+    if (pane === undefined || pane === "" || window === undefined || numbers.some((value) => !Number.isFinite(value))) continue;
+    panes.push({ pane, window, windowIndex: numbers[0]!, left: numbers[1]!, top: numbers[2]!, width: numbers[3]!, windowWidth: numbers[4]! });
+  }
+  return panes;
+}
+
+export async function splitTmuxWorktreePane(
+  session: string,
+  worktreePath: string,
+  process: ProcessAdapter,
+  callerPane?: string,
+): Promise<Result<string>> {
+  const format = "#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}";
+  const listed = await process.run("tmux", ["list-panes", "-s", "-t", session, "-F", format]);
+  if (listed.kind !== "ok") return failed(listed.error, listed.exitCode);
+  const panes = parsePaneLayouts(listed.value.stdout);
+  const caller = callerPane === undefined ? undefined : panes.find((pane) => pane.pane === callerPane);
+  const windows = [...new Set(panes.map((pane) => pane.window))]
+    .map((window) => panes.filter((pane) => pane.window === window))
+    .sort((first, second) => second[0]!.windowIndex - first[0]!.windowIndex);
+  const selected = caller === undefined ? windows[0] : panes.filter((pane) => pane.window === caller.window);
+  if (selected === undefined || selected.length === 0 || selected.length >= 4) {
+    const result = await process.run("tmux", ["new-window", "-d", "-t", session, "-c", worktreePath, "-P", "-F", "#{pane_id}"]);
+    if (result.kind !== "ok") return failed(result.error, result.exitCode);
+    const pane = result.value.stdout.trim();
+    return pane.length > 0 ? ok(pane) : failed(`tmux new window for session ${session} returned no pane`);
+  }
+
+  const main = caller ?? [...selected].sort((first, second) => first.left - second.left || first.top - second.top)[0]!;
+  const rightmost = selected
+    .filter((pane) => pane.pane !== main.pane && pane.left > main.left)
+    .sort((first, second) => second.left - first.left || second.top - first.top)[0];
+  const splitArgs = rightmost === undefined
+    ? ["split-window", "-d", "-h", "-p", "50", "-t", main.pane, "-c", worktreePath, "-P", "-F", "#{pane_id}"]
+    : ["split-window", "-d", "-v", "-t", rightmost.pane, "-c", worktreePath, "-P", "-F", "#{pane_id}"];
+  const split = await process.run("tmux", splitArgs);
+  if (split.kind !== "ok") return failed(split.error, split.exitCode);
+  const pane = split.value.stdout.trim();
+  if (pane === "") return failed(`tmux split for session ${session} returned no pane`);
+  const mainWidth = Math.floor(main.windowWidth / 2);
+  const resized = await process.run("tmux", ["resize-pane", "-t", main.pane, "-x", String(mainWidth)]);
+  if (resized.kind !== "ok") return failed(resized.error, resized.exitCode);
+  return ok(pane);
 }
 
 export async function waitForTmuxSession(

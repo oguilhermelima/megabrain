@@ -35,9 +35,9 @@ describe("orchestrate close", () => {
 // the CALLER's own host terminal. With childHost correctly "tmux" now, that call would always fail
 // (getHost("tmux") is undefined), breaking close outright unless the call is skipped for tmux.
 describe("orchestrate close: exclusive tmux session (no host terminal component)", () => {
-  function fakeProcess(behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter {
+  function fakeProcess(behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => ok({ stdout: "", stderr: "", exitCode: 0 }), calls: { command: string; args: readonly string[] }[] = []): ProcessAdapter {
     return {
-      async run(command, args) { return behavior(command, args); },
+      async run(command, args) { calls.push({ command, args: [...args] }); return behavior(command, args); },
       async startDetached() { return failed("not used"); },
       invocationCount() { return 0; },
     };
@@ -58,6 +58,107 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
       const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%20\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await executeOrchestrateClose(["d1"], environment, process);
       expect(result.kind).toBe("ok");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("closes a last pane from an unregistered legacy dispatch record", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-legacy-session-`);
+    const calls: { command: string; args: readonly string[] }[] = [];
+    let sessionAlive = true;
+    try {
+      await mkdir(join(root, "dispatches", "legacy-d"), { recursive: true });
+      await writeFile(join(root, "dispatches", "legacy-d", "meta.json"), JSON.stringify({
+        dispatchId: "legacy-d", parentSessionId: "coord-orca-term", parentHost: "orca", childHost: "tmux",
+        terminalId: "tmux:legacy-session:%5", runtime: "tmux", tmuxSession: "legacy-session", tmuxPane: "%5",
+        parentTmuxSession: null, state: "running", processState: "running", terminalState: "owned",
+      }));
+      const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%5\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "has-session") return sessionAlive
+          ? ok({ stdout: "", stderr: "", exitCode: 0 })
+          : failed("can't find session", 1);
+        if (command === "tmux" && args[0] === "kill-session") sessionAlive = false;
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      }, calls);
+      const result = await executeOrchestrateClose(["legacy-d"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+      expect(result.kind).toBe("ok");
+      expect(calls.some((call) => call.command === "tmux" && call.args[0] === "kill-session")).toBe(true);
+      expect(sessionAlive).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("closes only a child pane in a wrapper-owned session", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-wrapper-session-`);
+    const calls: { command: string; args: readonly string[] }[] = [];
+    try {
+      await mkdir(join(root, "dispatches", "d2"), { recursive: true });
+      await writeFile(join(root, "dispatches", "d2", "meta.json"), JSON.stringify({
+        dispatchId: "d2", parentSessionId: "coord-orca-term", parentHost: "orca", childHost: "tmux",
+        terminalId: "tmux:wrapper-session:%2", runtime: "tmux", tmuxSession: "wrapper-session", tmuxPane: "%2",
+        parentTmuxSession: null, tmuxSessionOwned: false, state: "running", processState: "running", terminalState: "owned",
+      }));
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes"
+        ? ok({ stdout: "%main\n%2\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }), calls);
+      const result = await executeOrchestrateClose(["d2"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+      expect(result.kind).toBe("ok");
+      expect(calls.some((call) => call.command === "tmux" && call.args[0] === "kill-pane" && call.args.includes("%2"))).toBe(true);
+      expect(calls.some((call) => call.command === "tmux" && call.args[0] === "kill-session")).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("closes the empty Megabrain worktree session and its recorded Orca tab", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-owned-session-`);
+    const calls: { command: string; args: readonly string[] }[] = [];
+    try {
+      await mkdir(join(root, "dispatches", "d3"), { recursive: true });
+      await mkdir(join(root, "sessions"), { recursive: true });
+      await writeFile(join(root, "dispatches", "d3", "meta.json"), JSON.stringify({
+        dispatchId: "d3", parentSessionId: "coord-orca-term", parentHost: "orca", childHost: "tmux",
+        terminalId: "tmux:megabrain-wt-tree-hash:%3", runtime: "tmux", tmuxSession: "megabrain-wt-tree-hash", tmuxPane: "%3",
+        parentTmuxSession: null, tmuxSessionOwned: true, tmuxHostTerminalHost: "orca", tmuxHostTerminalId: "attach-tab",
+        workspaceId: "workspace", state: "running", processState: "running", terminalState: "owned",
+      }));
+      await writeFile(join(root, "sessions", "megabrain-wt-tree-hash.json"), JSON.stringify({ tmuxSession: "megabrain-wt-tree-hash", megabrainOwned: true, hostTerminalId: "attach-tab", hostTerminalHost: "orca" }));
+      let sessionAlive = true;
+      const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%3\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "has-session") return sessionAlive ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("no session", 1);
+        if (command === "tmux" && args[0] === "kill-session") sessionAlive = false;
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      }, calls);
+      const result = await executeOrchestrateClose(["d3"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+      expect(result.kind).toBe("ok");
+      expect(calls.filter((call) => (call.command === "tmux" || call.command === "orca") && call.args[0] !== "capture-pane").map((call) => [call.command, call.args[0]])).toEqual([
+        ["tmux", "has-session"], ["tmux", "list-panes"], ["tmux", "kill-session"], ["orca", "terminal"],
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves an unowned session instead of killing its final pane", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-unowned-session-`);
+    const calls: { command: string; args: readonly string[] }[] = [];
+    try {
+      await mkdir(join(root, "dispatches", "d4"), { recursive: true });
+      await writeFile(join(root, "dispatches", "d4", "meta.json"), JSON.stringify({
+        dispatchId: "d4", parentSessionId: "coord-orca-term", parentHost: "orca", childHost: "tmux",
+        terminalId: "tmux:wrapper-session:%4", runtime: "tmux", tmuxSession: "wrapper-session", tmuxPane: "%4",
+        parentTmuxSession: null, tmuxSessionOwned: false, state: "running", processState: "running", terminalState: "owned",
+      }));
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes"
+        ? ok({ stdout: "%4\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }), calls);
+      const result = await executeOrchestrateClose(["d4"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+      expect(result.kind).toBe("failed");
+      expect(calls.some((call) => call.command === "tmux" && ["kill-pane", "kill-session"].includes(String(call.args[0])))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

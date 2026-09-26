@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { dispatchPath } from "../../adapters/dispatch-store.js";
@@ -14,7 +14,8 @@ import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironme
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
-import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
+import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, waitForTmuxSession } from "../../hosts/tmux.js";
+import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
@@ -320,6 +321,171 @@ async function createHostTerminal(host: Pick<HostProvider, "terminalIdentity">, 
   return failed("terminal create retry deadline expired");
 }
 
+type TmuxWorktreeSession = Readonly<{
+  readonly session: string;
+  readonly record: RecordValue;
+}>;
+
+async function canonicalPath(path: string): Promise<string> {
+  return realpath(path).catch(() => path);
+}
+
+async function existingTmuxSessionForWorktree(root: string, worktreePath: string, process: ProcessAdapter): Promise<TmuxWorktreeSession | undefined> {
+  const target = await canonicalPath(worktreePath);
+  const sessionDirectory = `${root}/sessions`;
+  for (const name of await readdir(sessionDirectory).catch(() => [])) {
+    if (!name.endsWith(".json")) continue;
+    const record = await readJson(`${sessionDirectory}/${name}`);
+    const session = stringValue(record?.tmuxSession);
+    const directory = stringValue(record?.workingDirectory);
+    if (session === "" || directory === "" || await canonicalPath(directory) !== target) continue;
+    if ((await getTmux().sessionExists(session, process)).kind !== "ok") continue;
+    const panes = await getTmux().panesForSession(session, process);
+    const recordedPane = stringValue(record?.tmuxPane);
+    if (panes.kind !== "ok" || panes.value.length === 0 || (recordedPane !== "" && !panes.value.includes(recordedPane))) continue;
+    return { session, record: record ?? {} };
+  }
+  const dispatchDirectory = `${root}/dispatches`;
+  for (const id of await readdir(dispatchDirectory).catch(() => [])) {
+    const meta = await readJson(`${dispatchDirectory}/${id}/meta.json`);
+    const state = stringValue(meta?.state);
+    const session = stringValue(meta?.tmuxSession);
+    const pane = stringValue(meta?.tmuxPane);
+    if (stringValue(meta?.runtime) !== "tmux" || ["failed", "orphaned", "closed"].includes(state) || session === "" || pane === "") continue;
+    const directory = stringValue(meta?.worktreePath);
+    if (directory === "" || await canonicalPath(directory) !== target) continue;
+    if ((await getTmux().sessionExists(session, process)).kind !== "ok") continue;
+    const panes = await getTmux().panesForSession(session, process);
+    if (panes.kind !== "ok" || !panes.value.includes(pane)) continue;
+    const record = await readJson(`${sessionDirectory}/${encodeURIComponent(session)}.json`);
+    return { session, record: { ...meta, ...(record ?? {}) } };
+  }
+  return undefined;
+}
+
+async function acquireWorktreeSessionLock(root: string, worktreePath: string): Promise<Result<() => Promise<void>>> {
+  const lockRoot = `${root}/locks/tmux-sessions`;
+  await mkdir(lockRoot, { recursive: true });
+  const key = createHash("sha256").update(worktreePath).digest("hex");
+  const lock = `${lockRoot}/${key}.lock`;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      await mkdir(lock);
+      return ok(async () => rm(lock, { recursive: true, force: true }));
+    } catch {
+      try {
+        if ((Date.now() - (await stat(lock)).mtimeMs) > 120_000) await rm(lock, { recursive: true, force: true });
+      } catch {
+        // Another process released the lock between the failed mkdir and stat.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  return failed(`timed out waiting for tmux session lock for ${worktreePath}`);
+}
+
+async function attachHostToWorktreeSession(
+  root: string,
+  session: string,
+  record: RecordValue,
+  worktree: SpawnWorktree,
+  parentContext: CallerIdentity,
+  parentWorkspace: string | null,
+  options: SpawnOptions,
+  process: ProcessAdapter,
+): Promise<Readonly<{ terminalId: string | null; host: string | null; warning: string | null }>> {
+  let terminalId = stringValue(record.hostTerminalId) || stringValue(record.tmuxHostTerminalId) || null;
+  let host = stringValue(record.hostTerminalHost) || stringValue(record.tmuxHostTerminalHost) || null;
+  let warning: string | null = null;
+  if ((parentContext.host === "orca" || parentContext.host === "superset") && terminalId === null) {
+    const provider = getHost(parentContext.host);
+    if (provider === undefined) warning = `tmux attach terminal was not opened: ${parentContext.host} host is unavailable`;
+    else {
+      const command = `tmux attach -t ${shellQuote(session)}`;
+      const call = provider.create({ workspaceId: worktree.workspaceId ?? parentWorkspace, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}`, command });
+      if (call.kind !== "ok") warning = `tmux attach terminal was not opened: ${call.kind === "failed" ? call.error : call.reason}`;
+      else {
+        const created = await createHostTerminal(provider, call.value, process);
+        if (created.kind !== "ok") warning = `tmux attach terminal was not opened: ${created.error}`;
+        else {
+          terminalId = created.value.terminalId;
+          host = parentContext.host;
+        }
+      }
+    }
+  }
+  const directory = `${root}/sessions`;
+  await mkdir(directory, { recursive: true });
+  await atomicJson(`${directory}/${encodeURIComponent(session)}.json`, {
+    ...record,
+    tmuxSession: session,
+    workingDirectory: await canonicalPath(worktree.path),
+    megabrainOwned: record.megabrainOwned === true || record.tmuxSessionOwned === true,
+    hostTerminalId: terminalId,
+    hostTerminalHost: host,
+    workspaceId: worktree.workspaceId ?? parentWorkspace,
+  });
+  return { terminalId, host, warning };
+}
+
+type TmuxTarget = Readonly<{
+  readonly session: string;
+  readonly pane: string;
+  readonly sessionOwned: boolean;
+  readonly sessionCreated: boolean;
+  readonly hostTerminalId: string | null;
+  readonly hostTerminalHost: string | null;
+  readonly warning: string | null;
+}>;
+
+async function openWorktreeTmuxTarget(
+  root: string,
+  worktree: SpawnWorktree,
+  parentContext: CallerIdentity,
+  parentWorkspace: string | null,
+  options: SpawnOptions,
+  process: ProcessAdapter,
+): Promise<Result<TmuxTarget>> {
+  const acquired = await acquireWorktreeSessionLock(root, await canonicalPath(worktree.path));
+  if (acquired.kind !== "ok") return acquired;
+  try {
+    const existing = await existingTmuxSessionForWorktree(root, worktree.path, process);
+    if (existing !== undefined) {
+      const split = await splitTmuxWorktreePane(existing.session, worktree.path, process);
+      if (split.kind !== "ok") return split;
+      const attached = await attachHostToWorktreeSession(root, existing.session, existing.record, worktree, parentContext, parentWorkspace, options, process);
+      return ok({
+        session: existing.session,
+        pane: split.value,
+        sessionOwned: existing.record.megabrainOwned === true || existing.record.tmuxSessionOwned === true || existing.session === `megabrain-${stringValue(existing.record.dispatchId)}`,
+        sessionCreated: false,
+        hostTerminalId: attached.terminalId,
+        hostTerminalHost: attached.host,
+        warning: attached.warning,
+      });
+    }
+
+    const session = tmuxWorktreeSessionName(await canonicalPath(worktree.path));
+    const created = await createTmuxSession(session, worktree.path, undefined, process, false);
+    if (created.kind !== "ok") return created;
+    const waited = await waitForTmuxSession(session, process);
+    if (waited.kind !== "ok") return waited;
+    const panes = await getTmux().panesForSession(session, process);
+    if (panes.kind !== "ok" || panes.value[0] === undefined) return failed(`tmux session ${session} has no pane`);
+
+    const record: RecordValue = {
+      tmuxSession: session,
+      workingDirectory: await canonicalPath(worktree.path),
+      megabrainOwned: true,
+      createdAt: new Date().toISOString(),
+    };
+    const attached = await attachHostToWorktreeSession(root, session, record, worktree, parentContext, parentWorkspace, options, process);
+    return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId: attached.terminalId, hostTerminalHost: attached.host, warning: attached.warning });
+  } finally {
+    await acquired.value();
+  }
+}
+
 function resultError(result: Result<unknown>, fallback: string): string {
   return result.kind === "ok" ? fallback : result.error;
 }
@@ -471,16 +637,37 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   // An explicit --tmux always wins; omitted, this follows the shell's auto default exactly (see
   // resolveAutoSpawnRuntime and tmuxRuntimeInstalled) instead of reading MEGABRAIN_SPAWN_RUNTIME,
   // an environment variable nothing in this codebase ever sets.
-  const runtime: SpawnRuntime = options.tmux === null ? resolveAutoSpawnRuntime(await tmuxRuntimeInstalled(environment)) : options.tmux ? "tmux" : "host";
-  // dispatchId does not depend on the worktree, so the wrapped prompt (the payload actually
-  // transported, not the raw --prompt) can be built and budgeted before anything is created.
+  const selectedRuntime: SpawnRuntime = options.tmux === null ? resolveAutoSpawnRuntime(await tmuxRuntimeInstalled(environment)) : options.tmux ? "tmux" : "host";
   const id = dispatchId(environment);
   const prompt = finalPrompt(options, id);
-  const budget = validatePromptBudget(prompt, runtime);
-  if (budget.kind !== "ok") return budget;
+  const initialBudget = validatePromptBudget(prompt, selectedRuntime);
+  if (initialBudget.kind !== "ok") return initialBudget;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
+  const callerInTmux = Boolean(environment.TMUX && environment.TMUX_PANE);
+  let sameWorktree = false;
+  if (callerInTmux) {
+    const callerPath = await getTmux().paneCurrentPath?.(environment.TMUX_PANE!, process);
+    if (callerPath?.kind === "ok") {
+      const [callerRealPath, targetRealPath] = await Promise.all([
+        realpath(callerPath.value).catch(() => null),
+        realpath(worktree.path).catch(() => null),
+      ]);
+      sameWorktree = callerRealPath !== null && targetRealPath !== null && callerRealPath === targetRealPath;
+    }
+  }
+  const root = resolveStateDirectory(environment);
+  const existingWorktreeSession = selectedRuntime === "tmux" && !sameWorktree
+    ? await existingTmuxSessionForWorktree(root, worktree.path, process)
+    : undefined;
+  const placement = decideTmuxPlacement({ callerInTmux, sameWorktree, tmuxRuntimeSelected: selectedRuntime === "tmux", existingSession: existingWorktreeSession !== undefined });
+  const runtime: SpawnRuntime = placement.kind === "host" ? "host" : "tmux";
+  // Runtime selection depends on same-worktree tmux placement, so budget after resolving it.
+  if (runtime !== selectedRuntime) {
+    const budget = validatePromptBudget(prompt, runtime);
+    if (budget.kind !== "ok") return budget;
+  }
   const parentContext = await resolveCaller(environment, process);
   const parentWorkspace = parentWorkspaceId(environment);
   const parentTmux = parentTmuxChannel(environment);
@@ -498,26 +685,36 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   let session: string | null = null;
   let pane: string | null = null;
   let sessionOwned = true;
+  let sessionCreatedBySpawn = false;
+  let hostTerminalId: string | null = null;
+  let hostTerminalHost: string | null = null;
+  let tmuxHostWarning: string | null = null;
   let readinessError: string | undefined;
   let terminalCreateAttempts: number | undefined;
 
   if (runtime === "tmux") {
-    if (parentContext.host === "tmux" && environment.TMUX_PANE !== undefined) {
+    if (placement.kind === "caller-window" && environment.TMUX_PANE !== undefined) {
       const current = await getTmux().sessionForPane(environment.TMUX_PANE, process);
       if (current.kind === "ok") {
         session = current.value;
         sessionOwned = false;
         const waited = await waitForTmuxSession(session, process);
         if (waited.kind !== "ok") return waited;
-        const split = await splitTmuxWindow(session, worktree.path, process);
+        const split = await splitTmuxWorktreePane(session, worktree.path, process, environment.TMUX_PANE);
         if (split.kind !== "ok") return split;
         pane = split.value;
       }
     }
     if (session === null) {
-      session = `megabrain-${id}`;
-      const created = await createTmuxSession(session, worktree.path, undefined, process);
-      if (created.kind !== "ok") return created;
+      const target = await openWorktreeTmuxTarget(root, worktree, parentContext, parentWorkspace, options, process);
+      if (target.kind !== "ok") return target;
+      session = target.value.session;
+      pane = target.value.pane;
+      sessionOwned = target.value.sessionOwned;
+      sessionCreatedBySpawn = target.value.sessionCreated;
+      hostTerminalId = target.value.hostTerminalId;
+      hostTerminalHost = target.value.hostTerminalHost;
+      tmuxHostWarning = target.value.warning;
     }
     const waited = await waitForTmuxSession(session, process);
     if (waited.kind !== "ok") return waited;
@@ -556,10 +753,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     terminalCreateAttempts = createdTerminal.value.attempts;
   }
 
-  const root = resolveStateDirectory(environment);
   const directory = await dispatchPath(root, id, "");
   await mkdir(directory, { recursive: true });
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, pane);
+  if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   await atomicJson(`${directory}/meta.json`, meta);
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };
   let step: SpawnStep = runtime === "tmux" ? "transcript-start" : "prompt-publication";
@@ -641,13 +838,14 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       if (marked.kind !== "ok") return marked;
     }
     if (plan.action === "fail") {
-      const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionOwned);
+      const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
-      const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }) };
+      const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
-      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${attempts}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
+      const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
+      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${attempts}${warning}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
     }
     step = plan.nextStep;
   }

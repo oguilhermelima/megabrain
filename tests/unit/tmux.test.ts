@@ -11,7 +11,7 @@ import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { notifyChild, resolveCaller } from "../../src/cli/commands/queue-write.js";
-import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
+import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxPane, splitTmuxWindow, splitTmuxWorktreePane, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -42,7 +42,7 @@ describe("tmux identity provider", () => {
     expect(process.calls).toEqual([
       { command: "tmux", args: ["display-message", "-p", "-t", "%4", "#{session_name}"] },
       { command: "tmux", args: ["has-session", "-t", "work"] },
-      { command: "tmux", args: ["list-panes", "-t", "work", "-F", "#{pane_id}"] },
+      { command: "tmux", args: ["list-panes", "-s", "-t", "work", "-F", "#{pane_id}"] },
       { command: "tmux", args: ["display-message", "-p", "-t", "%4", "#{pane_pid}"] },
     ]);
   });
@@ -178,6 +178,58 @@ describe("tmux identity provider", () => {
     expect(calls).toStrictEqual([
       { command: "tmux", args: ["new-session", "-d", "-A", "-s", "child", "-c", "/work/tree"] },
     ]);
+  });
+
+  test("splits a specific caller pane horizontally into the right-hand child pane", async () => {
+    const process = processFor(ok({ stdout: "%10\n", stderr: "", exitCode: 0 }));
+    expect(await splitTmuxPane("caller", "%4", "/work/tree", process)).toEqual({ kind: "ok", value: "%10" });
+    expect(process.calls).toEqual([{
+      command: "tmux",
+      args: ["split-window", "-d", "-h", "-t", "%4", "-c", "/work/tree", "-P", "-F", "#{pane_id}"],
+    }]);
+  });
+
+  test("places the first child to the right of the main pane and restores the main half", async () => {
+    const calls: Call[] = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (args[0] === "list-panes") return ok({ stdout: "%0|@1|0|0|0|59|120\n", stderr: "", exitCode: 0 });
+        if (args[0] === "split-window") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    expect(await splitTmuxWorktreePane("worktree", "/work/tree", process, "%0")).toEqual({ kind: "ok", value: "%1" });
+    expect(calls[0]?.args).toEqual(["list-panes", "-s", "-t", "worktree", "-F", "#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}"]);
+    expect(calls[0]?.args.at(-1)).toBe("#{pane_id}|#{window_id}|#{window_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{window_width}");
+    expect(calls.slice(1)).toEqual([
+      { command: "tmux", args: ["split-window", "-d", "-h", "-p", "50", "-t", "%0", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] },
+      { command: "tmux", args: ["resize-pane", "-t", "%0", "-x", "60"] },
+    ]);
+  });
+
+  test("stacks later children in the right column and starts a new window at four panes", async () => {
+    const calls: Call[] = [];
+    let rows = "%0|@1|0|0|0|59|120\n%1|@1|0|60|0|59|120\n%2|@1|0|60|14|59|120\n";
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (args[0] === "list-panes") return ok({ stdout: rows, stderr: "", exitCode: 0 });
+        if (args[0] === "split-window") return ok({ stdout: "%3\n", stderr: "", exitCode: 0 });
+        if (args[0] === "new-window") return ok({ stdout: "%4\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    expect(await splitTmuxWorktreePane("worktree", "/work/tree", process)).toEqual({ kind: "ok", value: "%3" });
+    expect(calls[1]).toEqual({ command: "tmux", args: ["split-window", "-d", "-v", "-t", "%2", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] });
+    rows += "%3|@1|0|60|28|59|120\n";
+    calls.length = 0;
+    expect(await splitTmuxWorktreePane("worktree", "/work/tree", process)).toEqual({ kind: "ok", value: "%4" });
+    expect(calls[1]).toEqual({ command: "tmux", args: ["new-window", "-d", "-t", "worktree", "-c", "/work/tree", "-P", "-F", "#{pane_id}"] });
   });
 
   test("the child notification follows the registered agent and tmux modules", async () => {
