@@ -98,13 +98,17 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
         workspaceId: "workspace", state: "running", processState: "running", terminalState: "owned",
       }));
       await writeFile(join(root, "sessions", "megabrain-wt-tree-hash.json"), JSON.stringify({ tmuxSession: "megabrain-wt-tree-hash", megabrainOwned: true, hostTerminalId: "attach-tab", hostTerminalHost: "orca" }));
-      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes"
-        ? ok({ stdout: "%3\n", stderr: "", exitCode: 0 })
-        : ok({ stdout: "", stderr: "", exitCode: 0 }), calls);
+      let sessionAlive = true;
+      const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%3\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "has-session") return sessionAlive ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("no session", 1);
+        if (command === "tmux" && args[0] === "kill-session") sessionAlive = false;
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      }, calls);
       const result = await executeOrchestrateClose(["d3"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
       expect(result.kind).toBe("ok");
       expect(calls.filter((call) => (call.command === "tmux" || call.command === "orca") && call.args[0] !== "capture-pane").map((call) => [call.command, call.args[0]])).toEqual([
-        ["tmux", "has-session"], ["tmux", "list-panes"], ["tmux", "kill-session"], ["orca", "terminal"],
+        ["tmux", "has-session"], ["tmux", "list-panes"], ["tmux", "kill-session"], ["tmux", "has-session"], ["orca", "terminal"],
       ]);
     } finally {
       await rm(root, { recursive: true, force: true });
