@@ -11,7 +11,7 @@ import { callerSession } from "../../src/cli/commands/install-doctor.js";
 import { childIdentity, dispatchId } from "../../src/cli/commands/check.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { notifyChild, resolveCaller } from "../../src/cli/commands/queue-write.js";
-import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxWindow, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
+import { createTmuxSession, getTmux, registerTmux, sendTmuxPair, splitTmuxPane, splitTmuxWindow, waitForTmuxSession, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -178,6 +178,15 @@ describe("tmux identity provider", () => {
     expect(calls).toStrictEqual([
       { command: "tmux", args: ["new-session", "-d", "-A", "-s", "child", "-c", "/work/tree"] },
     ]);
+  });
+
+  test("splits a specific caller pane horizontally into the right-hand child pane", async () => {
+    const process = processFor(ok({ stdout: "%10\n", stderr: "", exitCode: 0 }));
+    expect(await splitTmuxPane("caller", "%4", "/work/tree", process)).toEqual({ kind: "ok", value: "%10" });
+    expect(process.calls).toEqual([{
+      command: "tmux",
+      args: ["split-window", "-d", "-h", "-t", "%4", "-c", "/work/tree", "-P", "-F", "#{pane_id}"],
+    }]);
   });
 
   test("the child notification follows the registered agent and tmux modules", async () => {

@@ -5,11 +5,24 @@ import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { decideTmuxPlacement } from "../../src/core/tmux-placement.js";
+import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
 
 describe("tmux placement", () => {
   test("opens beside a caller in the same worktree even when its host resolves as orca and runtime is disabled", () => {
     expect(decideTmuxPlacement({ callerInTmux: true, sameWorktree: true, tmuxRuntimeSelected: false, existingSession: true })).toEqual({ kind: "caller-window" });
+  });
+
+  test("selects a known worktree session before creating one", () => {
+    expect(decideTmuxPlacement({ callerInTmux: false, sameWorktree: false, tmuxRuntimeSelected: true, existingSession: true })).toEqual({ kind: "existing-session" });
+    expect(decideTmuxPlacement({ callerInTmux: false, sameWorktree: false, tmuxRuntimeSelected: true, existingSession: false })).toEqual({ kind: "worktree-session" });
+    expect(decideTmuxPlacement({ callerInTmux: false, sameWorktree: false, tmuxRuntimeSelected: false, existingSession: false })).toEqual({ kind: "host" });
+  });
+
+  test("names worktree sessions stably and distinguishes paths that share a basename", () => {
+    const first = tmuxWorktreeSessionName("/repo/feature/tree");
+    expect(first).toBe(tmuxWorktreeSessionName("/repo/feature/tree"));
+    expect(first).toMatch(/^megabrain-wt-tree-[a-f0-9]{12}$/);
+    expect(tmuxWorktreeSessionName("/other/tree")).not.toBe(first);
   });
 
   test("splits the real caller pane when host identity resolves as orca", async () => {
