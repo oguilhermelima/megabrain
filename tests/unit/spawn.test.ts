@@ -114,7 +114,7 @@ describe("executeSpawn", () => {
     let receivedRepo: string | undefined;
     let receivedBranch: string | undefined;
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
     try {
       const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
         resolveWorktree: async (target, options) => {
@@ -1209,7 +1209,7 @@ describe("executeSpawn", () => {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
       const created = process.calls.find((call) => call.command === "tmux" && call.args[0] === "new-session");
-      expect(created).toEqual({ command: "tmux", args: ["new-session", "-d", "-A", "-s", `megabrain-${dispatchId}`, "-c", "/work/tree"] });
+      expect(created).toEqual({ command: "tmux", args: ["new-session", "-d", "-s", tmuxWorktreeSessionName("/work/tree"), "-c", "/work/tree"] });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1403,9 +1403,13 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
     await mkdir(state, { recursive: true });
     await writeFile(`${state}/state.json`, JSON.stringify({ "tmux-runtime": { installed: true } }));
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
     try {
-      const process = processFor([]);
+      const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+        ? ok({ stdout: "%auto-child\n", stderr: "", exitCode: 0 })
+        : command === "orca" && args[1] === "create"
+          ? ok({ stdout: JSON.stringify({ handle: "auto-attach-terminal" }), stderr: "", exitCode: 0 })
+          : ok({ stdout: "", stderr: "", exitCode: 0 }));
       await executeSpawn(
         ["--repo", "/repo", "--branch", "feat/auto-tmux", "--agent", "codex", "--prompt", "spawn"],
         { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
@@ -1413,7 +1417,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
         { resolveWorktree: async () => ok(worktree("created")) },
       );
       expect(process.calls.some((call) => call.command === "tmux")).toBe(true);
-      expect(process.calls.some((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "create")).toBe(false);
+      expect(process.calls.some((call) => call.command === "orca" && call.args[0] === "terminal" && call.args[1] === "create" && call.args.some((arg) => arg.startsWith("tmux attach -t 'megabrain-wt-tree-")))).toBe(true);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
