@@ -41,7 +41,30 @@ case "$invalid_output" in
 esac
 printf 'compiled invalid-dispatch path reports the rejected identifier\n'
 
-if rg -n 'dispatches/' "$root/src" --glob '!src/adapters/dispatch-store.ts' >/dev/null; then
-  fail 'dispatch path construction exists outside src/adapters/dispatch-store.ts'
-fi
+store_module_candidates="$(grep -rl '^export function dispatchRoot(' "$root/src")"
+[ -n "$store_module_candidates" ] || fail 'could not locate the module that exports dispatchRoot'
+case "$store_module_candidates" in
+  *$'\n'*) fail "multiple modules export dispatchRoot:\n$store_module_candidates" ;;
+esac
+store_module="$(realpath "$store_module_candidates")"
+
+set +e
+grep -rn 'dispatches/' "$root/src" >"$work/dispatch-path-matches"
+dispatch_path_status=$?
+set -e
+case "$dispatch_path_status" in
+  0)
+    : >"$work/offending-dispatch-path-matches"
+    while IFS= read -r match; do
+      matched_file="${match%%:*}"
+      [ "$(realpath "$matched_file")" = "$store_module" ] || printf '%s\n' "$match" >>"$work/offending-dispatch-path-matches"
+    done <"$work/dispatch-path-matches"
+    if [ -s "$work/offending-dispatch-path-matches" ]; then
+      fail "dispatch path construction exists outside the dispatch store:
+$(cat "$work/offending-dispatch-path-matches")"
+    fi
+    ;;
+  1) ;;
+  *) fail "could not scan src for dispatch path construction (rg exit $dispatch_path_status)" ;;
+esac
 printf 'dispatch path construction is confined to the dispatch store\n'
