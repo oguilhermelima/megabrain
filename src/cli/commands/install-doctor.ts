@@ -17,7 +17,7 @@ import { usageText } from "../../core/usage.js";
 import { runMachineInstall } from "./install-machine.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
-type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number };
+type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 type State = Record<string, Record<string, unknown>>;
 const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
@@ -388,7 +388,7 @@ async function report(module: string, environment: Environment, process: Process
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
     const { unrecognisedMessageFiles: _unrecognisedMessageFiles, untrackedDispatches: _untrackedDispatches, ...counts } = health;
-    return { module, status, reason, ...counts };
+    return { module, status, reason, ...counts, usableRuntimes: usable.length };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
@@ -867,6 +867,12 @@ async function installOne(module: string, environment: Environment, processAdapt
     return failed(`${module}: ${step.error}`);
   }
   const after = await report(module, environment, processAdapter);
+  // Orchestration installs nothing of its own: it is usable as soon as one runtime is. Leftover
+  // dispatch records that need review are worth reporting, but they are not a failed install.
+  if (module === "orchestration" && after.status === "misconfigured" && typeof after.usableRuntimes === "number" && after.usableRuntimes > 0) {
+    writeInstalledState(environment, module, true, after.reason);
+    return ok(`${module}: ok (warning: ${after.reason})\n`);
+  }
   writeInstalledState(environment, module, after.status === "ok", after.reason);
   const text = `${module}: ${after.status} (${after.reason})\n`;
   return after.status === "ok" ? ok(text) : failed(text.trim());

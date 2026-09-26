@@ -493,6 +493,8 @@ async function installMachine(
         }
         configuredModules.push(module);
         step?.done(moduleLabel(module));
+        const warning = /\(warning: ([^;)]+)/.exec(result.value)?.[1];
+        if (ui !== undefined && warning !== undefined) ui.warn(`${moduleLabel(module)}: ${warning}. Review with megabrain orchestrate list --uncertain`);
         const latestState = readMachineState(statePath);
         if (latestState === undefined) throw new Error(`could not read valid megabrain state at ${statePath}`);
         writeMachineState(statePath, latestState, selection, configuredModules);

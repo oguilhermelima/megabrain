@@ -48,6 +48,7 @@ function scriptedPrompter(answers: Answers, seen: string[]): () => MachinePrompt
     review: async () => answer("review", answers.review ?? true),
     step: (label) => { seen.push(`step:${label}`); return { done: () => undefined, fail: () => undefined }; },
     info: () => undefined,
+    warn: (message) => { seen.push(`warn:${message}`); },
     outro: (message) => { seen.push(`outro:${message}`); },
   });
 }

@@ -37,6 +37,7 @@ export type MachinePrompter = Readonly<{
   review: (plan: ReviewPlan) => Promise<boolean>;
   step: (label: string) => StepHandle;
   info: (message: string) => void;
+  warn: (message: string) => void;
   outro: (message: string) => void;
 }>;
 
@@ -157,6 +158,7 @@ export function createClackPrompter(): MachinePrompter {
       return { done: (message) => spinner.stop(message), fail: (message) => spinner.error(message) };
     },
     info: (message) => clack.log.info(message),
+    warn: (message) => clack.log.warn(message),
     outro: (message) => clack.outro(message),
   };
 }
