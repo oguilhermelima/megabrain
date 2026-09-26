@@ -14,7 +14,7 @@ import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironme
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
-import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxPane, splitTmuxWindow, waitForTmuxSession } from "../../hosts/tmux.js";
+import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, waitForTmuxSession } from "../../hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 
@@ -341,7 +341,8 @@ async function existingTmuxSessionForWorktree(root: string, worktreePath: string
     if (session === "" || directory === "" || await canonicalPath(directory) !== target) continue;
     if ((await getTmux().sessionExists(session, process)).kind !== "ok") continue;
     const panes = await getTmux().panesForSession(session, process);
-    if (panes.kind !== "ok" || panes.value.length === 0) continue;
+    const recordedPane = stringValue(record?.tmuxPane);
+    if (panes.kind !== "ok" || panes.value.length === 0 || (recordedPane !== "" && !panes.value.includes(recordedPane))) continue;
     return { session, record: record ?? {} };
   }
   const dispatchDirectory = `${root}/dispatches`;
@@ -405,7 +406,7 @@ async function openWorktreeTmuxTarget(
   try {
     const existing = await existingTmuxSessionForWorktree(root, worktree.path, process);
     if (existing !== undefined) {
-      const split = await splitTmuxWindow(existing.session, worktree.path, process);
+      const split = await splitTmuxWorktreePane(existing.session, worktree.path, process);
       if (split.kind !== "ok") return split;
       return ok({
         session: existing.session,
@@ -629,10 +630,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     const callerPath = await getTmux().paneCurrentPath?.(environment.TMUX_PANE!, process);
     if (callerPath?.kind === "ok") {
       const [callerRealPath, targetRealPath] = await Promise.all([
-        realpath(callerPath.value).catch(() => callerPath.value),
-        realpath(worktree.path).catch(() => worktree.path),
+        realpath(callerPath.value).catch(() => null),
+        realpath(worktree.path).catch(() => null),
       ]);
-      sameWorktree = callerRealPath === targetRealPath;
+      sameWorktree = callerRealPath !== null && targetRealPath !== null && callerRealPath === targetRealPath;
     }
   }
   const root = resolveStateDirectory(environment);
@@ -677,7 +678,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         sessionOwned = false;
         const waited = await waitForTmuxSession(session, process);
         if (waited.kind !== "ok") return waited;
-        const split = await splitTmuxPane(session, environment.TMUX_PANE, worktree.path, process);
+        const split = await splitTmuxWorktreePane(session, worktree.path, process, environment.TMUX_PANE);
         if (split.kind !== "ok") return split;
         pane = split.value;
       }
