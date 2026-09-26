@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { executeDoctor } from "../../src/cli/commands/install-doctor.js";
+import { executeDoctor, executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
 
@@ -199,6 +199,39 @@ describe("doctor orchestration-hooks entry detection", () => {
     expect(result.status).toBe("misconfigured");
     expect(result.reason).toContain("claude: entrypoint missing");
     expect(result.reason).toContain("megabrain install");
+  });
+});
+
+describe("install orchestration-hooks backups", () => {
+  test("backs up an existing config once, before the first install", async () => {
+    const home = mkdtempSync("/tmp/megabrain-install-hooks-backup-");
+    const configDir = join(home, ".claude");
+    const config = join(configDir, "settings.json");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(config, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }] } }));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "which") return args[0] === "claude"
+          ? ok({ stdout: "/usr/bin/claude", stderr: "", exitCode: 0 })
+          : failed(`${args[0]} unavailable`);
+        if (command === "date") return ok({ stdout: "20260926T000000Z\n", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("detached process unavailable"); },
+      invocationCount: () => 0,
+    };
+
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    const first = await executeInstall(["orchestration-hooks"], environment, process);
+    expect(first.kind).toBe("ok");
+    const second = await executeInstall(["orchestration-hooks"], environment, process);
+    expect(second.kind).toBe("ok");
+
+    const backups = readdirSync(configDir).filter((name) => name.startsWith("settings.json.megabrain-backup-"));
+    expect(backups).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(configDir, backups[0]!), "utf8"))).toEqual({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }] },
+    });
   });
 });
 
