@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Scenarios written before implementation: plain/JSON parity, every selection flag, archived
-# records, malformed records, and an empty inventory.
+# Scenarios written before implementation: archived records are hidden by default and included
+# with an explicit marker when requested, alongside plain/JSON parity, selection flags, malformed
+# records, and an empty inventory.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-orchestrate-list.XXXXXX")"
 trap 'rm -rf "$state_dir"' EXIT
@@ -23,13 +24,24 @@ run_side() {
   MEGABRAIN_STATE_DIR="$root_dir" MEGABRAIN_SESSION_ID=caller MEGABRAIN_SESSION_HOST=host "$executable" orchestrate list $args
 }
 write_fixture "$state_dir"
-for args in "" "--json" "--all" "--all --json" "--orphans --json" "--uncertain --json"; do
+for args in "" "--json" "--all" "--all --json" "--archived" "--archived --json" "--all --archived --json" "--orphans --json" "--uncertain --json"; do
   binary_output="$(run_side "$root/.build/megabrain" "$state_dir" "$args" 2>"$state_dir/binary.err")"
   [ -n "$binary_output" ] || fail "compiled binary produced no output for args: $args"
   if [ -x "$root/.build/megabrain" ]; then
     [ -n "$binary_output" ] || fail "compiled binary produced no output for args: $args"
   fi
 done
+default_json="$(run_side "$root/.build/megabrain" "$state_dir" "--all --json")"
+printf '%s' "$default_json" | jq -e 'all(.[]; .dispatchId != "archived" and .archived != true)' >/dev/null ||
+  fail "default list included an archived dispatch: $default_json"
+archived_json="$(run_side "$root/.build/megabrain" "$state_dir" "--archived --json")"
+printf '%s' "$archived_json" | jq -e 'any(.[]; .dispatchId == "archived" and .archived == true)' >/dev/null ||
+  fail "--archived did not include an explicitly marked archived dispatch: $archived_json"
+archived_text="$(run_side "$root/.build/megabrain" "$state_dir" "--archived")"
+case "$archived_text" in
+  *'archived'*) ;;
+  *) fail "text list did not visibly mark the archived dispatch: $archived_text" ;;
+esac
 empty="$state_dir/empty"
 mkdir -p "$empty"
 [ "$(run_side "$root/.build/megabrain" "$empty" "--json")" = '[]' ] || fail 'empty compiled JSON inventory differs'
