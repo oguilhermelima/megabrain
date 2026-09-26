@@ -138,9 +138,8 @@ function dispatchId(environment: SpawnEnvironment): string {
     : `dispatch-${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
 }
 
-// Mirrors the shell's megabrain_runtime_enabled (lib/common.sh): true only when state.json parses
-// and its "tmux-runtime" entry is installed. An absent or unparsable state.json is "not installed",
-// exactly like the shell's own guard, so the auto default falls back to host in either case.
+// The "tmux-runtime" installed flag in state.json selects tmux. An absent or unparsable file means
+// tmux is not installed, so the automatic runtime falls back to host.
 async function tmuxRuntimeInstalled(environment: SpawnEnvironment): Promise<boolean> {
   try {
     const raw = await readFile(`${resolveStateDirectory(environment)}/state.json`, "utf8");
