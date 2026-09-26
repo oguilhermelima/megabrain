@@ -12,7 +12,9 @@ function terminalTail(stdout: string): Result<string> {
     const result = record(root.result);
     const terminal = record(result.terminal);
     const tail = terminal.tail;
-    return typeof tail === "string" ? ok(tail) : failed("orca terminal read did not include result.terminal.tail");
+    if (typeof tail === "string") return ok(tail);
+    if (Array.isArray(tail) && tail.every((line): line is string => typeof line === "string")) return ok(tail.join("\n"));
+    return failed("orca terminal read did not include result.terminal.tail");
   } catch {
     return failed("orca terminal read returned invalid JSON");
   }

@@ -32,7 +32,7 @@ function processFor(events: string[], behavior: (command: string, args: readonly
       events.push(`${command} ${args.join(" ")}`);
       const result = await behavior(command, args);
       if (command === "orca" && args[0] === "terminal" && args[1] === "read" && result.kind === "ok" && result.value.stdout === "") {
-        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: `${codexIdleOutput}\n${claudeIdleOutput}` } } }), stderr: "", exitCode: 0 });
+        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: [codexIdleOutput, claudeIdleOutput] } } }), stderr: "", exitCode: 0 });
       }
       return result;
     },
@@ -790,7 +790,7 @@ describe("executeSpawn", () => {
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
       ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
       : command === "orca" && args[1] === "read"
-        ? ok({ stdout: JSON.stringify({ result: { terminal: { tail: "Working (2s)\\nesc to interrupt" } } }), stderr: "", exitCode: 0 })
+        ? ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["Working (2s)", "esc to interrupt"] } } }), stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "timeout", "--tmux", "false"], {
