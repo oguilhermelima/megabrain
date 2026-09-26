@@ -201,3 +201,27 @@ describe("doctor orchestration-hooks entry detection", () => {
     expect(result.reason).toContain("megabrain install");
   });
 });
+
+describe("install orchestration with dispatches that need review", () => {
+  // Orchestration installs nothing of its own; a usable runtime is the whole requirement. A leftover
+  // record that needs reconciling is reported, but it must not turn the install into a failure.
+  test("succeeds with a warning when a runtime is usable, and still fails when none is", async () => {
+    const { executeInstall } = await import("../../src/cli/commands/install-doctor.js");
+    const state = mkdtempSync("/tmp/megabrain-install-orchestration-");
+    writeDispatchMeta(state, "unproven", "running", "2020-01-01T00:00:00Z", { processState: "start-unproven" });
+
+    const withRuntime = await executeInstall(["orchestration"], { HOME: state, MEGABRAIN_STATE_DIR: state }, processFor({
+      "orca status --json": "{}",
+    }));
+    expect(withRuntime.kind).toBe("ok");
+    if (withRuntime.kind === "ok") expect(withRuntime.value).toContain("orchestration: ok (warning: dispatch state requires reconciliation");
+
+    const noRuntime: ProcessAdapter = {
+      async run(command) { return failed(`${command} unavailable`); },
+      async startDetached() { return failed("detached process unavailable"); },
+      invocationCount: () => 0,
+    };
+    const withoutRuntime = await executeInstall(["orchestration"], { HOME: state, MEGABRAIN_STATE_DIR: state }, noRuntime);
+    expect(withoutRuntime.kind).toBe("failed");
+  });
+});
