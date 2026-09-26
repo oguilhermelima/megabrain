@@ -727,7 +727,8 @@ async function installSimulatorNative(processAdapter: ProcessAdapter): Promise<R
 async function installTvAdb(processAdapter: ProcessAdapter): Promise<Result<void>> {
   if (await available(processAdapter, "adb")) return ok(undefined);
   const platform = await processAdapter.run("uname", ["-s"]);
-  const os = platform.kind === "ok" ? platform.value.stdout.trim() : "";
+  const os = platform.kind === "ok" ? platform.value.stdout.trim()
+    : process.platform === "darwin" ? "Darwin" : process.platform === "linux" ? "Linux" : "";
   const brewAvailable = os === "Darwin" && await available(processAdapter, "brew");
   const message = brewAvailable
     ? "adb is missing. Install Android platform-tools with: brew install android-platform-tools"
