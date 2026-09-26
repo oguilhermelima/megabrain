@@ -8,6 +8,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { discoverAgentDirectories, type AgentEnvironment, type MachineAgent, type MachineAgentDirectories } from "../../core/agent-directories.js";
+import { executeTmux } from "./tmux.js";
 
 export { discoverAgentDirectories } from "../../core/agent-directories.js";
 
@@ -37,14 +38,16 @@ type SkillMode = "none" | "global" | "project";
 type MachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
+  readonly tmux: "yes" | "no";
   readonly modules: readonly string[];
   readonly yes: boolean;
   readonly provided: boolean;
 }>;
-type MachineArguments = Omit<MachineSelection, "agents" | "modules" | "skill" | "provided"> & Readonly<{
+type MachineArguments = Omit<MachineSelection, "agents" | "modules" | "skill" | "tmux" | "provided"> & Readonly<{
   readonly agents?: readonly MachineAgent[];
   readonly modules?: readonly string[];
   readonly skill?: SkillMode;
+  readonly tmux?: "yes" | "no";
   readonly provided: boolean;
 }>;
 type ParseFailure = Readonly<{ kind: "failed"; error: string; exitCode: 2 }>;
@@ -76,13 +79,14 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
   let selectedAgents: readonly MachineAgent[] | undefined;
   let selectedModules: readonly string[] | undefined;
   let skill: SkillMode | undefined;
+  let tmux: "yes" | "no" | undefined;
   let yes = false;
   let provided = false;
   const seen = new Set<string>();
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--yes") { yes = true; continue; }
-    if (arg !== "--agents" && arg !== "--skill" && arg !== "--modules") {
+    if (arg !== "--agents" && arg !== "--skill" && arg !== "--modules" && arg !== "--tmux") {
       return { kind: "failed", error: `unknown install option: ${arg}`, exitCode: 2 };
     }
     if (seen.has(arg)) return { kind: "failed", error: `${arg} may only be specified once`, exitCode: 2 };
@@ -99,6 +103,9 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
       const parsed = parseModules(value);
       if ("kind" in parsed) return parsed;
       selectedModules = parsed as readonly string[];
+    } else if (arg === "--tmux") {
+      if (value !== "yes" && value !== "no") return { kind: "failed", error: "--tmux must be yes or no", exitCode: 2 };
+      tmux = value;
     } else if (arg === "--skill") {
       if (value !== "none" && value !== "global" && value !== "project") {
         return { kind: "failed", error: `${arg} must be none, global, or project`, exitCode: 2 };
@@ -107,12 +114,13 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
       skill = mode;
     }
   }
-  return { agents: selectedAgents, modules: selectedModules, skill, yes, provided };
+  return { agents: selectedAgents, modules: selectedModules, skill, tmux, yes, provided };
 }
 
 type DefaultModuleSelection = Readonly<{
   readonly modules: readonly string[];
   readonly skipped: readonly Readonly<{ module: string; reason: string }>[];
+  readonly tmuxAvailable: boolean;
 }>;
 
 async function resolveDefaultModuleSelection(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<DefaultModuleSelection> {
@@ -122,15 +130,15 @@ async function resolveDefaultModuleSelection(environment: AgentEnvironment, proc
   const tmux = await has("tmux");
   const orca = await has("orca");
   const supersetOnPath = await has("superset");
-  if (tmux) defaults.unshift("tmux-runtime");
   const homeSuperset = environment.HOME === undefined ? "" : join(environment.HOME, ".superset/bin/superset");
   const superset = supersetOnPath || (homeSuperset.length > 0 && existsSync(homeSuperset));
   if (orca || supersetOnPath || tmux) defaults.push("orchestration");
   else skipped.push({ module: "orchestration", reason: "no orca, superset, or tmux runtime detected" });
   defaults.push("orchestration-hooks");
+  if (!tmux) skipped.push({ module: "tmux-runtime", reason: "tmux was not found" });
   if (superset && orca) defaults.push("worktree");
   else if (superset && !orca) skipped.push({ module: "worktree", reason: "orca CLI is not on PATH" });
-  return { modules: defaults, skipped };
+  return { modules: defaults, skipped, tmuxAvailable: tmux };
 }
 
 export async function resolveDefaultModules(environment: AgentEnvironment, processAdapter: ProcessAdapter): Promise<readonly string[]> {
@@ -329,6 +337,7 @@ function readMachineState(path: string): Record<string, unknown> | undefined {
 type PersistedMachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
+  readonly tmux: "yes" | "no";
   /** Modules requested for this machine install. */
   readonly requestedModules: readonly string[];
   /** Modules that completed successfully, in request order. */
@@ -341,12 +350,15 @@ function matchingMachineInstall(left: unknown, right: PersistedMachineSelection)
   const value = left as Record<string, unknown>;
   if (value.agents === undefined || JSON.stringify(value.agents) !== JSON.stringify(right.agents)) return undefined;
   if (value.skill !== right.skill || value.version !== right.version || !Array.isArray(value.modules)) return undefined;
+  const tmux = value.tmux ?? (value.modules.includes("tmux-runtime") ? "yes" : "no");
+  if (tmux !== right.tmux) return undefined;
   const requestedModules = Array.isArray(value.requestedModules) ? value.requestedModules : value.modules;
   if (JSON.stringify(requestedModules) !== JSON.stringify(right.requestedModules)) return undefined;
   if (!value.modules.every((module): module is string => typeof module === "string" && right.requestedModules.includes(module))) return undefined;
   return {
     agents: right.agents,
     skill: right.skill,
+    tmux: right.tmux,
     requestedModules: right.requestedModules,
     modules: value.modules as string[],
     version: right.version,
@@ -354,7 +366,7 @@ function matchingMachineInstall(left: unknown, right: PersistedMachineSelection)
 }
 
 function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection, configuredModules: readonly string[]): void {
-  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version } };
+  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, tmux: selection.tmux, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version } };
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
@@ -372,6 +384,7 @@ export async function runMachineInstall(
   processAdapter: ProcessAdapter,
   installModule: (module: string) => Promise<Result<string>>,
   interactive = Boolean(process.stdin.isTTY),
+  revertTmuxRuntime: () => Promise<Result<string>> = () => executeTmux(["wrapper", "--revert"], environment, processAdapter),
 ): Promise<Result<string>> {
   const parsed = parseMachineInstallArgs(args);
   if ("kind" in parsed) return parsed;
@@ -384,15 +397,32 @@ export async function runMachineInstall(
   const detected = parsed.agents ?? availableAgents;
   const selectedAgents = parsed.agents ?? (interactive && !parsed.yes ? await askMany("Select agents", detected, detected) as MachineAgent[] : detected);
   const skill: SkillMode = parsed.skill ?? (interactive && !parsed.yes ? await ask("Install the skill?", ["none", "global", "project"], "global") as SkillMode : "global");
-  const modulesToInstall = parsed.modules ?? (interactive && !parsed.yes ? await askMany("Select modules", modules, defaults.modules) : defaults.modules);
-  const defaultSkips = parsed.modules === undefined
-    ? defaults.skipped.filter(({ module }) => !modulesToInstall.includes(module)).map(({ module, reason }) => `${module} skipped: ${reason}`)
-    : [];
-  const selection: MachineSelection = { agents: selectedAgents, skill, modules: modulesToInstall, yes: parsed.yes, provided: parsed.provided };
+  const tmux = parsed.tmux ?? (defaults.tmuxAvailable && interactive && !parsed.yes
+    ? await ask("Run agents inside tmux, splitting the screen?", ["no", "yes"], "yes") as "yes" | "no"
+    : defaults.tmuxAvailable && parsed.yes ? "yes" : "no");
+  let modulesToInstall = [...(parsed.modules ?? (interactive && !parsed.yes ? await askMany("Select modules", modules, defaults.modules) : defaults.modules))];
+  if (tmux === "yes" && !modulesToInstall.includes("tmux-runtime")) modulesToInstall.unshift("tmux-runtime");
+  if (tmux === "no") modulesToInstall = modulesToInstall.filter((module) => module !== "tmux-runtime");
+  const defaultSkips = [
+    ...(parsed.modules === undefined ? defaults.skipped.filter(({ module }) => module !== "tmux-runtime" && !modulesToInstall.includes(module)) : []),
+    ...(!defaults.tmuxAvailable && tmux === "no" ? [{ module: "tmux-runtime", reason: "tmux was not found" }] : []),
+  ].map(({ module, reason }) => `${module} skipped: ${reason}`);
+  const selection: MachineSelection = { agents: selectedAgents, skill, tmux, modules: modulesToInstall, yes: parsed.yes, provided: parsed.provided };
   const statePath = join(resolveStateDirectory(environment), "state.json");
   const state = readMachineState(statePath);
   if (state === undefined) return failed(`could not read valid megabrain state at ${statePath}`);
-  const recordedSelection: PersistedMachineSelection = { agents: selectedAgents, skill, requestedModules: modulesToInstall, modules: modulesToInstall, version: packageJson.version };
+  const tmuxState = state["tmux-runtime"];
+  const tmuxInstalled = typeof tmuxState === "object" && tmuxState !== null && !Array.isArray(tmuxState) && (tmuxState as Record<string, unknown>).installed === true;
+  let tmuxReverted = false;
+  if (tmux === "no" && tmuxInstalled) {
+    const shouldRevert = parsed.yes || (interactive && await ask("Revert the tmux runtime and remove its agent wrapper?", ["no", "yes"], "yes") === "yes");
+    if (!shouldRevert) return ok("tmux runtime retained; rerun with --yes to remove it\n");
+    const reverted = await revertTmuxRuntime();
+    if (reverted.kind !== "ok") return failed(`tmux runtime revert failed: ${reverted.kind === "failed" ? reverted.error : reverted.reason}`);
+    delete state["tmux-runtime"];
+    tmuxReverted = true;
+  }
+  const recordedSelection: PersistedMachineSelection = { agents: selectedAgents, skill, tmux, requestedModules: modulesToInstall, modules: modulesToInstall, version: packageJson.version };
   const previous = matchingMachineInstall(state.machineInstall, recordedSelection);
   const legacyInstructions = await retireLegacyInstructions(environment, process.cwd(), parsed.yes, interactive);
   if (legacyInstructions.kind !== "ok") return legacyInstructions;
@@ -401,7 +431,7 @@ export async function runMachineInstall(
   const skillsConfigured = previous !== undefined;
   if (skillsConfigured && pendingModules.length === 0) {
     const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed none\n`;
-    return ok(`${legacyInstructions.value}${defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : ""}machine configuration already current; no changes made\n${summary}`);
+    return ok(`${legacyInstructions.value}${tmuxReverted ? "tmux runtime reverted\n" : ""}${defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : ""}machine configuration already current; no changes made\n${summary}`);
   }
 
   try {
@@ -426,15 +456,17 @@ export async function runMachineInstall(
           continue;
         }
         configuredModules.push(module);
-        writeMachineState(statePath, state, selection, configuredModules);
+        const latestState = readMachineState(statePath);
+        if (latestState === undefined) throw new Error(`could not read valid megabrain state at ${statePath}`);
+        writeMachineState(statePath, latestState, selection, configuredModules);
       } catch (error: unknown) {
         failures.push(`${module}: ${error instanceof Error ? error.message : "module installation failed"}`);
       }
     }
     const summary = `machine install summary: configured ${configuredModules.join(", ") || "none"}; failed ${failures.map((failure) => failure.split(":", 1)[0]).join(", ") || "none"}\n`;
     const skipped = defaultSkips.length > 0 ? `${defaultSkips.join("\n")}\n` : "";
-    if (failures.length > 0) return failed(`${legacyInstructions.value}${retired.value}${skipped}${failures.join("\n")}\n${summary}`);
-    return ok(`${legacyInstructions.value}${retired.value}${skipped}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${configuredModules.join(", ") || "none"}\n${summary}`);
+    if (failures.length > 0) return failed(`${legacyInstructions.value}${retired.value}${tmuxReverted ? "tmux runtime reverted\n" : ""}${skipped}${failures.join("\n")}\n${summary}`);
+    return ok(`${legacyInstructions.value}${retired.value}${tmuxReverted ? "tmux runtime reverted\n" : ""}${skipped}machine configuration installed for agents ${selectedAgents.join(",") || "none"}; modules ${configuredModules.join(", ") || "none"}\n${summary}`);
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "machine configuration failed");
   }
