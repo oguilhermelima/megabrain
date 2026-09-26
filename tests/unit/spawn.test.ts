@@ -526,12 +526,13 @@ describe("executeSpawn", () => {
       }
     });
 
-    test("from another tmux pane (splits the caller's own session)", async () => {
+  test("from another tmux pane (does not split the caller's different checkout)", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-identity-`);
       const dispatchId = "dispatch-tmux-parent";
       const process = processFor([], (command, args) => {
         if (command === "tmux" && args[0] === "display-message") return ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "split-window") return ok({ stdout: "%13\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%14\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       });
@@ -540,14 +541,15 @@ describe("executeSpawn", () => {
       try {
         const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
-        expect(result.kind).toBe("ok");
+        expect(result).toMatchObject({ kind: "ok" });
         const meta = JSON.parse(await readFile(`${root}/dispatches/${dispatchId}/meta.json`, "utf8")) as Record<string, unknown>;
         expect(meta.childHost).toBe("tmux");
-        expect(meta.tmuxSession).toBe("caller-session");
-        expect(meta.tmuxPane).toBe("%13");
-        // The caller's OWN pane is %0, in the SAME session; the child's identity names its own
-        // split pane %13, never the caller's %0.
-        expect(meta.terminalId).toBe("tmux:caller-session:%13");
+        expect(meta.tmuxSession).not.toBe("caller-session");
+        expect(process.calls.some((call) => call.command === "tmux" && call.args[0] === "split-window")).toBe(false);
+        expect(meta.tmuxPane).toBe("%14");
+        // The caller's different checkout keeps its own session; the child still identifies its
+        // own pane in the separately selected worktree session.
+        expect(meta.terminalId).toBe(`tmux:${meta.tmuxSession}:%14`);
         expect(meta.parentSessionId).toBe("caller-session:%0");
         expect(meta.parentHost).toBe("tmux");
         expect(meta.terminalId).not.toBe(meta.parentSessionId);
