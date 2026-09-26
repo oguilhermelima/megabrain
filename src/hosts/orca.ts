@@ -1,9 +1,22 @@
 import type { ProcessAdapter } from "../adapters/proc.js";
-import { failed, ok } from "../core/result.js";
+import { failed, ok, type Result } from "../core/result.js";
+import { hasLivenessClassifier, waitForStableIdle } from "../core/liveness.js";
 import { unavailable, type HostProvider } from "./types.js";
 
 const record = (value: unknown): Record<string, unknown> => typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
 const stringValue = (value: unknown): string | undefined => typeof value === "string" && value !== "" ? value : undefined;
+
+function terminalTail(stdout: string): Result<string> {
+  try {
+    const root = record(JSON.parse(stdout));
+    const result = record(root.result);
+    const terminal = record(result.terminal);
+    const tail = terminal.tail;
+    return typeof tail === "string" ? ok(tail) : failed("orca terminal read did not include result.terminal.tail");
+  } catch {
+    return failed("orca terminal read returned invalid JSON");
+  }
+}
 
 export const orca: HostProvider = {
   id: "orca",
@@ -19,9 +32,18 @@ export const orca: HostProvider = {
     const terminal = record(root.terminal);
     return stringValue(resultTerminal.handle) ?? stringValue(terminal.handle) ?? stringValue(root.handle);
   },
-  readiness: async ({ terminalId }, process: ProcessAdapter, timeoutMs) => {
-    const result = await process.run("orca", ["terminal", "wait", "--terminal", terminalId, "--for", "tui-idle", "--timeout-ms", String(timeoutMs)]);
-    return result.kind === "ok" ? ok(undefined) : failed(`orca terminal ${terminalId} did not become ready within ${timeoutMs}ms`, result.exitCode);
+  readiness: async ({ workspaceId, terminalId }, process: ProcessAdapter, timeoutMs, agentId) => {
+    const timeoutError = `orca terminal ${terminalId} did not become ready within ${timeoutMs}ms`;
+    if (!hasLivenessClassifier(agentId)) {
+      const result = await process.run("orca", ["terminal", "wait", "--terminal", terminalId, "--for", "tui-idle", "--timeout-ms", String(timeoutMs)]);
+      return result.kind === "ok" ? ok(undefined) : failed(timeoutError, result.exitCode);
+    }
+    return waitForStableIdle(agentId, timeoutMs, async () => {
+      const call = orca.read({ workspaceId, terminalId });
+      if (call.kind !== "ok") return call;
+      const result = await process.run(call.value.command, call.value.args);
+      return result.kind === "ok" ? terminalTail(result.value.stdout) : failed(result.error, result.exitCode);
+    }, timeoutError);
   },
   list: () => ok({ command: "orca", args: ["terminal", "list", "--json"] }),
   read: ({ terminalId }) => ok({ command: "orca", args: ["terminal", "read", "--terminal", terminalId, "--json"] }),

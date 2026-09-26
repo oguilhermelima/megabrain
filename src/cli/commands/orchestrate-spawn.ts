@@ -6,7 +6,7 @@ import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
-import { classifyLiveness } from "../../core/liveness.js";
+import { waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
@@ -203,9 +203,6 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
   return 10000;
 }
 
-const TMUX_READINESS_POLL_MS = 100;
-const TMUX_READINESS_STABLE_MS = 1000;
-
 // Reuses the same output classification `orchestrate liveness` uses (core/liveness.ts,
 // getTmux().capturePane): the tmux runtime has no blocking "wait until ready" call the way the
 // host providers do, so readiness is read from the pane's own text until the agent's composer
@@ -215,20 +212,7 @@ const TMUX_READINESS_STABLE_MS = 1000;
 // TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
 // failing outright, since the composer may still settle before the overall deadline.
 async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Result<void>> {
-  const started = Date.now();
-  let stableSince: number | null = null;
-  while (true) {
-    const captured = await getTmux().capturePane(pane, 200, process);
-    const idle = captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle";
-    if (idle) {
-      if (stableSince === null) stableSince = Date.now();
-      else if (Date.now() - stableSince >= TMUX_READINESS_STABLE_MS) return ok(undefined);
-    } else {
-      stableSince = null;
-    }
-    if (Date.now() - started >= timeoutMs) return failed(`tmux pane ${pane} did not become ready within ${timeoutMs}ms`);
-    await new Promise((resolve) => setTimeout(resolve, TMUX_READINESS_POLL_MS));
-  }
+  return waitForStableIdle(agentId, timeoutMs, () => getTmux().capturePane(pane, 200, process), `tmux pane ${pane} did not become ready within ${timeoutMs}ms`);
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
@@ -588,7 +572,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       outcome = appended.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: "dispatch message append", detail: appended.error } };
     } else if (step === "readiness-wait") {
       const host = getHost(parentContext.host);
-      const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, process, readinessTimeoutMs);
+      const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, process, readinessTimeoutMs, options.agent);
       if (waited === undefined) {
         readinessError = `${parentContext.host} terminal ${terminalId} did not become ready within ${readinessTimeoutMs}ms`;
         outcome = { kind: "failed" };
