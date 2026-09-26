@@ -34,6 +34,7 @@ describe("tmux placement", () => {
         if (command === "tmux" && args[0] === "display-message" && args.at(-1) === "#{pane_current_path}") return ok({ stdout: `${root}\n`, stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "display-message" && args.at(-1) === "#{session_name}") return ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "split-window") return ok({ stdout: "%child\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "list-panes" && String(args.at(-1)).includes("window_id")) return ok({ stdout: "%caller\t@1\t0\t0\t0\t59\t120\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%child\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: "› Ask Codex to do anything\n", stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
