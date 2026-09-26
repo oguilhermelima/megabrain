@@ -50,5 +50,9 @@ run_case() { # run_case <shell> <wrapper>
 }
 
 run_case /bin/bash bash/megabrain-agent-tmux.bash
-run_case /bin/zsh zsh/megabrain-agent-tmux.zsh
+if [ -x /bin/zsh ]; then
+  run_case /bin/zsh zsh/megabrain-agent-tmux.zsh
+else
+  printf 'skip: zsh wrapper identity case requires /bin/zsh\n'
+fi
 printf 'ok: shell wrappers preserve caller identity across isolated tmux sessions\n'
