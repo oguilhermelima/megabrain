@@ -172,6 +172,10 @@ export function hasCallerIdentity(caller: CallerIdentity): boolean {
   return caller.id !== "" || caller.terminalId !== null;
 }
 
+export function isAgentSessionId(value: string): boolean {
+  return /^(?:claude|codex):.+$/.test(value);
+}
+
 // Ownership: the caller's stable id matches the recorded owner, or — for a record written before
 // agent-session ids existed, whose owner is a terminal handle — the caller's current terminal
 // handle matches. Host must agree either way.

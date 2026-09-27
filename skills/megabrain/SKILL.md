@@ -48,7 +48,8 @@ through tmux; over the limit is refused before anything is created, never trunca
 ## Supervising what you started
 
 ```
-megabrain orchestrate list [--all|--orphans|--uncertain] [--json]
+megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]
+megabrain orchestrate adopt <dispatch-id> [--force] [--json]
 megabrain orchestrate liveness <dispatch-id> [--json]
 megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]
 megabrain orchestrate ack <dispatch-id> <delivery-id> [--close] [--json]

@@ -8,14 +8,15 @@ import { usageText } from "../../core/usage.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
 
-// The one caller-identity resolver (core/context.js, via queue-write.js resolveCaller). Narrowed
-// to {id, host} — DispatchCaller's own shape — since ownership here is compared by id/host only;
-// see core/dispatch.js decorateDispatchRecord for where that comparison itself now goes through
-// ownsDispatch. Without this, a structured Orca session (no terminal handle) resolved to
-// {id:"", host:"unknown"} and `orchestrate list` showed none of its own dispatches.
+// Use the shared caller identity intact so list ownership also recognizes a matching legacy
+// terminal handle, exactly as the dispatch ownership checks do elsewhere.
 export async function callerFromEnvironment(environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<DispatchCaller> {
   const identity = await resolveCaller(environment, process);
-  return { id: identity.id, host: identity.host };
+  return {
+    id: identity.id,
+    host: identity.host,
+    ...(identity.terminalId !== null && identity.terminalId !== identity.id ? { terminalId: identity.terminalId } : {}),
+  };
 }
 
 async function metadataPaths(dispatchRoot: string): Promise<Array<{ path: string; archived: boolean }>> {
@@ -62,18 +63,21 @@ async function loadRecords(root: string): Promise<DispatchRecord[]> {
 function parseArgs(args: readonly string[]): Result<{ options: DispatchListOptions; json: boolean }> {
   let json = false;
   let all = false;
+  let mine = false;
   let orphans = false;
   let uncertain = false;
   let archived = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
     else if (arg === "--all") all = true;
+    else if (arg === "--mine") mine = true;
     else if (arg === "--orphans") orphans = true;
     else if (arg === "--uncertain") uncertain = true;
     else if (arg === "--archived") archived = true;
     else if (arg === "-h" || arg === "--help") return ok({ options: { all, orphans, uncertain, archived }, json });
     else return failed(`unknown orchestrate list option: ${arg}`, 2);
   }
+  if (all && mine) return failed("orchestrate list options --all and --mine cannot be combined", 2);
   return ok({ options: { all, orphans, uncertain, archived }, json });
 }
 

@@ -92,3 +92,36 @@ override_output="$(MEGABRAIN_STATE_DIR="$override_state" MEGABRAIN_SESSION_ID=ov
 printf '%s' "$override_output" | jq -e 'length == 1 and .[0].dispatchId == "override-owned" and .[0].ownedByCaller == true' >/dev/null ||
   fail "an explicit session override did not win over a live Superset marker: $override_output"
 printf 'an explicit session override wins over a live Superset marker\n'
+
+# Dispatch ownership is tied to the creating agent session, not whichever terminal
+# currently invokes the command. Each session sees exactly its own records by default.
+ownership_state="$state_dir/ownership"
+mkdir -p "$ownership_state/dispatches/session-a" "$ownership_state/dispatches/session-b" "$ownership_state/dispatches/legacy"
+printf '%s\n' '{"dispatchId":"session-a","parentSessionId":"claude:session-a","parentHost":"claude","state":"running"}' >"$ownership_state/dispatches/session-a/meta.json"
+printf '%s\n' '{"dispatchId":"session-b","parentSessionId":"codex:session-b","parentHost":"codex","state":"running"}' >"$ownership_state/dispatches/session-b/meta.json"
+printf '%s\n' '{"dispatchId":"legacy","parentSessionId":"old-terminal","parentHost":"orca","state":"running"}' >"$ownership_state/dispatches/legacy/meta.json"
+session_a="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+  MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=session-a "$root/.build/megabrain" orchestrate list --json)"
+printf '%s' "$session_a" | jq -e 'length == 1 and .[0].dispatchId == "session-a" and .[0].owner == "mine"' >/dev/null ||
+  fail "session A did not see exactly its dispatch with mine ownership: $session_a"
+session_b="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+  MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=codex CODEX_THREAD_ID=session-b "$root/.build/megabrain" orchestrate list --json)"
+printf '%s' "$session_b" | jq -e 'length == 1 and .[0].dispatchId == "session-b" and .[0].owner == "mine"' >/dev/null ||
+  fail "session B did not see exactly its dispatch with mine ownership: $session_b"
+session_empty="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+  MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=session-empty "$root/.build/megabrain" orchestrate list --json)"
+[ "$session_empty" = '[]' ] || fail "a session with no dispatches saw other owners' records: $session_empty"
+all_owners="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+  MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=session-a "$root/.build/megabrain" orchestrate list --all --json)"
+printf '%s' "$all_owners" | jq -e '([.[] | select(.owner == "mine")] | length) == 1 and ([.[] | select(.owner == "foreign")] | length) == 1 and ([.[] | select(.dispatchId == "legacy" and .owner == "unknown")] | length) == 1' >/dev/null ||
+  fail "owner classifications are incorrect, especially for a legacy handle: $all_owners"
+all_owners_text="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+  MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=session-a "$root/.build/megabrain" orchestrate list --all)"
+printf '%s\n' "$all_owners_text" | awk '
+  NR == 1 { if ($0 !~ /OWNER/) exit 1; next }
+  $1 == "session-a" { if ($5 != "mine") exit 1; seen_a = 1 }
+  $1 == "session-b" { if ($5 != "foreign") exit 1; seen_b = 1 }
+  $1 == "legacy" { if ($5 != "unknown") exit 1; seen_legacy = 1 }
+  END { if (!seen_a || !seen_b || !seen_legacy) exit 1 }
+' || fail "text output did not expose owner classifications by dispatch: $all_owners_text"
+printf 'dispatch lists show mine, foreign, and unknown ownership by agent session\n'

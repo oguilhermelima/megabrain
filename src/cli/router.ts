@@ -10,6 +10,7 @@ import { executeNative } from "./commands/native.js";
 import { executeTv } from "./commands/tv.js";
 import { executeQueueWrite } from "./commands/queue-write.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
+import { executeOrchestrateAdopt } from "./commands/orchestrate-adopt.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
 import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
@@ -85,6 +86,9 @@ export function route(
   }
   if (command === "orchestrate" && commandArgs[0] === "list") {
     return executeOrchestrateList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "adopt") {
+    return executeOrchestrateAdopt(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "spawn") {
     return executeSpawn(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
