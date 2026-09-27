@@ -154,10 +154,9 @@ printf 'tmux parent ownership: only the exact owning pane may act as the parent\
 
 create_tmux_meta "$dispatch_one" "$tmux_pane_one"
 create_tmux_meta "$dispatch_two" "$tmux_pane_two" true
-tmux_cmd rename-session -t "$session_name" "$session_name-renamed"
-
-send_child_message "$tmux_pane_one" "$dispatch_one" child-one "$state_dir/child-one.out"
 send_child_message "$tmux_pane_two" "$dispatch_two" child-two "$state_dir/child-two.out"
+tmux_cmd rename-session -t "$session_name" "$session_name-renamed"
+send_child_message "$tmux_pane_one" "$dispatch_one" child-one "$state_dir/child-one.out"
 write_dispatch_meta "$state_dir" "$dispatch_orca" \
   parentSessionId="$parent_id" parentHost=orca childHost=orca workspaceId="$workspace_id" \
   terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
