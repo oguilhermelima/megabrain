@@ -5,6 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-integrations.XXXXXX")"
+work="$(cd "$work" && pwd -P)"
 trap 'rm -rf "$work"' EXIT
 
 # This scenario exercises the zsh wrapper; keep it independent of the shell that runs CI.
@@ -44,6 +45,14 @@ assert_backup_matches() {
 
 node_executable="$(node -p 'process.execPath')"
 
+agent_hooks_config() {
+  case "$1" in
+    claude) printf '%s\n' "$integration_home/.claude/settings.json" ;;
+    agy) printf '%s\n' "$integration_home/.gemini/config/hooks.json" ;;
+    codex|cursor) printf '%s\n' "$integration_home/.$1/hooks.json" ;;
+  esac
+}
+
 assert_contains "$("$root/.build/megabrain" --version)" megabrain
 assert_contains "$("$root/.build/megabrain" --version)" megabrain
 manifest_version="$(jq -r '.version' "$root/package.json")"
@@ -76,9 +85,8 @@ printf 'marked integrations: backed up, replaced once, and reverted\n'
 
 fixture_root="$work/fixture/megabrain-local"
 for agent in claude codex agy cursor; do
-  mkdir -p "$integration_home/.$agent"
-  config="$integration_home/.$agent/hooks.json"
-  [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
+  config="$(agent_hooks_config "$agent")"
+  mkdir -p "$(dirname "$config")"
   # A legacy entry pointing at the deleted wrapper script in a different (fake, never-created)
   # checkout — proving install finds and migrates it in place, not just a fresh, unconfigured
   # agent.
@@ -97,11 +105,15 @@ for agent in claude codex agy cursor; do
   printf '#!/usr/bin/env bash\nexit 0\n' >"$work/bin/$agent"
   chmod +x "$work/bin/$agent"
 done
-PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
-  "$root/.build/megabrain" install orchestration-hooks --yes >/dev/null
+legacy_agy_config="$integration_home/.agy/hooks.json"
+mkdir -p "$(dirname "$legacy_agy_config")"
+jq -n '{hooks:{Stop:[{hooks:[{type:"command",command:"user legacy agy hook"},{type:"command",command:"MEGABRAIN_HOOK_AGENT=agy /old/.build/megabrain hook turn-end"}]}]}}' >"$legacy_agy_config"
+cp "$legacy_agy_config" "$work/agy-legacy-hooks.json"
+install_output="$(PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
+  "$root/.build/megabrain" install orchestration-hooks --yes)"
+assert_contains "$install_output" "agy hook moved from $legacy_agy_config to $(agent_hooks_config agy)"
 for agent in claude codex agy cursor; do
-  config="$integration_home/.$agent/hooks.json"
-  [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
+  config="$(agent_hooks_config "$agent")"
   assert_file "$config"
   assert_backup_matches "$config" "$work/${agent}-hooks.json"
   legacy_count="$(jq '[.. | objects | .command? // empty | select(test("megabrain-turn-end[.]sh"))] | length' "$config")"
@@ -111,15 +123,18 @@ for agent in claude codex agy cursor; do
   assert_equal "$(jq -r '.. | objects | .command? // empty | select(test(" hook turn-end$"))' "$config")" \
     "MEGABRAIN_HOOK_AGENT=$agent '$node_executable' '$root/.build/megabrain' hook turn-end"
 done
+assert_file "$legacy_agy_config"
+assert_equal "$(jq '[.. | objects | .command? // empty | select(startswith("MEGABRAIN_HOOK_AGENT=agy "))] | length' "$legacy_agy_config")" 0
+assert_equal "$(jq '[.. | objects | .command? // empty | select(. == "user legacy agy hook")] | length' "$legacy_agy_config")" 1
 printf 'agent hooks: all four migrated in place from the legacy wrapper, with backups and one current entry each\n'
 
 PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
   "$root/.build/megabrain" install orchestration-hooks --revert >/dev/null
 for agent in claude codex agy cursor; do
-  config="$integration_home/.$agent/hooks.json"
-  [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
+  config="$(agent_hooks_config "$agent")"
   cmp -s "$work/${agent}-hooks.json" "$config" || fail "$agent hooks were not restored"
 done
+cmp -s "$work/agy-legacy-hooks.json" "$legacy_agy_config" || fail 'legacy agy hooks were not restored'
 printf 'agent hooks: reverse operation restored the previous current entries\n'
 
 moved_root="$work/moved/megabrain-local"
@@ -129,8 +144,7 @@ moved_root="$(cd -P "$moved_root" && pwd -P)"
 PATH="$work/bin:$PATH" HOME="$integration_home" MEGABRAIN_STATE_DIR="$integration_home/state" \
   "$moved_root/.build/megabrain" install orchestration-hooks --yes >/dev/null
 for agent in claude codex agy cursor; do
-  config="$integration_home/.$agent/hooks.json"
-  [ "$agent" = claude ] && config="$integration_home/.$agent/settings.json"
+  config="$(agent_hooks_config "$agent")"
   moved_entry="$(jq -r '.. | objects | .command? // empty | select(test(" hook turn-end$"))' "$config")"
   assert_equal "$moved_entry" "MEGABRAIN_HOOK_AGENT=$agent '$node_executable' '$moved_root/.build/megabrain' hook turn-end"
   assert_file "$moved_root/.build/megabrain"

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { executeDoctor } from "../../src/cli/commands/install-doctor.js";
+import { executeDoctor, executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
 
@@ -199,6 +199,105 @@ describe("doctor orchestration-hooks entry detection", () => {
     expect(result.status).toBe("misconfigured");
     expect(result.reason).toContain("claude: entrypoint missing");
     expect(result.reason).toContain("megabrain install");
+  });
+});
+
+describe("install orchestration-hooks backups", () => {
+  test("backs up an existing config once, before the first install", async () => {
+    const home = mkdtempSync("/tmp/megabrain-install-hooks-backup-");
+    const configDir = join(home, ".claude");
+    const config = join(configDir, "settings.json");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(config, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }] } }));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "which") return args[0] === "claude"
+          ? ok({ stdout: "/usr/bin/claude", stderr: "", exitCode: 0 })
+          : failed(`${args[0]} unavailable`);
+        if (command === "date") return ok({ stdout: "20260926T000000Z\n", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("detached process unavailable"); },
+      invocationCount: () => 0,
+    };
+
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    const first = await executeInstall(["orchestration-hooks"], environment, process);
+    expect(first.kind).toBe("ok");
+    const second = await executeInstall(["orchestration-hooks"], environment, process);
+    expect(second.kind).toBe("ok");
+
+    const backups = readdirSync(configDir).filter((name) => name.startsWith("settings.json.megabrain-backup-"));
+    expect(backups).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(configDir, backups[0]!), "utf8"))).toEqual({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }] },
+    });
+  });
+});
+
+describe("revert orchestration-hooks", () => {
+  function hookProcess(...availableAgents: string[]): ProcessAdapter {
+    return {
+      async run(command, args) {
+        if (command === "which") return availableAgents.includes(args[0] ?? "")
+          ? ok({ stdout: `/usr/bin/${args[0]}`, stderr: "", exitCode: 0 })
+          : failed(`${args[0]} unavailable`);
+        if (command === "date") return ok({ stdout: "20260926T010000Z\n", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("detached process unavailable"); },
+      invocationCount: () => 0,
+    };
+  }
+
+  test("restores the original config when no other changes were made", async () => {
+    const home = mkdtempSync("/tmp/megabrain-revert-hooks-restore-");
+    const directory = join(home, ".claude");
+    const config = join(directory, "settings.json");
+    mkdirSync(directory, { recursive: true });
+    const original = '{\n  "theme": "dark",\n  "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "user-hook"}]}]}\n}\n';
+    writeFileSync(config, original);
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+
+    expect((await executeInstall(["orchestration-hooks"], environment, hookProcess("claude"))).kind).toBe("ok");
+    const reverted = await executeInstall(["orchestration-hooks", "--revert"], environment, hookProcess());
+
+    expect(reverted.kind).toBe("ok");
+    expect(readFileSync(config, "utf8")).toBe(original);
+  });
+
+  test("removes only megabrain entries and preserves later user hooks", async () => {
+    const home = mkdtempSync("/tmp/megabrain-revert-hooks-merge-");
+    const directory = join(home, ".claude");
+    const config = join(directory, "settings.json");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(config, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }] } }));
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    expect((await executeInstall(["orchestration-hooks"], environment, hookProcess("claude"))).kind).toBe("ok");
+
+    const current = JSON.parse(readFileSync(config, "utf8")) as { hooks: { Stop: Array<{ hooks: unknown[] }> } };
+    current.hooks.Stop.push({ hooks: [{ type: "command", command: "added-later" }] });
+    writeFileSync(config, JSON.stringify(current));
+    const reverted = await executeInstall(["orchestration-hooks", "--revert"], environment, hookProcess());
+
+    expect(reverted.kind).toBe("ok");
+    expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }, { hooks: [{ type: "command", command: "added-later" }] }] },
+    });
+  });
+
+  test("deletes a config created by install when no content remains", async () => {
+    const home = mkdtempSync("/tmp/megabrain-revert-hooks-created-");
+    const directory = join(home, ".claude");
+    const config = join(directory, "settings.json");
+    mkdirSync(directory, { recursive: true });
+    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+
+    expect((await executeInstall(["orchestration-hooks"], environment, hookProcess("claude"))).kind).toBe("ok");
+    const reverted = await executeInstall(["orchestration-hooks", "--revert"], environment, hookProcess());
+
+    expect(reverted.kind).toBe("ok");
+    expect(existsSync(config)).toBe(false);
   });
 });
 

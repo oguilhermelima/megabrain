@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { isDeepStrictEqual } from "node:util";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -15,6 +16,7 @@ import { tmuxCallerPaneSession } from "./queue-write.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
 import { runMachineInstall } from "./install-machine.js";
+import { discoverAgentDirectories } from "../../core/agent-directories.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
@@ -154,11 +156,16 @@ function hookEntryStatus(agent: string, path: string): "present" | "legacy" | "m
   return "missing";
 }
 
-function hookConfig(environment: Environment, agent: string): string {
-  const home = environment.HOME ?? "";
-  return agent === "claude" ? `${home}/.claude/settings.json`
-    : agent === "codex" ? `${home}/.codex/hooks.json`
-      : agent === "agy" ? `${home}/.agy/hooks.json` : `${home}/.cursor/hooks.json`;
+function hookConfig(environment: Environment, agent: HookAgent): string {
+  const config = agent === "cursor"
+    ? join(environment.HOME ?? "", ".cursor")
+    : discoverAgentDirectories(environment)[agent]?.config ?? "";
+  return join(config, agent === "claude" ? "settings.json" : "hooks.json");
+}
+
+// agy used to be written to this incorrect location. It is read only for migration and revert.
+function legacyAgyHookConfig(environment: Environment): string {
+  return join(environment.HOME ?? "", ".agy", "hooks.json");
 }
 
 function configuredWorktreeRoot(environment: Environment, raw: string): string {
@@ -408,7 +415,7 @@ async function report(module: string, environment: Environment, process: Process
         details.push(`${name}: not-installed`);
         continue;
       }
-      const config = name === "claude" ? `${environment.HOME ?? ""}/.claude/settings.json` : name === "codex" ? `${environment.HOME ?? ""}/.codex/hooks.json` : name === "agy" ? `${environment.HOME ?? ""}/.agy/hooks.json` : `${environment.HOME ?? ""}/.cursor/hooks.json`;
+      const config = hookConfig(environment, name as HookAgent);
       if (!existsSync(config)) { details.push(`${name}: entry-missing (config absent)`); healthy = false; }
       else {
         const entryStatus = hookEntryStatus(name, config);
@@ -498,7 +505,8 @@ function writeInstalledState(environment: Environment, module: string, installed
     state = {};
   }
   const configuredAt = new Date().toISOString();
-  state[module] = { installed, configuredAt, statusSource: "megabrain install", details };
+  const previous = state[module] !== null && typeof state[module] === "object" ? state[module] as Record<string, unknown> : {};
+  state[module] = { ...previous, installed, configuredAt, statusSource: "megabrain install", details };
   state._meta = { kind: "installation-record", recordedAt: configuredAt, source: "megabrain install", liveStatusCommand: "megabrain doctor" };
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -586,11 +594,35 @@ export function hookEntrypointCommand(
 // deleted bash wrapper's path (an older install, or one from a different checkout) or an
 // existing direct-binary command (possibly stale, e.g. pointing at a different checkout).
 function hookEntryMatches(entry: unknown): boolean {
-  return typeof entry === "object" && entry !== null &&
-    hookCommandKind(String((entry as Record<string, unknown>).command ?? "")) !== "none";
+  if (typeof entry !== "object" || entry === null) return false;
+  const command = String((entry as Record<string, unknown>).command ?? "");
+  return hookEntryAgent(entry) !== undefined && hookCommandKind(command) !== "none";
 }
 
-function repairStopHooks(existing: Record<string, unknown>, command: string): Record<string, unknown> {
+function hookEntryAgent(entry: unknown): HookAgent | undefined {
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const command = String((entry as Record<string, unknown>).command ?? "");
+  const match = /(?:^|\s)MEGABRAIN_HOOK_AGENT=(claude|codex|agy|cursor)(?:\s|$)/.exec(command);
+  return match?.[1] as HookAgent | undefined;
+}
+
+function hasHookEntry(existing: Record<string, unknown>, agent: HookAgent): boolean {
+  const hooks = existing.hooks;
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return false;
+  const value = hooks as Record<string, unknown>;
+  const matchesAgent = (entry: unknown): boolean => {
+    if (hookEntryAgent(entry) !== agent || !hookEntryMatches(entry)) return false;
+    return hookCommandKind(String((entry as Record<string, unknown>).command ?? "")) === "new";
+  };
+  if (agent === "cursor") return Array.isArray(value.afterAgentResponse) && value.afterAgentResponse.some(matchesAgent);
+  return Array.isArray(value.Stop) && value.Stop.some((group) => {
+    if (typeof group !== "object" || group === null || Array.isArray(group)) return false;
+    const entries = (group as Record<string, unknown>).hooks;
+    return Array.isArray(entries) && entries.some(matchesAgent);
+  });
+}
+
+function repairStopHooks(existing: Record<string, unknown>, command: string, agent: HookAgent): Record<string, unknown> {
   const hooksField = existing.hooks;
   if (hooksField !== undefined && (typeof hooksField !== "object" || hooksField === null || Array.isArray(hooksField))) throw new Error("hooks must be an object");
   const hooks = (hooksField as Record<string, unknown> | undefined) ?? {};
@@ -602,7 +634,7 @@ function repairStopHooks(existing: Record<string, unknown>, command: string): Re
   for (const group of stop) {
     const record = group !== null && typeof group === "object" ? (group as Record<string, unknown>) : {};
     const nested = Array.isArray(record.hooks) ? (record.hooks as unknown[]) : [];
-    if (!nested.some(hookEntryMatches)) {
+    if (!nested.some((entry) => hookEntryAgent(entry) === agent && hookEntryMatches(entry))) {
       entries.push(group);
       continue;
     }
@@ -610,7 +642,7 @@ function repairStopHooks(existing: Record<string, unknown>, command: string): Re
     let nestedSeen = false;
     const nestedEntries: unknown[] = [];
     for (const entry of nested) {
-      if (hookEntryMatches(entry)) {
+      if (hookEntryAgent(entry) === agent && hookEntryMatches(entry)) {
         if (nestedSeen) continue;
         nestedEntries.push({ ...(entry as Record<string, unknown>), type: "command", command });
         nestedSeen = true;
@@ -625,7 +657,7 @@ function repairStopHooks(existing: Record<string, unknown>, command: string): Re
   return { ...existing, hooks: { ...hooks, Stop: entries } };
 }
 
-function repairAfterAgentResponse(existing: Record<string, unknown>, command: string): Record<string, unknown> {
+function repairAfterAgentResponse(existing: Record<string, unknown>, command: string, agent: HookAgent): Record<string, unknown> {
   const hooksField = existing.hooks;
   if (hooksField !== undefined && (typeof hooksField !== "object" || hooksField === null || Array.isArray(hooksField))) throw new Error("hooks must be an object");
   const hooks = (hooksField as Record<string, unknown> | undefined) ?? {};
@@ -635,7 +667,7 @@ function repairAfterAgentResponse(existing: Record<string, unknown>, command: st
   let seen = false;
   const entries: unknown[] = [];
   for (const entry of list) {
-    if (hookEntryMatches(entry)) {
+    if (hookEntryAgent(entry) === agent && hookEntryMatches(entry)) {
       if (seen) continue;
       entries.push({ ...(entry as Record<string, unknown>), command, timeout: 10 });
       seen = true;
@@ -647,24 +679,73 @@ function repairAfterAgentResponse(existing: Record<string, unknown>, command: st
   return { ...existing, hooks: { ...hooks, afterAgentResponse: entries }, version: (existing.version as number | undefined) ?? 1 };
 }
 
-async function repairHooksConfig(agent: HookAgent, environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+type HookInstallState = { createdConfigs: string[]; backups: Record<string, string>; movedLegacyAgy?: boolean };
+
+function readHookInstallState(environment: Environment): HookInstallState {
+  const moduleState = readState(environment)["orchestration-hooks"];
+  const value = moduleState?.hookConfigs;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return { createdConfigs: [], backups: {} };
+  const record = value as Record<string, unknown>;
+  const createdConfigs = Array.isArray(record.createdConfigs) ? record.createdConfigs.filter((agent): agent is string => typeof agent === "string") : [];
+  const backups = typeof record.backups === "object" && record.backups !== null && !Array.isArray(record.backups)
+    ? Object.fromEntries(Object.entries(record.backups as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    : {};
+  return { createdConfigs, backups, movedLegacyAgy: record.movedLegacyAgy === true };
+}
+
+function writeHookInstallState(environment: Environment, hookState: HookInstallState): void {
+  const path = statePath(environment);
+  let state: Record<string, Record<string, unknown>> = {};
+  try { state = JSON.parse(readFileSync(path, "utf8")) as Record<string, Record<string, unknown>>; } catch { /* initialized below */ }
+  const moduleState = state["orchestration-hooks"] !== null && typeof state["orchestration-hooks"] === "object" ? state["orchestration-hooks"] : {};
+  state["orchestration-hooks"] = { ...moduleState, hookConfigs: hookState };
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
+  } catch {
+    // State is best-effort; install and revert must report their actual config result.
+  }
+}
+
+function latestHookBackup(path: string): string | undefined {
+  const prefix = `${basename(path)}.megabrain-backup-`;
+  try {
+    const names = readdirSync(dirname(path)).filter((name) => name.startsWith(prefix)).sort();
+    return names.length > 0 ? resolve(dirname(path), names[names.length - 1]!) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function repairHooksConfig(agent: HookAgent, environment: Environment, processAdapter: ProcessAdapter, hookState: HookInstallState): Promise<Result<void>> {
   const path = hookConfig(environment, agent);
   const command = hookEntrypointCommand(environment, agent);
   if (command === undefined) return failed(`hook entrypoint is not executable for ${agent}`);
+  const existedBeforeInstall = existsSync(path);
   let existing: Record<string, unknown> = {};
-  if (existsSync(path)) {
+  if (existedBeforeInstall) {
     const raw = fileText(path);
     try {
       existing = raw === undefined ? {} : (JSON.parse(raw) as Record<string, unknown>);
     } catch {
       return failed(`${agent} config is not valid JSON: ${path}`);
     }
-    const backup = await backupExistingFile(path, processAdapter);
-    if (backup.kind !== "ok") return backup;
+  }
+  if (existedBeforeInstall && !hasHookEntry(existing, agent)) {
+    const recorded = hookState.backups[agent];
+    const backupPath = recorded !== undefined && dirname(recorded) === dirname(path) && basename(recorded).startsWith(`${basename(path)}.megabrain-backup-`)
+      ? recorded : latestHookBackup(path);
+    if (backupPath !== undefined) {
+      hookState.backups[agent] = backupPath;
+    } else {
+      const backup = await backupExistingFile(path, processAdapter);
+      if (backup.kind !== "ok") return backup;
+      if (backup.value !== undefined) hookState.backups[agent] = backup.value;
+    }
   }
   let updated: Record<string, unknown>;
   try {
-    updated = agent === "cursor" ? repairAfterAgentResponse(existing, command) : repairStopHooks(existing, command);
+    updated = agent === "cursor" ? repairAfterAgentResponse(existing, command, agent) : repairStopHooks(existing, command, agent);
   } catch {
     return failed(`could not update ${agent} hooks: ${path}`);
   }
@@ -673,38 +754,245 @@ async function repairHooksConfig(agent: HookAgent, environment: Environment, pro
   } catch {
     return failed(`could not update ${agent} hooks: ${path}`);
   }
+  if (!existedBeforeInstall && !hookState.createdConfigs.includes(agent)) hookState.createdConfigs.push(agent);
+  writeHookInstallState(environment, hookState);
   return ok(undefined);
 }
 
 async function installOrchestrationHooks(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  const hookState = readHookInstallState(environment);
+  hookState.movedLegacyAgy = false;
   for (const agent of hookAgents) {
     if (!(await hookAgentAvailable(agent, processAdapter))) continue;
-    const result = await repairHooksConfig(agent, environment, processAdapter);
+    const result = await repairHooksConfig(agent, environment, processAdapter, hookState);
     if (result.kind !== "ok") return failed(`orchestration-hooks: ${result.error}`);
+  }
+  const migration = await migrateLegacyAgyHooks(environment, processAdapter, hookState);
+  if (migration.kind !== "ok") return failed(`orchestration-hooks: ${migration.error}`);
+  return ok(undefined);
+}
+
+function removeHookEntries(existing: Record<string, unknown>, agent: HookAgent): Record<string, unknown> {
+  const hooksField = existing.hooks;
+  if (typeof hooksField !== "object" || hooksField === null || Array.isArray(hooksField)) return existing;
+  const hooks = hooksField as Record<string, unknown>;
+  if (agent === "cursor") {
+    const list = hooks.afterAgentResponse;
+    if (!Array.isArray(list)) return existing;
+    return { ...existing, hooks: { ...hooks, afterAgentResponse: list.filter((entry) => hookEntryAgent(entry) !== agent || !hookEntryMatches(entry)) } };
+  }
+  const stop = hooks.Stop;
+  if (!Array.isArray(stop)) return existing;
+  const nextStop: unknown[] = [];
+  for (const group of stop) {
+    if (typeof group !== "object" || group === null || Array.isArray(group)) {
+      nextStop.push(group);
+      continue;
+    }
+    const record = group as Record<string, unknown>;
+    if (!Array.isArray(record.hooks)) {
+      nextStop.push(group);
+      continue;
+    }
+    const entries = record.hooks.filter((entry) => hookEntryAgent(entry) !== agent || !hookEntryMatches(entry));
+    if (entries.length === 0 && Object.keys(record).length === 1) continue;
+    nextStop.push({ ...record, hooks: entries });
+  }
+  return { ...existing, hooks: { ...hooks, Stop: nextStop } };
+}
+
+async function migrateLegacyAgyHooks(environment: Environment, processAdapter: ProcessAdapter, hookState: HookInstallState): Promise<Result<void>> {
+  const path = legacyAgyHookConfig(environment);
+  if (!existsSync(path)) return ok(undefined);
+  let existing: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("config must be a JSON object");
+    existing = parsed as Record<string, unknown>;
+  } catch {
+    return failed(`agy legacy config is not valid JSON: ${path}`);
+  }
+  const updated = removeHookEntries(existing, "agy");
+  if (isDeepStrictEqual(updated, existing)) return ok(undefined);
+
+  let backup: string | undefined = hookState.backups.agyLegacy;
+  if (backup === undefined || !existsSync(backup)) {
+    backup = latestHookBackup(path);
+    if (backup === undefined) {
+      const result = await backupExistingFile(path, processAdapter);
+      if (result.kind !== "ok") return result;
+      backup = result.value;
+    }
+    if (backup !== undefined) hookState.backups.agyLegacy = backup;
+  }
+  hookState.movedLegacyAgy = true;
+  writeHookInstallState(environment, hookState);
+  try {
+    if (emptyConfigCreatedByInstall(updated)) unlinkSync(path);
+    else await writeJsonAtomic(path, updated);
+  } catch {
+    return failed(`could not move agy hooks from ${path}`);
   }
   return ok(undefined);
 }
 
-async function revertOrchestrationHooks(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+function restoreHookEntries(current: Record<string, unknown>, original: Record<string, unknown>, agent: HookAgent): Record<string, unknown> {
+  const currentHooks = typeof current.hooks === "object" && current.hooks !== null && !Array.isArray(current.hooks)
+    ? current.hooks as Record<string, unknown> : {};
+  const originalHooks = typeof original.hooks === "object" && original.hooks !== null && !Array.isArray(original.hooks)
+    ? original.hooks as Record<string, unknown> : {};
+  if (agent === "cursor") {
+    const saved = Array.isArray(originalHooks.afterAgentResponse) ? originalHooks.afterAgentResponse.filter((entry) => hookEntryAgent(entry) === agent && hookEntryMatches(entry)) : [];
+    const present = Array.isArray(currentHooks.afterAgentResponse) ? currentHooks.afterAgentResponse : [];
+    return { ...current, hooks: { ...currentHooks, afterAgentResponse: [...present, ...saved] } };
+  }
+  const savedGroups: unknown[] = [];
+  const originalStop = Array.isArray(originalHooks.Stop) ? originalHooks.Stop : [];
+  for (const group of originalStop) {
+    if (typeof group !== "object" || group === null || Array.isArray(group)) continue;
+    const record = group as Record<string, unknown>;
+    const entries = Array.isArray(record.hooks) ? record.hooks.filter((entry) => hookEntryAgent(entry) === agent && hookEntryMatches(entry)) : [];
+    if (entries.length > 0) savedGroups.push({ ...record, hooks: entries });
+  }
+  const currentStop = Array.isArray(currentHooks.Stop) ? currentHooks.Stop : [];
+  return { ...current, hooks: { ...currentHooks, Stop: [...currentStop, ...savedGroups] } };
+}
+
+function withoutEmptyContainers(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const entries = value.map(withoutEmptyContainers).filter((entry) => !(Array.isArray(entry) && entry.length === 0) && !(typeof entry === "object" && entry !== null && Object.keys(entry).length === 0));
+    return entries;
+  }
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => [key, withoutEmptyContainers(entry)] as const)
+      .filter(([, entry]) => !(Array.isArray(entry) && entry.length === 0) && !(typeof entry === "object" && entry !== null && Object.keys(entry).length === 0));
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
+function emptyConfigCreatedByInstall(value: unknown): boolean {
+  const pruned = withoutEmptyContainers(value);
+  if (typeof pruned !== "object" || pruned === null || Array.isArray(pruned)) return false;
+  const remaining = { ...(pruned as Record<string, unknown>) };
+  if (remaining.version === 1) delete remaining.version;
+  return Object.keys(remaining).length === 0;
+}
+
+function removeInstallCreatedStructure(current: Record<string, unknown>, original: unknown, agent: HookAgent): Record<string, unknown> {
+  const baseline = typeof original === "object" && original !== null && !Array.isArray(original)
+    ? original as Record<string, unknown> : {};
+  const currentHooks = current.hooks;
+  const originalHooks = baseline.hooks;
+  if (typeof currentHooks !== "object" || currentHooks === null || Array.isArray(currentHooks)) return current;
+  const hooks = { ...(currentHooks as Record<string, unknown>) };
+  const priorHooks = typeof originalHooks === "object" && originalHooks !== null && !Array.isArray(originalHooks)
+    ? originalHooks as Record<string, unknown> : {};
+  const listKey = agent === "cursor" ? "afterAgentResponse" : "Stop";
+  if (Array.isArray(hooks[listKey]) && hooks[listKey].length === 0 && priorHooks[listKey] === undefined) delete hooks[listKey];
+  const result = { ...current };
+  if (Object.keys(hooks).length === 0 && originalHooks === undefined) delete result.hooks;
+  else result.hooks = hooks;
+  if (agent === "cursor" && result.version === 1 && baseline.version === undefined) delete result.version;
+  return result;
+}
+
+async function revertOrchestrationHooks(environment: Environment): Promise<Result<string>> {
+  const hookState = readHookInstallState(environment);
   for (const agent of hookAgents) {
-    if (!(await hookAgentAvailable(agent, processAdapter))) continue;
     const path = hookConfig(environment, agent);
-    const directory = dirname(path);
-    const prefix = `${basename(path)}.megabrain-backup-`;
-    let latest: string | undefined;
+    if (!existsSync(path)) continue;
+    let current: Record<string, unknown>;
     try {
-      const names = readdirSync(directory).filter((name) => name.startsWith(prefix)).sort();
-      latest = names.length > 0 ? resolve(directory, names[names.length - 1]) : undefined;
+      const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("config must be a JSON object");
+      current = parsed as Record<string, unknown>;
     } catch {
-      latest = undefined;
+      return failed(`${agent} config is not valid JSON: ${path}`);
     }
-    if (latest === undefined) continue;
+    const filtered = removeHookEntries(current, agent);
+    const recorded = hookState.backups[agent];
+    const backup = recorded !== undefined && dirname(recorded) === dirname(path) && basename(recorded).startsWith(`${basename(path)}.megabrain-backup-`)
+      ? recorded : latestHookBackup(path);
+    if (backup !== undefined && existsSync(backup)) {
+      try {
+        const original: unknown = JSON.parse(readFileSync(backup, "utf8"));
+        if (isDeepStrictEqual(removeInstallCreatedStructure(filtered, original, agent), removeHookEntries(original as Record<string, unknown>, agent))) {
+          await copyFile(backup, path);
+          continue;
+        }
+      } catch {
+        // An unusable backup cannot authorize replacing the current config.
+      }
+    }
     try {
-      await copyFile(latest, path);
+      await writeJsonAtomic(path, filtered);
+      if (hookState.createdConfigs.includes(agent) && emptyConfigCreatedByInstall(filtered)) unlinkSync(path);
     } catch {
-      return failed(`could not restore ${agent} hooks from ${latest}`);
+      return failed(`could not remove ${agent} hooks from ${path}`);
     }
   }
+  const legacyPath = legacyAgyHookConfig(environment);
+  const legacyBackup = hookState.backups.agyLegacy;
+  if (legacyBackup !== undefined && existsSync(legacyBackup)) {
+    let original: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(legacyBackup, "utf8"));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("config must be a JSON object");
+      original = parsed as Record<string, unknown>;
+    } catch {
+      return failed(`agy legacy backup is not valid JSON: ${legacyBackup}`);
+    }
+    if (!existsSync(legacyPath)) {
+      try {
+        await copyFile(legacyBackup, legacyPath);
+      } catch {
+        return failed(`could not restore agy legacy hooks from ${legacyBackup}`);
+      }
+    } else {
+      let current: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(legacyPath, "utf8"));
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("config must be a JSON object");
+        current = parsed as Record<string, unknown>;
+      } catch {
+        return failed(`agy legacy config is not valid JSON: ${legacyPath}`);
+      }
+      const filtered = removeHookEntries(current, "agy");
+      if (isDeepStrictEqual(filtered, removeHookEntries(original, "agy"))) {
+        try {
+          await copyFile(legacyBackup, legacyPath);
+        } catch {
+          return failed(`could not restore agy legacy hooks from ${legacyBackup}`);
+        }
+      } else {
+        try {
+          const restored = restoreHookEntries(filtered, original, "agy");
+          if (emptyConfigCreatedByInstall(restored)) unlinkSync(legacyPath);
+          else await writeJsonAtomic(legacyPath, restored);
+        } catch {
+          return failed(`could not restore agy legacy hooks in ${legacyPath}`);
+        }
+      }
+    }
+  } else if (existsSync(legacyPath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(legacyPath, "utf8"));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("config must be a JSON object");
+      const filtered = removeHookEntries(parsed as Record<string, unknown>, "agy");
+      if (isDeepStrictEqual(filtered, parsed)) {
+        // No Megabrain entries were present in the legacy config.
+      } else if (emptyConfigCreatedByInstall(filtered)) unlinkSync(legacyPath);
+      else await writeJsonAtomic(legacyPath, filtered);
+    } catch {
+      return failed(`could not remove agy hooks from ${legacyPath}`);
+    }
+  }
+  hookState.createdConfigs = [];
+  hookState.backups = {};
+  hookState.movedLegacyAgy = false;
+  writeHookInstallState(environment, hookState);
   return ok("orchestration-hooks reverted\n");
 }
 
@@ -874,7 +1162,11 @@ async function installOne(module: string, environment: Environment, processAdapt
     return ok(`${module}: ok (warning: ${after.reason})\n`);
   }
   writeInstalledState(environment, module, after.status === "ok", after.reason);
-  const text = `${module}: ${after.status} (${after.reason})\n`;
+  const movedLegacyAgy = module === "orchestration-hooks" && readHookInstallState(environment).movedLegacyAgy === true;
+  const migration = movedLegacyAgy
+    ? `agy hook moved from ${legacyAgyHookConfig(environment)} to ${hookConfig(environment, "agy")}\n`
+    : "";
+  const text = `${module}: ${after.status} (${after.reason})\n${migration}`;
   return after.status === "ok" ? ok(text) : failed(text.trim());
 }
 
@@ -954,7 +1246,7 @@ export async function executeInstall(args: readonly string[], environment: Envir
   if (!modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   if (revert) {
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
-    return revertOrchestrationHooks(environment, processAdapter);
+    return revertOrchestrationHooks(environment);
   }
   if (module === "simulator-web" && browser !== "chromium" && browser !== "firefox" && browser !== "both") {
     return failed("browser must be chromium, firefox, or both", 2);
