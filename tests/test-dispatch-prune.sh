@@ -131,7 +131,7 @@ assert_equal "$(printf '%s' "$archive_result" | jq -r '.archived')" 1
 archive_path="$(printf '%s' "$archive_result" | jq -r '.archivedDispatches[0].path')"
 assert_file "$archive_path/meta.json"
 assert_missing "$MEGABRAIN_STATE_DIR/dispatches/archive-dispatch"
-assert_equal "$("$root/.build/megabrain" orchestrate list --all --json | jq -r 'map(select(.dispatchId == "archive-dispatch")) | length')" 1
+assert_equal "$("$root/.build/megabrain" orchestrate list --all --archived --json | jq -r 'map(select(.dispatchId == "archive-dispatch")) | length')" 1
 
 cat >"$fake_bin/tmux" <<'EOF'
 #!/usr/bin/env bash
