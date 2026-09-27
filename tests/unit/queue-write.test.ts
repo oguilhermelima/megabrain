@@ -100,18 +100,34 @@ describe("findChild: tmux-runtime records", () => {
     });
   });
 
-  test("still finds the real child by tmuxSession and tmuxPane", async () => {
+  test("finds the real child by stable tmuxSessionId and tmuxPane after a rename", async () => {
     await withRoot(async (root) => {
       await writeDispatch(root, "real-child", {
         runtime: "tmux", terminalId: "coord-orca-term", childHost: "orca",
-        tmuxSession: "dispatch-session", tmuxPane: "%5",
+        tmuxSession: "old-session-name", tmuxSessionId: "$3", tmuxPane: "%5",
       });
       const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "some-server", TMUX_PANE: "%5" };
-      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message" ? ok({ stdout: "dispatch-session\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "renamed-session\n" : "$3\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await findChild(root, environment, process);
       expect("kind" in result).toBe(false);
       if ("kind" in result) return;
       expect(result.dispatch).toBe("real-child");
+    });
+  });
+
+  test("keeps matching legacy records without tmuxSessionId by session name", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "legacy-child", { runtime: "tmux", tmuxSession: "dispatch-session", tmuxPane: "%5" });
+      const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "some-server", TMUX_PANE: "%5" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "dispatch-session\n" : "$3\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const result = await findChild(root, environment, process);
+      expect("kind" in result).toBe(false);
+      if ("kind" in result) return;
+      expect(result.dispatch).toBe("legacy-child");
     });
   });
 

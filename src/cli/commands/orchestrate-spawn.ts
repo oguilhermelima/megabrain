@@ -537,7 +537,7 @@ export async function markRunningIfSpawning(root: string, id: string): Promise<R
   return updateMeta(root, id, { state: "running" });
 }
 
-async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, pane: string | null): Promise<RecordValue> {
+async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null): Promise<RecordValue> {
   const now = new Date().toISOString();
   return {
     dispatchId: id,
@@ -567,6 +567,7 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     runtime,
     spawnRuntime: runtime === "tmux" ? "tmux" : "ide",
     tmuxSession: session,
+    tmuxSessionId: sessionId,
     tmuxPane: pane,
     label: options.label ?? `${options.agent} ${worktree.path}`,
     chain: null,
@@ -689,6 +690,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
   let session: string | null = null;
+  let sessionId: string | null = null;
   let pane: string | null = null;
   let sessionOwned = true;
   let sessionCreatedBySpawn = false;
@@ -729,6 +731,9 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       if (panes.kind !== "ok" || panes.value[0] === undefined) return failed(`tmux session ${session} has no pane`);
       pane = panes.value[0];
     }
+    const identifiedSession = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{session_id}"]);
+    const stableSessionId = identifiedSession.kind === "ok" ? identifiedSession.value.stdout.trim() : "";
+    sessionId = /^\$\d+$/.test(stableSessionId) ? stableSessionId : null;
     // The CHILD's own identity, never the caller's: session/pane are always the pane this
     // dispatch actually runs in (freshly split or created above), even when the split reuses the
     // caller's own tmux session — the caller's own pane and this dispatch's pane are always
@@ -761,7 +766,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
 
   const directory = await dispatchPath(root, id, "");
   await mkdir(directory, { recursive: true });
-  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, pane);
+  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   await atomicJson(`${directory}/meta.json`, meta);
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };

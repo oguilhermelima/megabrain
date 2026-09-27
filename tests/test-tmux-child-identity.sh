@@ -69,11 +69,21 @@ tmux_cmd() {
 # Fixture built directly with jq (tests/fixtures/a-dispatch-meta.sh): no lib/ sourcing, no
 # megabrain_dispatch_meta_write.
 create_tmux_meta() {
-  local dispatch_id="$1" pane="$2"
-  write_dispatch_meta "$state_dir" "$dispatch_id" \
+  local dispatch_id="$1" pane="$2" legacy="${3:-false}" session_id
+  session_id="$(tmux_cmd display-message -p -t "$pane" '#{session_id}')"
+  if [ "$legacy" = true ]; then
+    write_dispatch_meta "$state_dir" "$dispatch_id" \
     parentSessionId="$parent_id" parentHost=superset childHost=superset workspaceId="$workspace_id" \
     terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
-    state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$pane" runtime=tmux >/dev/null
+      state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$pane" runtime=tmux >/dev/null
+    jq 'del(.tmuxSessionId)' "$state_dir/dispatches/$dispatch_id/meta.json" >"$state_dir/dispatches/$dispatch_id/meta.tmp"
+    mv "$state_dir/dispatches/$dispatch_id/meta.tmp" "$state_dir/dispatches/$dispatch_id/meta.json"
+  else
+    write_dispatch_meta "$state_dir" "$dispatch_id" \
+      parentSessionId="$parent_id" parentHost=superset childHost=superset workspaceId="$workspace_id" \
+      terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
+      state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxSessionId="$session_id" tmuxPane="$pane" runtime=tmux >/dev/null
+  fi
 }
 
 # findChild (src/cli/commands/queue-write.ts) never matches a tmux-runtime dispatch by
@@ -143,14 +153,16 @@ printf 'tmux parent ownership: only the exact owning pane may act as the parent\
 # a lookup mechanism that no longer exists anywhere in the binary. Dropped per rule 3.
 
 create_tmux_meta "$dispatch_one" "$tmux_pane_one"
-create_tmux_meta "$dispatch_two" "$tmux_pane_two"
-
-send_child_message "$tmux_pane_one" "$dispatch_one" child-one "$state_dir/child-one.out"
+create_tmux_meta "$dispatch_two" "$tmux_pane_two" true
 send_child_message "$tmux_pane_two" "$dispatch_two" child-two "$state_dir/child-two.out"
+tmux_cmd rename-session -t "$session_name" "$session_name-renamed"
+send_child_message "$tmux_pane_one" "$dispatch_one" child-one "$state_dir/child-one.out"
 write_dispatch_meta "$state_dir" "$dispatch_orca" \
   parentSessionId="$parent_id" parentHost=orca childHost=orca workspaceId="$workspace_id" \
   terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
-  state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$tmux_pane_two" runtime=tmux >/dev/null
+  state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" \
+  tmuxSessionId="$(tmux_cmd display-message -p -t "$tmux_pane_two" '#{session_id}')" \
+  tmuxPane="$tmux_pane_two" runtime=tmux >/dev/null
 send_child_message "$tmux_pane_two" "$dispatch_orca" child-without-host "$state_dir/child-without-host.out"
 
 message_one="$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' -print -quit)"
