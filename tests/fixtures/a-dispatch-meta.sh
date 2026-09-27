@@ -9,7 +9,7 @@
 # Recognised keys (all optional, defaults shown): parentSessionId=parent-terminal
 # parentHost=superset childHost=superset workspaceId= terminalId=<dispatch-id>-terminal
 # worktreePath=. branch=main agent=codex agentId=<agent> model=gpt-5 effort=
-# modelHonored=true runtime=host spawnRuntime=<ide|tmux> tmuxSession= tmuxPane=
+# modelHonored=true runtime=host spawnRuntime=<ide|tmux> tmuxSession= tmuxSessionId= tmuxPane=
 # parentTerminalId= parentTmuxSession= parentTmuxPane= parentWorkspaceId= label=<agent label>
 # state=running
 write_dispatch_meta() {
@@ -17,7 +17,7 @@ write_dispatch_meta() {
   shift 2
   local parentSessionId=parent-terminal parentHost=superset childHost=superset workspaceId=""
   local terminalId="$dispatch_id-terminal" worktreePath="." branch=main agent=codex agentId=""
-  local model=gpt-5 effort="" modelHonored=true runtime=host spawnRuntime="" tmuxSession=""
+  local model=gpt-5 effort="" modelHonored=true runtime=host spawnRuntime="" tmuxSession="" tmuxSessionId=""
   local tmuxPane="" parentTerminalId="" parentTmuxSession="" parentTmuxPane="" parentWorkspaceId=""
   local label="" state=running
   local assignment key value
@@ -40,6 +40,7 @@ write_dispatch_meta() {
       runtime) runtime="$value" ;;
       spawnRuntime) spawnRuntime="$value" ;;
       tmuxSession) tmuxSession="$value" ;;
+      tmuxSessionId) tmuxSessionId="$value" ;;
       tmuxPane) tmuxPane="$value" ;;
       parentTerminalId) parentTerminalId="$value" ;;
       parentTmuxSession) parentTmuxSession="$value" ;;
@@ -63,7 +64,7 @@ write_dispatch_meta() {
     --arg childHost "$childHost" --arg workspaceId "$workspaceId" --arg terminalId "$terminalId" \
     --arg worktreePath "$worktreePath" --arg branch "$branch" --arg agent "$agent" --arg agentId "$agentId" \
     --arg model "$model" --arg effort "$effort" --argjson modelHonored "$modelHonored" \
-    --arg runtime "$runtime" --arg spawnRuntime "$spawnRuntime" --arg tmuxSession "$tmuxSession" \
+    --arg runtime "$runtime" --arg spawnRuntime "$spawnRuntime" --arg tmuxSession "$tmuxSession" --arg tmuxSessionId "$tmuxSessionId" \
     --arg tmuxPane "$tmuxPane" --arg labelText "$label" --arg state "$state" --arg now "$now" \
     '{
       dispatchId: $dispatchId,
@@ -87,6 +88,7 @@ write_dispatch_meta() {
       runtime: $runtime,
       spawnRuntime: $spawnRuntime,
       tmuxSession: (if $tmuxSession == "" then null else $tmuxSession end),
+      tmuxSessionId: (if $tmuxSessionId == "" then null else $tmuxSessionId end),
       tmuxPane: (if $tmuxPane == "" then null else $tmuxPane end),
       "label": $labelText,
       chain: null,
