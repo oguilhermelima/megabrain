@@ -5,6 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-integrations.XXXXXX")"
+work="$(cd "$work" && pwd -P)"
 trap 'rm -rf "$work"' EXIT
 
 # This scenario exercises the zsh wrapper; keep it independent of the shell that runs CI.
