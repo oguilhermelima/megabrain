@@ -17,6 +17,7 @@ type Session = {
   readonly host: string;
   readonly id: string;
   readonly tmuxSession?: string;
+  readonly tmuxSessionId?: string;
   readonly tmuxPane?: string;
 };
 
@@ -91,10 +92,17 @@ export async function resolveCaller(environment: QueueEnvironment, processAdapte
 // precedence is still resolveCaller's; list-panes is only a fallback for the plain-tmux case it
 // could not resolve.
 async function tmuxSessionViaListPanes(pane: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
-  const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"]);
+  const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{session_id}\t#{pane_id}"]);
   if (result.kind !== "ok") return undefined;
-  const match = result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[1] === pane);
+  const match = result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[2] === pane);
   return match?.[0];
+}
+
+async function tmuxSessionIdForPane(pane: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const result = await processAdapter.run("tmux", ["display-message", "-p", "-t", pane, "#{session_id}"]);
+  if (result.kind !== "ok") return undefined;
+  const sessionId = result.value.stdout.trim();
+  return /^\$\d+$/.test(sessionId) ? sessionId : undefined;
 }
 
 async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Session | undefined> {
@@ -104,12 +112,15 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
       host: caller.host,
       id: caller.terminalId ?? caller.id,
       ...(caller.tmuxSession !== null ? { tmuxSession: caller.tmuxSession } : {}),
+      ...(caller.host === "tmux" && caller.tmuxPane !== null
+        ? { tmuxSessionId: await tmuxSessionIdForPane(caller.tmuxPane, processAdapter) }
+        : {}),
       ...(caller.tmuxPane !== null ? { tmuxPane: caller.tmuxPane } : {}),
     };
   }
   if (environment.TMUX !== undefined && environment.TMUX !== "" && environment.TMUX_PANE !== undefined && environment.TMUX_PANE !== "") {
     const sessionName = await tmuxSessionViaListPanes(environment.TMUX_PANE, processAdapter);
-    if (sessionName !== undefined) return { host: "tmux", id: `${sessionName}:${environment.TMUX_PANE}`, tmuxSession: sessionName, tmuxPane: environment.TMUX_PANE };
+    if (sessionName !== undefined) return { host: "tmux", id: `${sessionName}:${environment.TMUX_PANE}`, tmuxSession: sessionName, tmuxSessionId: await tmuxSessionIdForPane(environment.TMUX_PANE, processAdapter), tmuxPane: environment.TMUX_PANE };
   }
   return undefined;
 }
@@ -129,7 +140,10 @@ function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boo
   const matchesTmux = current.host === "tmux" &&
     meta?.runtime === "tmux" &&
     current.tmuxSession !== undefined && current.tmuxPane !== undefined &&
-    meta?.tmuxSession === current.tmuxSession && meta?.tmuxPane === current.tmuxPane;
+    meta?.tmuxPane === current.tmuxPane &&
+    (typeof meta?.tmuxSessionId === "string"
+      ? current.tmuxSessionId !== undefined && meta.tmuxSessionId === current.tmuxSessionId
+      : meta?.tmuxSession === current.tmuxSession);
   return matchesTerminal || matchesTmux;
 }
 
