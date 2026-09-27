@@ -1,6 +1,6 @@
 import { ok, unknown, type Result } from "./result.js";
 import { dispatchStates, processStates, terminalStates, type DispatchStateValue, type ProcessStateValue, type TerminalStateValue } from "./dispatch-states.js";
-import { ownsDispatch, type CallerIdentity } from "./context.js";
+import { isAgentSessionId, ownsDispatch, type CallerIdentity } from "./context.js";
 
 export type JsonRecord = { readonly [key: string]: unknown };
 export type UnknownField = { readonly kind: "unknown"; readonly value: string };
@@ -56,7 +56,7 @@ export function decorateDispatchRecord(record: DispatchRecord, caller: DispatchC
   const parentSessionId = record.parentSessionId ?? "";
   const ownerRecord = { parentHost: record.parentHost ?? "", parentSessionId };
   const ownedByCaller = ownsDispatch(caller, ownerRecord);
-  const agentSession = /^(?:claude|codex):.+$/.test(parentSessionId);
+  const agentSession = isAgentSessionId(parentSessionId);
   const owner: DispatchOwner = ownedByCaller ? "mine" : agentSession ? "foreign" : "unknown";
   const orphan = isKnown(record.state, "orphaned");
   const uncertain = record.processState === "start-unproven" || record.processState === "stop-unproven" || record.processState === "abandoned" || record.processState === "exited";
