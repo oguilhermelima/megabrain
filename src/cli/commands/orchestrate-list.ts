@@ -11,7 +11,12 @@ export type OrchestrateListEnvironment = Readonly<Record<string, string | undefi
 // Use the shared caller identity intact so list ownership also recognizes a matching legacy
 // terminal handle, exactly as the dispatch ownership checks do elsewhere.
 export async function callerFromEnvironment(environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<DispatchCaller> {
-  return resolveCaller(environment, process);
+  const identity = await resolveCaller(environment, process);
+  return {
+    id: identity.id,
+    host: identity.host,
+    ...(identity.terminalId !== null && identity.terminalId !== identity.id ? { terminalId: identity.terminalId } : {}),
+  };
 }
 
 async function metadataPaths(dispatchRoot: string): Promise<Array<{ path: string; archived: boolean }>> {

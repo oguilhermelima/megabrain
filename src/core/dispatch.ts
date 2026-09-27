@@ -20,7 +20,7 @@ export type DispatchRecord = {
 };
 
 export type DispatchListOptions = Readonly<{ all: boolean; orphans: boolean; uncertain: boolean; archived: boolean }>;
-export type DispatchCaller = CallerIdentity;
+export type DispatchCaller = Readonly<{ id: string; host: string; terminalId?: string | null }>;
 export type DispatchOwner = "mine" | "foreign" | "unknown";
 export type DecoratedDispatch = JsonRecord & Readonly<{ owner: DispatchOwner; ownedByCaller: boolean; orphan: boolean; uncertain: boolean; reconcileResult: unknown; archived?: boolean }>;
 
@@ -55,7 +55,13 @@ function isKnown<T extends string>(value: T | UnknownField | undefined, expected
 export function decorateDispatchRecord(record: DispatchRecord, caller: DispatchCaller): DecoratedDispatch {
   const parentSessionId = record.parentSessionId ?? "";
   const ownerRecord = { parentHost: record.parentHost ?? "", parentSessionId };
-  const ownedByCaller = ownsDispatch(caller, ownerRecord);
+  const identity: CallerIdentity = {
+    ...caller,
+    terminalId: caller.terminalId ?? null,
+    tmuxSession: null,
+    tmuxPane: null,
+  };
+  const ownedByCaller = ownsDispatch(identity, ownerRecord);
   const agentSession = isAgentSessionId(parentSessionId);
   const owner: DispatchOwner = ownedByCaller ? "mine" : agentSession ? "foreign" : "unknown";
   const orphan = isKnown(record.state, "orphaned");
