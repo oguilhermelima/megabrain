@@ -160,7 +160,9 @@ send_child_message "$tmux_pane_one" "$dispatch_one" child-one "$state_dir/child-
 write_dispatch_meta "$state_dir" "$dispatch_orca" \
   parentSessionId="$parent_id" parentHost=orca childHost=orca workspaceId="$workspace_id" \
   terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
-  state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$tmux_pane_two" runtime=tmux >/dev/null
+  state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" \
+  tmuxSessionId="$(tmux_cmd display-message -p -t "$tmux_pane_two" '#{session_id}')" \
+  tmuxPane="$tmux_pane_two" runtime=tmux >/dev/null
 send_child_message "$tmux_pane_two" "$dispatch_orca" child-without-host "$state_dir/child-without-host.out"
 
 message_one="$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' -print -quit)"
