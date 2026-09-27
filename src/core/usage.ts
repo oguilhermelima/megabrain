@@ -13,7 +13,7 @@ export const USAGE_LINES = {
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
   "terminal-close": "terminal close <selector> [--json]",
   "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]",
-  "orchestrate-list": "orchestrate list [--all|--orphans|--uncertain] [--archived] [--json]",
+  "orchestrate-list": "orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]",
   "orchestrate-prune": "orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]",
   "orchestrate-reconcile": "orchestrate reconcile <dispatch-id> [--all] [--json]",
   "orchestrate-liveness": "orchestrate liveness <dispatch-id> [--json]",
@@ -131,7 +131,7 @@ Commands:
   terminal restart <selector> ...      Restart a terminal created by megabrain
   terminal close <selector> ...        Close a terminal created by megabrain
   orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
-  orchestrate list [--all|--orphans|--uncertain] [--archived] [--json]  List managed dispatches
+  orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]  List managed dispatches
   orchestrate prune ...                Archive or delete old terminal dispatches
   orchestrate reconcile <dispatch-id>  Reconcile an open dispatch without respawning
   orchestrate liveness <dispatch-id>     Read execution state from a dispatch terminal

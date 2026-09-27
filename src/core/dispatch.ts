@@ -20,8 +20,9 @@ export type DispatchRecord = {
 };
 
 export type DispatchListOptions = Readonly<{ all: boolean; orphans: boolean; uncertain: boolean; archived: boolean }>;
-export type DispatchCaller = Readonly<{ id: string; host: string }>;
-export type DecoratedDispatch = JsonRecord & Readonly<{ ownedByCaller: boolean; orphan: boolean; uncertain: boolean; reconcileResult: unknown; archived?: boolean }>;
+export type DispatchCaller = CallerIdentity;
+export type DispatchOwner = "mine" | "foreign" | "unknown";
+export type DecoratedDispatch = JsonRecord & Readonly<{ owner: DispatchOwner; ownedByCaller: boolean; orphan: boolean; uncertain: boolean; reconcileResult: unknown; archived?: boolean }>;
 
 function field<T extends string>(value: unknown, known: readonly T[]): T | UnknownField | undefined {
   if (typeof value !== "string") return undefined;
@@ -52,14 +53,14 @@ function isKnown<T extends string>(value: T | UnknownField | undefined, expected
 }
 
 export function decorateDispatchRecord(record: DispatchRecord, caller: DispatchCaller): DecoratedDispatch {
-  // DispatchCaller only carries id/host, not a terminal handle, so ownsDispatch's legacy
-  // terminal-handle fallback is inert here (padded to null) — the id/host comparison it also
-  // does is the same one this used to do inline.
-  const identity: CallerIdentity = { id: caller.id, host: caller.host, terminalId: null, tmuxSession: null, tmuxPane: null };
-  const ownedByCaller = ownsDispatch(identity, { parentHost: record.parentHost ?? "", parentSessionId: record.parentSessionId ?? "" });
+  const parentSessionId = record.parentSessionId ?? "";
+  const ownerRecord = { parentHost: record.parentHost ?? "", parentSessionId };
+  const ownedByCaller = ownsDispatch(caller, ownerRecord);
+  const agentSession = /^(?:claude|codex):.+$/.test(parentSessionId);
+  const owner: DispatchOwner = ownedByCaller ? "mine" : agentSession ? "foreign" : "unknown";
   const orphan = isKnown(record.state, "orphaned");
   const uncertain = record.processState === "start-unproven" || record.processState === "stop-unproven" || record.processState === "abandoned" || record.processState === "exited";
-  return { ...record.raw, ownedByCaller, orphan, uncertain, reconcileResult: record.raw.reconcileOutcome ?? "unchanged" };
+  return { ...record.raw, owner, ownedByCaller, orphan, uncertain, reconcileResult: record.raw.reconcileOutcome ?? "unchanged" };
 }
 
 export function filterDispatchRecords(records: readonly DispatchRecord[], options: DispatchListOptions, caller: DispatchCaller): DispatchRecord[] {
@@ -79,11 +80,10 @@ function display(value: unknown, fallback = ""): string {
 
 export function formatDispatchList(records: readonly DecoratedDispatch[], json: boolean): string {
   if (json) return `${JSON.stringify(records, null, 2)}\n`;
-  const lines = [`${"DISPATCH".padEnd(38)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNERSHIP".padEnd(10)} ${"ORIGIN".padEnd(10)} WORKTREE`];
+  const lines = [`${"DISPATCH".padEnd(38)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNER".padEnd(10)} ${"ORIGIN".padEnd(10)} WORKTREE`];
   for (const record of records) {
-    const ownership = record.ownedByCaller === true ? "owned" : "not-owned";
     const origin = record.archived === true ? "archived" : "live";
-    lines.push(`${display(record.dispatchId).padEnd(38)} ${display(record.state).padEnd(20)} ${display(record.processState, "unknown").padEnd(18)} ${display(record.terminalState, "unknown").padEnd(12)} ${ownership.padEnd(10)} ${origin.padEnd(10)} ${display(record.worktreePath)}`);
+    lines.push(`${display(record.dispatchId).padEnd(38)} ${display(record.state).padEnd(20)} ${display(record.processState, "unknown").padEnd(18)} ${display(record.terminalState, "unknown").padEnd(12)} ${display(record.owner, "unknown").padEnd(10)} ${origin.padEnd(10)} ${display(record.worktreePath)}`);
   }
   return `${lines.join("\n")}\n`;
 }
