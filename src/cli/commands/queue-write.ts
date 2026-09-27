@@ -94,7 +94,7 @@ export async function resolveCaller(environment: QueueEnvironment, processAdapte
 async function tmuxSessionViaListPanes(pane: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
   const result = await processAdapter.run("tmux", ["list-panes", "-a", "-F", "#{session_name}\t#{session_id}\t#{pane_id}"]);
   if (result.kind !== "ok") return undefined;
-  const match = result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => parts[2] === pane);
+  const match = result.value.stdout.split("\n").map((line) => line.split("\t")).find((parts) => (parts[2] ?? parts[1]) === pane);
   return match?.[0];
 }
 
