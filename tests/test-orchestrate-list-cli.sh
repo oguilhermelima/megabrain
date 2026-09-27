@@ -117,8 +117,11 @@ printf '%s' "$all_owners" | jq -e '([.[] | select(.owner == "mine")] | length) =
   fail "owner classifications are incorrect, especially for a legacy handle: $all_owners"
 all_owners_text="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
   MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=session-a "$root/.build/megabrain" orchestrate list --all)"
-case "$all_owners_text" in
-  *'OWNER'*'mine'*'foreign'*'unknown'*) ;;
-  *) fail "text output did not expose owner classifications: $all_owners_text" ;;
-esac
+printf '%s\n' "$all_owners_text" | awk '
+  NR == 1 { if ($0 !~ /OWNER/) exit 1; next }
+  $1 == "session-a" { if ($5 != "mine") exit 1; seen_a = 1 }
+  $1 == "session-b" { if ($5 != "foreign") exit 1; seen_b = 1 }
+  $1 == "legacy" { if ($5 != "unknown") exit 1; seen_legacy = 1 }
+  END { if (!seen_a || !seen_b || !seen_legacy) exit 1 }
+' || fail "text output did not expose owner classifications by dispatch: $all_owners_text"
 printf 'dispatch lists show mine, foreign, and unknown ownership by agent session\n'
