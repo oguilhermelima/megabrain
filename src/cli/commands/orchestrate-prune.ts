@@ -48,7 +48,7 @@ async function childIdentityProof(directory: string): Promise<boolean> {
   return names.some((name) => name.includes("-child-"));
 }
 
-async function reconcileEntry(entry: Entry, process: ProcessAdapter, persist: boolean): Promise<RecordValue> {
+async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
   const state = text(entry.meta.state);
   const processState = text(entry.meta.processState);
   const terminalState = text(entry.meta.terminalState);
@@ -63,7 +63,7 @@ async function reconcileEntry(entry: Entry, process: ProcessAdapter, persist: bo
   const decision = reconcileDecision(entry.meta, proven ? "proven" : terminal, parent);
   if (decision.outcome === "unchanged") return entry.meta;
   const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  if (persist) await atomicJson(`${entry.directory}/meta.json`, next);
+  await atomicJson(`${entry.directory}/meta.json`, next);
   return next;
 }
 
@@ -73,51 +73,55 @@ function hostTerminalArgs(meta: RecordValue): { readonly command: string; readon
   return call?.kind === "ok" ? { ...call.value, host } : undefined;
 }
 
-type ReleaseResult = { readonly kind: "gone" } | { readonly kind: "unproven"; readonly reason: string };
+type ReleaseResult = { readonly kind: "gone" } | { readonly kind: "unproven"; readonly reason: string } | { readonly kind: "blocked"; readonly reason: string };
 const gone: ReleaseResult = { kind: "gone" };
 const unproven = (reason: string): ReleaseResult => ({ kind: "unproven", reason });
+const blocked = (reason: string): ReleaseResult => ({ kind: "blocked", reason });
 
 async function releaseBeforePrune(meta: RecordValue, environment: Environment, process: ProcessAdapter, dryRun: boolean): Promise<ReleaseResult> {
   const terminalState = text(meta.terminalState);
   if (terminalState === "released" || terminalState === "missing") return gone;
-  if (terminalState === "retained") return unproven(text(meta.terminalReason) || "terminal identity is unproven");
+  if (terminalState === "retained") return blocked(text(meta.terminalReason) || "terminal identity is unproven");
   if (text(meta.runtime) === "tmux") {
     const session = await getTmux().sessionExists(text(meta.tmuxSession), process);
     if (session.kind === "ok" && !session.value) return gone;
-    if (session.kind !== "ok") return unproven(session.error);
+    // Close treats a tmux session it cannot query as already absent and proceeds. Keep prune's
+    // behavior aligned with that established close contract; pane-list failures remain unproven.
+    if (session.kind !== "ok") return gone;
     const panes = await getTmux().panesForSession(text(meta.tmuxSession), process);
-    if (panes.kind !== "ok") return unproven(panes.error);
+    if (panes.kind !== "ok") return blocked("terminal identity is unproven");
     if (!panes.value.includes(text(meta.tmuxPane))) return gone;
     const sessionName = text(meta.tmuxSession);
-    if (sessionName === text(meta.parentTmuxSession)) return unproven("terminal shares the parent tmux session");
+    const shared = sessionName === text(meta.parentTmuxSession);
+    let callerSession: string | undefined;
     if (environment.TMUX && environment.TMUX_PANE) {
-      const caller = await tmuxCallerSession(environment, process);
-      if (caller !== undefined && caller === sessionName) return unproven("terminal is in the calling tmux session");
+      callerSession = await tmuxCallerSession(environment, process);
+      if (callerSession === sessionName && environment.TMUX_PANE === text(meta.tmuxPane)) return blocked("terminal is the calling tmux pane");
     }
     if (dryRun) return gone;
     const paneIds = panes.value;
-    const released = paneIds.length > 1
+    const released = shared || callerSession === sessionName || paneIds.length > 1
       ? await getTmux().killPane(text(meta.tmuxPane), process)
       : await getTmux().killSession(sessionName, process);
-    return released.kind === "ok" ? gone : unproven("could not release dispatch terminal");
+    return released.kind === "ok" ? gone : blocked("could not release dispatch terminal");
   }
   const listing = hostTerminalArgs(meta);
-  if (listing === undefined) return unproven("terminal identity is unproven: host listing is unavailable");
+  if (listing === undefined) return blocked("terminal identity is unproven");
   const terminals = await process.run(listing.command, listing.args);
-  if (terminals.kind !== "ok") return unproven(`terminal identity is unproven: ${terminals.error}`);
+  if (terminals.kind !== "ok") return blocked("terminal identity is unproven");
   let parsed: unknown;
-  try { parsed = JSON.parse(terminals.value.stdout); } catch { return unproven("terminal identity is unproven: host listing is invalid"); }
+  try { parsed = JSON.parse(terminals.value.stdout); } catch { return blocked("terminal identity is unproven"); }
   const listed = containsTerminal(parsed, listing.host, text(meta.terminalId));
   if (!listed && dryRun) return unproven("terminal is absent from the host listing");
   if (dryRun) return gone;
   const close = getHost(listing.host)?.close({ workspaceId: text(meta.workspaceId) || null, terminalId: text(meta.terminalId) });
-  if (close === undefined || close.kind !== "ok") return unproven(listed ? "could not release dispatch terminal" : "terminal is absent from the host listing");
+  if (close === undefined || close.kind !== "ok") return listed ? blocked("could not release dispatch terminal") : unproven("terminal is absent from the host listing");
   const closed = await process.run(close.value.command, close.value.args);
   if (closed.kind === "ok") return gone;
   const closeOutput = closed.kind === "failed" && closed.stdout?.trim() ? closed.stdout : closed.error;
   const reason = hostCloseReason(closeOutput);
   if (isHostTerminalAbsent(reason)) return gone;
-  return unproven(listed ? `could not release dispatch terminal: ${reason}` : "terminal is absent from the host listing");
+  return listed ? blocked("could not release dispatch terminal") : unproven("terminal is absent from the host listing");
 }
 
 // The tmux session this caller is itself physically running in — used only to avoid pruning the
@@ -128,13 +132,13 @@ export async function tmuxCallerSession(environment: Environment, process: Proce
   return tmuxCallerPaneSession(environment, process);
 }
 
-async function entries(root: string, persist: boolean): Promise<Entry[]> {
+async function entries(root: string): Promise<Entry[]> {
   const result: Entry[] = [];
   for (const directory of await liveDispatchDirectories(root)) {
     try {
       const parsed = JSON.parse(await readFile(`${directory}/meta.json`, "utf8")) as RecordValue;
       const meta = normalizeMetadata(parsed);
-      if (meta !== parsed && persist) await atomicJson(`${directory}/meta.json`, meta);
+      if (meta !== parsed) await atomicJson(`${directory}/meta.json`, meta);
       if (typeof meta.dispatchId === "string") result.push({ id: meta.dispatchId, meta, directory });
     } catch { /* shell ignores unreadable metadata */ }
   }
@@ -146,9 +150,9 @@ export async function executeOrchestratePrune(args: readonly string[], environme
   const parsed = parsePruneArgs(args); if (parsed.kind !== "ok") return parsed;
   const options: PruneOptions = parsed.value; const root = resolveStateDirectory(environment); const now = new Date(); const month = now.toISOString().slice(0, 7);
   const archived: Array<{ dispatchId: string; path: string }> = []; const deleted: string[] = []; const skipped: Array<{ dispatchId: string; state: string | null; reason: string }> = []; const terminalNotProvenGone: Array<{ dispatchId: string; reason: string }> = [];
-  for (const entry of await entries(root, !options.dryRun)) {
+  for (const entry of await entries(root)) {
     let meta = entry.meta;
-    try { meta = await reconcileEntry(entry, process, !options.dryRun); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
+    try { meta = await reconcileEntry(entry, process); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
     const decision = pruneDecision(meta, options, now);
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
     const released = await releaseBeforePrune(meta, environment, process, options.dryRun);
@@ -162,6 +166,7 @@ export async function executeOrchestratePrune(args: readonly string[], environme
       }).catch(() => undefined);
       continue;
     }
+    if (released.kind === "blocked") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.reason }); continue; }
     if (options.mode === "archive") {
       const target = dispatchArchiveDirectory(root, month, entry.id); archived.push({ dispatchId: entry.id, path: target });
       if (!options.dryRun) { try { await mkdir(dispatchArchiveParentDirectory(root, month), { recursive: true }); await rename(entry.directory, target); } catch { archived.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not archive dispatch" }); } }
