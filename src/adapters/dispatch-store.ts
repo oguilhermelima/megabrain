@@ -2,7 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveDispatchId } from "../core/dispatch-paths.js";
 
-export type DispatchHandle = Readonly<{ dispatchId: string; directory: string }>;
+export type DispatchHandle = Readonly<{ dispatchId: string; directory: string; archived: boolean }>;
 export type DispatchFile = "meta" | "messages" | "deliveries" | "transcript" | "message-lock" | "nudge" | "nudge-lock" | "waiter";
 
 export function dispatchRoot(stateDirectory: string): string { return `${stateDirectory}/dispatches`; }
@@ -18,16 +18,21 @@ export async function resolveDispatchDirectory(stateDirectory: string, dispatchI
   if (valid.kind === "invalid") return failed(`invalid dispatch id: ${dispatchId}`);
   const root = `${stateDirectory}/dispatches`;
   const live = `${root}/${dispatchId}`;
-  if (await exists(live)) return ok({ dispatchId, directory: live });
+  if (await exists(live)) return ok({ dispatchId, directory: live, archived: false });
   const months = (await readdir(`${root}/archive`, { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
   for (const month of months) {
     const archived = `${root}/archive/${month}/${dispatchId}`;
-    if (await exists(archived)) return ok({ dispatchId, directory: archived });
+    if (await exists(archived)) return ok({ dispatchId, directory: archived, archived: true });
   }
-  return ok({ dispatchId, directory: live });
+  return ok({ dispatchId, directory: live, archived: false });
+}
+
+export async function dispatchIsArchived(stateDirectory: string, dispatchId: string): Promise<boolean> {
+  const resolved = await resolveDispatchDirectory(stateDirectory, dispatchId);
+  return resolved.kind === "ok" && resolved.value.archived;
 }
 
 export function dispatchFile(handle: DispatchHandle, file: DispatchFile): string {

@@ -14,7 +14,7 @@ Commands:
   terminal restart <selector> ...      Restart a terminal created by megabrain
   terminal close <selector> ...        Close a terminal created by megabrain
   orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
-  orchestrate list [--all|--orphans|--uncertain] [--json]  List managed dispatches
+  orchestrate list [--all|--orphans|--uncertain] [--archived] [--json]  List managed dispatches
   orchestrate prune ...                Archive or delete old terminal dispatches
   orchestrate reconcile <dispatch-id>  Reconcile an open dispatch without respawning
   orchestrate liveness <dispatch-id>     Read execution state from a dispatch terminal

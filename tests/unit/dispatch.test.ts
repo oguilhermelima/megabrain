@@ -13,7 +13,7 @@ const record = (values: Record<string, unknown> = {}): DispatchRecord => {
   if (parsed.kind !== "ok") throw new Error(parsed.reason);
   return parsed.value;
 };
-const options = (values: Partial<DispatchListOptions> = {}): DispatchListOptions => ({ all: false, orphans: false, uncertain: false, ...values });
+const options = (values: Partial<DispatchListOptions> = {}): DispatchListOptions => ({ all: false, orphans: false, uncertain: false, archived: false, ...values });
 
 describe("parseDispatchRecord", () => {
   test("preserves the complete document and types known fields", () => {
@@ -51,7 +51,7 @@ describe("filterDispatchRecords", () => {
 describe("formatDispatchList", () => {
   test("matches the exact plain header and columns", () => {
     const value = decorateDispatchRecord(record({ dispatchId: "one" }), { id: "caller", host: "host" });
-    expect(formatDispatchList([value], false)).toBe("DISPATCH                               STATE                PROCESS            TERMINAL     OWNERSHIP  WORKTREE\none                                    running              running            owned        not-owned  /worktree\n");
+    expect(formatDispatchList([value], false)).toBe("DISPATCH                               STATE                PROCESS            TERMINAL     OWNERSHIP  ORIGIN     WORKTREE\none                                    running              running            owned        not-owned  live       /worktree\n");
   });
   test("serializes JSON with computed inventory fields", () => {
     const value = decorateDispatchRecord(record({ dispatchId: "one" }), { id: "caller", host: "host" });

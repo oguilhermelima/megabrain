@@ -18,19 +18,19 @@ export async function callerFromEnvironment(environment: OrchestrateListEnvironm
   return { id: identity.id, host: identity.host };
 }
 
-async function metadataPaths(dispatchRoot: string): Promise<string[]> {
-  const paths: string[] = [];
-  async function add(parent: string, entries: string[]): Promise<void> {
+async function metadataPaths(dispatchRoot: string): Promise<Array<{ path: string; archived: boolean }>> {
+  const paths: Array<{ path: string; archived: boolean }> = [];
+  async function add(parent: string, entries: string[], archived: boolean): Promise<void> {
     for (const entry of entries) {
       const path = `${parent}/${entry}`;
       const exists = await access(path).then(() => true, () => false);
-      if (exists && entry === "meta.json") paths.push(path);
+      if (exists && entry === "meta.json") paths.push({ path, archived });
     }
   }
   const direct = (await readdir(dispatchRoot, { withFileTypes: true }).catch(() => []))
     .sort((left, right) => left.name.localeCompare(right.name));
   for (const entry of direct) {
-    if (entry.isDirectory() && entry.name !== "archive") await add(`${dispatchRoot}/${entry.name}`, ["meta.json"]);
+    if (entry.isDirectory() && entry.name !== "archive") await add(`${dispatchRoot}/${entry.name}`, ["meta.json"], false);
   }
   const archive = (await readdir(`${dispatchRoot}/archive`, { withFileTypes: true }).catch(() => []))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -39,7 +39,7 @@ async function metadataPaths(dispatchRoot: string): Promise<string[]> {
     const archived = (await readdir(`${dispatchRoot}/archive/${date.name}`, { withFileTypes: true }).catch(() => []))
       .sort((left, right) => left.name.localeCompare(right.name));
     for (const dispatch of archived) {
-      if (dispatch.isDirectory()) await add(`${dispatchRoot}/archive/${date.name}/${dispatch.name}`, ["meta.json"]);
+      if (dispatch.isDirectory()) await add(`${dispatchRoot}/archive/${date.name}/${dispatch.name}`, ["meta.json"], true);
     }
   }
   return paths;
@@ -47,13 +47,13 @@ async function metadataPaths(dispatchRoot: string): Promise<string[]> {
 
 async function loadRecords(root: string): Promise<DispatchRecord[]> {
   const records: DispatchRecord[] = [];
-  for (const path of await metadataPaths(`${root}/dispatches`)) {
+  for (const entry of await metadataPaths(`${root}/dispatches`)) {
     try {
-      const parsed = parseDispatchRecord(JSON.parse(await readFile(path, "utf8")) as unknown);
-      if (parsed.kind === "ok") records.push(parsed.value);
-      else console.error(`skipping unreadable dispatch metadata: ${path}`);
+      const parsed = parseDispatchRecord(JSON.parse(await readFile(entry.path, "utf8")) as unknown);
+      if (parsed.kind === "ok") records.push({ ...parsed.value, raw: { ...parsed.value.raw, archived: entry.archived } });
+      else console.error(`skipping unreadable dispatch metadata: ${entry.path}`);
     } catch {
-      console.error(`skipping unreadable dispatch metadata: ${path}`);
+      console.error(`skipping unreadable dispatch metadata: ${entry.path}`);
     }
   }
   return records;
@@ -64,15 +64,17 @@ function parseArgs(args: readonly string[]): Result<{ options: DispatchListOptio
   let all = false;
   let orphans = false;
   let uncertain = false;
+  let archived = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
     else if (arg === "--all") all = true;
     else if (arg === "--orphans") orphans = true;
     else if (arg === "--uncertain") uncertain = true;
-    else if (arg === "-h" || arg === "--help") return ok({ options: { all, orphans, uncertain }, json });
+    else if (arg === "--archived") archived = true;
+    else if (arg === "-h" || arg === "--help") return ok({ options: { all, orphans, uncertain, archived }, json });
     else return failed(`unknown orchestrate list option: ${arg}`, 2);
   }
-  return ok({ options: { all, orphans, uncertain }, json });
+  return ok({ options: { all, orphans, uncertain, archived }, json });
 }
 
 export async function executeOrchestrateList(args: readonly string[], environment: OrchestrateListEnvironment, process: ProcessAdapter): Promise<Result<string>> {

@@ -19,9 +19,9 @@ export type DispatchRecord = {
   readonly terminalState?: TerminalState;
 };
 
-export type DispatchListOptions = Readonly<{ all: boolean; orphans: boolean; uncertain: boolean }>;
+export type DispatchListOptions = Readonly<{ all: boolean; orphans: boolean; uncertain: boolean; archived: boolean }>;
 export type DispatchCaller = Readonly<{ id: string; host: string }>;
-export type DecoratedDispatch = JsonRecord & Readonly<{ ownedByCaller: boolean; orphan: boolean; uncertain: boolean; reconcileResult: unknown }>;
+export type DecoratedDispatch = JsonRecord & Readonly<{ ownedByCaller: boolean; orphan: boolean; uncertain: boolean; reconcileResult: unknown; archived?: boolean }>;
 
 function field<T extends string>(value: unknown, known: readonly T[]): T | UnknownField | undefined {
   if (typeof value !== "string") return undefined;
@@ -65,7 +65,8 @@ export function decorateDispatchRecord(record: DispatchRecord, caller: DispatchC
 export function filterDispatchRecords(records: readonly DispatchRecord[], options: DispatchListOptions, caller: DispatchCaller): DispatchRecord[] {
   return records.filter((record) => {
     const decorated = decorateDispatchRecord(record, caller);
-    return (options.all || options.orphans || options.uncertain || decorated.ownedByCaller === true) &&
+    return (options.archived || decorated.archived !== true) &&
+      (options.all || options.orphans || options.uncertain || decorated.ownedByCaller === true) &&
       (!options.orphans || decorated.orphan === true) && (!options.uncertain || decorated.uncertain === true);
   });
 }
@@ -78,10 +79,11 @@ function display(value: unknown, fallback = ""): string {
 
 export function formatDispatchList(records: readonly DecoratedDispatch[], json: boolean): string {
   if (json) return `${JSON.stringify(records, null, 2)}\n`;
-  const lines = [`${"DISPATCH".padEnd(38)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNERSHIP".padEnd(10)} WORKTREE`];
+  const lines = [`${"DISPATCH".padEnd(38)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNERSHIP".padEnd(10)} ${"ORIGIN".padEnd(10)} WORKTREE`];
   for (const record of records) {
     const ownership = record.ownedByCaller === true ? "owned" : "not-owned";
-    lines.push(`${display(record.dispatchId).padEnd(38)} ${display(record.state).padEnd(20)} ${display(record.processState, "unknown").padEnd(18)} ${display(record.terminalState, "unknown").padEnd(12)} ${ownership.padEnd(10)} ${display(record.worktreePath)}`);
+    const origin = record.archived === true ? "archived" : "live";
+    lines.push(`${display(record.dispatchId).padEnd(38)} ${display(record.state).padEnd(20)} ${display(record.processState, "unknown").padEnd(18)} ${display(record.terminalState, "unknown").padEnd(12)} ${ownership.padEnd(10)} ${origin.padEnd(10)} ${display(record.worktreePath)}`);
   }
   return `${lines.join("\n")}\n`;
 }
