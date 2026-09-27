@@ -4,6 +4,11 @@ import { usageText } from "./usage.js";
 export type CloseArguments = Readonly<{ dispatchId: string; forceRelease: boolean; json: boolean }>;
 export type CloseDecision = "close" | "duplicate" | "retained" | "caller";
 
+export function isHostTerminalAbsent(value: string): boolean {
+  const detail = value.replaceAll("_", " ");
+  return /not found|does not exist|no such|already closed|already gone|already deleted|404|terminal handle stale/i.test(detail);
+}
+
 export function hostCloseReason(raw: string): string {
   let extracted: unknown;
   try {

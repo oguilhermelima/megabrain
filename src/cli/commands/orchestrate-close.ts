@@ -1,6 +1,6 @@
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
-import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../core/orchestrate-close.js";
+import { closeDecision, closeOutput, hostCloseReason, isHostTerminalAbsent, parseCloseArgs } from "../../core/orchestrate-close.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
@@ -12,10 +12,6 @@ import { usageText } from "../../core/usage.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
-const absent = (value: string): boolean => {
-  const detail = value.replaceAll("_", " ");
-  return /not found|does not exist|no such|already closed|already gone|already deleted|404|terminal handle stale/i.test(detail);
-};
 
 
 export async function tmuxSessionForEnvironment(environment: QueueEnvironment, process: ProcessAdapter): Promise<string | undefined> {
@@ -62,7 +58,7 @@ async function closeHostTerminal(meta: RecordValue, process: ProcessAdapter): Pr
   const result = await process.run(call.command, call.args);
   if (result.kind === "ok") return ok("closed");
   const reason = errorText(result);
-  return absent(reason) ? ok("absent") : failed(reason);
+  return isHostTerminalAbsent(reason) ? ok("absent") : failed(reason);
 }
 
 async function closeRecordedTmuxHost(hostId: string, terminalId: string, workspaceId: string | null, process: ProcessAdapter): Promise<Result<void>> {
@@ -72,7 +68,7 @@ async function closeRecordedTmuxHost(hostId: string, terminalId: string, workspa
   if (call.kind === "failed") return call;
   if (call.kind === "unknown") return unknown(call.reason);
   const result = await process.run(call.value.command, call.value.args);
-  if (result.kind === "ok" || absent(errorText(result))) return ok(undefined);
+  if (result.kind === "ok" || isHostTerminalAbsent(errorText(result))) return ok(undefined);
   return failed(`could not close recorded ${hostId} terminal ${terminalId}: ${errorText(result)}`, result.exitCode);
 }
 
