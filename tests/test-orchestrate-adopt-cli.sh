@@ -28,7 +28,7 @@ unknown_result="$(run_adopt unknown --json)" || fail "adopting an unknown legacy
 printf '%s' "$unknown_result" | jq -e '.adopted == true and .owner == "claude:adopter"' >/dev/null ||
   fail "unknown owner adoption result is incorrect: $unknown_result"
 unknown_meta="$state_dir/state/dispatches/unknown/meta.json"
-jq -e '.parentSessionId == "claude:adopter" and .adoptions | length == 1 and .adoptions[0].previousOwner == "old-terminal" and .adoptions[0].adoptedBy == "claude:adopter" and (.adoptions[0].adoptedAt | type == "string" and length > 0)' "$unknown_meta" >/dev/null ||
+jq -e '.parentSessionId == "claude:adopter" and (.adoptions | length) == 1 and .adoptions[0].previousOwner == "old-terminal" and .adoptions[0].adoptedBy == "claude:adopter" and (.adoptions[0].adoptedAt | type == "string" and length > 0)' "$unknown_meta" >/dev/null ||
   fail "adopting an unknown owner did not preserve ownership history: $(cat "$unknown_meta")"
 adopter_list="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
   MEGABRAIN_STATE_DIR="$state_dir/state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=adopter \
