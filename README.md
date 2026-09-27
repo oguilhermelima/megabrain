@@ -159,14 +159,24 @@ sleeps, and the answer has to survive all of it. Every message is written to an 
 **before** anything is typed into a terminal.
 
 ```sh
-megabrain orchestrate watch <id> --json         # blocks until there is mail
-megabrain orchestrate list [--archived] --json  # archived dispatches are hidden by default
+megabrain orchestrate watch <id> --json          # blocks until there is mail
+megabrain orchestrate list --mine --json         # show dispatches owned by this session
+megabrain orchestrate list --all --json          # include foreign and unknown owners
+megabrain orchestrate adopt <id> [--force] --json # take ownership of a dispatch
 megabrain orchestrate reply <id> --text "..."   # answer a question
 megabrain orchestrate ack <id> <delivery-id> [--close] # mark it consumed and optionally release the terminal
 megabrain orchestrate read <id>                 # what the agent actually did
 megabrain orchestrate reconcile <id>            # settle its state against reality
 megabrain orchestrate close <id>                # take the pane back
 ```
+
+Dispatch ownership belongs to the agent session that created it and survives a resumed
+conversation. A new session does not inherit that ownership. `list` shows only your dispatches by
+default (`--mine` is an explicit alias); `--all` includes every dispatch and labels each owner as
+`mine`, `foreign`, or `unknown`. `adopt` takes over an unknown legacy owner, or a foreign owner
+whose session is no longer alive when that can be established. `--force` takes over a foreign
+dispatch regardless of owner liveness. Each takeover is recorded in the dispatch metadata; an
+archived dispatch cannot be adopted.
 
 ### Managed terminals
 

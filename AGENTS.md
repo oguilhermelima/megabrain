@@ -14,7 +14,8 @@
 - Run megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json].
 - Run megabrain terminal close <selector> [--json].
 - Run megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json].
-- Run megabrain orchestrate list [--all|--orphans|--uncertain] [--archived] [--json].
+- Run megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json].
+- Run megabrain orchestrate adopt <dispatch-id> [--force] [--json].
 - Run megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json].
 - Run megabrain orchestrate reconcile <dispatch-id> [--all] [--json].
 - Run megabrain orchestrate liveness <dispatch-id> [--json].
