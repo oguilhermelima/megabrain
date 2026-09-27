@@ -9,6 +9,7 @@ import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
+import { cleanTranscript } from "../../core/dispatch-read.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -36,7 +37,7 @@ async function preserveTranscript(directory: string, meta: RecordValue, process:
   if (captured.kind !== "ok" || captured.value === "") return;
   try {
     await mkdir(directory, { recursive: true });
-    await writeFile(path, captured.value);
+    await writeFile(path, cleanTranscript(captured.value).text);
   } catch {
     // Transcript capture is best effort; an existing transcript is never overwritten.
   }

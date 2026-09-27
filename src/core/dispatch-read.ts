@@ -6,9 +6,45 @@ export function formatDispatchRead(value: DispatchRead, json: boolean, cap: numb
 export function capTranscript(value: string, maxBytes: number): Readonly<{ text: string; truncated: boolean }> {
   const bytes = new TextEncoder().encode(value);
   if (bytes.length <= maxBytes) return { text: value, truncated: false };
-  const decoded = new TextDecoder().decode(bytes.slice(bytes.length - maxBytes));
+  let start = bytes.length - maxBytes;
+  let decoded = "";
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  while (start < bytes.length) {
+    try { decoded = decoder.decode(bytes.slice(start)); break; } catch { start += 1; }
+  }
   const newline = decoded.indexOf("\n");
-  return { text: newline < 0 ? "" : decoded.slice(newline + 1), truncated: true };
+  const startsAtLineBoundary = start > 0 && bytes[start - 1] === 10;
+  return { text: newline < 0 || newline === 0 || startsAtLineBoundary ? decoded : decoded.slice(newline + 1), truncated: true };
+}
+
+export const TRANSCRIPT_MAX_BYTES = 1_048_576;
+
+function stripTerminalControls(value: string): string {
+  return value
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)?/g, "")
+    .replace(/\u009d[^\u0007\u009c]*(?:\u0007|\u009c)?/g, "")
+    .replace(/\u001b[P^_X][\s\S]*?(?:\u001b\\|\u009c)/g, "")
+    .replace(/\u0090[\s\S]*?\u009c/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u009b[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b[ -/]*[@-~]/g, "")
+    .replace(/\t/g, "  ")
+    .replace(/[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+}
+
+export function cleanTranscript(value: string, maxBytes = TRANSCRIPT_MAX_BYTES): Readonly<{ text: string; truncated: boolean }> {
+  const input = stripTerminalControls(value);
+  const output: string[] = [];
+  let previous: string | undefined;
+  for (const sourceLine of input.split("\n")) {
+    const line = sourceLine.endsWith("\r") ? sourceLine.slice(0, -1) : sourceLine.split("\r").at(-1) ?? "";
+    if (line === previous) continue;
+    output.push(line);
+    previous = line;
+  }
+  const normalized = output.join("\n");
+  const capped = capTranscript(normalized, maxBytes);
+  return { text: capped.text, truncated: capped.truncated };
 }
 
 type Screen = { readonly rows: string[]; readonly row: number; readonly column: number };
