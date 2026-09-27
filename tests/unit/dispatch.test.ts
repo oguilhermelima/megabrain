@@ -51,10 +51,10 @@ describe("filterDispatchRecords", () => {
 describe("formatDispatchList", () => {
   test("matches the exact plain header and columns", () => {
     const value = decorateDispatchRecord(record({ dispatchId: "one" }), { id: "caller", host: "host" });
-    expect(formatDispatchList([value], false)).toBe("DISPATCH                               STATE                PROCESS            TERMINAL     OWNERSHIP  ORIGIN     WORKTREE\none                                    running              running            owned        not-owned  live       /worktree\n");
+    expect(formatDispatchList([value], false)).toBe("DISPATCH                               STATE                PROCESS            TERMINAL     OWNER      ORIGIN     WORKTREE\none                                    running              running            owned        unknown    live       /worktree\n");
   });
   test("serializes JSON with computed inventory fields", () => {
     const value = decorateDispatchRecord(record({ dispatchId: "one" }), { id: "caller", host: "host" });
-    expect(JSON.parse(formatDispatchList([value], true))).toEqual([{ dispatchId: "one", parentSessionId: "session", parentHost: "host", state: "running", processState: "running", terminalState: "owned", worktreePath: "/worktree", ownedByCaller: false, orphan: false, uncertain: false, reconcileResult: "unchanged" }]);
+    expect(JSON.parse(formatDispatchList([value], true))).toEqual([{ dispatchId: "one", parentSessionId: "session", parentHost: "host", state: "running", processState: "running", terminalState: "owned", worktreePath: "/worktree", owner: "unknown", ownedByCaller: false, orphan: false, uncertain: false, reconcileResult: "unchanged" }]);
   });
 });
