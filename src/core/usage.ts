@@ -50,7 +50,7 @@ export const USAGE_LINES = {
   "native-app-reload": "native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]",
   "native-health": "native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]",
   "native-crashes": "native crashes <phone|tv> [--last N] [--json]",
-  "native-build": "native build <phone|tv> [--runtime <version>] [--json]",
+  "native-build": "native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json]",
   "tv-connect": "tv connect <ip> [--port <port>]",
   "tv-disconnect": "tv disconnect [<ip>]",
   "tmux-tune": "tmux tune [--yes] [--dry-run] [--revert] [--json]",

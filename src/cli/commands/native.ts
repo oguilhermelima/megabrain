@@ -105,14 +105,18 @@ async function nativeBuild(args: readonly string[], environment: Environment, pr
   if (args.includes("-h") || args.includes("--help")) return ok(nativeBuildUsage());
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   let runtime = "";
+  let requestedDevice = "";
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") continue;
     if (arg === "--runtime" && args[index + 1]) { runtime = args[++index] as string; continue; }
+    if (arg === "--device" && args[index + 1] && !(args[index + 1] as string).startsWith("--")) { requestedDevice = args[++index] as string; continue; }
+    if (arg === "--device") return error("--device requires a simulator name or UDID", 2);
     return error(`unknown native build option: ${arg}`, 2);
   }
   const root = await nativeWorktreeRoot(environment, processAdapter);
   const loaded = config(root); if (loaded.kind !== "ok") return loaded;
+  requestedDevice = requestedDevice || setting(loaded.value, kind.value, "device");
   const appSetting = setting(loaded.value, kind.value, "appPath"); if (!appSetting) return buildConfigError(kind.value);
   const appPath = resolve(root, appSetting);
   const app = readExpoApp(appPath); if (app.kind !== "ok") return app;
@@ -121,12 +125,35 @@ async function nativeBuild(args: readonly string[], environment: Environment, pr
   const matchingRuntimes = runtimes.value.filter((item) => item.platform === platform && (!runtime || item.version === runtime));
   if (matchingRuntimes.length === 0) return error(runtime ? `no installed ${platform} runtime matches ${runtime}` : `no installed ${platform} runtime is available`);
   matchingRuntimes.sort((left, right) => right.version.localeCompare(left.version, undefined, { numeric: true }));
-  const selectedRuntime = matchingRuntimes[0] as NativeRuntime;
   const devices = await processAdapter.run("xcrun", ["simctl", "list", "devices", "--json"]); if (devices.kind !== "ok") return error("failed to list simulators with simctl");
-  let candidates: Result<NativeCandidate[]>;
-  try { candidates = candidatesForRuntimeFromSimctl(JSON.parse(devices.value.stdout), kind.value, selectedRuntime.version); } catch { return error("simctl returned invalid device data"); }
-  if (candidates.kind !== "ok") return candidates;
-  const selected = selectDevice(kind.value, candidates.value, "", false); if (selected.kind !== "ok") return selected;
+  let simctlData: unknown;
+  try { simctlData = JSON.parse(devices.value.stdout); } catch { return error("simctl returned invalid device data"); }
+  const runtimeCandidates = matchingRuntimes.map((item) => ({ runtime: item, candidates: candidatesForRuntimeFromSimctl(simctlData, kind.value, item.version) }));
+  const candidatesByRuntime = runtimeCandidates.find((item) => item.candidates.kind !== "ok");
+  if (candidatesByRuntime?.candidates.kind === "failed") return error(candidatesByRuntime.candidates.error, candidatesByRuntime.candidates.exitCode);
+  if (candidatesByRuntime?.candidates.kind === "unknown") return error(candidatesByRuntime.candidates.error, candidatesByRuntime.candidates.exitCode);
+  let selectedRuntime: NativeRuntime;
+  let selected: Result<NativeCandidate>;
+  if (requestedDevice) {
+    const candidates = runtimeCandidates.flatMap(({ runtime: itemRuntime, candidates: itemCandidates }) => itemCandidates.kind === "ok" ? itemCandidates.value.map((candidate) => ({ runtime: itemRuntime, candidate })) : []);
+    const selection = selectDevice(kind.value, candidates.map(({ candidate }) => candidate), requestedDevice, false);
+    if (selection.kind !== "ok") return error(selection.error, selection.exitCode);
+    selected = selection;
+    const deviceRuntime = candidates.find(({ candidate }) => candidate.udid === selection.value.udid)?.runtime;
+    if (!deviceRuntime) return error(`could not determine the runtime for simulator ${selection.value.udid}`);
+    selectedRuntime = deviceRuntime;
+  } else {
+    selectedRuntime = matchingRuntimes[0] as NativeRuntime;
+    const runtimeDevices = runtimeCandidates.find(({ runtime: itemRuntime }) => itemRuntime.version === selectedRuntime.version)?.candidates;
+    if (!runtimeDevices || runtimeDevices.kind !== "ok") return runtimeDevices ?? error("failed to list simulators with simctl");
+    const booted = runtimeDevices.value.filter((candidate) => candidate.state === "Booted");
+    if (booted.length === 1) selected = ok(booted[0] as NativeCandidate);
+    else if (booted.length === 0 && runtimeDevices.value.length === 1) selected = ok(runtimeDevices.value[0] as NativeCandidate);
+    else {
+      const names = runtimeDevices.value.map((candidate) => candidate.name).join(", ") || "none";
+      return error(`cannot choose a ${platform} simulator automatically; pass --device <name-or-udid> or set surfaces.${kind.value}.device in .megabrain/native.json. Candidates: ${names}`);
+    }
+  }
   const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
   if (boot.kind !== "ok" && !/already booted/i.test(boot.error)) return error(`failed to boot simulator ${selected.value.udid}: ${boot.error}`);
   const outcomes = {} as Record<NativeBuildStep, { ok: boolean; error?: string }>;

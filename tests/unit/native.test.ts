@@ -98,6 +98,121 @@ describe("native runtime commands", () => {
 });
 
 describe("native build planning", () => {
+  type BuildFixtureOptions = {
+    readonly kind?: "phone" | "tv";
+    readonly runtimes?: readonly { readonly platform: "iOS" | "tvOS"; readonly version: string }[];
+    readonly devices: Readonly<Record<string, readonly { readonly udid: string; readonly state: string; readonly name: string; readonly isAvailable: boolean }[]>>;
+    readonly args?: readonly string[];
+    readonly configuredDevice?: string;
+  };
+  async function runNativeBuildFixture(options: BuildFixtureOptions) {
+    const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-build-"));
+    const app = join(worktree, "apps", options.kind === "tv" ? "tv" : "phone");
+    await mkdir(join(worktree, ".megabrain"), { recursive: true });
+    await mkdir(join(app, "ios", "Example.xcworkspace"), { recursive: true });
+    await writeFile(join(app, "app.json"), JSON.stringify({ expo: { scheme: "example", ios: { bundleIdentifier: "com.example.app" } } }));
+    await writeFile(join(worktree, ".megabrain", "native.json"), JSON.stringify({ version: 1, surfaces: { [options.kind ?? "phone"]: { appPath: `apps/${options.kind === "tv" ? "tv" : "phone"}`, ...(options.configuredDevice ? { device: options.configuredDevice } : {}) } } }));
+    const runtimes = options.runtimes ?? [{ platform: options.kind === "tv" ? "tvOS" : "iOS", version: "27.0" }];
+    const runtimeData = { runtimes: runtimes.map(({ platform, version }) => ({ name: `${platform} ${version}`, version, buildversion: "A1", identifier: `com.apple.CoreSimulator.SimRuntime.${platform}-${version.replaceAll(".", "-")}`, isAvailable: true })) };
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (command === "git") return ok({ stdout: `${worktree}\n`, stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args.join(" ") === "simctl list runtimes --json") return ok({ stdout: JSON.stringify(runtimeData), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args.join(" ") === "simctl list devices --json") return ok({ stdout: JSON.stringify({ devices: options.devices }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "boot") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        if (command === "pnpm" || command === "pod" || command === "xcodebuild") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[0] === "simctl") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    try {
+      const result = await executeNative(["build", options.kind ?? "phone", ...(options.args ?? []), "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree, MEGABRAIN_STATE_DIR: join(worktree, "state") }, process);
+      const xcode = calls.find((call) => call.command === "xcodebuild");
+      return { result, xcodeArgs: xcode?.args, calls };
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  }
+
+  test("uses the booted iPhone and excludes a booted Apple TV", async () => {
+    const { result, xcodeArgs } = await runNativeBuildFixture({ devices: {
+      "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: "phone-1", state: "Booted", name: "iPhone 17", isAvailable: true }],
+      "com.apple.CoreSimulator.SimRuntime.tvOS-27-0": [{ udid: "tv-1", state: "Booted", name: "Apple TV", isAvailable: true }],
+    } });
+    expect(result.kind).toBe("ok");
+    expect(xcodeArgs).toContain("platform=iOS Simulator,id=phone-1");
+  });
+
+  test("prefers the only booted iPhone", async () => {
+    const { xcodeArgs } = await runNativeBuildFixture({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      { udid: "shutdown", state: "Shutdown", name: "iPhone 16", isAvailable: true },
+      { udid: "booted", state: "Booted", name: "iPhone 17", isAvailable: true },
+    ] } });
+    expect(xcodeArgs).toContain("platform=iOS Simulator,id=booted");
+  });
+
+  test("refuses multiple unbooted iPhones with usable selectors and names", async () => {
+    const { result, xcodeArgs } = await runNativeBuildFixture({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      { udid: "a", state: "Shutdown", name: "iPhone 16", isAvailable: true },
+      { udid: "b", state: "Shutdown", name: "iPhone 17", isAvailable: true },
+    ] } });
+    expect(xcodeArgs).toBeUndefined();
+    const refusal = JSON.parse(result.value).refusal.message as string;
+    expect(refusal).toContain("--device <name-or-udid>");
+    expect(refusal).toContain("surfaces.phone.device");
+    expect(refusal).toContain("iPhone 16");
+    expect(refusal).toContain("iPhone 17");
+  });
+
+  test.each(["phone-2", "iPhone 17"]) ("selects an explicitly requested simulator by %s", async (requested) => {
+    const { xcodeArgs } = await runNativeBuildFixture({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      { udid: "phone-1", state: "Booted", name: "iPhone 16", isAvailable: true },
+      { udid: "phone-2", state: "Shutdown", name: "iPhone 17", isAvailable: true },
+    ] }, args: ["--device", requested] });
+    expect(xcodeArgs).toContain("platform=iOS Simulator,id=phone-2");
+  });
+
+  test("uses the configured simulator and lets --device override it", async () => {
+    const devices = { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      { udid: "configured", state: "Shutdown", name: "iPhone 16", isAvailable: true },
+      { udid: "override", state: "Shutdown", name: "iPhone 17", isAvailable: true },
+    ] };
+    const configured = await runNativeBuildFixture({ devices, configuredDevice: "configured" });
+    expect(configured.xcodeArgs).toContain("platform=iOS Simulator,id=configured");
+    const overridden = await runNativeBuildFixture({ devices, configuredDevice: "configured", args: ["--device", "override"] });
+    expect(overridden.xcodeArgs).toContain("platform=iOS Simulator,id=override");
+  });
+
+  test("uses the runtime containing an explicitly selected simulator", async () => {
+    const { result, xcodeArgs } = await runNativeBuildFixture({ runtimes: [{ platform: "iOS", version: "26.0" }, { platform: "iOS", version: "27.0" }], devices: {
+      "com.apple.CoreSimulator.SimRuntime.iOS-26-0": [{ udid: "older", state: "Shutdown", name: "iPhone 16", isAvailable: true }],
+      "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: "newer", state: "Booted", name: "iPhone 17", isAvailable: true }],
+    }, args: ["--device", "older"] });
+    expect(xcodeArgs).toContain("platform=iOS Simulator,id=older");
+    expect(JSON.parse(result.value).runtime).toBe("26.0");
+  });
+
+  test("refuses an unknown simulator", async () => {
+    const { result, xcodeArgs } = await runNativeBuildFixture({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      { udid: "phone-1", state: "Booted", name: "iPhone 17", isAvailable: true },
+    ] }, args: ["--device", "missing"] });
+    expect(xcodeArgs).toBeUndefined();
+    expect(JSON.parse(result.value).refusal.message).toContain("missing");
+  });
+
+  test("tv build never selects an iPhone", async () => {
+    const { result, xcodeArgs } = await runNativeBuildFixture({ kind: "tv", devices: {
+      "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: "phone", state: "Booted", name: "iPhone 17", isAvailable: true }],
+      "com.apple.CoreSimulator.SimRuntime.tvOS-27-0": [{ udid: "tv", state: "Booted", name: "Apple TV", isAvailable: true }],
+    } });
+    expect(result.kind).toBe("ok");
+    expect(xcodeArgs).toContain("platform=tvOS Simulator,id=tv");
+  });
+
   test("discovers the worktree root through the process adapter when git is unavailable", async () => {
     const worktree = await mkdtemp(join(tmpdir(), "megabrain-native-root-"));
     const state = join(worktree, "state");
