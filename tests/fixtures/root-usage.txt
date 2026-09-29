@@ -4,6 +4,8 @@ Commands:
   version|-V|--version                   Print the megabrain version
   install [options]                    Configure agents, skills, and modules
   doctor [module-id]                   Check one module or all modules
+  db check [--json]                    Check SQLite integrity and foreign keys
+  db backup [--json]                   Create and rotate a SQLite backup
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

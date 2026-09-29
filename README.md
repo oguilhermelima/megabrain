@@ -79,6 +79,8 @@ npm link
 
 ```sh
 megabrain doctor          # what is installed and what is missing
+megabrain db check        # check SQLite integrity and foreign keys
+megabrain db backup       # create a consistent SQLite backup
 megabrain context --json  # tmux, orca, or superset
 ```
 

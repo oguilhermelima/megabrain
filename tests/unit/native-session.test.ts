@@ -20,7 +20,7 @@ async function seed(directory: string, sessions: readonly { readonly udid: strin
   await writeFile(join(directory, "native-sessions.json"), `${JSON.stringify({ version: 1, sessions })}\n`);
 }
 
-function processStub(options: { readonly dead?: ReadonlySet<string>; readonly postDelay?: number; readonly kind?: "phone" | "tv" } = {}): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[] }[] } {
+function processStub(options: { readonly dead?: ReadonlySet<string>; readonly postDelay?: number; readonly kind?: "phone" | "tv"; readonly deleteFailure?: boolean } = {}): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[] }[] } {
   const calls: Array<{ readonly command: string; readonly args: readonly string[] }> = [];
   let created = 0;
   const dead = options.dead ?? new Set<string>();
@@ -37,6 +37,7 @@ function processStub(options: { readonly dead?: ReadonlySet<string>; readonly po
         created += 1;
         return ok({ stdout: `${JSON.stringify({ value: { sessionId: `created-${created}` } })}\n200`, stderr: "", exitCode: 0 });
       }
+      if (command === "curl" && args[1] === "-X" && args[2] === "DELETE") return options.deleteFailure ? failed("delete failed") : ok({ stdout: "", stderr: "", exitCode: 0 });
       if (command === "curl" && args.some((arg) => arg.startsWith("http://127.0.0.1:4723/session/")) && !args.some((arg) => arg.endsWith("/source"))) {
         const sessionId = args.find((arg) => arg.startsWith("http://127.0.0.1:4723/session/"))?.slice("http://127.0.0.1:4723/session/".length) ?? "";
         return dead.has(sessionId) ? failed("404 invalid session id") : ok({ stdout: JSON.stringify({ value: { id: sessionId } }), stderr: "", exitCode: 0 });
@@ -117,9 +118,11 @@ describe("native Appium session store", () => {
     const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
     const database = openDatabase({ MEGABRAIN_STATE_DIR: directory });
-    expect(database).toBeDefined();
-    expect(database === undefined ? [] : listNativeSessions(database)).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
-    database?.close();
+    expect(database.kind).toBe("ok");
+    if (database.kind === "ok") {
+      expect(listNativeSessions(database.value)).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
+      database.value.close();
+    }
   });
 
   test("reuses the session produced by the previous health call", async () => {
@@ -178,18 +181,40 @@ describe("native Appium session store", () => {
     expect(JSON.parse(post?.args.at(-1) ?? "{}")).toEqual({ capabilities: { alwaysMatch: { platformName: "tvOS", "appium:automationName": "XCUITest", "appium:isHeadless": true, "appium:newCommandTimeout": 60, "appium:udid": "tv-one", "appium:bundleId": "com.example.tv" } } });
   });
 
-  test("serializes concurrent writers so one live session is shared", async () => {
+  test("revalidates concurrent Appium creates and deletes the losing session", async () => {
     const directory = await fixture();
     const processAdapter = processStub({ postDelay: 10 });
 
     await Promise.all([health(directory, processAdapter), health(directory, processAdapter)]);
 
-    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
-    expect(posts).toHaveLength(1);
     const database = openDatabase({ MEGABRAIN_STATE_DIR: directory });
-    expect(database).toBeDefined();
-    expect(database === undefined ? [] : listNativeSessions(database)).toHaveLength(1);
-    database?.close();
+    expect(database.kind).toBe("ok");
+    if (database.kind === "ok") {
+      expect(listNativeSessions(database.value)).toHaveLength(1);
+      const recorded = listNativeSessions(database.value)[0]?.sessionId;
+      const created = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
+      const deleted = processAdapter.calls.filter((call) => call.command === "curl" && call.args[1] === "-X" && call.args[2] === "DELETE");
+      expect(created).toHaveLength(2);
+      expect(deleted).toHaveLength(1);
+      expect(deleted[0]?.args[3]).not.toBe(`http://127.0.0.1:4723/session/${recorded}`);
+      database.value.close();
+    }
+  });
+
+  test("reports a failed losing-session cleanup without failing health", async () => {
+    const directory = await fixture();
+    const processAdapter = processStub({ postDelay: 10, deleteFailure: true });
+    const args = ["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--json"];
+
+    const results = await Promise.all([
+      executeNative(args, { MEGABRAIN_STATE_DIR: directory }, processAdapter),
+      executeNative(args, { MEGABRAIN_STATE_DIR: directory }, processAdapter),
+    ]);
+
+    expect(results.every((result) => result.kind === "ok")).toBe(true);
+    const warnings = results.flatMap((result) => result.kind === "ok" ? [(JSON.parse(result.value) as { warning?: string }).warning].filter((warning): warning is string => warning !== undefined) : []);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("could not delete losing Appium session");
   });
 
   test("creates and cleans up without reuse when no state directory is resolvable", async () => {

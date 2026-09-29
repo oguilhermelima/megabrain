@@ -16,6 +16,17 @@ One command surface for delegating to other coding agents and for the worktrees,
 device setups that work needs. Run `megabrain <command> --help` for the exact flags of any
 command; the help output is the authority, and the lines below are shortened for reading.
 
+## Database integrity
+
+```
+megabrain db check [--json]
+megabrain db backup [--json]
+```
+
+`db check` reports SQLite integrity, foreign key violations, the schema version, and the state
+database path. `db backup` writes a consistent SQLite backup under the state directory and keeps
+the newest seven backups.
+
 ## Delegating work to another agent
 
 **Start here: `megabrain orchestrate spawn --prompt <brief> [--worktree <path>]`.** When no
