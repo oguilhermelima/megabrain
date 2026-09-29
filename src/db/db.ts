@@ -3,38 +3,45 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import nativeSessionsMigration from "./schema/001-native-sessions.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
+import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
 
 const BUSY_TIMEOUT_MILLISECONDS = 5_000;
+const DEFAULT_BUSY_SECONDS = 30;
+const APPLICATION_ID = 0x4d424431; // ASCII "MBD1", reserved for the megabrain database.
 
 type Migration = Readonly<{ version: number; sql: string }>;
-
 type SqlValue = string | number | bigint | null | Uint8Array;
-type DatabaseAdapter = Readonly<{
-  run(sql: string, parameters?: readonly SqlValue[]): void;
+export type RunResult = Readonly<{ changes: number; lastInsertRowid: number | bigint }>;
+export type DatabaseAdapter = Readonly<{
+  run(sql: string, parameters?: readonly SqlValue[]): RunResult;
+  exec(sql: string): void;
   query<T>(sql: string): Readonly<{
     all(): T[];
     get(...parameters: SqlValue[]): T | null;
+    run(...parameters: SqlValue[]): RunResult;
   }>;
   close(): void;
 }>;
 
+type BunStatement = Readonly<{
+  all(...parameters: SqlValue[]): unknown[];
+  get(...parameters: SqlValue[]): unknown;
+  run(...parameters: SqlValue[]): RunResult;
+}>;
 type BunDatabase = Readonly<{
-  run(sql: string, parameters?: readonly SqlValue[]): void;
-  query(sql: string): Readonly<{
-    all(): unknown[];
-    get(...parameters: SqlValue[]): unknown;
-  }>;
+  query(sql: string): BunStatement;
+  exec(sql: string): void;
   close(): void;
 }>;
-
+type NodeStatement = Readonly<{
+  all(...parameters: SqlValue[]): unknown[];
+  get(...parameters: SqlValue[]): unknown;
+  run(...parameters: SqlValue[]): RunResult;
+}>;
 type NodeDatabase = Readonly<{
   exec(sql: string): void;
-  prepare(sql: string): Readonly<{
-    all(...parameters: SqlValue[]): unknown[];
-    get(...parameters: SqlValue[]): unknown;
-    run(...parameters: SqlValue[]): unknown;
-  }>;
+  prepare(sql: string): NodeStatement;
   close(): void;
 }>;
 
@@ -46,15 +53,14 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
     const { Database } = require("bun:sqlite") as { readonly Database: new (path: string) => BunDatabase };
     const database = new Database(path);
     return {
-      run: (sql, parameters) => {
-        if (parameters === undefined) database.run(sql);
-        else database.run(sql, parameters);
-      },
+      run: (sql, parameters) => database.query(sql).run(...(parameters ?? [])),
+      exec: (sql) => database.exec(sql),
       query: <T>(sql: string) => {
         const statement = database.query(sql);
         return {
           all: () => statement.all() as T[],
           get: (...parameters: SqlValue[]) => (statement.get(...parameters) as T | null | undefined) ?? null,
+          run: (...parameters: SqlValue[]) => statement.run(...parameters),
         };
       },
       close: () => database.close(),
@@ -82,15 +88,14 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
   const { DatabaseSync } = sqlite;
   const database = new DatabaseSync(path);
   return {
-    run: (sql, parameters) => {
-      if (parameters === undefined) database.exec(sql);
-      else database.prepare(sql).run(...parameters);
-    },
+    run: (sql, parameters) => database.prepare(sql).run(...(parameters ?? [])),
+    exec: (sql) => database.exec(sql),
     query: <T>(sql: string) => {
       const statement = database.prepare(sql);
       return {
         all: () => statement.all() as T[],
         get: (...parameters: SqlValue[]) => (statement.get(...parameters) as T | null | undefined) ?? null,
+        run: (...parameters: SqlValue[]) => statement.run(...parameters),
       };
     },
     close: () => database.close(),
@@ -107,41 +112,200 @@ export type DatabaseHandle = Readonly<{
   close(): void;
 }>;
 
+type NotThenable<T> = T extends PromiseLike<unknown> ? never : T;
+type Synchronous<T> = (db: DatabaseAdapter) => NotThenable<T>;
+const activeTransactions = new WeakSet<DatabaseHandle>();
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function failAt(step: string, cause: unknown): never {
+  throw new Error(`${step} failed: ${errorMessage(cause)}`, { cause });
+}
+
+function pragmaNumber(db: DatabaseAdapter, name: string): number {
+  const row = db.query<Record<string, number>>(`PRAGMA ${name}`).get();
+  const value = row?.[name];
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`PRAGMA ${name} returned an invalid value`);
+  return value;
+}
+
 function migrate(db: DatabaseAdapter): void {
-  db.run(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`);
-  db.run("PRAGMA journal_mode = WAL");
-  db.run("BEGIN IMMEDIATE");
   try {
-    db.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
-    const applied = new Set(db.query<{ version: number }>("SELECT version FROM schema_migrations").all().map((row) => row.version));
-    for (const migration of migrations) {
-      if (applied.has(migration.version)) continue;
-      db.run(migration.sql);
-      db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date().toISOString()]);
+    db.run("BEGIN IMMEDIATE");
+    try {
+      db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+      const applied = new Set(db.query<{ version: number }>("SELECT version FROM schema_migrations").all().map((row) => row.version));
+      for (const migration of migrations) {
+        if (applied.has(migration.version)) continue;
+        db.exec(migration.sql);
+        db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date().toISOString()]);
+      }
+      const highest = migrations.at(-1)?.version ?? 0;
+      db.exec(`PRAGMA user_version = ${highest}`);
+      db.run("COMMIT");
+    } catch (cause: unknown) {
+      try { db.run("ROLLBACK"); } catch { /* preserve the migration failure */ }
+      throw cause;
     }
-    db.run("COMMIT");
   } catch (cause: unknown) {
-    try { db.run("ROLLBACK"); } catch { /* preserve the migration failure */ }
-    throw cause;
+    failAt("migrate", cause);
   }
 }
 
-export function openDatabase(environment: StateEnvironment): DatabaseHandle | undefined {
-  const configuredStateDirectory = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
-  if (configuredStateDirectory === undefined || configuredStateDirectory === "") return undefined;
+function configureConnection(db: DatabaseAdapter): void {
+  try { db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`); }
+  catch (cause: unknown) { failAt("pragma busy_timeout", cause); }
+  try { db.exec("PRAGMA journal_mode = WAL"); }
+  catch (cause: unknown) { failAt("pragma journal_mode", cause); }
+  try { db.exec("PRAGMA synchronous = NORMAL"); }
+  catch (cause: unknown) { failAt("pragma synchronous", cause); }
+  try { db.exec("PRAGMA foreign_keys = ON"); }
+  catch (cause: unknown) { failAt("pragma foreign_keys", cause); }
 
-  const stateDirectory = resolve(resolveStateDirectory(environment));
-  const path = resolve(stateDirectory, "megabrain.db");
+  try {
+    const applicationId = pragmaNumber(db, "application_id");
+    if (applicationId !== 0 && applicationId !== APPLICATION_ID) {
+      throw new Error(`database application_id ${applicationId} belongs to another application (expected ${APPLICATION_ID})`);
+    }
+    if (applicationId === 0) db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
+  } catch (cause: unknown) { failAt("version guard application_id", cause); }
+
+  try {
+    const actual = pragmaNumber(db, "user_version");
+    const highest = migrations.at(-1)?.version ?? 0;
+    if (actual > highest) throw new Error(`database user_version ${actual} is newer than this binary supports (${highest}); upgrade megabrain`);
+  } catch (cause: unknown) { failAt("version guard user_version", cause); }
+}
+
+export function openDatabase(environment: StateEnvironment): Result<DatabaseHandle> {
+  let configuredStateDirectory: string;
+  try {
+    const configured = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
+    if (configured === undefined || configured === "") return failed("resolve failed: no state directory is configured");
+    configuredStateDirectory = resolve(resolveStateDirectory(environment));
+  } catch (cause: unknown) {
+    return failed(`resolve failed: ${errorMessage(cause)}`);
+  }
+
+  const path = resolve(configuredStateDirectory, "megabrain.db");
   let db: DatabaseAdapter | undefined;
   try {
-    mkdirSync(stateDirectory, { recursive: true });
+    mkdirSync(configuredStateDirectory, { recursive: true });
+  } catch (cause: unknown) {
+    return failed(`resolve failed: ${errorMessage(cause)}`);
+  }
+  try {
     db = openRuntimeDatabase(path);
+  } catch (cause: unknown) {
+    return failed(`open failed: ${errorMessage(cause)}`);
+  }
+
+  try {
+    configureConnection(db);
     migrate(db);
     const handle: DatabaseHandle = { path, db, close: () => db?.close() };
-    importNativeSessions(handle, resolve(stateDirectory, "native-sessions.json"));
-    return handle;
-  } catch {
-    db?.close();
-    return undefined;
+    try {
+      importNativeSessions(handle, resolve(configuredStateDirectory, "native-sessions.json"));
+    } catch (cause: unknown) { failAt("import", cause); }
+    return ok(handle);
+  } catch (cause: unknown) {
+    try { db.close(); } catch { /* preserve the open failure */ }
+    return failed(errorMessage(cause));
   }
+}
+
+function isBusy(cause: unknown): boolean {
+  const message = errorMessage(cause).toLowerCase();
+  const code = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code).toUpperCase() : "";
+  return code.includes("SQLITE_BUSY") || code.includes("SQLITE_LOCKED") || /database is (?:locked|busy)|sqlite_busy|sqlite_locked/.test(message);
+}
+
+function busySeconds(): number {
+  const value = process.env.MEGABRAIN_DB_BUSY_SECONDS;
+  if (value === undefined) return DEFAULT_BUSY_SECONDS;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_BUSY_SECONDS;
+}
+
+function sleep(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function retryDelay(attempt: number, remaining: number): number {
+  const exponential = Math.min(250, 10 * (2 ** Math.min(attempt, 5)));
+  const jittered = Math.floor(exponential * (0.5 + Math.random()));
+  return Math.max(0, Math.min(jittered, remaining));
+}
+
+function isThenable(value: unknown): boolean {
+  return (typeof value === "object" && value !== null || typeof value === "function") && "then" in value;
+}
+
+function transaction<T>(handle: DatabaseHandle, begin: "IMMEDIATE" | "DEFERRED", fn: (db: DatabaseAdapter) => T): Result<T> {
+  if (activeTransactions.has(handle)) throw new Error("nested database transactions on the same handle are not allowed");
+  activeTransactions.add(handle);
+  const budget = busySeconds() * 1000;
+  const deadline = Date.now() + budget;
+  let attempt = 0;
+  try {
+    while (true) {
+      try {
+        handle.db.run(begin === "IMMEDIATE" ? "BEGIN IMMEDIATE" : "BEGIN");
+      } catch (cause: unknown) {
+        if (!isBusy(cause)) return failed(`${begin === "IMMEDIATE" ? "write" : "read"} transaction begin failed: ${errorMessage(cause)}`);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return failed(`database is busy after ${busySeconds()} seconds`);
+        sleep(retryDelay(attempt++, remaining));
+        continue;
+      }
+
+      try {
+        const value = fn(handle.db);
+        if (isThenable(value)) {
+          try { handle.db.run("ROLLBACK"); } catch { /* preserve the synchronous-only error */ }
+          return failed("database transactions must be synchronous");
+        }
+        while (true) {
+          try {
+            handle.db.run("COMMIT");
+            return ok(value);
+          } catch (cause: unknown) {
+            if (!isBusy(cause)) {
+              try { handle.db.run("ROLLBACK"); } catch { /* preserve the commit failure */ }
+              return failed(`database transaction commit failed: ${errorMessage(cause)}`);
+            }
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+              try { handle.db.run("ROLLBACK"); } catch { /* preserve the busy failure */ }
+              return failed(`database is busy after ${busySeconds()} seconds`);
+            }
+            sleep(retryDelay(attempt++, remaining));
+          }
+        }
+      } catch (cause: unknown) {
+        try { handle.db.run("ROLLBACK"); } catch { /* preserve the callback failure */ }
+        if (isBusy(cause)) {
+          const remaining = deadline - Date.now();
+          if (remaining > 0) {
+            sleep(retryDelay(attempt++, remaining));
+            continue;
+          }
+          return failed(`database is busy after ${busySeconds()} seconds`);
+        }
+        return failed(`database transaction failed: ${errorMessage(cause)}`);
+      }
+    }
+  } finally {
+    activeTransactions.delete(handle);
+  }
+}
+
+export function withWrite<T>(handle: DatabaseHandle, fn: Synchronous<T>): Result<T> {
+  return transaction(handle, "IMMEDIATE", fn as (db: DatabaseAdapter) => T);
+}
+
+export function readSnapshot<T>(handle: DatabaseHandle, fn: Synchronous<T>): Result<T> {
+  return transaction(handle, "DEFERRED", fn as (db: DatabaseAdapter) => T);
 }
