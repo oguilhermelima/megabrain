@@ -17,6 +17,7 @@ import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
 import { runMachineInstall } from "./install-machine.js";
 import { discoverAgentDirectories } from "../../core/agent-directories.js";
+import { inspectDatabase } from "../../db/db.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
@@ -474,18 +475,40 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
     else if (module !== undefined) return failed("doctor accepts at most one module id", 2);
     else module = arg;
   }
-  if (module !== undefined && !modules.includes(module)) return failed(`unknown module: ${module}`, 2);
+  if (module !== undefined && !modules.includes(module) && module !== "database") return failed(`unknown module: ${module}`, 2);
+  const databaseReport = (): Report => {
+    const checked = inspectDatabase(environment);
+    if (checked.kind !== "ok") return { module: "database", status: "error", reason: checked.error, ...emptyCounts() };
+    if (checked.value === undefined) return { module: "database", status: "ok", reason: "database file is not present", ...emptyCounts() };
+    return {
+      module: "database",
+      status: checked.value.clean ? "ok" : "corrupt",
+      reason: checked.value.clean
+        ? `quick_check ok; user_version ${checked.value.userVersion}; ${checked.value.path}`
+        : `quick_check ${checked.value.quickCheck.join(", ")}; ${checked.value.foreignKeyViolations.length} foreign key violation(s); ${checked.value.path}`,
+      ...emptyCounts(),
+    };
+  };
+  if (module === "database") {
+    const value = databaseReport();
+    return { kind: "ok", value: `${output(value, json)}`, exitCode: value.status === "ok" ? 0 : 1 };
+  }
   const values: Report[] = [];
   for (const id of module === undefined ? modules : [module]) {
     values.push(await report(id, environment, process));
   }
-  const unhealthy = values.some((value) => value.status !== "ok");
-  const text = module === undefined && json ? `${JSON.stringify(values, null, 2)}\n` : values.map((value) => output(value, json)).join("");
+  const dbReport = databaseReport();
+  const unhealthy = values.some((value) => value.status !== "ok") || dbReport.status !== "ok";
+  const text = module === undefined && json
+    ? `${JSON.stringify(values, null, 2)}\n`
+    : `${values.map((value) => output(value, json)).join("")}${module === undefined ? output(dbReport, json) : ""}`;
   const hook = values.find((value) => value.module === "orchestration-hooks");
-  const stderr = hook?.reason.includes("codex: entry-present")
+  const hookStderr = hook?.reason.includes("codex: entry-present")
     ? "\nCODEX ACTION REQUIRED: the megabrain hook needs one-time trust in Codex.\nOpen a plain terminal, run codex, and choose \"Trust all and continue\".\nOpening Codex through Superset will not complete this step because Superset passes --dangerously-bypass-hook-trust.\n"
     : undefined;
-  return stderr === undefined
+  const databaseStderr = json && dbReport.status !== "ok" ? `database: ${dbReport.status} (${dbReport.reason})\n` : undefined;
+  const stderr = [hookStderr, databaseStderr].filter((part): part is string => part !== undefined).join("\n");
+  return stderr.length === 0
     ? { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0 }
     : { kind: "ok", value: text, exitCode: unhealthy ? 1 : 0, stderr };
 }
