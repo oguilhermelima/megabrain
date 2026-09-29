@@ -264,7 +264,7 @@ function appiumSessionCapabilities(platform: NativePlatform, udid: string, bundl
   return { platformName: platform, ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
 }
 type AppiumSession = Readonly<{ sessionId: string; stored: boolean }>;
-type AppiumSessionAttempt = Readonly<{ session?: AppiumSession; reason?: string }>;
+type AppiumSessionAttempt = Readonly<{ session?: AppiumSession; reason?: string; warning?: string }>;
 type AppiumResponse = Readonly<{ status: number; body: string }>;
 function appiumResponse(stdout: string): AppiumResponse | undefined {
   const status = stdout.match(/(?:^|\n)(\d{3})\s*$/);
@@ -304,21 +304,78 @@ async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSe
 async function appiumSession(environment: Environment, processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform): Promise<Result<AppiumSessionAttempt>> {
   const store = createNativeSessionStore(environment);
   if (!store.available) {
+    if (store.error !== undefined) return failed(`native session database could not open: ${store.error}`);
     const sessionId = await createAppiumSession(processAdapter, key, platform);
     return sessionId.kind === "ok" ? ok({ session: { sessionId: sessionId.value, stored: false } }) : ok({ reason: sessionId.error });
   }
-  return store.update<AppiumSessionAttempt>(async (sessions) => {
-    const recorded = nativeSessionFor(sessions, key);
-    let current = sessions;
-    if (recorded !== undefined) {
-      const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${recorded.sessionId}`]);
-      if (probe.kind === "ok") return { sessions, value: { session: { sessionId: recorded.sessionId, stored: true } } };
-      current = removeNativeSession(sessions, key);
+  const initialSnapshot = store.read();
+  if (initialSnapshot.kind !== "ok") return failed(`could not read native session store: ${initialSnapshot.error}`);
+  const initiallyRecorded = nativeSessionFor(initialSnapshot.value, key);
+  if (initiallyRecorded !== undefined) {
+    const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${initiallyRecorded.sessionId}`]);
+    if (probe.kind === "ok") return ok({ session: { sessionId: initiallyRecorded.sessionId, stored: true } });
+  }
+
+  const created = await createAppiumSession(processAdapter, key, platform);
+  if (created.kind !== "ok") {
+    if (initiallyRecorded !== undefined) {
+      const removed = store.update((sessions) => {
+        const current = nativeSessionFor(sessions, key);
+        return current?.sessionId === initiallyRecorded.sessionId
+          ? { sessions: removeNativeSession(sessions, key), value: undefined }
+          : { sessions, value: undefined };
+      });
+      if (removed.kind !== "ok") return failed(`could not clear dead native session: ${removed.error}; ${created.error}`);
     }
-    const sessionId = await createAppiumSession(processAdapter, key, platform);
-    if (sessionId.kind !== "ok") return { sessions: current, value: { reason: sessionId.error } };
-    return { sessions: replaceNativeSession(current, { ...key, sessionId: sessionId.value }), value: { session: { sessionId: sessionId.value, stored: true } } };
-  });
+    return ok({ reason: created.error });
+  }
+
+  const sessionId = created.value;
+  const sessionUrl = `http://127.0.0.1:4723/session/${sessionId}`;
+  const discardCreated = async (): Promise<string | undefined> => {
+    const removed = await processAdapter.run("curl", ["-fsS", "-X", "DELETE", sessionUrl]);
+    return removed.kind === "ok" ? undefined : `could not delete losing Appium session ${sessionId}: ${removed.error}`;
+  };
+
+  while (true) {
+    const snapshot = store.read();
+    if (snapshot.kind !== "ok") {
+      const warning = await discardCreated();
+      return failed(`could not re-read native session store: ${snapshot.error}${warning === undefined ? "" : `; ${warning}`}`);
+    }
+    const current = nativeSessionFor(snapshot.value, key);
+    if (current !== undefined && current.sessionId !== initiallyRecorded?.sessionId) {
+      const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${current.sessionId}`]);
+      if (probe.kind === "ok") {
+        const confirmed = store.update((sessions) => {
+          const latest = nativeSessionFor(sessions, key);
+          return latest?.sessionId === current.sessionId
+            ? { sessions, value: true }
+            : { sessions, value: false };
+        });
+        if (confirmed.kind !== "ok") {
+          const warning = await discardCreated();
+          return failed(`could not confirm concurrent native session: ${confirmed.error}${warning === undefined ? "" : `; ${warning}`}`);
+        }
+        if (confirmed.value) {
+          const warning = await discardCreated();
+          return ok({ session: { sessionId: current.sessionId, stored: true }, ...(warning === undefined ? {} : { warning }) });
+        }
+        continue;
+      }
+    }
+
+    const saved = store.update((sessions) => {
+      const latest = nativeSessionFor(sessions, key);
+      if (latest?.sessionId !== current?.sessionId) return { sessions, value: false };
+      return { sessions: replaceNativeSession(sessions, { ...key, sessionId }), value: true };
+    });
+    if (saved.kind !== "ok") {
+      const warning = await discardCreated();
+      return failed(`could not store Appium session: ${saved.error}${warning === undefined ? "" : `; ${warning}`}`);
+    }
+    if (saved.value) return ok({ session: { sessionId, stored: true } });
+  }
 }
 async function nativeHealth(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("health"));
@@ -381,7 +438,9 @@ async function nativeHealth(args: readonly string[], environment: Environment, p
     else frame = unknownFrame("screenshot or control frame hash could not be obtained");
   }
   const result = evaluateNativeHealth({ process, metro, tree, frame });
-  return args.includes("--json") ? ok(`${JSON.stringify(result)}\n`) : ok(`${result.status}: ${result.reason}\nprocess=${result.process.state}; metro=${result.metro.state}; tree=${result.tree.count ?? "unknown"}; frame=${result.frame.state}\n`);
+  const warning = session.kind === "ok" ? session.value.warning : undefined;
+  const reported = warning === undefined ? result : { ...result, warning };
+  return args.includes("--json") ? ok(`${JSON.stringify(reported)}\n`) : ok(`${result.status}: ${result.reason}\nprocess=${result.process.state}; metro=${result.metro.state}; tree=${result.tree.count ?? "unknown"}; frame=${result.frame.state}${warning === undefined ? "" : `; warning=${warning}`}\n`);
 }
 async function nativeList(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("list"));
