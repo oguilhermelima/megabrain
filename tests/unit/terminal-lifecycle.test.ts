@@ -58,7 +58,7 @@ describe("terminal create reads the Orca handle, not the request id", () => {
     const stateDir = await mktemp();
     const result = await executeTerminalLifecycle(
       ["create", "--worktree", worktreePath, "--command", "node app.js", "--json"],
-      { MEGABRAIN_TERMINAL_DIR: stateDir, MEGABRAIN_SESSION_HOST: "orca" },
+      { MEGABRAIN_STATE_DIR: stateDir, MEGABRAIN_SESSION_HOST: "orca" },
       process,
     );
     expect(result.kind).toBe("ok");
