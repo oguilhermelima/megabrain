@@ -131,7 +131,7 @@ Commands:
   db backup [--json]                   Create and rotate a SQLite backup
   db import <dir> [--replace] [--json] Import JSON state into SQLite
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
-  db show <id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored state in legacy JSON shape
+  db show <id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

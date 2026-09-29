@@ -81,10 +81,31 @@ npm link
 megabrain doctor          # what is installed and what is missing
 megabrain db check        # check SQLite integrity and foreign keys
 megabrain db backup       # create a consistent SQLite backup
-megabrain db import <dir> # import a legacy JSON state directory
-megabrain db show <id>    # inspect a dispatch in the legacy JSON shape
+megabrain db migrate --dry-run --json # preview legacy JSON migration and parity
+megabrain db migrate      # explicitly migrate and seal legacy JSON state
+megabrain db import <dir> # explicitly import a legacy JSON state directory
+megabrain db show <id>    # inspect a dispatch as JSON
 megabrain context --json  # tmux, orca, or superset
 ```
+
+### State database and cutover
+
+Dispatches, messages, deliveries, terminals, install state, models, and tmux sessions live in
+`$MEGABRAIN_STATE_DIR/megabrain.db` (by default `~/.megabrain/megabrain.db`). SQLite is the
+source of truth. `db show` reads a dispatch or auxiliary record; `db check` checks integrity and
+foreign keys; `db backup` writes a consistent backup under `backups/` and keeps the newest seven.
+
+On the first non-`db` command, Megabrain imports a legacy JSON state directory when one is present,
+checks parity, moves each dispatch transcript to `transcripts/<dispatch-id>.txt`, and seals the
+remaining legacy tree under `legacy/json-<UTC timestamp>/`. A marker in the database makes this a
+one-time operation. A fresh state with no JSON gets the marker without a snapshot. `db import`
+also sets the marker because an explicit import means the operator has chosen the database store.
+
+Use `db migrate --dry-run --json` to inspect the parity report without changing the state
+directory. `db migrate --json` performs the same migration explicitly and refuses if a cutover
+marker already exists. If rollback is needed, restore the sealed legacy tree to its original paths
+and run the previous binary. Changes made after cutover exist only in SQLite and are lost by that
+rollback; restore a database backup instead when those changes must be retained.
 
 ## Chains: choosing who does the work
 
@@ -195,9 +216,9 @@ megabrain terminal restart port:3000 --wait-port 3000 --timeout 30 --json
 megabrain terminal close id:<terminal-id> --json
 ```
 
-The registry lives under `$MEGABRAIN_STATE_DIR/terminals/`. Listing keeps a terminal whose host
-identity disappeared and marks it `stale`, while a host-known process is reported as `alive` or
-`dead`. The create wrapper asks the process to publish its own PID before replacing the command
+Terminal records live in the state database. Listing keeps a terminal whose host identity
+disappeared and marks it `stale`, while a host-known process is reported as `alive` or `dead`. The
+create wrapper asks the process to publish its own PID before replacing the command
 with `exec`, so identity is not inferred from a port scan. If the marker is not published, the
 terminal is closed and no record is created. The optional `--port` value is recorded as caller
 knowledge and is never discovered automatically.
@@ -290,9 +311,9 @@ megabrain tmux wrapper --yes    # zsh or bash, chosen from $SHELL
 ```
 
 The session is named `megabrain-<agent>-<pid>` — a fixed prefix and the shell's pid, never the
-repository — and it is recorded under `~/.megabrain/sessions/`, with the directory it was started
-in. So `agy` in `~/Workspaces/stack` becomes `megabrain-agy-67074`, and megabrain can tell you what
-is running where.
+repository — and its session record is stored in `~/.megabrain/megabrain.db` with the directory it
+was started in. So `agy` in `~/Workspaces/stack` becomes `megabrain-agy-67074`, and megabrain can
+tell you what is running where.
 
 Such a session is a **main** session: it has no parent, no queue and no completion signal, which is
 exactly right for an agent you started yourself. A dispatch is the other thing — a child, with a

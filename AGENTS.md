@@ -6,6 +6,7 @@
 - Run megabrain db check [--json].
 - Run megabrain db backup [--json].
 - Run megabrain db import <dir> [--replace] [--json].
+- Run megabrain db migrate [--dry-run] [--json].
 - Run megabrain db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json].
 - Run megabrain context [--json].
 - Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json].
@@ -73,3 +74,13 @@
 - Run megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
 - Run megabrain web userscript list.
 - Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
+
+## State database
+
+Dispatches and other runtime state live in `$MEGABRAIN_STATE_DIR/megabrain.db` (default
+`~/.megabrain/megabrain.db`). Use `megabrain db show` to inspect rows, `db check` for integrity,
+`db backup` for a consistent backup, and `db migrate --dry-run --json` to preview a legacy JSON
+cutover. The first non-`db` command imports legacy state, verifies parity, moves transcripts to
+`transcripts/<dispatch-id>.txt`, and seals the remaining JSON trees under `legacy/json-<UTC>/`.
+Rollback restores that legacy tree and runs the previous binary; database changes made after
+cutover are lost when rolling back.
