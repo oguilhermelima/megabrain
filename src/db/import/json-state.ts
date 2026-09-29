@@ -412,6 +412,14 @@ export type ParityReport = Readonly<{
 
 export async function readJsonStateParity(db: DatabaseAdapter, stateDir: string): Promise<ParityReport> {
   const source = await parseJsonState(stateDir);
+  return readParsedJsonStateParity(db, source);
+}
+
+export function readParsedJsonStateParity(
+  db: DatabaseAdapter,
+  source: ParsedJsonState,
+  options: Readonly<{ ignoredLeaseKeys?: readonly string[] }> = {},
+): ParityReport {
   const mismatches: Record<string, unknown>[] = [];
   const records = {
     dispatches: listDispatches(db, { includeArchived: true }),
@@ -419,7 +427,8 @@ export async function readJsonStateParity(db: DatabaseAdapter, stateDir: string)
     terminals: listTerminals(db), installState: listInstallState(db), models: listModels(db), tmuxSessions: listTmuxSessions(db),
   };
   const outbox = listOutbox(db);
-  const leases = listLeases(db);
+  const ignoredLeaseKeys = new Set(options.ignoredLeaseKeys ?? []);
+  const leases = listLeases(db).filter((lease) => !ignoredLeaseKeys.has(lease.key));
   const sourceDispatches = source.dispatches.map(({ value }) => value);
   const sourceDispatchById = new Map(sourceDispatches.map((value) => [String(value.dispatchId), value]));
   const actualDispatchById = new Map(records.dispatches.map((value) => [value.dispatchId, value]));

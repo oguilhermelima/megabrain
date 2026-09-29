@@ -50,11 +50,11 @@ type NodeDatabase = Readonly<{
 
 const SQLITE_WARNING = "SQLite is an experimental feature and might change at any time";
 
-function openRuntimeDatabase(path: string): DatabaseAdapter {
+function openRuntimeDatabase(path: string, readOnly = false): DatabaseAdapter {
   const require = createRequire(import.meta.url);
   if (process.versions.bun !== undefined) {
-    const { Database } = require("bun:sqlite") as { readonly Database: new (path: string) => BunDatabase };
-    const database = new Database(path);
+    const { Database } = require("bun:sqlite") as { readonly Database: new (path: string, options?: Readonly<{ readonly?: boolean }>) => BunDatabase };
+    const database = readOnly ? new Database(path, { readonly: true }) : new Database(path);
     return {
       run: (sql, parameters) => database.query(sql).run(...(parameters ?? [])),
       exec: (sql) => database.exec(sql),
@@ -71,7 +71,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
   }
 
   const originalEmitWarning = process.emitWarning;
-  let sqlite: { readonly DatabaseSync: new (path: string) => NodeDatabase };
+  let sqlite: { readonly DatabaseSync: new (path: string, options?: Readonly<{ readOnly?: boolean }>) => NodeDatabase };
   try {
     process.emitWarning = ((warning: unknown, ...args: unknown[]): void => {
       const message = typeof warning === "string" ? warning : warning instanceof Error ? warning.message : undefined;
@@ -89,7 +89,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
     process.emitWarning = originalEmitWarning;
   }
   const { DatabaseSync } = sqlite;
-  const database = new DatabaseSync(path);
+  const database = readOnly ? new DatabaseSync(path, { readOnly: true }) : new DatabaseSync(path);
   return {
     run: (sql, parameters) => database.prepare(sql).run(...(parameters ?? [])),
     exec: (sql) => database.exec(sql),
@@ -177,6 +177,21 @@ export function backupDatabase(handle: DatabaseHandle): Result<string> {
     return backupToDirectory(handle.db, dirname(handle.path), pragmaNumber(handle.db, "user_version"));
   } catch (cause: unknown) {
     return failed(`backup failed: ${errorMessage(cause)}`);
+  }
+}
+
+export function vacuumDatabaseFile(sourcePath: string, targetPath: string): Result<string> {
+  let source: DatabaseAdapter | undefined;
+  try {
+    mkdirSync(dirname(targetPath), { recursive: true });
+    source = openRuntimeDatabase(sourcePath, true);
+    source.exec(`VACUUM INTO ${quoteSqlString(targetPath)}`);
+    return ok(targetPath);
+  } catch (cause: unknown) {
+    try { unlinkSync(targetPath); } catch { /* target may not have been created */ }
+    return failed(`database snapshot failed: ${errorMessage(cause)}`);
+  } finally {
+    try { source?.close(); } catch { /* preserve the snapshot result */ }
   }
 }
 
