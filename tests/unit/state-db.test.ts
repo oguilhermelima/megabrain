@@ -158,19 +158,18 @@ describe("state database facade", () => {
   });
 
   test("schema 003 migrates an existing version 2 database", () => {
-    expect(latestSchemaVersion).toBe(3);
     const db = requireOk(guardedStateDatabase(environment));
     db.db.run("DROP TABLE nudge_events");
     db.db.run("DROP TABLE waiters");
     db.db.exec("ALTER TABLE outbox DROP COLUMN detail");
     db.db.exec("ALTER TABLE outbox DROP COLUMN lease_holder");
-    db.db.run("DELETE FROM schema_migrations WHERE version = 3");
+    db.db.run("DELETE FROM schema_migrations WHERE version > 2");
     db.db.exec("PRAGMA user_version = 2");
     db.close();
     const migrated = requireOk(guardedOpenDatabase(environment));
     const version = migrated.db.query<{ user_version: number }>("PRAGMA user_version").get();
-    expect(version?.user_version).toBe(3);
-    expect(migrated.db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version).toBe(3);
+    expect(version?.user_version).toBe(latestSchemaVersion);
+    expect(migrated.db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version).toBe(latestSchemaVersion);
     expect(migrated.db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'waiters'").get()?.name).toBe("waiters");
   });
 });
