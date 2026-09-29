@@ -72,7 +72,8 @@ function findMeta(directory: string): boolean {
 
 export function hasLegacyJson(directory: string): boolean {
   return findMeta(join(directory, "dispatches"))
-    || ["terminals", "state.json", "models.json", "sessions"].some((name) => existsSync(join(directory, name)));
+    || ["terminals", "state.json", "models.json"].some((name) => existsSync(join(directory, name)))
+    || walkFiles(join(directory, "sessions")).some((path) => path.endsWith(".json"));
 }
 
 function walkFiles(directory: string): string[] {
