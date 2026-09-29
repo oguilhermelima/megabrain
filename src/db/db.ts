@@ -18,7 +18,7 @@ export type DatabaseAdapter = Readonly<{
   run(sql: string, parameters?: readonly SqlValue[]): RunResult;
   exec(sql: string): void;
   query<T>(sql: string): Readonly<{
-    all(): T[];
+    all(...parameters: SqlValue[]): T[];
     get(...parameters: SqlValue[]): T | null;
     run(...parameters: SqlValue[]): RunResult;
   }>;
@@ -59,7 +59,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
       query: <T>(sql: string) => {
         const statement = database.query(sql);
         return {
-          all: () => statement.all() as T[],
+          all: (...parameters: SqlValue[]) => statement.all(...parameters) as T[],
           get: (...parameters: SqlValue[]) => (statement.get(...parameters) as T | null | undefined) ?? null,
           run: (...parameters: SqlValue[]) => statement.run(...parameters),
         };
@@ -94,7 +94,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
     query: <T>(sql: string) => {
       const statement = database.prepare(sql);
       return {
-        all: () => statement.all() as T[],
+        all: (...parameters: SqlValue[]) => statement.all(...parameters) as T[],
         get: (...parameters: SqlValue[]) => (statement.get(...parameters) as T | null | undefined) ?? null,
         run: (...parameters: SqlValue[]) => statement.run(...parameters),
       };
@@ -135,8 +135,13 @@ function failAt(step: string, cause: unknown): never {
   throw new Error(`${step} failed: ${errorMessage(cause)}`, { cause });
 }
 
-function pragmaNumber(db: DatabaseAdapter, name: string): number {
-  const row = db.query<Record<string, number>>(`PRAGMA ${name}`).get();
+const numericPragmas = {
+  application_id: "PRAGMA application_id",
+  user_version: "PRAGMA user_version",
+} as const;
+
+function pragmaNumber(db: DatabaseAdapter, name: keyof typeof numericPragmas): number {
+  const row = db.query<Record<string, number>>(numericPragmas[name]).get();
   const value = row?.[name];
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`PRAGMA ${name} returned an invalid value`);
   return value;

@@ -30,5 +30,5 @@ export function getMessage(db: DatabaseAdapter, dispatchId: string, seq: number)
 }
 
 export function listMessages(db: DatabaseAdapter, dispatchId: string): MessageRecord[] {
-  return db.query<MessageRow>(`SELECT * FROM messages WHERE dispatch_id = '${dispatchId.replaceAll("'", "''")}' ORDER BY seq`).all().map(toMessage);
+  return db.query<MessageRow>("SELECT * FROM messages WHERE dispatch_id = ? ORDER BY seq").all(dispatchId).map(toMessage);
 }

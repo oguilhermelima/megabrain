@@ -51,7 +51,7 @@ export function insertModel(db: DatabaseAdapter, record: Readonly<Record<string,
 }
 
 export function getModel(db: DatabaseAdapter, agent: string, model: string): Record<string, unknown> | undefined {
-  const row = db.query<{ value: string }>(`SELECT value FROM models WHERE agent = '${agent.replaceAll("'", "''")}' AND model = '${model.replaceAll("'", "''")}'`).get();
+  const row = db.query<{ value: string }>("SELECT value FROM models WHERE agent = ? AND model = ?").get(agent, model);
   return row === null ? undefined : decode(row.value);
 }
 

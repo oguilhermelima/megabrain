@@ -61,7 +61,7 @@ export function insertDispatch(db: DatabaseAdapter, meta: Readonly<Record<string
   data.columns[1] = meta.state;
   data.columns[19] = archivedAt;
   db.run(`INSERT INTO dispatches (id, state, owner_session_id, parent_host, parent_terminal_id, agent, model, effort, worktree_path, branch, runtime, child_host, tmux_session_id, tmux_session, tmux_pane, terminal_id, agent_thread_id, created_at, updated_at, archived_at, extra)
-    VALUES (${Array.from({ length: 21 }, () => "?").join(",")})`, data.columns);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, data.columns);
   return { kind: "inserted" };
 }
 
@@ -83,20 +83,18 @@ export function listDispatches(db: DatabaseAdapter, options: Readonly<{ includeA
 
 export function listDispatchesByOwner(db: DatabaseAdapter, ownerSessionId: string, options: Readonly<{ includeArchived?: boolean }> = {}): DispatchRecord[] {
   const rows = options.includeArchived === true
-    ? db.query<DispatchRow>(`SELECT * FROM dispatches WHERE owner_session_id = ${sqlString(ownerSessionId)} ORDER BY created_at, id`).all()
-    : db.query<DispatchRow>(`SELECT * FROM dispatches WHERE owner_session_id = ${sqlString(ownerSessionId)} AND archived_at IS NULL ORDER BY created_at, id`).all();
+    ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? ORDER BY created_at, id").all(ownerSessionId)
+    : db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND archived_at IS NULL ORDER BY created_at, id").all(ownerSessionId);
   return rows.map(toMeta);
 }
 
 export function findDispatchByTmuxIdentity(db: DatabaseAdapter, sessionId: string, pane: string): DispatchRecord[] {
-  return db.query<DispatchRow>(`SELECT * FROM dispatches WHERE tmux_session_id = ${sqlString(sessionId)} AND tmux_pane = ${sqlString(pane)} ORDER BY id`).all().map(toMeta);
+  return db.query<DispatchRow>("SELECT * FROM dispatches WHERE tmux_session_id = ? AND tmux_pane = ? ORDER BY id").all(sessionId, pane).map(toMeta);
 }
 
 export function findDispatchesByTerminal(db: DatabaseAdapter, terminalId: string): DispatchRecord[] {
-  return db.query<DispatchRow>(`SELECT * FROM dispatches WHERE terminal_id = ${sqlString(terminalId)} ORDER BY id`).all().map(toMeta);
+  return db.query<DispatchRow>("SELECT * FROM dispatches WHERE terminal_id = ? ORDER BY id").all(terminalId).map(toMeta);
 }
-
-function sqlString(value: string): string { return `'${value.replaceAll("'", "''")}'`; }
 
 export type DispatchUpdateResult =
   | Readonly<{ kind: "updated"; version: number; record: DispatchRecord }>

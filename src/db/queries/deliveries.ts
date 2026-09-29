@@ -45,5 +45,5 @@ export function getDelivery(db: DatabaseAdapter, id: string): DeliveryRecord | u
 }
 
 export function listDeliveries(db: DatabaseAdapter, dispatchId: string): DeliveryRecord[] {
-  return db.query<DeliveryRow>(`SELECT * FROM deliveries WHERE dispatch_id = '${dispatchId.replaceAll("'", "''")}' ORDER BY COALESCE(message_seq, 2147483647), id`).all().map(toDelivery);
+  return db.query<DeliveryRow>("SELECT * FROM deliveries WHERE dispatch_id = ? ORDER BY COALESCE(message_seq, 2147483647), id").all(dispatchId).map(toDelivery);
 }

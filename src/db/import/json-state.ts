@@ -140,12 +140,14 @@ async function parseState(stateDir: string): Promise<ParsedState> {
   return { dispatches, messages, deliveries, terminals, install, models, sessions, malformed, collisions, tmuxAmbiguities };
 }
 
-function exists(db: DatabaseAdapter, table: string, column: string, value: string): boolean {
-  const row = db.query<{ found: number }>(`SELECT 1 AS found FROM ${table} WHERE ${column} = '${value.replaceAll("'", "''")}' LIMIT 1`).get();
+function exists(db: DatabaseAdapter, sql: string, value: string): boolean {
+  const row = db.query<{ found: number }>(sql).get(value);
   return row !== null;
 }
 
-function dispatchExists(db: DatabaseAdapter, id: string): boolean { return exists(db, "dispatches", "id", id); }
+function dispatchExists(db: DatabaseAdapter, id: string): boolean {
+  return exists(db, "SELECT 1 AS found FROM dispatches WHERE id = ? LIMIT 1", id);
+}
 
 export function toModels(registry: Record<string, unknown>, rowValues?: readonly Record<string, unknown>[]): Record<string, unknown> {
   const rows = rowValues ?? (Array.isArray(registry.models) ? registry.models.filter(isRecord) : []);
@@ -165,14 +167,14 @@ export async function importJsonState(db: DatabaseAdapter, stateDir: string): Pr
     if (!dispatchExists(db, dispatchId)) { parsed.malformed.push({ path: record.path, reason: `dispatch not imported: ${dispatchId}` }); continue; }
     const seq = record.value.seq;
     if (!Number.isInteger(seq) || typeof record.value.from !== "string" || typeof record.value.type !== "string" || typeof record.value.text !== "string" || typeof record.value.createdAt !== "string") { parsed.malformed.push({ path: record.path, reason: "message requires integer seq, from, type, text and createdAt fields" }); continue; }
-    if (typeof seq !== "number" || db.query<{ found: number }>(`SELECT 1 AS found FROM messages WHERE dispatch_id = '${dispatchId.replaceAll("'", "''")}' AND seq = ${Number.isInteger(seq) ? seq : -1}`).get() !== null) continue;
+    if (typeof seq !== "number" || db.query<{ found: number }>("SELECT 1 AS found FROM messages WHERE dispatch_id = ? AND seq = ?").get(dispatchId, Number.isInteger(seq) ? seq : -1) !== null) continue;
     try { insertMessage(db, dispatchId, record.value); inserted.messages += 1; }
     catch (error: unknown) { parsed.malformed.push({ path: record.path, reason: error instanceof Error ? error.message : "message violates database constraints" }); }
   }
   for (const record of parsed.deliveries) {
     const dispatchId = typeof record.value.dispatchId === "string" ? record.value.dispatchId : dispatchIdFromPath(record.path);
     if (!dispatchExists(db, dispatchId)) { parsed.malformed.push({ path: record.path, reason: `dispatch not imported: ${dispatchId}` }); continue; }
-    if (exists(db, "deliveries", "id", String(record.value.id))) continue;
+    if (exists(db, "SELECT 1 AS found FROM deliveries WHERE id = ? LIMIT 1", String(record.value.id))) continue;
     try { insertDelivery(db, { ...record.value, dispatchId }); inserted.deliveries += 1; }
     catch (error: unknown) { parsed.malformed.push({ path: record.path, reason: error instanceof Error ? error.message : "delivery violates database constraints" }); }
   }
@@ -183,7 +185,7 @@ export async function importJsonState(db: DatabaseAdapter, stateDir: string): Pr
     insertTerminal(db, record.value); inserted.terminals += 1;
   }
   for (const [moduleId, value] of Object.entries(parsed.install)) {
-    if (exists(db, "install_state", "module_id", moduleId)) continue;
+    if (exists(db, "SELECT 1 AS found FROM install_state WHERE module_id = ? LIMIT 1", moduleId)) continue;
     const updatedAt = isRecord(value) && typeof value.updatedAt === "string" ? value.updatedAt : "";
     insertInstallState(db, moduleId, value, updatedAt); inserted.installState += 1;
   }
@@ -191,13 +193,13 @@ export async function importJsonState(db: DatabaseAdapter, stateDir: string): Pr
   for (const record of modelRecords) {
     const agent = record.agent; const model = record.model;
     if (typeof agent !== "string" || typeof model !== "string") { parsed.malformed.push({ path: join(stateDir, "models.json"), reason: "each model needs string agent and model fields" }); continue; }
-    if (db.query<{ found: number }>(`SELECT 1 AS found FROM models WHERE agent = '${agent.replaceAll("'", "''")}' AND model = '${model.replaceAll("'", "''")}'`).get() !== null) continue;
+    if (db.query<{ found: number }>("SELECT 1 AS found FROM models WHERE agent = ? AND model = ?").get(agent, model) !== null) continue;
     insertModel(db, record, parsed.models); inserted.models += 1;
   }
   for (const record of parsed.sessions) {
     const name = record.value.tmuxSession;
     if (typeof name !== "string") { parsed.malformed.push({ path: record.path, reason: "tmuxSession must be a string" }); continue; }
-    if (exists(db, "tmux_sessions", "session_name", name)) continue;
+    if (exists(db, "SELECT 1 AS found FROM tmux_sessions WHERE session_name = ? LIMIT 1", name)) continue;
     const ids = [...(new Set(parsed.dispatches.flatMap(({ value }) => value.tmuxSession === name && typeof value.tmuxSessionId === "string" ? [value.tmuxSessionId] : [])))].sort();
     insertTmuxSession(db, record.value, ids.length === 1 ? ids[0] : null); inserted.tmuxSessions += 1;
   }

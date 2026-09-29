@@ -3,7 +3,7 @@ export type SqlValue = string | number | bigint | null | Uint8Array;
 export type DatabaseAdapter = Readonly<{
   run(sql: string, parameters?: readonly SqlValue[]): Readonly<{ changes: number; lastInsertRowid: number | bigint }>;
   query<T>(sql: string): Readonly<{
-    all(): T[];
+    all(...parameters: SqlValue[]): T[];
     get(...parameters: SqlValue[]): T | null;
   }>;
 }>;
