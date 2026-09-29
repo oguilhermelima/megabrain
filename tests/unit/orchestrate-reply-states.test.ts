@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
-import { appendMessage, appendParentReply, createDelivery, createDispatch, listDeliveries, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
+import { appendMessage, appendParentReply, createDelivery, createDispatch, getDispatch, listDeliveries, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
 
 // End-to-end (CLI-verb level, in-process) coverage of the shell parity bugs found in
 // tests/test-e2e-findings.sh: a "done" dispatch must refuse a reply exactly like
@@ -81,13 +81,17 @@ async function tempStateDir(): Promise<string> {
 }
 
 async function writeDispatch(root: string, id: string, meta: JsonRecord): Promise<void> {
-  const directory = `${root}/dispatches/${id}`;
-  await mkdir(directory, { recursive: true });
-  await writeFile(`${directory}/meta.json`, `${JSON.stringify(meta)}\n`);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const state = meta.state === "stalled" || meta.state === "timeout" ? "running" : meta.state;
+  const result = createDispatch(database.value, { ...meta, dispatchId: id, state });
+  if (result.kind !== "ok") throw new Error(result.error);
 }
 
 async function readMeta(root: string, id: string): Promise<JsonRecord> {
-  return JSON.parse(await readFile(`${root}/dispatches/${id}/meta.json`, "utf8")) as JsonRecord;
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  return requireOk(getDispatch(database.value, id)) as JsonRecord;
 }
 
 function environment(root: string): Record<string, string> {
@@ -145,8 +149,8 @@ describe("orchestrate reply: shell-parity state rules", () => {
     expect(result.kind === "failed" ? result.error : "").toContain("open a new dispatch for a reply");
     const meta = await readMeta(root, "dispatch-1");
     expect(meta.state).toBe("done");
-    const messages = await readdir(`${root}/dispatches/dispatch-1/messages`).catch(() => []);
-    expect(messages.length).toBe(0);
+    const database = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+    expect(requireOk(listMessages(database, "dispatch-1"))).toEqual([]);
   });
 
   test("accepts a reply to a stalled dispatch, queues it, and resumes the dispatch to running", async () => {
@@ -158,8 +162,8 @@ describe("orchestrate reply: shell-parity state rules", () => {
     expect(parsed.status).toBe("queued");
     const meta = await readMeta(root, "dispatch-1");
     expect(meta.state).toBe("running");
-    const messages = await readdir(`${root}/dispatches/dispatch-1/messages`).catch(() => []);
-    expect(messages.length).toBe(1);
+    const database = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+    expect(requireOk(listMessages(database, "dispatch-1"))).toHaveLength(1);
   });
 
   test("still refuses the other settled states (failed, closed, circuit_broken)", async () => {

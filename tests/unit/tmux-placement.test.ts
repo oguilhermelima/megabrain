@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
-import { deleteTmuxSession, getTmuxSession, listTmuxSessions, putTmuxSession, stateDatabase } from "../../src/adapters/state-db.js";
+import { deleteTmuxSession, getDispatch, getTmuxSession, listTmuxSessions, putTmuxSession, stateDatabase } from "../../src/adapters/state-db.js";
 
 describe("tmux placement", () => {
   test("lists, looks up, and deletes tmux sessions through the state facade", async () => {
@@ -67,7 +67,11 @@ describe("tmux placement", () => {
         TMUX: "isolated", TMUX_PANE: "%caller", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-orca-tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, { resolveWorktree: async () => ok({ path: root, branch: "main", ownership: "existing", workspaceId: null }) });
       expect(result.kind).toBe("ok");
-      const meta = JSON.parse(await readFile(`${root}/state/dispatches/dispatch-orca-tmux/meta.json`, "utf8")) as Record<string, unknown>;
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: `${root}/state` });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const stored = getDispatch(database.value, "dispatch-orca-tmux");
+      if (stored.kind !== "ok" || stored.value === undefined) throw new Error("spawned dispatch missing from database");
+      const meta = stored.value as Record<string, unknown>;
       expect(meta).toMatchObject({ runtime: "tmux", parentHost: "orca", tmuxSession: "caller-session", tmuxPane: "%child" });
       expect(calls.some((call) => call.command === "tmux" && call.args[0] === "split-window" && call.args.includes("%caller"))).toBe(true);
       expect(calls.some((call) => call.command === "orca" && call.args[1] === "create")).toBe(false);
@@ -81,10 +85,9 @@ describe("tmux placement", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-wrapper-reuse-`);
     const state = `${root}/state`;
     const calls: { command: string; args: readonly string[] }[] = [];
-    await mkdir(`${state}/sessions`, { recursive: true });
-    await writeFile(`${state}/sessions/wrapper-session.json`, JSON.stringify({
-      tmuxSession: "wrapper-session", workingDirectory: "/work/tree", tmuxPane: "%main", role: "main",
-    }));
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: state });
+    if (database.kind !== "ok") throw new Error(database.error);
+    putTmuxSession(database.value, { tmuxSession: "wrapper-session", workingDirectory: "/work/tree", tmuxPane: "%main", role: "main" }, "$1");
     const process: ProcessAdapter = {
       async run(command, args) {
         calls.push({ command, args: [...args] });
@@ -105,7 +108,9 @@ describe("tmux placement", () => {
         MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "orca-parent", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-wrapper-reuse", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, { resolveWorktree: async () => ok({ path: "/work/tree", branch: "main", ownership: "existing", workspaceId: null }) });
       expect(result.kind).toBe("ok");
-      const meta = JSON.parse(await readFile(`${state}/dispatches/dispatch-wrapper-reuse/meta.json`, "utf8")) as Record<string, unknown>;
+      const stored = getDispatch(database.value, "dispatch-wrapper-reuse");
+      if (stored.kind !== "ok" || stored.value === undefined) throw new Error("spawned dispatch missing from database");
+      const meta = stored.value as Record<string, unknown>;
       expect(meta).toMatchObject({ tmuxSession: "wrapper-session", tmuxSessionOwned: false, tmuxHostTerminalId: "wrapper-attach-tab", tmuxHostTerminalHost: "orca" });
       expect(calls.some((call) => call.command === "orca" && call.args.includes("tmux attach -t 'wrapper-session'"))).toBe(true);
     } finally {

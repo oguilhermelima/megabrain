@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { continueRefusedChain, executeChainRun, type ChainRunDependencies } from "../../src/cli/commands/chain-run.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
+import { createDispatch, getDispatch, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -37,6 +38,14 @@ function environment(root: string, extra: Record<string, string | undefined> = {
   // validateConfig treats the registry as absent and skips model validation —
   // these tests exercise chain selection and step-walking, not the model registry.
   return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, ...extra };
+}
+
+function readDispatch(root: string, id: string): Record<string, unknown> {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const result = getDispatch(database.value, id);
+  if (result.kind !== "ok" || result.value === undefined) throw new Error(`dispatch missing: ${id}`);
+  return result.value;
 }
 
 const okSpawn = (dispatchId = "dispatch-1"): ChainRunDependencies["spawn"] => async () => ok(`${JSON.stringify({ dispatchId })}\n`);
@@ -324,17 +333,16 @@ describe("executeChainRun: dispatch side effects", () => {
         chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }],
         usageLimits: { liveProviders: [], cacheTtlSeconds: 30, timeoutSeconds: 5, notice: { enabled: true, intervalSeconds: 3600 } },
       });
-      const dispatchDir = join(root, "dispatches", "dispatch-notice");
-      await mkdir(dispatchDir, { recursive: true });
-      await writeFile(join(dispatchDir, "meta.json"), JSON.stringify({ dispatchId: "dispatch-notice", chain: null }));
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      createDispatch(database.value, { dispatchId: "dispatch-notice", state: "running", chain: null });
       const result = await executeChainRun(["--worktree", "/w", "--prompt", "notice-prompt", "--json"], environment(root), fakeProcess(), { spawn: okSpawn("dispatch-notice") });
       expect(result.kind).toBe("ok");
-      const { readdir } = await import("node:fs/promises");
-      const messages = await readdir(join(dispatchDir, "messages")).catch(() => []);
-      expect(messages.length).toBeGreaterThan(0);
-      const text = await readFile(join(dispatchDir, "messages", messages[0]), "utf8");
-      expect(JSON.parse(text).text).toContain("Usage limits:");
-      const meta = JSON.parse(await readFile(join(dispatchDir, "meta.json"), "utf8"));
+      const messages = listMessages(database.value, "dispatch-notice");
+      expect(messages.kind).toBe("ok");
+      if (messages.kind === "ok") expect(messages.value.length).toBeGreaterThan(0);
+      if (messages.kind === "ok") expect(messages.value[0]?.text).toContain("Usage limits:");
+      const meta = readDispatch(root, "dispatch-notice");
       expect(meta.chain).toMatchObject({ name: "defaultSteps", step: 1, total: 1, usedDefault: true, prompt: "notice-prompt" });
     });
   });
@@ -342,12 +350,12 @@ describe("executeChainRun: dispatch side effects", () => {
   test("merges the prompt into an already-established chain context", async () => {
     await withRoot("chain-context", async (root) => {
       await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }] });
-      const dispatchDir = join(root, "dispatches", "dispatch-ctx");
-      await mkdir(dispatchDir, { recursive: true });
-      await writeFile(join(dispatchDir, "meta.json"), JSON.stringify({ dispatchId: "dispatch-ctx", chain: { name: "defaultSteps", step: 1, total: 1 } }));
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      createDispatch(database.value, { dispatchId: "dispatch-ctx", state: "running", chain: { name: "defaultSteps", step: 1, total: 1 } });
       const result = await executeChainRun(["--worktree", "/w", "--prompt", "carried-prompt", "--json"], environment(root), fakeProcess(), { spawn: okSpawn("dispatch-ctx") });
       expect(result.kind).toBe("ok");
-      const meta = JSON.parse(await readFile(join(dispatchDir, "meta.json"), "utf8"));
+      const meta = readDispatch(root, "dispatch-ctx");
       expect(meta.chain).toMatchObject({ name: "defaultSteps", prompt: "carried-prompt" });
     });
   });
@@ -382,7 +390,7 @@ describe("executeChainRun: in-process spawn hand-off", () => {
           expect(body.ok).toBe(true);
           expect(typeof body.dispatch.dispatchId).toBe("string");
           expect(process.calls.some((call) => call.command.includes("megabrain"))).toBe(false);
-          const meta = JSON.parse(await readFile(join(root, "dispatches", body.dispatch.dispatchId, "meta.json"), "utf8"));
+          const meta = readDispatch(root, body.dispatch.dispatchId);
           expect(meta).toMatchObject({ agent: "codex", model: "m1", worktreePath: resolved });
         } finally {
           await rm(worktreeDir, { recursive: true, force: true });
@@ -396,9 +404,10 @@ describe("executeChainRun: in-process spawn hand-off", () => {
 
 describe("continueRefusedChain", () => {
   async function writeDispatchMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const dispatchDir = join(root, "dispatches", dispatchId);
-    await mkdir(dispatchDir, { recursive: true });
-    await writeFile(join(dispatchDir, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") throw new Error(database.error);
+    const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
+    if (created.kind !== "ok") throw new Error(created.error);
   }
 
   test("refuses a dispatch that was never marked limit-refused", async () => {
@@ -501,7 +510,7 @@ describe("continueRefusedChain", () => {
           expect(process.calls.some((call) => call.command.includes("megabrain"))).toBe(false);
           const body = JSON.parse(result.value.split("\n")[1]);
           expect(typeof body.dispatchId).toBe("string");
-          const resumedMeta = JSON.parse(await readFile(join(root, "dispatches", body.dispatchId, "meta.json"), "utf8"));
+          const resumedMeta = readDispatch(root, body.dispatchId);
           expect(resumedMeta).toMatchObject({ agent: "codex", model: "m2", runtime: "tmux", worktreePath: resolved });
           expect(resumedMeta.chain).toMatchObject({ name: "defaultSteps", step: 2, total: 2, usedDefault: true, prompt: "keep going" });
         } finally {
