@@ -208,23 +208,14 @@ stale_pane="$tmux_pane_one"
 tmux_cmd kill-pane -t "$stale_pane"
 stale_output="$state_dir/stale.out"
 stale_done="$state_dir/stale.done"
-# A caller identity is resolved once per call (queue-write.ts's session(), reused by findChild):
-# setting a terminal-handle override short-circuits before the tmux fallback is ever attempted,
-# so a stale TMUX_PANE can only be observed with no override present -- the caller then falls
-# through every identity probe (tmux display-message on the now-dead pane, then the
-# list-panes -a fallback) and is refused outright as unidentified, rather than reaching
-# findChild's dispatch-specific "no managed dispatch belongs to tmux session ... pane ..."
-# message, which requires a *resolved* tmux identity that simply finds no match -- confirmed
-# empirically: with SUPERSET_TERMINAL_ID set (as the old assertion required), session() returns
-# the superset identity before ever touching TMUX_PANE, and the refusal names a superset
-# terminal, not a tmux pane. Adjusted to the message the current code actually produces for a
-# truly stale pane, while keeping the property that matters: a dead pane reference is refused,
-# and dispatch_one's message count does not grow.
+# A caller identity is resolved once per call (queue-write.ts's session(), reused by findChild).
+# When every identity probe fails for a stale pane, the command refuses the request before it
+# scans dispatch ownership, using the same error as main.
 stale_command="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_one") TMUX_PANE=$(printf '%q' "$stale_pane") $(printf '%q' "$root/.build/megabrain") ask stale-message >$(printf '%q' "$stale_output") 2>&1; printf 'done\n' >$(printf '%q' "$stale_done")"
 tmux_cmd send-keys -t "$tmux_pane_two" -l "$stale_command"
 tmux_cmd send-keys -t "$tmux_pane_two" Enter
 wait_for_file "$stale_done"
-assert_contains "$(cat "$stale_output")" 'no managed dispatch belongs to'
+assert_contains "$(cat "$stale_output")" 'this command requires a managed terminal identity'
 assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_one" | jq -r '.messages | length')" 1
 
 tab_dispatch="dispatch-tab"
