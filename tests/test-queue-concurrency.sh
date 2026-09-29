@@ -64,6 +64,7 @@ jq -n '{
   processState: "running", terminalState: "owned", terminalReason: null, failureCount: 0, stage: null,
   reason: null, reconcileOutcome: null, createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
 }' >"$state_dir/dispatches/queue-race/meta.json"
+"$binary" db import "$state_dir" >/dev/null
 
 # WHY: a parent reply and a child ask are written by different processes into the same
 # mailbox, so the sequence number and the file name are allocated concurrently. Without
@@ -91,8 +92,8 @@ for i in $(seq 1 "$writers"); do
 done
 wait
 
-messages_dir="$state_dir/dispatches/queue-race/messages"
-written="$(find "$messages_dir" -name '*.json' | wc -l | tr -d ' ')"
+queue="$(MEGABRAIN_STATE_DIR="$state_dir" "$binary" db show queue-race --json)"
+written="$(jq '.messages | length' <<<"$queue")"
 durable="$(find "$writers_dir" -name '*.written' | wc -l | tr -d ' ')"
 refused="$(find "$writers_dir" -name '*.refused' | wc -l | tr -d ' ')"
 results="$(find "$writers_dir" -name '*.exit' | wc -l | tr -d ' ')"
@@ -102,13 +103,14 @@ assert_equal "$accounted" "$writers"
 assert_equal "$written" "$durable"
 [ "$durable" -gt 0 ] || fail 'no writer was durable; the scenario proved nothing'
 
-unique_seqs="$(find "$messages_dir" -name '*.json' -exec jq -r '.seq' {} \; | sort -u | wc -l | tr -d ' ')"
+unique_seqs="$(jq '[.messages[].seq] | unique | length' <<<"$queue")"
 assert_equal "$unique_seqs" "$durable"
 
-unique_bodies="$(find "$messages_dir" -name '*.json' -exec jq -r '.text' {} \; | sort -u | wc -l | tr -d ' ')"
+unique_bodies="$(jq '[.messages[].text] | unique | length' <<<"$queue")"
 assert_equal "$unique_bodies" "$durable"
 
-[ ! -d "$messages_dir/.lock" ] || fail 'the mailbox lock was left behind'
+integrity="$(MEGABRAIN_STATE_DIR="$state_dir" "$binary" db check --json)"
+assert_equal "$(jq -r '.clean' <<<"$integrity")" true
 printf '%s concurrent writers: %s durable, %s refused; every durable message kept, every sequence unique\n' \
   "$writers" "$durable" "$refused"
 

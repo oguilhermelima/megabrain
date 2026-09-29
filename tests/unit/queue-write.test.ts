@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../src/core/queue-write.js";
 import { findChild } from "../../src/cli/commands/queue-write.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
+import { createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
 
 describe("parseChildMessage", () => {
   test.each([
@@ -78,9 +79,10 @@ describe("findChild: tmux-runtime records", () => {
   }
 
   async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const directory = join(root, "dispatches", dispatchId);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") throw new Error(database.error);
+    const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
+    if (created.kind !== "ok") throw new Error(created.error);
   }
 
   test("does not match a tmux dispatch by terminalId, even a legacy record carrying the parent's own id", async () => {
@@ -164,9 +166,10 @@ describe("findChild: MEGABRAIN_DISPATCH_ID fast path only short-circuits for the
   }
 
   async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const directory = join(root, "dispatches", dispatchId);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") throw new Error(database.error);
+    const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
+    if (created.kind !== "ok") throw new Error(created.error);
   }
 
   test("falls back to the identity scan when MEGABRAIN_DISPATCH_ID names a dispatch that is not the caller's", async () => {

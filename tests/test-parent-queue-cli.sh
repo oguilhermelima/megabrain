@@ -15,6 +15,11 @@ write_fixture() {
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-session\",\"parentHost\":\"orca\"}" >"$state/dispatches/$dispatch/meta.json"
   printf '%s\n' '{"seq":1,"from":"child","type":"done","text":"finished"}' >"$state/dispatches/$dispatch/messages/0001-child-done.json"
   printf '%s\n' "{\"id\":\"delivery-fixed\",\"dispatchId\":\"$dispatch\",\"recipient\":\"parent\",\"consumer\":null,\"consumerGeneration\":null,\"messageSeqs\":[1],\"status\":\"outstanding\"}" >"$state/dispatches/$dispatch/deliveries/delivery-fixed.json"
+  "$root/.build/megabrain" db import "$state" >/dev/null
+}
+
+show_dispatch() {
+  MEGABRAIN_STATE_DIR="$1" "$root/.build/megabrain" db show "$2" --json
 }
 
 run_watch() {

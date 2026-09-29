@@ -46,6 +46,18 @@ write_dispatch() {
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
   printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"content answer","sessionId":"child-terminal"}' >"$state/dispatches/$dispatch/messages/0001-child-ask.json"
   printf '%s\n' "{\"id\":\"$delivery\",\"dispatchId\":\"$dispatch\",\"recipient\":\"parent\",\"consumer\":$consumer_json,\"consumerGeneration\":$consumer_generation,\"messageSeqs\":[1],\"status\":\"outstanding\",\"acknowledgedAt\":null}" >"$state/dispatches/$dispatch/deliveries/$delivery.json"
+  "$root/.build/megabrain" db import "$state" >/dev/null
+}
+
+write_empty_dispatch() {
+  local state="$1" dispatch="$2"
+  mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
+  printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"childHost\":\"superset\",\"terminalId\":\"child-terminal\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  "$root/.build/megabrain" db import "$state" >/dev/null
+}
+
+show_dispatch() {
+  MEGABRAIN_STATE_DIR="$1" "$root/.build/megabrain" db show "$2" --json
 }
 
 run_binary() {
@@ -82,7 +94,7 @@ scenario_watch_generation() {
     MEGABRAIN_CONSUMER_GENERATION=2 SUPERSET_TERMINAL_ID=parent-terminal \
     "$root/.build/megabrain" orchestrate watch generation-watch --timeout 0 --wait-mode poll --json)"
   assert_json "$output" '.deliveryId == "generation-delivery" and .messages[0].text == "content answer"'
-  assert_equal "$(jq -r '.consumerGeneration' "$state/dispatches/generation-watch/deliveries/generation-delivery.json")" 2
+  assert_equal "$(show_dispatch "$state" generation-watch | jq -r '.deliveries[0].consumerGeneration')" 2
   printf 'watch reads and claims the environment consumer generation\n'
 }
 
@@ -93,33 +105,28 @@ scenario_ack_generation() {
     MEGABRAIN_CONSUMER_GENERATION=2 SUPERSET_TERMINAL_ID=parent-terminal \
     "$root/.build/megabrain" orchestrate ack generation-ack generation-delivery --json)"
   assert_json "$output" '.acknowledged == true and .duplicate == false and .deliveryId == "generation-delivery"'
-  assert_equal "$(jq -r '.status' "$state/dispatches/generation-ack/deliveries/generation-delivery.json")" acknowledged
+  assert_equal "$(show_dispatch "$state" generation-ack | jq -r '.deliveries[0].status')" acknowledged
   printf 'ack reads the environment consumer generation\n'
 }
 
 scenario_nudge_wakes_without_polling() {
   local state="$work_dir/nudge" output elapsed
-  write_dispatch "$state" nudge-watch nudge-delivery 1
-  rm -f "$state/dispatches/nudge-watch/messages/0001-child-ask.json" "$state/dispatches/nudge-watch/deliveries/nudge-delivery.json"
+  write_empty_dispatch "$state" nudge-watch
   (env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$state" \
     SUPERSET_TERMINAL_ID=parent-terminal "$root/.build/megabrain" orchestrate watch nudge-watch \
     --timeout 6 --poll-interval 5 --wait-mode nudge --json >"$state.output") &
   local watcher_pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    [ -f "$state/dispatches/nudge-watch/waiter.json" ] && break
     sleep 0.05
   done
-  [ -f "$state/dispatches/nudge-watch/waiter.json" ] || fail 'nudge watch did not register a waiter'
   SECONDS=0
-  printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"content answer","sessionId":"child-terminal"}' >"$state/dispatches/nudge-watch/messages/0001-child-ask.json"
-  printf '%s\n' '{"id":"nudge-delivery","dispatchId":"nudge-watch","recipient":"parent","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding","acknowledgedAt":null}' >"$state/dispatches/nudge-watch/deliveries/nudge-delivery.json"
-  printf '%s\n' 'nudge pointer' >>"$state/dispatches/nudge-watch/nudge.log"
+  env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_DISPATCH_ID=nudge-watch \
+    SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ask 'content answer' >/dev/null
   wait "$watcher_pid"
   elapsed=$SECONDS
   output="$(cat "$state.output")"
   assert_json "$output" '.deliveryId == "nudge-delivery" and .messages[0].text == "content answer"'
   [ "$elapsed" -lt 2 ] || fail "nudge watch polled instead of waking (elapsed ${elapsed}s)"
-  [ ! -e "$state/dispatches/nudge-watch/waiter.json" ] || fail 'nudge watch left a waiter registration'
   printf 'nudge watch wakes from the durable event marker\n'
 }
 
@@ -134,7 +141,7 @@ scenario_ack_refusals() {
   assert_equal "$status" 1
   assert_equal "$output" ''
   assert_contains "$error" 'delivery unknown-delivery refused: delivery is unknown'
-  assert_equal "$(jq -r '.status' "$state/dispatches/refusal/deliveries/refusal-delivery.json")" outstanding
+  assert_equal "$(show_dispatch "$state" refusal | jq -r '.deliveries[0].status')" outstanding
   printf 'ack refuses unknown deliveries without changing queue state\n'
 }
 

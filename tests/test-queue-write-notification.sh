@@ -20,6 +20,7 @@ write_fixture() {
   local state="$1" dispatch="$2"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"orca\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  "$root/.build/megabrain" db import "$state" >/dev/null
 }
 
 mkdir -p "$work_dir/bin" "$work_dir/home"
@@ -47,7 +48,7 @@ run_case() {
     run_message "$state" "$dispatch" done "finished again"
   fi
   effect="$(cat "$work_dir/effect")"
-  deliveries="$(find "$state/dispatches/$dispatch/deliveries" -name '*.json' | wc -l | tr -d ' ')"
+  deliveries="$(MEGABRAIN_STATE_DIR="$state" "$root/.build/megabrain" db show "$dispatch" --json | jq '.deliveries | length')"
   if [ "$label" = done-repeat ]; then
     [ "$deliveries" -eq 2 ] || fail "$label created $deliveries deliveries"
   else

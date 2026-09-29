@@ -41,6 +41,11 @@ make_dispatch() {
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"childHost\":\"superset\",\"terminalId\":\"child-terminal\",\"runtime\":\"host\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
   printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"answer"}' >"$state/dispatches/$dispatch/messages/0001-parent-reply.json"
   printf '%s\n' "{\"id\":\"delivery-fixed\",\"dispatchId\":\"$dispatch\",\"recipient\":\"child\",\"consumer\":\"child/superset/child-terminal\",\"consumerGeneration\":1,\"messageSeqs\":[1],\"status\":\"outstanding\"}" >"$state/dispatches/$dispatch/deliveries/delivery-fixed.json"
+  "$root/.build/megabrain" db import "$state" >/dev/null
+}
+
+show_dispatch() {
+  MEGABRAIN_STATE_DIR="$1" "$root/.build/megabrain" db show "$2" --json
 }
 
 run_shell() {
@@ -81,8 +86,8 @@ compare() {
 }
 
 compare first-ack 'delivery-fixed --json'
-assert_equal "$(jq -r '.status' "$work_dir/first-ack-shell/dispatches/first-ack/deliveries/delivery-fixed.json")" acknowledged
-assert_equal "$(jq -r '.status' "$work_dir/first-ack-binary/dispatches/first-ack/deliveries/delivery-fixed.json")" acknowledged
+assert_equal "$(show_dispatch "$work_dir/first-ack-shell" first-ack | jq -r '.deliveries[0].status')" acknowledged
+assert_equal "$(show_dispatch "$work_dir/first-ack-binary" first-ack | jq -r '.deliveries[0].status')" acknowledged
 
 for implementation in shell binary; do
   state="$work_dir/duplicate-$implementation"
@@ -101,7 +106,7 @@ for implementation in shell binary; do
   fi
   assert_equal "$status" 0
   assert_equal "$(printf '%s' "$output" | jq -r '.duplicate')" true
-  assert_equal "$(jq -r '.status' "$state/dispatches/duplicate-$implementation/deliveries/delivery-fixed.json")" acknowledged
+  assert_equal "$(show_dispatch "$state" "duplicate-$implementation" | jq -r '.deliveries[0].status')" acknowledged
   printf '%s reports duplicate and preserves delivery state\n' "$implementation"
 done
 

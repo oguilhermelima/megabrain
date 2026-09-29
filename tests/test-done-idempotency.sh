@@ -45,11 +45,11 @@ assert_contains() {
 }
 
 delivery_count() {
-  find "$state_dir/dispatches/$1/deliveries" -name '*.json' -type f | wc -l | tr -d ' '
+  "$root/.build/megabrain" db show "$1" --json | jq '.deliveries | length'
 }
 
 message_count() {
-  find "$state_dir/dispatches/$1/messages" -name '*.json' -type f | wc -l | tr -d ' '
+  "$root/.build/megabrain" db show "$1" --json | jq '.messages | length'
 }
 
 create_dispatch() {
@@ -63,6 +63,18 @@ set_dispatch_state() {
   tmp="$(mktemp "$state_dir/dispatches/$1/.state.XXXXXX")"
   jq --arg state "$state" '.state = $state' "$path" >"$tmp"
   mv -f "$tmp" "$path"
+}
+
+nudge_count() {
+  local dispatch_id="$1"
+  MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" NUDGE_DISPATCH="$dispatch_id" bun -e '
+    const { stateDatabase, listNudges } = await import(process.env.MEGABRAIN_ROOT + "/src/adapters/state-db.ts");
+    const db = stateDatabase({ MEGABRAIN_STATE_DIR: process.env.MEGABRAIN_STATE_DIR });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const result = listNudges(db.value, process.env.NUDGE_DISPATCH);
+    if (result.kind !== "ok") throw new Error(result.error);
+    process.stdout.write(String(result.value.length));
+  '
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
@@ -83,16 +95,15 @@ run_child_message() {
   fi
 }
 
-nudge_count() {
-  find "$state_dir/dispatches" -name nudge.log -type f | wc -l | tr -d ' '
-}
-
 # A second completion is durable protocol mail, not a second actionable outcome.
 create_dispatch repeated-done
+create_dispatch different-outcome
+set_dispatch_state different-outcome failed
+"$root/.build/megabrain" db import "$state_dir" >/dev/null
 export SUPERSET_TERMINAL_ID=child-repeated-done
 run_child_message repeated-done done 'first completion' >/dev/null
 run_child_message repeated-done done 'retried completion' >/dev/null
-assert_equal "$(nudge_count)" 1
+assert_equal "$(nudge_count repeated-done)" 1
 assert_equal "$(message_count repeated-done)" 2
 assert_equal "$(delivery_count repeated-done)" 2
 
@@ -112,16 +123,14 @@ printf 'repeated done creates one actionable nudge and durable protocol mail\n'
 
 # A different outcome after failure remains actionable, even though the state
 # transition itself is refused by the settled dispatch contract.
-create_dispatch different-outcome
 export SUPERSET_TERMINAL_ID=child-different-outcome
-set_dispatch_state different-outcome failed
 different_output_path="$state_dir/different-output"
 if run_child_message different-outcome done 'completion after failure' >"$different_output_path" 2>&1; then
   fail 'done after failed dispatch was accepted'
 fi
 different_output="$(cat "$different_output_path")"
 assert_contains "$different_output" 'illegal dispatch state transition: failed -> done'
-assert_equal "$(nudge_count)" 2
+assert_equal "$(( $(nudge_count repeated-done) + $(nudge_count different-outcome) ))" 2
 assert_equal "$(message_count different-outcome)" 1
 assert_equal "$(delivery_count different-outcome)" 1
 export SUPERSET_TERMINAL_ID=parent-terminal
