@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { latestSchemaVersion } from "../../src/db/db.js";
+import { latestSchemaVersion, openDatabase } from "../../src/db/db.js";
+import { updateDispatch, type DispatchRow } from "../../src/db/queries/dispatches.js";
 import {
   ackDelivery,
   appendMessage,
@@ -14,6 +15,7 @@ import {
   fenceDelivery,
   finishOutbox,
   listDispatches,
+  listDeliveries,
   listMessages,
   listOutbox,
   mutateDispatch,
@@ -46,14 +48,17 @@ describe("state database facade", () => {
     const result = mutateDispatch(db, "retry", (current) => {
       calls += 1;
       if (calls === 1) {
-        // Simulate an intervening version advance so updateDispatch returns its conflict branch.
-        db.db.run("UPDATE dispatches SET version = version + 1 WHERE id = ?", ["retry"]);
+        // Simulate a competing patch so the facade retries with the new record and version.
+        const row = db.db.query<DispatchRow>("SELECT * FROM dispatches WHERE id = ?").get("retry");
+        if (row === null) throw new Error("dispatch disappeared");
+        const competing = updateDispatch(db.db, "retry", row.version, { counter: Number(current.counter) + 1 });
+        if (competing.kind !== "updated") throw new Error(`competing update failed: ${competing.kind}`);
       }
-      return { other: Number(current.other) + 1 };
+      return { counter: Number(current.counter) + 1, other: Number(current.other) + 1 };
     });
     expect(result.kind).toBe("ok");
     const final = requireOk(stateDatabase(environment));
-    expect(requireOk(listDispatches(final)).find((record) => record.dispatchId === "retry")).toMatchObject({ counter: 1, other: 1 });
+    expect(requireOk(listDispatches(final)).find((record) => record.dispatchId === "retry")).toMatchObject({ counter: 2, other: 1 });
   });
 
   test("four OS processes preserve 1000 concurrent dispatch counter updates", () => {
@@ -110,7 +115,7 @@ describe("state database facade", () => {
     expect(requireOk(listOutbox(db))).toHaveLength(1);
   });
 
-  test("outbox claim is exclusive and expired claims become available", () => {
+  test("outbox claim is exclusive, expired claims return, and finish reports success", () => {
     const db = requireOk(stateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "outbox", state: "running" }));
     const appended = requireOk(appendMessage(db, "outbox", { from: "child", type: "ask", text: "notify" }, {
@@ -119,22 +124,28 @@ describe("state database facade", () => {
     expect(appended.seq).toBe(1);
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-a", 60))?.status).toBe("sending");
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))).toBeUndefined();
-    expect(requireOk(finishOutbox(db, "outbox-claim", "failed", "retryable"))).toBeUndefined();
-    expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", -1))?.status).toBe("sending");
+    db.db.run("UPDATE outbox SET lease_until = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", "outbox-claim"]);
+    expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))?.status).toBe("sending");
+    expect(finishOutbox(db, "outbox-claim", "failed", "retryable").kind).toBe("ok");
+    expect(finishOutbox(db, "missing", "sent").kind).toBe("failed");
   });
 
   test("delivery ack and fence preserve consumer and generation rules", () => {
     const db = requireOk(stateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "deliveries", state: "running" }));
     requireOk(createDelivery(db, { id: "unclaimed", dispatchId: "deliveries", messageSeqs: [1], status: "outstanding" }));
+    const delivery = requireOk(listDeliveries(db, "deliveries"))[0];
+    expect(delivery?.createdAt).toBeString();
+    expect(delivery?.updatedAt).toBeString();
     expect(ackDelivery(db, "unclaimed", "consumer-a", 1).kind).toBe("failed");
     requireOk(createDelivery(db, { id: "claimed", dispatchId: "deliveries", messageSeqs: [2], status: "outstanding", consumer: "consumer-a", consumerGeneration: 1 }));
-    expect(requireOk(ackDelivery(db, "claimed", "consumer-a", 2))).toMatchObject({ duplicate: false });
-    expect(requireOk(ackDelivery(db, "claimed", "consumer-a", 2))).toMatchObject({ duplicate: true });
+    expect(ackDelivery(db, "claimed", "consumer-a", 2).kind).toBe("failed");
+    expect(ackDelivery(db, "claimed", "consumer-b", 1).kind).toBe("failed");
+    expect(requireOk(ackDelivery(db, "claimed", "consumer-a", 1))).toMatchObject({ duplicate: false });
+    expect(requireOk(ackDelivery(db, "claimed", "consumer-a", 1))).toMatchObject({ duplicate: true });
     requireOk(createDelivery(db, { id: "fence", dispatchId: "deliveries", messageSeqs: [3], status: "outstanding", consumer: "consumer-a", consumerGeneration: 1 }));
     expect(requireOk(fenceDelivery(db, "fence", "consumer-a", 2))).toMatchObject({ status: "fenced" });
     expect(ackDelivery(db, "fence", "consumer-a", 2).kind).toBe("failed");
-    expect(ackDelivery(db, "claimed", "consumer-b", 2).kind).toBe("failed");
   });
 
   test("archiveDispatch removes records from the default list only", () => {
@@ -148,8 +159,17 @@ describe("state database facade", () => {
   test("schema 003 migrates an existing version 2 database", () => {
     expect(latestSchemaVersion).toBe(3);
     const db = requireOk(stateDatabase(environment));
-    const version = db.db.query<{ user_version: number }>("PRAGMA user_version").get();
+    db.db.run("DROP TABLE nudge_events");
+    db.db.run("DROP TABLE waiters");
+    db.db.exec("ALTER TABLE outbox DROP COLUMN detail");
+    db.db.exec("ALTER TABLE outbox DROP COLUMN lease_holder");
+    db.db.run("DELETE FROM schema_migrations WHERE version = 3");
+    db.db.exec("PRAGMA user_version = 2");
+    db.close();
+    const migrated = requireOk(openDatabase(environment));
+    const version = migrated.db.query<{ user_version: number }>("PRAGMA user_version").get();
     expect(version?.user_version).toBe(3);
-    expect(db.db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version).toBe(3);
+    expect(migrated.db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version).toBe(3);
+    expect(migrated.db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'waiters'").get()?.name).toBe("waiters");
   });
 });
