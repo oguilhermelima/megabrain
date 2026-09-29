@@ -19,6 +19,7 @@ let current: { directory: string; sqlite: InstanceType<typeof Database>; db: Tes
 async function database(): Promise<{ directory: string; db: TestDatabase }> {
   const directory = await mkdtemp(join(tmpdir(), "megabrain-dispatch-db-"));
   const sqlite = new Database(":memory:");
+  sqlite.exec("PRAGMA foreign_keys = ON");
   const db: TestDatabase = {
     run(sql, parameters) {
       const result = parameters === undefined ? (sqlite.exec(sql), { changes: 0, lastInsertRowid: 0 }) : sqlite.query(sql).run(...parameters);
