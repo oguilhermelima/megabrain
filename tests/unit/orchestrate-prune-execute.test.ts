@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeOrchestratePrune } from "../../src/cli/commands/orchestrate-prune.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
+import { openDatabase, withWrite } from "../../src/db/db.js";
+import { parseJsonState, applyJsonStateImport } from "../../src/db/import/json-state.js";
+import { appendMessage, createDelivery, createDispatch, deleteDispatch, getDispatch, listDeliveries, listDispatches, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
 
 const oldDate = "2020-01-01T00:00:00.000Z";
 
@@ -16,20 +19,51 @@ function fakeProcess(behavior: (command: string, args: readonly string[]) => Res
   };
 }
 
-async function fixture(meta: Record<string, unknown>): Promise<{ root: string; directory: string; metaPath: string }> {
+async function fixture(meta: Record<string, unknown>): Promise<{ root: string; directory: string }> {
   const dispatchId = String(meta.dispatchId ?? "dispatch-1");
   const root = await mkdtemp(join(tmpdir(), "megabrain-prune-terminal-proof-"));
   const directory = join(root, "dispatches", dispatchId);
   await mkdir(directory, { recursive: true });
-  const metaPath = join(directory, "meta.json");
-  await writeFile(metaPath, `${JSON.stringify({ dispatchId, state: "done", createdAt: oldDate, updatedAt: oldDate, terminalState: "owned", ...meta })}\n`);
-  return { root, directory, metaPath };
+  await writeFile(join(directory, "meta.json"), `${JSON.stringify({ dispatchId, state: "done", createdAt: oldDate, updatedAt: oldDate, terminalState: "owned", ...meta })}\n`);
+  const parsed = await parseJsonState(root);
+  const database = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const imported = withWrite(database.value, (db) => applyJsonStateImport(db, parsed));
+  if (imported.kind !== "ok" || imported.value.malformed.length > 0) throw new Error("could not seed dispatch database");
+  return { root, directory };
+}
+
+function records(root: string, includeArchived = false) {
+  const database = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const result = listDispatches(database.value, { includeArchived });
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value;
 }
 
 const env = (root: string) => ({ MEGABRAIN_STATE_DIR: root });
 const unprovenHost = () => fakeProcess((command, args) => command === "orca" && args[0] === "terminal" && args[1] === "close"
   ? failed("terminal close denied", 1)
   : ok({ stdout: "[]\n", stderr: "", exitCode: 0 }));
+
+describe("dispatch deletion", () => {
+  test("deletes a dispatch with its messages and deliveries and reports an absent id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "megabrain-delete-dispatch-"));
+    try {
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const handle = database.value;
+      expect(createDispatch(handle, { dispatchId: "delete-me", state: "running" }).kind).toBe("ok");
+      expect(appendMessage(handle, "delete-me", { from: "child", type: "ask", text: "help" }).kind).toBe("ok");
+      expect(createDelivery(handle, { id: "delivery-1", dispatchId: "delete-me", messageSeqs: [1], status: "outstanding" }).kind).toBe("ok");
+      expect(deleteDispatch(handle, "delete-me")).toEqual({ kind: "ok", value: true });
+      expect(getDispatch(handle, "delete-me")).toEqual({ kind: "ok", value: undefined });
+      expect(listMessages(handle, "delete-me")).toEqual({ kind: "ok", value: [] });
+      expect(listDeliveries(handle, "delete-me")).toEqual({ kind: "ok", value: [] });
+      expect(deleteDispatch(handle, "absent")).toEqual({ kind: "ok", value: false });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
 
 describe("orchestrate prune terminal proof", () => {
   test("keeps a host dispatch when a valid listing omits its terminal and records the reason", async () => {
@@ -45,8 +79,7 @@ describe("orchestrate prune terminal proof", () => {
           { dispatchId: "dispatch-1", reason: "terminal is absent from the host listing" },
         ]);
       }
-      expect(await readdir(join(f.root, "dispatches"))).toContain("dispatch-1");
-      expect(JSON.parse(await readFile(f.metaPath, "utf8"))).toMatchObject({
+      expect(records(f.root)[0]).toMatchObject({
         terminalState: "retained",
         terminalReason: "terminal is absent from the host listing",
       });
@@ -65,7 +98,7 @@ describe("orchestrate prune terminal proof", () => {
   test("dry-run classifies unproven terminals without changing metadata", async () => {
     const f = await fixture({ childHost: "orca", runtime: "host", terminalId: "child-terminal" });
     try {
-      const before = await readFile(f.metaPath);
+      const before = records(f.root);
       const result = await executeOrchestratePrune(["--dry-run", "--json"], env(f.root), unprovenHost());
 
       expect(result.kind).toBe("ok");
@@ -76,7 +109,7 @@ describe("orchestrate prune terminal proof", () => {
           { dispatchId: "dispatch-1", reason: "terminal is absent from the host listing" },
         ]);
       }
-      expect(await readFile(f.metaPath)).toEqual(before);
+      expect(records(f.root)).toEqual(before);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
@@ -95,9 +128,10 @@ describe("orchestrate prune terminal proof", () => {
         expect(output.archived).toBe(1);
         archivePath = output.archivedDispatches[0]?.path ?? "";
       }
-      expect(await readdir(join(f.root, "dispatches"))).not.toContain("dispatch-1");
+      expect(records(f.root)).toEqual([]);
+      expect(records(f.root, true)).toHaveLength(1);
       expect(archivePath).not.toBe("");
-      expect(await readFile(join(archivePath, "meta.json"), "utf8")).toContain("stale-terminal");
+      expect(records(f.root, true)[0]).toMatchObject({ terminalId: "stale-terminal" });
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
@@ -116,8 +150,8 @@ describe("orchestrate prune terminal proof", () => {
         expect(result.kind).toBe("ok");
         if (result.kind === "ok") expect((JSON.parse(result.value) as Record<string, unknown>).archived).toBe(1);
       }
-      expect(await readdir(join(missingSession.root, "dispatches"))).not.toContain("missing-session");
-      expect(await readdir(join(missingPane.root, "dispatches"))).not.toContain("missing-pane");
+      expect(records(missingSession.root)).toEqual([]);
+      expect(records(missingPane.root)).toEqual([]);
     } finally {
       await Promise.all([missingSession.root, missingPane.root].map((root) => rm(root, { recursive: true, force: true })));
     }
