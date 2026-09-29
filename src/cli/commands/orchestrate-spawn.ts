@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
@@ -10,13 +9,14 @@ import { waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
-import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
+import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, waitForTmuxSession } from "../../hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
+import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, acquireLease, releaseLease } from "../../adapters/state-db.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -139,16 +139,12 @@ function dispatchId(environment: SpawnEnvironment): string {
     : `dispatch-${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
 }
 
-// The "tmux-runtime" installed flag in state.json selects tmux. An absent or unparsable file means
-// tmux is not installed, so the automatic runtime falls back to host.
-async function tmuxRuntimeInstalled(environment: SpawnEnvironment): Promise<boolean> {
-  try {
-    const raw = await readFile(`${resolveStateDirectory(environment)}/state.json`, "utf8");
-    const parsed = JSON.parse(raw) as Record<string, { readonly installed?: boolean } | undefined>;
-    return parsed["tmux-runtime"]?.installed === true;
-  } catch {
-    return false;
-  }
+// The installed module state selects tmux; absent state falls back to the host runtime.
+function tmuxRuntimeInstalled(environment: SpawnEnvironment): boolean {
+  const database = stateDatabase(environment);
+  if (database.kind !== "ok") return false;
+  const state = getInstallState(database.value);
+  return state.kind === "ok" && (state.value["tmux-runtime"] as { readonly installed?: boolean } | undefined)?.installed === true;
 }
 
 // The workspace id a parent may pass down to the child host provider. Unrelated to caller
@@ -336,12 +332,19 @@ async function canonicalPath(path: string): Promise<string> {
   return realpath(path).catch(() => path);
 }
 
+async function stableTmuxSessionId(session: string, process: ProcessAdapter): Promise<string | null> {
+  const result = await process.run("tmux", ["display-message", "-p", "-t", session, "#{session_id}"]);
+  const id = result.kind === "ok" ? result.value.stdout.trim() : "";
+  return /^\$\d+$/.test(id) ? id : null;
+}
+
 async function existingTmuxSessionForWorktree(root: string, worktreePath: string, process: ProcessAdapter): Promise<TmuxWorktreeSession | undefined> {
   const target = await canonicalPath(worktreePath);
-  const sessionDirectory = `${root}/sessions`;
-  for (const name of await readdir(sessionDirectory).catch(() => [])) {
-    if (!name.endsWith(".json")) continue;
-    const record = await readJson(`${sessionDirectory}/${name}`);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return undefined;
+  const sessions = listTmuxSessions(database.value);
+  if (sessions.kind !== "ok") return undefined;
+  for (const record of sessions.value) {
     const session = stringValue(record?.tmuxSession);
     const directory = stringValue(record?.workingDirectory);
     if (session === "" || directory === "" || await canonicalPath(directory) !== target) continue;
@@ -351,9 +354,9 @@ async function existingTmuxSessionForWorktree(root: string, worktreePath: string
     if (panes.kind !== "ok" || panes.value.length === 0 || (recordedPane !== "" && !panes.value.includes(recordedPane))) continue;
     return { session, record: record ?? {} };
   }
-  const dispatchDirectory = `${root}/dispatches`;
-  for (const id of await readdir(dispatchDirectory).catch(() => [])) {
-    const meta = await readJson(`${dispatchDirectory}/${id}/meta.json`);
+  const dispatches = listDispatches(database.value);
+  if (dispatches.kind !== "ok") return undefined;
+  for (const meta of dispatches.value) {
     const state = stringValue(meta?.state);
     const session = stringValue(meta?.tmuxSession);
     const pane = stringValue(meta?.tmuxPane);
@@ -363,31 +366,26 @@ async function existingTmuxSessionForWorktree(root: string, worktreePath: string
     if ((await getTmux().sessionExists(session, process)).kind !== "ok") continue;
     const panes = await getTmux().panesForSession(session, process);
     if (panes.kind !== "ok" || !panes.value.includes(pane)) continue;
-    const record = await readJson(`${sessionDirectory}/${encodeURIComponent(session)}.json`);
-    return { session, record: { ...meta, ...(record ?? {}) } };
+    const record = getTmuxSession(database.value, session);
+    return { session, record: { ...meta, ...(record.kind === "ok" ? record.value ?? {} : {}) } };
   }
   return undefined;
 }
 
 async function acquireWorktreeSessionLock(root: string, worktreePath: string): Promise<Result<() => Promise<void>>> {
-  const lockRoot = `${root}/locks/tmux-sessions`;
-  await mkdir(lockRoot, { recursive: true });
   const key = createHash("sha256").update(worktreePath).digest("hex");
-  const lock = `${lockRoot}/${key}.lock`;
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    try {
-      await mkdir(lock);
-      return ok(async () => rm(lock, { recursive: true, force: true }));
-    } catch {
-      try {
-        if ((Date.now() - (await stat(lock)).mtimeMs) > 120_000) await rm(lock, { recursive: true, force: true });
-      } catch {
-        // Another process released the lock between the failed mkdir and stat.
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+  const lock = `tmux-sessions/${key}`;
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return database;
+  const holder = `${process.pid}:${randomUUID()}`;
+  const deadline = Date.now() + 10000;
+  while (true) {
+    const acquired = acquireLease(database.value, lock, holder, 120);
+    if (acquired.kind !== "ok") return acquired;
+    if (acquired.value) return ok(async () => { releaseLease(database.value, lock, holder); });
+    if (Date.now() >= deadline) return failed(`timed out waiting for tmux session lock for ${worktreePath}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return failed(`timed out waiting for tmux session lock for ${worktreePath}`);
 }
 
 async function attachHostToWorktreeSession(
@@ -420,9 +418,7 @@ async function attachHostToWorktreeSession(
       }
     }
   }
-  const directory = `${root}/sessions`;
-  await mkdir(directory, { recursive: true });
-  await atomicJson(`${directory}/${encodeURIComponent(session)}.json`, {
+  const sessionRecord = {
     ...record,
     tmuxSession: session,
     workingDirectory: await canonicalPath(worktree.path),
@@ -430,7 +426,9 @@ async function attachHostToWorktreeSession(
     hostTerminalId: terminalId,
     hostTerminalHost: host,
     workspaceId: worktree.workspaceId ?? parentWorkspace,
-  });
+  };
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind === "ok") putTmuxSession(database.value, sessionRecord, await stableTmuxSessionId(session, process));
   return { terminalId, host, warning };
 }
 
@@ -484,6 +482,7 @@ async function openWorktreeTmuxTarget(
       workingDirectory: await canonicalPath(worktree.path),
       megabrainOwned: true,
       createdAt: new Date().toISOString(),
+      stableSessionId: await stableTmuxSessionId(session, process),
     };
     const attached = await attachHostToWorktreeSession(root, session, record, worktree, parentContext, parentWorkspace, options, process);
     return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId: attached.terminalId, hostTerminalHost: attached.host, warning: attached.warning });
@@ -496,14 +495,11 @@ function resultError(result: Result<unknown>, fallback: string): string {
   return result.kind === "ok" ? fallback : result.error;
 }
 
-async function hasReceipt(root: string, id: string): Promise<boolean> {
-  const directory = await dispatchPath(root, id, "messages");
-  for (const name of await readdir(directory).catch(() => [])) {
-    if (!name.endsWith(".json")) continue;
-    const value = await readJson(`${directory}/${name}`);
-    if (value?.from === "child" && value.type === "received") return true;
-  }
-  return false;
+function hasReceipt(root: string, id: string): boolean {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return false;
+  const messages = listMessages(database.value, id);
+  return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "received");
 }
 
 async function awaitReceipt(root: string, id: string, environment: SpawnEnvironment): Promise<boolean> {
@@ -511,23 +507,25 @@ async function awaitReceipt(root: string, id: string, environment: SpawnEnvironm
   const timeout = Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 0;
   const started = Date.now();
   do {
-    if (await hasReceipt(root, id)) return true;
+    if (hasReceipt(root, id)) return true;
     if (Date.now() - started >= timeout) return false;
     await new Promise((resolve) => setTimeout(resolve, 50));
   } while (true);
 }
 
 async function updateMeta(root: string, id: string, update: RecordValue): Promise<Result<void>> {
-  const path = await dispatchPath(root, id, "meta.json");
-  const current = await readJson(path);
-  if (current === undefined) return failed(`dispatch not found: ${id}`);
-  await atomicJson(path, { ...current, ...update, updatedAt: new Date().toISOString() });
-  return ok(undefined);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return database;
+  const updated = mutateDispatch(database.value, id, (current) => ({ ...current, ...update, updatedAt: new Date().toISOString() }));
+  return updated.kind === "ok" ? ok(undefined) : updated;
 }
 
 export async function markRunningIfSpawning(root: string, id: string): Promise<Result<void>> {
-  const path = await dispatchPath(root, id, "meta.json");
-  const meta = await readJson(path);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return database;
+  const result = getDispatch(database.value, id);
+  if (result.kind !== "ok") return result;
+  const meta = result.value;
   if (meta === undefined) return failed(`dispatch not found: ${id}`);
   const state = stringValue(meta.state);
   const transition = checkDispatchTransition("dispatch", state, "running");
@@ -600,8 +598,11 @@ async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: 
     if (result !== undefined && result.kind !== "ok") failures.push(`${call}: ${result.error}`);
   }
   if (plan.cleanup.runtime === "host") {
-    const provider = getHost(stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost));
-    const workspaceId = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.workspaceId) || null;
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    const stored = database.kind === "ok" ? getDispatch(database.value, id) : database;
+    const meta = stored.kind === "ok" ? stored.value : undefined;
+    const provider = getHost(stringValue(meta?.childHost));
+    const workspaceId = stringValue(meta?.workspaceId) || null;
     if (provider !== undefined && terminalId !== "") {
       const call = provider.close({ workspaceId, terminalId });
       if (call.kind === "ok") {
@@ -734,6 +735,22 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     const identifiedSession = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{session_id}"]);
     const stableSessionId = identifiedSession.kind === "ok" ? identifiedSession.value.stdout.trim() : "";
     sessionId = /^\$\d+$/.test(stableSessionId) ? stableSessionId : null;
+    const registry = stateDatabase(environment);
+    if (registry.kind !== "ok") return failed(registry.error, registry.exitCode);
+    const priorSession = getTmuxSession(registry.value, session);
+    if (priorSession.kind !== "ok") return failed(priorSession.error, priorSession.exitCode);
+    const savedSession = putTmuxSession(registry.value, {
+      ...(priorSession.value ?? {}),
+      tmuxSession: session,
+      workingDirectory: await canonicalPath(worktree.path),
+      tmuxPane: pane,
+      megabrainOwned: sessionOwned || priorSession.value?.megabrainOwned === true,
+      createdAt: priorSession.value?.createdAt ?? new Date().toISOString(),
+      hostTerminalId: hostTerminalId ?? priorSession.value?.hostTerminalId ?? null,
+      hostTerminalHost: hostTerminalHost ?? priorSession.value?.hostTerminalHost ?? null,
+      workspaceId: worktree.workspaceId ?? parentWorkspace,
+    }, sessionId ?? (stringValue(priorSession.value?.stableSessionId) || null));
+    if (savedSession.kind !== "ok") return failed(savedSession.error, savedSession.exitCode);
     // The CHILD's own identity, never the caller's: session/pane are always the pane this
     // dispatch actually runs in (freshly split or created above), even when the split reuses the
     // caller's own tmux session — the caller's own pane and this dispatch's pane are always
@@ -764,11 +781,12 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     terminalCreateAttempts = createdTerminal.value.attempts;
   }
 
-  const directory = await dispatchPath(root, id, "");
-  await mkdir(directory, { recursive: true });
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
-  await atomicJson(`${directory}/meta.json`, meta);
+  const database = stateDatabase(environment);
+  if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const createdDispatch = createDispatch(database.value, meta);
+  if (createdDispatch.kind !== "ok") return createdDispatch;
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };
   let step: SpawnStep = runtime === "tmux" ? "transcript-start" : "prompt-publication";
   const baseInput = (): Omit<SpawnDecisionInput, "step" | "outcome"> => ({ dispatchId: id, runtime, worktree: worktree.ownership, state });
@@ -799,7 +817,8 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process, true);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
-        const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
+        const currentDispatch = getDispatch(database.value, id);
+        const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
         const host = getHost(childHost);
         const identityVariable = host?.terminalIdentityVariable;
         const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")} MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_NO_TMUX=1 ${command}` });
@@ -820,7 +839,8 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
         else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
       } else {
-        const childHost = stringValue((await readJson(await dispatchPath(root, id, "meta.json")))?.childHost);
+        const currentDispatch = getDispatch(database.value, id);
+        const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
         const host = getHost(childHost);
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt });
         const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));

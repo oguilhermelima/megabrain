@@ -21,7 +21,7 @@ export type SpawnRuntime = "tmux" | "host";
 export type WorktreeOwnership = "created" | "existing" | "unknown";
 
 // With no explicit --tmux flag, the runtime is tmux only when the tmux-runtime module reports
-// itself installed in state.json, otherwise host. An active TMUX/TMUX_PANE session alone does not
+// itself installed in machine state, otherwise host. An active TMUX/TMUX_PANE session alone does not
 // flip this default. An explicit --tmux true/false always wins and never reaches this function.
 export function resolveAutoSpawnRuntime(tmuxRuntimeInstalled: boolean): SpawnRuntime {
   return tmuxRuntimeInstalled ? "tmux" : "host";
