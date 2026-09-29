@@ -66,7 +66,7 @@ describe("db import and db show", () => {
       expect(first.kind).toBe("ok");
       if (first.kind === "ok") expect(JSON.parse(first.value).imported.dispatches).toBe(1);
       const shown = await run(state, ["db", "show", dispatchId, "--json"]);
-      expect(JSON.parse(requireOutput(shown))).toEqual({ meta: originalMeta, messages: [originalMessage], deliveries: [originalDelivery], archived: false });
+      expect(JSON.parse(requireOutput(shown))).toEqual({ meta: originalMeta, messages: [originalMessage], deliveries: [originalDelivery], nudges: [], archived: false });
 
       const second = await run(state, ["db", "import", source, "--json"]);
       expect(second.kind).toBe("ok");
@@ -125,7 +125,7 @@ describe("db import and db show", () => {
       const archivedMeta = meta("dispatch-archived", { state: "closed" });
       await writeJson(join(archived, "meta.json"), archivedMeta);
       expect((await run(state, ["db", "import", join(root, "source")])).kind).toBe("ok");
-      expect(JSON.parse(requireOutput(await run(state, ["db", "show", "dispatch-archived", "--json"])))).toEqual({ meta: archivedMeta, messages: [], deliveries: [], archived: true });
+      expect(JSON.parse(requireOutput(await run(state, ["db", "show", "dispatch-archived", "--json"])))).toEqual({ meta: archivedMeta, messages: [], deliveries: [], nudges: [], archived: true });
       const missing = await run(state, ["db", "show", "missing", "--json"]);
       expect(missing.kind).toBe("failed");
       if (missing.kind === "failed") { expect(missing.exitCode).toBe(1); expect(missing.error).toContain("missing"); }
