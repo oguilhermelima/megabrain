@@ -164,6 +164,7 @@ describe("state database facade", () => {
     db.db.exec("ALTER TABLE outbox DROP COLUMN detail");
     db.db.exec("ALTER TABLE outbox DROP COLUMN lease_holder");
     db.db.run("DELETE FROM schema_migrations WHERE version > 2");
+    db.db.exec("DROP TABLE settings");
     db.db.exec("PRAGMA user_version = 2");
     db.close();
     const migrated = requireOk(guardedOpenDatabase(environment));
