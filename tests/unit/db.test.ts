@@ -1,3 +1,4 @@
+import { guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
-import { latestSchemaVersion, openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
+import { latestSchemaVersion, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
 import { insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
@@ -21,7 +22,7 @@ async function withStateDirectory<T>(operation: (directory: string) => Promise<T
 }
 
 function database(directory: string): DatabaseHandle {
-  const handle = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+  const handle = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
   if (handle.kind !== "ok") throw new Error(handle.error);
   return handle.value;
 }
@@ -82,7 +83,7 @@ describe("SQLite database", () => {
       const raw = rawDatabase(directory);
       raw.exec("PRAGMA application_id = 123456");
       raw.close();
-      const foreign = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+      const foreign = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
       expect(foreign.kind).toBe("failed");
       if (foreign.kind === "failed") expect(foreign.error).toContain("application_id");
     });
@@ -92,7 +93,7 @@ describe("SQLite database", () => {
       const raw = rawDatabase(directory);
       raw.exec("PRAGMA user_version = 77");
       raw.close();
-      const newer = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+      const newer = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
       expect(newer.kind).toBe("failed");
       if (newer.kind === "failed") {
         expect(newer.error).toContain("77");
@@ -106,7 +107,7 @@ describe("SQLite database", () => {
     await withStateDirectory(async (directory) => {
       const file = join(directory, "megabrain.db");
       await writeFile(file, "not a sqlite database");
-      const result = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+      const result = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
       expect(result.kind).toBe("failed");
       if (result.kind === "failed") expect(result.error).toMatch(/open|pragma/i);
     });
@@ -116,7 +117,7 @@ describe("SQLite database", () => {
       raw.exec("CREATE TABLE native_sessions (invalid TEXT)");
       raw.exec("INSERT INTO schema_migrations VALUES (0, 'test')");
       raw.close();
-      const result = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+      const result = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
       expect(result.kind).toBe("failed");
       if (result.kind === "failed") expect(result.error).toContain("migrate");
     });

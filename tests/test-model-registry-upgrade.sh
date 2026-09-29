@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 state_root="$(mktemp -d /tmp/megabrain-model-registry-upgrade.XXXXXX)"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 
 cleanup() {
   local rc=$?
@@ -65,8 +69,9 @@ write_old_registry() {
         else .
         end
       )
-  ' "$MEGABRAIN_STATE_DIR/models.json" >"$output"
+  ' <("$root/.build/megabrain" db show --models --json) >"$output"
   mv -f "$output" "$MEGABRAIN_STATE_DIR/models.json"
+  "$root/.build/megabrain" db import "$MEGABRAIN_STATE_DIR" --replace >/dev/null
 }
 
 # 1. A fresh registry accepts every Claude level in the template and refuses an unknown one.
@@ -112,7 +117,7 @@ printf 'registry upgrade: missing entries added and corrected levels applied\n'
 # 3. A model added with model add is curated and wins over the template during upgrade.
 reset_state
 "$root/.build/megabrain" model add codex operator-model --reasoning high >/dev/null
-curated_before="$(jq -c '.models[] | select(.agent == "codex" and .model == "operator-model")' "$MEGABRAIN_STATE_DIR/models.json")"
+curated_before="$("$root/.build/megabrain" db show --models --json | jq -c '.models[] | select(.agent == "codex" and .model == "operator-model")')"
 write_old_registry
 upgraded="$("$root/.build/megabrain" model list --json)"
 curated_after="$(printf '%s' "$upgraded" | jq -c '.models[] | select(.agent == "codex" and .model == "operator-model")')"

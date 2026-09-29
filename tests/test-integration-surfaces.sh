@@ -4,7 +4,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
+source "$root/tests/support/state-db.bash"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-integrations.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
+
 work="$(cd "$work" && pwd -P)"
 trap 'rm -rf "$work"' EXIT
 
@@ -62,10 +68,11 @@ printf 'command entry points: megabrain and mb report the manifest version\n'
 nested_state="$work/nested-state"
 write_dispatch_meta "$nested_state" nested-dispatch \
   childHost=superset workspaceId=workspace terminalId=nested-child worktreePath="$root" state=spawning >/dev/null
+state_db_import_dispatch "$root/.build/megabrain" "$nested_state" nested-dispatch
 nested_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$nested_state" SUPERSET_TERMINAL_ID=nested-child bash -c 'MEGABRAIN_STATE_DIR="$1" SUPERSET_TERMINAL_ID="$2" "$3" received' _ "$nested_state" nested-child "$root/.build/megabrain")"
 assert_contains "$nested_output" 'received sent: nested-dispatch'
-assert_equal "$(find "$nested_state/dispatches/nested-dispatch/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
-assert_equal "$(jq -r '.state' "$nested_state/dispatches/nested-dispatch/meta.json")" running
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$nested_state" nested-dispatch | jq -r '.messages | map(select(.from == "child" and .type == "received")) | length')" 1
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$nested_state" nested-dispatch | jq -r '.meta.state')" running
 printf 'state propagation: nested invocation inherits one state directory\n'
 
 integration_home="$work/integration-home"

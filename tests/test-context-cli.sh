@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-context-cli.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 node_dir="$(dirname "$(command -v node)")"
 
 if [ ! -x "$root/.build/megabrain" ]; then

@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { selectChain, type ChainConfig } from "../../src/core/chain.js";
 import { executeChain } from "../../src/cli/commands/chain.js";
@@ -7,6 +8,7 @@ import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ModelRegistry } from "../../src/core/model.js";
+import { saveModels } from "../../src/adapters/state-db.js";
 
 const step = { agent: "codex", model: "m", effort: "high" };
 const config: ChainConfig = {
@@ -44,9 +46,11 @@ describe("chain validation reads the state model registry", () => {
       writeFileSync(join(root, ".megabrain/models.json"), JSON.stringify(registry([
         { agent: "codex", model: "gpt-5.5", reasoning: { separateAxis: true, levels: ["low"] }, provenance: { kind: "sourced" } },
       ])));
-      writeFileSync(join(state, "models.json"), JSON.stringify(registry([
+      const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: state });
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      saveModels(opened.value, registry([
         { agent: "codex", model: "gpt-6-luna", reasoning: { separateAxis: true, levels: ["high"] }, provenance: { kind: "curated", method: "manual curation", obtainedAt: "2026-09-23" } },
-      ])));
+      ]));
       const environment = { MEGABRAIN_STATE_DIR: state, HOME: state, MEGABRAIN_ROOT: root };
       const result = await executeChain(["add", "uses-state-model", "--when", "{}", "--steps", JSON.stringify([{ agent: "codex", model: "gpt-6-luna", effort: "high" }])], environment);
       expect(result.kind).toBe("ok");
@@ -64,9 +68,13 @@ describe("chain validation reads the state model registry", () => {
       const environment = { MEGABRAIN_STATE_DIR: state, HOME: state, MEGABRAIN_ROOT: root };
       const result = await executeChain(["add", "uses-template-model", "--when", "{}", "--steps", JSON.stringify([{ agent: "codex", model: "gpt-6-luna", effort: "high" }])], environment);
       expect(result.kind).toBe("ok");
-      // model.ts's readRegistry copies the template into the state file on first
-      // use; validateConfig must go through the same copy, not read the template directly.
-      expect(JSON.parse(readFileSync(join(state, "models.json"), "utf8"))).toEqual(JSON.parse(readFileSync(join(root, ".megabrain/models.json"), "utf8")));
+      const opened = guardedStateDatabase(environment);
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      const loaded = (await import("../../src/adapters/state-db.js")).loadModels(opened.value);
+      expect(loaded.kind).toBe("ok");
+      if (loaded.kind === "ok") expect(loaded.value.models).toEqual(registry([
+        { agent: "codex", model: "gpt-6-luna", reasoning: { separateAxis: true, levels: ["high"] }, provenance: { kind: "sourced" } },
+      ]).models);
     } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
   });
 });

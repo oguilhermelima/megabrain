@@ -7,6 +7,7 @@ import { getDispatch, type DispatchRow } from "../../db/queries/dispatches.js";
 import { listMessages } from "../../db/queries/messages.js";
 import { listDeliveries } from "../../db/queries/deliveries.js";
 import { getInstallState, getTerminal, getTmuxSession, listInstallState, listModels } from "../../db/queries/aux-state.js";
+import { dryRunLegacyMigration, markExplicitImport, migrateLegacyState } from "../../db/cutover.js";
 
 function parseJson(args: readonly string[]): Result<boolean> {
   let json = false;
@@ -45,10 +46,11 @@ function backup(environment: StateEnvironment, json: boolean): Result<string> {
 
 export async function executeDatabase(args: readonly string[], environment: StateEnvironment): Promise<Result<string>> {
   const [verb, ...options] = args;
-  if (verb === undefined || verb === "-h" || verb === "--help") return ok("Usage: megabrain db <check|backup|import|show> ...\n");
-  if (verb !== "check" && verb !== "backup" && verb !== "import" && verb !== "show") return failed(`unknown db command: ${verb}`, 2);
-  if (options.includes("-h") || options.includes("--help")) return ok(usageText(verb === "import" ? "db-import" : verb === "show" ? "db-show" : verb === "check" ? "db-check" : "db-backup"));
+  if (verb === undefined || verb === "-h" || verb === "--help") return ok("Usage: megabrain db <check|backup|import|migrate|show> ...\n");
+  if (verb !== "check" && verb !== "backup" && verb !== "import" && verb !== "migrate" && verb !== "show") return failed(`unknown db command: ${verb}`, 2);
+  if (options.includes("-h") || options.includes("--help")) return ok(usageText(verb === "import" ? "db-import" : verb === "migrate" ? "db-migrate" : verb === "show" ? "db-show" : verb === "check" ? "db-check" : "db-backup"));
   if (verb === "import") return importState(options, environment);
+  if (verb === "migrate") return migrateState(options, environment);
   if (verb === "show") return showState(options, environment);
   const parsed = parseJson(options);
   if (parsed.kind !== "ok") return failed(`${parsed.error}\n${usageText(verb === "check" ? "db-check" : "db-backup").trimEnd()}`, parsed.exitCode);
@@ -75,6 +77,8 @@ async function importState(args: readonly string[], environment: StateEnvironmen
     const report = result.value;
     if (report.malformed.length > 0) return failed(`malformed input:\n${report.malformed.map(({ path, reason }) => `  ${path}: ${reason}`).join("\n")}`);
     if (report.conflicts.length > 0) return failed(`conflicting records: ${report.conflicts.join(", ")}`);
+    const marked = markExplicitImport(opened.value, report.imported);
+    if (marked.kind !== "ok") return failed(marked.error, marked.exitCode);
     const summary = { imported: report.imported, skippedIdentical: report.skippedIdentical, replaced: report.replaced, malformed: report.malformed };
     return ok(json ? `${JSON.stringify(summary, null, 2)}\n` : `imported ${countRecords(report.imported)}, skipped identical ${countRecords(report.skippedIdentical)}, replaced ${countRecords(report.replaced)}, malformed ${report.malformed.length}\n`);
   } catch (error: unknown) {
@@ -82,6 +86,23 @@ async function importState(args: readonly string[], environment: StateEnvironmen
   } finally {
     opened.value.close();
   }
+}
+
+async function migrateState(args: readonly string[], environment: StateEnvironment): Promise<Result<string>> {
+  let dryRun = false;
+  let json = false;
+  for (const arg of args) {
+    if (arg === "--dry-run") dryRun = true;
+    else if (arg === "--json") json = true;
+    else return failed(`unexpected argument: ${arg}\n${usageText("db-migrate").trimEnd()}`, 2);
+  }
+  const result = dryRun ? await dryRunLegacyMigration(environment) : await migrateLegacyState(environment);
+  if (result.kind !== "ok") return failed(result.error, result.exitCode);
+  const summary = result.value;
+  if (json) return ok(`${JSON.stringify(summary, null, 2)}\n`);
+  const state = summary.migrated ? "migrated" : dryRun ? "dry run complete" : "already migrated";
+  const snapshot = summary.snapshot === null ? "" : `; legacy snapshot: ${summary.snapshot}`;
+  return ok(`${state}; dispatches ${summary.totals.dispatches}, messages ${summary.totals.messages}, deliveries ${summary.totals.deliveries}${snapshot}\n`);
 }
 
 function countRecords(counts: Readonly<Record<string, number>>): number {
@@ -119,14 +140,16 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
       const meta = getDispatch(db, id as string);
       if (meta === undefined) return { kind: "missing" as const };
       const row = db.query<Pick<DispatchRow, "archived_at">>("SELECT archived_at FROM dispatches WHERE id = ?").get(id as string);
-      return { kind: "found" as const, value: { meta, messages: listMessages(db, id as string), deliveries: listDeliveries(db, id as string), archived: row?.archived_at !== null && row?.archived_at !== undefined } };
+      const nudges = db.query<{ id: number; dispatch_id: string; pointer: string; outcome: string; reason: string; created_at: string }>("SELECT id, dispatch_id, pointer, outcome, reason, created_at FROM nudge_events WHERE dispatch_id = ? ORDER BY id").all(id as string)
+        .map((nudge) => ({ id: nudge.id, dispatchId: nudge.dispatch_id, pointer: nudge.pointer, outcome: nudge.outcome, reason: nudge.reason, createdAt: nudge.created_at }));
+      return { kind: "found" as const, value: { meta, messages: listMessages(db, id as string), deliveries: listDeliveries(db, id as string), nudges, archived: row?.archived_at !== null && row?.archived_at !== undefined } };
     });
     if (result.kind !== "ok") return failed(result.error, result.exitCode);
     if (result.value.kind === "missing") return failed(`${mode === "terminal" ? "terminal" : mode === "tmux-session" ? "tmux session" : "dispatch"} not found: ${id}`);
     if (json) return ok(`${JSON.stringify(result.value.value, null, 2)}\n`);
     if (mode === "dispatch") {
-      const value = result.value.value as { meta: Record<string, unknown>; messages: unknown[]; deliveries: unknown[]; archived: boolean };
-      return ok(`${String(value.meta.dispatchId)}: ${String(value.meta.state)}; ${value.messages.length} messages, ${value.deliveries.length} deliveries${value.archived ? "; archived" : ""}\n`);
+      const value = result.value.value as { meta: Record<string, unknown>; messages: unknown[]; deliveries: unknown[]; nudges: unknown[]; archived: boolean };
+      return ok(`${String(value.meta.dispatchId)}: ${String(value.meta.state)}; ${value.messages.length} messages, ${value.deliveries.length} deliveries, ${value.nudges.length} nudges${value.archived ? "; archived" : ""}\n`);
     }
     if (mode === "terminal") return ok(`terminal ${id} found\n`);
     if (mode === "tmux-session") return ok(`tmux session ${id} found\n`);

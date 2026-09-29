@@ -11,6 +11,17 @@ if [ ! -x "$binary" ]; then
 fi
 
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-turn-end.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+export HOME="$state_dir/home"
+export MEGABRAIN_STATE_DIR="$state_dir/state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 bin_dir="$state_dir/bin"
 send_log="$state_dir/send.log"
 mkdir -p "$bin_dir"
@@ -82,7 +93,7 @@ write_dispatch_meta() {
       terminalState: "owned", terminalReason: null, failureCount: 0, stage: null, reason: null,
       reconcileOutcome: null, createdAt: $now, updatedAt: $now}' \
     >"$dispatch_dir/meta.json"
-  jq -n '{lastReadSeq: 0}' >"$dispatch_dir/cursor.json"
+  "$binary" db import "$MEGABRAIN_STATE_DIR" --replace >/dev/null
 }
 
 create_dispatch() {
@@ -107,6 +118,11 @@ append_message() {
   case "$type" in
     ask|done|stalled) printf 'mail: megabrain orchestrate watch %s\n' "$dispatch_id" >>"$send_log" ;;
   esac
+  "$binary" db import "$MEGABRAIN_STATE_DIR" --replace >/dev/null
+}
+
+show_dispatch() {
+  "$binary" db show "$1" --json
 }
 
 run_hook() {
@@ -122,7 +138,7 @@ append_message event-hook ask 'event-backed question'
 assert_equal "$(send_count)" 1
 run_hook
 assert_equal "$(send_count)" 1
-assert_equal "$(jq -r '.lastReadSeq' "$MEGABRAIN_DISPATCH_DIR/event-hook/cursor.json")" 0
+assert_equal "$(show_dispatch event-hook | jq '[.messages[] | select(.from == "child")] | length')" 1
 printf 'event-backed child mail is not nudged again by the parent turn-end hook\n'
 
 create_dispatch protocol-hook running
@@ -140,9 +156,10 @@ printf '%s\n%s\n' \
   "You've hit your usage limit for this account." \
   'Switch to another model now,' >"$MEGABRAIN_TEST_PANE_OUTPUT"
 run_hook
-assert_equal "$(jq -r '.state' "$MEGABRAIN_DISPATCH_DIR/refused/meta.json")" failed
-assert_equal "$(jq -r '.processState' "$MEGABRAIN_DISPATCH_DIR/refused/meta.json")" failed
-assert_equal "$(jq -r '.stage' "$MEGABRAIN_DISPATCH_DIR/refused/meta.json")" limit-refused
-assert_equal "$(jq -r '.reconcileOutcome' "$MEGABRAIN_DISPATCH_DIR/refused/meta.json")" limit-refused
-assert_contains "$(jq -r '.reason' "$MEGABRAIN_DISPATCH_DIR/refused/meta.json")" 'usage limit'
+refused_meta="$(show_dispatch refused | jq -c '.meta')"
+assert_equal "$(jq -r '.state' <<<"$refused_meta")" failed
+assert_equal "$(jq -r '.processState' <<<"$refused_meta")" failed
+assert_equal "$(jq -r '.stage' <<<"$refused_meta")" limit-refused
+assert_equal "$(jq -r '.reconcileOutcome' <<<"$refused_meta")" limit-refused
+assert_contains "$(jq -r '.reason' <<<"$refused_meta")" 'usage limit'
 printf 'parent hook: records a pane usage-limit refusal without waiting\n'

@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-receipt.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 cleanup() {
   rm -rf "$state_dir"
@@ -12,6 +16,13 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 export ORCA_TERMINAL_HANDLE=parent-terminal
 unset SUPERSET_TERMINAL_ID TMUX TMUX_PANE
 
@@ -39,6 +50,7 @@ create_dispatch() {
     parentSessionId=parent-terminal parentHost=orca childHost=orca terminalId="$terminal_id" \
     worktreePath="$root" branch=fix/prompt-delivery-proof agent=codex agentId=codex label=label \
     state="$state" model=gpt-5 modelHonored=true runtime=host spawnRuntime=ide >/dev/null
+  "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 }
 
 # megabrain_dispatch_preamble (dynamic PATH-based executable-hint text, with a distinct fallback
@@ -81,39 +93,40 @@ write_dispatch_meta "$state_dir" outside-repository \
   parentSessionId=parent-terminal parentHost=superset childHost=superset workspaceId=workspace-test \
   terminalId=outside-terminal worktreePath="$outside" branch=main agent=codex agentId=codex \
   label=label state=spawning model=gpt-5 modelHonored=true runtime=host spawnRuntime=ide >/dev/null
+ "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 (cd "$outside" && env -u TMUX -u TMUX_PANE -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/.build/megabrain" received >/dev/null)
-assert_equal "$(find "$state_dir/dispatches/outside-repository/messages" -name '*-child-received.json' | wc -l | tr -d ' ')" 1
+assert_equal "$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show outside-repository --json | jq '[.messages[] | select(.type == "received")] | length')" 1
 printf 'dispatch receipt works from a non-checkout directory\n'
 
 create_dispatch optional-receipt spawning command-terminal
 received_output="$(env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=command-terminal MEGABRAIN_STATE_DIR="$state_dir" \
   "$root/.build/megabrain" received)"
 assert_equal "$received_output" 'received sent: optional-receipt'
-received_message="$state_dir/dispatches/optional-receipt/messages/0001-child-received.json"
-[ -f "$received_message" ] || fail 'received command did not leave a durable message'
-assert_equal "$(jq -r '.type' "$received_message")" received
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/optional-receipt/meta.json")" running
+optional_show="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show optional-receipt --json)"
+assert_equal "$(jq -r '.messages[0].type' <<<"$optional_show")" received
+assert_equal "$(jq -r '.meta.state' <<<"$optional_show")" running
 printf 'received command is durable and authoritative\n'
 
 create_dispatch running-reply running
 reply_result="$("$root/.build/megabrain" orchestrate reply running-reply --text 'Continue work' --json)"
 assert_equal "$(jq -r '.status' <<<"$reply_result")" queued
-reply_message="$(find "$state_dir/dispatches/running-reply/messages" -name '*.json' -print -quit)"
-assert_equal "$(jq -r '.type' "$reply_message")" reply
-assert_equal "$(jq -r '.text' "$reply_message")" 'Continue work'
+reply_show="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show running-reply --json)"
+assert_equal "$(jq -r '.messages[0].type' <<<"$reply_show")" reply
+assert_equal "$(jq -r '.messages[0].text' <<<"$reply_show")" 'Continue work'
 printf 'running child accepts queued parent reply\n'
 
 # A child that has just ended an ask turn is waiting_for_reply. The turn-end hook must inspect
 # its own mailbox before the waiting guard, and ask the agent to consume it.
 create_dispatch waiting-reply waiting_for_reply waiting-terminal
 append_dispatch_message "$state_dir" waiting-reply parent reply 'reply waiting at turn end' parent-terminal >/dev/null
+"$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 waiting_hook_output="$(env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=waiting-terminal MEGABRAIN_STATE_DIR="$state_dir" \
   "$root/.build/megabrain" hook turn-end '{}')"
 assert_equal "$(jq -r '.decision' <<<"$waiting_hook_output")" block
 assert_contains "$(jq -r '.reason' <<<"$waiting_hook_output")" 'megabrain check'
-waiting_delivery="$state_dir/dispatches/waiting-reply/deliveries"/*.json
-assert_equal "$(jq -r '.status' $waiting_delivery)" outstanding
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/waiting-reply/meta.json")" waiting_for_reply
+waiting_show="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show waiting-reply --json)"
+assert_equal "$(jq -r '.deliveries[0].status' <<<"$waiting_show")" outstanding
+assert_equal "$(jq -r '.meta.state' <<<"$waiting_show")" waiting_for_reply
 printf 'waiting child turn: hook exposes queued reply before the state guard\n'
 
 printf 'ok: receipt delivery and running reply scenarios\n'

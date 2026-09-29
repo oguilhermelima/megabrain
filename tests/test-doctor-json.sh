@@ -4,6 +4,10 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-doctor.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 node_dir="$(dirname "$(command -v node)")"
 
 cleanup() {
@@ -51,6 +55,7 @@ exit 0
 EOF
   chmod +x "$tmux_only_bin/tmux"
   printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$tmux_only_state/state.json"
+  MEGABRAIN_STATE_DIR="$tmux_only_state" HOME="$tmux_only_state" "$entrypoint" db import "$tmux_only_state" >/dev/null
   # PATH includes Node for the shebang and system tools, while excluding real host CLIs.
   tmux_only_json="$(PATH="$tmux_only_bin:$node_dir:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$tmux_only_state" HOME="$tmux_only_state" "$entrypoint" doctor orchestration --json 2>/dev/null)"
   tmux_only_status="$(printf '%s' "$tmux_only_json" | jq -r '.status')"

@@ -35,10 +35,25 @@ export function getInstallState(handle: DatabaseHandle): Result<InstallState> {
 }
 
 export function putInstallModule(handle: DatabaseHandle, moduleId: string, value: unknown): Result<void> {
+  return write(handle, ({ db }) => putInstallValue(db, moduleId, value));
+}
+
+function putInstallValue(db: DatabaseHandle["db"], moduleId: string, value: unknown): void {
+  const updatedAt = typeof value === "object" && value !== null && "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString();
+  db.run("INSERT INTO install_state (module_id, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(module_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [moduleId, encode(value), updatedAt]);
+}
+
+export function mutateInstallModule(handle: DatabaseHandle, moduleId: string, mutate: (value: unknown | undefined) => unknown): Result<unknown> {
   return write(handle, ({ db }) => {
-    const updatedAt = typeof value === "object" && value !== null && "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString();
-    db.run("INSERT INTO install_state (module_id, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(module_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [moduleId, encode(value), updatedAt]);
+    const row = db.query<{ value: string }>("SELECT value FROM install_state WHERE module_id = ?").get(moduleId);
+    const next = mutate(row === null ? undefined : decode(row.value));
+    putInstallValue(db, moduleId, next);
+    return next;
   });
+}
+
+export function deleteInstallModule(handle: DatabaseHandle, moduleId: string): Result<boolean> {
+  return write(handle, ({ db }) => db.run("DELETE FROM install_state WHERE module_id = ?", [moduleId]).changes > 0);
 }
 
 export function loadModels(handle: DatabaseHandle): Result<ModelRegistry> {
@@ -68,10 +83,18 @@ export function getTmuxSessionByStableId(handle: DatabaseHandle, stableSessionId
   });
 }
 
+export function listTmuxSessions(handle: DatabaseHandle): Result<TmuxSessionRecord[]> {
+  return read(handle, ({ db }) => db.query<{ value: string }>("SELECT value FROM tmux_sessions ORDER BY session_name").all().map((row) => decode<TmuxSessionRecord>(row.value)));
+}
+
 export function putTmuxSession(handle: DatabaseHandle, record: Readonly<Record<string, unknown>>, stableSessionId: string | null): Result<TmuxSessionRecord> {
   return write(handle, ({ db }) => {
     if (typeof record.tmuxSession !== "string") throw new TypeError("tmuxSession must be a string");
     db.run("INSERT INTO tmux_sessions (session_name, stable_session_id, value) VALUES (?, ?, ?) ON CONFLICT(session_name) DO UPDATE SET stable_session_id = excluded.stable_session_id, value = excluded.value", [record.tmuxSession, stableSessionId, encode(record)]);
     return record as TmuxSessionRecord;
   });
+}
+
+export function deleteTmuxSession(handle: DatabaseHandle, name: string): Result<boolean> {
+  return write(handle, ({ db }) => db.run("DELETE FROM tmux_sessions WHERE session_name = ?", [name]).changes > 0);
 }

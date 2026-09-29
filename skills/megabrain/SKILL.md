@@ -22,12 +22,15 @@ command; the help output is the authority, and the lines below are shortened for
 megabrain db check [--json]
 megabrain db backup [--json]
 megabrain db import <dir> [--replace] [--json]
+megabrain db migrate [--dry-run] [--json]
 megabrain db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]
 ```
 
 `db check` reports SQLite integrity, foreign key violations, the schema version, and the state
 database path. `db backup` writes a consistent SQLite backup under the state directory and keeps
-the newest seven backups.
+the newest seven backups. `db migrate --dry-run --json` previews legacy JSON import and parity
+without changing the state directory; `db migrate --json` runs it and refuses when the cutover
+marker already exists. `db show` reads dispatches and auxiliary records from SQLite.
 
 ## Delegating work to another agent
 
@@ -217,7 +220,7 @@ remover failures use `error` instead. The remover's output is captured and repor
 own error on failure; successful remover JSON is not passed through as megabrain output. `terminal create` with no
 `--command` runs the worktree's `.superset/config.json` run script. Superset tabs come back
 untitled; only Orca tabs carry a title. Terminal identities, commands and creation times are
-recorded under `$MEGABRAIN_STATE_DIR/terminals/`, so `terminal list` reports `alive` or `dead`,
+stored in the SQLite state database, so `terminal list` reports `alive` or `dead`,
 and retains a host-gone terminal as `stale`. `terminal restart` accepts `id:`, `title:`, `port:` or
 `worktree:` selectors, kills only the recorded process tree after proving a port listener belongs
 to it, waits for the old port to be free, and optionally waits for it to listen again with
@@ -335,5 +338,14 @@ pane; otherwise it opens as a tab in the IDE that launched the session. Override
 
 ## Where state lives
 
-Dispatch messages are append-only under `$MEGABRAIN_STATE_DIR/dispatches/`, which defaults to
-`~/.megabrain`. Direct-parent ownership is required for `reply` and `close`.
+Dispatches, messages, deliveries, terminals, install state, models, and tmux sessions live in
+`$MEGABRAIN_STATE_DIR/megabrain.db`, which defaults to `~/.megabrain/megabrain.db`. The first
+non-`db` command imports legacy JSON state, checks parity, moves dispatch transcripts to
+`transcripts/<dispatch-id>.txt`, and seals the remaining JSON trees under
+`legacy/json-<UTC timestamp>/`. A fresh state with no legacy JSON is marked without a snapshot;
+`db import` also sets the marker for explicit fixture or operator imports. `db check` verifies the
+database, and `db backup` creates a consistent backup.
+
+For rollback, restore the sealed legacy tree to its original paths and use the previous binary.
+Changes made after cutover are stored only in SQLite and are lost by that rollback. Direct-parent
+ownership is required for `reply` and `close`.

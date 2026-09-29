@@ -1,19 +1,20 @@
-import { mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parsePruneArgs, pruneDecision, pruneStates, type PruneOptions } from "../../core/orchestrate-prune.js";
 import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
-import { dispatchArchiveDirectory, dispatchArchiveParentDirectory, liveDispatchDirectories } from "../../adapters/dispatch-store.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { atomicJson, tmuxCallerPaneSession } from "./queue-write.js";
+import { tmuxCallerPaneSession } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { hostCloseReason, isHostTerminalAbsent } from "../../core/orchestrate-close.js";
 import { usageText } from "../../core/usage.js";
+import { stateDatabase, listDispatches, listMessages, mutateDispatch, archiveDispatch, deleteDispatch, transcriptPath } from "../../adapters/state-db.js";
+import type { DatabaseHandle } from "../../db/db.js";
 
 type RecordValue = Record<string, unknown>;
 type Environment = Readonly<Record<string, string | undefined>>;
-type Entry = Readonly<{ id: string; meta: RecordValue; directory: string }>;
+type Entry = Readonly<{ id: string; meta: RecordValue }>;
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
@@ -43,12 +44,12 @@ async function terminalStatus(meta: RecordValue, process: ProcessAdapter): Promi
   return panes.value.includes(text(meta.tmuxPane)) ? "proven" : "missing";
 }
 
-async function childIdentityProof(directory: string): Promise<boolean> {
-  const names = await readdir(`${directory}/messages`).catch(() => []);
-  return names.some((name) => name.includes("-child-"));
+function childIdentityProof(handle: DatabaseHandle, dispatchId: string): boolean {
+  const messages = listMessages(handle, dispatchId);
+  return messages.kind === "ok" && messages.value.some((message) => message.from === "child");
 }
 
-async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
+async function reconcileEntry(handle: DatabaseHandle, entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
   const state = text(entry.meta.state);
   const processState = text(entry.meta.processState);
   const terminalState = text(entry.meta.terminalState);
@@ -56,15 +57,15 @@ async function reconcileEntry(entry: Entry, process: ProcessAdapter): Promise<Re
     (terminalState === "retained" || ["start-unproven", "stop-unproven", "abandoned", "exited"].includes(processState));
   if (!needsReconcile) return entry.meta;
   const terminal = await terminalStatus(entry.meta, process);
-  const proven = terminal === "proven" || await childIdentityProof(entry.directory);
+  const proven = terminal === "proven" || childIdentityProof(handle, entry.id);
   let parent: "alive" | "gone" | "unknown" = "unknown";
   const parentSession = text(entry.meta.parentTmuxSession);
   if (proven && parentSession !== "") parent = (await getTmux().sessionExists(parentSession, process)).kind === "ok" ? "alive" : "gone";
   const decision = reconcileDecision(entry.meta, proven ? "proven" : terminal, parent);
   if (decision.outcome === "unchanged") return entry.meta;
   const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  await atomicJson(`${entry.directory}/meta.json`, next);
-  return next;
+  const updated = mutateDispatch(handle, entry.id, () => next);
+  return updated.kind === "ok" ? updated.value : entry.meta;
 }
 
 function hostTerminalArgs(meta: RecordValue): { readonly command: string; readonly args: readonly string[]; readonly host: string } | undefined {
@@ -132,45 +133,62 @@ export async function tmuxCallerSession(environment: Environment, process: Proce
   return tmuxCallerPaneSession(environment, process);
 }
 
-async function entries(root: string): Promise<Entry[]> {
-  const result: Entry[] = [];
-  for (const directory of await liveDispatchDirectories(root)) {
-    try {
-      const parsed = JSON.parse(await readFile(`${directory}/meta.json`, "utf8")) as RecordValue;
-      const meta = normalizeMetadata(parsed);
-      if (meta !== parsed) await atomicJson(`${directory}/meta.json`, meta);
-      if (typeof meta.dispatchId === "string") result.push({ id: meta.dispatchId, meta, directory });
-    } catch { /* shell ignores unreadable metadata */ }
-  }
-  return result;
+function entries(handle: DatabaseHandle): Entry[] {
+  const records = listDispatches(handle);
+  if (records.kind !== "ok") return [];
+  return records.value.map((record) => {
+    const meta = normalizeMetadata(record as RecordValue);
+    if (meta !== record) {
+      const updated = mutateDispatch(handle, record.dispatchId, () => meta);
+      if (updated.kind === "ok") return { id: record.dispatchId, meta: updated.value as RecordValue };
+    }
+    return { id: record.dispatchId, meta };
+  });
 }
 
 export async function executeOrchestratePrune(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-prune"));
   const parsed = parsePruneArgs(args); if (parsed.kind !== "ok") return parsed;
   const options: PruneOptions = parsed.value; const root = resolveStateDirectory(environment); const now = new Date(); const month = now.toISOString().slice(0, 7);
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+  const handle = opened.value;
   const archived: Array<{ dispatchId: string; path: string }> = []; const deleted: string[] = []; const skipped: Array<{ dispatchId: string; state: string | null; reason: string }> = []; const terminalNotProvenGone: Array<{ dispatchId: string; reason: string }> = [];
-  for (const entry of await entries(root)) {
+  for (const entry of entries(handle)) {
     let meta = entry.meta;
-    try { meta = await reconcileEntry(entry, process); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
+    try { meta = await reconcileEntry(handle, entry, process); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
     const decision = pruneDecision(meta, options, now);
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
     const released = await releaseBeforePrune(meta, environment, process, options.dryRun);
     if (released.kind === "unproven") {
       terminalNotProvenGone.push({ dispatchId: entry.id, reason: released.reason });
-      if (!options.dryRun) await atomicJson(`${entry.directory}/meta.json`, {
+      if (!options.dryRun) mutateDispatch(handle, entry.id, () => ({
         ...meta,
         terminalState: "retained",
         terminalReason: released.reason,
         updatedAt: new Date().toISOString(),
-      }).catch(() => undefined);
+      }));
       continue;
     }
     if (released.kind === "blocked") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.reason }); continue; }
     if (options.mode === "archive") {
-      const target = dispatchArchiveDirectory(root, month, entry.id); archived.push({ dispatchId: entry.id, path: target });
-      if (!options.dryRun) { try { await mkdir(dispatchArchiveParentDirectory(root, month), { recursive: true }); await rename(entry.directory, target); } catch { archived.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not archive dispatch" }); } }
-    } else { deleted.push(entry.id); if (!options.dryRun) { try { await rm(entry.directory, { recursive: true, force: true }); } catch { deleted.pop(); skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: "could not delete dispatch" }); } } }
+      archived.push({ dispatchId: entry.id, path: handle.path });
+      if (!options.dryRun) {
+        const result = archiveDispatch(handle, entry.id, now.toISOString());
+        if (result.kind !== "ok" || !result.value) { archived.pop(); skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not archive dispatch" }); }
+      }
+    } else {
+      if (options.dryRun) deleted.push(entry.id);
+      else {
+        const result = deleteDispatch(handle, entry.id);
+        if (result.kind !== "ok" || !result.value) skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not delete dispatch" });
+        else {
+          deleted.push(entry.id);
+          const path = transcriptPath(environment, entry.id);
+          if (path.kind === "ok") await rm(path.value, { force: true }).catch(() => undefined);
+        }
+      }
+    }
   }
   const result = { mode: options.mode, dryRun: options.dryRun, olderThanDays: options.olderThan, archived, deleted, skipped, terminalNotProvenGone };
   if (options.json) return ok(json({ ...result, archived: archived.length, deleted: deleted.length, skipped: skipped.length, terminalNotProvenGone: terminalNotProvenGone.length, archivedDispatches: archived, deletedDispatches: deleted, skippedDispatches: skipped, terminalNotProvenGoneDispatches: terminalNotProvenGone }));

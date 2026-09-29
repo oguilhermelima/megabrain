@@ -3,7 +3,12 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+node_bin="$(dirname "$(command -v node)")"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-spawn-rollback.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 cleanup() {
   rm -rf "$work_dir"
@@ -95,7 +100,7 @@ scenario_launch_failure_keeps_worktree() {
   set +e
   output="$(env -i HOME="$state/home" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
     ORCA_TERMINAL_HANDLE=parent-terminal \
-    ORCA_WAIT_STATUS=1 PATH="$bin:/usr/bin:/bin" "$root/.build/megabrain" orchestrate spawn \
+    ORCA_WAIT_STATUS=1 PATH="$bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" orchestrate spawn \
     --repo "$repo" --branch "$branch" --agent codex --model gpt-5 --effort medium \
     --prompt 'write the fixture file' --tmux false --json 2>&1)"
   launch_status=$?

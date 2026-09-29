@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-reply-nudge.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 state_root="$(cd -P "$state_root" && pwd -P)"
 state_dir="$state_root/state"
 socket_name=mbreply
@@ -65,6 +69,7 @@ create_meta() {
     worktreePath="$root" branch=main agent="$agent" agentId="$agent" label=label state=running \
     model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$pane" \
     runtime=tmux spawnRuntime=tmux parentTmuxSession="$session_name" parentTmuxPane="$parent_pane" >/dev/null
+  MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 }
 
 # `orchestrate reply` writes the queue message durably before it ever touches the pane
@@ -101,8 +106,9 @@ if [ ! -f "$done_file" ]; then
 fi
 wait "$reply_pid"
 assert_equal "$(jq -r '.status' "$reply_output")" queued
-assert_equal "$(find "$state_dir/dispatches/$dispatch_id/messages" -name '*.json' | wc -l | tr -d ' ')" 1
-assert_equal "$(jq -r '.text' "$state_dir/dispatches/$dispatch_id/messages"/*.json)" "$answer"
+reply_message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
+assert_equal "$(jq -r '.seq' <<<"$reply_message")" 1
+assert_equal "$(jq -r '.text' <<<"$reply_message")" "$answer"
 printf 'busy child: reply returns within the bound and keeps the full queue message\n'
 
 tmux_cmd kill-pane -t "$child_pane"
@@ -150,9 +156,9 @@ scenario_agent_nudge() {
   output="$(PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text "answer for $agent" --json)"
   assert_equal "$(jq -r '.status' <<<"$output")" queued
   assert_equal "$(jq -r '.nudge' <<<"$output")" "$expect_nudge"
-  message="$state_dir/dispatches/$dispatch_id/messages"/*.json
-  assert_equal "$(jq -r '.text' $message)" "answer for $agent"
-  assert_contains "$(jq -r '.sessionId' $message)" ':'
+  message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
+  assert_equal "$(jq -r '.text' <<<"$message")" "answer for $agent"
+  assert_contains "$(jq -r '.sessionId' <<<"$message")" ':'
   if [ "$expect_key" = none ]; then
     [ ! -s "$send_log" ] || fail "$agent: expected no send-keys call, got: $(cat "$send_log")"
   else

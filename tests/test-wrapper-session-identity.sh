@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "/tmp/mbw.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 export TMUX_TMPDIR="$work/tmux"
 mkdir -p "$TMUX_TMPDIR" "$work/bin"
 real_tmux="$(command -v tmux)"

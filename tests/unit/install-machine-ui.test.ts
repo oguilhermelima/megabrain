@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +7,7 @@ import { runMachineInstall } from "../../src/cli/commands/install-machine.js";
 import { SetupCancelled, type MachinePrompter } from "../../src/cli/commands/install-ui.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
+import { getInstallState } from "../../src/adapters/state-db.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -17,6 +19,14 @@ function environment(): { HOME: string; MEGABRAIN_STATE_DIR: string } {
   const root = mkdtempSync(join(tmpdir(), "megabrain-install-ui-"));
   temporaryDirectories.push(root);
   return { HOME: join(root, "home"), MEGABRAIN_STATE_DIR: join(root, "state") };
+}
+
+function machineState(env: ReturnType<typeof environment>): Record<string, unknown> {
+  const opened = guardedStateDatabase(env);
+  if (opened.kind !== "ok") throw new Error(opened.error);
+  const result = getInstallState(opened.value);
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value;
 }
 
 function processAdapter(available: readonly string[]): ProcessAdapter {
@@ -66,7 +76,7 @@ describe("interactive machine install", () => {
     expect(installed).toEqual(["tmux-runtime", "orchestration-hooks"]);
     expect(existsSync(join(env.HOME, ".codex", "skills", "megabrain", "SKILL.md"))).toBe(true);
     expect(existsSync(join(env.HOME, ".claude", "skills", "megabrain", "SKILL.md"))).toBe(false);
-    const state = JSON.parse(readFileSync(join(env.MEGABRAIN_STATE_DIR, "state.json"), "utf8"));
+    const state = machineState(env);
     expect(state.machineInstall).toMatchObject({ agents: ["codex"], skill: "global", tmux: "yes" });
   });
 
@@ -93,7 +103,7 @@ describe("interactive machine install", () => {
 
     expect(result).toEqual(ok(""));
     expect(installed).toEqual([]);
-    expect(existsSync(join(env.MEGABRAIN_STATE_DIR, "state.json"))).toBe(false);
+    expect(machineState(env)).toEqual({});
     expect(existsSync(join(env.HOME, ".claude", "skills"))).toBe(false);
   });
 
@@ -103,7 +113,7 @@ describe("interactive machine install", () => {
       true, async () => ok("reverted"), scriptedPrompter({ cancelAt: "skill" }, []));
 
     expect(result).toEqual(ok("", 130));
-    expect(existsSync(join(env.MEGABRAIN_STATE_DIR, "state.json"))).toBe(false);
+    expect(machineState(env)).toEqual({});
   });
 
   test("a rerun starts from the previous answers and ends as a no-op", async () => {

@@ -3,12 +3,18 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-tmux-panes.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$tmp/.megabrain-test-state"
+require_megabrain_test_state
+
 socket="mbpane$$"
 state="$tmp/state"
+export HOME="$tmp/home"
 fake_bin="$tmp/bin"
 parent_dir="$tmp/parent"
-worktree="$root"
+worktree="$tmp/worktree"
 local_worktree="$root"
 parent_session="mbpane-parent"
 local_session="mbpane-local"
@@ -31,11 +37,25 @@ assert_equal() {
   [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
 }
 
+db_meta() { "$root/.build/megabrain" db show "$1" --json | jq -c '.meta'; }
+
 tmux_cmd() {
   tmux -f /dev/null -L "$socket" "$@"
 }
 
-mkdir -p "$state" "$fake_bin" "$parent_dir"
+mkdir -p "$state" "$HOME" "$fake_bin" "$parent_dir"
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1 ;; esac
+  done
+}
+git clone --shared --quiet "$root" "$worktree"
+worktree="$(cd "$worktree" && pwd -P)"
 export REAL_TMUX="$(command -v tmux)"
 export TMUX_TEST_SOCKET="$socket"
 cat > "$fake_bin/tmux" <<'EOF'
@@ -75,6 +95,14 @@ tmux_cmd set-option -g default-command 'exec /bin/bash'
 parent_pane="$(tmux_cmd display-message -p -t "$parent_session" '#{pane_id}')"
 export TMUX="$(tmux_cmd display-message -p -t "$parent_pane" '#{socket_path},#{pid},#{session_id}')"
 export TMUX_PANE="$parent_pane"
+assert_safe_state_dir
+
+wrapper_session="mbpane-wrapper"
+tmux_cmd new-session -d -s "$wrapper_session" -c "$local_worktree" -x 120 -y 40 bash
+wrapper_pane="$(tmux_cmd display-message -p -t "$wrapper_session" '#{pane_id}')"
+mkdir -p "$state/sessions"
+jq -n --arg session "$wrapper_session" --arg path "$local_worktree" --arg pane "$wrapper_pane" '{tmuxSession:$session,workingDirectory:$path,tmuxPane:$pane,agent:"codex",role:"main",host:"test",createdAt:"now"}' > "$state/sessions/$wrapper_session.json"
+"$root/.build/megabrain" db import "$state" --replace --json >/dev/null
 
 dispatches=()
 panes=()
@@ -82,7 +110,7 @@ for index in 1 2 3 4 5; do
   dispatch="dispatch-pane-child-$index"
   output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt "child $index" --tmux true --json 2>&1 || true)"
   if ! jq -e '.dispatchId' <<<"$output" >/dev/null 2>&1; then
-    transcript="$state/dispatches/$dispatch/transcript"
+    transcript="$state/transcripts/$dispatch.txt"
     [ ! -f "$transcript" ] || cat "$transcript" >&2
     if [ -n "$session" ]; then
       printf 'pane state after failed spawn %s:\n' "$index" >&2
@@ -97,12 +125,11 @@ for index in 1 2 3 4 5; do
     fail "spawn $index failed: $output"
   fi
   dispatches+=("$dispatch")
-  meta="$state/dispatches/$dispatch/meta.json"
-  [ -f "$meta" ] || fail "spawn $index did not write metadata"
-  [ "$(jq -r '.dispatchId' "$meta")" = "$dispatch" ] || fail "spawn $index wrote unexpected dispatch metadata"
-  panes+=("$(jq -r '.tmuxPane' "$meta")")
-  if [ "$index" = 1 ]; then session="$(jq -r '.tmuxSession' "$meta")"; fi
-  [ "$(jq -r '.tmuxSession' "$meta")" = "$session" ] || fail "spawn $index opened a different worktree session"
+  meta="$(db_meta "$dispatch")"
+  [ "$(jq -r '.dispatchId' <<<"$meta")" = "$dispatch" ] || fail "spawn $index wrote unexpected dispatch metadata"
+  panes+=("$(jq -r '.tmuxPane' <<<"$meta")")
+  if [ "$index" = 1 ]; then session="$(jq -r '.tmuxSession' <<<"$meta")"; fi
+  [ "$(jq -r '.tmuxSession' <<<"$meta")" = "$session" ] || fail "spawn $index opened a different worktree session"
 done
 
 window_counts="$(tmux_cmd list-windows -t "$session" -F '#{window_index}:#{window_panes}')"
@@ -141,16 +168,11 @@ assert_equal "$(tmux_cmd list-panes -t "$session" -F '#{pane_id}' | wc -l | tr -
 if tmux_cmd has-session -t "$session" >/dev/null 2>&1; then fail "Megabrain worktree session survived its last child"; fi
 printf 'close order: first four panes removed; final pane removed with session\n'
 
-wrapper_session="mbpane-wrapper"
-tmux_cmd new-session -d -s "$wrapper_session" -c "$worktree" -x 120 -y 40 bash
-wrapper_pane="$(tmux_cmd display-message -p -t "$wrapper_session" '#{pane_id}')"
-mkdir -p "$state/sessions"
-jq -n --arg session "$wrapper_session" --arg path "$worktree" --arg pane "$wrapper_pane" '{tmuxSession:$session,workingDirectory:$path,tmuxPane:$pane,agent:"codex",role:"main",host:"test",createdAt:"now"}' > "$state/sessions/$wrapper_session.json"
 wrapper_dispatch="dispatch-wrapper-session-child"
-wrapper_output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$wrapper_dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt wrapper --tmux true --json)"
-wrapper_meta="$state/dispatches/$wrapper_dispatch/meta.json"
-assert_equal "$(jq -r '.tmuxSession' "$wrapper_meta")" "$wrapper_session"
-assert_equal "$(jq -r '.tmuxSessionOwned' "$wrapper_meta")" false
+wrapper_output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$wrapper_dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$local_worktree" --agent codex --prompt wrapper --tmux true --json)"
+wrapper_meta="$(db_meta "$wrapper_dispatch")"
+assert_equal "$(jq -r '.tmuxSession' <<<"$wrapper_meta")" "$wrapper_session"
+assert_equal "$(jq -r '.tmuxSessionOwned' <<<"$wrapper_meta")" false
 "$root/.build/megabrain" orchestrate close "$wrapper_dispatch" >/dev/null
 tmux_cmd has-session -t "$wrapper_session" || fail "closing a dispatch killed its wrapper session"
 tmux_cmd display-message -p -t "$wrapper_pane" '#{pane_id}' >/dev/null || fail "closing a dispatch killed the wrapper pane"
@@ -167,11 +189,11 @@ export ORCA_TERMINAL_HANDLE=orca-parent
 unset MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID
 local_output="$(MEGABRAIN_SPAWN_DISPATCH_ID=dispatch-local-orca-tmux "$root/.build/megabrain" orchestrate spawn --worktree "$local_worktree" --agent codex --prompt local --tmux false --json)"
 local_dispatch="$(jq -r '.dispatchId' <<<"$local_output")"
-local_meta="$state/dispatches/$local_dispatch/meta.json"
-assert_equal "$(jq -r '.parentHost' "$local_meta")" orca
-assert_equal "$(jq -r '.runtime' "$local_meta")" tmux
-assert_equal "$(jq -r '.tmuxSession' "$local_meta")" "$local_session"
-local_child="$(jq -r '.tmuxPane' "$local_meta")"
+local_meta="$(db_meta "$local_dispatch")"
+assert_equal "$(jq -r '.parentHost' <<<"$local_meta")" orca
+assert_equal "$(jq -r '.runtime' <<<"$local_meta")" tmux
+assert_equal "$(jq -r '.tmuxSession' <<<"$local_meta")" "$local_session"
+local_child="$(jq -r '.tmuxPane' <<<"$local_meta")"
 [ "$local_child" != "$local_pane" ] || fail "same-checkout child reused the caller's pane"
 "$root/.build/megabrain" orchestrate close "$local_dispatch" >/dev/null
 tmux_cmd display-message -p -t "$local_pane" '#{pane_id}' >/dev/null || fail "closing the child killed the caller pane"

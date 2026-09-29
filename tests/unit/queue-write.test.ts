@@ -1,11 +1,20 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../src/core/queue-write.js";
 import { findChild } from "../../src/cli/commands/queue-write.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
+import { archiveDispatch, createDispatch, isDispatchArchived } from "../../src/adapters/state-db.js";
+import { appendMessage, claimOutbox, createDelivery, finishNotification, listDeliveries, listMessages, listNudges, listOutbox } from "../../src/adapters/state-db.js";
+import type { DatabaseHandle } from "../../src/db/db.js";
+
+function requireOk<T>(result: Result<T>): T {
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value;
+}
 
 describe("parseChildMessage", () => {
   test.each([
@@ -78,9 +87,10 @@ describe("findChild: tmux-runtime records", () => {
   }
 
   async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const directory = join(root, "dispatches", dispatchId);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+    const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") throw new Error(database.error);
+    const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
+    if (created.kind !== "ok") throw new Error(created.error);
   }
 
   test("does not match a tmux dispatch by terminalId, even a legacy record carrying the parent's own id", async () => {
@@ -164,9 +174,10 @@ describe("findChild: MEGABRAIN_DISPATCH_ID fast path only short-circuits for the
   }
 
   async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const directory = join(root, "dispatches", dispatchId);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+    const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") throw new Error(database.error);
+    const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
+    if (created.kind !== "ok") throw new Error(created.error);
   }
 
   test("falls back to the identity scan when MEGABRAIN_DISPATCH_ID names a dispatch that is not the caller's", async () => {
@@ -223,6 +234,90 @@ describe("findChild: MEGABRAIN_DISPATCH_ID fast path only short-circuits for the
       expect("kind" in result).toBe(false);
       if ("kind" in result) return;
       expect(result.dispatch).toBe("real-child");
+    });
+  });
+});
+
+describe("queue facade transactions", () => {
+  async function withDatabase<T>(body: (handle: DatabaseHandle) => Promise<T>): Promise<T> {
+    const root = await mkdtemp(join(tmpdir(), "megabrain-queue-atomic-"));
+    try {
+      const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      const dispatch = createDispatch(opened.value, { dispatchId: "atomic", state: "running" });
+      if (dispatch.kind !== "ok") throw new Error(dispatch.error);
+      return await body(opened.value);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  test("message, delivery, and outbox all roll back when delivery insertion fails", async () => {
+    await withDatabase(async (handle) => {
+      const delivery = {
+        id: "duplicate-delivery", dispatchId: "atomic", recipient: "parent",
+        messageSeqs: [1], status: "outstanding", createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(), acknowledgedAt: null, fencedAt: null,
+        consumer: null, consumerGeneration: null,
+      };
+      const seeded = createDelivery(handle, delivery);
+      expect(seeded.kind).toBe("ok");
+
+      const result = appendMessage(handle, "atomic", { from: "child", type: "ask", text: "question" }, {
+        delivery,
+        outbox: { id: "atomic-outbox", targetKind: "parent", target: "parent-terminal", payload: { text: "mail" } },
+      });
+      expect(result.kind).toBe("failed");
+      if (result.kind !== "failed") return;
+      expect(result.error).toContain("UNIQUE");
+      expect(requireOk(listMessages(handle, "atomic"))).toHaveLength(0);
+      expect(requireOk(listDeliveries(handle, "atomic"))).toHaveLength(1);
+      expect(requireOk(listOutbox(handle))).toHaveLength(0);
+    });
+  });
+
+  test("outbox finish and nudge event roll back together when the nudge insert fails", async () => {
+    await withDatabase(async (handle) => {
+      const appended = appendMessage(handle, "atomic", { from: "child", type: "ask", text: "question" }, {
+        outbox: { id: "atomic-outbox", targetKind: "parent", target: "parent-terminal", payload: { text: "mail" } },
+      });
+      expect(appended.kind).toBe("ok");
+      const claimed = claimOutbox(handle, "atomic-outbox", "test-worker", 30);
+      expect(claimed.kind).toBe("ok");
+      const result = finishNotification(handle, "atomic-outbox", "sent", {
+        dispatchId: "missing-dispatch", pointer: "mail", outcome: "delivered", reason: "sent",
+      });
+      expect(result.kind).toBe("failed");
+      expect(requireOk(listOutbox(handle))[0]?.status).toBe("sending");
+      expect(requireOk(listNudges(handle, "atomic"))).toHaveLength(0);
+    });
+  });
+
+  test("derives protocol delivery from messages visible inside the append transaction", async () => {
+    await withDatabase(async (handle) => {
+      const appendDone = (text: string) => appendMessage(handle, "atomic", { from: "child", type: "done", text }, {
+        derive: (previous) => previous.some((message) => message.from === "child" && message.type === "done") ? {} : {
+          delivery: {
+            id: `delivery-${text}`, recipient: "parent", messageSeqs: [], status: "outstanding",
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), consumer: null, consumerGeneration: null,
+          },
+        },
+      });
+      expect(appendDone("first").kind).toBe("ok");
+      expect(appendDone("retry").kind).toBe("ok");
+      expect(requireOk(listMessages(handle, "atomic")).map(({ seq }) => seq)).toEqual([1, 2]);
+      expect(requireOk(listDeliveries(handle, "atomic")).map(({ id }) => id)).toEqual(["delivery-first"]);
+    });
+  });
+
+  test("reads archived_at through the facade and rejects unknown dispatches", async () => {
+    await withDatabase(async (handle) => {
+      expect(requireOk(isDispatchArchived(handle, "atomic"))).toBe(false);
+      expect(requireOk(archiveDispatch(handle, "atomic", "2026-09-01T00:00:00.000Z"))).toBe(true);
+      expect(requireOk(isDispatchArchived(handle, "atomic"))).toBe(true);
+      const missing = isDispatchArchived(handle, "missing");
+      expect(missing.kind).toBe("failed");
+      if (missing.kind === "failed") expect(missing.error).toBe("dispatch not found: missing");
     });
   });
 });

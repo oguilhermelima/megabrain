@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/state-dir-guard.bash"
 
 set -euo pipefail
 
@@ -109,6 +110,15 @@ set_state_dir() {
   # form the pane's shell takes.
   export HOME="$state_dir/home"
   mkdir -p "$HOME" "$state_dir/bin"
+  require_megabrain_test_state "$MEGABRAIN_STATE_DIR"
+  if [ -z "${MEGABRAIN_STATE_DIR:-}" ]; then
+    printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2
+    return 1
+  fi
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*)
+    printf 'FAIL: refusing real HOME database\n' >&2
+    return 1
+  esac
   printf 'export PATH=%q:$PATH\n' "$state_dir/bin" >"$HOME/.bashrc"
   printf '. "$HOME/.bashrc"\n' >"$HOME/.bash_profile"
   # The tmux launch line runs this literally (agents/codex.ts's real flags are ignored by a
@@ -256,7 +266,7 @@ run_flow() {
   dispatch_id="$(jq -r '.dispatch.dispatchId // empty' <<<"$chain_output")"
   [ -n "$dispatch_id" ] || fail "$runtime chain did not launch a dispatch"
   export MEGABRAIN_TEST_DISPATCH_ID="$dispatch_id"
-  dispatch_meta="$(cat "$state_dir/dispatches/$dispatch_id/meta.json")"
+  dispatch_meta="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.meta')"
 
   if [ "$runtime" = tmux ]; then
     child_session="$(jq -r '.tmuxSession' <<<"$dispatch_meta")"
@@ -281,7 +291,7 @@ run_flow() {
   # syncPromptReceipt (src/cli/commands/orchestrate-stop-reconcile.ts) -- already exercised
   # directly in tests/test-prompt-state.sh's "reconcile-receipt" scenario, so it is not repeated
   # here.
-  assert_equal "$(jq -r '.promptReceipt' "$state_dir/dispatches/$dispatch_id/meta.json")" received
+  assert_equal "$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq -r '.meta.promptReceipt')" received
   printf '%s: chain run launches a dispatch and the child receipt is durable\n' "$runtime"
 
   child_command ask "$runtime-question" >/dev/null
@@ -320,7 +330,7 @@ run_flow() {
   compiled_parent_ack "$done_delivery_id" >/dev/null
   assert_equal "$(jq -r '.duplicate' <<<"$(compiled_parent_ack "$done_delivery_id")")" true
 
-  queue_types="$(find "$state_dir/dispatches/$dispatch_id/messages" -name '*.json' -exec jq -r '[.from, .type] | join("/")' {} \; | sort)"
+  queue_types="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq -r '.messages[] | [.from, .type] | join("/")' | sort)"
   assert_contains "$queue_types" 'child/received'
   assert_contains "$queue_types" 'child/ask'
   assert_contains "$queue_types" 'parent/reply'
@@ -335,7 +345,8 @@ run_flow() {
     close_output="$(compiled_close "$dispatch_id" --json)"
   fi
   assert_contains "$close_output" "$dispatch_id"
-  assert_equal "$(jq -r '.state' "$state_dir/dispatches/$dispatch_id/meta.json")" closed
-  assert_equal "$(find "$state_dir/dispatches/$dispatch_id/deliveries" -name '*.json' -exec jq -r 'select(.status == "outstanding") | .id' {} \; | wc -l | tr -d ' ')" 0
+  closed_state="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json)"
+  assert_equal "$(jq -r '.meta.state' <<<"$closed_state")" closed
+  assert_equal "$(jq '[.deliveries[] | select(.status == "outstanding")] | length' <<<"$closed_state")" 0
   printf '%s end-to-end: chain, receipt, ask, reply, done, duplicate ack, and close\n' "$runtime"
 }

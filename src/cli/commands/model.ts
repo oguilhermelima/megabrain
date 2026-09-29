@@ -1,6 +1,5 @@
-import { writeFileSync } from "node:fs";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, validateReasoning } from "../../core/model.js";
+import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, saveModelRegistry, validateReasoning } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 
@@ -44,7 +43,8 @@ async function modelAdd(args: readonly string[], environment: Environment): Prom
   const result = addModel(loaded.registry, agent, model, levels, new Date().toISOString());
   if (result.kind === "invalid") return errorResult(result.message, result.message.includes("cannot be empty") ? 2 : 1);
   if (result.kind === "unknown") return errorResult("model operation is unknown");
-  writeFileSync(loaded.file, `${JSON.stringify(result.value, null, 2)}\n`);
+  const saved = saveModelRegistry(environment, result.value);
+  if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);
   return ok(`model added: ${agent}/${model}\n`);
 }
 
@@ -65,7 +65,8 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
   const ids = result.value.stdout.split(/\s+/).map((id) => id.replace(/[^A-Za-z0-9_.-]/g, "")).filter((id) => /^(gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+$/.test(id));
   const models = refreshAgyModels(ids, new Date().toISOString());
   if (models.length === 0) return errorResult("could not refresh agy models: agy models returned no model ids");
-  writeFileSync(loaded.file, `${JSON.stringify({ ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models] }, null, 2)}\n`);
+  const saved = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models] });
+  if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);
   return ok(`model registry refreshed: agy (${models.length} models)\n`);
 }
 

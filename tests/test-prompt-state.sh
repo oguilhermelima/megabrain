@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-prompt-state.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 dispatch_dir="$state_dir/dispatches"
 
 cleanup() {
@@ -12,6 +16,13 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 export MEGABRAIN_ROOT="$root"
 
 failures=0
@@ -54,6 +65,14 @@ create_host_dispatch() {
   }' >"$dir/meta.json"
 }
 
+import_fixture() {
+  "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
+}
+
+show_dispatch() {
+  "$root/.build/megabrain" db show "$1" --json
+}
+
 append_child_message() {
   local dispatch_id="$1" type="$2" text="$3" dir="$dispatch_dir/$1"
   jq -n --arg type "$type" --arg text "$text" '{seq: 1, from: "child", type: $type, text: $text, createdAt: "2020-01-01T00:00:00Z", sessionId: "child-terminal"}' \
@@ -79,6 +98,7 @@ run_child_message() (
 # the binary instead.
 create_host_dispatch reconcile-receipt spawning
 append_child_message reconcile-receipt received 'prompt received'
+import_fixture
 reconcile_result="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" orchestrate reconcile reconcile-receipt --json)"
 assert_equal "$(printf '%s' "$reconcile_result" | jq -r '.promptReceipt')" received
 assert_equal "$(printf '%s' "$reconcile_result" | jq -r '.promptState')" confirmed
@@ -88,32 +108,38 @@ printf 'reconcile records a later child receipt\n'
 
 late_dispatch=late-receipt
 create_host_dispatch "$late_dispatch" spawning
+import_fixture
 late_output="$(run_child_message "$late_dispatch" received 'prompt received')" || fail_test 'late receipt was rejected'
 assert_equal "$late_output" "received sent: $late_dispatch"
-assert_equal "$(jq -r '.promptReceipt' "$dispatch_dir/$late_dispatch/meta.json")" received
-assert_equal "$(jq -r '.promptState' "$dispatch_dir/$late_dispatch/meta.json")" confirmed
-assert_equal "$(jq -r '.state' "$dispatch_dir/$late_dispatch/meta.json")" running
+late_meta="$(show_dispatch "$late_dispatch" | jq -c '.meta')"
+assert_equal "$(jq -r '.promptReceipt' <<<"$late_meta")" received
+assert_equal "$(jq -r '.promptState' <<<"$late_meta")" confirmed
+assert_equal "$(jq -r '.state' <<<"$late_meta")" running
 printf 'late child receipt is honored and advances spawning\n'
 
 done_output="$(run_child_message "$late_dispatch" done 'late completion')" || fail_test 'done after a late receipt was rejected'
 assert_equal "$done_output" "done sent: $late_dispatch"
-assert_equal "$(jq -r '.state' "$dispatch_dir/$late_dispatch/meta.json")" done
+assert_equal "$(show_dispatch "$late_dispatch" | jq -r '.meta.state')" done
 printf 'done after a late receipt follows the transition table\n'
 
 closed_dispatch=closed-receipt
 create_host_dispatch "$closed_dispatch" closed
+import_fixture
 closed_output="$(run_child_message "$closed_dispatch" received 'receipt after close')" || fail_test 'receipt for a closed dispatch crashed'
 assert_equal "$closed_output" "received sent: $closed_dispatch"
-assert_equal "$(jq -r '.promptReceipt' "$dispatch_dir/$closed_dispatch/meta.json")" received
-assert_equal "$(jq -r '.state' "$dispatch_dir/$closed_dispatch/meta.json")" closed
+closed_meta="$(show_dispatch "$closed_dispatch" | jq -c '.meta')"
+assert_equal "$(jq -r '.promptReceipt' <<<"$closed_meta")" received
+assert_equal "$(jq -r '.state' <<<"$closed_meta")" closed
 printf 'receipt after close is recorded without reopening the dispatch\n'
 
 failed_dispatch=failed-receipt
 create_host_dispatch "$failed_dispatch" failed
+import_fixture
 failed_output="$(run_child_message "$failed_dispatch" received 'receipt after failure')" || fail_test 'receipt for a failed dispatch crashed'
 assert_equal "$failed_output" "received sent: $failed_dispatch"
-assert_equal "$(jq -r '.promptReceipt' "$dispatch_dir/$failed_dispatch/meta.json")" received
-assert_equal "$(jq -r '.state' "$dispatch_dir/$failed_dispatch/meta.json")" failed
+failed_meta="$(show_dispatch "$failed_dispatch" | jq -c '.meta')"
+assert_equal "$(jq -r '.promptReceipt' <<<"$failed_meta")" received
+assert_equal "$(jq -r '.state' <<<"$failed_meta")" failed
 printf 'receipt after failure is recorded without reopening the dispatch\n'
 
 if [ "$failures" -gt 0 ]; then

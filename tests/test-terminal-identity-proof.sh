@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal-proof.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 session_name="megabrain-terminal-proof-$$"
 scenario="${TEST_SCENARIO:-all}"
 child_pane=""
@@ -50,6 +54,7 @@ create_dispatch() {
     runtime: "tmux", spawnRuntime: "tmux", tmuxSession: $session, tmuxPane: $pane,
     createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
   }' >"$dir/meta.json"
+  "$root/.build/megabrain" db import "$state_dir/state" --replace >/dev/null
 }
 
 terminal_identity_source() {

@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # WHY: the Node bundle resolves package assets independently of the caller's current directory.
 work="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/megabrain-root-export.XXXXXX")" && pwd -P)"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 fixture="$work/repo"
 state="$work/state"
 unrelated="$work/unrelated"

@@ -1,9 +1,11 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeDoctor, executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
+import { createDispatch } from "../../src/adapters/state-db.js";
 
 function processFor(values: Record<string, string>): ProcessAdapter {
   return {
@@ -25,8 +27,9 @@ function report(result: Awaited<ReturnType<typeof executeDoctor>>) {
 }
 
 function writeDispatchMeta(stateDir: string, dispatchId: string, dispatchState: string, updatedAt: string, extra: Record<string, unknown> = {}): void {
-  mkdirSync(join(stateDir, "dispatches", dispatchId), { recursive: true });
-  writeFileSync(join(stateDir, "dispatches", dispatchId, "meta.json"), JSON.stringify({
+  const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: stateDir });
+  if (opened.kind !== "ok") throw new Error(opened.error);
+  const result = createDispatch(opened.value, {
     dispatchId,
     state: dispatchState,
     processState: "running",
@@ -35,7 +38,8 @@ function writeDispatchMeta(stateDir: string, dispatchId: string, dispatchState: 
     createdAt: "2020-01-01T00:00:00Z",
     updatedAt,
     ...extra,
-  }));
+  });
+  if (result.kind !== "ok") throw new Error(result.error);
 }
 
 describe("doctor orchestration health counts (shell parity)", () => {
@@ -60,14 +64,10 @@ describe("doctor orchestration health counts (shell parity)", () => {
     expect((result as unknown as { prunableDispatches: number }).prunableDispatches).toBe(3);
   });
 
-  // Mirrors the shell's untracked-directory scan: a dispatch directory with no meta.json at all
-  // gets a notice naming it, while a directory whose meta.json exists but fails to parse ("broken")
-  // is excluded from that notice (the shell's own `[ -f meta.json ]` check only tests presence).
-  test("surfaces a dispatch directory with no meta.json as untracked, not a malformed one", async () => {
+  // Untracked and malformed JSON directories have no database representation; the equivalent
+  // database assertion is that an empty dispatch table produces no JSON-layout warning.
+  test("does not report untracked or malformed JSON directories after cutover", async () => {
     const state = mkdtempSync("/tmp/megabrain-doctor-untracked-");
-    mkdirSync(join(state, "dispatches", "untracked", "messages"), { recursive: true });
-    mkdirSync(join(state, "dispatches", "broken"), { recursive: true });
-    writeFileSync(join(state, "dispatches", "broken", "meta.json"), "{ not json");
     const outcome = await executeDoctor(["orchestration", "--json"], {
       HOME: state,
       MEGABRAIN_STATE_DIR: state,
@@ -78,7 +78,7 @@ describe("doctor orchestration health counts (shell parity)", () => {
     expect(outcome.kind).toBe("ok");
     const text = outcome.kind === "ok" ? outcome.value : "";
     const stderr = outcome.kind === "ok" ? (outcome.stderr ?? "") : "";
-    expect(`${text}${stderr}`).toContain("untracked");
+    expect(`${text}${stderr}`).not.toContain("untracked");
     expect(`${text}${stderr}`).not.toContain("broken");
   });
 });
@@ -86,11 +86,7 @@ describe("doctor orchestration health counts (shell parity)", () => {
 describe("doctor live state", () => {
   test("reports uncertain dispatches as misconfigured", async () => {
     const state = mkdtempSync("/tmp/megabrain-doctor-dispatch-");
-    mkdirSync(join(state, "dispatches", "uncertain"), { recursive: true });
-    writeFileSync(join(state, "dispatches", "uncertain", "meta.json"), JSON.stringify({
-      dispatchId: "uncertain",
-      processState: "start-unproven",
-    }));
+    writeDispatchMeta(state, "uncertain", "running", "2020-01-01T00:00:00Z", { processState: "start-unproven" });
     const result = report(await executeDoctor(["orchestration", "--json"], {
       HOME: state,
       MEGABRAIN_STATE_DIR: state,

@@ -1,14 +1,14 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { dispatchFile, dispatchPath, liveDispatchDirectories, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ok, type Result } from "../../core/result.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
 import { executeCheck, loadMessages } from "./check.js";
-import { appendMessage, atomicJson, findChild, parentContextMatches, readJson, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
+import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
+import { getDispatch, listDispatches, listMessages, mutateDispatch, noDispatchChange, stateDatabase } from "../../adapters/state-db.js";
 
 export type HookEnvironment = QueueEnvironment;
 type JsonRecord = Record<string, unknown>;
@@ -54,10 +54,10 @@ function pointerForFinishedDispatches(count: number, ids: string): string {
 
 // megabrain_dispatch_has_prompt_receipt: has the child ever sent a "received" message.
 async function hasPromptReceipt(root: string, dispatchId: string): Promise<boolean> {
-  const resolved = await resolveDispatchDirectory(root, dispatchId);
-  if (resolved.kind !== "ok") return false;
-  const messages = await loadMessages(dispatchFile(resolved.value, "messages"));
-  return messages.some((message) => message.from === "child" && message.type === "received");
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return false;
+  const messages = listMessages(database.value, dispatchId);
+  return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "received");
 }
 
 // megabrain_dispatch_has_recent_child_activity: the newest child received/ask/done message's
@@ -66,19 +66,15 @@ async function hasPromptReceipt(root: string, dispatchId: string): Promise<boole
 const LIVE_ACTIVITY_WINDOW_SECONDS = 60;
 
 async function hasRecentChildActivity(root: string, dispatchId: string): Promise<boolean> {
-  const resolved = await resolveDispatchDirectory(root, dispatchId);
-  if (resolved.kind !== "ok") return false;
-  const directory = dispatchFile(resolved.value, "messages");
-  const names = await readdir(directory).catch(() => []);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return false;
+  const result = listMessages(database.value, dispatchId);
+  if (result.kind !== "ok") return false;
   let latest = 0;
-  for (const name of names) {
-    if (!name.endsWith(".json")) continue;
-    const path = `${directory}/${name}`;
-    const value = await readJson(path);
-    if (value === undefined) continue;
-    if (value.from !== "child" || (value.type !== "received" && value.type !== "ask" && value.type !== "done")) continue;
-    const modified = await stat(path).then((entry) => Math.floor(entry.mtimeMs / 1000)).catch(() => undefined);
-    if (modified !== undefined && modified > latest) latest = modified;
+  for (const message of result.value) {
+    if (message.from !== "child" || (message.type !== "received" && message.type !== "ask" && message.type !== "done")) continue;
+    const modified = Date.parse(message.createdAt) / 1000;
+    if (Number.isFinite(modified) && modified > latest) latest = modified;
   }
   if (latest === 0) return false;
   return Math.floor(Date.now() / 1000) - latest <= LIVE_ACTIVITY_WINDOW_SECONDS;
@@ -115,27 +111,16 @@ async function readLimitRefusal(meta: JsonRecord, processAdapter: ProcessAdapter
 // (mirroring megabrain_dispatch_meta_update_fields's own transition validation) rather than write
 // an illegal state/processState transition.
 async function markLimitRefused(root: string, dispatchId: string, reason: string): Promise<boolean> {
-  const path = await dispatchPath(root, dispatchId, "meta.json");
-  const meta = await readJson(path);
-  if (meta === undefined) return false;
-  const state = typeof meta.state === "string" ? meta.state : "";
-  const processState = typeof meta.processState === "string" ? meta.processState : "";
-  if (checkDispatchTransition("dispatch", state, "failed").kind !== "ok") return false;
-  if (checkDispatchTransition("process", processState, "failed").kind !== "ok") return false;
-  const now = new Date().toISOString();
-  await atomicJson(path, {
-    ...meta,
-    promptReceipt: "unknown",
-    promptState: "failed",
-    promptDeliveryReason: reason,
-    state: "failed",
-    processState: "failed",
-    stage: "limit-refused",
-    reason,
-    reconcileOutcome: "limit-refused",
-    updatedAt: now,
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return false;
+  let refused = false;
+  const updated = mutateDispatch(database.value, dispatchId, (meta) => {
+    const state = typeof meta.state === "string" ? meta.state : "";
+    const processState = typeof meta.processState === "string" ? meta.processState : "";
+    if (checkDispatchTransition("dispatch", state, "failed").kind !== "ok" || checkDispatchTransition("process", processState, "failed").kind !== "ok") { refused = true; return noDispatchChange; }
+    return { promptReceipt: "unknown", promptState: "failed", promptDeliveryReason: reason, state: "failed", processState: "failed", stage: "limit-refused", reason, reconcileOutcome: "limit-refused", updatedAt: new Date().toISOString() };
   });
-  return true;
+  return updated.kind === "ok" && !refused;
 }
 
 // megabrain_hook_parent_notify: scans every dispatch this session parents. A "done" dispatch that
@@ -146,15 +131,16 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
 // scan from reaching the rest (mirrors the shell's `|| true` / `|| continue` at each of these
 // points).
 async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<void> {
-  const directories = await liveDispatchDirectories(root);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return;
+  const listed = listDispatches(database.value);
+  if (listed.kind !== "ok") return;
   const doneIds: string[] = [];
   let doneFirstMeta: JsonRecord | undefined;
 
-  for (const directory of directories) {
-    const dispatchId = directory.slice(directory.lastIndexOf("/") + 1);
-    if (dispatchId === "") continue;
-    const meta = await readJson(`${directory}/meta.json`);
-    if (meta === undefined) continue;
+  for (const meta of listed.value) {
+    const dispatchId = meta.dispatchId;
+    if (dispatchId === undefined) continue;
     const state = typeof meta.state === "string" ? meta.state : "";
     const terminalState = typeof meta.terminalState === "string" ? meta.terminalState : "owned";
     const isOpen = (openDispatchStates as readonly string[]).includes(state);
@@ -263,7 +249,10 @@ export async function executeHookTurnEnd(
     }
 
     const dispatchId = child.dispatch;
-    const meta = await readJson(await dispatchPath(root, dispatchId, "meta.json"));
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+    if (database.kind !== "ok") return finish(defaultText);
+    const metaResult = getDispatch(database.value, dispatchId);
+    const meta = metaResult.kind === "ok" ? metaResult.value : undefined;
     if (meta === undefined) return finish(defaultText);
     const state = typeof meta.state === "string" ? meta.state : "";
 

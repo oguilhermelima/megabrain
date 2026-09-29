@@ -2,6 +2,10 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-chain-ts.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state/.megabrain-test-state"
+require_megabrain_test_state
+
 binary="$root/.build/megabrain"
 trap 'rm -rf "$state"' EXIT
 export MEGABRAIN_ROOT="$root"

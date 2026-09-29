@@ -30,6 +30,7 @@ import { executeTmux } from "./commands/tmux.js";
 import { executeChildAck } from "./commands/child-ack.js";
 import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
 import { usageTable, usageText } from "../core/usage.js";
+import { ensureAutomaticCutover } from "../db/cutover.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -39,7 +40,7 @@ export type RouterDependencies = {
   readonly readStdin?: () => Promise<string>;
 };
 
-export function route(
+export async function route(
   args: readonly string[],
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
@@ -49,7 +50,17 @@ export function route(
     return Promise.resolve(ok(ROOT_USAGE));
   }
   if (command === "version" || command === "-V" || command === "--version") {
-    return Promise.resolve(ok(`megabrain ${packageJson.version}\n`));
+    return ok(`megabrain ${packageJson.version}\n`);
+  }
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "terminal", "received", "ask", "done", "hook"]);
+  if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
+  const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
+  if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
+    const cutover = await ensureAutomaticCutover(dependencies.environment);
+    if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
+    if (cutover.value?.snapshot !== undefined && cutover.value.snapshot !== null) {
+      process.stderr.write(`migrated legacy JSON state to SQLite; snapshot: ${cutover.value.snapshot}\n`);
+    }
   }
   const helpIndex = commandArgs.findIndex((argument) => argument === "-h" || argument === "--help");
   if (helpIndex === 0 && command === "worktree") {

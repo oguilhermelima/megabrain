@@ -3,8 +3,14 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/support/state-db.bash"
 export MEGABRAIN_ROOT="$root"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-real-use.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+
 node_bin="$state_dir/node-bin"
 mkdir -p "$node_bin"
 ln -s "$(command -v node)" "$node_bin/node"
@@ -62,6 +68,7 @@ exit 1
 EOF
 chmod +x "$tmux_drift_bin/tmux"
 printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$MEGABRAIN_STATE_DIR/state.json"
+state_db_import "$root/.build/megabrain" "$MEGABRAIN_STATE_DIR"
 # WHY: the compiled doctor exits non-zero for a non-ok report (executeDoctor's unhealthy exit
 # code), and that is exactly what this scenario expects — under this file's `set -e`, a plain
 # `var="$(cmd)"` assignment aborts the whole script the instant `cmd` returns non-zero, silently,
@@ -138,6 +145,7 @@ dispatch_state="$state_dir/dispatch-state"
 mkdir -p "$dispatch_state/dispatches/uncertain" "$dispatch_state/dispatches/healthy"
 printf '%s\n' '{"dispatchId":"uncertain","parentSessionId":"","parentHost":"unknown","state":"running","processState":"start-unproven","terminalState":"owned","worktreePath":"/tmp/uncertain"}' >"$dispatch_state/dispatches/uncertain/meta.json"
 printf '%s\n' '{"dispatchId":"healthy","parentSessionId":"","parentHost":"unknown","state":"running","processState":"running","terminalState":"owned","worktreePath":"/tmp/healthy"}' >"$dispatch_state/dispatches/healthy/meta.json"
+state_db_import "$root/.build/megabrain" "$dispatch_state"
 uncertain_list="$(MEGABRAIN_STATE_DIR="$dispatch_state" "$root/.build/megabrain" orchestrate list --uncertain --json)"
 assert_contains "$uncertain_list" 'uncertain'
 assert_contains "$uncertain_list" 'uncertain' 'orchestrate list --uncertain omitted the doctor-counted dispatch'
@@ -154,9 +162,9 @@ printf 'scenario 7: help documents the version flag\n'
 # forwards unconditionally to the compiled binary, whose own writeInstalledState
 # (src/cli/commands/install-doctor.ts) is the only place that still writes this record. Reuses
 # scenario 3's real, successful `install simulator-web` run instead of hand-writing the record.
-jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._meta.liveStatusCommand == "megabrain doctor"' "$scenario3_home/state.json" >/dev/null ||
+state_db_install "$root/.build/megabrain" "$scenario3_home" | jq -e '._meta.kind == "installation-record" and ._meta.recordedAt != null and ._meta.liveStatusCommand == "megabrain doctor"' >/dev/null ||
   fail 'state.json did not identify its timestamp and live-status command'
-printf 'scenario 8: install record identifies its timestamp\n'
+printf 'scenario 8: database install record identifies its timestamp\n'
 
 # Scenario 9: compiled chain edit removes its editor directory on every path.
 run_chain_edit_cleanup_case() {

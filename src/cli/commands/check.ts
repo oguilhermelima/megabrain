@@ -3,70 +3,53 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
-import { readFile, readdir, rename, writeFile, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
-import { dispatchDeliveryFile, dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
+import { claimDelivery, createDelivery, getDispatch, listDeliveries, listDispatches, listMessages, stateDatabase } from "../../adapters/state-db.js";
+import type { DeliveryRecord } from "../../db/queries/deliveries.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
-type JsonRecord = Record<string, unknown>;
 
-export async function readJson(path: string): Promise<JsonRecord | undefined> {
-  try {
-    const value: unknown = JSON.parse(await readFile(path, "utf8"));
-    return typeof value === "object" && value !== null ? value as JsonRecord : undefined;
-  } catch { return undefined; }
+function checkMessages(root: string, dispatch: string): CheckMessage[] {
+  const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (db.kind !== "ok") return [];
+  const result = listMessages(db.value, dispatch);
+  return result.kind === "ok" ? result.value.map((message) => ({ ...message, path: `db:${dispatch}:${message.seq}`, from: message.from, type: message.type, text: message.text })) : [];
 }
 
-function number(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined; }
-
-export async function files(path: string): Promise<string[]> {
-  const result: string[] = [];
-  try {
-    async function walk(directory: string): Promise<void> {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        const entryPath = `${directory}/${entry.name}`;
-        if (entry.isDirectory()) await walk(entryPath);
-        else if (entry.isFile() && entry.name.endsWith(".json")) result.push(entryPath);
-      }
-    }
-    await walk(resolve(path));
-  } catch {
-    return [];
-  }
-  return result;
+function checkDeliveries(root: string, dispatch: string): CheckDelivery[] {
+  const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (db.kind !== "ok") return [];
+  const result = listDeliveries(db.value, dispatch);
+  return result.kind === "ok" ? result.value as unknown as CheckDelivery[] : [];
 }
 
 export async function dispatchId(environment: CheckEnvironment, root: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  if (database.kind !== "ok") return undefined;
   const direct = environment.MEGABRAIN_DISPATCH_ID;
   if (direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct)) {
-    const resolved = await resolveDispatchDirectory(root, direct);
-    const meta = resolved.kind === "ok" ? await readJson(dispatchFile(resolved.value, "meta")) : undefined;
-    if (meta !== undefined && meta.dispatchId === direct) return direct;
+    const resolved = getDispatch(database.value, direct);
+    if (resolved.kind === "ok" && resolved.value?.dispatchId === direct) return direct;
   }
-  if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
+  let host: string | undefined;
+  let id: string | undefined;
+  let tmuxSession: string | undefined;
+  if (environment.TMUX && environment.TMUX_PANE) {
     const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
-    if (result.kind !== "ok") return undefined;
-    const session = result.value;
-    if (session.length === 0) return undefined;
-    for (const path of await files(`${root}/dispatches`)) {
-      if (!path.endsWith("/meta.json")) continue;
-      const meta = await readJson(path);
-      if (meta?.runtime === "tmux" && meta.tmuxSession === session && meta.tmuxPane === environment.TMUX_PANE) return typeof meta.dispatchId === "string" ? meta.dispatchId : undefined;
-    }
-    return undefined;
+    if (result.kind !== "ok" || result.value === "") return undefined;
+    host = "tmux"; tmuxSession = result.value;
+  } else {
+    host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined;
+    id = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
+    if (host === undefined || id === undefined) return undefined;
   }
-  const host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined;
-  const id = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-  if (host === undefined || id === undefined) return undefined;
-  for (const path of await files(`${root}/dispatches`)) {
-    if (!path.endsWith("/meta.json")) continue;
-    const meta = await readJson(path);
-    if (meta?.terminalId === id && meta.childHost === host) return typeof meta.dispatchId === "string" ? meta.dispatchId : undefined;
-  }
-  return undefined;
+  const listed = listDispatches(database.value);
+  if (listed.kind !== "ok") return undefined;
+  const matched = listed.value.find((meta) => host === "tmux"
+    ? meta.runtime === "tmux" && meta.tmuxSession === tmuxSession && meta.tmuxPane === environment.TMUX_PANE
+    : meta.terminalId === id && meta.childHost === host);
+  return matched?.dispatchId;
 }
 
 export async function childIdentity(environment: CheckEnvironment, processAdapter: ProcessAdapter): Promise<Pick<ConsumerIdentityInput, "childHost" | "childSessionId" | "tmux">> {
@@ -79,40 +62,24 @@ export async function childIdentity(environment: CheckEnvironment, processAdapte
   return { childHost, childSessionId };
 }
 
-export async function loadMessages(directory: string): Promise<CheckMessage[]> {
-  const result: CheckMessage[] = [];
-  for (const path of await files(directory)) {
-    const value = await readJson(path);
-    const seq = number(value?.seq);
-    if (value !== undefined && seq !== undefined && typeof value.from === "string" && typeof value.type === "string") result.push({ ...value, seq, path, from: value.from, type: value.type, text: typeof value.text === "string" ? value.text : "" });
-  }
-  return orderMessages(result);
-}
-
-export async function loadDeliveries(directory: string): Promise<CheckDelivery[]> {
-  const result: CheckDelivery[] = [];
-  for (const path of await files(directory)) {
-    const value = await readJson(path);
-    const id = typeof value?.id === "string" ? value.id : undefined;
-    const seqs = Array.isArray(value?.messageSeqs) ? value.messageSeqs.filter((seq): seq is number => number(seq) !== undefined) : [];
-    if (value !== undefined && id !== undefined && typeof value.status === "string") result.push({ ...value, id, messageSeqs: seqs, status: value.status, consumer: typeof value.consumer === "string" ? value.consumer : null, consumerGeneration: number(value.consumerGeneration) ?? null });
-  }
-  return result;
-}
+export async function loadMessages(root: string, dispatch: string): Promise<CheckMessage[]> { return checkMessages(root, dispatch); }
+export async function loadDeliveries(root: string, dispatch: string): Promise<CheckDelivery[]> { return checkDeliveries(root, dispatch); }
 
 export async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[]): Promise<void> {
-  const resolved = await resolveDispatchDirectory(root, dispatch);
-  if (resolved.kind !== "ok") return;
-  const directory = dispatchFile(resolved.value, "deliveries");
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
   for (const message of messages) {
     if (deliveries.some((delivery) => delivery.messageSeqs.includes(message.seq))) continue;
     const priorDone = messages.some((candidate) => candidate.from === "child" && candidate.type === "done" && candidate.seq < message.seq);
     const classification = classifyMail(message.from, message.type, priorDone);
     const recipient = message.from === "parent" && message.type === "reply" ? "child" : classification === "actionable" || classification === "protocol" ? "parent" : undefined;
     if (recipient === undefined) continue;
-    const id = `delivery-${Date.now()}-${message.seq}`;
-    const value = { id, dispatchId: dispatch, recipient, consumer: null, consumerGeneration: null, messageSeqs: [message.seq], status: "outstanding", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), acknowledgedAt: null, fencedAt: null };
-    await writeFile(`${directory}/${id}.json`, `${JSON.stringify(value)}\n`);
+    const now = new Date().toISOString();
+    const created = createDelivery(database.value, {
+      id: `delivery-${Date.now()}-${message.seq}`, dispatchId: dispatch, recipient, consumer: null, consumerGeneration: null,
+      messageSeqs: [message.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null,
+    });
+    if (created.kind !== "ok") throw new Error(created.error);
   }
 }
 
@@ -147,45 +114,29 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   const root = resolveStateDirectory(environment);
   const dispatch = await dispatchId(environment, root, processAdapter);
   if (dispatch === undefined) return failed(`no managed dispatch belongs to superset/${environment.SUPERSET_TERMINAL_ID ?? "unknown"}`);
-  const dispatchResult = await resolveDispatchDirectory(root, dispatch);
-  if (dispatchResult.kind !== "ok") return dispatchResult;
-  const dispatchHandle = dispatchResult.value;
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  if (database.kind !== "ok") return database;
   const resolvedIdentity = resolveConsumerIdentity({
-    ...(await childIdentity(environment, processAdapter)),
-    mailbox: "child",
-    environmentConsumer: environment.MEGABRAIN_CONSUMER_ID,
-    explicitConsumer: consumer,
-    sessionHost: environment.MEGABRAIN_SESSION_HOST,
-    sessionId: environment.MEGABRAIN_SESSION_ID,
+    ...(await childIdentity(environment, processAdapter)), mailbox: "child", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID,
+    explicitConsumer: consumer, sessionHost: environment.MEGABRAIN_SESSION_HOST, sessionId: environment.MEGABRAIN_SESSION_ID,
   });
   if (resolvedIdentity.kind === "unknown") return failed(resolvedIdentity.reason);
   const resolvedConsumer = resolvedIdentity.value;
   const started = Date.now();
-  let selected: ReturnType<typeof selectDelivery> = { kind: "none" };
-  let messages: CheckMessage[] = [];
   while (true) {
-    messages = await loadMessages(dispatchFile(dispatchHandle, "messages"));
-    const deliveries = await loadDeliveries(dispatchFile(dispatchHandle, "deliveries"));
+    const messages = checkMessages(root, dispatch);
+    const deliveries = checkDeliveries(root, dispatch);
     await migrateDeliveries(root, dispatch, messages, deliveries);
-    selected = selectDelivery("child", full, await loadDeliveries(dispatchFile(dispatchHandle, "deliveries")), messages, resolvedConsumer, generation);
-    if (selected.kind === "selected" || Date.now() - started >= timeout * 1000) break;
+    const selected = selectDelivery("child", full, checkDeliveries(root, dispatch), messages, resolvedConsumer, generation);
+    if (selected.kind === "selected") {
+      if (selected.delivery.consumer === null) {
+        const claim = claimDelivery(database.value, selected.delivery.id, resolvedConsumer, generation);
+        if (claim.kind !== "ok") return claim;
+        if (claim.value === undefined) continue;
+      }
+      return ok(report(dispatch, selected.delivery, messages, selected.replayed, json));
+    }
+    if (Date.now() - started >= timeout * 1000) return ok(report(dispatch, undefined, [], false, json));
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, pollInterval * 1000)));
   }
-  if (selected.kind === "selected") {
-    if (selected.delivery.consumer === null) {
-      const path = dispatchDeliveryFile(dispatchHandle, selected.delivery.id);
-      const temporaryPath = `${path}.${randomUUID()}.tmp`;
-      const claimed = { ...selected.delivery, consumer: resolvedConsumer, consumerGeneration: generation, updatedAt: new Date().toISOString() };
-      try {
-        await writeFile(temporaryPath, `${JSON.stringify(claimed)}\n`);
-        await rename(temporaryPath, path);
-      } catch (error: unknown) {
-        await unlink(temporaryPath).catch(() => undefined);
-        throw error;
-      }
-      return ok(report(dispatch, selected.delivery, messages, false, json));
-    }
-    return ok(report(dispatch, selected.delivery, messages, selected.replayed, json));
-  }
-  return ok(report(dispatch, undefined, [], false, json));
 }

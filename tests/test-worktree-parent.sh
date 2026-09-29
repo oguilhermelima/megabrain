@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-parent.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 cleanup() {
   rm -rf "$work_dir"

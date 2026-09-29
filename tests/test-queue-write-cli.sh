@@ -9,9 +9,29 @@ if [ ! -x "$root/.build/megabrain" ]; then
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue-write-cli.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+export HOME="$work_dir/home"
+export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 trap 'rm -rf "$work_dir"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+
+import_state() { MEGABRAIN_STATE_DIR="$1" HOME="$HOME" "$root/.build/megabrain" db import "$1" >/dev/null; }
+show_dispatch() { MEGABRAIN_STATE_DIR="$1" "$root/.build/megabrain" db show "$2" --json; }
+db_waiter() {
+  node "$root/tests/support/write-waiter.mjs" "$1" "$2" "$3"
+}
+read_nudges() {
+  show_dispatch "$1" "$2" | jq -c '.nudges'
+}
 
 # MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION has no effect anywhere in lib/ or the entry script any
 # more (grep: zero hits) — command_ask/command_done/command_received are unconditional binary
@@ -26,12 +46,14 @@ write_fixture() {
   local state="$1" dispatch="$2"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"orca\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  import_state "$state"
 }
 
 write_tmux_fixture() {
   local state="$1" dispatch="$2" tmux_session="$3" tmux_pane="$4"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"runtime\":\"tmux\",\"tmuxSession\":\"$tmux_session\",\"tmuxPane\":\"$tmux_pane\",\"state\":\"running\",\"processState\":\"running\"}" >"$state/dispatches/$dispatch/meta.json"
+  import_state "$state"
 }
 
 run_tmux_queue() {
@@ -82,7 +104,7 @@ run_verb() {
   fi
   set -e
   [ "$status" -eq 0 ] || fail "$label refused: $output"
-  [ "$(find "$state/dispatches/$dispatch/messages" -name '*.json' | wc -l | tr -d ' ')" -eq 1 ] || fail "$label did not write one message"
+  [ "$(show_dispatch "$state" "$dispatch" | jq '.messages | length')" -eq 1 ] || fail "$label did not write one message"
   printf '%s writes exactly one durable message\n' "$label"
 }
 
@@ -96,6 +118,7 @@ run_notification_transport() {
   esac
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",$metadata,\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  import_state "$state"
   mkdir -p "$work_dir/notify-bin"
   : >"$work_dir/binary-effect"
   if [ "$host" = tmux ]; then
@@ -121,12 +144,12 @@ run_notification_suppression() {
   state="$work_dir/$dispatch"
   write_fixture "$state" "$dispatch"
   mkdir -p "$state/dispatches/$dispatch"
-  printf '%s\n' "{\"pid\":$$}" >"$state/dispatches/$dispatch/waiter.json"
+  db_waiter "$state" "$dispatch" "$$"
   : >"$work_dir/suppressed-effect"
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/suppressed-effect" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ask 'suppressed body' >/dev/null 2>&1
   effect="$(cat "$work_dir/suppressed-effect")"
   [ -z "$effect" ] || fail "notified despite an active waiter: $effect"
-  grep -F 'outcome=suppressed reason=active-waiter' "$state/dispatches/$dispatch/nudge.log" >/dev/null || fail 'did not record active-waiter suppression'
+  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome + " " + .[0].reason')" = 'suppressed active-waiter' ] || fail 'did not record active-waiter suppression'
   printf 'active waiter suppresses notification\n'
 }
 
@@ -137,11 +160,12 @@ run_notification_context_suppression() {
   chmod +x "$work_dir/notify-bin/tmux"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"parentTmuxSession\":\"parent-session\",\"parentTmuxPane\":\"%parent\",\"runtime\":\"tmux\",\"tmuxSession\":\"parent-session\",\"tmuxPane\":\"%parent\",\"agent\":\"codex\",\"state\":\"running\",\"processState\":\"running\"}" >"$state/dispatches/$dispatch/meta.json"
+  import_state "$state"
   : >"$work_dir/context-effect"
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/context-effect" TMUX=parent-session TMUX_PANE=%parent "$root/.build/megabrain" ask 'context body' >/dev/null
   effect="$(cat "$work_dir/context-effect")"
   [ -z "$effect" ] || fail "notified across state directories: $effect"
-  grep -F 'outcome=suppressed reason=state-directory-mismatch' "$state/dispatches/$dispatch/nudge.log" >/dev/null || fail 'did not record state-directory suppression'
+  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome + " " + .[0].reason')" = 'suppressed state-directory-mismatch' ] || fail 'did not record state-directory suppression'
   printf 'cross-context parent notification is suppressed\n'
 }
 
@@ -153,8 +177,8 @@ run_notification_failure() {
   write_fixture "$state" "$dispatch"
   : >"$work_dir/failure-effect"
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/failure-effect" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ask 'failed body' >/dev/null
-  [ "$(find "$state/dispatches/$dispatch/messages" -name '*.json' | wc -l | tr -d ' ')" -eq 1 ] || fail 'lost the durable write after notification failure'
-  grep -F 'outcome=failed' "$state/dispatches/$dispatch/nudge.log" >/dev/null || fail 'did not record notification failure'
+  [ "$(show_dispatch "$state" "$dispatch" | jq '.messages | length')" -eq 1 ] || fail 'lost the durable write after notification failure'
+  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome')" = failed ] || fail 'did not record notification failure'
   printf 'notification failure preserves the durable write\n'
 }
 
@@ -176,7 +200,7 @@ run_verb_round_trip() {
 run_binary_concurrency() {
   local dispatch=binary-concurrency writers=20
   local state="$work_dir/$dispatch"
-  local writer_dir="$state/writers" messages_dir="$state/dispatches/$dispatch/messages"
+  local writer_dir="$state/writers"
   write_fixture "$state" "$dispatch"
   mkdir -p "$writer_dir"
   for i in $(seq 1 "$writers"); do
@@ -193,9 +217,11 @@ run_binary_concurrency() {
   local durable refused written unique_seqs unique_bodies
   durable="$(find "$writer_dir" -name '*.written' | wc -l | tr -d ' ')"
   refused="$(find "$writer_dir" -name '*.refused' | wc -l | tr -d ' ')"
-  written="$(find "$messages_dir" -maxdepth 1 -name '*.json' | wc -l | tr -d ' ')"
-  unique_seqs="$(find "$messages_dir" -maxdepth 1 -name '*.json' -exec jq -r '.seq' {} \; | sort -u | wc -l | tr -d ' ')"
-  unique_bodies="$(find "$messages_dir" -maxdepth 1 -name '*.json' -exec jq -r '.text' {} \; | sort -u | wc -l | tr -d ' ')"
+  local queue
+  queue="$(show_dispatch "$state" "$dispatch")"
+  written="$(jq '.messages | length' <<<"$queue")"
+  unique_seqs="$(jq '[.messages[].seq] | unique | length' <<<"$queue")"
+  unique_bodies="$(jq '[.messages[].text] | unique | length' <<<"$queue")"
   [ $((durable + refused)) -eq "$writers" ] || fail "binary concurrency unaccounted: durable=$durable refused=$refused"
   [ "$written" -eq "$durable" ] || fail "binary concurrency durable mismatch: durable=$durable files=$written"
   [ "$unique_seqs" -eq "$durable" ] || fail "binary concurrency duplicate sequences: unique=$unique_seqs durable=$durable"

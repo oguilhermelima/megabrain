@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { deleteTerminal, listTerminals, putTerminal, stateDatabase } from "../../adapters/state-db.js";
+import type { DatabaseHandle } from "../../db/db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../core/terminal-lifecycle.js";
-import { resolveStateDirectory } from "../../core/state.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
 
@@ -13,7 +14,6 @@ type JsonObject = { readonly [key: string]: unknown };
 type Host = "superset" | "orca" | "unknown";
 
 const isObject = (value: unknown): value is JsonObject => typeof value === "object" && value !== null;
-const stateDir = (env: Environment) => env.MEGABRAIN_TERMINAL_DIR ?? join(resolveStateDirectory(env), "terminals");
 
 function parsed(text: string): unknown {
   try { return JSON.parse(text) as unknown; } catch { return undefined; }
@@ -87,18 +87,18 @@ function recordFrom(value: unknown): TerminalLifecycleRecord | undefined {
   };
 }
 
-async function records(env: Environment): Promise<TerminalLifecycleRecord[]> {
-  const directory = stateDir(env);
-  let names: string[];
-  try { names = await readdir(directory); } catch { return []; }
-  const result: TerminalLifecycleRecord[] = [];
-  for (const name of names.filter((item) => item.endsWith(".json")).sort()) {
-    try {
-      const record = recordFrom(parsed(await readFile(join(directory, name), "utf8")));
-      if (record !== undefined) result.push(record);
-    } catch { /* A concurrent close may remove a record after readdir. */ }
-  }
-  return result;
+function withState<T>(env: Environment, operation: (database: DatabaseHandle) => Result<T>): Result<T> {
+  const opened = stateDatabase(env);
+  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+  return operation(opened.value);
+}
+
+function records(env: Environment): Result<TerminalLifecycleRecord[]> {
+  return withState(env, (database) => {
+    const loaded = listTerminals(database);
+    if (loaded.kind !== "ok") return loaded;
+    return ok(loaded.value.map(recordFrom).filter((record): record is TerminalLifecycleRecord => record !== undefined));
+  });
 }
 
 function host(env: Environment): Host {
@@ -167,9 +167,18 @@ async function workspaceId(process: ProcessAdapter, worktreePath: string): Promi
   return undefined;
 }
 
-async function save(env: Environment, record: TerminalLifecycleRecord): Promise<void> {
-  await mkdir(stateDir(env), { recursive: true });
-  await writeFile(join(stateDir(env), `${record.terminalId}.json`), `${JSON.stringify({ ...record, status: "active" })}\n`);
+function save(env: Environment, record: TerminalLifecycleRecord): Result<void> {
+  return withState(env, (database) => {
+    const stored = putTerminal(database, { ...record, status: "active" });
+    return stored.kind === "ok" ? ok(undefined) : stored;
+  });
+}
+
+function remove(env: Environment, terminalId: string): Result<void> {
+  return withState(env, (database) => {
+    const deleted = deleteTerminal(database, terminalId);
+    return deleted.kind === "ok" ? ok(undefined) : deleted;
+  });
 }
 
 function output(value: unknown, json: boolean): string { return json ? `${JSON.stringify(value, null, 2)}\n` : `${String(value)}\n`; }
@@ -364,10 +373,13 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
       return failed(`${currentHost} terminal create did not publish a process identity`);
     }
     const record: TerminalLifecycleRecord = { terminalId: id, host: currentHost, workspaceId: workspace ?? null, worktree: path.value, title, command: resolvedCommand, createdAt: new Date().toISOString(), pid, rootPid: jsonNumber(created.value.value, [["rootPid"], ["processRootPid"], ["terminal", "rootPid"], ["result", "rootPid"]]) ?? pid, port: port ?? jsonNumber(created.value.value, [["port"], ["terminal", "port"], ["result", "port"]]) };
-    await save(env, record);
+    const saved = save(env, record);
+    if (saved.kind !== "ok") return saved;
     return ok(json ? output({ host: currentHost, worktree: path.value, title, terminalId: id, pid: record.pid, rootPid: record.rootPid, port: record.port }, true) : created.value.stdout);
   }
-  const all = await records(env);
+  const loadedRecords = records(env);
+  if (loadedRecords.kind !== "ok") return loadedRecords;
+  const all = loadedRecords.value;
   if (selector === undefined) return failed(`terminal ${operation} requires a selector`, 2);
   const normalized = await normalizedSelector(process, selector, currentDirectory);
   if (normalized.kind !== "ok") return normalized;
@@ -385,12 +397,14 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     const listed = await hostList(process, record);
     if (listed === undefined) return failed(`could not verify host terminal ${record.terminalId} before close`);
     if (!listed.some((item) => hostId(item) === record.terminalId)) {
-      await rm(join(stateDir(env), `${record.terminalId}.json`), { force: true });
+      const removed = remove(env, record.terminalId);
+      if (removed.kind !== "ok") return failed(`host no longer knows terminal ${record.terminalId}, but its record could not be removed`);
       return ok(json ? output({ selector, terminalId: record.terminalId, status: "stale", recordRemoved: true, message: "host no longer knows this terminal" }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: stale\nrecord removed: true\nhost no longer knows this terminal\n`, 1);
     }
     const result = await process.run(call.command, call.args);
     if (result.kind !== "ok") return failed(`could not close host terminal ${record.terminalId}; record retained`);
-    try { await rm(join(stateDir(env), `${record.terminalId}.json`), { force: true }); } catch { return failed(`host terminal ${record.terminalId} closed but its record could not be removed`); }
+    const removed = remove(env, record.terminalId);
+    if (removed.kind !== "ok") return failed(`host terminal ${record.terminalId} closed but its record could not be removed`);
     const identity = record.rootPid !== null || record.pid !== null ? "recorded" : "unavailable";
     return ok(json ? output({ selector, terminalId: record.terminalId, status: "closed", identity, recordRemoved: true }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: closed\nidentity: ${identity}\nrecord removed: true\n`);
   }
@@ -406,8 +420,12 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
   if (targetPort !== null && !(await waitForPort(process, targetPort, "free", timeout))) return failed(`timed out waiting for port ${targetPort} to become free`);
   const replacement = await recreate(process, record, command ?? record.command);
   if (replacement.kind !== "ok") return replacement;
-  await save(env, replacement.value.record);
-  if (replacement.value.record.terminalId !== record.terminalId) await rm(join(stateDir(env), `${record.terminalId}.json`), { force: true });
+  const saved = save(env, replacement.value.record);
+  if (saved.kind !== "ok") return saved;
+  if (replacement.value.record.terminalId !== record.terminalId) {
+    const removed = remove(env, record.terminalId);
+    if (removed.kind !== "ok") return failed(`terminal was restarted but the old record could not be removed`);
+  }
   const waitedPort = waitPort;
   if (waitedPort !== undefined && !(await waitForPort(process, waitedPort, "listening", timeout))) return failed(`timed out waiting for port ${waitedPort} to listen again`);
   const reportedPort = waitedPort ?? targetPort;

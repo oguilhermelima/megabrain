@@ -1,5 +1,6 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
@@ -9,6 +10,7 @@ import { appendMessage } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
+import { createDispatch, getDispatch, listDispatches, listMessages, putWaiter } from "../../src/adapters/state-db.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 type Behavior = (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>;
@@ -36,15 +38,34 @@ function environment(root: string, extra: Record<string, string | undefined> = {
 }
 
 async function writeMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-  const directory = join(root, "dispatches", dispatchId);
-  await mkdir(directory, { recursive: true });
-  await mkdir(join(directory, "messages"), { recursive: true });
-  await mkdir(join(directory, "deliveries"), { recursive: true });
-  await writeFile(join(directory, "meta.json"), JSON.stringify({ dispatchId, ...meta }));
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
+  if (created.kind !== "ok") throw new Error(created.error);
 }
 
 async function readMeta(root: string, dispatchId: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(join(root, "dispatches", dispatchId, "meta.json"), "utf8"));
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const record = getDispatch(database.value, dispatchId);
+  if (record.kind !== "ok" || record.value === undefined) throw new Error(record.kind === "ok" ? `missing dispatch ${dispatchId}` : record.error);
+  return record.value;
+}
+
+function readMessages(root: string, dispatchId: string): readonly Record<string, unknown>[] {
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const messages = listMessages(database.value, dispatchId);
+  if (messages.kind !== "ok") throw new Error(messages.error);
+  return messages.value;
+}
+
+function readDispatchIds(root: string): readonly string[] {
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const dispatches = listDispatches(database.value);
+  if (dispatches.kind !== "ok") throw new Error(dispatches.error);
+  return dispatches.value.map((dispatch) => dispatch.dispatchId);
 }
 
 const noStdin = async (): Promise<string> => "";
@@ -130,7 +151,10 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     await withRoot("active-waiter", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "done", terminalState: "owned" });
       await mkdir(join(root, "dispatches", "d1"), { recursive: true });
-      await writeFile(join(root, "dispatches", "d1", "waiter.json"), JSON.stringify({ pid: process.pid, parentSessionId: "coord-term", parentHost: "orca" }));
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const waiter = putWaiter(database.value, { dispatchId: "d1", pid: process.pid, parentSessionId: "coord-term", parentHost: "orca", createdAt: new Date().toISOString() });
+      if (waiter.kind !== "ok") throw new Error(waiter.error);
       const fake = fakeProcess();
       await executeHookTurnEnd([], parentEnv(root), fake, noStdin);
       expect(fake.calls.some((call) => call.args.includes("send"))).toBe(false);
@@ -263,7 +287,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
           expect(refusedMeta.state).toBe("failed");
           expect(refusedMeta.reconcileOutcome).toBe("limit-refused");
 
-          const dispatchIds = (await readdir(join(root, "dispatches"))).filter((id) => id !== firstDispatchId);
+          const dispatchIds = readDispatchIds(root).filter((id) => id !== firstDispatchId);
           expect(dispatchIds).toHaveLength(1);
           const resumedMeta = await readMeta(root, dispatchIds[0]);
           expect(resumedMeta).toMatchObject({ agent: "codex", model: "m2", runtime: "tmux", worktreePath: resolvedWorktree });
@@ -306,7 +330,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         const process = fakeProcess();
         const result = await executeHookTurnEnd([], childEnv(root), process, noStdin);
         expect(result).toEqual({ kind: "ok", value: "{}\n" });
-        expect((await (await import("node:fs/promises")).readdir(join(root, "dispatches", "d1", "messages"))).length).toBe(0);
+        expect(readMessages(root, "d1")).toHaveLength(0);
       });
     }
   });
@@ -332,8 +356,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await executeHookTurnEnd([], childEnv(root), process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
-      const messages = await (await import("node:fs/promises")).readdir(join(root, "dispatches", "d1", "messages"));
-      expect(messages.some((name) => name.includes("stalled"))).toBe(false);
+      expect(readMessages(root, "d1").some((message) => message.type === "stalled")).toBe(false);
     });
   });
 
@@ -345,10 +368,9 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await executeHookTurnEnd([], childEnv(root), process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
-      const directory = join(root, "dispatches", "d1", "messages");
-      const names = (await (await import("node:fs/promises")).readdir(directory)).filter((name) => name.includes("stalled"));
+      const names = readMessages(root, "d1").filter((message) => message.type === "stalled");
       expect(names).toHaveLength(1);
-      const recorded = JSON.parse(await readFile(join(directory, names[0]), "utf8"));
+      const recorded = names[0];
       expect(recorded).toMatchObject({ from: "child", type: "stalled", text: "child turn ended without ask or done", sessionId: "child-term" });
     });
   });
@@ -361,9 +383,8 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const payload = JSON.stringify({ last_assistant_message: "here is my final answer" });
       await executeHookTurnEnd([payload], childEnv(root), process, noStdin);
-      const directory = join(root, "dispatches", "d1", "messages");
-      const names = (await (await import("node:fs/promises")).readdir(directory)).filter((name) => name.includes("stalled"));
-      const recorded = JSON.parse(await readFile(join(directory, names[0]), "utf8"));
+      const names = readMessages(root, "d1").filter((message) => message.type === "stalled");
+      const recorded = names[0];
       expect(recorded.text).toBe("here is my final answer");
     });
   });
@@ -376,9 +397,8 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const stdin = async () => JSON.stringify({ lastAssistantMessage: "from stdin" });
       await executeHookTurnEnd([], childEnv(root), process, stdin);
-      const directory = join(root, "dispatches", "d1", "messages");
-      const names = (await (await import("node:fs/promises")).readdir(directory)).filter((name) => name.includes("stalled"));
-      const recorded = JSON.parse(await readFile(join(directory, names[0]), "utf8"));
+      const names = readMessages(root, "d1").filter((message) => message.type === "stalled");
+      const recorded = names[0];
       expect(recorded.text).toBe("from stdin");
     });
   });
@@ -394,9 +414,8 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const payload = JSON.stringify({ transcript_path: transcriptPath });
       await executeHookTurnEnd([payload], childEnv(root), process, noStdin);
-      const directory = join(root, "dispatches", "d1", "messages");
-      const names = (await (await import("node:fs/promises")).readdir(directory)).filter((name) => name.includes("stalled"));
-      const recorded = JSON.parse(await readFile(join(directory, names[0]), "utf8"));
+      const names = readMessages(root, "d1").filter((message) => message.type === "stalled");
+      const recorded = names[0];
       expect(recorded.text).toBe(Array.from({ length: 20 }, (_value, index) => `line ${index + 10}`).join("\n"));
     });
   });
@@ -460,7 +479,7 @@ describe("executeHookTurnEnd: the parent is never mistaken for its own just-spaw
           const hookResult = await executeHookTurnEnd([], hookEnvironment, process, noStdin);
           expect(hookResult).toEqual({ kind: "ok", value: "{}\n" });
 
-          const messages = (await readdir(join(root, "dispatches", dispatchId, "messages"))).filter((name) => name.includes("stalled"));
+          const messages = readMessages(root, dispatchId).filter((message) => message.type === "stalled");
           expect(messages).toHaveLength(0);
           const afterMeta = await readMeta(root, dispatchId);
           expect(afterMeta.state).toBe("spawning");
@@ -496,10 +515,9 @@ describe("executeHookTurnEnd: a caller inside a tmux pane passes the top gate", 
       const childEnvironment = environment(root, { TMUX: "child-tmux-server", TMUX_PANE: "%3" });
       const result = await executeHookTurnEnd([], childEnvironment, process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
-      const directory = join(root, "dispatches", "d1", "messages");
-      const names = (await readdir(directory)).filter((name) => name.includes("stalled"));
+      const names = readMessages(root, "d1").filter((message) => message.type === "stalled");
       expect(names).toHaveLength(1);
-      const recorded = JSON.parse(await readFile(join(directory, names[0]), "utf8"));
+      const recorded = names[0];
       expect(recorded).toMatchObject({ from: "child", type: "stalled", text: "child turn ended without ask or done", sessionId: "work:%3" });
     });
   });
@@ -558,7 +576,7 @@ describe("executeHookTurnEnd: a caller inside a tmux pane passes the top gate", 
           expect(refusedMeta.state).toBe("failed");
           expect(refusedMeta.reconcileOutcome).toBe("limit-refused");
 
-          const dispatchIds = (await readdir(join(root, "dispatches"))).filter((id) => id !== dispatchId);
+          const dispatchIds = readDispatchIds(root).filter((id) => id !== dispatchId);
           expect(dispatchIds).toHaveLength(1);
           const resumedMeta = await readMeta(root, dispatchIds[0]);
           expect(resumedMeta).toMatchObject({ agent: "codex", model: "m2", runtime: "tmux", worktreePath: resolvedWorktree });

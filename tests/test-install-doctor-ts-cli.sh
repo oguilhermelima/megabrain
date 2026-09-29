@@ -3,6 +3,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-install-doctor.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 binary="$root/.build/megabrain"
 export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
 modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync)
@@ -171,6 +175,8 @@ cp "$root/tmux/megabrain.tmux.conf" "$work/home/.megabrain/tmux/megabrain.tmux.c
 printf '%s\n' '/Users/gui/Workspaces' >"$work/home/.megabrain/worktree-root"
 printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$work/shell-state/state.json"
 cp "$work/shell-state/state.json" "$work/binary-state/state.json"
+MEGABRAIN_STATE_DIR="$work/shell-state" "$binary" db import "$work/shell-state" >/dev/null
+MEGABRAIN_STATE_DIR="$work/binary-state" "$binary" db import "$work/binary-state" >/dev/null
 printf '%s\n' '/Users/gui/Workspaces' >"$work/shell-state/worktree-root"
 cp "$work/shell-state/worktree-root" "$work/binary-state/worktree-root"
 
@@ -242,11 +248,16 @@ export HOME="$work/home"
 read_only_state="$work/read-only-state"
 mkdir -p "$read_only_state"
 printf '%s\n' '{"orchestration":{"installed":true}}' >"$read_only_state/state.json"
+MEGABRAIN_STATE_DIR="$read_only_state" "$binary" db import "$read_only_state" >/dev/null
 read_only_before="$work/read-only-before.json"
-cp "$read_only_state/state.json" "$read_only_before"
+read_only_after="$work/read-only-after.json"
+read_only_sorted="$work/read-only-sorted.json"
+MEGABRAIN_STATE_DIR="$read_only_state" "$binary" db show --install-state --json >"$read_only_before"
 export MEGABRAIN_STATE_DIR="$read_only_state"
 run_capture "$work/read-only-run" "$binary" doctor orchestration --json
-cmp -s "$read_only_before" "$read_only_state/state.json" || fail 'doctor changed the installation state'
+MEGABRAIN_STATE_DIR="$read_only_state" "$binary" db show --install-state --json | jq -S . >"$read_only_after"
+jq -S . "$read_only_before" >"$read_only_sorted"
+cmp -s "$read_only_sorted" "$read_only_after" || fail 'doctor changed the installation state'
 jq -e '.module == "orchestration" and (.status | type) == "string" and (.reason | type) == "string"' \
   "$work/read-only-run.stdout" >/dev/null || fail 'doctor did not report module content'
 if grep -F 'state reconciled' "$work/read-only-run.stdout" >/dev/null; then
@@ -277,6 +288,7 @@ healthy_state="$work/healthy-state"
 mkdir -p "$healthy_state"
 jq -n --argjson modules "$(printf '%s\n' "${modules[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
   '$modules | map({key: ., value: {installed: true}}) | from_entries' >"$healthy_state/state.json"
+MEGABRAIN_STATE_DIR="$healthy_state" "$binary" db import "$healthy_state" >/dev/null
 export MEGABRAIN_STATE_DIR="$healthy_state"
 healthy_json="$work/healthy-json"
 run_capture "$healthy_json" "$binary" doctor --json

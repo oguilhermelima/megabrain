@@ -4,7 +4,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
+source "$root/tests/support/state-db.bash"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-ident.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+
 socket_name="megabrainident"
 session_name="megabrain-ident-test"
 other_session="megabrain-ident-other"
@@ -55,7 +61,7 @@ wait_for_file() {
 wait_for_message() {
   local dispatch_id="$1" attempt count
   for ((attempt = 1; attempt <= 100; attempt++)); do
-    count="$(find "$state_dir/dispatches/$dispatch_id/messages" -name '*.json' -print 2>/dev/null | wc -l | tr -d ' ')"
+    count="$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_id" | jq '.messages | length' 2>/dev/null || printf 0)"
     [ "$count" -ge 1 ] && return 0
     sleep 0.05
   done
@@ -84,6 +90,7 @@ create_tmux_meta() {
       terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
       state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxSessionId="$session_id" tmuxPane="$pane" runtime=tmux >/dev/null
   fi
+  state_db_import_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_id"
 }
 
 # findChild (src/cli/commands/queue-write.ts) never matches a tmux-runtime dispatch by
@@ -135,6 +142,7 @@ write_dispatch_meta "$state_dir" "$tmux_parent_dispatch" \
   parentSessionId="$session_name:$tmux_pane_one" parentHost=tmux childHost=superset workspaceId="$workspace_id" \
   terminalId=host-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
   state=running model=gpt-5 modelHonored=true runtime=host >/dev/null
+state_db_import_dispatch "$root/.build/megabrain" "$state_dir" "$tmux_parent_dispatch"
 "$root/.build/megabrain" orchestrate reply "$tmux_parent_dispatch" --text 'ownership probe' --json >/dev/null ||
   fail 'tmux parent could not read its own dispatch'
 export TMUX_PANE="$tmux_pane_two"
@@ -163,19 +171,15 @@ write_dispatch_meta "$state_dir" "$dispatch_orca" \
   state=running model=gpt-5 modelHonored=true tmuxSession="$session_name" \
   tmuxSessionId="$(tmux_cmd display-message -p -t "$tmux_pane_two" '#{session_id}')" \
   tmuxPane="$tmux_pane_two" runtime=tmux >/dev/null
+state_db_import_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_orca"
 send_child_message "$tmux_pane_two" "$dispatch_orca" child-without-host "$state_dir/child-without-host.out"
 
-message_one="$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' -print -quit)"
-message_two="$(find "$state_dir/dispatches/$dispatch_two/messages" -name '*.json' -print -quit)"
-[ -n "$message_one" ] || fail "dispatch one has no message"
-[ -n "$message_two" ] || fail "dispatch two has no message"
-assert_equal "$(jq -r '.text' "$message_one")" child-one
-assert_equal "$(jq -r '.text' "$message_two")" child-two
-[ "$(find "$state_dir/dispatches/$dispatch_orca/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch without host received no message"
-message_without_host="$(find "$state_dir/dispatches/$dispatch_orca/messages" -name '*.json' -print -quit)"
-assert_equal "$(jq -r '.text' "$message_without_host")" child-without-host
-[ "$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch one received an extra message"
-[ "$(find "$state_dir/dispatches/$dispatch_two/messages" -name '*.json' | wc -l | tr -d ' ')" = 1 ] || fail "dispatch two received an extra message"
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_one" | jq -r '.messages[0].text')" child-one
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_two" | jq -r '.messages[0].text')" child-two
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_orca" | jq -r '.messages | length')" 1
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_orca" | jq -r '.messages[0].text')" child-without-host
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_one" | jq -r '.messages | length')" 1
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_two" | jq -r '.messages | length')" 1
 
 wrong_parent_output=""
 if wrong_parent_output="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=other-parent "$root/.build/megabrain" orchestrate watch "$dispatch_one" --timeout 0 --poll-interval 0 --json 2>&1)"; then
@@ -197,40 +201,31 @@ assert_equal "$(jq -r '.messages[0].text' <<<"$delivery_one")" child-one
 assert_equal "$(jq -r '.messages[0].text' <<<"$delivery_two")" child-two
 
 env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID="$parent_id" "$root/.build/megabrain" orchestrate ack "$dispatch_one" "$delivery_id_one" --json >/dev/null
-assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_one/deliveries/$delivery_id_one.json")" acknowledged
-assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_two/deliveries/$delivery_id_two.json")" outstanding
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_one" | jq -r --arg id "$delivery_id_one" '.deliveries[] | select(.id == $id) | .status')" acknowledged
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_two" | jq -r --arg id "$delivery_id_two" '.deliveries[] | select(.id == $id) | .status')" outstanding
 
 stale_pane="$tmux_pane_one"
 tmux_cmd kill-pane -t "$stale_pane"
 stale_output="$state_dir/stale.out"
 stale_done="$state_dir/stale.done"
-# A caller identity is resolved once per call (queue-write.ts's session(), reused by findChild):
-# setting a terminal-handle override short-circuits before the tmux fallback is ever attempted,
-# so a stale TMUX_PANE can only be observed with no override present -- the caller then falls
-# through every identity probe (tmux display-message on the now-dead pane, then the
-# list-panes -a fallback) and is refused outright as unidentified, rather than reaching
-# findChild's dispatch-specific "no managed dispatch belongs to tmux session ... pane ..."
-# message, which requires a *resolved* tmux identity that simply finds no match -- confirmed
-# empirically: with SUPERSET_TERMINAL_ID set (as the old assertion required), session() returns
-# the superset identity before ever touching TMUX_PANE, and the refusal names a superset
-# terminal, not a tmux pane. Adjusted to the message the current code actually produces for a
-# truly stale pane, while keeping the property that matters: a dead pane reference is refused,
-# and dispatch_one's message count does not grow.
+# A caller identity is resolved once per call (queue-write.ts's session(), reused by findChild).
+# When every identity probe fails for a stale pane, the command refuses the request before it
+# scans dispatch ownership, using the same error as main.
 stale_command="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR=$(printf '%q' "$state_dir") MEGABRAIN_DISPATCH_ID=$(printf '%q' "$dispatch_one") TMUX_PANE=$(printf '%q' "$stale_pane") $(printf '%q' "$root/.build/megabrain") ask stale-message >$(printf '%q' "$stale_output") 2>&1; printf 'done\n' >$(printf '%q' "$stale_done")"
 tmux_cmd send-keys -t "$tmux_pane_two" -l "$stale_command"
 tmux_cmd send-keys -t "$tmux_pane_two" Enter
 wait_for_file "$stale_done"
 assert_contains "$(cat "$stale_output")" 'this command requires a managed terminal identity'
-assert_equal "$(find "$state_dir/dispatches/$dispatch_one/messages" -name '*.json' | wc -l | tr -d ' ')" 1
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_one" | jq -r '.messages | length')" 1
 
 tab_dispatch="dispatch-tab"
 write_dispatch_meta "$state_dir" "$tab_dispatch" \
   parentSessionId=tab-parent parentHost=superset childHost=superset workspaceId="$workspace_id" \
   terminalId=tab-terminal worktreePath="$root" branch=main agent=codex agentId=codex label=label \
   state=running model=gpt-5 modelHonored=true runtime=host >/dev/null
+state_db_import_dispatch "$root/.build/megabrain" "$state_dir" "$tab_dispatch"
 env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=tab-terminal MEGABRAIN_DISPATCH_ID="$tab_dispatch" "$root/.build/megabrain" ask tab-message >/dev/null
-tab_message="$(find "$state_dir/dispatches/$tab_dispatch/messages" -name '*.json' -print -quit)"
-assert_equal "$(jq -r '.text' "$tab_message")" tab-message
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$tab_dispatch" | jq -r '.messages[0].text')" tab-message
 
 # megabrain_launch_agent (lib/module-worktree.sh) is gone: `orchestrate spawn` forwards
 # unconditionally to executeSpawn (src/cli/commands/orchestrate-spawn.ts), which has a different

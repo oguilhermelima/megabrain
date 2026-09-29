@@ -1,15 +1,15 @@
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { closeDecision, closeOutput, hostCloseReason, isHostTerminalAbsent, parseCloseArgs } from "../../core/orchestrate-close.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
-import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
-import { dispatchFile, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
+import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
+import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -27,16 +27,18 @@ function errorText(result: { readonly error?: string; readonly stdout?: string; 
   return hostCloseReason(/^(?:orca|megabrain_superset) exited with status \d+$/.test(raw) ? "" : raw);
 }
 
-async function preserveTranscript(directory: string, meta: RecordValue, process: ProcessAdapter): Promise<void> {
+async function preserveTranscript(environment: QueueEnvironment, id: string, meta: RecordValue, process: ProcessAdapter): Promise<void> {
   if (text(meta.runtime) !== "tmux") return;
-  const path = `${directory}/transcript`;
+  const storedPath = transcriptPath(environment, id);
+  if (storedPath.kind !== "ok") return;
+  const path = storedPath.value;
   if (await access(path).then(() => true, () => false)) return;
   const pane = text(meta.tmuxPane);
   if (pane === "") return;
   const captured = await getTmux().capturePane(pane, 200, process);
   if (captured.kind !== "ok" || captured.value === "") return;
   try {
-    await mkdir(directory, { recursive: true });
+    await mkdir(dirname(path), { recursive: true });
     await writeFile(path, cleanTranscript(captured.value).text);
   } catch {
     // Transcript capture is best effort; an existing transcript is never overwritten.
@@ -76,12 +78,15 @@ async function closeRecordedTmuxHost(hostId: string, terminalId: string, workspa
 export async function executeOrchestrateClose(args: readonly string[], environment: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-close"));
   const parsed = parseCloseArgs(args); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(environment);
-  const resolved = await resolveDispatchDirectory(root, parsed.value.dispatchId);
-  if (resolved.kind !== "ok") return { ...resolved, error: `${resolved.error}\nmegabrain: dispatch not found: ${parsed.value.dispatchId}` };
-  const path = dispatchFile(resolved.value, "meta");
-  const meta = await readJson(path); if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
-  if (resolved.value.archived) {
+  const database = stateDatabase(environment);
+  if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const metaResult = getDispatch(database.value, parsed.value.dispatchId);
+  if (metaResult.kind !== "ok") return metaResult;
+  const meta = metaResult.value;
+  if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+  const active = listDispatches(database.value);
+  if (active.kind !== "ok") return active;
+  if (!active.value.some((item) => item.dispatchId === parsed.value.dispatchId)) {
     const message = `dispatch ${parsed.value.dispatchId} is archived; nothing to close`;
     return ok(parsed.value.json ? `${JSON.stringify({ dispatchId: parsed.value.dispatchId, status: "archived", message }, null, 2)}\n` : `${message}\n`);
   }
@@ -99,7 +104,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
 
   const host = text(meta.childHost); const runtime = text(meta.runtime) || "host";
   let outcome = "unknown";
-  await preserveTranscript(resolved.value.directory, meta, process);
+  await preserveTranscript(environment, parsed.value.dispatchId, meta, process);
   if (runtime === "tmux") {
     const session = text(meta.tmuxSession); const pane = text(meta.tmuxPane); const parentSession = text(meta.parentTmuxSession);
     const shared = session === parentSession || session === tmuxSession;
@@ -121,8 +126,12 @@ export async function executeOrchestrateClose(args: readonly string[], environme
           paneExists = panes.value.includes(pane);
         }
       }
-      const recordPath = `${root}/sessions/${encodeURIComponent(session)}.json`;
-      const sessionRecord = await readJson(recordPath);
+      const stableId = text(meta.tmuxSessionId);
+      const stableRecord = stableId === "" ? { kind: "ok" as const, value: undefined } : getTmuxSessionByStableId(database.value, stableId);
+      if (stableRecord.kind !== "ok") return failed(stableRecord.error, stableRecord.exitCode);
+      const namedRecord = stableRecord.value === undefined ? getTmuxSession(database.value, session) : stableRecord;
+      if (namedRecord.kind !== "ok") return failed(namedRecord.error, namedRecord.exitCode);
+      const sessionRecord = namedRecord.value;
       const legacyUnregisteredSession = meta.tmuxSessionOwned === undefined && sessionRecord === undefined;
       const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${parsed.value.dispatchId}` || legacyUnregisteredSession;
       if (paneExists && paneCount > 1) {
@@ -149,7 +158,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
           const closed = await closeRecordedTmuxHost(hostTerminalHost, hostTerminalId, workspaceId === "" ? null : workspaceId, process);
           if (closed.kind !== "ok") return closed;
         }
-        await rm(recordPath, { force: true }).catch(() => undefined);
+        deleteTmuxSession(database.value, session);
       }
     }
   } else {
@@ -167,6 +176,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     terminalState: "released",
     terminalReason: null,
   };
-  await atomicJson(path, next);
+  const updated = mutateDispatch(database.value, parsed.value.dispatchId, () => next);
+  if (updated.kind !== "ok") return updated;
   return ok(closeOutput(parsed.value.dispatchId, parsed.value.json, runtime, host, outcome));
 }

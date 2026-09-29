@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-model-cli.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 state="$work/state"
 home="$work/home"
 trap 'rm -rf "$work"' EXIT
@@ -44,7 +48,7 @@ mkdir -p "$home"
 # Falsification: a no-op or shell comparison would not create the fixture registry or satisfy
 # the independent inventory assertions below.
 list_output="$(run_binary model list --json)"
-[ -f "$state/models.json" ] || fail 'model list did not initialize the fixture registry'
+MEGABRAIN_STATE_DIR="$state" "$root/.build/megabrain" db show --models --json | jq -e '.version == 1' >/dev/null || fail 'model list did not initialize the database registry'
 assert_equal "$(printf '%s' "$list_output" | jq '.version')" 1
 assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 12
 assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 19

@@ -4,9 +4,16 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
+source "$root/tests/support/state-db.bash"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-event-delivery.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
+ln -s "$(command -v node)" "$bin_dir/node"
 send_log="$state_dir/send.log"
 : >"$send_log"
 cat >"$bin_dir/superset" <<EOF
@@ -47,13 +54,14 @@ assert_contains() {
 }
 
 delivery_count() {
-  find "$state_dir/dispatches/$1/deliveries" -name '*.json' -type f | wc -l | tr -d ' '
+  state_db_dispatch "$root/.build/megabrain" "$state_dir" "$1" | jq '.deliveries | length'
 }
 
 create_dispatch() {
   local dispatch_id="$1" child_terminal="child-$1"
   write_dispatch_meta "$state_dir" "$dispatch_id" \
     childHost=superset workspaceId=workspace-test terminalId="$child_terminal" state=running >/dev/null
+  state_db_import_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_id"
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
@@ -74,12 +82,17 @@ run_child_message() {
   fi
 }
 
-nudge_count() {
-  find "$state_dir/dispatches" -name nudge.log -type f | wc -l | tr -d ' '
-}
-
 send_count() {
   wc -l <"$send_log" | tr -d ' '
+}
+
+nudge_count() {
+  local total=0 dispatch_id count
+  for dispatch_id in "$@"; do
+    count="$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_id" | jq '.nudges | length')"
+    total=$((total + count))
+  done
+  printf '%s\n' "$total"
 }
 
 # A child ask is an event: append alone creates its parent delivery and one nudge.
@@ -87,8 +100,8 @@ create_dispatch child-ask
 export SUPERSET_TERMINAL_ID=child-child-ask
 run_child_message child-ask ask 'needs a decision' >/dev/null
 assert_equal "$(delivery_count child-ask)" 1
-assert_equal "$(nudge_count)" 1
-assert_equal "$(jq -r '.recipient' "$state_dir/dispatches/child-ask/deliveries"/*.json)" parent
+assert_equal "$(nudge_count child-ask)" 1
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-ask | jq -r '.deliveries[0].recipient')" parent
 printf 'child ask creates one parent delivery and one nudge\n'
 
 # A child done has the same event-driven behavior.
@@ -96,7 +109,7 @@ create_dispatch child-done
 export SUPERSET_TERMINAL_ID=child-child-done
 run_child_message child-done done 'finished successfully' >/dev/null
 assert_equal "$(delivery_count child-done)" 1
-assert_equal "$(nudge_count)" 2
+assert_equal "$(nudge_count child-ask child-done)" 2
 printf 'child done creates one parent delivery and one nudge\n'
 
 # A "child stalled" message is not user-invoked; only the turn-end hook writes one
@@ -109,8 +122,8 @@ env -i HOME="$state_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STAT
   MEGABRAIN_DISPATCH_ID=child-stalled SUPERSET_TERMINAL_ID=child-child-stalled MEGABRAIN_HOOK_AGENT=codex \
   "$root/.build/megabrain" hook turn-end '{"last_assistant_message":"needs intervention"}' >/dev/null
 assert_equal "$(delivery_count child-stalled)" 1
-assert_equal "$(jq -r '.type' "$state_dir/dispatches/child-stalled/messages"/*.json)" stalled
-assert_equal "$(nudge_count)" 3
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-stalled | jq -r '.messages[0].type')" stalled
+assert_equal "$(nudge_count child-ask child-done child-stalled)" 3
 printf 'child stalled creates one parent delivery and one nudge\n'
 
 # Protocol evidence remains durable without creating an actionable nudge. A plain "received"
@@ -125,7 +138,7 @@ create_dispatch protocol-only
 export SUPERSET_TERMINAL_ID=child-protocol-only
 run_child_message protocol-only received 'prompt received' >/dev/null
 assert_equal "$(delivery_count protocol-only)" 1
-assert_equal "$(nudge_count)" 3
+assert_equal "$(nudge_count child-ask child-done child-stalled protocol-only)" 3
 printf 'received mail is durable and protocol-only\n'
 
 # A parent reply creates the child's delivery before the child checks, and notifies the child's
@@ -137,7 +150,7 @@ export SUPERSET_TERMINAL_ID=parent-terminal
 create_dispatch parent-reply
 "$root/.build/megabrain" orchestrate reply parent-reply --text 'continue' --json >/dev/null
 assert_equal "$(delivery_count parent-reply)" 1
-assert_equal "$(jq -r '.recipient' "$state_dir/dispatches/parent-reply/deliveries"/*.json)" child
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" parent-reply | jq -r '.deliveries[0].recipient')" child
 assert_equal "$(send_count)" 1
 printf 'parent reply creates one child delivery and one nudge\n'
 
@@ -159,17 +172,19 @@ export SUPERSET_TERMINAL_ID=parent-terminal
 unset ORCA_TERMINAL_HANDLE
 create_dispatch consumer-fence
 append_dispatch_message "$state_dir" consumer-fence child ask 'fence me' child-terminal >/dev/null
+state_db_import_dispatch "$root/.build/megabrain" "$state_dir" consumer-fence true
 fence_check="$("$root/.build/megabrain" orchestrate watch consumer-fence --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 fence_id="$(jq -r '.deliveryId' <<<"$fence_check")"
 if "$root/.build/megabrain" orchestrate ack consumer-fence "$fence_id" --consumer foreign --generation 1 >/dev/null 2>&1; then
   fail 'foreign consumer acknowledged a claimed delivery'
 fi
-assert_equal "$(jq -r '.status' "$state_dir/dispatches/consumer-fence/deliveries/$fence_id.json")" outstanding
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" consumer-fence | jq -r --arg id "$fence_id" '.deliveries[] | select(.id == $id) | .status')" outstanding
 printf 'foreign consumer is refused by the delivery fence\n'
 
 # Watch only reads and claims the delivery born at append; it does not create one.
 create_dispatch watch-reader
 append_dispatch_message "$state_dir" watch-reader child done 'already delivered' child-terminal >/dev/null
+state_db_import_dispatch "$root/.build/megabrain" "$state_dir" watch-reader true
 before_watch="$(delivery_count watch-reader)"
 watch_output="$("$root/.build/megabrain" orchestrate watch watch-reader --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 assert_equal "$(delivery_count watch-reader)" "$before_watch"
@@ -182,6 +197,7 @@ create_dispatch legacy-queue
 mkdir -p "$state_dir/dispatches/legacy-queue/messages"
 jq -n '{seq: 1, from: "child", type: "ask", text: "legacy question", createdAt: "2026-09-10T00:00:00Z", sessionId: "child-legacy-queue"}' \
   >"$state_dir/dispatches/legacy-queue/messages/0001-child-ask.json"
+state_db_import_dispatch "$root/.build/megabrain" "$state_dir" legacy-queue true
 export SUPERSET_TERMINAL_ID=parent-terminal
 legacy_output="$("$root/.build/megabrain" orchestrate watch legacy-queue --timeout 0 --poll-interval 0 --wait-mode poll --json)"
 assert_equal "$(delivery_count legacy-queue)" 1

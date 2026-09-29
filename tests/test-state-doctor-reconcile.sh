@@ -4,8 +4,14 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
+source "$root/tests/support/state-db.bash"
 [ -x "$binary" ] || { printf 'skip: compiled doctor binary is missing at %s; run bun run build\n' "$binary"; exit 0; }
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-state-doctor.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
+
 export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
 
 cleanup() {
@@ -67,12 +73,13 @@ write_state() {
   jq -n --arg moduleName "$module" --argjson installed "$1" \
     '{($moduleName): {installed: $installed, details: "historical result"}}' \
     >"$MEGABRAIN_STATE_FILE"
+  state_db_import "$binary" "$MEGABRAIN_STATE_DIR" true
 }
 
 write_state false
 first_output="$("$binary" doctor simulator-native 2>&1)" ||
   fail 'compiled doctor did not accept an installed native simulator'
-[ "$(jq -r '."simulator-native".installed' "$MEGABRAIN_STATE_FILE")" = false ] ||
+[ "$(state_db_install "$binary" "$MEGABRAIN_STATE_DIR" | jq -r ' ."simulator-native".installed')" = false ] ||
   fail 'doctor changed a false state after observing the driver'
 case "$first_output" in
   *'state reconciled'*) fail 'doctor reported a state reconciliation' ;;
@@ -86,7 +93,7 @@ write_state true
 if "$binary" doctor simulator-native >/dev/null 2>&1; then
   fail 'doctor accepted a missing native simulator driver'
 fi
-[ "$(jq -r '."simulator-native".installed' "$MEGABRAIN_STATE_FILE")" = true ] ||
+[ "$(state_db_install "$binary" "$MEGABRAIN_STATE_DIR" | jq -r ' ."simulator-native".installed')" = true ] ||
   fail 'doctor changed a true state after observing the missing driver'
 printf 'stale true state is reported without mutation\n'
 
@@ -97,8 +104,8 @@ printf '%s\n' '{"profiles":{},"extensions":{}}' >"$MEGABRAIN_PLAYWRIGHT_ROOT/man
 if "$binary" doctor simulator-web >/dev/null 2>&1; then
   fail 'doctor accepted an unknown web simulator status'
 fi
-[ "$(jq -r '."simulator-web".installed' "$MEGABRAIN_STATE_FILE")" = true ] ||
+[ "$(state_db_install "$binary" "$MEGABRAIN_STATE_DIR" | jq -r ' ."simulator-web".installed')" = true ] ||
   fail 'doctor changed an installed web simulator after an unknown check'
 printf 'unknown web simulator status preserves the installed state without mutation\n'
 
-printf 'ok: doctor does not stay silent when state.json disagrees with reality\n'
+printf 'ok: doctor does not stay silent when database install state disagrees with reality\n'

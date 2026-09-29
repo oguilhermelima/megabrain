@@ -9,6 +9,10 @@ binary="$root/.build/megabrain"
   exit 0
 }
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 fake_bin="$state_dir/bin"
 fake_port_state="$state_dir/fake-port-state"
 fake_port_recreated_file="$state_dir/fake-port-recreated"
@@ -197,6 +201,7 @@ write_dispatch_meta() {
   mkdir -p "$dispatch_dir/$id/messages" "$dispatch_dir/$id/deliveries"
   jq -n --arg id "$id" --arg terminalId "$terminal_id" '{dispatchId: $id, terminalId: $terminalId, state: "running"}' \
     >"$dispatch_dir/$id/meta.json"
+  "$binary" db import "$state_dir" >/dev/null
 }
 
 # Fixture-only replacement for megabrain_terminal_record_write (lib/module-worktree.sh), also
@@ -207,6 +212,7 @@ write_terminal_record() {
   jq -n --arg terminalId "$id" --arg host "$host" --argjson pid "$pid_json" --argjson port "$port_json" --argjson rootPid "$root_pid_json" \
     '{terminalId: $terminalId, host: $host, workspaceId: "workspace-test", worktree: "'"$root"'", title: null, command: "run", createdAt: "now", pid: $pid, rootPid: $rootPid, port: $port, status: "active"}' \
     >"$terminal_dir/$id.json"
+  "$binary" db import "$state_dir" >/dev/null
 }
 
 scenario_create_json_preserves_identity() {
@@ -216,11 +222,10 @@ scenario_create_json_preserves_identity() {
   fake_port=8082
   output="$(terminal create --worktree "$root" --command 'run server' --title "$fake_title" --json)"
   assert_json_true "$output" '.terminalId == "terminal-create" and .pid == 100 and .port == 8082'
-  record="$terminal_dir/terminal-create.json"
-  [ -f "$record" ] || fail 'create did not persist a terminal record'
+  "$binary" db show --terminal terminal-create --json >/dev/null || fail 'create did not persist a terminal record'
   dispatch_id=identity-dispatch
   write_dispatch_meta "$dispatch_id" "$(jq -r '.terminalId' <<<"$output")"
-  assert_equal "$(jq -r '.terminalId' "$dispatch_dir/$dispatch_id/meta.json")" terminal-create
+  assert_equal "$("$binary" db show "$dispatch_id" --json | jq -r '.meta.terminalId')" terminal-create
   printf 'create --json returns the identity used by dispatch metadata\n'
 }
 
@@ -332,8 +337,7 @@ scenario_create_marker_identity() {
   fake_identity_read=true
   output="$(terminal create --worktree "$root" --command 'run marker' --title 'DEV marker' --port 8086 --json)"
   assert_json_true "$output" '.terminalId == "terminal-marker" and .pid == 333 and .rootPid == 333 and .port == 8086'
-  record="$terminal_dir/terminal-marker.json"
-  assert_equal "$(jq -r '.command' "$record")" 'run marker'
+  assert_equal "$("$binary" db show --terminal terminal-marker --json | jq -r '.command')" 'run marker'
   assert_contains "$(cat "$fake_create_command_file")" 'MEGABRAIN_TERMINAL_PID_'
   printf 'create wraps the command and persists its self-reported root identity\n'
 }
@@ -356,7 +360,7 @@ scenario_restart_marker_identity() {
 }
 
 scenario_close_lifecycle() {
-  local output record failure_output
+  local output failure_output
   fake_id=terminal-close
   fake_pid=336
   fake_port=8089
@@ -364,11 +368,10 @@ scenario_close_lifecycle() {
   fake_create_returns_identity=true
   printf 'no\n' >"$fake_close_called_file"
   terminal create --worktree "$root" --command 'run close' --port 8089 --json >/dev/null
-  record="$terminal_dir/terminal-close.json"
   output="$(terminal close id:terminal-close --json)"
   assert_json_true "$output" '.status == "closed" and .recordRemoved == true and .identity == "recorded"'
   [ "$(cat "$fake_close_called_file")" = yes ] || fail 'close did not call the host'
-  [ ! -f "$record" ] || fail 'close did not remove the terminal record'
+  if "$binary" db show --terminal terminal-close --json >/dev/null 2>&1; then fail 'close did not remove the terminal record'; fi
 
   fake_id=terminal-no-identity
   fake_host_live=true

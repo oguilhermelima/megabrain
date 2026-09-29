@@ -4,6 +4,12 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-doctor-tolerance.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+node_bin="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-tolerance-node.XXXXXX")"
+ln -s "$(command -v node)" "$node_bin/node"
 
 cleanup() {
   rm -rf "$state_dir"
@@ -74,7 +80,7 @@ EOF
 chmod +x "$tmux_bin/tmux"
 
 cleanup_fakes() {
-  rm -rf "$orca_bin" "$superset_bin" "$tmux_bin"
+  rm -rf "$orca_bin" "$superset_bin" "$tmux_bin" "$node_bin"
 }
 trap 'cleanup; cleanup_fakes' EXIT
 
@@ -89,13 +95,14 @@ expect_doctor() {
   local scenario_dir path_value output rc
   scenario_dir="$state_dir/$name-scenario"
   mkdir -p "$scenario_dir"
-  path_value="/usr/bin:/bin"
+  path_value="$node_bin:/usr/bin:/bin"
   if [ "$fake_tmux_runtime" = true ]; then
     printf '%s\n' '{"tmux-runtime":{"installed":true}}' >"$scenario_dir/state.json"
     path_value="$tmux_bin:$path_value"
   else
     printf '%s\n' '{}' >"$scenario_dir/state.json"
   fi
+  MEGABRAIN_STATE_DIR="$scenario_dir" HOME="$scenario_dir" "$binary" db import "$scenario_dir" >/dev/null
   [ "$fake_orca_available" = true ] && path_value="$orca_bin:$path_value"
   [ "$fake_superset_available" = true ] && path_value="$superset_bin:$path_value"
   if output="$(PATH="$path_value" MEGABRAIN_STATE_DIR="$scenario_dir" HOME="$scenario_dir" \

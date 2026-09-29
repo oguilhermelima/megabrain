@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import nativeSessionsMigration from "./schema/001-native-sessions.sql" with { type: "text" };
 import dispatchCoreMigration from "./schema/002-dispatch-core.sql" with { type: "text" };
 import stateFacadeMigration from "./schema/003-waiters-outbox-detail.sql" with { type: "text" };
+import cutoverSettingsMigration from "./schema/004-cutover-settings.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -49,11 +50,11 @@ type NodeDatabase = Readonly<{
 
 const SQLITE_WARNING = "SQLite is an experimental feature and might change at any time";
 
-function openRuntimeDatabase(path: string): DatabaseAdapter {
+function openRuntimeDatabase(path: string, readOnly = false): DatabaseAdapter {
   const require = createRequire(import.meta.url);
   if (process.versions.bun !== undefined) {
-    const { Database } = require("bun:sqlite") as { readonly Database: new (path: string) => BunDatabase };
-    const database = new Database(path);
+    const { Database } = require("bun:sqlite") as { readonly Database: new (path: string, options?: Readonly<{ readonly?: boolean }>) => BunDatabase };
+    const database = readOnly ? new Database(path, { readonly: true }) : new Database(path);
     return {
       run: (sql, parameters) => database.query(sql).run(...(parameters ?? [])),
       exec: (sql) => database.exec(sql),
@@ -70,7 +71,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
   }
 
   const originalEmitWarning = process.emitWarning;
-  let sqlite: { readonly DatabaseSync: new (path: string) => NodeDatabase };
+  let sqlite: { readonly DatabaseSync: new (path: string, options?: Readonly<{ readOnly?: boolean }>) => NodeDatabase };
   try {
     process.emitWarning = ((warning: unknown, ...args: unknown[]): void => {
       const message = typeof warning === "string" ? warning : warning instanceof Error ? warning.message : undefined;
@@ -88,7 +89,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
     process.emitWarning = originalEmitWarning;
   }
   const { DatabaseSync } = sqlite;
-  const database = new DatabaseSync(path);
+  const database = readOnly ? new DatabaseSync(path, { readOnly: true }) : new DatabaseSync(path);
   return {
     run: (sql, parameters) => database.prepare(sql).run(...(parameters ?? [])),
     exec: (sql) => database.exec(sql),
@@ -108,6 +109,7 @@ const migrations: readonly Migration[] = [
   { version: 1, sql: nativeSessionsMigration },
   { version: 2, sql: dispatchCoreMigration },
   { version: 3, sql: stateFacadeMigration },
+  { version: 4, sql: cutoverSettingsMigration },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 
@@ -160,6 +162,7 @@ function backupToDirectory(db: DatabaseAdapter, stateDirectory: string, version:
   try {
     mkdirSync(backupDirectory, { recursive: true });
     db.exec(`VACUUM INTO ${quoteSqlString(path)}`);
+    chmodSync(path, 0o600);
     const backups = readdirSync(backupDirectory)
       .filter((name) => /^megabrain-.*-v\d+\.db$/.test(name))
       .sort((left, right) => right.localeCompare(left));
@@ -175,6 +178,34 @@ export function backupDatabase(handle: DatabaseHandle): Result<string> {
     return backupToDirectory(handle.db, dirname(handle.path), pragmaNumber(handle.db, "user_version"));
   } catch (cause: unknown) {
     return failed(`backup failed: ${errorMessage(cause)}`);
+  }
+}
+
+export function vacuumDatabaseFile(sourcePath: string, targetPath: string): Result<string> {
+  let source: DatabaseAdapter | undefined;
+  const sourceWal = `${sourcePath}-wal`;
+  const sourceShm = `${sourcePath}-shm`;
+  const hadSourceWal = existsSync(sourceWal);
+  const hadSourceShm = existsSync(sourceShm);
+  try {
+    mkdirSync(dirname(targetPath), { recursive: true });
+    source = openRuntimeDatabase(sourcePath, true);
+    source.exec(`VACUUM INTO ${quoteSqlString(targetPath)}`);
+    chmodSync(targetPath, 0o600);
+    return ok(targetPath);
+  } catch (cause: unknown) {
+    try { unlinkSync(targetPath); } catch { /* target may not have been created */ }
+    return failed(`database snapshot failed: ${errorMessage(cause)}`);
+  } finally {
+    try { source?.close(); } catch { /* preserve the snapshot result */ }
+    if (!hadSourceWal) try { unlinkSync(sourceWal); } catch { /* no sidecar was created */ }
+    if (!hadSourceShm) try { unlinkSync(sourceShm); } catch { /* no sidecar was created */ }
+  }
+}
+
+function secureDatabaseFiles(path: string): void {
+  for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+    if (existsSync(file)) chmodSync(file, 0o600);
   }
 }
 
@@ -238,8 +269,19 @@ function migrate(db: DatabaseAdapter, path: string): void {
 function configureConnection(db: DatabaseAdapter): void {
   try { db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`); }
   catch (cause: unknown) { failAt("pragma busy_timeout", cause); }
-  try { db.exec("PRAGMA journal_mode = WAL"); }
-  catch (cause: unknown) { failAt("pragma journal_mode", cause); }
+  const journalDeadline = Date.now() + busySeconds() * 1000;
+  let journalAttempt = 0;
+  while (true) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      break;
+    } catch (cause: unknown) {
+      if (!isBusy(cause)) failAt("pragma journal_mode", cause);
+      const remaining = journalDeadline - Date.now();
+      if (remaining <= 0) failAt("pragma journal_mode", new Error(`database is busy after ${busySeconds()} seconds`, { cause }));
+      sleep(retryDelay(journalAttempt++, remaining));
+    }
+  }
   try { db.exec("PRAGMA synchronous = NORMAL"); }
   catch (cause: unknown) { failAt("pragma synchronous", cause); }
   try { db.exec("PRAGMA foreign_keys = ON"); }
@@ -290,9 +332,11 @@ export function openDatabase(environment: StateEnvironment): Result<DatabaseHand
   try {
     configureConnection(db);
     migrate(db, path);
+    secureDatabaseFiles(path);
     const handle: DatabaseHandle = { path, db, close: () => db?.close() };
     try {
       importNativeSessions(handle, resolve(configuredStateDirectory, "native-sessions.json"));
+      secureDatabaseFiles(path);
     } catch (cause: unknown) { failAt("import", cause); }
     return ok(handle);
   } catch (cause: unknown) {

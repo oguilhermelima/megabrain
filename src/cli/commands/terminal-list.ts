@@ -1,9 +1,8 @@
-import { readFile, readdir, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { realpath } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { listTerminals, stateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { formatTerminalList, processStatus, type HostTerminal, type TerminalRecord } from "../../core/terminal-list.js";
-import { resolveStateDirectory } from "../../core/state.js";
 import { getHost } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
 
@@ -95,14 +94,13 @@ export async function executeTerminalList(args: readonly string[], environment: 
   }
   const filter = worktree === undefined ? undefined : await selector(process, worktree);
   if (filter !== undefined && filter.kind !== "ok") return filter;
-  const directory = environment.MEGABRAIN_TERMINAL_DIR ?? join(resolveStateDirectory(environment), "terminals");
-  let names: string[];
-  try { names = await readdir(directory); } catch { names = []; }
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+  const stored = listTerminals(opened.value);
+  if (stored.kind !== "ok") return stored;
   const entries: TerminalRecord[] = [];
-  for (const name of names.filter((item) => item.endsWith(".json")).sort()) {
-    let parsed: unknown;
-    try { parsed = jsonValue(await readFile(join(directory, name), "utf8")); } catch { continue; }
-    const record = terminalRecord(parsed);
+  for (const storedRecord of stored.value) {
+    const record = terminalRecord(storedRecord);
     if (record === undefined || (filter !== undefined && record.worktree !== filter.value)) continue;
     const host = await hostRecords(process, record);
     let processAlive = true;

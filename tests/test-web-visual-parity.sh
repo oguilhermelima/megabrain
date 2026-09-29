@@ -251,6 +251,10 @@ NODE
 
 # Scenario: the public CLI persists and removes custom device descriptors.
 cli_devices_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-web-devices.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$cli_devices_root/.megabrain-test-state"
+require_megabrain_test_state
+
 cli_devices_file="$cli_devices_root/devices.json"
 MEGABRAIN_PLAYWRIGHT_ROOT="$cli_devices_root" "$root/.build/megabrain" web devices add studio \
   --devices-file "$cli_devices_file" --viewport 1000x700 --device-scale-factor 2 \

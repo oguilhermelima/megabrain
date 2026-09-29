@@ -196,6 +196,10 @@ assert.equal(
 NODE
 
 viewport_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-web-viewport.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$viewport_root/.megabrain-test-state"
+require_megabrain_test_state
+
 cleanup_viewport() {
   rm -rf "$viewport_root"
 }

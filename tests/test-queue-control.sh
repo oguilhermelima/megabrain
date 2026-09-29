@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue-control.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 pane_fixture="$state_dir/pane.transcript"
 stop_calls_file="$state_dir/stop.calls"
 terminal_status_fixture=proven
@@ -38,6 +42,13 @@ assert_not_contains() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=parent-terminal
 unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
@@ -80,7 +91,7 @@ export PATH="$fake_bin:/usr/bin:/bin" PANE_FIXTURE="$pane_fixture" STOP_CALLS_FI
 
 compiled_stop() {
   local dispatch_id="$1" pane identity
-  pane="$(jq -r '.tmuxPane // empty' "$state_dir/dispatches/$dispatch_id/meta.json")"
+  pane="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq -r '.meta.tmuxPane // empty')"
   identity="$terminal_status_fixture"
   env MEGABRAIN_ROOT="$root" MEGABRAIN_SESSION_HOST=superset MEGABRAIN_SESSION_ID=parent-terminal \
     TARGET_PANE="$pane" TARGET_DISPATCH="$dispatch_id" IDENTITY_FIXTURE="$identity" ORCA_CHILD_ID="$dispatch_id-child" ORCA_IDENTITY="${identity/proven/$dispatch_id-child}" \
@@ -104,6 +115,7 @@ compiled_ack() {
 }
 
 begin_scenario() {
+  rm -rf "$state_dir/dispatches" "$state_dir/megabrain.db" "$state_dir/megabrain.db-wal" "$state_dir/megabrain.db-shm"
   export SUPERSET_TERMINAL_ID=parent-terminal
   unset TMUX TMUX_PANE ORCA_TERMINAL_HANDLE
 }
@@ -117,6 +129,7 @@ create_dispatch() {
     terminalId="$dispatch_id-child" worktreePath="$root" branch=main agent=codex agentId=codex \
     label=label state=running model=gpt-5 modelHonored=true tmuxSession=session-% \
     tmuxPane="$dispatch_id-pane" runtime="$runtime" spawnRuntime="$runtime" >/dev/null
+  "$root/.build/megabrain" db import "$state_dir" >/dev/null
 }
 
 set_pane_fixture() {
@@ -126,9 +139,8 @@ set_pane_fixture() {
 # orchestrate reply's JSON output carries no message sequence; the sequence is read back from
 # the queue file the compiled binary itself just wrote.
 last_reply_seq() {
-  local dispatch_id="$1" file
-  file="$(find "$state_dir/dispatches/$dispatch_id/messages" -name '*-parent-reply.json' | sort | tail -1)"
-  jq -r '.seq' "$file"
+  local dispatch_id="$1"
+  MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq -r '[.messages[] | select(.from == "parent" and .type == "reply") | .seq] | max'
 }
 
 scenario_empty_report() {
@@ -156,8 +168,9 @@ scenario_supersede_undelivered() {
   assert_equal "$(jq -r '.supersededDelivered' <<<"$result")" 0
   assert_equal "$(jq -r '.deliveredSequences | length' <<<"$result")" 0
   assert_equal "$(jq -r '.status' <<<"$result")" queued
-  assert_equal "$(jq -s '[.[].status] | map(select(. == "superseded")) | length' "$state_dir/dispatches/supersede-queued/deliveries"/*.json)" 2
-  assert_equal "$(jq -s '[.[].status] | map(select(. == "outstanding")) | length' "$state_dir/dispatches/supersede-queued/deliveries"/*.json)" 1
+  supersede_queue="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show supersede-queued --json)"
+  assert_equal "$(jq '[.deliveries[] | select(.status == "superseded")] | length' <<<"$supersede_queue")" 2
+  assert_equal "$(jq '[.deliveries[] | select(.status == "outstanding")] | length' <<<"$supersede_queue")" 1
   export SUPERSET_TERMINAL_ID=supersede-queued-child
   child_view="$(compiled_check --timeout 0 --poll-interval 0 --json)"
   assert_contains "$(jq -r '.text' <<<"$child_view")" 'new authoritative direction'
@@ -186,13 +199,13 @@ scenario_supersede_delivered() {
   assert_equal "$(jq -r '.supersededQueued' <<<"$result")" 0
   assert_equal "$(jq -r '.supersededDelivered' <<<"$result")" 1
   assert_equal "$(jq -r '.deliveredSequences | join(",")' <<<"$result")" "$old_seq"
-  withdrawal_path="$state_dir/dispatches/supersede-delivered/messages"/*-parent-withdrawal.json
-  assert_equal "$(jq -r '.type' $withdrawal_path)" withdrawal
+  withdrawal="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show supersede-delivered --json | jq '.messages[] | select(.type == "withdrawal")')"
+  assert_equal "$(jq -r '.type' <<<"$withdrawal")" withdrawal
   # appendMessage's persisted shape (src/cli/commands/queue-write.ts) is fixed:
   # {seq,from,type,text,createdAt,sessionId}, with no room for an extra structured "supersedes"
   # array the way the retired shell writer had -- the withdrawn sequence is only ever encoded in
   # the prose text below. The old structured-field assertion is dropped per rule 3.
-  assert_contains "$(jq -r '.text' $withdrawal_path)" "$old_seq"
+  assert_contains "$(jq -r '.text' <<<"$withdrawal")" "$old_seq"
   export SUPERSET_TERMINAL_ID=supersede-delivered-child
   child_view="$(compiled_check --timeout 0 --poll-interval 0 --json)"
   assert_equal "$(jq -r '.messages[0].type' <<<"$child_view")" withdrawal
@@ -209,7 +222,7 @@ scenario_stop_pending_check() {
     fail 'pending-check frame was not refused'
   fi
   assert_contains "$result" 'pending check'
-  assert_equal "$(find "$state_dir/dispatches/stop-pending/messages" -name '*.json' -type f | wc -l | tr -d ' ')" 0
+  assert_equal "$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show stop-pending --json | jq '.messages | length')" 0
   printf 'pending-check transcript refuses stop before sending Escape\n'
 }
 
@@ -222,7 +235,7 @@ scenario_stop_working() {
   result="$(compiled_stop stop-working --json)"
   assert_equal "$(jq -r '.status' <<<"$result")" interrupted
   assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
-  message_types="$(jq -r '.type' "$state_dir/dispatches/stop-working/messages"/*.json | tr '\n' ' ')"
+  message_types="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show stop-working --json | jq -r '[.messages[].type] | join(" ") + " "')"
   assert_equal "$message_types" 'interrupt interrupt-result '
   printf 'working transcript records the interrupt before and after Escape\n'
 }
@@ -248,7 +261,7 @@ scenario_stop_orca() {
   assert_equal "$(jq -r '.status' <<<"$result")" interrupted
   assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
   assert_contains "$(cat "$stop_calls_file")" '--interrupt'
-  message="$(jq -r '.text' "$state_dir/dispatches/stop-orca/messages"/*-parent-interrupt.json)"
+  message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show stop-orca --json | jq -r '.messages[] | select(.type == "interrupt") | .text')"
   assert_contains "$message" 'working liveness and pending-check frame are unavailable on Orca'
   printf 'Orca interrupts through terminal send and records its weaker guard explicitly\n'
 }

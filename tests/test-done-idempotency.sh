@@ -5,6 +5,18 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-done-idempotency.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
 cat >"$bin_dir/superset" <<'EOF'
@@ -45,11 +57,11 @@ assert_contains() {
 }
 
 delivery_count() {
-  find "$state_dir/dispatches/$1/deliveries" -name '*.json' -type f | wc -l | tr -d ' '
+  "$root/.build/megabrain" db show "$1" --json | jq '.deliveries | length'
 }
 
 message_count() {
-  find "$state_dir/dispatches/$1/messages" -name '*.json' -type f | wc -l | tr -d ' '
+  "$root/.build/megabrain" db show "$1" --json | jq '.messages | length'
 }
 
 create_dispatch() {
@@ -63,6 +75,11 @@ set_dispatch_state() {
   tmp="$(mktemp "$state_dir/dispatches/$1/.state.XXXXXX")"
   jq --arg state "$state" '.state = $state' "$path" >"$tmp"
   mv -f "$tmp" "$path"
+}
+
+nudge_count() {
+  local dispatch_id="$1"
+  MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.nudges | length'
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"
@@ -83,16 +100,15 @@ run_child_message() {
   fi
 }
 
-nudge_count() {
-  find "$state_dir/dispatches" -name nudge.log -type f | wc -l | tr -d ' '
-}
-
 # A second completion is durable protocol mail, not a second actionable outcome.
 create_dispatch repeated-done
+create_dispatch different-outcome
+set_dispatch_state different-outcome failed
+"$root/.build/megabrain" db import "$state_dir" >/dev/null
 export SUPERSET_TERMINAL_ID=child-repeated-done
 run_child_message repeated-done done 'first completion' >/dev/null
 run_child_message repeated-done done 'retried completion' >/dev/null
-assert_equal "$(nudge_count)" 1
+assert_equal "$(nudge_count repeated-done)" 1
 assert_equal "$(message_count repeated-done)" 2
 assert_equal "$(delivery_count repeated-done)" 2
 
@@ -112,16 +128,14 @@ printf 'repeated done creates one actionable nudge and durable protocol mail\n'
 
 # A different outcome after failure remains actionable, even though the state
 # transition itself is refused by the settled dispatch contract.
-create_dispatch different-outcome
 export SUPERSET_TERMINAL_ID=child-different-outcome
-set_dispatch_state different-outcome failed
 different_output_path="$state_dir/different-output"
 if run_child_message different-outcome done 'completion after failure' >"$different_output_path" 2>&1; then
   fail 'done after failed dispatch was accepted'
 fi
 different_output="$(cat "$different_output_path")"
 assert_contains "$different_output" 'illegal dispatch state transition: failed -> done'
-assert_equal "$(nudge_count)" 2
+assert_equal "$(( $(nudge_count repeated-done) + $(nudge_count different-outcome) ))" 2
 assert_equal "$(message_count different-outcome)" 1
 assert_equal "$(delivery_count different-outcome)" 1
 export SUPERSET_TERMINAL_ID=parent-terminal

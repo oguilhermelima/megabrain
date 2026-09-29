@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,8 +6,46 @@ import { join } from "node:path";
 import { parseMachineInstallArgs, resolveDefaultModules, runMachineInstall } from "../../src/cli/commands/install-machine.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
+import { deleteInstallModule, getInstallState, mutateInstallModule, putInstallModule } from "../../src/adapters/state-db.js";
+import { executeDatabase } from "../../src/cli/commands/db.js";
 
 const temporaryDirectories: string[] = [];
+
+function machineState(environment: { MEGABRAIN_STATE_DIR: string }): Record<string, any> {
+  const opened = guardedStateDatabase(environment);
+  if (opened.kind !== "ok") throw new Error(opened.error);
+  const result = getInstallState(opened.value);
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value;
+}
+
+function seedInstallState(directory: string, state: Record<string, unknown>): void {
+  const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: directory });
+  if (opened.kind !== "ok") throw new Error(opened.error);
+  for (const [moduleId, value] of Object.entries(state)) {
+    const result = putInstallModule(opened.value, moduleId, value);
+    if (result.kind !== "ok") throw new Error(result.error);
+  }
+}
+
+test("install state module updates preserve sibling fields, delete rows, and round-trip through db show", async () => {
+  const directory = temporaryDirectory();
+  const environment = { MEGABRAIN_STATE_DIR: directory };
+  const opened = guardedStateDatabase(environment);
+  if (opened.kind !== "ok") throw new Error(opened.error);
+  expect(putInstallModule(opened.value, "orchestration-hooks", { installed: true, details: "existing" }).kind).toBe("ok");
+  expect(mutateInstallModule(opened.value, "orchestration-hooks", (value) => ({
+    ...(value as Record<string, unknown>), hookConfigs: { createdConfigs: ["claude"] },
+  })).kind).toBe("ok");
+  expect(putInstallModule(opened.value, "_meta", { kind: "installation-record", source: "doctor" }).kind).toBe("ok");
+  expect(deleteInstallModule(opened.value, "tmux-runtime").kind).toBe("ok");
+  const shown = await executeDatabase(["show", "--install-state", "--json"], environment);
+  expect(shown.kind).toBe("ok");
+  if (shown.kind === "ok") expect(JSON.parse(shown.value)).toEqual({
+    _meta: { kind: "installation-record", source: "doctor" },
+    "orchestration-hooks": { installed: true, details: "existing", hookConfigs: { createdConfigs: ["claude"] } },
+  });
+});
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -71,7 +110,7 @@ describe("machine install options", () => {
     const first = await runMachineInstall(args, environment, withTmux, installModule, false);
     expect(first.kind).toBe("ok");
     expect(calls).toContain("tmux-runtime");
-    const state = JSON.parse(readFileSync(join(environment.MEGABRAIN_STATE_DIR, "state.json"), "utf8")) as Record<string, any>;
+    const state = machineState(environment);
     expect(state.machineInstall.modules).toContain("tmux-runtime");
 
     const second = await runMachineInstall(args, environment, withTmux, installModule, false);
@@ -101,7 +140,7 @@ describe("machine install options", () => {
     mkdirSync(home, { recursive: true });
     mkdirSync(stateDirectory, { recursive: true });
     writeFileSync(shellConfig, "# user config\n# >>> megabrain tmux wrapper >>>\nsource ~/.megabrain/zsh/megabrain-agent-tmux.zsh\n# <<< megabrain tmux wrapper <<<\n");
-    writeFileSync(join(stateDirectory, "state.json"), JSON.stringify({ "tmux-runtime": { installed: true } }));
+    seedInstallState(stateDirectory, { "tmux-runtime": { installed: true } });
     const environment = { HOME: home, SHELL: "/bin/zsh", MEGABRAIN_STATE_DIR: stateDirectory };
     const args = ["--yes", "--agents", "none", "--tmux", "no"];
     const result = await runMachineInstall(args, environment, processAdapter(["tmux"]), async () => ok("installed"), false);
@@ -139,7 +178,7 @@ describe("machine install options", () => {
     }
     expect(calls).toEqual(["orchestration", "worktree"]);
     expect(existsSync(skill)).toBe(true);
-    const firstState = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8")) as Record<string, unknown>;
+    const firstState = machineState({ MEGABRAIN_STATE_DIR: stateDirectory });
     expect(firstState.machineInstall).toMatchObject({
       agents: ["claude"],
       skill: "global",
@@ -204,8 +243,7 @@ describe("machine install options", () => {
     const root = temporaryDirectory();
     const home = join(root, "home");
     const stateDirectory = join(root, "state");
-    const stateFile = join(stateDirectory, "state.json");
-    await Bun.write(stateFile, JSON.stringify({ orchestration: { installed: true } }));
+    seedInstallState(stateDirectory, { orchestration: { installed: true } });
     let installedModules = 0;
     const installModule = async () => {
       installedModules += 1;
@@ -216,8 +254,7 @@ describe("machine install options", () => {
 
     const first = await runMachineInstall(args, environment, processAdapter(), installModule, false);
     expect(first.kind).toBe("ok");
-    expect(existsSync(stateFile)).toBe(true);
-    const state: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
+    const state: unknown = machineState({ MEGABRAIN_STATE_DIR: stateDirectory });
     expect(state).toMatchObject({
       orchestration: { installed: true },
       machineInstall: { agents: [], skill: "none", modules: [], version: expect.any(String) },
@@ -243,9 +280,9 @@ describe("machine install options", () => {
     mkdirSync(claudeConfig, { recursive: true });
     writeFileSync(codexInstructions, "User-authored Codex instructions\n");
     writeFileSync(claudeInstructions, "User-authored Claude instructions\n");
-    await Bun.write(join(stateDirectory, "state.json"), JSON.stringify({
+    seedInstallState(stateDirectory, {
       machineInstall: { agents: [], skill: "none", agentsMd: "project", modules: [], version: "old" },
-    }));
+    });
     const environment = {
       HOME: home,
       CODEX_HOME: codexHome,
@@ -269,7 +306,7 @@ describe("machine install options", () => {
     expect(readFileSync(claudeInstructions, "utf8")).toBe("User-authored Claude instructions\n");
     expect(readFileSync(codexInstructions, "utf8")).toBe("User-authored Codex instructions\n");
     expect(existsSync(join(project, "AGENTS.md"))).toBe(false);
-    const state: unknown = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8"));
+    const state: unknown = machineState({ MEGABRAIN_STATE_DIR: stateDirectory });
     expect(state).toMatchObject({ machineInstall: { agents: ["claude", "codex", "agy"], skill: "global" } });
     expect(JSON.stringify(state)).not.toContain("agentsMd");
   });

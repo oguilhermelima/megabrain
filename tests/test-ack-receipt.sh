@@ -4,6 +4,18 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-ack-receipt.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
+export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 dispatch_id=ack-receipt
 dispatch_dir="$state_dir/dispatches/$dispatch_id"
 
@@ -39,11 +51,13 @@ jq -n --arg dispatchId "$dispatch_id" --arg worktreePath "$root" --arg now "$(no
   runtime: "host", spawnRuntime: "ide", createdAt: $now, updatedAt: $now
 }' >"$dispatch_dir/meta.json"
 
+"$root/.build/megabrain" db import "$state_dir" >/dev/null
+
 # The reply is written by a delayed producer so the child really waits on the queue.
 (
   sleep 1
-  jq -n --arg now "$(now)" '{seq: 1, from: "parent", type: "reply", text: "answer from coordinator", createdAt: $now, sessionId: "parent-terminal"}' \
-    >"$dispatch_dir/messages/0001-parent-reply.json"
+  env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=parent-terminal \
+    "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text 'answer from coordinator' >/dev/null
 ) &
 
 child_delivery="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" \
@@ -55,8 +69,7 @@ child_delivery_id="$(printf '%s' "$child_delivery" | jq -r '.deliveryId')"
 child_ack="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" \
   SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ack "$child_delivery_id" --json)"
 assert_equal "$(printf '%s' "$child_ack" | jq -r '.duplicate')" false
-[ ! -e "$dispatch_dir/nudge.log" ] ||
-  fail 'child ack woke the coordinator instead of staying protocol-only'
+assert_equal "$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '[.messages[] | select(.type == "ack")] | length')" 1
 
 parent_delivery="$(env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" \
   SUPERSET_TERMINAL_ID=parent-terminal "$root/.build/megabrain" orchestrate watch "$dispatch_id" \
@@ -68,5 +81,5 @@ parent_delivery_id="$(printf '%s' "$parent_delivery" | jq -r '.deliveryId')"
 env -u TMUX -u TMUX_PANE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=parent-terminal \
   "$root/.build/megabrain" orchestrate ack "$dispatch_id" "$parent_delivery_id" --json >/dev/null
 
-assert_equal "$(find "$dispatch_dir/messages" -name '*-child-ack.json' | wc -l | tr -d ' ')" 1
+assert_equal "$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '[.messages[] | select(.type == "ack")] | length')" 1
 printf 'child reply acknowledgement reaches the coordinator queue without an ack loop\n'

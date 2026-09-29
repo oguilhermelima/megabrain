@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal-lifecycle.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 binary="$root/.build/megabrain"
 trap 'rm -rf "$work"' EXIT
 
@@ -14,7 +18,8 @@ assert_equal() { [ "$1" = "$2" ] || fail "expected '$2', got '$1'"; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected '$1' to contain '$2'" ;; esac; }
 assert_json() { printf '%s' "$1" | jq -e "$2" >/dev/null || fail "JSON assertion failed: $2\n$1"; }
 
-mkdir -p "$work/bin" "$work/state/terminals" "$work/worktree/.superset"
+mkdir -p "$work/bin" "$work/state" "$work/worktree/.superset"
+ln -s "$(command -v node)" "$work/bin/node"
 git -C "$work/worktree" init -q
 git -C "$work/worktree" config user.email test@example.invalid
 git -C "$work/worktree" config user.name test
@@ -69,10 +74,12 @@ run_binary() {
 
 write_record() {
   local id="$1" pid="${2:-123}" root_pid="${3:-123}"
+  mkdir -p "$work/state/terminals"
   rm -f "$work/state/terminals/"*.json
   cat >"$work/state/terminals/$id.json" <<EOF
 {"terminalId":"$id","host":"superset","workspaceId":"workspace","worktree":"$MEGABRAIN_TEST_WORKTREE","title":"DEV old","command":"run old","createdAt":"now","pid":$pid,"rootPid":$root_pid,"port":4000,"status":"active"}
 EOF
+  "$binary" db import "$work/state" --replace >/dev/null
   : >"$MEGABRAIN_CALL_LOG"
 }
 
@@ -98,8 +105,8 @@ scenario_create_content() {
   assert_equal "$status" 0
   output="$(cat "$work/stdout")"
   assert_json "$output" '.terminalId == "new-terminal" and .worktree == env.MEGABRAIN_TEST_WORKTREE and .port == 4000'
-  record="$work/state/terminals/new-terminal.json"
-  assert_json "$(cat "$record")" '.command == "pnpm dev && pnpm test" and .workspaceId == "workspace"'
+  record="$work/state/new-terminal.json"
+  assert_json "$("$binary" db show --terminal new-terminal --json)" '.command == "pnpm dev && pnpm test" and .workspaceId == "workspace"'
   printf 'create derives the run script and persists content\n'
 
   rm "$work/worktree/.superset/config.json"
@@ -128,7 +135,7 @@ scenario_close_content() {
   assert_equal "$status" 0
   output="$(cat "$work/stdout")"
   assert_json "$output" '.status == "closed" and .terminalId == "old-terminal" and .recordRemoved == true and .identity == "recorded"'
-  [ ! -f "$work/state/terminals/old-terminal.json" ] || fail 'close did not remove the live record'
+  if "$binary" db show --terminal old-terminal --json >/dev/null 2>&1; then fail 'close did not remove the live record'; fi
   printf 'close verifies host identity and removes the live record\n'
 
   write_record stale-terminal
@@ -136,14 +143,14 @@ scenario_close_content() {
   assert_equal "$status" 1
   output="$(cat "$work/stdout")"
   assert_json "$output" '.status == "stale" and .recordRemoved == true and .terminalId == "stale-terminal"'
-  [ ! -f "$work/state/terminals/stale-terminal.json" ] || fail 'close did not remove the stale record'
+  if "$binary" db show --terminal stale-terminal --json >/dev/null 2>&1; then fail 'close did not remove the stale record'; fi
   printf 'close removes stale records without calling the host\n'
 
   write_record old-terminal
   status="$(MEGABRAIN_TEST_CLOSE_FAILURE=true run_binary terminal close id:old-terminal --json)"
   assert_equal "$status" 1
   assert_contains "$(cat "$work/stderr")" 'record retained'
-  [ -f "$work/state/terminals/old-terminal.json" ] || fail 'close did not retain the record after host failure'
+  "$binary" db show --terminal old-terminal --json >/dev/null || fail 'close did not retain the record after host failure'
   printf 'close retains records when the host close fails\n'
 }
 

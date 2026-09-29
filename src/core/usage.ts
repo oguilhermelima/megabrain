@@ -4,6 +4,7 @@ export const USAGE_LINES = {
   "db-check": "db check [--json]",
   "db-backup": "db backup [--json]",
   "db-import": "db import <dir> [--replace] [--json]",
+  "db-migrate": "db migrate [--dry-run] [--json]",
   "db-show": "db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
@@ -129,7 +130,8 @@ Commands:
   db check [--json]                    Check SQLite integrity and foreign keys
   db backup [--json]                   Create and rotate a SQLite backup
   db import <dir> [--replace] [--json] Import JSON state into SQLite
-  db show <id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored state in legacy JSON shape
+  db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
+  db show <id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

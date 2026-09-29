@@ -1,11 +1,9 @@
-import { readdir } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseStopArgs, stopDecision, stopOutput } from "../../core/orchestrate-stop.js";
 import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { dispatchIsArchived, dispatchPath } from "../../adapters/dispatch-store.js";
-import { appendMessage, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
+import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
@@ -13,6 +11,8 @@ import { getHost, runHostSend } from "../../hosts/index.js";
 import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
+import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatch } from "../../adapters/state-db.js";
+import type { DatabaseHandle } from "../../db/db.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -37,10 +37,14 @@ function normalize(meta: RecordValue): RecordValue {
   };
 }
 
-async function parentMeta(root: string, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue>> {
-  const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
+async function parentMeta(database: DatabaseHandle, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue>> {
+  const stored = getDispatch(database, dispatch);
+  if (stored.kind !== "ok") return stored;
+  const meta = stored.value;
   if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
-  if (await dispatchIsArchived(root, dispatch)) return failed(`dispatch ${dispatch} is archived; refusing to change it`);
+  const live = listDispatches(database);
+  if (live.kind !== "ok") return live;
+  if (!live.value.some((record) => record.dispatchId === dispatch)) return failed(`dispatch ${dispatch} is archived; refusing to change it`);
   const current = await resolveCaller(env, process);
   if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
   const expectedHost = value(meta.parentHost); const expectedId = value(meta.parentSessionId);
@@ -58,22 +62,16 @@ async function tmuxLiveness(meta: RecordValue, process: ProcessAdapter): Promise
   return { status: classified.status, reason: classified.reason ?? "", identity };
 }
 
-async function childMessages(root: string, dispatch: string): Promise<RecordValue[]> {
-  const directory = await dispatchPath(root, dispatch, "messages");
-  const names = await readdir(directory).catch(() => []);
-  const messages: RecordValue[] = [];
-  for (const name of names) {
-    const message = await readJson(`${directory}/${name}`);
-    if (message !== undefined) messages.push(message);
-  }
-  return messages;
+function childMessages(database: DatabaseHandle, dispatch: string): RecordValue[] {
+  const messages = listMessages(database, dispatch);
+  return messages.kind === "ok" ? messages.value as RecordValue[] : [];
 }
 
 function hasChildIdentityProof(messages: readonly RecordValue[]): boolean {
   return messages.some((message) => message.from === "child" && (message.type === "received" || message.type === "ask" || message.type === "done"));
 }
 
-async function syncPromptReceipt(path: string, meta: RecordValue, messages: readonly RecordValue[]): Promise<RecordValue> {
+function syncPromptReceipt(database: DatabaseHandle, dispatch: string, meta: RecordValue, messages: readonly RecordValue[]): RecordValue {
   if (!messages.some((message) => message.from === "child" && message.type === "received")) return meta;
   const delivery = value(meta.promptDelivery) || "pending";
   const next: RecordValue = {
@@ -83,18 +81,22 @@ async function syncPromptReceipt(path: string, meta: RecordValue, messages: read
     promptState: "confirmed",
     updatedAt: new Date().toISOString(),
   };
-  await atomicJson(path, next);
-  return next;
+  const updated = mutateDispatch(database, dispatch, () => next);
+  return updated.kind === "ok" ? updated.value as RecordValue : meta;
 }
 
-async function reconcileOne(root: string, dispatch: string, process: ProcessAdapter): Promise<Result<RecordValue>> {
-  const path = await dispatchPath(root, dispatch, "meta.json");
-  const loaded = await readJson(path);
-  if (loaded === undefined) return failed(`dispatch not found: ${dispatch}`);
-  let meta = normalize(loaded);
-  if (JSON.stringify(meta) !== JSON.stringify(loaded)) await atomicJson(path, meta);
-  const messages = await childMessages(root, dispatch);
-  meta = await syncPromptReceipt(path, meta, messages);
+async function reconcileOne(database: DatabaseHandle, dispatch: string, process: ProcessAdapter): Promise<Result<RecordValue>> {
+  const loaded = getDispatch(database, dispatch);
+  if (loaded.kind !== "ok") return loaded;
+  if (loaded.value === undefined) return failed(`dispatch not found: ${dispatch}`);
+  let meta = normalize(loaded.value as RecordValue);
+  if (JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
+    const updated = mutateDispatch(database, dispatch, () => meta);
+    if (updated.kind !== "ok") return updated;
+    meta = updated.value as RecordValue;
+  }
+  const messages = childMessages(database, dispatch);
+  meta = syncPromptReceipt(database, dispatch, meta, messages);
   const state = value(meta.state);
   if (state === "closed" || state === "circuit_broken") return ok({ ...meta, reconcileResult: "unchanged" });
   const terminal = await terminalStatus(meta, process);
@@ -103,14 +105,18 @@ async function reconcileOne(root: string, dispatch: string, process: ProcessAdap
   if (proven) parent = await parentStatus(meta, process);
   const decision = reconcileDecision(meta, proven ? "proven" : terminal, parent);
   const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  if (decision.outcome !== "unchanged") await atomicJson(path, next);
+  if (decision.outcome !== "unchanged") {
+    const updated = mutateDispatch(database, dispatch, () => next);
+    if (updated.kind !== "ok") return updated;
+  }
   return ok({ ...next, reconcileResult: decision.outcome });
 }
 
 export async function executeOrchestrateStop(args: readonly string[], env: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-stop"));
   const parsed = parseStopArgs(args); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(env); const parent = await parentMeta(root, parsed.value.dispatchId, env, process); if (parent.kind !== "ok") return parent;
+  const root = resolveStateDirectory(env); const database = stateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const parent = await parentMeta(database.value, parsed.value.dispatchId, env, process); if (parent.kind !== "ok") return parent;
   const caller = await resolveCaller(env, process); const session = caller.id || caller.terminalId || "";
   const meta = parent.value; const runtime = value(meta.runtime) || "host"; let status = "unknown"; let interruptStatus: "landed" | "not-landed" = "not-landed"; let reason = ""; let interruptReason = "";
   if (runtime === "tmux") {
@@ -152,12 +158,15 @@ export async function executeOrchestrateReconcile(args: readonly string[], env: 
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-reconcile"));
   let dispatch = ""; let all = false; let json = false;
   for (const arg of args) { if (arg === "--all") all = true; else if (arg === "--json") json = true; else if (dispatch === "") dispatch = arg; else return failed(`unknown reconcile option: ${arg}`, 2); }
-  const root = resolveStateDirectory(env); const ids = all ? (await readdir(`${root}/dispatches`, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory() && entry.name !== "archive").map((entry) => entry.name) : [dispatch]; if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
+  const database = stateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const live = listDispatches(database.value); if (live.kind !== "ok") return live;
+  const ids = all ? live.value.map((record) => record.dispatchId) : [dispatch]; if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
   const entries: RecordValue[] = [];
   for (const id of ids) {
-    if (await dispatchIsArchived(root, id)) return failed(`dispatch ${id} is archived; refusing to reconcile it`);
-    if (await readJson(await dispatchPath(root, id, "meta.json")) === undefined) { if (all) continue; return failed(`dispatch not found: ${id}`); }
-    const result = await reconcileOne(root, id, process); if (result.kind !== "ok") return result; entries.push(result.value);
+    const stored = getDispatch(database.value, id); if (stored.kind !== "ok") return stored;
+    if (stored.value === undefined) { if (all) continue; return failed(`dispatch not found: ${id}`); }
+    if (!all && !live.value.some((record) => record.dispatchId === id)) return failed(`dispatch ${id} is archived; refusing to reconcile it`);
+    const result = await reconcileOne(database.value, id, process); if (result.kind !== "ok") return result; entries.push(result.value);
   }
   if (json) return ok(`${JSON.stringify(entries.length === 1 ? entries[0] : entries, null, 2)}\n`);
   return ok(entries.map((item) => `dispatch: ${value(item.dispatchId)}\nresult: ${value(item.reconcileResult)}\nstate: ${value(item.state)}\nprocess: ${value(item.processState)}\nterminal: ${value(item.terminalState)}\n`).join(""));
