@@ -120,6 +120,9 @@ tmp="$(mktemp "$MEGABRAIN_STATE_DIR/dispatches/unknown-dispatch/.state.XXXXXX")"
 jq '.state = "running"' "$unknown_path" >"$tmp"
 mv -f "$tmp" "$unknown_path"
 db_import
+write_dispatch_meta "$MEGABRAIN_STATE_DIR" delete-dispatch \
+  childHost=superset workspaceId=workspace terminalId=child-terminal state=failed >/dev/null
+set_old delete-dispatch
 
 dry_run="$("$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.dryRun')" true
@@ -149,9 +152,6 @@ assert_equal "$(printf '%s' "$read_result" | jq -r '.text')" 'archived pane outp
 assert_equal "$(db_show archive-dispatch | jq -r '.messages[0].text')" 'archived queue message'
 printf 'archived dispatch remains readable through list and read\n'
 
-write_dispatch_meta "$MEGABRAIN_STATE_DIR" delete-dispatch \
-  childHost=superset workspaceId=workspace terminalId=child-terminal state=failed >/dev/null
-set_old delete-dispatch
 delete_result="$("$root/.build/megabrain" orchestrate prune --delete --json)"
 assert_equal "$(printf '%s' "$delete_result" | jq -r '.deleted')" 0
 assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "delete-dispatch") | .reason')" 'terminal identity is unproven'
