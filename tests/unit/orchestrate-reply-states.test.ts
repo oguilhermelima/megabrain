@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
+import { appendMessage, appendParentReply, createDelivery, createDispatch, listDeliveries, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
 
 // End-to-end (CLI-verb level, in-process) coverage of the shell parity bugs found in
 // tests/test-e2e-findings.sh: a "done" dispatch must refuse a reply exactly like
@@ -22,6 +23,11 @@ function fakeProcess(): ProcessAdapter {
 }
 
 type JsonRecord = Record<string, unknown>;
+
+function requireOk<T>(result: Result<T>): T {
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value;
+}
 
 function baseMeta(overrides: JsonRecord = {}): JsonRecord {
   const now = new Date().toISOString();
@@ -87,6 +93,47 @@ async function readMeta(root: string, id: string): Promise<JsonRecord> {
 function environment(root: string): Record<string, string> {
   return { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "parent-terminal" };
 }
+
+describe("parent reply database transaction", () => {
+  test("preserves outstanding replies when superseding is disabled and appends a delivered reply", async () => {
+    const root = await tempStateDir();
+    try {
+      const db = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+      requireOk(createDispatch(db, { dispatchId: "reply", state: "running" }));
+      const old = requireOk(appendMessage(db, "reply", { from: "parent", type: "reply", text: "old" }));
+      requireOk(createDelivery(db, { id: "old-delivery", dispatchId: "reply", messageSeqs: [old.seq], status: "outstanding" }));
+      const result = requireOk(appendParentReply(db, "reply", { from: "parent", type: "reply", text: "new", sessionId: "parent" }, { supersede: false }));
+      expect(result.seq).toBe(2);
+      expect(requireOk(listMessages(db, "reply")).map((message) => message.seq)).toEqual([1, 2]);
+      expect(requireOk(listDeliveries(db, "reply")).map((delivery) => delivery.status)).toEqual(["outstanding", "outstanding"]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("supersedes outstanding reply deliveries and rolls back all writes if outbox encoding fails", async () => {
+    const root = await tempStateDir();
+    try {
+      const db = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+      requireOk(createDispatch(db, { dispatchId: "reply", state: "running" }));
+      const old = requireOk(appendMessage(db, "reply", { from: "parent", type: "reply", text: "old" }));
+      requireOk(createDelivery(db, { id: "old-delivery", dispatchId: "reply", messageSeqs: [old.seq], status: "outstanding" }));
+      const result = requireOk(appendParentReply(db, "reply", { from: "parent", type: "reply", text: "new", sessionId: "parent" }, { supersede: true }));
+      expect(result.seq).toBe(2);
+      expect(requireOk(listDeliveries(db, "reply")).find((delivery) => delivery.id === "old-delivery")?.status).toBe("superseded");
+
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+      const beforeMessages = requireOk(listMessages(db, "reply"));
+      const beforeDeliveries = requireOk(listDeliveries(db, "reply"));
+      const failed = appendParentReply(db, "reply", { from: "parent", type: "reply", text: "rolled back" }, {
+        supersede: true,
+        outbox: { id: "bad-outbox", targetKind: "terminal", target: "child", payload: cyclic },
+      });
+      expect(failed.kind).toBe("failed");
+      expect(requireOk(listMessages(db, "reply"))).toEqual(beforeMessages);
+      expect(requireOk(listDeliveries(db, "reply"))).toEqual(beforeDeliveries);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
 
 describe("orchestrate reply: shell-parity state rules", () => {
   test("refuses a reply to a done dispatch and leaves the queue empty", async () => {
