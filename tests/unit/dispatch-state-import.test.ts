@@ -1,43 +1,28 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+import { openDatabase, type DatabaseHandle } from "../../src/db/db.js";
 import { readJsonStateParity, importJsonState } from "../../src/db/import/json-state.js";
 import { insertDispatch, getDispatch, updateDispatch } from "../../src/db/queries/dispatches.js";
 import { insertMessage, listMessages } from "../../src/db/queries/messages.js";
 import { insertDelivery, listDeliveries } from "../../src/db/queries/deliveries.js";
 
-type SqlValue = string | number | bigint | null | Uint8Array;
-type TestDatabase = {
-  run(sql: string, parameters?: readonly SqlValue[]): { changes: number; lastInsertRowid: number | bigint };
-  query<T>(sql: string): { all(): T[]; get(...parameters: SqlValue[]): T | null };
-};
+let current: { directory: string; handle: DatabaseHandle } | undefined;
 
-let current: { directory: string; sqlite: InstanceType<typeof Database>; db: TestDatabase } | undefined;
-
-async function database(): Promise<{ directory: string; db: TestDatabase }> {
+async function database(): Promise<{ directory: string; db: DatabaseHandle["db"] }> {
   const directory = await mkdtemp(join(tmpdir(), "megabrain-dispatch-db-"));
-  const sqlite = new Database(":memory:");
-  sqlite.exec("PRAGMA foreign_keys = ON");
-  const db: TestDatabase = {
-    run(sql, parameters) {
-      const result = parameters === undefined ? (sqlite.exec(sql), { changes: 0, lastInsertRowid: 0 }) : sqlite.query(sql).run(...parameters);
-      return { changes: Number(result.changes ?? 0), lastInsertRowid: result.lastInsertRowid ?? 0 };
-    },
-    query: <T>(sql: string) => {
-      const statement = sqlite.query(sql);
-      return { all: () => statement.all() as T[], get: (...parameters: SqlValue[]) => (statement.get(...parameters) as T | null | undefined) ?? null };
-    },
-  };
-  const schema = await readFile(new URL("../../src/db/schema/002-dispatch-core.sql", import.meta.url), "utf8");
-  sqlite.exec(schema);
-  current = { directory, sqlite, db };
-  return { directory, db };
+  const result = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+  if (result.kind !== "ok") {
+    await rm(directory, { recursive: true, force: true });
+    throw new Error(result.error);
+  }
+  current = { directory, handle: result.value };
+  return { directory, db: result.value.db };
 }
 
 afterEach(async () => {
-  current?.sqlite.close();
+  current?.handle.close();
   if (current !== undefined) await rm(current.directory, { recursive: true, force: true });
   current = undefined;
 });
