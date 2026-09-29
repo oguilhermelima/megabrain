@@ -54,7 +54,8 @@ export async function route(
   }
   const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "terminal", "received", "ask", "done", "hook"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
-  if (command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
+  const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
+  if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
     const cutover = await ensureAutomaticCutover(dependencies.environment);
     if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
     if (cutover.value?.snapshot !== undefined && cutover.value.snapshot !== null) {
