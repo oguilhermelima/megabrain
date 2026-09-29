@@ -1,6 +1,8 @@
 export const USAGE_LINES = {
   "install": "install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert]",
   "doctor": "doctor [module-id] [--json]",
+  "db-check": "db check [--json]",
+  "db-backup": "db backup [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
@@ -122,6 +124,8 @@ Commands:
   version|-V|--version                   Print the megabrain version
   install [options]                    Configure agents, skills, and modules
   doctor [module-id]                   Check one module or all modules
+  db check [--json]                    Check SQLite integrity and foreign keys
+  db backup [--json]                   Create and rotate a SQLite backup
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

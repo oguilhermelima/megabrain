@@ -25,6 +25,7 @@ import { executeChain } from "./commands/chain.js";
 import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
 import { executeSpawn } from "./commands/orchestrate-spawn.js";
 import { executeDoctor, executeInstall } from "./commands/install-doctor.js";
+import { executeDatabase } from "./commands/db.js";
 import { executeTmux } from "./commands/tmux.js";
 import { executeChildAck } from "./commands/child-ack.js";
 import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
@@ -59,6 +60,9 @@ export function route(
   }
   if (command === "doctor") {
     return executeDoctor(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "db") {
+    return Promise.resolve(executeDatabase(commandArgs, dependencies.environment));
   }
   if (command === "install") {
     return executeInstall(commandArgs, dependencies.environment, dependencies.processAdapter);

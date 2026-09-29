@@ -1,6 +1,6 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import nativeSessionsMigration from "./schema/001-native-sessions.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
@@ -112,6 +112,14 @@ export type DatabaseHandle = Readonly<{
   close(): void;
 }>;
 
+export type DatabaseIntegrityReport = Readonly<{
+  path: string;
+  userVersion: number;
+  quickCheck: readonly string[];
+  foreignKeyViolations: readonly Record<string, unknown>[];
+  clean: boolean;
+}>;
+
 type NotThenable<T> = T extends PromiseLike<unknown> ? never : T;
 type Synchronous<T> = (db: DatabaseAdapter) => NotThenable<T>;
 const activeTransactions = new WeakSet<DatabaseHandle>();
@@ -131,8 +139,72 @@ function pragmaNumber(db: DatabaseAdapter, name: string): number {
   return value;
 }
 
-function migrate(db: DatabaseAdapter): void {
+function quoteSqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function backupToDirectory(db: DatabaseAdapter, stateDirectory: string, version: number): Result<string> {
+  const backupDirectory = resolve(stateDirectory, "backups");
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
+  const path = resolve(backupDirectory, `megabrain-${timestamp}-v${version}.db`);
   try {
+    mkdirSync(backupDirectory, { recursive: true });
+    db.exec(`VACUUM INTO ${quoteSqlString(path)}`);
+    const backups = readdirSync(backupDirectory)
+      .filter((name) => /^megabrain-.*-v\d+\.db$/.test(name))
+      .sort((left, right) => right.localeCompare(left));
+    for (const old of backups.slice(7)) unlinkSync(resolve(backupDirectory, old));
+    return ok(path);
+  } catch (cause: unknown) {
+    return failed(`backup failed: ${errorMessage(cause)}`);
+  }
+}
+
+export function backupDatabase(handle: DatabaseHandle): Result<string> {
+  try {
+    return backupToDirectory(handle.db, dirname(handle.path), pragmaNumber(handle.db, "user_version"));
+  } catch (cause: unknown) {
+    return failed(`backup failed: ${errorMessage(cause)}`);
+  }
+}
+
+export function inspectDatabase(environment: StateEnvironment): Result<DatabaseIntegrityReport | undefined> {
+  let path: string;
+  try {
+    const configured = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
+    if (configured === undefined || configured === "") return failed("resolve failed: no state directory is configured");
+    path = resolve(resolveStateDirectory(environment), "megabrain.db");
+  } catch (cause: unknown) {
+    return failed(`resolve failed: ${errorMessage(cause)}`);
+  }
+  if (!existsSync(path)) return ok(undefined);
+  let db: DatabaseAdapter | undefined;
+  try {
+    db = openRuntimeDatabase(path);
+    const quickCheck = db.query<{ quick_check: string }>("PRAGMA quick_check").all().map((row) => row.quick_check);
+    const foreignKeyViolations = db.query<Record<string, unknown>>("PRAGMA foreign_key_check").all();
+    const userVersion = pragmaNumber(db, "user_version");
+    return ok({ path, userVersion, quickCheck, foreignKeyViolations, clean: quickCheck.length === 1 && quickCheck[0] === "ok" && foreignKeyViolations.length === 0 });
+  } catch (cause: unknown) {
+    return failed(`database check failed: ${errorMessage(cause)}`);
+  } finally {
+    try { db?.close(); } catch { /* preserve the integrity result */ }
+  }
+}
+
+function migrate(db: DatabaseAdapter, path: string): void {
+  try {
+    const migrationTable = db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
+    if (migrationTable !== null) {
+      const applied = db.query<{ version: number }>("SELECT version FROM schema_migrations").all();
+      const appliedVersions = new Set(applied.map((row) => row.version));
+      const pending = migrations.some((migration) => !appliedVersions.has(migration.version));
+      if (pending && applied.length > 0) {
+        const version = Math.max(...applied.map((row) => row.version));
+        const backup = backupToDirectory(db, dirname(path), version);
+        if (backup.kind !== "ok") throw new Error(backup.error);
+      }
+    }
     db.run("BEGIN IMMEDIATE");
     try {
       db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -176,6 +248,11 @@ function configureConnection(db: DatabaseAdapter): void {
     const actual = pragmaNumber(db, "user_version");
     const highest = migrations.at(-1)?.version ?? 0;
     if (actual > highest) throw new Error(`database user_version ${actual} is newer than this binary supports (${highest}); upgrade megabrain`);
+    const hasMigrationTable = db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get() !== null;
+    if (hasMigrationTable) {
+      const applied = db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version ?? 0;
+      if (applied > highest) throw new Error(`database migration version ${applied} is newer than this binary supports (${highest}); upgrade megabrain`);
+    }
   } catch (cause: unknown) { failAt("version guard user_version", cause); }
 }
 
@@ -204,7 +281,7 @@ export function openDatabase(environment: StateEnvironment): Result<DatabaseHand
 
   try {
     configureConnection(db);
-    migrate(db);
+    migrate(db, path);
     const handle: DatabaseHandle = { path, db, close: () => db?.close() };
     try {
       importNativeSessions(handle, resolve(configuredStateDirectory, "native-sessions.json"));
@@ -252,6 +329,8 @@ function transaction<T>(handle: DatabaseHandle, begin: "IMMEDIATE" | "DEFERRED",
   try {
     while (true) {
       try {
+        const remaining = Math.max(0, deadline - Date.now());
+        handle.db.exec(`PRAGMA busy_timeout = ${Math.min(BUSY_TIMEOUT_MILLISECONDS, remaining)}`);
         handle.db.run(begin === "IMMEDIATE" ? "BEGIN IMMEDIATE" : "BEGIN");
       } catch (cause: unknown) {
         if (!isBusy(cause)) return failed(`${begin === "IMMEDIATE" ? "write" : "read"} transaction begin failed: ${errorMessage(cause)}`);
@@ -298,6 +377,7 @@ function transaction<T>(handle: DatabaseHandle, begin: "IMMEDIATE" | "DEFERRED",
       }
     }
   } finally {
+    try { handle.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`); } catch { /* keep the transaction result */ }
     activeTransactions.delete(handle);
   }
 }
