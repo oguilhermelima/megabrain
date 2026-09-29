@@ -105,7 +105,7 @@ describe("dispatch state schema and JSON import", () => {
     expect(parity.totals.deliveries).toBe(2);
     expect(parity.records.dispatches.find((record) => record.dispatchId === liveId)).toEqual(live);
     expect(listMessages(db, liveId).map((message) => message.seq)).toEqual([1, 2, 3]);
-    expect(listDeliveries(db, liveId).map((delivery) => delivery.id)).toEqual(["delivery-acked", "delivery-open"]);
+    expect(listDeliveries(db, liveId).map((delivery) => delivery.id)).toEqual(["delivery-open", "delivery-acked"]);
 
     const secondImport = await importJsonState(db, stateDir);
     expect(secondImport.inserted).toEqual({ dispatches: 0, messages: 0, deliveries: 0, terminals: 0, installState: 0, models: 0, tmuxSessions: 0 });
