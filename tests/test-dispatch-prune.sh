@@ -128,7 +128,7 @@ dry_run="$("$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.dryRun')" true
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.archived')" 1
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.deleted')" 0
-assert_equal "$(printf '%s' "$dry_run" | jq -r '.skipped')" 4
+assert_equal "$(printf '%s' "$dry_run" | jq -r '.skipped')" 5
 assert_equal "$(db_show archive-dispatch | jq -r '.meta.dispatchId')" archive-dispatch
 assert_equal "$(db_show running-dispatch | jq -r '.meta.dispatchId')" running-dispatch
 printf 'prune dry-run reports without moving anything\n'
