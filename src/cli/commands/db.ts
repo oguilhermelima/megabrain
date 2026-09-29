@@ -119,14 +119,16 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
       const meta = getDispatch(db, id as string);
       if (meta === undefined) return { kind: "missing" as const };
       const row = db.query<Pick<DispatchRow, "archived_at">>("SELECT archived_at FROM dispatches WHERE id = ?").get(id as string);
-      return { kind: "found" as const, value: { meta, messages: listMessages(db, id as string), deliveries: listDeliveries(db, id as string), archived: row?.archived_at !== null && row?.archived_at !== undefined } };
+      const nudges = db.query<{ id: number; dispatch_id: string; pointer: string; outcome: string; reason: string; created_at: string }>("SELECT id, dispatch_id, pointer, outcome, reason, created_at FROM nudge_events WHERE dispatch_id = ? ORDER BY id").all(id as string)
+        .map((nudge) => ({ id: nudge.id, dispatchId: nudge.dispatch_id, pointer: nudge.pointer, outcome: nudge.outcome, reason: nudge.reason, createdAt: nudge.created_at }));
+      return { kind: "found" as const, value: { meta, messages: listMessages(db, id as string), deliveries: listDeliveries(db, id as string), nudges, archived: row?.archived_at !== null && row?.archived_at !== undefined } };
     });
     if (result.kind !== "ok") return failed(result.error, result.exitCode);
     if (result.value.kind === "missing") return failed(`${mode === "terminal" ? "terminal" : mode === "tmux-session" ? "tmux session" : "dispatch"} not found: ${id}`);
     if (json) return ok(`${JSON.stringify(result.value.value, null, 2)}\n`);
     if (mode === "dispatch") {
-      const value = result.value.value as { meta: Record<string, unknown>; messages: unknown[]; deliveries: unknown[]; archived: boolean };
-      return ok(`${String(value.meta.dispatchId)}: ${String(value.meta.state)}; ${value.messages.length} messages, ${value.deliveries.length} deliveries${value.archived ? "; archived" : ""}\n`);
+      const value = result.value.value as { meta: Record<string, unknown>; messages: unknown[]; deliveries: unknown[]; nudges: unknown[]; archived: boolean };
+      return ok(`${String(value.meta.dispatchId)}: ${String(value.meta.state)}; ${value.messages.length} messages, ${value.deliveries.length} deliveries, ${value.nudges.length} nudges${value.archived ? "; archived" : ""}\n`);
     }
     if (mode === "terminal") return ok(`terminal ${id} found\n`);
     if (mode === "tmux-session") return ok(`tmux session ${id} found\n`);
