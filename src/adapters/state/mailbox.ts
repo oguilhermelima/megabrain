@@ -9,7 +9,10 @@ import { read, write } from "./shared.js";
 
 export type OutboxInput = Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }>;
 export type OutboxDetails = OutboxRecord & Readonly<{ leaseHolder: string | null; detail: string | null }>;
-export type AppendMessageOptions = Readonly<{ outbox?: OutboxInput }>;
+export type DeliveryInput = Readonly<Record<string, unknown>>;
+export type NudgeInput = Readonly<{ dispatchId: string; pointer: string; outcome: string; reason: string; createdAt?: string }>;
+export type AppendMessageEffects = Readonly<{ delivery?: DeliveryInput; outbox?: OutboxInput }>;
+export type AppendMessageOptions = AppendMessageEffects & Readonly<{ derive?: (previous: readonly MessageRecord[]) => AppendMessageEffects }>;
 
 function findMessageByKey(db: DatabaseAdapter, key: string): MessageRecord | undefined {
   const row = db.query<{ dispatch_id: string; seq: number; from: string; type: string; text: string; body: string | null; session_id: string | null; created_at: string; idempotency_key: string | null; extra: string }>("SELECT * FROM messages WHERE idempotency_key = ?").get(key);
@@ -32,8 +35,22 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       seq: nextMessageSequence(db, dispatchId),
       createdAt: typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString(),
     };
+    const previous = queryMessages(db, dispatchId);
     insertMessage(db, dispatchId, assigned);
-    if (options.outbox !== undefined) enqueueOutboxValue(db, { ...options.outbox, dispatchId }, new Date().toISOString());
+    const derived = options.derive?.(previous) ?? {};
+    const delivery = options.delivery ?? derived.delivery;
+    const outbox = options.outbox ?? derived.outbox;
+    if (delivery !== undefined) {
+      const now = new Date().toISOString();
+      insertDelivery(db, {
+        ...delivery,
+        dispatchId,
+        messageSeqs: [assigned.seq],
+        createdAt: typeof delivery.createdAt === "string" ? delivery.createdAt : now,
+        updatedAt: typeof delivery.updatedAt === "string" ? delivery.updatedAt : now,
+      });
+    }
+    if (outbox !== undefined) enqueueOutboxValue(db, { ...outbox, dispatchId }, new Date().toISOString());
     return queryMessages(db, dispatchId).at(-1) as MessageRecord;
   });
 }
@@ -200,6 +217,24 @@ export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" 
   if (result.kind !== "ok") return result;
   if (result.value.kind === "missing") return failed(`outbox item not found: ${id}`);
   if (result.value.kind === "invalid_state") return failed(`outbox item ${id} cannot finish from status ${result.value.current}`);
+  return ok(undefined);
+}
+
+export function finishNotification(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", event: NudgeInput): Result<void> {
+  const now = new Date().toISOString();
+  const result = write(handle, ({ db }) => {
+    const current = outboxRow(db, id);
+    if (current === undefined) return { kind: "missing" as const };
+    if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
+    if (current.dispatchId !== event.dispatchId) throw new Error("notification event dispatch does not match outbox item");
+    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, event.reason, now, id]);
+    const appended = appendNudge(db, event.dispatchId, event.pointer, event.outcome, event.reason, event.createdAt ?? now);
+    if (appended.kind !== "ok") throw new Error(appended.error);
+    return { kind: "finished" as const };
+  });
+  if (result.kind !== "ok") return result;
+  if (result.value.kind === "missing") return failed("outbox item not found: " + id);
+  if (result.value.kind === "invalid_state") return failed("outbox item " + id + " cannot finish from status " + result.value.current);
   return ok(undefined);
 }
 
