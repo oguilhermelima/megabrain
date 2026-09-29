@@ -107,6 +107,7 @@ const migrations: readonly Migration[] = [
   { version: 1, sql: nativeSessionsMigration },
   { version: 2, sql: dispatchCoreMigration },
 ];
+export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 
 export type DatabaseHandle = Readonly<{
   readonly path: string;
@@ -216,8 +217,7 @@ function migrate(db: DatabaseAdapter, path: string): void {
         db.exec(migration.sql);
         db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date().toISOString()]);
       }
-      const highest = migrations.at(-1)?.version ?? 0;
-      db.exec(`PRAGMA user_version = ${highest}`);
+      db.exec(`PRAGMA user_version = ${latestSchemaVersion}`);
       db.run("COMMIT");
     } catch (cause: unknown) {
       try { db.run("ROLLBACK"); } catch { /* preserve the migration failure */ }
@@ -248,12 +248,11 @@ function configureConnection(db: DatabaseAdapter): void {
 
   try {
     const actual = pragmaNumber(db, "user_version");
-    const highest = migrations.at(-1)?.version ?? 0;
-    if (actual > highest) throw new Error(`database user_version ${actual} is newer than this binary supports (${highest}); upgrade megabrain`);
+    if (actual > latestSchemaVersion) throw new Error(`database user_version ${actual} is newer than this binary supports (${latestSchemaVersion}); upgrade megabrain`);
     const hasMigrationTable = db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get() !== null;
     if (hasMigrationTable) {
       const applied = db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version ?? 0;
-      if (applied > highest) throw new Error(`database migration version ${applied} is newer than this binary supports (${highest}); upgrade megabrain`);
+      if (applied > latestSchemaVersion) throw new Error(`database migration version ${applied} is newer than this binary supports (${latestSchemaVersion}); upgrade megabrain`);
     }
   } catch (cause: unknown) { failAt("version guard user_version", cause); }
 }

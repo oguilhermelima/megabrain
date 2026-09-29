@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
-import { openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
+import { latestSchemaVersion, openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
 
@@ -43,7 +43,7 @@ describe("SQLite database", () => {
         expect(handle.db.query<{ synchronous: number }>("PRAGMA synchronous").get()?.synchronous).toBe(1);
         expect(handle.db.query<{ foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys).toBe(1);
         expect(handle.db.query<{ application_id: number }>("PRAGMA application_id").get()?.application_id).toBeGreaterThan(0);
-        expect(handle.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(1);
+        expect(handle.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(latestSchemaVersion);
       } finally {
         handle.close();
       }
@@ -69,7 +69,7 @@ describe("SQLite database", () => {
       expect(newer.kind).toBe("failed");
       if (newer.kind === "failed") {
         expect(newer.error).toContain("77");
-        expect(newer.error).toContain("1");
+        expect(newer.error).toContain(String(latestSchemaVersion));
         expect(newer.error).toContain("upgrade megabrain");
       }
     });
