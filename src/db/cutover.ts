@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -202,8 +202,28 @@ function sealLegacy(directory: string): string {
     }
     return snapshot;
   } catch (error: unknown) {
-    throw new Error(`legacy snapshot failed at ${snapshot}: ${errorMessage(error)}`, { cause: error });
+    const rollback = restoreLegacySnapshot(directory, snapshot);
+    throw new Error(`legacy snapshot failed at ${snapshot}: ${errorMessage(error)}${rollback === undefined ? "; moved paths were restored" : `; restore incomplete: ${rollback}`}`, { cause: error });
   }
+}
+
+function restoreLegacySnapshot(directory: string, snapshot: string): string | undefined {
+  const errors: string[] = [];
+  for (const name of ["sessions", "models.json", "state.json", "terminals", "dispatches"]) {
+    const source = join(snapshot, name);
+    if (!existsSync(source)) continue;
+    const target = join(directory, name);
+    if (existsSync(target)) {
+      errors.push(`${name}: original path already exists`);
+      continue;
+    }
+    try { renameSync(source, target); }
+    catch (error: unknown) { errors.push(`${name}: ${errorMessage(error)}`); }
+  }
+  if (errors.length > 0) return errors.join("; ");
+  try { rmSync(snapshot); }
+  catch (error: unknown) { return `could not remove empty snapshot ${snapshot}: ${errorMessage(error)}`; }
+  return undefined;
 }
 
 function busyBudgetMs(): number {
@@ -231,7 +251,7 @@ async function acquireCutoverLease(handle: DatabaseHandle): Promise<Result<strin
   }
 }
 
-function importAndCheck(handle: DatabaseHandle, source: ParsedJsonState, stateDirectory: string): Result<ParityReport> {
+function importAndCheck(handle: DatabaseHandle, source: ParsedJsonState): Result<ParityReport> {
   let parity: ParityReport | undefined;
   const result = withWrite(handle, (db) => {
     const imported = applyJsonStateImport(db, source);
@@ -280,7 +300,7 @@ async function migrateWithLease(handle: DatabaseHandle, environment: StateEnviro
     if (backup.kind !== "ok") return failed(backup.error, backup.exitCode);
     const manifest = snapshotManifest(directory);
     const source = await parseJsonState(directory);
-    const initial = importAndCheck(handle, source, directory);
+    const initial = importAndCheck(handle, source);
     if (initial.kind !== "ok") {
       const parity = parityForFailure(handle, source);
       const report = writeParityReport(directory, parity, method);
@@ -311,7 +331,10 @@ async function migrateWithLease(handle: DatabaseHandle, environment: StateEnviro
       moveTranscripts(directory, environment);
       const snapshot = sealLegacy(directory);
       const marked = setCutoverMarker(handle, method, parity.totals);
-      if (marked.kind !== "ok") return failed(marked.error, marked.exitCode);
+      if (marked.kind !== "ok") {
+        const rollback = restoreLegacySnapshot(directory, snapshot);
+        return failed(`${marked.error}; legacy state ${rollback === undefined ? "was restored for retry" : `could not be fully restored: ${rollback}`}`, marked.exitCode);
+      }
       return ok({ migrated: true, method, snapshot, totals: parity.totals, parity: summarizeParity(parity) });
     } catch (error: unknown) {
       return failed(`legacy migration imported into SQLite but could not finish cutover: ${errorMessage(error)}`);
@@ -392,7 +415,7 @@ export async function dryRunLegacyMigration(environment: StateEnvironment): Prom
     if (marker.kind !== "ok") return failed(marker.error, marker.exitCode);
     if (marker.value !== undefined) return failed(`database was already migrated at ${marker.value.completedAt}`);
     const source = await parseJsonState(directory);
-    const checked = importAndCheck(opened, source, directory);
+    const checked = importAndCheck(opened, source);
     if (checked.kind !== "ok") {
       const parity = parityForFailure(opened, source);
       return ok({ migrated: false, method: "migrate", snapshot: null, totals: parity.totals, parity: summarizeParity(parity) });

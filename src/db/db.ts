@@ -183,6 +183,10 @@ export function backupDatabase(handle: DatabaseHandle): Result<string> {
 
 export function vacuumDatabaseFile(sourcePath: string, targetPath: string): Result<string> {
   let source: DatabaseAdapter | undefined;
+  const sourceWal = `${sourcePath}-wal`;
+  const sourceShm = `${sourcePath}-shm`;
+  const hadSourceWal = existsSync(sourceWal);
+  const hadSourceShm = existsSync(sourceShm);
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
     source = openRuntimeDatabase(sourcePath, true);
@@ -194,6 +198,8 @@ export function vacuumDatabaseFile(sourcePath: string, targetPath: string): Resu
     return failed(`database snapshot failed: ${errorMessage(cause)}`);
   } finally {
     try { source?.close(); } catch { /* preserve the snapshot result */ }
+    if (!hadSourceWal) try { unlinkSync(sourceWal); } catch { /* no sidecar was created */ }
+    if (!hadSourceShm) try { unlinkSync(sourceShm); } catch { /* no sidecar was created */ }
   }
 }
 
@@ -263,8 +269,19 @@ function migrate(db: DatabaseAdapter, path: string): void {
 function configureConnection(db: DatabaseAdapter): void {
   try { db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`); }
   catch (cause: unknown) { failAt("pragma busy_timeout", cause); }
-  try { db.exec("PRAGMA journal_mode = WAL"); }
-  catch (cause: unknown) { failAt("pragma journal_mode", cause); }
+  const journalDeadline = Date.now() + busySeconds() * 1000;
+  let journalAttempt = 0;
+  while (true) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      break;
+    } catch (cause: unknown) {
+      if (!isBusy(cause)) failAt("pragma journal_mode", cause);
+      const remaining = journalDeadline - Date.now();
+      if (remaining <= 0) failAt("pragma journal_mode", new Error(`database is busy after ${busySeconds()} seconds`, { cause }));
+      sleep(retryDelay(journalAttempt++, remaining));
+    }
+  }
   try { db.exec("PRAGMA synchronous = NORMAL"); }
   catch (cause: unknown) { failAt("pragma synchronous", cause); }
   try { db.exec("PRAGMA foreign_keys = ON"); }
