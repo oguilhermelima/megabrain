@@ -3,8 +3,20 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 binary="$root/.build/megabrain"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-runtime.XXXXXX")"
+export HOME
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1 ;; esac
+  done
+}
 
 cleanup() {
   rm -rf "$state_root"
@@ -58,6 +70,9 @@ run_spawn() {
   local state="$1"
   shift
   mkdir -p "$state"
+  export MEGABRAIN_STATE_DIR="$state"
+  assert_safe_state_dir
+  MEGABRAIN_STATE_DIR="$state" "$binary" db import "$state" --replace --json >/dev/null
   printf '%s\n' "$shared_dir" >"$state/worktree-root"
   # An explicit caller identity is required: without one, orchestrate spawn refuses before it
   # ever reaches the host-vs-tmux routing decision under test here ("cannot launch agent from
@@ -80,7 +95,7 @@ assert_contains "$tmux_false_output" 'orca terminal create'
 printf 'explicit --tmux false routes to a host terminal (orca terminal create)\n'
 
 # Scenario: with no --tmux flag, the auto default follows only the tmux-runtime module's
-# installed flag in state.json (lib/common.sh's megabrain_runtime_enabled, read by
+# installed flag in database install state (formerly state.json, read by
 # lib/module-worktree.sh's megabrain_resolve_spawn_runtime) — never ambient tmux presence alone.
 # This replaces an earlier version of this scenario that asserted the opposite (that an active
 # TMUX/TMUX_PANE session by itself auto-selects tmux); that was wrong. Verified by extracting the
@@ -88,7 +103,7 @@ printf 'explicit --tmux false routes to a host terminal (orca terminal create)\n
 # `orchestrate spawn` from it directly, outside this repo: with TMUX/TMUX_PANE and
 # ORCA_TERMINAL_HANDLE all set and no tmux-runtime install flag in state.json, the real shell
 # resolved to host and printed `orca terminal create failed for ...` — ambient tmux never flipped
-# it. Only writing `{"tmux-runtime":{"installed":true}}` into that state dir's state.json made the
+# it. Only importing `{"tmux-runtime":{"installed":true}}` into that state dir made the
 # same shell take the tmux path instead.
 auto_installed_state="$state_root/auto-installed"
 mkdir -p "$auto_installed_state"
@@ -100,7 +115,7 @@ printf 'omitting --tmux with the tmux-runtime module installed takes the tmux pa
 
 auto_absent_state="$state_root/auto-absent"
 mkdir -p "$auto_absent_state"
-# No state.json at all: the module has never been installed for this state dir. TMUX/TMUX_PANE
+# No install-state row: the module has never been installed for this state dir. TMUX/TMUX_PANE
 # are set here too, to prove ambient tmux presence alone still does not flip the default.
 auto_absent_output="$(TMUX=fake-server TMUX_PANE=%1 run_spawn "$auto_absent_state" --branch feat/auto-absent --agent codex --model m --prompt p)"
 assert_contains "$auto_absent_output" 'orca terminal create'
