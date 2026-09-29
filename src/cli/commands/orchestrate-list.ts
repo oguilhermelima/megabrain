@@ -1,10 +1,9 @@
-import { access, readFile, readdir } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, parseDispatchRecord, type DispatchCaller, type DispatchListOptions, type DispatchRecord } from "../../core/dispatch.js";
-import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
+import { stateDatabase, listDispatchEntries } from "../../adapters/state-db.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -17,47 +16,6 @@ export async function callerFromEnvironment(environment: OrchestrateListEnvironm
     host: identity.host,
     ...(identity.terminalId !== null && identity.terminalId !== identity.id ? { terminalId: identity.terminalId } : {}),
   };
-}
-
-async function metadataPaths(dispatchRoot: string): Promise<Array<{ path: string; archived: boolean }>> {
-  const paths: Array<{ path: string; archived: boolean }> = [];
-  async function add(parent: string, entries: string[], archived: boolean): Promise<void> {
-    for (const entry of entries) {
-      const path = `${parent}/${entry}`;
-      const exists = await access(path).then(() => true, () => false);
-      if (exists && entry === "meta.json") paths.push({ path, archived });
-    }
-  }
-  const direct = (await readdir(dispatchRoot, { withFileTypes: true }).catch(() => []))
-    .sort((left, right) => left.name.localeCompare(right.name));
-  for (const entry of direct) {
-    if (entry.isDirectory() && entry.name !== "archive") await add(`${dispatchRoot}/${entry.name}`, ["meta.json"], false);
-  }
-  const archive = (await readdir(`${dispatchRoot}/archive`, { withFileTypes: true }).catch(() => []))
-    .sort((left, right) => left.name.localeCompare(right.name));
-  for (const date of archive) {
-    if (!date.isDirectory()) continue;
-    const archived = (await readdir(`${dispatchRoot}/archive/${date.name}`, { withFileTypes: true }).catch(() => []))
-      .sort((left, right) => left.name.localeCompare(right.name));
-    for (const dispatch of archived) {
-      if (dispatch.isDirectory()) await add(`${dispatchRoot}/archive/${date.name}/${dispatch.name}`, ["meta.json"], true);
-    }
-  }
-  return paths;
-}
-
-async function loadRecords(root: string): Promise<DispatchRecord[]> {
-  const records: DispatchRecord[] = [];
-  for (const entry of await metadataPaths(`${root}/dispatches`)) {
-    try {
-      const parsed = parseDispatchRecord(JSON.parse(await readFile(entry.path, "utf8")) as unknown);
-      if (parsed.kind === "ok") records.push({ ...parsed.value, raw: { ...parsed.value.raw, archived: entry.archived } });
-      else console.error(`skipping unreadable dispatch metadata: ${entry.path}`);
-    } catch {
-      console.error(`skipping unreadable dispatch metadata: ${entry.path}`);
-    }
-  }
-  return records;
 }
 
 function parseArgs(args: readonly string[]): Result<{ options: DispatchListOptions; json: boolean }> {
@@ -85,9 +43,15 @@ export async function executeOrchestrateList(args: readonly string[], environmen
   const parsedArgs = parseArgs(args);
   if (parsedArgs.kind !== "ok") return parsedArgs;
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("orchestrate-list"));
-  const root = resolveStateDirectory(environment);
   const caller = await callerFromEnvironment(environment, process);
-  const records = await loadRecords(root);
+  const database = stateDatabase(environment);
+  if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const entries = listDispatchEntries(database.value, { includeArchived: true });
+  if (entries.kind !== "ok") return failed(entries.error, entries.exitCode);
+  const records: DispatchRecord[] = entries.value.map(({ record, archived }) => {
+    const parsed = parseDispatchRecord(record);
+    return parsed.kind === "ok" ? { ...parsed.value, raw: { ...parsed.value.raw, archived } } : { raw: {} };
+  });
   if (records.length === 0) {
     return parsedArgs.value.json ? ok("[]\n") : ok(formatDispatchList([], false));
   }

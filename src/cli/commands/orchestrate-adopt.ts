@@ -1,12 +1,13 @@
 import { join } from "node:path";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { dispatchFile, dispatchRoot, resolveDispatchDirectory } from "../../adapters/dispatch-store.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { hasCallerIdentity, isAgentSessionId } from "../../core/context.js";
-import { resolveStateDirectory } from "../../core/state.js";
-import { acquireLock, atomicJson, readJson, resolveCaller, type QueueEnvironment } from "./queue-write.js";
+import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
+import { stateDatabase, getDispatch, listDispatches, mutateDispatch, acquireLease, releaseLease } from "../../adapters/state-db.js";
 
 type AdoptionLiveness = "alive" | "not-alive" | "unknown";
 type Meta = Record<string, unknown>;
@@ -87,21 +88,34 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
   const current = await resolveCaller(environment, processAdapter);
   if (!hasCallerIdentity(current) || !isAgentSessionId(current.id)) return failed("orchestrate adopt requires an agent session identity (claude:<id> or codex:<id>)");
 
-  const root = resolveStateDirectory(environment);
-  const initial = await resolveDispatchDirectory(root, parsed.value.dispatchId);
+  const database = stateDatabase(environment);
+  if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const initial = getDispatch(database.value, parsed.value.dispatchId);
   if (initial.kind !== "ok") return initial;
-  if (initial.value.archived) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to adopt it`);
-  if (await readJson(dispatchFile(initial.value, "meta")) === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
-  const lockPath = join(dispatchRoot(root), `.${parsed.value.dispatchId}.adopt.lock`);
-  const acquired = await acquireLock(lockPath, environment);
-  if (acquired.kind !== "ok") return acquired;
+  if (initial.value === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+  const initialLive = listDispatches(database.value);
+  if (initialLive.kind !== "ok") return initialLive;
+  if (!initialLive.value.some((record) => record.dispatchId === parsed.value.dispatchId)) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to adopt it`);
+  const lockPath = `dispatches/.${parsed.value.dispatchId}.adopt.lock`;
+  const holder = `${process.pid}:${randomUUID()}`;
+  const deadline = Date.now() + Math.max(0, Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15")) * 1000;
+  let locked = false;
+  while (!locked) {
+    const acquired = acquireLease(database.value, lockPath, holder, Math.max(1, Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30")));
+    if (acquired.kind !== "ok") return acquired;
+    locked = acquired.value;
+    if (locked) break;
+    if (Date.now() >= deadline) return failed(`mailbox lock is held by another writer: ${lockPath}`);
+    await delay(20);
+  }
   try {
-    const resolved = await resolveDispatchDirectory(root, parsed.value.dispatchId);
+    const resolved = getDispatch(database.value, parsed.value.dispatchId);
     if (resolved.kind !== "ok") return resolved;
-    if (resolved.value.archived) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to adopt it`);
-    const path = dispatchFile(resolved.value, "meta");
-    const meta = await readJson(path);
-    if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+    if (resolved.value === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+    const live = listDispatches(database.value);
+    if (live.kind !== "ok") return live;
+    if (!live.value.some((record) => record.dispatchId === parsed.value.dispatchId)) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to adopt it`);
+    const meta = resolved.value as Meta;
     const previousOwner = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
     const ownerHost = typeof meta.parentHost === "string" ? meta.parentHost : "";
     if (previousOwner === current.id && ownerHost === current.host) return ok(output(parsed.value.dispatchId, false, current.id, parsed.value.json));
@@ -122,10 +136,10 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
       adoptions: [...adoptions, { previousOwner, adoptedBy: current.id, adoptedAt: now }],
       updatedAt: now,
     };
-    try { await atomicJson(path, next); }
-    catch (error: unknown) { return failed(`could not record dispatch adoption: ${error instanceof Error ? error.message : "metadata write failed"}`); }
+    const updated = mutateDispatch(database.value, parsed.value.dispatchId, () => next);
+    if (updated.kind !== "ok") return failed(`could not record dispatch adoption: ${updated.error}`);
     return ok(output(parsed.value.dispatchId, true, current.id, parsed.value.json));
   } finally {
-    await rm(lockPath, { recursive: true, force: true });
+    releaseLease(database.value, lockPath, holder);
   }
 }

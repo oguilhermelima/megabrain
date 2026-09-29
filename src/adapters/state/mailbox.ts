@@ -1,8 +1,10 @@
 import { acknowledgeDelivery } from "../../core/ack.js";
+import { addSupersedeSummary, supersedeDelivery, type SupersedeSummary } from "../../core/parent-reply.js";
+import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { insertDelivery, listDeliveries as queryDeliveries, toDelivery, type DeliveryRecord } from "../../db/queries/deliveries.js";
 import { insertMessage, listMessages as queryMessages, toMessage, type MessageRecord } from "../../db/queries/messages.js";
-import { decode, encode, type DatabaseAdapter } from "../../db/queries/types.js";
+import { decode, encode, object, type DatabaseAdapter } from "../../db/queries/types.js";
 import { toOutbox, type OutboxRecord } from "../../db/queries/outbox-leases.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { read, write } from "./shared.js";
@@ -10,6 +12,7 @@ import { read, write } from "./shared.js";
 export type OutboxInput = Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }>;
 export type OutboxDetails = OutboxRecord & Readonly<{ leaseHolder: string | null; detail: string | null }>;
 export type AppendMessageOptions = Readonly<{ outbox?: OutboxInput }>;
+export type AppendParentReplyOptions = Readonly<{ supersede: boolean; outbox?: OutboxInput }>;
 
 function findMessageByKey(db: DatabaseAdapter, key: string): MessageRecord | undefined {
   const row = db.query<{ dispatch_id: string; seq: number; from: string; type: string; text: string; body: string | null; session_id: string | null; created_at: string; idempotency_key: string | null; extra: string }>("SELECT * FROM messages WHERE idempotency_key = ?").get(key);
@@ -35,6 +38,47 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
     insertMessage(db, dispatchId, assigned);
     if (options.outbox !== undefined) enqueueOutboxValue(db, { ...options.outbox, dispatchId }, new Date().toISOString());
     return queryMessages(db, dispatchId).at(-1) as MessageRecord;
+  });
+}
+
+export function appendParentReply(handle: DatabaseHandle, dispatchId: string, message: Readonly<Record<string, unknown>>, options: AppendParentReplyOptions): Result<MessageRecord> {
+  return write(handle, ({ db }) => {
+    const now = typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString();
+    let summary: SupersedeSummary = { queued: 0, delivered: 0, deliveredSequences: [] };
+    if (options.supersede) {
+      const deliveries = queryDeliveries(db, dispatchId);
+      const messages = queryMessages(db, dispatchId);
+      for (const delivery of deliveries) {
+        const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
+        if (sequences.length === 0 || !sequences.every((seq) => messages.some((item) => item.seq === seq && item.from === "parent" && item.type === "reply"))) continue;
+        const decision = supersedeDelivery(String(delivery.status), typeof delivery.consumer === "string" ? delivery.consumer : null, sequences, delivery.superseded === true);
+        if (decision.queued === 0 && decision.delivered === 0) continue;
+        const extraRow = db.query<{ extra: string }>("SELECT extra FROM deliveries WHERE id = ?").get(delivery.id);
+        const extra = extraRow === null ? {} : object(decode<unknown>(extraRow.extra));
+        db.run("UPDATE deliveries SET status = ?, updated_at = ?, extra = ? WHERE id = ?", [
+          decision.queued > 0 ? "superseded" : delivery.status,
+          now,
+          encode({ ...extra, superseded: true, supersededAt: now }),
+          delivery.id,
+        ]);
+        summary = addSupersedeSummary(summary, decision);
+      }
+    }
+
+    const append = (value: Readonly<Record<string, unknown>>): MessageRecord => {
+      const assigned = { ...value, seq: nextMessageSequence(db, dispatchId), createdAt: typeof value.createdAt === "string" ? value.createdAt : now };
+      insertMessage(db, dispatchId, assigned);
+      const row = queryMessages(db, dispatchId).at(-1);
+      if (row === undefined) throw new Error("parent reply insert was not visible");
+      const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
+      insertDelivery(db, { id: deliveryId, dispatchId, recipient: "child", messageSeqs: [row.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
+      return row;
+    };
+
+    if (summary.delivered > 0) append({ from: "parent", type: "withdrawal", text: `withdrawn parent direction message sequence(s): ${summary.deliveredSequences.join(", ")}`, sessionId: "" });
+    const reply = append({ ...message, from: "parent", type: "reply", text: message.text, sessionId: message.sessionId ?? "" });
+    if (options.outbox !== undefined) enqueueOutboxValue(db, { ...options.outbox, dispatchId }, now);
+    return { ...reply, supersedeSummary: summary };
   });
 }
 
