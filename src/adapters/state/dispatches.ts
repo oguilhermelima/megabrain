@@ -10,6 +10,7 @@ export type DispatchFilters = Readonly<{
   tmuxPane?: string;
   terminalId?: string;
 }>;
+export type DispatchEntry = Readonly<{ record: DispatchRecord; archived: boolean }>;
 
 export type NoDispatchChange = Readonly<{ kind: "no_change" }>;
 export const noDispatchChange: NoDispatchChange = Object.freeze({ kind: "no_change" });
@@ -32,6 +33,11 @@ export function getDispatch(handle: DatabaseHandle, id: string): Result<Dispatch
 }
 
 export function listDispatches(handle: DatabaseHandle, filters: DispatchFilters = {}): Result<DispatchRecord[]> {
+  const entries = listDispatchEntries(handle, filters);
+  return entries.kind === "ok" ? ok(entries.value.map((entry) => entry.record)) : entries;
+}
+
+export function listDispatchEntries(handle: DatabaseHandle, filters: DispatchFilters = {}): Result<DispatchEntry[]> {
   return read(handle, ({ db }) => {
     const where: string[] = [];
     const parameters: (string | number | null)[] = [];
@@ -41,7 +47,7 @@ export function listDispatches(handle: DatabaseHandle, filters: DispatchFilters 
     if (filters.tmuxPane !== undefined) { where.push("tmux_pane = ?"); parameters.push(filters.tmuxPane); }
     if (filters.terminalId !== undefined) { where.push("terminal_id = ?"); parameters.push(filters.terminalId); }
     const sql = `SELECT * FROM dispatches${where.length === 0 ? "" : ` WHERE ${where.join(" AND ")}`} ORDER BY created_at, id`;
-    return db.query<DispatchRow>(sql).all(...parameters).map(toMeta);
+    return db.query<DispatchRow>(sql).all(...parameters).map((row) => ({ record: toMeta(row), archived: row.archived_at !== null }));
   });
 }
 
@@ -76,4 +82,8 @@ export function isDispatchArchived(handle: DatabaseHandle, id: string): Result<b
   });
   if (result.kind !== "ok") return result;
   return result.value === undefined ? failed(`dispatch not found: ${id}`) : ok(result.value);
+}
+
+export function deleteDispatch(handle: DatabaseHandle, id: string): Result<boolean> {
+  return write(handle, ({ db }) => db.run("DELETE FROM dispatches WHERE id = ?", [id]).changes > 0);
 }

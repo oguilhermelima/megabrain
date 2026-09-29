@@ -83,10 +83,18 @@ export function getTmuxSessionByStableId(handle: DatabaseHandle, stableSessionId
   });
 }
 
+export function listTmuxSessions(handle: DatabaseHandle): Result<TmuxSessionRecord[]> {
+  return read(handle, ({ db }) => db.query<{ value: string }>("SELECT value FROM tmux_sessions ORDER BY session_name").all().map((row) => decode<TmuxSessionRecord>(row.value)));
+}
+
 export function putTmuxSession(handle: DatabaseHandle, record: Readonly<Record<string, unknown>>, stableSessionId: string | null): Result<TmuxSessionRecord> {
   return write(handle, ({ db }) => {
     if (typeof record.tmuxSession !== "string") throw new TypeError("tmuxSession must be a string");
     db.run("INSERT INTO tmux_sessions (session_name, stable_session_id, value) VALUES (?, ?, ?) ON CONFLICT(session_name) DO UPDATE SET stable_session_id = excluded.stable_session_id, value = excluded.value", [record.tmuxSession, stableSessionId, encode(record)]);
     return record as TmuxSessionRecord;
   });
+}
+
+export function deleteTmuxSession(handle: DatabaseHandle, name: string): Result<boolean> {
+  return write(handle, ({ db }) => db.run("DELETE FROM tmux_sessions WHERE session_name = ?", [name]).changes > 0);
 }

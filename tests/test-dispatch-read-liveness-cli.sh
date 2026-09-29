@@ -4,28 +4,48 @@ set -euo pipefail
 # Scenarios written before implementation: host read, missing dispatch, and tmux liveness
 # classification for working, idle, blocked, and unknown frames.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
+node_bin="$(dirname "$(command -v node)")"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-read-liveness-cli.XXXXXX")"
+export HOME="$work/home"
+mkdir -p "$HOME"
 trap 'rm -rf "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || fail 'MEGABRAIN_STATE_DIR is unset'
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) fail 'refusing real-home megabrain state directory' ;; esac
+  done
+}
+import_state() { export MEGABRAIN_STATE_DIR="$1"; assert_safe_state_dir; "$root/.build/megabrain" db import "$1" --replace --json >/dev/null; }
 
 write_host_fixture() {
   local state="$1"
   mkdir -p "$state/dispatches/host-read/messages"
-  printf '%s\n' '{"dispatchId":"host-read","parentSessionId":"parent","parentHost":"orca","runtime":"host","childHost":"orca","terminalId":"child"}' >"$state/dispatches/host-read/meta.json"
+  printf '%s\n' '{"dispatchId":"host-read","parentSessionId":"parent","parentHost":"orca","runtime":"host","childHost":"orca","terminalId":"child","state":"running"}' >"$state/dispatches/host-read/meta.json"
+  import_state "$state"
 }
 
 write_tmux_fixture() {
   local state="$1" frame="$2" dispatch_state="${3:-running}"
   mkdir -p "$state/dispatches/live/messages"
   printf '{"dispatchId":"live","parentSessionId":"parent","parentHost":"orca","runtime":"tmux","childHost":"orca","agent":"codex","tmuxSession":"session","tmuxPane":"%s","state":"%s"}\n' '%1' "$dispatch_state" >"$state/dispatches/live/meta.json"
+  import_state "$state"
   cp "$root/tests/fixtures/agent-liveness/$frame.transcript" "$work/pane"
 }
 
 run_side() {
   local side="$1" verb="$2" state="$3" executable="$4"; shift 4
   local implementation="" implementation_name="MEGABRAIN_ORCHESTRATE_$(printf '%s' "$verb" | tr '[:lower:]' '[:upper:]')_IMPLEMENTATION"
+  mkdir -p "$state"
+  export MEGABRAIN_STATE_DIR="$state"
+  assert_safe_state_dir
   [ "$side" = shell ] && implementation="$implementation_name=shell"
-  env -i HOME="$work/home" PATH="$work/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
+  env -i HOME="$work/home" PATH="$work/bin:$node_bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" \
     MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=parent ORCA_TERMINAL_HANDLE=parent \
     FAKE_FRAME="$work/pane" $implementation "$executable" orchestrate "$verb" "$@"
 }
@@ -84,6 +104,8 @@ printf 'missing dispatch agrees between shell and binary\n'
 fallback_state="$work/tmux-fallback"
 mkdir -p "$fallback_state/dispatches/fallback/messages"
 printf '%s\n' '{"dispatchId":"fallback","parentSessionId":"parent","parentHost":"tmux","runtime":"tmux","tmuxSession":"missing-session","tmuxPane":"%99","state":"running"}' >"$fallback_state/dispatches/fallback/meta.json"
+import_state "$fallback_state"
+mkdir -p "$fallback_state/transcripts"
 cat >"$work/bin/tmux" <<'EOF'
 #!/bin/sh
 case "$1" in
@@ -93,7 +115,7 @@ esac
 EOF
 chmod +x "$work/bin/tmux"
 set +e
-fallback_output="$(env -i HOME="$work/home" PATH="$work/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$fallback_state" MEGABRAIN_SESSION_HOST=tmux MEGABRAIN_SESSION_ID=parent "$root/.build/megabrain" orchestrate read fallback --json 2>&1)"
+fallback_output="$(env -i HOME="$work/home" PATH="$work/bin:$node_bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$fallback_state" MEGABRAIN_SESSION_HOST=tmux MEGABRAIN_SESSION_ID=parent "$root/.build/megabrain" orchestrate read fallback --json 2>&1)"
 fallback_status=$?
 set -e
 expected_fallback='megabrain: could not read tmux pane %99 and no persisted transcript exists'

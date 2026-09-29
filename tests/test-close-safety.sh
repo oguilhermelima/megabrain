@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 state_dir="$(mktemp -d /tmp/mbclose.XXXXXX)"
 state_dir="$(cd -P "$state_dir" && pwd -P)"
 unset TMUX TMUX_PANE
@@ -24,6 +25,8 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
 export MEGABRAIN_ROOT="$root"
 outside_tmux_before="$(find "$default_tmux_dir" -mindepth 1 -maxdepth 1 -type s -print 2>/dev/null | sort || true)"
 
@@ -33,6 +36,19 @@ fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || fail 'MEGABRAIN_STATE_DIR is unset'
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) fail 'refusing real-home megabrain state directory' ;; esac
+  done
+}
+assert_safe_state_dir
+db_import() { assert_safe_state_dir; "$root/.build/megabrain" db import "$MEGABRAIN_STATE_DIR" --replace --json >/dev/null; }
+db_show() { "$root/.build/megabrain" db show "$1" --json; }
 
 assert_equal() {
   [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
@@ -122,6 +138,7 @@ create_meta() {
     worktreePath="$root" branch=fix/close-never-kills-caller \
     tmuxSession="$tmux_session" tmuxPane="$tmux_pane" runtime=tmux \
     parentTmuxSession="$parent_session" parentTmuxPane="$parent_pane" parentWorkspaceId=workspace-test >/dev/null
+  db_import
 }
 
 set_terminal_state() {
@@ -129,6 +146,7 @@ set_terminal_state() {
   tmp="$(mktemp "$state_dir/dispatches/$1/.terminal-state.XXXXXX")"
   jq --arg state "$state" '.terminalState = $state' "$path" >"$tmp"
   mv -f "$tmp" "$path"
+  db_import
 }
 
 set_dispatch_state() {
@@ -136,6 +154,7 @@ set_dispatch_state() {
   tmp="$(mktemp "$state_dir/dispatches/$1/.state.XXXXXX")"
   jq --arg state "$state" '.state = $state' "$path" >"$tmp"
   mv -f "$tmp" "$path"
+  db_import
 }
 
 assert_pane_alive() {
@@ -180,7 +199,7 @@ assert_equal "$after_panes" 1
 assert_pane_alive "$parent_pane"
 assert_session_alive "$session_name"
 [ ! -s "$close_log" ] || fail 'shared close attempted to close the host terminal'
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/shared-child/meta.json")" closed
+assert_equal "$(db_show shared-child | jq -r '.meta.state')" closed
 printf 'shared-session child close removes only the child pane\n'
 
 tmux_cmd new-session -d -s "$dedicated_session_name" bash
@@ -198,14 +217,14 @@ assert_session_alive "$session_name"
 # (childHost=orca), which only ever worked by an identity accident the compiled binary's own
 # comment documents as fixed. Dropped the close_log assertion; kept the session-teardown proof.
 [ ! -s "$close_log" ] || fail 'dedicated close unexpectedly attempted a host terminal close'
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/dedicated-child/meta.json")" closed
+assert_equal "$(db_show dedicated-child | jq -r '.meta.state')" closed
 printf 'dedicated-session child close tears down its exclusive tmux session\n'
 
 automatic_session_name="megabrain-close-automatic-$$"
 automatic_dispatch_id="automatic-release"
 tmux_cmd new-session -d -s "$automatic_session_name" bash
 automatic_pane="$(tmux_cmd display-message -p -t "$automatic_session_name" '#{pane_id}')"
-automatic_transcript="$state_dir/dispatches/$automatic_dispatch_id/transcript"
+automatic_transcript="$state_dir/transcripts/$automatic_dispatch_id.txt"
 mkdir -p "$(dirname "$automatic_transcript")"
 printf '%s\n' 'automatic release transcript' >"$automatic_transcript"
 tmux_cmd send-keys -t "$automatic_pane" -l \
@@ -224,6 +243,7 @@ write_dispatch_meta "$state_dir" "$automatic_dispatch_id" \
   worktreePath="$root" branch=fix/dispatch-process-lifetime \
   tmuxSession="$automatic_session_name" tmuxPane="$automatic_pane" runtime=tmux \
   parentTmuxSession="$session_name" parentTmuxPane="$parent_pane" parentWorkspaceId=workspace-test >/dev/null
+db_import
 set_dispatch_state "$automatic_dispatch_id" done
 # RULE-3, not rewritten as a live assertion: reaching "done" no longer tears its own tmux session
 # down by itself. queue-write.ts's updateMeta (the real production path behind `megabrain done`)
@@ -246,7 +266,7 @@ unproven_session_name="megabrain-close-unproven-$$"
 unproven_dispatch_id="unproven-release"
 tmux_cmd new-session -d -s "$unproven_session_name" bash
 unproven_pane="$(tmux_cmd display-message -p -t "$unproven_session_name" '#{pane_id}')"
-unproven_transcript="$state_dir/dispatches/$unproven_dispatch_id/transcript"
+unproven_transcript="$state_dir/transcripts/$unproven_dispatch_id.txt"
 mkdir -p "$(dirname "$unproven_transcript")"
 touch "$unproven_transcript"
 write_dispatch_meta "$state_dir" "$unproven_dispatch_id" \
@@ -254,6 +274,7 @@ write_dispatch_meta "$state_dir" "$unproven_dispatch_id" \
   worktreePath="$root" branch=fix/dispatch-process-lifetime \
   tmuxSession="$unproven_session_name" tmuxPane="$unproven_pane" runtime=tmux \
   parentTmuxSession="$session_name" parentTmuxPane="$parent_pane" parentWorkspaceId=workspace-test >/dev/null
+db_import
 # See the RULE-3 note above the "automatic-release" scenario: reaching "done" never auto-releases
 # a tmux session anymore, proven or not, so this scenario's original proven/unproven distinction
 # (does automatic release skip an unproven terminal) is now moot on both sides -- keeping it only
@@ -272,6 +293,7 @@ create_host_meta() {
   write_dispatch_meta "$state_dir" "$dispatch_id" \
     childHost=superset workspaceId=workspace-test terminalId="$dispatch_id-terminal" \
     worktreePath="$root" state=running >/dev/null
+  db_import
 }
 
 host_close_mode=absent
@@ -281,8 +303,8 @@ if absent_output="$(MB_CLOSE_MODE=absent compiled_close host-terminal-absent --j
 else
   fail "a missing host terminal was treated as a close failure: $absent_output"
 fi
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/host-terminal-absent/meta.json")" closed
-assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/host-terminal-absent/meta.json")" released
+assert_equal "$(db_show host-terminal-absent | jq -r '.meta.state')" closed
+assert_equal "$(db_show host-terminal-absent | jq -r '.meta.terminalState')" released
 printf 'host terminal already absent is an idempotent close\n'
 
 host_close_mode=failure
@@ -291,7 +313,7 @@ if failure_output="$(MB_CLOSE_MODE=failure compiled_close host-terminal-failure 
   fail 'a genuine host close failure unexpectedly succeeded'
 fi
 assert_contains "$failure_output" 'terminal close denied by host'
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/host-terminal-failure/meta.json")" running
+assert_equal "$(db_show host-terminal-failure | jq -r '.meta.state')" running
 printf 'genuine host close failure preserves its reason\n'
 
 trap - EXIT

@@ -1,11 +1,30 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../src/core/orchestrate-close.js";
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
+import { openDatabase, withWrite } from "../../src/db/db.js";
+import { parseJsonState, applyJsonStateImport } from "../../src/db/import/json-state.js";
+import { getDispatch, stateDatabase } from "../../src/adapters/state-db.js";
+
+async function importFixture(root: string): Promise<void> {
+  const parsed = await parseJsonState(root);
+  const database = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const result = withWrite(database.value, (db) => applyJsonStateImport(db, parsed));
+  if (result.kind !== "ok" || result.value.malformed.length > 0) throw new Error("could not import close fixture");
+}
+
+function dispatch(root: string, id: string): Record<string, unknown> {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const result = getDispatch(database.value, id);
+  if (result.kind !== "ok" || result.value === undefined) throw new Error(`dispatch missing: ${id}`);
+  return result.value;
+}
 
 const meta = (values: Record<string, unknown> = {}) => ({ dispatchId: "d", state: "running", terminalState: "owned", runtime: "host", ...values });
 
@@ -39,6 +58,7 @@ describe("orchestrate close: stale host terminal", () => {
         childHost: "orca", terminalId: "stale-child-terminal", workspaceId: "workspace",
         runtime: "host", state: "spawning", processState: "starting", terminalState: "owned",
       }));
+      await importFixture(root);
       const process = {
         async run(command: string, args: readonly string[]) {
           if (command === "orca" && args.slice(0, 3).join(" ") === "terminal close --terminal") {
@@ -54,7 +74,7 @@ describe("orchestrate close: stale host terminal", () => {
 
       expect(result.kind).toBe("ok");
       if (result.kind === "ok") expect(result.value).toContain("terminal was already gone");
-      const updated = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
+      const updated = dispatch(root, "stale");
       expect(updated.state).toBe("closed");
       expect(updated.terminalState).toBe("released");
       expect(updated.processState).toBe("stopped");
@@ -72,6 +92,7 @@ describe("orchestrate close: stale host terminal", () => {
         childHost: "orca", terminalId: "denied-child-terminal", workspaceId: "workspace",
         runtime: "host", state: "running", processState: "running", terminalState: "owned",
       }));
+      await importFixture(root);
       const process = {
         async run() { return failed("orca exited with status 1", 1, '{"error":{"code":"PERMISSION_DENIED","message":"terminal close denied by host"}}'); },
         async startDetached() { return failed("not used"); },
@@ -114,6 +135,7 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
         tmuxSession: "megabrain-d1", tmuxPane: "%20", parentTmuxSession: null,
         state: "running", processState: "running", terminalState: "owned",
       }));
+      await importFixture(root);
       const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" };
       const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%20\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const result = await executeOrchestrateClose(["d1"], environment, process);
@@ -134,6 +156,7 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
         terminalId: "tmux:legacy-session:%5", runtime: "tmux", tmuxSession: "legacy-session", tmuxPane: "%5",
         parentTmuxSession: null, state: "running", processState: "running", terminalState: "owned",
       }));
+      await importFixture(root);
       const process = fakeProcess((command, args) => {
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%5\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "has-session") return sessionAlive
@@ -161,6 +184,7 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
         terminalId: "tmux:wrapper-session:%2", runtime: "tmux", tmuxSession: "wrapper-session", tmuxPane: "%2",
         parentTmuxSession: null, tmuxSessionOwned: false, state: "running", processState: "running", terminalState: "owned",
       }));
+      await importFixture(root);
       const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes"
         ? ok({ stdout: "%main\n%2\n", stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }), calls);
@@ -186,6 +210,7 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
         workspaceId: "workspace", state: "running", processState: "running", terminalState: "owned",
       }));
       await writeFile(join(root, "sessions", "megabrain-wt-tree-hash.json"), JSON.stringify({ tmuxSession: "megabrain-wt-tree-hash", megabrainOwned: true, hostTerminalId: "attach-tab", hostTerminalHost: "orca" }));
+      await importFixture(root);
       let sessionAlive = true;
       const process = fakeProcess((command, args) => {
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%3\n", stderr: "", exitCode: 0 });
@@ -213,6 +238,7 @@ describe("orchestrate close: exclusive tmux session (no host terminal component)
         terminalId: "tmux:wrapper-session:%4", runtime: "tmux", tmuxSession: "wrapper-session", tmuxPane: "%4",
         parentTmuxSession: null, tmuxSessionOwned: false, state: "running", processState: "running", terminalState: "owned",
       }));
+      await importFixture(root);
       const process = fakeProcess((command, args) => command === "tmux" && args[0] === "list-panes"
         ? ok({ stdout: "%4\n", stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }), calls);

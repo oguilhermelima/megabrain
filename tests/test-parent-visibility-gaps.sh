@@ -3,8 +3,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 binary="$root/.build/megabrain"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-visibility.XXXXXX")"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
 
 cleanup() {
   local rc=$?
@@ -21,6 +24,16 @@ trap cleanup EXIT
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
+}
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || fail 'MEGABRAIN_STATE_DIR is unset'
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) fail 'refusing real-home megabrain state directory' ;; esac
+  done
 }
 
 assert_equal() {
@@ -74,6 +87,9 @@ write_meta() {
     processState: "running", terminalState: "owned", terminalReason: null, failureCount: 0, stage: null,
     reason: null, reconcileOutcome: null, createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
   }' >"$dispatch_dir/meta.json"
+  export MEGABRAIN_STATE_DIR="$state"
+  assert_safe_state_dir
+  "$binary" db import "$state" --replace --json >/dev/null
 }
 
 bin_dir="$state_dir/bin"

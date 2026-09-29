@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
+import { appendMessage, appendParentReply, createDelivery, createDispatch, getDispatch, listDeliveries, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
 
 // End-to-end (CLI-verb level, in-process) coverage of the shell parity bugs found in
 // tests/test-e2e-findings.sh: a "done" dispatch must refuse a reply exactly like
@@ -22,6 +23,11 @@ function fakeProcess(): ProcessAdapter {
 }
 
 type JsonRecord = Record<string, unknown>;
+
+function requireOk<T>(result: Result<T>): T {
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value;
+}
 
 function baseMeta(overrides: JsonRecord = {}): JsonRecord {
   const now = new Date().toISOString();
@@ -75,18 +81,63 @@ async function tempStateDir(): Promise<string> {
 }
 
 async function writeDispatch(root: string, id: string, meta: JsonRecord): Promise<void> {
-  const directory = `${root}/dispatches/${id}`;
-  await mkdir(directory, { recursive: true });
-  await writeFile(`${directory}/meta.json`, `${JSON.stringify(meta)}\n`);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const state = meta.state === "stalled" || meta.state === "timeout" ? "running" : meta.state;
+  const result = createDispatch(database.value, { ...meta, dispatchId: id, state });
+  if (result.kind !== "ok") throw new Error(result.error);
 }
 
 async function readMeta(root: string, id: string): Promise<JsonRecord> {
-  return JSON.parse(await readFile(`${root}/dispatches/${id}/meta.json`, "utf8")) as JsonRecord;
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  return requireOk(getDispatch(database.value, id)) as JsonRecord;
 }
 
 function environment(root: string): Record<string, string> {
   return { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "parent-terminal" };
 }
+
+describe("parent reply database transaction", () => {
+  test("preserves outstanding replies when superseding is disabled and appends a delivered reply", async () => {
+    const root = await tempStateDir();
+    try {
+      const db = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+      requireOk(createDispatch(db, { dispatchId: "reply", state: "running" }));
+      const old = requireOk(appendMessage(db, "reply", { from: "parent", type: "reply", text: "old" }));
+      requireOk(createDelivery(db, { id: "old-delivery", dispatchId: "reply", messageSeqs: [old.seq], status: "outstanding" }));
+      const result = requireOk(appendParentReply(db, "reply", { from: "parent", type: "reply", text: "new", sessionId: "parent" }, { supersede: false }));
+      expect(result.seq).toBe(2);
+      expect(requireOk(listMessages(db, "reply")).map((message) => message.seq)).toEqual([1, 2]);
+      expect(requireOk(listDeliveries(db, "reply")).map((delivery) => delivery.status)).toEqual(["outstanding", "outstanding"]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("supersedes outstanding reply deliveries and rolls back all writes if outbox encoding fails", async () => {
+    const root = await tempStateDir();
+    try {
+      const db = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+      requireOk(createDispatch(db, { dispatchId: "reply", state: "running" }));
+      const old = requireOk(appendMessage(db, "reply", { from: "parent", type: "reply", text: "old" }));
+      requireOk(createDelivery(db, { id: "old-delivery", dispatchId: "reply", messageSeqs: [old.seq], status: "outstanding" }));
+      const result = requireOk(appendParentReply(db, "reply", { from: "parent", type: "reply", text: "new", sessionId: "parent" }, { supersede: true }));
+      expect(result.seq).toBe(2);
+      expect(requireOk(listDeliveries(db, "reply")).find((delivery) => delivery.id === "old-delivery")?.status).toBe("superseded");
+
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+      const beforeMessages = requireOk(listMessages(db, "reply"));
+      const beforeDeliveries = requireOk(listDeliveries(db, "reply"));
+      const failed = appendParentReply(db, "reply", { from: "parent", type: "reply", text: "rolled back" }, {
+        supersede: true,
+        outbox: { id: "bad-outbox", targetKind: "terminal", target: "child", payload: cyclic },
+      });
+      expect(failed.kind).toBe("failed");
+      expect(requireOk(listMessages(db, "reply"))).toEqual(beforeMessages);
+      expect(requireOk(listDeliveries(db, "reply"))).toEqual(beforeDeliveries);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
 
 describe("orchestrate reply: shell-parity state rules", () => {
   test("refuses a reply to a done dispatch and leaves the queue empty", async () => {
@@ -98,8 +149,8 @@ describe("orchestrate reply: shell-parity state rules", () => {
     expect(result.kind === "failed" ? result.error : "").toContain("open a new dispatch for a reply");
     const meta = await readMeta(root, "dispatch-1");
     expect(meta.state).toBe("done");
-    const messages = await readdir(`${root}/dispatches/dispatch-1/messages`).catch(() => []);
-    expect(messages.length).toBe(0);
+    const database = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+    expect(requireOk(listMessages(database, "dispatch-1"))).toEqual([]);
   });
 
   test("accepts a reply to a stalled dispatch, queues it, and resumes the dispatch to running", async () => {
@@ -111,8 +162,8 @@ describe("orchestrate reply: shell-parity state rules", () => {
     expect(parsed.status).toBe("queued");
     const meta = await readMeta(root, "dispatch-1");
     expect(meta.state).toBe("running");
-    const messages = await readdir(`${root}/dispatches/dispatch-1/messages`).catch(() => []);
-    expect(messages.length).toBe(1);
+    const database = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+    expect(requireOk(listMessages(database, "dispatch-1"))).toHaveLength(1);
   });
 
   test("still refuses the other settled states (failed, closed, circuit_broken)", async () => {

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 state_dir="$(mktemp -d /tmp/mbnotify.XXXXXX)"
 state_dir="$(cd -P "$state_dir" && pwd -P)"
 unset TMUX TMUX_PANE
@@ -20,6 +21,8 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
 export ORCA_TERMINAL_HANDLE=parent-terminal
 unset SUPERSET_TERMINAL_ID
 
@@ -43,6 +46,16 @@ fail() {
 
 assert_equal() {
   [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
+}
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) { printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1; } ;; esac
+  done
 }
 
 tmux_cmd() {
@@ -69,7 +82,9 @@ create_meta() {
       model: "gpt-5", modelHonored: true, label: "label", state: "running",
       runtime: "tmux", spawnRuntime: "tmux", tmuxSession: $tmuxSession, tmuxPane: $tmuxPane,
       createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
-    }' >"$dir/meta.json"
+  }' >"$dir/meta.json"
+  assert_safe_state_dir
+  "$root/.build/megabrain" db import "$MEGABRAIN_STATE_DIR" --replace --json >/dev/null
 }
 
 tmux_cmd new-session -d -s "$parent_session" "printf '%s' 'Working · esc to interrupt'; sleep 5"
@@ -81,7 +96,7 @@ create_meta shared-close "$parent_session" "$shared_pane"
 shared_close="$(compiled_close shared-close --json)"
 assert_equal "$(printf '%s' "$shared_close" | jq -r '.message')" \
   'tmux pane removed; the shared tmux session and host terminal tab were kept.'
-assert_equal "$(jq -r '.state' "$state_dir/dispatches/shared-close/meta.json")" closed
+assert_equal "$("$root/.build/megabrain" db show shared-close --json | jq -r '.meta.state')" closed
 printf 'shared close reports that session and host tab were kept\n'
 
 tmux_cmd new-session -d -s "$dedicated_session" bash
