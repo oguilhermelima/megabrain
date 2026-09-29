@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import nativeSessionsMigration from "./schema/001-native-sessions.sql" with { type: "text" };
+import dispatchCoreMigration from "./schema/002-dispatch-core.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -104,6 +105,7 @@ function openRuntimeDatabase(path: string): DatabaseAdapter {
 
 const migrations: readonly Migration[] = [
   { version: 1, sql: nativeSessionsMigration },
+  { version: 2, sql: dispatchCoreMigration },
 ];
 
 export type DatabaseHandle = Readonly<{
