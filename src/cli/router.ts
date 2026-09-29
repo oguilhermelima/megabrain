@@ -52,6 +52,8 @@ export async function route(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "terminal", "received", "ask", "done", "hook"]);
+  if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   if (command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
     const cutover = await ensureAutomaticCutover(dependencies.environment);
     if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
