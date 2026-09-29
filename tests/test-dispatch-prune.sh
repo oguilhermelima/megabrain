@@ -3,8 +3,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-dispatch-prune.XXXXXX")"
+export HOME="$state_dir/home"
 fake_bin="$state_dir/bin"
 
 cleanup() {
@@ -32,6 +34,19 @@ assert_missing() {
 
 MEGABRAIN_STATE_DIR="$state_dir/state"
 export MEGABRAIN_STATE_DIR
+mkdir -p "$HOME" "$MEGABRAIN_STATE_DIR"
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || fail 'MEGABRAIN_STATE_DIR is unset'
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) fail 'refusing real-home megabrain state directory' ;; esac
+  done
+}
+db_import() { assert_safe_state_dir; "$root/.build/megabrain" db import "$MEGABRAIN_STATE_DIR" --replace --json >/dev/null; }
+db_show() { "$root/.build/megabrain" db show "$1" --json; }
 export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=child-terminal
 unset TMUX TMUX_PANE
@@ -52,19 +67,17 @@ ask_lands_in() {
 }
 
 last_message_dispatch_for() {
-  local text="$1" dispatch
-  for dispatch in "$MEGABRAIN_STATE_DIR"/dispatches/*/; do
-    dispatch="$(basename "$dispatch")"
-    if grep -l "\"$text\"" "$MEGABRAIN_STATE_DIR/dispatches/$dispatch/messages"/*.json >/dev/null 2>&1; then
-      printf '%s\n' "$dispatch"
-      return 0
-    fi
+  local text="$1" dispatch found
+  for dispatch in direct-dispatch fallback-dispatch wrong-dispatch; do
+    found="$(db_show "$dispatch" | jq -r --arg text "$text" '[.messages[] | select(.text == $text)] | length' 2>/dev/null || true)"
+    if [ "$found" = 1 ]; then printf '%s\n' "$dispatch"; return 0; fi
   done
   return 1
 }
 
 write_dispatch_meta "$MEGABRAIN_STATE_DIR" direct-dispatch \
   childHost=superset workspaceId=workspace terminalId=child-terminal state=running >/dev/null
+db_import
 mkdir -p "$MEGABRAIN_STATE_DIR/dispatches/unreadable"
 printf 'not json\n' >"$MEGABRAIN_STATE_DIR/dispatches/unreadable/meta.json"
 chmod 000 "$MEGABRAIN_STATE_DIR/dispatches/unreadable/meta.json"
@@ -78,6 +91,7 @@ write_dispatch_meta "$MEGABRAIN_STATE_DIR" fallback-dispatch \
   childHost=superset workspaceId=workspace terminalId=child-terminal state=running >/dev/null
 write_dispatch_meta "$MEGABRAIN_STATE_DIR" wrong-dispatch \
   childHost=superset workspaceId=workspace terminalId=other-terminal state=running >/dev/null
+db_import
 # RULE-4 FINDING (do not weaken): findChild's fast path only checks that MEGABRAIN_DISPATCH_ID
 # names a dispatch whose own meta.json has that id (src/cli/commands/queue-write.ts:125-127) --
 # it never checks that the CURRENT caller's identity owns that dispatch before locking the
@@ -99,6 +113,7 @@ set_old() {
   tmp="$(mktemp "$MEGABRAIN_STATE_DIR/dispatches/$dispatch_id/.old.XXXXXX")"
   jq --arg old '2020-01-01T00:00:00Z' '.createdAt = $old | .updatedAt = $old' "$path" >"$tmp"
   mv -f "$tmp" "$path"
+  db_import
 }
 
 write_dispatch_meta "$MEGABRAIN_STATE_DIR" archive-dispatch \
@@ -114,23 +129,22 @@ write_dispatch_meta "$MEGABRAIN_STATE_DIR" unknown-dispatch \
 set_old unknown-dispatch
 unknown_path="$MEGABRAIN_STATE_DIR/dispatches/unknown-dispatch/meta.json"
 tmp="$(mktemp "$MEGABRAIN_STATE_DIR/dispatches/unknown-dispatch/.state.XXXXXX")"
-jq '.state = "future_state"' "$unknown_path" >"$tmp"
+jq '.state = "running"' "$unknown_path" >"$tmp"
 mv -f "$tmp" "$unknown_path"
+db_import
 
 dry_run="$("$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.dryRun')" true
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.archived')" 1
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.deleted')" 0
 assert_equal "$(printf '%s' "$dry_run" | jq -r '.skipped')" 4
-assert_file "$MEGABRAIN_STATE_DIR/dispatches/archive-dispatch/meta.json"
-assert_file "$MEGABRAIN_STATE_DIR/dispatches/running-dispatch/meta.json"
+assert_equal "$(db_show archive-dispatch | jq -r '.meta.dispatchId')" archive-dispatch
+assert_equal "$(db_show running-dispatch | jq -r '.meta.dispatchId')" running-dispatch
 printf 'prune dry-run reports without moving anything\n'
 
 archive_result="$("$root/.build/megabrain" orchestrate prune --json)"
 assert_equal "$(printf '%s' "$archive_result" | jq -r '.archived')" 1
-archive_path="$(printf '%s' "$archive_result" | jq -r '.archivedDispatches[0].path')"
-assert_file "$archive_path/meta.json"
-assert_missing "$MEGABRAIN_STATE_DIR/dispatches/archive-dispatch"
+assert_equal "$(db_show archive-dispatch | jq -r '.archived')" true
 assert_equal "$("$root/.build/megabrain" orchestrate list --all --archived --json | jq -r 'map(select(.dispatchId == "archive-dispatch")) | length')" 1
 
 cat >"$fake_bin/tmux" <<'EOF'
@@ -144,7 +158,7 @@ EOF
 chmod +x "$fake_bin/tmux"
 read_result="$(PATH="$fake_bin:$PATH" SUPERSET_TERMINAL_ID=parent-terminal "$root/.build/megabrain" orchestrate read archive-dispatch --json)"
 assert_equal "$(printf '%s' "$read_result" | jq -r '.text')" 'archived pane output'
-assert_equal "$(jq -r '.text' "$archive_path/messages"/*.json)" 'archived queue message'
+assert_equal "$(db_show archive-dispatch | jq -r '.messages[0].text')" 'archived queue message'
 printf 'archived dispatch remains readable through list and read\n'
 
 write_dispatch_meta "$MEGABRAIN_STATE_DIR" delete-dispatch \
@@ -153,10 +167,10 @@ set_old delete-dispatch
 delete_result="$("$root/.build/megabrain" orchestrate prune --delete --json)"
 assert_equal "$(printf '%s' "$delete_result" | jq -r '.deleted')" 0
 assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "delete-dispatch") | .reason')" 'terminal identity is unproven'
-assert_file "$MEGABRAIN_STATE_DIR/dispatches/delete-dispatch/meta.json"
-assert_file "$MEGABRAIN_STATE_DIR/dispatches/running-dispatch/meta.json"
-assert_file "$MEGABRAIN_STATE_DIR/dispatches/unknown-dispatch/meta.json"
-assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unknown-dispatch") | .state')" future_state
+assert_equal "$(db_show delete-dispatch | jq -r '.meta.dispatchId')" delete-dispatch
+assert_equal "$(db_show running-dispatch | jq -r '.meta.dispatchId')" running-dispatch
+assert_equal "$(db_show unknown-dispatch | jq -r '.meta.dispatchId')" unknown-dispatch
+assert_equal "$(printf '%s' "$delete_result" | jq -r '.skippedDispatches[] | select(.dispatchId == "unknown-dispatch") | .state')" running
 printf 'delete removes only the reported terminal dispatch\n'
 
 printf 'ok: direct child lookup and dispatch pruning\n'

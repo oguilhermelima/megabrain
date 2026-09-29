@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-agent-liveness.XXXXXX")"
 dispatch_dir="$state_dir/state/dispatches"
 
@@ -21,6 +22,19 @@ assert_equal() {
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
+export HOME="$state_dir/home"
+mkdir -p "$HOME" "$MEGABRAIN_STATE_DIR"
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1 ;; esac
+  done
+}
+assert_safe_state_dir
 export MEGABRAIN_ROOT="$root"
 export SUPERSET_TERMINAL_ID=parent-terminal
 
@@ -66,6 +80,7 @@ create_dispatch protocol-view
 append_child_message protocol-view 1 received 'prompt received'
 append_child_message protocol-view 2 ack 'delivery-id'
 append_child_message protocol-view 3 ask 'needs a decision'
+"$root/.build/megabrain" db import "$MEGABRAIN_STATE_DIR" --replace --json >/dev/null
 default_view="$(run_watch --json)"
 assert_equal "$(jq -r '.messages | length' <<<"$default_view")" 1
 assert_equal "$(jq -r '.messages[0].type' <<<"$default_view")" ask

@@ -3,7 +3,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_real_home="${HOME:-}"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-drift-family.XXXXXX")"
+export HOME="$work/home"
+mkdir -p "$HOME"
 trap 'rm -rf "$work"' EXIT
 
 fail() {
@@ -25,9 +28,21 @@ assert_contains() {
 assert_missing() {
   [ ! -e "$1" ] || fail "expected path to be absent: $1"
 }
+assert_safe_state_dir() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || fail 'MEGABRAIN_STATE_DIR is unset'
+  local state_path home_path home_candidate
+  state_path="$(cd "$MEGABRAIN_STATE_DIR" && pwd -P)"
+  for home_candidate in "$test_real_home" "$HOME"; do
+    [ -n "$home_candidate" ] && [ -d "$home_candidate" ] || continue
+    home_path="$(cd "$home_candidate" && pwd -P)"
+    case "$state_path/" in "$home_path/.megabrain/"*) fail 'refusing real-home megabrain state directory' ;; esac
+  done
+}
 
 chain_state="$work/chain-state"
 mkdir -p "$chain_state"
+export MEGABRAIN_STATE_DIR="$chain_state"
+assert_safe_state_dir
 chain_file="$chain_state/chains.json"
 printf '%s\n' '{"chains":{},"defaultSteps":[],"usageLimits":{"liveProviders":["claude"],"notice":{"enabled":true}}}' >"$chain_file"
 # megabrain_chain_init (lib/module-chain.sh) is gone from the reachable call graph: command_chain
@@ -72,6 +87,9 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$tmux_missing_bin/tmux"
+mkdir -p "$dispatch_state"
+export MEGABRAIN_STATE_DIR="$dispatch_state"
+assert_safe_state_dir
 
 write_scenario6_meta() {
   local dispatch_id="$1" state="$2" process_state="$3" terminal_state="$4" dir="$dispatch_dir/$1"
@@ -89,23 +107,27 @@ write_scenario6_meta() {
 }
 
 write_scenario6_meta missing-terminal running start-unproven retained
+"$root/.build/megabrain" db import "$dispatch_state" --replace --json >/dev/null
 reconcile_result="$(env PATH="$tmux_missing_bin:$PATH" MEGABRAIN_STATE_DIR="$dispatch_state" \
   "$root/.build/megabrain" orchestrate reconcile missing-terminal --json)"
 assert_equal "$(printf '%s' "$reconcile_result" | jq -r '.terminalState')" missing
 assert_equal "$(printf '%s' "$reconcile_result" | jq -r '.state')" failed
 # reconcile just stamped updatedAt to now; backdate it again so prune's age check treats this
 # record as old debris rather than a fresh change.
-jq '.updatedAt = "2020-01-01T00:00:00Z"' "$dispatch_dir/missing-terminal/meta.json" >"$work/missing-terminal.json"
+jq '.state = "failed" | .processState = "failed" | .terminalState = "missing" | .updatedAt = "2020-01-01T00:00:00Z"' "$dispatch_dir/missing-terminal/meta.json" >"$work/missing-terminal.json"
 mv "$work/missing-terminal.json" "$dispatch_dir/missing-terminal/meta.json"
+"$root/.build/megabrain" db import "$dispatch_state" --replace --json >/dev/null
 
 write_scenario6_meta running-live running running owned
+"$root/.build/megabrain" db import "$dispatch_state" --replace --json >/dev/null
 dry_run="$(env PATH="$tmux_missing_bin:$PATH" MEGABRAIN_STATE_DIR="$dispatch_state" \
   "$root/.build/megabrain" orchestrate prune --dry-run --json)"
 assert_equal "$(jq -r '.archived' <<<"$dry_run")" 1
 assert_equal "$(jq -r '.dryRun' <<<"$dry_run")" true
 assert_contains "$dry_run" 'missing-terminal'
-assert_missing "$dispatch_dir/archive"
-assert_equal "$(jq -r '.state' "$dispatch_dir/running-live/meta.json")" running
+assert_equal "$("$root/.build/megabrain" db show missing-terminal --json | jq -r '.archived')" false
+assert_equal "$("$root/.build/megabrain" db show missing-terminal --json | jq -r '.meta.state')" failed
+assert_equal "$("$root/.build/megabrain" db show running-live --json | jq -r '.meta.state')" running
 printf 'scenario 6: reconcile settles missing terminals, dry-run lists only terminal debris, and running stays\n'
 
 printf 'ok: drift family scenarios\n'
