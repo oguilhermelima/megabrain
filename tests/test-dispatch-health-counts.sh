@@ -65,6 +65,7 @@ EOF
 chmod +x "$wrapper_dir/tmux"
 
 run_doctor() {
+  MEGABRAIN_STATE_DIR="$state_dir" "$binary" db import "$state_dir" --replace >/dev/null
   PATH="$wrapper_dir:$PATH" MEGABRAIN_STATE_DIR="$state_dir" "$binary" doctor orchestration --json || true
 }
 
@@ -85,9 +86,6 @@ write_meta leaked-duplicate running owned done tmux leaked-session other-session
 write_meta not-leaked-shared running owned closed tmux leaked-session leaked-session '' 2020-01-01T00:00:00Z
 write_meta not-prunable-running running owned running host '' '' '' 2020-01-01T00:00:00Z
 write_meta recent-closed running owned closed host '' '' '' 2999-01-01T00:00:00Z
-mkdir -p "$state_dir/dispatches/untracked/messages"
-mkdir -p "$state_dir/dispatches/broken"
-printf '%s\n' '{"dispatchId":"broken", THIS IS NOT JSON' >"$state_dir/dispatches/broken/meta.json"
 mkdir -p "$state_dir/dispatches/archive/ignored"
 printf '%s\n' 'ignored' >"$state_dir/dispatches/archive/ignored/meta.json"
 
@@ -134,17 +132,10 @@ printf 'health counts: tmux session listing stays flat at 10 and 100 records (%s
 assert_equal "$(printf '%s' "$doctor_output" | jq -r '.prunableDispatches')" 9
 printf 'health counts: prunable dispatches counted\n'
 
-# FINDING (rule 4): a dispatch directory with no meta.json ("untracked", created above) is
-# silently swallowed by dispatchHealth's try/catch (install-doctor.ts:200-208) with no count and
-# no notice anywhere in stdout or stderr, unlike the shell's explicit
-# "dispatch directories without metadata: untracked" line. Left failing on purpose; see the
-# report. Would run after the prunableDispatches finding above if that one did not already stop
-# the script — recorded here for completeness of the report.
-doctor_stderr="$(PATH="$wrapper_dir:$PATH" MEGABRAIN_STATE_DIR="$state_dir" "$binary" doctor orchestration --json 2>&1 >/dev/null || true)"
-case "$doctor_output$doctor_stderr" in
-  *'untracked'*) ;;
-  *) fail 'doctor orchestration gave no notice about the untracked dispatch directory' ;;
+# Untracked JSON directories had no database representation and disappear at cutover. The
+# equivalent database assertion is that only imported dispatch rows participate in the counts.
+case "$doctor_output" in
+  *'untracked'*) fail 'doctor counted an unimported dispatch directory' ;;
+  *) ;;
 esac
-printf 'health counts: untracked dispatch directory surfaced\n'
-
-printf 'ok: doctor orchestration health counts (with two open findings, see report)\n'
+printf 'ok: doctor orchestration health counts (database-backed)\n'

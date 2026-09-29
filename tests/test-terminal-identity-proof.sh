@@ -50,6 +50,7 @@ create_dispatch() {
     runtime: "tmux", spawnRuntime: "tmux", tmuxSession: $session, tmuxPane: $pane,
     createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:00:00Z"
   }' >"$dir/meta.json"
+  "$root/.build/megabrain" db import "$state_dir/state" --replace >/dev/null
 }
 
 terminal_identity_source() {

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
+import { getInstallState, stateDatabase } from "../../src/adapters/state-db.js";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 
@@ -297,7 +298,11 @@ describe("executeInstall", () => {
     expect(tuningInstalled.length).toBeGreaterThan(0);
     const zshrc = readFileSync(join(home, ".zshrc"), "utf8");
     expect(zshrc).toContain("megabrain tmux wrapper");
-    const state = JSON.parse(readFileSync(join(home, "state.json"), "utf8")) as Record<string, { installed?: boolean }>;
+    const opened = stateDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const loaded = getInstallState(opened.value);
+    if (loaded.kind !== "ok") throw new Error(loaded.error);
+    const state = loaded.value as Record<string, { installed?: boolean }>;
     expect(state["tmux-runtime"]?.installed).toBe(true);
   });
 

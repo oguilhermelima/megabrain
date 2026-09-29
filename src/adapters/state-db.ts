@@ -39,12 +39,14 @@ export {
 } from "./state/mailbox.js";
 export {
   deleteTerminal,
+  deleteInstallModule,
   getInstallState,
   getTerminal,
   getTmuxSession,
   getTmuxSessionByStableId,
   listTerminals,
   loadModels,
+  mutateInstallModule,
   putInstallModule,
   putTerminal,
   putTmuxSession,

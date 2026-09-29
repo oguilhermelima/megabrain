@@ -18,6 +18,7 @@ import { usageText } from "../../core/usage.js";
 import { runMachineInstall } from "./install-machine.js";
 import { discoverAgentDirectories } from "../../core/agent-directories.js";
 import { inspectDatabase } from "../../db/db.js";
+import { getInstallState, listDispatches, mutateInstallModule, putInstallModule, stateDatabase } from "../../adapters/state-db.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
@@ -31,16 +32,11 @@ async function succeeds(process: ProcessAdapter, command: string, args: readonly
   return (await process.run(command, args)).kind === "ok";
 }
 
-function statePath(environment: Environment): string {
-  return resolve(resolveStateDirectory(environment), "state.json");
-}
-
 function readState(environment: Environment): State {
-  try {
-    return JSON.parse(readFileSync(statePath(environment), "utf8")) as State;
-  } catch {
-    return {};
-  }
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return {};
+  const loaded = getInstallState(opened.value);
+  return loaded.kind === "ok" ? loaded.value as State : {};
 }
 
 function fileText(path: string): string | undefined {
@@ -229,66 +225,36 @@ function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
   return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
-type DispatchHealth = Omit<Report, "module" | "status" | "reason"> & { unrecognisedMessageFiles: string[]; untrackedDispatches: string[] };
+type DispatchHealth = Omit<Report, "module" | "status" | "reason">;
 
-// Mirrors the shell's default prune window (MEGABRAIN_DISPATCH_PRUNE_DEFAULT_DAYS), also the
-// default parsePruneArgs uses for `megabrain orchestrate prune`: a terminal dispatch only counts
-// as prunable once it has been settled for at least this many days.
+// Mirrors the default prune window used by megabrain orchestrate prune.
 const PRUNE_DEFAULT_DAYS = 7;
 
-function messageFiles(directory: string): string[] {
-  try {
-    return readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && !/^\d{4,}-[^-]+-.+\.json$/.test(entry.name))
-      .map((entry) => resolve(directory, entry.name));
-  } catch {
-    return [];
-  }
-}
-
 async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<DispatchHealth> {
-  const result: DispatchHealth = { ...emptyCounts(), unrecognisedMessageFiles: [], untrackedDispatches: [] };
-  const directory = resolve(resolveStateDirectory(environment), "dispatches");
-  if (!existsSync(directory)) return result;
+  const result: DispatchHealth = emptyCounts();
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return result;
+  const listed = listDispatches(opened.value);
+  if (listed.kind !== "ok") return result;
+  const records = listed.value;
   const pruneStateSet = new Set<string>(pruneStates);
   const pruneOptions = { olderThan: PRUNE_DEFAULT_DAYS, states: [...pruneStates], mode: "archive" as const, dryRun: false, json: false };
   const now = new Date();
-  const records: Array<Record<string, unknown>> = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === "archive") continue;
-    result.unrecognisedMessageFiles.push(...messageFiles(resolve(directory, entry.name, "messages")));
-    const metaPath = resolve(directory, entry.name, "meta.json");
-    // Matches the shell scan's own `[ -f meta.json ]` check: a directory with no meta.json at all
-    // is untracked, but one whose meta.json exists and merely fails to parse is not — it still
-    // falls into the catch below, silently excluded from every count, exactly as the shell's jq
-    // scan drops an unparsable record with no separate notice for it.
-    if (!existsSync(metaPath)) {
-      result.untrackedDispatches.push(entry.name);
-      continue;
+  for (const record of records) {
+    const processState = typeof record.processState === "string" ? record.processState : "";
+    const reason = processState === "start-unproven" ? "process start was not proven"
+      : processState === "stop-unproven" ? "process stop was not proven"
+        : processState === "exited" ? "agent exited without reporting"
+          : processState === "abandoned" ? "process was abandoned without proof" : undefined;
+    if (reason !== undefined) {
+      result.uncertainDispatches += 1;
+      result.uncertainReasons.push({ dispatchId: record.dispatchId, reason, processState, terminalState: record.terminalState ?? null });
     }
-    try {
-      const record = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
-      records.push(record);
-      const processState = typeof record.processState === "string" ? record.processState : "";
-      const reason = processState === "start-unproven" ? "process start was not proven"
-        : processState === "stop-unproven" ? "process stop was not proven"
-          : processState === "exited" ? "agent exited without reporting"
-            : processState === "abandoned" ? "process was abandoned without proof" : undefined;
-      const dispatchId = record.dispatchId ?? entry.name;
-      if (reason !== undefined) {
-        result.uncertainDispatches += 1;
-        result.uncertainReasons.push({ dispatchId, reason, processState, terminalState: record.terminalState ?? null });
-      }
-      if (record.terminalState === "retained") {
-        result.retainedTerminals += 1;
-        result.retainedReasons.push({ dispatchId, reason: record.terminalReason ?? "terminal identity remains unproven", processState, terminalState: "retained" });
-      }
-      if (pruneDecision(record, pruneOptions, now).eligible) {
-        result.prunableDispatches += 1;
-      }
-    } catch {
-      // Match the shell scan: malformed metadata is not a health record.
+    if (record.terminalState === "retained") {
+      result.retainedTerminals += 1;
+      result.retainedReasons.push({ dispatchId: record.dispatchId, reason: record.terminalReason ?? "terminal identity remains unproven", processState, terminalState: "retained" });
     }
+    if (pruneDecision(record, pruneOptions, now).eligible) result.prunableDispatches += 1;
   }
   const sessions = await getTmux().listSessions(process, "#{session_name}");
   const liveSessions = new Set(sessions.kind === "ok" ? sessions.value : []);
@@ -383,20 +349,12 @@ async function report(module: string, environment: Environment, process: Process
     let suffix = `; uncertain dispatches: ${health.uncertainDispatches} (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: ${health.retainedTerminals}; leaked dispatch sessions: ${health.leakedDispatchSessions}; prunable dispatches: ${health.prunableDispatches}`;
     if (health.uncertainDispatches > 0) suffix += `; unresolved reasons: ${[...new Set(health.uncertainReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
     if (health.retainedTerminals > 0) suffix += `; retained reasons: ${[...new Set(health.retainedReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
-    if (health.unrecognisedMessageFiles.length > 0) suffix += `; unrecognised message files: ${health.unrecognisedMessageFiles.join(", ")}`;
-    // Mirrors the shell's megabrain_notice call for the same condition (a dispatch directory with
-    // no meta.json at all). The shell put it on stderr; folded into reason instead, matching the
-    // unrecognisedMessageFiles convention just above, so every reader of this module's report —
-    // not only one polling stderr — sees it, and it survives even when the directory it describes
-    // is gone by the time a later, separate doctor call would otherwise be needed to find it.
-    if (health.untrackedDispatches.length > 0) suffix += `; dispatch directories without metadata: ${health.untrackedDispatches.join(", ")}`;
     if (health.uncertainDispatches > 0 || health.retainedTerminals > 0) {
       status = "misconfigured";
       reason = `dispatch state requires reconciliation${suffix}`;
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }
     else reason = `no orchestration runtime is available; missing runtimes: ${missing.join(", ")}${suffix}`;
-    const { unrecognisedMessageFiles: _unrecognisedMessageFiles, untrackedDispatches: _untrackedDispatches, ...counts } = health;
-    return { module, status, reason, ...counts, usableRuntimes: usable.length };
+    return { module, status, reason, ...health, usableRuntimes: usable.length };
   } else if (module === "worktree") {
     const superset = await available(process, "superset") || existsSync(`${environment.HOME ?? ""}/.superset/bin/superset`);
     if (!superset) reason = `superset CLI is not on PATH and ${environment.HOME ?? ""}/.superset/bin/superset is unavailable`;
@@ -520,23 +478,15 @@ function isInteractiveTerminal(): boolean {
 }
 
 function writeInstalledState(environment: Environment, module: string, installed: boolean, details: string): void {
-  const path = statePath(environment);
-  let state: Record<string, unknown> = {};
-  try {
-    state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    state = {};
-  }
   const configuredAt = new Date().toISOString();
-  const previous = state[module] !== null && typeof state[module] === "object" ? state[module] as Record<string, unknown> : {};
-  state[module] = { ...previous, installed, configuredAt, statusSource: "megabrain install", details };
-  state._meta = { kind: "installation-record", recordedAt: configuredAt, source: "megabrain install", liveStatusCommand: "megabrain doctor" };
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
-  } catch {
-    // A best-effort install record must never mask the real install/doctor result.
-  }
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return;
+  const updated = mutateInstallModule(opened.value, module, (value) => {
+    const previous = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    return { ...previous, installed, configuredAt, statusSource: "megabrain install", details };
+  });
+  if (updated.kind !== "ok") return;
+  putInstallModule(opened.value, "_meta", { kind: "installation-record", recordedAt: configuredAt, source: "megabrain install", liveStatusCommand: "megabrain doctor" });
 }
 
 async function dateStamp(processAdapter: ProcessAdapter): Promise<string> {
@@ -717,17 +667,12 @@ function readHookInstallState(environment: Environment): HookInstallState {
 }
 
 function writeHookInstallState(environment: Environment, hookState: HookInstallState): void {
-  const path = statePath(environment);
-  let state: Record<string, Record<string, unknown>> = {};
-  try { state = JSON.parse(readFileSync(path, "utf8")) as Record<string, Record<string, unknown>>; } catch { /* initialized below */ }
-  const moduleState = state["orchestration-hooks"] !== null && typeof state["orchestration-hooks"] === "object" ? state["orchestration-hooks"] : {};
-  state["orchestration-hooks"] = { ...moduleState, hookConfigs: hookState };
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
-  } catch {
-    // State is best-effort; install and revert must report their actual config result.
-  }
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return;
+  mutateInstallModule(opened.value, "orchestration-hooks", (value) => {
+    const moduleState = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    return { ...moduleState, hookConfigs: hookState };
+  });
 }
 
 function latestHookBackup(path: string): string | undefined {
