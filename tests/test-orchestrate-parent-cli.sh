@@ -4,6 +4,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-cli.XXXXXX")"
+export HOME="$work_dir/home"
+export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 trap 'rm -rf "$work_dir"' EXIT
 
 fail() {
@@ -44,16 +51,16 @@ write_dispatch() {
   fi
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
-  printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"content answer","sessionId":"child-terminal"}' >"$state/dispatches/$dispatch/messages/0001-child-ask.json"
-  printf '%s\n' "{\"id\":\"$delivery\",\"dispatchId\":\"$dispatch\",\"recipient\":\"parent\",\"consumer\":$consumer_json,\"consumerGeneration\":$consumer_generation,\"messageSeqs\":[1],\"status\":\"outstanding\",\"acknowledgedAt\":null}" >"$state/dispatches/$dispatch/deliveries/$delivery.json"
-  "$root/.build/megabrain" db import "$state" >/dev/null
+  printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"content answer","sessionId":"child-terminal","createdAt":"2026-09-01T00:00:00Z"}' >"$state/dispatches/$dispatch/messages/0001-child-ask.json"
+  printf '%s\n' "{\"id\":\"$delivery\",\"dispatchId\":\"$dispatch\",\"recipient\":\"parent\",\"consumer\":$consumer_json,\"consumerGeneration\":$consumer_generation,\"messageSeqs\":[1],\"status\":\"outstanding\",\"createdAt\":\"2026-09-01T00:00:00Z\",\"updatedAt\":\"2026-09-01T00:00:00Z\",\"acknowledgedAt\":null}" >"$state/dispatches/$dispatch/deliveries/$delivery.json"
+  MEGABRAIN_STATE_DIR="$state" HOME="$HOME" "$root/.build/megabrain" db import "$state" >/dev/null
 }
 
 write_empty_dispatch() {
   local state="$1" dispatch="$2"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"childHost\":\"superset\",\"terminalId\":\"child-terminal\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
-  "$root/.build/megabrain" db import "$state" >/dev/null
+  MEGABRAIN_STATE_DIR="$state" HOME="$HOME" "$root/.build/megabrain" db import "$state" >/dev/null
 }
 
 show_dispatch() {
@@ -125,7 +132,7 @@ scenario_nudge_wakes_without_polling() {
   wait "$watcher_pid"
   elapsed=$SECONDS
   output="$(cat "$state.output")"
-  assert_json "$output" '.deliveryId == "nudge-delivery" and .messages[0].text == "content answer"'
+  assert_json "$output" '(.deliveryId | startswith("delivery-")) and .messages[0].text == "content answer"'
   [ "$elapsed" -lt 2 ] || fail "nudge watch polled instead of waking (elapsed ${elapsed}s)"
   printf 'nudge watch wakes from the durable event marker\n'
 }

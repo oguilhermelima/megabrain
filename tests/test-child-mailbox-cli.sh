@@ -4,6 +4,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-child-mailbox.XXXXXX")"
+export HOME="$work/home"
+export MEGABRAIN_STATE_DIR="$work/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 trap 'rm -rf "$work"' EXIT
 
 source "$root/tests/fixtures/entrypoint-routing.sh"
@@ -44,10 +51,10 @@ scenario_child_ack_route_preserves_content() {
 scenario_check_content_honors_nonblocking_poll() {
   local state="$work/check-content" output
   mkdir -p "$state/dispatches/check/messages" "$state/dispatches/check/deliveries"
-  printf '%s\n' '{"dispatchId":"check","terminalId":"child-terminal","childHost":"superset","runtime":"host"}' >"$state/dispatches/check/meta.json"
-  printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"compiled reply"}' >"$state/dispatches/check/messages/0001-parent-reply.json"
-  printf '%s\n' '{"id":"delivery-fixed","dispatchId":"check","recipient":"child","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding"}' >"$state/dispatches/check/deliveries/delivery-fixed.json"
-  "$root/.build/megabrain" db import "$state" >/dev/null
+  printf '%s\n' '{"dispatchId":"check","terminalId":"child-terminal","childHost":"superset","runtime":"host","state":"running"}' >"$state/dispatches/check/meta.json"
+  printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"compiled reply","createdAt":"2026-09-01T00:00:00Z"}' >"$state/dispatches/check/messages/0001-parent-reply.json"
+  printf '%s\n' '{"id":"delivery-fixed","dispatchId":"check","recipient":"child","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding","createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}' >"$state/dispatches/check/deliveries/delivery-fixed.json"
+  MEGABRAIN_STATE_DIR="$state" HOME="$HOME" "$root/.build/megabrain" db import "$state" >/dev/null
   output="$(env -i HOME="$work/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal \
     "$root/.build/megabrain" check --timeout 0 --poll-interval 0 --wait-mode poll --json)"
   assert_json "$output" '.dispatchId == "check" and .messages[0].from == "parent" and .messages[0].type == "reply" and .messages[0].text == "compiled reply" and .status == "reply"'

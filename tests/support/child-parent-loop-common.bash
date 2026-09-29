@@ -109,6 +109,14 @@ set_state_dir() {
   # form the pane's shell takes.
   export HOME="$state_dir/home"
   mkdir -p "$HOME" "$state_dir/bin"
+  if [ -z "${MEGABRAIN_STATE_DIR:-}" ]; then
+    printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2
+    return 1
+  fi
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*)
+    printf 'FAIL: refusing real HOME database\n' >&2
+    return 1
+  esac
   printf 'export PATH=%q:$PATH\n' "$state_dir/bin" >"$HOME/.bashrc"
   printf '. "$HOME/.bashrc"\n' >"$HOME/.bash_profile"
   # The tmux launch line runs this literally (agents/codex.ts's real flags are ignored by a

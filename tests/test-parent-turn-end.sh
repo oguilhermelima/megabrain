@@ -11,6 +11,13 @@ if [ ! -x "$binary" ]; then
 fi
 
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-turn-end.XXXXXX")"
+export HOME="$state_dir/home"
+export MEGABRAIN_STATE_DIR="$state_dir/state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 bin_dir="$state_dir/bin"
 send_log="$state_dir/send.log"
 mkdir -p "$bin_dir"
@@ -82,7 +89,7 @@ write_dispatch_meta() {
       terminalState: "owned", terminalReason: null, failureCount: 0, stage: null, reason: null,
       reconcileOutcome: null, createdAt: $now, updatedAt: $now}' \
     >"$dispatch_dir/meta.json"
-  "$binary" db import "$MEGABRAIN_STATE_DIR" >/dev/null
+  "$binary" db import "$MEGABRAIN_STATE_DIR" --replace >/dev/null
 }
 
 create_dispatch() {
@@ -107,7 +114,7 @@ append_message() {
   case "$type" in
     ask|done|stalled) printf 'mail: megabrain orchestrate watch %s\n' "$dispatch_id" >>"$send_log" ;;
   esac
-  "$binary" db import "$MEGABRAIN_STATE_DIR" >/dev/null
+  "$binary" db import "$MEGABRAIN_STATE_DIR" --replace >/dev/null
 }
 
 show_dispatch() {

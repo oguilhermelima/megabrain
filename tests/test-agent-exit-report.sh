@@ -6,6 +6,14 @@ root="${MEGABRAIN_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-agent-exit-report.XXXXXX")"
+export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
 host_records_mode=missing
@@ -78,7 +86,7 @@ create_dispatch() {
   write_dispatch_meta "$state_dir" "$dispatch_id" \
     childHost="$child_host" workspaceId=workspace-test runtime="$runtime" \
     tmuxSession="$tmux_session" tmuxPane="$tmux_pane" state=running >/dev/null
-  "$root/.build/megabrain" db import "$state_dir" >/dev/null
+  MEGABRAIN_STATE_DIR="$state_dir" HOME="$HOME" "$root/.build/megabrain" db import "$state_dir" >/dev/null
 }
 
 assert_exit_record() {

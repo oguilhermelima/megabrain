@@ -12,6 +12,11 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "${HOME:-}"/.megabrain|"${HOME:-}"/.megabrain/*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 export MEGABRAIN_ROOT="$root"
 export ORCA_TERMINAL_HANDLE=child-terminal
 unset SUPERSET_TERMINAL_ID
@@ -54,7 +59,7 @@ holder_pid=""
 output="$(MEGABRAIN_DB_BUSY_SECONDS=5 MEGABRAIN_DISPATCH_ID=queue "$root/.build/megabrain" ask 'after interrupted writer')"
 assert_equal "$output" 'ask sent: queue'
 queue="$("$root/.build/megabrain" db show queue --json)"
-assert_equal "$(printf '%s' "$queue" | jq '[.messages[].seq]')" '[1]'
+assert_equal "$(printf '%s' "$queue" | jq -c '[.messages[].seq]')" '[1]'
 assert_equal "$(printf '%s' "$queue" | jq '.messages | length')" 1
 integrity="$("$root/.build/megabrain" db check --json)"
 assert_equal "$(printf '%s' "$integrity" | jq -r '.clean')" true

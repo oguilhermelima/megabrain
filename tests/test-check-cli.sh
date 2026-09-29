@@ -26,7 +26,7 @@ write_fixture() {
 }
 
 import_fixture() {
-  "$root/.build/megabrain" db import "$1" >/dev/null
+  MEGABRAIN_STATE_DIR="$1" HOME="$HOME" "$root/.build/megabrain" db import "$1" >/dev/null
 }
 
 show_dispatch() {
@@ -43,6 +43,13 @@ run_side() {
 }
 
 mkdir -p "$work_dir/home"
+export HOME="$work_dir/home"
+export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 
 # Scenario written before implementation: an absent dispatch directory must produce the
 # same actionable answer on both implementations, without exposing Bun's filesystem error.
@@ -88,8 +95,8 @@ shell_default_home="$work_dir/shell-home"
 binary_default_home="$work_dir/binary-home"
 write_fixture "$shell_default_home/.megabrain"
 write_fixture "$binary_default_home/.megabrain"
-"$root/.build/megabrain" db import "$shell_default_home/.megabrain" >/dev/null
-"$root/.build/megabrain" db import "$binary_default_home/.megabrain" >/dev/null
+MEGABRAIN_STATE_DIR="$shell_default_home/.megabrain" HOME="$shell_default_home" "$root/.build/megabrain" db import "$shell_default_home/.megabrain" >/dev/null
+MEGABRAIN_STATE_DIR="$binary_default_home/.megabrain" HOME="$binary_default_home" "$root/.build/megabrain" db import "$binary_default_home/.megabrain" >/dev/null
 shell_output="$(env -i HOME="$shell_default_home" PATH="/usr/bin:/bin" MEGABRAIN_CHECK_IMPLEMENTATION=shell SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"
 binary_output="$(env -i HOME="$binary_default_home" PATH="/usr/bin:/bin" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" check --timeout 0 --json)"
 [ "$shell_output" = "$binary_output" ] || { printf 'FAIL: default state directory differs\n' >&2; exit 1; }

@@ -5,6 +5,14 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue.XXXXXX")"
+export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 
 cleanup() {
   wait 2>/dev/null || true

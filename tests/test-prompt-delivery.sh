@@ -12,6 +12,13 @@ cleanup() {
 trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 export ORCA_TERMINAL_HANDLE=parent-terminal
 unset SUPERSET_TERMINAL_ID TMUX TMUX_PANE
 
@@ -82,7 +89,7 @@ write_dispatch_meta "$state_dir" outside-repository \
   parentSessionId=parent-terminal parentHost=superset childHost=superset workspaceId=workspace-test \
   terminalId=outside-terminal worktreePath="$outside" branch=main agent=codex agentId=codex \
   label=label state=spawning model=gpt-5 modelHonored=true runtime=host spawnRuntime=ide >/dev/null
- "$root/.build/megabrain" db import "$state_dir" >/dev/null
+ "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 (cd "$outside" && env -u TMUX -u TMUX_PANE -u ORCA_TERMINAL_HANDLE MEGABRAIN_STATE_DIR="$state_dir" SUPERSET_TERMINAL_ID=outside-terminal "$root/.build/megabrain" received >/dev/null)
 assert_equal "$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show outside-repository --json | jq '[.messages[] | select(.type == "received")] | length')" 1
 printf 'dispatch receipt works from a non-checkout directory\n'
@@ -108,7 +115,7 @@ printf 'running child accepts queued parent reply\n'
 # its own mailbox before the waiting guard, and ask the agent to consume it.
 create_dispatch waiting-reply waiting_for_reply waiting-terminal
 append_dispatch_message "$state_dir" waiting-reply parent reply 'reply waiting at turn end' parent-terminal >/dev/null
-"$root/.build/megabrain" db import "$state_dir" >/dev/null
+"$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 waiting_hook_output="$(env -u SUPERSET_TERMINAL_ID -u TMUX -u TMUX_PANE ORCA_TERMINAL_HANDLE=waiting-terminal MEGABRAIN_STATE_DIR="$state_dir" \
   "$root/.build/megabrain" hook turn-end '{}')"
 assert_equal "$(jq -r '.decision' <<<"$waiting_hook_output")" block

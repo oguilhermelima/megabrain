@@ -11,6 +11,13 @@ fi
 source "$root/tests/fixtures/entrypoint-routing.sh"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-child-ack.XXXXXX")"
+export HOME="$work_dir/home"
+export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 trap 'rm -rf "$work_dir"' EXIT
 
 fail() {
@@ -39,9 +46,9 @@ make_dispatch() {
   local state="$1" dispatch="$2"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"superset\",\"childHost\":\"superset\",\"terminalId\":\"child-terminal\",\"runtime\":\"host\",\"state\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
-  printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"answer"}' >"$state/dispatches/$dispatch/messages/0001-parent-reply.json"
-  printf '%s\n' "{\"id\":\"delivery-fixed\",\"dispatchId\":\"$dispatch\",\"recipient\":\"child\",\"consumer\":\"child/superset/child-terminal\",\"consumerGeneration\":1,\"messageSeqs\":[1],\"status\":\"outstanding\"}" >"$state/dispatches/$dispatch/deliveries/delivery-fixed.json"
-  "$root/.build/megabrain" db import "$state" >/dev/null
+  printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"answer","createdAt":"2026-09-01T00:00:00Z"}' >"$state/dispatches/$dispatch/messages/0001-parent-reply.json"
+  printf '%s\n' "{\"id\":\"delivery-fixed\",\"dispatchId\":\"$dispatch\",\"recipient\":\"child\",\"consumer\":\"child/superset/child-terminal\",\"consumerGeneration\":1,\"messageSeqs\":[1],\"status\":\"outstanding\",\"createdAt\":\"2026-09-01T00:00:00Z\",\"updatedAt\":\"2026-09-01T00:00:00Z\"}" >"$state/dispatches/$dispatch/deliveries/delivery-fixed.json"
+  MEGABRAIN_STATE_DIR="$state" HOME="$HOME" "$root/.build/megabrain" db import "$state" >/dev/null
 }
 
 show_dispatch() {

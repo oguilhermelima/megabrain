@@ -9,11 +9,18 @@ if [ ! -x "$root/.build/megabrain" ]; then
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue-write-cli.XXXXXX")"
+export HOME="$work_dir/home"
+export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 trap 'rm -rf "$work_dir"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-import_state() { "$root/.build/megabrain" db import "$1" >/dev/null; }
+import_state() { MEGABRAIN_STATE_DIR="$1" HOME="$HOME" "$root/.build/megabrain" db import "$1" >/dev/null; }
 show_dispatch() { MEGABRAIN_STATE_DIR="$1" "$root/.build/megabrain" db show "$2" --json; }
 db_waiter() {
   MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$1" WAITER_DISPATCH="$2" WAITER_PID="$3" bun -e '
