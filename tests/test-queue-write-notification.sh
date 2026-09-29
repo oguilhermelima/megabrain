@@ -9,6 +9,13 @@ if [ ! -x "$root/.build/megabrain" ]; then
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue-write-notification.XXXXXX")"
+export HOME="$work_dir/home"
+export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 node_bin="$work_dir/node-bin"
 mkdir -p "$node_bin"
 ln -s "$(command -v node)" "$node_bin/node"
@@ -20,6 +27,7 @@ write_fixture() {
   local state="$1" dispatch="$2"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"orca\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  MEGABRAIN_STATE_DIR="$state" HOME="$HOME" "$root/.build/megabrain" db import "$state" >/dev/null
 }
 
 mkdir -p "$work_dir/bin" "$work_dir/home"
@@ -47,7 +55,7 @@ run_case() {
     run_message "$state" "$dispatch" done "finished again"
   fi
   effect="$(cat "$work_dir/effect")"
-  deliveries="$(find "$state/dispatches/$dispatch/deliveries" -name '*.json' | wc -l | tr -d ' ')"
+  deliveries="$(MEGABRAIN_STATE_DIR="$state" "$root/.build/megabrain" db show "$dispatch" --json | jq '.deliveries | length')"
   if [ "$label" = done-repeat ]; then
     [ "$deliveries" -eq 2 ] || fail "$label created $deliveries deliveries"
   else

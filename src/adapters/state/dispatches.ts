@@ -68,3 +68,12 @@ export function mutateDispatch(handle: DatabaseHandle, id: string, mutate: Dispa
 export function archiveDispatch(handle: DatabaseHandle, id: string, archivedAt = new Date().toISOString()): Result<boolean> {
   return write(handle, ({ db }) => db.run("UPDATE dispatches SET archived_at = COALESCE(archived_at, ?) WHERE id = ?", [archivedAt, id]).changes > 0);
 }
+
+export function isDispatchArchived(handle: DatabaseHandle, id: string): Result<boolean> {
+  const result = read(handle, ({ db }) => {
+    const row = db.query<{ archived_at: string | null }>("SELECT archived_at FROM dispatches WHERE id = ?").get(id);
+    return row === null ? undefined : row.archived_at !== null;
+  });
+  if (result.kind !== "ok") return result;
+  return result.value === undefined ? failed(`dispatch not found: ${id}`) : ok(result.value);
+}

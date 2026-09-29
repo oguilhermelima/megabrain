@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
@@ -25,6 +25,7 @@ import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.j
 import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/dispatch.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
+import { createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -119,9 +120,10 @@ function baseMeta(overrides: JsonRecord = {}): JsonRecord {
 }
 
 async function writeDispatch(root: string, id: string, meta: JsonRecord): Promise<void> {
-  const directory = `${root}/dispatches/${id}`;
-  await mkdir(directory, { recursive: true });
-  await writeFile(`${directory}/meta.json`, `${JSON.stringify(meta)}\n`);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") throw new Error(database.error);
+  const created = createDispatch(database.value, { ...meta, dispatchId: id });
+  if (created.kind !== "ok") throw new Error(created.error);
 }
 
 // The environment a structured Claude session (Orca, no terminal, no tmux) is measured to carry:

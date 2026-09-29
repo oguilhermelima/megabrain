@@ -6,6 +6,14 @@ root="${MEGABRAIN_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-agent-exit-report.XXXXXX")"
+export MEGABRAIN_STATE_DIR="$state_dir"
+export HOME="$state_dir/home"
+mkdir -p "$HOME"
+guard_db_state() {
+  [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }
+  case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
+}
+guard_db_state
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
 host_records_mode=missing
@@ -78,11 +86,12 @@ create_dispatch() {
   write_dispatch_meta "$state_dir" "$dispatch_id" \
     childHost="$child_host" workspaceId=workspace-test runtime="$runtime" \
     tmuxSession="$tmux_session" tmuxPane="$tmux_pane" state=running >/dev/null
+  MEGABRAIN_STATE_DIR="$state_dir" HOME="$HOME" "$root/.build/megabrain" db import "$state_dir" >/dev/null
 }
 
 assert_exit_record() {
   local dispatch_id="$1" meta
-  meta="$(cat "$state_dir/dispatches/$dispatch_id/meta.json")"
+  meta="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq -c '.meta')"
   assert_equal "$(jq -r '.state' <<<"$meta")" running
   assert_equal "$(jq -r '.processState' <<<"$meta")" exited
   assert_equal "$(jq -r '.terminalState' <<<"$meta")" missing
@@ -105,9 +114,9 @@ scenario_missing_terminal_is_idempotent() {
   host_records_mode=missing
   create_dispatch duplicate tmux tmux
   reconcile duplicate >/dev/null
-  first_meta="$(cat "$state_dir/dispatches/duplicate/meta.json")"
+  first_meta="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show duplicate --json | jq -c '.meta')"
   reconcile duplicate >/dev/null
-  second_meta="$(cat "$state_dir/dispatches/duplicate/meta.json")"
+  second_meta="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show duplicate --json | jq -c '.meta')"
   assert_equal "$first_meta" "$second_meta"
   printf 'repeated terminal death observation is idempotent\n'
 }
@@ -116,7 +125,7 @@ scenario_unproven_terminal_stays_unknown() {
   host_records_mode=invalid
   create_dispatch unproven superset host
   reconcile unproven >/dev/null
-  meta="$(cat "$state_dir/dispatches/unproven/meta.json")"
+  meta="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show unproven --json | jq -c '.meta')"
   assert_equal "$(jq -r '.state' <<<"$meta")" running
   assert_equal "$(jq -r '.processState' <<<"$meta")" running
   assert_equal "$(jq -r '.terminalState' <<<"$meta")" retained

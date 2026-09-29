@@ -5,11 +5,11 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
-import { dispatchPath } from "../../adapters/dispatch-store.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
+import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange } from "../../adapters/state-db.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -150,18 +150,24 @@ function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boo
 export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
   const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  if (database.kind !== "ok") return database;
   const direct = environment.MEGABRAIN_DISPATCH_ID;
-  const directMeta = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? await readJson(await dispatchPath(root, direct, "meta.json")) : undefined;
+  const directRecord = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? getDispatch(database.value, direct) : undefined;
+  const directMeta = directRecord?.kind === "ok" ? directRecord.value : undefined;
   // The fast path only short-circuits the scan for a dispatch that actually belongs to the
   // current caller. A stale MEGABRAIN_DISPATCH_ID (inherited by a process from a different
   // dispatch's environment) still names a real, readable meta.json, so checking existence alone
   // locked the candidate list to a dispatch that then failed its own ownership check. Falling
   // back to the identity scan here matches the retired shell implementation.
   const directDispatch = direct !== undefined && directMeta?.dispatchId === direct && callerOwnsDispatch(directMeta, current) ? direct : undefined;
-  const dispatches = directDispatch !== undefined ? [directDispatch] : await readdir(`${root}/dispatches`).catch(() => []);
+  const listed = directDispatch !== undefined ? undefined : listDispatches(database.value);
+  if (listed?.kind === "failed") return listed;
+  const dispatches = directDispatch !== undefined ? [directDispatch] : listed?.kind === "ok" ? listed.value.map((record) => record.dispatchId) : [];
   const matches: string[] = [];
   for (const dispatch of dispatches) {
-    const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
+    const record = getDispatch(database.value, dispatch);
+    const meta = record.kind === "ok" ? record.value : undefined;
     if (meta?.dispatchId === dispatch && callerOwnsDispatch(meta, current)) matches.push(dispatch);
   }
   if (matches.length > 1) return failed(`terminal identity matches multiple dispatches for ${current.host}/${current.id}: ${matches[0]}, ${matches[1]}`);
@@ -207,23 +213,13 @@ export async function parentContextMatches(root: string, meta: JsonRecord, proce
 // Exported for the turn-end hook, which suppresses its own parent nudges the same way
 // (megabrain_parent_notify_waiter_active) when a live `megabrain orchestrate watch` is already polling.
 export async function waiterIsActive(root: string, dispatch: string): Promise<boolean> {
-  const path = await dispatchPath(root, dispatch, "waiter.json");
-  const waiter = await readJson(path);
-  const pid = typeof waiter?.pid === "number" ? waiter.pid : typeof waiter?.pid === "string" ? Number(waiter.pid) : NaN;
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return false;
+  const result = getWaiter(database.value, dispatch);
+  const waiter = result.kind === "ok" ? result.value : undefined;
+  const pid = waiter?.pid ?? NaN;
   if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { await rm(path, { force: true }); return false; }
-}
-
-async function appendNotificationOutcome(root: string, dispatch: string, pointer: string, outcome: string, reason: string): Promise<void> {
-  const directory = await dispatchPath(root, dispatch, "");
-  const path = `${directory}/nudge.log`;
-  const lock = `${directory}/.nudge.lock`;
-  const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "unspecified";
-  while (true) {
-    try { await mkdir(lock); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
-  }
-  try { await writeFile(path, `${pointer} outcome=${outcome} reason=${cleanReason}\n`, { flag: "a" }); }
-  finally { await rm(lock, { recursive: true, force: true }); }
+  try { process.kill(pid, 0); return true; } catch { deleteWaiter(database.value, dispatch); return false; }
 }
 
 // The channel-resolution-and-send tail of megabrain_parent_notify: given a pointer line, find the
@@ -312,59 +308,83 @@ export async function acquireLock(path: string, environment: QueueEnvironment): 
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
-  const messages = await dispatchPath(root, dispatch, "messages");
-  const deliveries = await dispatchPath(root, dispatch, "deliveries");
-  await mkdir(messages, { recursive: true }); await mkdir(deliveries, { recursive: true });
-  const lock = `${messages}/.lock`;
-  const acquired = lockHeld ? ok(undefined) : await acquireLock(lock, environment);
-  if (acquired.kind !== "ok") return acquired;
-  try {
-    const names = await readdir(messages);
-    const seq = nextMessageSequence(names);
-    const path = `${messages}/${String(seq).padStart(4, "0")}-${from}-${type}.json`;
-    const now = new Date().toISOString();
-    const value: JsonRecord = { seq, from, type, text, createdAt: now, sessionId };
-    await atomicJson(path, value);
-    const priorDone = names.some((name) => name.endsWith("-child-done.json"));
-    const classification = classifyQueueMail(from, type, priorDone);
-    const recipient = recipientForQueueMessage(from, type, priorDone);
-    if (recipient !== undefined) {
-      const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
-      await atomicJson(`${deliveries}/${deliveryId}.json`, { id: deliveryId, dispatchId: dispatch, recipient, messageSeqs: [seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
-      if (recipient === "parent" && classification === "actionable") {
-        const meta = await readJson(await dispatchPath(root, dispatch, "meta.json"));
-        if (meta !== undefined) {
-          try {
-            const notification = await notifyParent(root, meta, dispatch, environment, processAdapter);
-            await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, notification.outcome, notification.reason);
-          } catch (error: unknown) {
-            const reason = error instanceof Error ? error.message : "notification failed";
-            try { await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, "failed", reason); } catch { /* notification is best effort */ }
-          }
-        } else {
-          try { await appendNotificationOutcome(root, dispatch, `mail: megabrain orchestrate watch ${dispatch}`, "skipped", "metadata-unavailable"); } catch { /* notification is best effort */ }
-        }
+  void lockHeld;
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  if (database.kind !== "ok") return database;
+  const metaResult = getDispatch(database.value, dispatch);
+  if (metaResult.kind !== "ok") return metaResult;
+  if (metaResult.value === undefined) return failed("dispatch not found: " + dispatch);
+  const metaRecord = metaResult.value;
+  const now = new Date().toISOString();
+  const pointer = "mail: megabrain orchestrate watch " + dispatch;
+  let outboxId: string | undefined;
+  const appended = appendDatabaseMessage(database.value, dispatch, { from, type, text, createdAt: now, sessionId }, {
+    derive: (previous) => {
+      const priorDone = previous.some((message) => message.from === "child" && message.type === "done");
+      const classification = classifyQueueMail(from, type, priorDone);
+      const recipient = recipientForQueueMessage(from, type, priorDone);
+      const deliveryId = recipient === undefined ? undefined : `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
+      outboxId = recipient === "parent" && classification === "actionable" ? "parent-pointer-" + randomUUID() : undefined;
+      return {
+        ...(deliveryId === undefined ? {} : {
+          delivery: {
+            id: deliveryId, recipient, messageSeqs: [], status: "outstanding",
+            createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null,
+            consumer: null, consumerGeneration: null,
+          },
+        }),
+        ...(outboxId === undefined ? {} : {
+          outbox: {
+            id: outboxId, dispatchId: dispatch, targetKind: "parent-pointer",
+            target: typeof metaRecord.parentSessionId === "string" ? metaRecord.parentSessionId : dispatch,
+            payload: { meta: metaRecord, pointer },
+          },
+        }),
+      };
+    },
+  });
+  if (appended.kind !== "ok") return appended;
+  if (outboxId !== undefined) {
+    try {
+      const claim = claimOutbox(database.value, outboxId, process.pid + ":" + randomUUID(), 30);
+      if (claim.kind === "ok" && claim.value !== undefined) {
+        const payload = claim.value.payload;
+        const record = typeof payload === "object" && payload !== null ? payload as JsonRecord : {};
+        const meta = typeof record.meta === "object" && record.meta !== null ? record.meta as JsonRecord : metaRecord;
+        let notification: NotificationResult;
+        if (!(await parentContextMatches(root, meta, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch" };
+        else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter" };
+        else notification = await sendParentPointer(root, meta, typeof record.pointer === "string" ? record.pointer : pointer, environment, processAdapter);
+        const status = notification.outcome === "delivered" ? "sent" : notification.outcome === "suppressed" ? "suppressed" : "failed";
+        finishNotification(database.value, outboxId, status, { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
       }
+    } catch {
+      // Queue writes are durable even when the best-effort pointer transport fails.
     }
-    return ok(seq);
-  } finally { if (!lockHeld) await rm(lock, { recursive: true, force: true }); }
+  }
+  return ok(appended.value.seq);
 }
 
-async function updateMeta(root: string, dispatch: string, type: string): Promise<Result<void>> {
-  const path = await dispatchPath(root, dispatch, "meta.json");
-  const meta = await readJson(path);
-  if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
-  const state = typeof meta.state === "string" ? meta.state : "running";
-  const processState = typeof meta.processState === "string" ? meta.processState : "running";
-  const nextState = type === "ask" ? "waiting_for_reply" : type === "done" ? "done" : state === "spawning" ? "running" : state;
-  const nextProcess = type === "done" ? "succeeded" : processState === "starting" || processState === "start-unproven" ? "running" : processState;
-  if (type === "done") {
-    const transition = checkDispatchTransition("dispatch", state, nextState);
-    if (transition.kind !== "ok") return transition;
-  }
-  const updated: JsonRecord = { ...meta, state: nextState, processState: nextProcess, updatedAt: new Date().toISOString() };
-  if (type === "received") { updated.promptReceipt = "received"; updated.promptState = "confirmed"; }
-  await atomicJson(path, updated);
+export async function updateMeta(root: string, dispatch: string, type: string): Promise<Result<void>> {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return database;
+  let refused: Result<void> | undefined;
+  const updated = mutateDispatch(database.value, dispatch, (current) => {
+    const state = typeof current.state === "string" ? current.state : "running";
+    const processState = typeof current.processState === "string" ? current.processState : "running";
+    const nextState = type === "ask" ? "waiting_for_reply" : type === "done" ? "done" : state === "spawning" ? "running" : state;
+    const nextProcess = type === "done" ? "succeeded" : processState === "starting" || processState === "start-unproven" ? "running" : processState;
+    if (type === "done") {
+      const transition = checkDispatchTransition("dispatch", state, nextState);
+      if (transition.kind !== "ok") { refused = transition; return noDispatchChange; }
+    }
+    return {
+      state: nextState, processState: nextProcess, updatedAt: new Date().toISOString(),
+      ...(type === "received" ? { promptReceipt: "received", promptState: "confirmed" } : {}),
+    };
+  });
+  if (refused !== undefined) return refused;
+  if (updated.kind !== "ok") return updated;
   return ok(undefined);
 }
 
