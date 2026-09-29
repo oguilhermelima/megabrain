@@ -7,6 +7,7 @@ import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
 import { latestSchemaVersion, openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
+import { insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
 
@@ -35,6 +36,32 @@ const firstSession: NativeSession = { udid: "one", bundleId: "com.example.app", 
 const secondSession: NativeSession = { udid: "two", bundleId: "com.example.app", sessionId: "second" };
 
 describe("SQLite database", () => {
+  test("query all binds values containing SQL syntax as data", async () => {
+    await withStateDirectory(async (directory) => {
+      const handle = database(directory);
+      const ownerId = "x'; DROP TABLE dispatches; --";
+      try {
+        expect(handle.db.query<{ value: string }>("SELECT ? AS value").all(ownerId)).toEqual([{ value: ownerId }]);
+        expect(handle.db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dispatches'").get()).not.toBeNull();
+      } finally {
+        handle.close();
+      }
+    });
+  });
+
+  test("lists dispatches by an owner id containing SQL syntax", async () => {
+    await withStateDirectory(async (directory) => {
+      const handle = database(directory);
+      const ownerId = "x'; DROP TABLE dispatches; --";
+      try {
+        insertDispatch(handle.db, { dispatchId: "quote-owner", state: "running", parentSessionId: ownerId });
+        expect(listDispatchesByOwner(handle.db, ownerId).map(({ dispatchId }) => dispatchId)).toEqual(["quote-owner"]);
+      } finally {
+        handle.close();
+      }
+    });
+  });
+
   test("fresh databases use the required pragmas and initialize their identity and version", async () => {
     await withStateDirectory(async (directory) => {
       const handle = database(directory);
