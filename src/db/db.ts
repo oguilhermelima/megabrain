@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import nativeSessionsMigration from "./schema/001-native-sessions.sql" with { type: "text" };
@@ -162,6 +162,7 @@ function backupToDirectory(db: DatabaseAdapter, stateDirectory: string, version:
   try {
     mkdirSync(backupDirectory, { recursive: true });
     db.exec(`VACUUM INTO ${quoteSqlString(path)}`);
+    chmodSync(path, 0o600);
     const backups = readdirSync(backupDirectory)
       .filter((name) => /^megabrain-.*-v\d+\.db$/.test(name))
       .sort((left, right) => right.localeCompare(left));
@@ -186,12 +187,19 @@ export function vacuumDatabaseFile(sourcePath: string, targetPath: string): Resu
     mkdirSync(dirname(targetPath), { recursive: true });
     source = openRuntimeDatabase(sourcePath, true);
     source.exec(`VACUUM INTO ${quoteSqlString(targetPath)}`);
+    chmodSync(targetPath, 0o600);
     return ok(targetPath);
   } catch (cause: unknown) {
     try { unlinkSync(targetPath); } catch { /* target may not have been created */ }
     return failed(`database snapshot failed: ${errorMessage(cause)}`);
   } finally {
     try { source?.close(); } catch { /* preserve the snapshot result */ }
+  }
+}
+
+function secureDatabaseFiles(path: string): void {
+  for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+    if (existsSync(file)) chmodSync(file, 0o600);
   }
 }
 
@@ -307,9 +315,11 @@ export function openDatabase(environment: StateEnvironment): Result<DatabaseHand
   try {
     configureConnection(db);
     migrate(db, path);
+    secureDatabaseFiles(path);
     const handle: DatabaseHandle = { path, db, close: () => db?.close() };
     try {
       importNativeSessions(handle, resolve(configuredStateDirectory, "native-sessions.json"));
+      secureDatabaseFiles(path);
     } catch (cause: unknown) { failAt("import", cause); }
     return ok(handle);
   } catch (cause: unknown) {
