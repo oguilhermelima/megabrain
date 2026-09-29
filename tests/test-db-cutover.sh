@@ -31,13 +31,13 @@ JSON
 run_normal() {
   local state="$1"
   require_megabrain_test_state "$state"
-  MEGABRAIN_STATE_DIR="$state" "$binary" context --json
+  MEGABRAIN_STATE_DIR="$state" "$binary" orchestrate list --all --json
 }
 
 # Fresh state is sealed without creating legacy state.
 fresh="$tmp/fresh"
 require_megabrain_test_state "$fresh"
-MEGABRAIN_STATE_DIR="$fresh" "$binary" context --json >/dev/null
+MEGABRAIN_STATE_DIR="$fresh" "$binary" orchestrate list --all --json >/dev/null
 assert_marker "$fresh" auto || fail 'fresh state did not get an automatic marker'
 [ ! -e "$fresh/legacy" ] || fail 'fresh state created a legacy snapshot'
 printf 'ok: fresh state receives only the cutover marker\n'
@@ -94,7 +94,7 @@ fixture "$imported" explicit-fixture
 require_megabrain_test_state "$imported"
 MEGABRAIN_STATE_DIR="$imported" "$binary" db import "$imported" --json >/dev/null
 assert_marker "$imported" import || fail 'db import did not set marker'
-MEGABRAIN_STATE_DIR="$imported" "$binary" context --json >/dev/null
+MEGABRAIN_STATE_DIR="$imported" "$binary" orchestrate list --all --json >/dev/null
 [ -f "$imported/dispatches/explicit-fixture/meta.json" ] || fail 'db import fixture was automatically sealed'
 printf 'ok: explicit import marks the state and preserves fixture files\n'
 
@@ -114,7 +114,7 @@ printf 'ok: dry run is read-only and migrate refuses an existing marker\n'
 # The database and its backup are private to the current user.
 mode_state="$tmp/modes"
 require_megabrain_test_state "$mode_state"
-MEGABRAIN_STATE_DIR="$mode_state" "$binary" context --json >/dev/null
+MEGABRAIN_STATE_DIR="$mode_state" "$binary" orchestrate list --all --json >/dev/null
 MEGABRAIN_STATE_DIR="$mode_state" "$binary" db backup --json >/dev/null
 [ "$(stat -c '%a' "$mode_state/megabrain.db" 2>/dev/null || stat -f '%Lp' "$mode_state/megabrain.db")" = 600 ] || fail 'database mode is not 600'
 backup_file="$(find "$mode_state/backups" -type f -name '*.db' -print -quit)"
