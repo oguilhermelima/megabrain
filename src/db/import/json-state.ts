@@ -1,11 +1,11 @@
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dispatchStates } from "../../core/dispatch-states.js";
-import { listDispatches, insertDispatch, type DispatchRecord } from "../queries/dispatches.js";
+import { getDispatch, listDispatches, insertDispatch, toMeta, type DispatchRecord, type DispatchRow } from "../queries/dispatches.js";
 import { insertMessage, listMessages, type MessageRecord } from "../queries/messages.js";
 import { insertDelivery, listDeliveries, type DeliveryRecord } from "../queries/deliveries.js";
 import { listLeases, listOutbox } from "../queries/outbox-leases.js";
-import { getTerminal, insertInstallState, insertModel, insertTerminal, insertTmuxSession, listInstallState, listModels, listTerminals, listTmuxSessions, type TerminalRecord, type TmuxSessionRecord } from "../queries/aux-state.js";
+import { getInstallState, getTerminal, getTmuxSession, insertInstallState, insertModel, insertTerminal, insertTmuxSession, listInstallState, listModels, listTerminals, listTmuxSessions, type TerminalRecord, type TmuxSessionRecord } from "../queries/aux-state.js";
 import { type DatabaseAdapter } from "../queries/types.js";
 
 type Malformed = Readonly<{ path: string; reason: string }>;
@@ -14,8 +14,8 @@ type TmuxAmbiguity = Readonly<{ sessionName: string; stableSessionIds: readonly 
 type Counts = { dispatches: number; messages: number; deliveries: number; terminals: number; installState: number; models: number; tmuxSessions: number };
 export type ImportReport = Readonly<{ inserted: Counts; skippedMalformed: readonly Malformed[]; collisions: readonly Collision[]; tmuxAmbiguities: readonly TmuxAmbiguity[] }>;
 
-type Located<T> = Readonly<{ path: string; value: T; archivedAt: string | null }>;
-type ParsedState = Readonly<{
+type Located<T> = Readonly<{ path: string; value: T; archivedAt: string | null; dispatchId?: string }>;
+export type ParsedJsonState = Readonly<{
   dispatches: Located<Record<string, unknown>>[];
   messages: Located<Record<string, unknown>>[];
   deliveries: Located<Record<string, unknown>>[];
@@ -26,6 +26,14 @@ type ParsedState = Readonly<{
   malformed: Malformed[];
   collisions: Collision[];
   tmuxAmbiguities: TmuxAmbiguity[];
+}>;
+
+export type AtomicImportReport = Readonly<{
+  imported: Counts;
+  skippedIdentical: Counts;
+  replaced: Counts;
+  malformed: readonly Malformed[];
+  conflicts: readonly string[];
 }>;
 
 const emptyCounts = (): Counts => ({ dispatches: 0, messages: 0, deliveries: 0, terminals: 0, installState: 0, models: 0, tmuxSessions: 0 });
@@ -47,7 +55,8 @@ async function readRecord(path: string, malformed: Malformed[]): Promise<Record<
   }
 }
 
-async function dispatchDirectories(root: string): Promise<{ live: string[]; archived: { directory: string; month: string }[] }> {
+async function dispatchDirectories(root: string): Promise<{ live: string[]; archived: { directory: string; month: string }[]; single: boolean }> {
+  if ((await files(root)).includes(join(root, "meta.json"))) return { live: [root], archived: [], single: true };
   const base = join(root, "dispatches");
   const live = (await readdir(base, { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isDirectory() && entry.name !== "archive")
@@ -59,10 +68,10 @@ async function dispatchDirectories(root: string): Promise<{ live: string[]; arch
     const month = monthEntry.name;
     for (const entry of await readdir(join(archive, month), { withFileTypes: true }).catch(() => [])) if (entry.isDirectory()) archived.push({ directory: join(archive, month, entry.name), month });
   }
-  return { live, archived: archived.sort((a, b) => a.directory.localeCompare(b.directory)) };
+  return { live, archived: archived.sort((a, b) => a.directory.localeCompare(b.directory)), single: false };
 }
 
-async function parseState(stateDir: string): Promise<ParsedState> {
+export async function parseJsonState(stateDir: string): Promise<ParsedJsonState> {
   const malformed: Malformed[] = [];
   const dispatches: Located<Record<string, unknown>>[] = [];
   const messages: Located<Record<string, unknown>>[] = [];
@@ -84,7 +93,7 @@ async function parseState(stateDir: string): Promise<ParsedState> {
       for (const childPath of await files(dir)) {
         const child = await readRecord(childPath, malformed);
         if (child === undefined) continue;
-        (childKind === "messages" ? messages : deliveries).push({ path: childPath, value: child, archivedAt: null });
+        (childKind === "messages" ? messages : deliveries).push({ path: childPath, value: child, archivedAt: null, ...(directories.single ? { dispatchId: id } : {}) });
       }
     }
   }
@@ -121,8 +130,17 @@ async function parseState(stateDir: string): Promise<ParsedState> {
   }
   const statePath = join(stateDir, "state.json");
   const modelPath = join(stateDir, "models.json");
-  const install = (await readRecord(statePath, malformed)) ?? {};
-  const models = (await readRecord(modelPath, malformed)) ?? { version: 1, models: [] };
+  const optionalRecord = async (path: string, fallback: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    try { await access(path); }
+    catch (error: unknown) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return fallback;
+      malformed.push({ path, reason: error instanceof Error ? error.message : "cannot read file" });
+      return fallback;
+    }
+    return (await readRecord(path, malformed)) ?? fallback;
+  };
+  const install = await optionalRecord(statePath, {});
+  const models = await optionalRecord(modelPath, { version: 1, models: [] });
   const modelRows = Array.isArray(models.models) ? models.models.filter(isRecord) : [];
   const linked: Map<string, Set<string>> = new Map();
   for (const { value } of dispatches) {
@@ -155,7 +173,7 @@ export function toModels(registry: Record<string, unknown>, rowValues?: readonly
 }
 
 export async function importJsonState(db: DatabaseAdapter, stateDir: string): Promise<ImportReport> {
-  const parsed = await parseState(stateDir);
+  const parsed = await parseJsonState(stateDir);
   const inserted = emptyCounts();
   for (const record of parsed.dispatches) {
     if (dispatchExists(db, String(record.value.dispatchId))) continue;
@@ -163,7 +181,7 @@ export async function importJsonState(db: DatabaseAdapter, stateDir: string): Pr
     inserted.dispatches += 1;
   }
   for (const record of parsed.messages) {
-    const dispatchId = typeof record.value.dispatchId === "string" ? record.value.dispatchId : dispatchIdFromPath(record.path);
+    const dispatchId = typeof record.value.dispatchId === "string" ? record.value.dispatchId : record.dispatchId ?? dispatchIdFromPath(record.path);
     if (!dispatchExists(db, dispatchId)) { parsed.malformed.push({ path: record.path, reason: `dispatch not imported: ${dispatchId}` }); continue; }
     const seq = record.value.seq;
     if (!Number.isInteger(seq) || typeof record.value.from !== "string" || typeof record.value.type !== "string" || typeof record.value.text !== "string" || typeof record.value.createdAt !== "string") { parsed.malformed.push({ path: record.path, reason: "message requires integer seq, from, type, text and createdAt fields" }); continue; }
@@ -172,7 +190,7 @@ export async function importJsonState(db: DatabaseAdapter, stateDir: string): Pr
     catch (error: unknown) { parsed.malformed.push({ path: record.path, reason: error instanceof Error ? error.message : "message violates database constraints" }); }
   }
   for (const record of parsed.deliveries) {
-    const dispatchId = typeof record.value.dispatchId === "string" ? record.value.dispatchId : dispatchIdFromPath(record.path);
+    const dispatchId = typeof record.value.dispatchId === "string" ? record.value.dispatchId : record.dispatchId ?? dispatchIdFromPath(record.path);
     if (!dispatchExists(db, dispatchId)) { parsed.malformed.push({ path: record.path, reason: `dispatch not imported: ${dispatchId}` }); continue; }
     if (exists(db, "SELECT 1 AS found FROM deliveries WHERE id = ? LIMIT 1", String(record.value.id))) continue;
     try { insertDelivery(db, { ...record.value, dispatchId }); inserted.deliveries += 1; }
@@ -204,6 +222,160 @@ export async function importJsonState(db: DatabaseAdapter, stateDir: string): Pr
     insertTmuxSession(db, record.value, ids.length === 1 ? ids[0] : null); inserted.tmuxSessions += 1;
   }
   return { inserted, skippedMalformed: parsed.malformed, collisions: parsed.collisions, tmuxAmbiguities: parsed.tmuxAmbiguities };
+}
+
+function legacyMessage(value: Record<string, unknown>): Record<string, unknown> {
+  const known = new Set(["seq", "from", "type", "text", "body", "sessionId", "createdAt", "idempotencyKey"]);
+  const result: Record<string, unknown> = { ...Object.fromEntries(Object.entries(value).filter(([key]) => !known.has(key))) };
+  for (const field of ["seq", "from", "type", "text", "createdAt"] as const) result[field] = value[field];
+  if (typeof value.sessionId === "string") result.sessionId = value.sessionId;
+  if (typeof value.idempotencyKey === "string") result.idempotencyKey = value.idempotencyKey;
+  if (Object.hasOwn(value, "body")) result.body = value.body;
+  return result;
+}
+
+function legacyDelivery(value: Record<string, unknown>, dispatchId: string): Record<string, unknown> {
+  const known = new Set(["id", "dispatchId", "messageSeqs", "status", "createdAt", "updatedAt", "recipient", "consumer", "consumerGeneration", "acknowledgedAt", "fencedAt"]);
+  const result: Record<string, unknown> = { ...Object.fromEntries(Object.entries(value).filter(([key]) => !known.has(key))) };
+  result.id = value.id; result.dispatchId = dispatchId;
+  result.messageSeqs = Array.isArray(value.messageSeqs) ? value.messageSeqs : [];
+  result.status = value.status; result.createdAt = value.createdAt; result.updatedAt = value.updatedAt;
+  for (const [input, output] of [["recipient", "recipient"], ["consumer", "consumer"], ["consumerGeneration", "consumerGeneration"], ["acknowledgedAt", "acknowledgedAt"], ["fencedAt", "fencedAt"]] as const) {
+    if (Object.hasOwn(value, input)) result[output] = value[input];
+  }
+  return result;
+}
+
+/** Validate the complete source before applying it. Call from one withWrite transaction. */
+export function applyJsonStateImport(db: DatabaseAdapter, parsed: ParsedJsonState, replace = false): AtomicImportReport {
+  const imported = emptyCounts();
+  const skippedIdentical = emptyCounts();
+  const replaced = emptyCounts();
+  const malformed: Malformed[] = [...parsed.malformed];
+  const conflicts: string[] = [];
+  const messagesByDispatch = new Map<string, Located<Record<string, unknown>>[]>();
+  const deliveriesByDispatch = new Map<string, Located<Record<string, unknown>>[]>();
+  const dispatchFor = (item: Located<Record<string, unknown>>): string =>
+    typeof item.value.dispatchId === "string" ? item.value.dispatchId : item.dispatchId ?? dispatchIdFromPath(item.path);
+  for (const item of parsed.messages) {
+    const id = dispatchFor(item);
+    messagesByDispatch.set(id, [...(messagesByDispatch.get(id) ?? []), item]);
+  }
+  for (const item of parsed.deliveries) {
+    const id = dispatchFor(item);
+    deliveriesByDispatch.set(id, [...(deliveriesByDispatch.get(id) ?? []), item]);
+  }
+  for (const item of parsed.messages) {
+    const value = item.value;
+    if (!Number.isInteger(value.seq) || typeof value.from !== "string" || typeof value.type !== "string" || typeof value.text !== "string" || typeof value.createdAt !== "string") malformed.push({ path: item.path, reason: "message requires integer seq, from, type, text and createdAt fields" });
+  }
+  for (const item of parsed.deliveries) {
+    const value = item.value;
+    if (typeof value.id !== "string" || typeof value.status !== "string" || typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") malformed.push({ path: item.path, reason: "delivery requires id, status, createdAt and updatedAt fields" });
+  }
+  for (const item of parsed.terminals) if (typeof item.value.terminalId !== "string") malformed.push({ path: item.path, reason: "terminalId must be a string" });
+  for (const model of Array.isArray(parsed.models.models) ? parsed.models.models : []) {
+    if (!isRecord(model) || typeof model.agent !== "string" || typeof model.model !== "string") malformed.push({ path: join(parsed.dispatches[0]?.path.split("/dispatches/")[0] ?? "", "models.json"), reason: "each model needs string agent and model fields" });
+  }
+  for (const item of parsed.sessions) if (typeof item.value.tmuxSession !== "string") malformed.push({ path: item.path, reason: "tmuxSession must be a string" });
+
+  const actions: { record: Located<Record<string, unknown>>; current: boolean; same: boolean }[] = [];
+  for (const record of parsed.dispatches) {
+    const id = String(record.value.dispatchId);
+    const row = db.query<DispatchRow>("SELECT * FROM dispatches WHERE id = ?").get(id);
+    if (row === null) { actions.push({ record, current: false, same: false }); continue; }
+    const expectedMessages = (messagesByDispatch.get(id) ?? []).map(({ value }) => legacyMessage(value)).sort((a, b) => Number(a.seq) - Number(b.seq));
+    const expectedDeliveries = (deliveriesByDispatch.get(id) ?? []).map(({ value }) => legacyDelivery(value, id)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const actualMessages = listMessages(db, id);
+    const actualDeliveries = listDeliveries(db, id).map((value) => ({ ...value }));
+    const same = canonical(toMeta(row)) === canonical(record.value)
+      && (row.archived_at !== null) === (record.archivedAt !== null)
+      && canonical(expectedMessages) === canonical(actualMessages)
+      && canonical(expectedDeliveries) === canonical(actualDeliveries);
+    actions.push({ record, current: true, same });
+    if (!same && !replace) conflicts.push(id);
+  }
+
+  for (const item of parsed.terminals) {
+    const id = String(item.value.terminalId ?? "");
+    const current = id === "" ? undefined : getTerminal(db, id);
+    if (current !== undefined && canonical(current) !== canonical(item.value) && !replace) conflicts.push(id);
+  }
+  for (const [id, value] of Object.entries(parsed.install)) {
+    const current = getInstallState(db, id);
+    if (current !== undefined && canonical(current) !== canonical(value) && !replace) conflicts.push(id);
+  }
+  const registryExtra = Object.fromEntries(Object.entries(parsed.models).filter(([key]) => key !== "models"));
+  const modelRows = Array.isArray(parsed.models.models) ? parsed.models.models.filter(isRecord) : [];
+  const currentModels = listModels(db);
+  for (const model of modelRows) {
+    const agent = String(model.agent ?? ""); const name = String(model.model ?? "");
+    if (agent === "" || name === "") continue;
+    const current = Array.isArray(currentModels.models) ? currentModels.models.find((row) => isRecord(row) && row.agent === agent && row.model === name) : undefined;
+    const same = current !== undefined && canonical(current) === canonical(model)
+      && canonical(Object.fromEntries(Object.entries(currentModels).filter(([key]) => key !== "models"))) === canonical(registryExtra);
+    if (current !== undefined && !same && !replace) conflicts.push(`${agent}/${name}`);
+  }
+  for (const item of parsed.sessions) {
+    const name = String(item.value.tmuxSession ?? "");
+    if (name === "") continue;
+    const current = getTmuxSession(db, name);
+    if (current !== undefined && canonical(current) !== canonical(item.value) && !replace) conflicts.push(name);
+  }
+  if (malformed.length > 0 || conflicts.length > 0) {
+    return { imported, skippedIdentical, replaced, malformed, conflicts: [...new Set(conflicts)].sort() };
+  }
+
+  for (const action of actions) {
+    const id = String(action.record.value.dispatchId);
+    const messages = messagesByDispatch.get(id) ?? [];
+    const deliveries = deliveriesByDispatch.get(id) ?? [];
+    if (action.current && action.same) {
+      skippedIdentical.dispatches += 1; skippedIdentical.messages += messages.length; skippedIdentical.deliveries += deliveries.length;
+      continue;
+    }
+    if (action.current) {
+      db.run("DELETE FROM dispatches WHERE id = ?", [id]);
+      replaced.dispatches += 1; replaced.messages += messages.length; replaced.deliveries += deliveries.length;
+    } else imported.dispatches += 1;
+    insertDispatch(db, action.record.value, action.record.archivedAt);
+    for (const item of messages) { insertMessage(db, id, item.value); if (!action.current) imported.messages += 1; }
+    for (const item of deliveries) { insertDelivery(db, { ...item.value, dispatchId: id }); if (!action.current) imported.deliveries += 1; }
+  }
+  for (const item of parsed.terminals) {
+    const id = String(item.value.terminalId);
+    const current = getTerminal(db, id);
+    if (current !== undefined && canonical(current) === canonical(item.value)) { skippedIdentical.terminals += 1; continue; }
+    if (current !== undefined) { db.run("DELETE FROM terminals WHERE terminal_id = ?", [id]); replaced.terminals += 1; }
+    insertTerminal(db, item.value); imported.terminals += 1;
+  }
+  for (const [id, value] of Object.entries(parsed.install)) {
+    const current = getInstallState(db, id);
+    if (current !== undefined && canonical(current) === canonical(value)) { skippedIdentical.installState += 1; continue; }
+    if (current !== undefined) { db.run("DELETE FROM install_state WHERE module_id = ?", [id]); replaced.installState += 1; }
+    const updatedAt = isRecord(value) && typeof value.updatedAt === "string" ? value.updatedAt : "";
+    insertInstallState(db, id, value, updatedAt); imported.installState += 1;
+  }
+  for (const model of modelRows) {
+    if (typeof model.agent !== "string" || typeof model.model !== "string") continue;
+    const current = db.query<{ found: number }>("SELECT 1 AS found FROM models WHERE agent = ? AND model = ?").get(model.agent, model.model);
+    if (current !== null) {
+      const existing = listModels(db);
+      const old = Array.isArray(existing.models) ? existing.models.find((row) => isRecord(row) && row.agent === model.agent && row.model === model.model) : undefined;
+      if (old !== undefined && canonical(old) === canonical(model) && canonical(Object.fromEntries(Object.entries(existing).filter(([key]) => key !== "models"))) === canonical(registryExtra)) { skippedIdentical.models += 1; continue; }
+      db.run("DELETE FROM models WHERE agent = ? AND model = ?", [model.agent, model.model]); replaced.models += 1;
+    }
+    insertModel(db, model, parsed.models); imported.models += 1;
+  }
+  for (const item of parsed.sessions) {
+    const name = String(item.value.tmuxSession ?? "");
+    const current = getTmuxSession(db, name);
+    if (current !== undefined && canonical(current) === canonical(item.value)) { skippedIdentical.tmuxSessions += 1; continue; }
+    if (current !== undefined) { db.run("DELETE FROM tmux_sessions WHERE session_name = ?", [name]); replaced.tmuxSessions += 1; }
+    const ids = [...new Set(parsed.dispatches.flatMap(({ value }) => value.tmuxSession === name && typeof value.tmuxSessionId === "string" ? [value.tmuxSessionId] : []))].sort();
+    insertTmuxSession(db, item.value, ids.length === 1 ? ids[0] : null); imported.tmuxSessions += 1;
+  }
+  return { imported, skippedIdentical, replaced, malformed, conflicts: [] };
 }
 
 function dispatchIdFromPath(path: string): string {
@@ -239,7 +411,7 @@ export type ParityReport = Readonly<{
 }>;
 
 export async function readJsonStateParity(db: DatabaseAdapter, stateDir: string): Promise<ParityReport> {
-  const source = await parseState(stateDir);
+  const source = await parseJsonState(stateDir);
   const mismatches: Record<string, unknown>[] = [];
   const records = {
     dispatches: listDispatches(db, { includeArchived: true }),

@@ -3,6 +3,8 @@ export const USAGE_LINES = {
   "doctor": "doctor [module-id] [--json]",
   "db-check": "db check [--json]",
   "db-backup": "db backup [--json]",
+  "db-import": "db import <dir> [--replace] [--json]",
+  "db-show": "db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
@@ -126,6 +128,8 @@ Commands:
   doctor [module-id]                   Check one module or all modules
   db check [--json]                    Check SQLite integrity and foreign keys
   db backup [--json]                   Create and rotate a SQLite backup
+  db import <dir> [--replace] [--json] Import JSON state into SQLite
+  db show <id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored state in legacy JSON shape
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

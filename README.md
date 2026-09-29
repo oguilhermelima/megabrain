@@ -81,6 +81,8 @@ npm link
 megabrain doctor          # what is installed and what is missing
 megabrain db check        # check SQLite integrity and foreign keys
 megabrain db backup       # create a consistent SQLite backup
+megabrain db import <dir> # import a legacy JSON state directory
+megabrain db show <id>    # inspect a dispatch in the legacy JSON shape
 megabrain context --json  # tmux, orca, or superset
 ```
 
