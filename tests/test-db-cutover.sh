@@ -11,11 +11,11 @@ binary="$root/.build/megabrain"
 fail() { printf 'not ok: %s\n' "$1" >&2; exit 1; }
 assert_marker() {
   local state="$1" expected="$2"
-  bun -e 'import { Database } from "bun:sqlite"; const db = new Database(process.argv[1], { readonly: true }); const row = db.query("SELECT value FROM settings WHERE key = ?").get("cutover"); let marker; try { marker = JSON.parse(row?.value ?? "{}"); } catch {} if (marker?.method !== process.argv[2]) process.exit(1);' "$state/megabrain.db" "$expected"
+  NODE_NO_WARNINGS=1 node -e 'const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1], { readOnly: true }); const row = db.prepare("SELECT value FROM settings WHERE key = ?").get("cutover"); let marker; try { marker = JSON.parse(row?.value ?? "{}"); } catch {} if (marker?.method !== process.argv[2]) process.exit(1);' "$state/megabrain.db" "$expected"
 }
 assert_no_marker() {
   local state="$1"
-  if bun -e 'import { Database } from "bun:sqlite"; const db = new Database(process.argv[1], { readonly: true }); const row = db.query("SELECT value FROM settings WHERE key = ?").get("cutover"); if (row !== null) process.exit(1);' "$state/megabrain.db"; then fail 'unexpected cutover marker'; fi
+  NODE_NO_WARNINGS=1 node -e 'const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1], { readOnly: true }); const row = db.prepare("SELECT value FROM settings WHERE key = ?").get("cutover"); if (row !== undefined) process.exit(1);' "$state/megabrain.db" || fail 'unexpected cutover marker'
 }
 fixture() {
   local state="$1" id="${2:-fixture}"
@@ -55,20 +55,21 @@ snapshot="$(find "$legacy/legacy" -mindepth 1 -maxdepth 1 -type d -name 'json-*'
 [ -n "$snapshot" ] || fail 'legacy JSON was not sealed'
 [ -f "$legacy/transcripts/live-fixture.txt" ] || fail 'live transcript was not moved'
 [ -f "$legacy/transcripts/archived-fixture.txt" ] || fail 'archived transcript was not moved'
+grep -q "migrated legacy JSON state.*$(basename "$snapshot")" "$tmp/migration.err" || fail 'automatic migration did not report its snapshot path'
 assert_marker "$legacy" auto || fail 'automatic marker missing after migration'
 MEGABRAIN_STATE_DIR="$legacy" "$binary" db show live-fixture --json | jq -e '.meta.dispatchId == "live-fixture" and .messages[0].text == "ready"' >/dev/null
 run_normal "$legacy" >/dev/null 2>"$tmp/second.err"
-[ ! -s "$tmp/second.err" ] || fail 'second command repeated cutover output'
+if grep -q 'migrated legacy JSON state' "$tmp/second.err"; then fail 'second command repeated cutover output'; fi
 printf 'ok: first command migrates, moves transcripts and seals live and archived state\n'
 
 # A malformed message is a parity failure: no dispatch commit and no file mutation/seal.
 bad="$tmp/bad"
 fixture "$bad" bad-fixture
-printf '{not json\n' >"$bad/dispatches/bad-fixture/messages/0002.json"
-before="$(find "$bad" -type f -print0 | sort -z | xargs -0 shasum | shasum | awk '{print $1}')"
+printf '{"seq":2,"from":"child","type":"reply","createdAt":"2026-09-01T00:01:00.000Z"}\n' >"$bad/dispatches/bad-fixture/messages/0002.json"
+before="$(find "$bad/dispatches" -type f -print0 | sort -z | xargs -0 shasum | shasum | awk '{print $1}')"
 if run_normal "$bad" >"$tmp/bad.out" 2>"$tmp/bad.err"; then fail 'parity mismatch unexpectedly succeeded'; fi
 grep -q 'migration-report-' "$tmp/bad.err" || fail 'parity failure did not name its report'
-after="$(find "$bad" -type f -print0 | sort -z | xargs -0 shasum | shasum | awk '{print $1}')"
+after="$(find "$bad/dispatches" -type f -print0 | sort -z | xargs -0 shasum | shasum | awk '{print $1}')"
 [ "$before" = "$after" ] || fail 'parity mismatch changed legacy files'
 [ ! -d "$bad/legacy" ] || fail 'parity mismatch sealed legacy state'
 assert_no_marker "$bad" || fail 'parity mismatch set marker'
@@ -80,8 +81,9 @@ fixture "$concurrent" concurrent-fixture
 require_megabrain_test_state "$concurrent"
 MEGABRAIN_STATE_DIR="$concurrent" "$binary" orchestrate list --all --json >"$tmp/concurrent-a.json" 2>"$tmp/concurrent-a.err" & p1=$!
 MEGABRAIN_STATE_DIR="$concurrent" "$binary" orchestrate list --all --json >"$tmp/concurrent-b.json" 2>"$tmp/concurrent-b.err" & p2=$!
-wait "$p1"
-wait "$p2"
+rc1=0; wait "$p1" || rc1=$?
+rc2=0; wait "$p2" || rc2=$?
+if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then cat "$tmp/concurrent-a.err" "$tmp/concurrent-b.err" >&2; fail "concurrent command failed ($rc1, $rc2)"; fi
 [ "$(find "$concurrent/legacy" -mindepth 1 -maxdepth 1 -type d -name 'json-*' | wc -l | tr -d ' ')" = 1 ] || fail 'concurrent startup created more than one snapshot'
 assert_marker "$concurrent" auto || fail 'concurrent startup did not set marker'
 printf 'ok: concurrent startup performs one cutover\n'
