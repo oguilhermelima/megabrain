@@ -79,14 +79,7 @@ set_dispatch_state() {
 
 nudge_count() {
   local dispatch_id="$1"
-  MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" NUDGE_DISPATCH="$dispatch_id" bun -e '
-    const { stateDatabase, listNudges } = await import(process.env.MEGABRAIN_ROOT + "/src/adapters/state-db.ts");
-    const db = stateDatabase({ MEGABRAIN_STATE_DIR: process.env.MEGABRAIN_STATE_DIR });
-    if (db.kind !== "ok") throw new Error(db.error);
-    const result = listNudges(db.value, process.env.NUDGE_DISPATCH);
-    if (result.kind !== "ok") throw new Error(result.error);
-    process.stdout.write(String(result.value.length));
-  '
+  MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.nudges | length'
 }
 
 export MEGABRAIN_STATE_DIR="$state_dir"

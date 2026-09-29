@@ -235,7 +235,7 @@ scenario_stop_working() {
   result="$(compiled_stop stop-working --json)"
   assert_equal "$(jq -r '.status' <<<"$result")" interrupted
   assert_equal "$(wc -l <"$stop_calls_file" | tr -d ' ')" 1
-  message_types="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show stop-working --json | jq -r '[.messages[].type] | join(\" \") + \" \"')"
+  message_types="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show stop-working --json | jq -r '[.messages[].type] | join(" ") + " "')"
   assert_equal "$message_types" 'interrupt interrupt-result '
   printf 'working transcript records the interrupt before and after Escape\n'
 }

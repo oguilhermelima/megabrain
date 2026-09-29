@@ -222,7 +222,7 @@ scenario_reconcile_keeps_waiting_for_reply() {
   local state="$work/reconcile-waiting" output
   write_tmux_fixture
   write_meta "$state" reconcile-waiting '{"dispatchId":"reconcile-waiting","parentSessionId":"parent","parentHost":"orca","runtime":"tmux","agent":"codex","tmuxSession":"session","tmuxPane":"%1","state":"waiting_for_reply","processState":"running","terminalState":"owned"}'
-  printf '%s\n' '{"seq":1,"from":"child","type":"ask","text":"question"}' >"$state/dispatches/reconcile-waiting/messages/00001-child-ask.json"
+  printf '%s\n' "{\"seq\":1,\"from\":\"child\",\"type\":\"ask\",\"text\":\"question\",\"createdAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >"$state/dispatches/reconcile-waiting/messages/00001-child-ask.json"
   import_state "$state"
   output="$(TMUX_CALLS="$work/tmux.calls" MEGABRAIN_TEST_DISPATCH=reconcile-waiting PS_IDENTITY=proven run_binary "$state" orchestrate reconcile reconcile-waiting --json)"
   assert_json "$output" '.reconcileResult == "adopted" and .state == "waiting_for_reply" and .processState == "running"'

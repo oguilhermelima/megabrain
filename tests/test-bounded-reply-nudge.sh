@@ -69,6 +69,7 @@ create_meta() {
     worktreePath="$root" branch=main agent="$agent" agentId="$agent" label=label state=running \
     model=gpt-5 modelHonored=true tmuxSession="$session_name" tmuxPane="$pane" \
     runtime=tmux spawnRuntime=tmux parentTmuxSession="$session_name" parentTmuxPane="$parent_pane" >/dev/null
+  MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 }
 
 # `orchestrate reply` writes the queue message durably before it ever touches the pane

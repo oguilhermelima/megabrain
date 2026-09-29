@@ -27,23 +27,10 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 import_state() { MEGABRAIN_STATE_DIR="$1" HOME="$HOME" "$root/.build/megabrain" db import "$1" >/dev/null; }
 show_dispatch() { MEGABRAIN_STATE_DIR="$1" "$root/.build/megabrain" db show "$2" --json; }
 db_waiter() {
-  MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$1" WAITER_DISPATCH="$2" WAITER_PID="$3" bun -e '
-    const { stateDatabase, putWaiter } = await import(process.env.MEGABRAIN_ROOT + "/src/adapters/state-db.ts");
-    const db = stateDatabase({ MEGABRAIN_STATE_DIR: process.env.MEGABRAIN_STATE_DIR });
-    if (db.kind !== "ok") throw new Error(db.error);
-    const result = putWaiter(db.value, { dispatchId: process.env.WAITER_DISPATCH, pid: Number(process.env.WAITER_PID), parentSessionId: "parent-terminal", parentHost: "orca", createdAt: new Date().toISOString() });
-    if (result.kind !== "ok") throw new Error(result.error);
-  '
+  node "$root/tests/support/write-waiter.mjs" "$1" "$2" "$3"
 }
 read_nudges() {
-  MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$1" NUDGE_DISPATCH="$2" bun -e '
-    const { stateDatabase, listNudges } = await import(process.env.MEGABRAIN_ROOT + "/src/adapters/state-db.ts");
-    const db = stateDatabase({ MEGABRAIN_STATE_DIR: process.env.MEGABRAIN_STATE_DIR });
-    if (db.kind !== "ok") throw new Error(db.error);
-    const result = listNudges(db.value, process.env.NUDGE_DISPATCH);
-    if (result.kind !== "ok") throw new Error(result.error);
-    process.stdout.write(JSON.stringify(result.value));
-  '
+  show_dispatch "$1" "$2" | jq -c '.nudges'
 }
 
 # MEGABRAIN_QUEUE_WRITE_IMPLEMENTATION has no effect anywhere in lib/ or the entry script any
@@ -162,7 +149,7 @@ run_notification_suppression() {
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/suppressed-effect" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ask 'suppressed body' >/dev/null 2>&1
   effect="$(cat "$work_dir/suppressed-effect")"
   [ -z "$effect" ] || fail "notified despite an active waiter: $effect"
-  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome + \" \" + .[0].reason')" = 'suppressed active-waiter' ] || fail 'did not record active-waiter suppression'
+  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome + " " + .[0].reason')" = 'suppressed active-waiter' ] || fail 'did not record active-waiter suppression'
   printf 'active waiter suppresses notification\n'
 }
 
@@ -178,7 +165,7 @@ run_notification_context_suppression() {
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/context-effect" TMUX=parent-session TMUX_PANE=%parent "$root/.build/megabrain" ask 'context body' >/dev/null
   effect="$(cat "$work_dir/context-effect")"
   [ -z "$effect" ] || fail "notified across state directories: $effect"
-  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome + \" \" + .[0].reason')" = 'suppressed state-directory-mismatch' ] || fail 'did not record state-directory suppression'
+  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome + " " + .[0].reason')" = 'suppressed state-directory-mismatch' ] || fail 'did not record state-directory suppression'
   printf 'cross-context parent notification is suppressed\n'
 }
 

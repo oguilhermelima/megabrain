@@ -24,7 +24,7 @@ assert_equal() {
 write_fixture() {
   local state_dir="$1"
   mkdir -p "$state_dir/dispatches/check/messages" "$state_dir/dispatches/check/deliveries"
-  printf '%s\n' '{"dispatchId":"check","terminalId":"child-terminal","childHost":"superset","runtime":"host"}' >"$state_dir/dispatches/check/meta.json"
+  printf '%s\n' '{"dispatchId":"check","terminalId":"child-terminal","childHost":"superset","runtime":"host","state":"running"}' >"$state_dir/dispatches/check/meta.json"
   printf '%s\n' '{"seq":1,"from":"parent","type":"reply","text":"hello"}' >"$state_dir/dispatches/check/messages/0001-parent-reply.json"
   printf '%s\n' '{"id":"delivery-fixed","dispatchId":"check","recipient":"child","consumer":null,"consumerGeneration":null,"messageSeqs":[1],"status":"outstanding"}' >"$state_dir/dispatches/check/deliveries/delivery-fixed.json"
 }
