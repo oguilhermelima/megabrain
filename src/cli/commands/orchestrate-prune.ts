@@ -2,7 +2,6 @@ import { rm } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parsePruneArgs, pruneDecision, pruneStates, type PruneOptions } from "../../core/orchestrate-prune.js";
 import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
-import { dispatchArchiveDirectory } from "../../adapters/dispatch-store.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
@@ -173,7 +172,7 @@ export async function executeOrchestratePrune(args: readonly string[], environme
     }
     if (released.kind === "blocked") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.reason }); continue; }
     if (options.mode === "archive") {
-      const target = dispatchArchiveDirectory(root, month, entry.id); archived.push({ dispatchId: entry.id, path: target });
+      archived.push({ dispatchId: entry.id, path: handle.path });
       if (!options.dryRun) {
         const result = archiveDispatch(handle, entry.id, now.toISOString());
         if (result.kind !== "ok" || !result.value) { archived.pop(); skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not archive dispatch" }); }

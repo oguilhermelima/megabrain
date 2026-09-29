@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { failed, type Result } from "../../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../../core/state.js";
+import { resolveDispatchId } from "../../core/dispatch-paths.js";
 import { openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../db/db.js";
 
 const handles = new Map<string, DatabaseHandle>();
@@ -22,7 +23,7 @@ export function stateDatabase(environment: StateEnvironment): Result<DatabaseHan
 }
 
 export function transcriptPath(environment: StateEnvironment, dispatchId: string): Result<string> {
-  if (dispatchId === "" || dispatchId.includes("/") || dispatchId.includes("\\") || dispatchId === "." || dispatchId === "..") return failed("dispatchId must be a non-empty path segment");
+  if (resolveDispatchId(dispatchId).kind === "invalid") return failed("dispatchId must contain only letters, digits, dots, underscores, or hyphens");
   try {
     const configured = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
     if (configured === undefined || configured === "") return failed("resolve failed: no state directory is configured");

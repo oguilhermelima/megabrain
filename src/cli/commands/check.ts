@@ -10,9 +10,6 @@ import type { DeliveryRecord } from "../../db/queries/deliveries.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 
-// Compatibility export retained for another command being migrated in this cutover wave.
-export { readJson } from "./queue-write.js";
-
 function checkMessages(root: string, dispatch: string): CheckMessage[] {
   const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (db.kind !== "ok") return [];

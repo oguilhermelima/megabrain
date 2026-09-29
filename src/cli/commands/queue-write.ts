@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
@@ -25,10 +25,6 @@ type NotificationResult = {
   readonly outcome: string;
   readonly reason: string;
 };
-
-export async function readJson(path: string): Promise<JsonRecord | undefined> {
-  try { const value: unknown = JSON.parse(await readFile(path, "utf8")); return typeof value === "object" && value !== null ? value as JsonRecord : undefined; } catch { return undefined; }
-}
 
 // The one caller-identity resolver (core/context.js), reached through the same env-var mapping
 // from every command that needs to know who is running it — no verb hand-rolls its own chain.
@@ -157,7 +153,7 @@ export async function findChild(root: string, environment: QueueEnvironment, pro
   const directMeta = directRecord?.kind === "ok" ? directRecord.value : undefined;
   // The fast path only short-circuits the scan for a dispatch that actually belongs to the
   // current caller. A stale MEGABRAIN_DISPATCH_ID (inherited by a process from a different
-  // dispatch's environment) still names a real, readable meta.json, so checking existence alone
+  // dispatch's environment) still names a real database row, so checking existence alone
   // locked the candidate list to a dispatch that then failed its own ownership check. Falling
   // back to the identity scan here matches the retired shell implementation.
   const directDispatch = direct !== undefined && directMeta?.dispatchId === direct && callerOwnsDispatch(directMeta, current) ? direct : undefined;
@@ -176,11 +172,6 @@ export async function findChild(root: string, environment: QueueEnvironment, pro
     return failed(`no managed dispatch belongs to ${current.host}/${current.id}`);
   }
   return { dispatch: matches[0], session: current };
-}
-
-export async function atomicJson(path: string, value: JsonRecord): Promise<void> {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try { await writeFile(temporary, `${JSON.stringify(value)}\n`); await rename(temporary, path); } catch (error: unknown) { await rm(temporary, { force: true }); throw error; }
 }
 
 async function readParentTmuxChannel(meta: JsonRecord, processAdapter: ProcessAdapter): Promise<{ readonly session: string; readonly pane: string } | undefined> {
@@ -292,19 +283,6 @@ export async function notifyChild(root: string, meta: JsonRecord, dispatch: stri
     result = await runHostSend(host, processAdapter, call.value);
   }
   return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified" } : { outcome: "failed", reason: result.error };
-}
-
-export async function acquireLock(path: string, environment: QueueEnvironment): Promise<Result<void>> {
-  const waitSeconds = Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15");
-  const staleSeconds = Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30");
-  const deadline = Date.now() + Math.max(0, waitSeconds) * 1000;
-  while (true) {
-    try { await mkdir(path); return ok(undefined); } catch {
-      try { const age = (Date.now() - (await stat(path)).mtimeMs) / 1000; if (age >= staleSeconds) { await rm(path, { recursive: true, force: true }); continue; } } catch { continue; }
-      if (Date.now() >= deadline) return failed(`mailbox lock is held by another writer: ${path}`);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  }
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
