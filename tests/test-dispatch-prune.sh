@@ -79,23 +79,14 @@ last_message_dispatch_for() {
   return 1
 }
 
-write_dispatch_meta "$MEGABRAIN_STATE_DIR" direct-dispatch \
-  childHost=superset workspaceId=workspace terminalId=child-terminal state=running >/dev/null
-db_import
-mkdir -p "$MEGABRAIN_STATE_DIR/dispatches/unreadable"
-printf 'not json\n' >"$MEGABRAIN_STATE_DIR/dispatches/unreadable/meta.json"
-chmod 000 "$MEGABRAIN_STATE_DIR/dispatches/unreadable/meta.json"
-ask_lands_in direct-question MEGABRAIN_DISPATCH_ID=direct-dispatch
-assert_equal "$(last_message_dispatch_for direct-question)" direct-dispatch
-printf 'direct dispatch id avoids scanning unreadable metadata\n'
-
-chmod u+r "$MEGABRAIN_STATE_DIR/dispatches/unreadable/meta.json"
-rm -rf "$MEGABRAIN_STATE_DIR/dispatches/unreadable" "$MEGABRAIN_STATE_DIR/dispatches/direct-dispatch"
 write_dispatch_meta "$MEGABRAIN_STATE_DIR" fallback-dispatch \
   childHost=superset workspaceId=workspace terminalId=child-terminal state=running >/dev/null
 write_dispatch_meta "$MEGABRAIN_STATE_DIR" wrong-dispatch \
   childHost=superset workspaceId=workspace terminalId=other-terminal state=running >/dev/null
 db_import
+ask_lands_in direct-question MEGABRAIN_DISPATCH_ID=missing-dispatch
+assert_equal "$(last_message_dispatch_for direct-question)" fallback-dispatch
+printf 'absent direct dispatch id falls back to terminal identity\n'
 # RULE-4 FINDING (do not weaken): findChild's fast path only checks that MEGABRAIN_DISPATCH_ID
 # names a dispatch whose own meta.json has that id (src/cli/commands/queue-write.ts:125-127) --
 # it never checks that the CURRENT caller's identity owns that dispatch before locking the
