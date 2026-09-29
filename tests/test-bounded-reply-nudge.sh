@@ -156,9 +156,9 @@ scenario_agent_nudge() {
   output="$(PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text "answer for $agent" --json)"
   assert_equal "$(jq -r '.status' <<<"$output")" queued
   assert_equal "$(jq -r '.nudge' <<<"$output")" "$expect_nudge"
-  message="$state_dir/dispatches/$dispatch_id/messages"/*.json
-  assert_equal "$(jq -r '.text' $message)" "answer for $agent"
-  assert_contains "$(jq -r '.sessionId' $message)" ':'
+  message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
+  assert_equal "$(jq -r '.text' <<<"$message")" "answer for $agent"
+  assert_contains "$(jq -r '.sessionId' <<<"$message")" ':'
   if [ "$expect_key" = none ]; then
     [ ! -s "$send_log" ] || fail "$agent: expected no send-keys call, got: $(cat "$send_log")"
   else
