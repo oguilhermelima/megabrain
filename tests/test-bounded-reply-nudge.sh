@@ -106,8 +106,9 @@ if [ ! -f "$done_file" ]; then
 fi
 wait "$reply_pid"
 assert_equal "$(jq -r '.status' "$reply_output")" queued
-assert_equal "$(find "$state_dir/dispatches/$dispatch_id/messages" -name '*.json' | wc -l | tr -d ' ')" 1
-assert_equal "$(jq -r '.text' "$state_dir/dispatches/$dispatch_id/messages"/*.json)" "$answer"
+reply_message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
+assert_equal "$(jq -r '.seq' <<<"$reply_message")" 1
+assert_equal "$(jq -r '.text' <<<"$reply_message")" "$answer"
 printf 'busy child: reply returns within the bound and keeps the full queue message\n'
 
 tmux_cmd kill-pane -t "$child_pane"

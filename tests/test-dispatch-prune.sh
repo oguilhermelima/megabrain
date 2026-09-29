@@ -72,7 +72,7 @@ ask_lands_in() {
 
 last_message_dispatch_for() {
   local text="$1" dispatch found
-  for dispatch in direct-dispatch fallback-dispatch wrong-dispatch; do
+  for dispatch in fallback-dispatch wrong-dispatch; do
     found="$(db_show "$dispatch" | jq -r --arg text "$text" '[.messages[] | select(.text == $text)] | length' 2>/dev/null || true)"
     if [ "$found" = 1 ]; then printf '%s\n' "$dispatch"; return 0; fi
   done
@@ -87,15 +87,8 @@ db_import
 ask_lands_in direct-question MEGABRAIN_DISPATCH_ID=missing-dispatch
 assert_equal "$(last_message_dispatch_for direct-question)" fallback-dispatch
 printf 'absent direct dispatch id falls back to terminal identity\n'
-# RULE-4 FINDING (do not weaken): findChild's fast path only checks that MEGABRAIN_DISPATCH_ID
-# names a dispatch whose own meta.json has that id (src/cli/commands/queue-write.ts:125-127) --
-# it never checks that the CURRENT caller's identity owns that dispatch before locking the
-# candidate list to it. A stale MEGABRAIN_DISPATCH_ID left over from a previous, different
-# dispatch (still present on disk, just not this caller's) therefore fails outright with "no
-# managed dispatch belongs to <host>/<id>" instead of falling back to the identity scan the way
-# the retired shell implementation did (and the way an absent/deleted id already does, two lines
-# below, since directDispatch is only ever set when the id's meta exists). Left failing per rule 4;
-# the lead decides.
+# A stale, present MEGABRAIN_DISPATCH_ID that belongs to another terminal must also fall back to
+# the identity scan, matching main's ownership contract.
 ask_lands_in stale-question MEGABRAIN_DISPATCH_ID=wrong-dispatch
 assert_equal "$(last_message_dispatch_for stale-question)" fallback-dispatch
 ask_lands_in absent-question

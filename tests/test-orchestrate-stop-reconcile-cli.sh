@@ -202,7 +202,7 @@ scenario_reconcile_syncs_receipt_and_parent_identity() {
   write_tmux_fixture
   write_orca_fixture
   write_meta "$state" reconcile-adopted '{"dispatchId":"reconcile-adopted","parentSessionId":"parent","parentHost":"orca","runtime":"tmux","agent":"codex","tmuxSession":"session","tmuxPane":"%1","state":"spawning","processState":"starting","terminalState":"retained","promptDelivery":"pending","promptReceipt":"pending","promptState":"awaiting-publication"}'
-  printf '%s\n' '{"seq":1,"from":"child","type":"received","text":"received"}' >"$state/dispatches/reconcile-adopted/messages/00001-child-received.json"
+  printf '%s\n' "{\"seq\":1,\"from\":\"child\",\"type\":\"received\",\"text\":\"received\",\"createdAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >"$state/dispatches/reconcile-adopted/messages/00001-child-received.json"
   import_state "$state"
   output="$(TMUX_CALLS="$work/tmux.calls" MEGABRAIN_TEST_DISPATCH=reconcile-adopted PS_IDENTITY=proven run_binary "$state" orchestrate reconcile reconcile-adopted --json)"
   assert_json "$output" '.reconcileResult == "adopted" and .state == "running" and .processState == "running" and .terminalState == "owned" and .promptReceipt == "received" and .promptState == "confirmed"'
