@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { failed, type Failed } from "./result.js";
-import { resolveStateDirectory, type StateEnvironment } from "./state.js";
+import { loadModels, saveModels, stateDatabase } from "../adapters/state-db.js";
+import { failed, type Failed, type Result } from "./result.js";
+import type { StateEnvironment } from "./state.js";
 import { resolvePackageRoot } from "./package-root.js";
 
 export type ModelProvenance = Readonly<Record<string, unknown>>;
@@ -108,13 +109,11 @@ export function refreshAgyModels(ids: readonly string[], obtainedAt: string): re
 
 export type ModelEnvironment = StateEnvironment & Readonly<{
   readonly MEGABRAIN_ROOT?: string;
-  readonly MEGABRAIN_MODEL_FILE?: string;
 }>;
 
-export function modelRegistryPaths(environment: ModelEnvironment): { readonly template: string; readonly state: string } {
+export function modelRegistryPaths(environment: ModelEnvironment): { readonly template: string } {
   const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
-  const stateDir = resolveStateDirectory(environment);
-  return { template: resolve(root, ".megabrain/models.json"), state: environment.MEGABRAIN_MODEL_FILE ?? resolve(stateDir, "models.json") };
+  return { template: resolve(root, ".megabrain/models.json") };
 }
 
 function isModelEntry(value: unknown): value is Model {
@@ -138,30 +137,45 @@ export function parseModelRegistry(text: string): ModelRegistry | undefined {
   }
 }
 
-export type LoadedModelRegistry = Readonly<{ readonly kind: "loaded"; readonly registry: ModelRegistry; readonly raw: string; readonly file: string }>;
+export type LoadedModelRegistry = Readonly<{ readonly kind: "loaded"; readonly registry: ModelRegistry; readonly raw: string }>;
 
 export function loadModelRegistry(environment: ModelEnvironment): LoadedModelRegistry | Failed {
-  const { template, state } = modelRegistryPaths(environment);
+  const { template } = modelRegistryPaths(environment);
   try {
-    mkdirSync(resolve(state, ".."), { recursive: true });
     if (!existsSync(template)) return failed(`model registry template is missing: ${template}`);
     const templateRaw = readFileSync(template, "utf8");
     const templateRegistry = parseModelRegistry(templateRaw);
     if (templateRegistry === undefined) return failed(`model registry template is not valid JSON: ${template}`);
-    if (!existsSync(state)) {
-      copyFileSync(template, state);
-      return { kind: "loaded", registry: templateRegistry, raw: templateRaw, file: state };
+    const opened = stateDatabase(environment);
+    if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+    let registry: ModelRegistry;
+    let storedEmpty = false;
+    const loaded = loadModels(opened.value);
+    if (loaded.kind !== "ok") return failed(loaded.error, loaded.exitCode);
+    if (loaded.value.models.length === 0) { registry = templateRegistry; storedEmpty = true; }
+    else {
+      const parsed = parseModelRegistry(JSON.stringify(loaded.value));
+      if (parsed === undefined) return failed("model registry stored in database is invalid");
+      registry = parsed;
     }
-    const raw = readFileSync(state, "utf8");
-    const registry = parseModelRegistry(raw);
-    if (registry === undefined) return failed(`model registry is not valid JSON: ${state}`);
     const upgraded = upgradeRegistry(registry, templateRegistry);
     const upgradedRaw = `${JSON.stringify(upgraded, null, 2)}\n`;
-    if (upgradedRaw !== raw) writeFileSync(state, upgradedRaw);
-    return { kind: "loaded", registry: upgraded, raw: upgradedRaw, file: state };
+    const currentRaw = `${JSON.stringify(registry, null, 2)}\n`;
+    if (storedEmpty || upgradedRaw !== currentRaw) {
+      const saved = saveModelRegistry(environment, upgraded);
+      if (saved.kind !== "ok") return failed(saved.error, saved.exitCode);
+    }
+    return { kind: "loaded", registry: upgraded, raw: upgradedRaw };
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "could not read model registry");
   }
+}
+
+export function saveModelRegistry(environment: ModelEnvironment, registry: ModelRegistry): Result<void> {
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+  const saved = saveModels(opened.value, registry);
+  return saved.kind === "ok" ? { kind: "ok", value: undefined } : saved;
 }
 
 export function formatModelList(registry: ModelRegistry): string {
