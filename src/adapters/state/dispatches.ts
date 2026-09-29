@@ -68,3 +68,7 @@ export function mutateDispatch(handle: DatabaseHandle, id: string, mutate: Dispa
 export function archiveDispatch(handle: DatabaseHandle, id: string, archivedAt = new Date().toISOString()): Result<boolean> {
   return write(handle, ({ db }) => db.run("UPDATE dispatches SET archived_at = COALESCE(archived_at, ?) WHERE id = ?", [archivedAt, id]).changes > 0);
 }
+
+export function deleteDispatch(handle: DatabaseHandle, id: string): Result<boolean> {
+  return write(handle, ({ db }) => db.run("DELETE FROM dispatches WHERE id = ?", [id]).changes > 0);
+}

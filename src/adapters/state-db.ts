@@ -2,6 +2,7 @@ export { stateDatabase, transcriptPath } from "./state/shared.js";
 export {
   archiveDispatch,
   createDispatch,
+  deleteDispatch,
   getDispatch,
   listDispatches,
   mutateDispatch,
