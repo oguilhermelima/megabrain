@@ -5,6 +5,7 @@
 - Run megabrain doctor [module-id] [--json].
 - Run megabrain db check [--json].
 - Run megabrain db backup [--json].
+- Run megabrain db import <dir> [--replace] [--json].
 - Run megabrain context [--json].
 - Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json].
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json].
