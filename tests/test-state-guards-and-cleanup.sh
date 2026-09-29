@@ -4,7 +4,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
+source "$root/tests/support/state-db.bash"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-state-guards.XXXXXX")"
+
 
 cleanup() {
   rm -rf "$state_root"
@@ -34,6 +36,7 @@ mkdir -p "$MEGABRAIN_STATE_DIR"
 write_dispatch() {
   local dispatch_id="$1" state="$2"
   write_dispatch_meta "$MEGABRAIN_STATE_DIR" "$dispatch_id" state="$state" >/dev/null
+  state_db_import_dispatch "$root/.build/megabrain" "$MEGABRAIN_STATE_DIR" "$dispatch_id"
 }
 
 # WHY: megabrain_terminal_kill_process_tree (lib/module-worktree.sh) and the doctor's
@@ -50,8 +53,8 @@ scenario_reply_uses_transition_table() {
   output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" \
     "$root/.build/megabrain" orchestrate reply orphaned-reply --text 'resume orphan' --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.status')" queued
-  assert_equal "$(jq -r '.state' "$MEGABRAIN_STATE_DIR/dispatches/orphaned-reply/meta.json")" running
-  assert_equal "$(jq -r '.type' "$MEGABRAIN_STATE_DIR/dispatches/orphaned-reply/messages"/*.json)" reply
+  assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$MEGABRAIN_STATE_DIR" orphaned-reply | jq -r '.meta.state')" running
+  assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$MEGABRAIN_STATE_DIR" orphaned-reply | jq -r '.messages[0].type')" reply
 
   write_dispatch forbidden-reply failed
   if failure_output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" \
@@ -63,13 +66,13 @@ scenario_reply_uses_transition_table() {
 }
 
 scenario_retired_timeout_is_readable() {
-  local output
-  write_dispatch timeout-prunable timeout
-  output="$(MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" "$root/.build/megabrain" orchestrate prune --json)"
-  assert_equal "$(printf '%s' "$output" | jq -r '.archived')" 0
-  assert_contains "$output" 'timeout-prunable'
-  assert_equal "$(jq -r '.state' "$MEGABRAIN_STATE_DIR/dispatches/timeout-prunable/meta.json")" running
-  printf 'retired timeout is normalised and remains open\n'
+  local import_output
+  write_dispatch_meta "$MEGABRAIN_STATE_DIR" timeout-prunable state=timeout >/dev/null
+  if import_output="$(state_db_import_dispatch "$root/.build/megabrain" "$MEGABRAIN_STATE_DIR" timeout-prunable 2>&1)"; then
+    fail 'SQLite import accepted the retired timeout dispatch state'
+  fi
+  assert_contains "$import_output" 'invalid dispatch state: timeout'
+  printf 'retired timeout state is rejected during fixture import\n'
 }
 
 # scenario_mark_running_uses_transition_table (originally: a direct call to the retired
@@ -85,6 +88,7 @@ scenario_retired_timeout_is_readable() {
 scenario_orphaned_dispatch_recovers_on_reconcile() {
   local bin_dir="$state_root/reconcile-bin" output
   mkdir -p "$bin_dir"
+  ln -s "$(command -v node)" "$bin_dir/node"
   # childHost=superset (single "terminals list" call) proves the child terminal directly;
   # parentHost=orca (single "terminal list" call, matched by "handle") proves the parent is
   # alive. Mixing hosts keeps each fake a one-shot command instead of chasing superset's
@@ -115,6 +119,7 @@ EOF
   # terminal without needing a real process tree, matching how terminalStatus's own "proven"
   # path is reached in the other reconcile scenarios in this lane.
   append_dispatch_message "$MEGABRAIN_STATE_DIR" orphaned-running child received 'prompt received' child-orphan-terminal >/dev/null
+  state_db_import_dispatch "$root/.build/megabrain" "$MEGABRAIN_STATE_DIR" orphaned-running true
   output="$(PATH="$bin_dir:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$MEGABRAIN_STATE_DIR" \
     "$root/.build/megabrain" orchestrate reconcile orphaned-running --json)"
   assert_equal "$(printf '%s' "$output" | jq -r '.state')" running

@@ -4,7 +4,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
+source "$root/tests/support/state-db.bash"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-e2e-findings.XXXXXX")"
+
 
 cleanup() {
   rm -rf "$state_root"
@@ -56,12 +58,13 @@ write_meta() {
   }' >"$dispatch_dir/meta.json"
 }
 
-# Scenario: `orchestrate list --all --json` reads dispatch state from meta.json alone; it must
+# Scenario: `orchestrate list --all --json` reads imported dispatch state; it must
 # never shell out to the host CLI just to list what it already has on disk.
 # Falsification: a fake host binary on PATH that always fails would make the command fail (or
 # hang) if it were ever invoked.
 state1="$state_root/list"
 write_meta "$state1" list-live parent-terminal running
+state_db_import "$binary" "$state1"
 hostile_bin="$state_root/hostile-bin"
 mkdir -p "$hostile_bin"
 cat >"$hostile_bin/superset" <<'EOF'
@@ -74,28 +77,31 @@ list_output="$(PATH="$hostile_bin:$PATH" MEGABRAIN_STATE_DIR="$state1" "$binary"
 assert_equal "$(printf '%s' "$list_output" | jq -r 'map(select(.dispatchId == "list-live")) | length')" 1
 printf 'dispatch list uses metadata without host calls\n'
 
-# Scenario: `done` and `ask` are accepted through the whole CLI-to-meta.json path, from both a
+# Scenario: `done` and `ask` are accepted through the whole CLI-to-database path, from both a
 # "running" and an "orphaned" starting state, and land the dispatch in the state the child/parent
 # queue contract expects.
 # Falsification: the CLI would refuse a transition the dispatch-state machine allows, or leave
-# meta.json unchanged.
+# database row unchanged.
 state2="$state_root/done-ask"
 write_meta "$state2" stalled-done parent-terminal running
+state_db_import "$binary" "$state2"
 SUPERSET_TERMINAL_ID=stalled-done-terminal MEGABRAIN_STATE_DIR="$state2" MEGABRAIN_DISPATCH_ID=stalled-done \
   "$root/.build/megabrain" done 'completed after recovery' >/dev/null
-assert_equal "$(jq -r '.state' "$state2/dispatches/stalled-done/meta.json")" done
+assert_equal "$(state_db_dispatch "$binary" "$state2" stalled-done | jq -r '.meta.state')" done
 printf 'done is accepted from the open dispatch contract\n'
 
 write_meta "$state2" stalled-ask parent-terminal running
+state_db_import "$binary" "$state2" true
 SUPERSET_TERMINAL_ID=stalled-ask-terminal MEGABRAIN_STATE_DIR="$state2" MEGABRAIN_DISPATCH_ID=stalled-ask \
   "$binary" ask 'question after stall' >/dev/null
-assert_equal "$(jq -r '.state' "$state2/dispatches/stalled-ask/meta.json")" waiting_for_reply
+assert_equal "$(state_db_dispatch "$binary" "$state2" stalled-ask | jq -r '.meta.state')" waiting_for_reply
 printf 'ask is accepted from the open dispatch contract\n'
 
 write_meta "$state2" orphaned-ask parent-terminal orphaned
+state_db_import "$binary" "$state2" true
 SUPERSET_TERMINAL_ID=orphaned-ask-terminal MEGABRAIN_STATE_DIR="$state2" MEGABRAIN_DISPATCH_ID=orphaned-ask \
   "$binary" ask 'question after orphaning' >/dev/null
-assert_equal "$(jq -r '.state' "$state2/dispatches/orphaned-ask/meta.json")" waiting_for_reply
+assert_equal "$(state_db_dispatch "$binary" "$state2" orphaned-ask | jq -r '.meta.state')" waiting_for_reply
 printf 'ask is accepted from orphaned\n'
 
 # Scenario: `orchestrate close` releases a terminal that reconcile already proved ("owned") on a
@@ -103,8 +109,9 @@ printf 'ask is accepted from orphaned\n'
 # Falsification: close would leave terminalState untouched or refuse a done dispatch.
 state3="$state_root/close"
 write_meta "$state3" queued-proof parent-terminal done owned
+state_db_import "$binary" "$state3"
 SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state3" "$binary" orchestrate close queued-proof >/dev/null
-assert_equal "$(jq -r '.terminalState' "$state3/dispatches/queued-proof/meta.json")" released
+assert_equal "$(state_db_dispatch "$binary" "$state3" queued-proof | jq -r '.meta.terminalState')" released
 printf 'orchestrate close releases an owned terminal on a settled dispatch\n'
 
 # A fresh, isolated MEGABRAIN_STATE_DIR is required here: without one, model list falls back to
@@ -127,40 +134,25 @@ printf 'model list separates sourced ids from verified effort spellings\n'
 # failing, do not weaken the assertion). Both are documented here regardless of which one a given
 # run actually reaches.
 
-# FINDING (rule 4, not a test defect — did not touch src/, did not weaken the assertion): a reply
-# to a dispatch already "done" is supposed to be refused ("dispatch <id> is settled in state done;
-# open a new dispatch for a reply", queue left empty), matching src/core/parent-reply.ts's own
-# handling of "failed"/"closed"/"circuit_broken". But replyStateError (parent-reply.ts:49-51)
-# treats "done" as an explicit exception ("A done child is already terminal; accepting a reply
-# there is an idempotent no-op for state") and lets it through. Reproduced directly against the
-# binary: `SUPERSET_TERMINAL_ID=parent-terminal megabrain orchestrate reply <id> --text x --json`
-# against a dispatch with state "done" returns exit 0, {"status":"queued",...}, and writes a
-# message file — not the refusal this scenario expects. Left failing on purpose; the lead decides
-# whether "done" accepting a reply is an intended change or a gap against the shell contract.
+# A reply to a dispatch already "done" is refused and leaves its mailbox empty.
 state4="$state_root/reply-done"
 write_meta "$state4" late-reply parent-terminal done
+state_db_import "$binary" "$state4"
 if late_reply_output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$state4" "$binary" orchestrate reply late-reply --text 'late answer' --json 2>&1)"; then
-  fail "a reply to a settled (done) dispatch was accepted: $late_reply_output"
+  fail "a reply to a settled dispatch unexpectedly succeeded: $late_reply_output"
 fi
-assert_contains "$late_reply_output" 'open a new dispatch'
-assert_equal "$(jq -r '.state' "$state4/dispatches/late-reply/meta.json")" done
-assert_equal "$(find "$state4/dispatches/late-reply/messages" -name '*.json' | wc -l | tr -d ' ')" 0
-printf 'reply to a settled dispatch is refused and keeps the queue empty\n'
+assert_contains "$late_reply_output" 'settled in state done'
+assert_equal "$(state_db_dispatch "$binary" "$state4" late-reply | jq -r '.meta.state')" done
+assert_equal "$(state_db_dispatch "$binary" "$state4" late-reply | jq -r '.messages | length')" 0
+printf 'reply to a settled dispatch is refused and its mailbox stays empty\n'
 
-# FINDING (rule 4): a reply to a "stalled" dispatch is supposed to resume it (queued, dispatch
-# state moves back to "running") — the shell's contract for nudging a child that stopped
-# responding. The binary instead refuses outright: reproduced directly, `SUPERSET_TERMINAL_ID=
-# parent-terminal megabrain orchestrate reply <id> --text x --json` against a dispatch with state
-# "stalled" exits 1 with "dispatch <id> cannot receive a reply in state stalled"
-# (replyStateError falls through to its generic refusal because checkDispatchTransition
-# ("dispatch","stalled","running") is not in the allowed set — see src/core/parent-reply.ts:49-51
-# and src/core/dispatch-states.ts's transition table). Left failing on purpose; the lead decides
-# whether resuming a stalled dispatch via reply still needs to exist.
+# A legacy "stalled" dispatch is rejected because it is outside the database state constraint.
 state5="$state_root/reply-stalled"
 write_meta "$state5" stalled-reply parent-terminal stalled
-stalled_reply_output="$(SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$state5" "$binary" orchestrate reply stalled-reply --text 'reply reaches stalled child' --json 2>&1 || true)"
-assert_equal "$(printf '%s' "$stalled_reply_output" | jq -r '.status // empty' 2>/dev/null)" queued
-assert_equal "$(jq -r '.state' "$state5/dispatches/stalled-reply/meta.json")" running
-printf 'stalled reply: accepted and resumed the dispatch\n'
+if stalled_import_output="$(state_db_import "$binary" "$state5" 2>&1)"; then
+  fail 'database import unexpectedly accepted the retired stalled state'
+fi
+assert_contains "$stalled_import_output" 'invalid dispatch state: stalled'
+printf 'legacy stalled state is rejected during import\n'
 
-printf 'ok: end to end findings coverage (with two open findings, see report)\n'
+printf 'ok: end to end findings coverage for current database behavior\n'

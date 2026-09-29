@@ -4,12 +4,14 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-shell-removal.XXXXXX")"
+
 node_bin="$work/node-bin"
 mkdir -p "$node_bin"
 ln -s "$(command -v node)" "$node_bin/node"
 trap 'rm -rf "$work"' EXIT
 
 source "$root/tests/fixtures/entrypoint-routing.sh"
+source "$root/tests/support/state-db.bash"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_equal() { [ "$1" = "$2" ] || fail "expected '$2', got '$1'"; }
@@ -119,6 +121,7 @@ write_dispatch_fixture() {
   local state="$1" dispatch="$2" parent_host="${3:-unknown}" runtime="${4:-host}"
   mkdir -p "$state/dispatches/$dispatch/messages" "$state/dispatches/$dispatch/deliveries"
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",\"workspaceId\":\"workspace\",\"parentSessionId\":\"parent-terminal\",\"parentHost\":\"$parent_host\",\"runtime\":\"$runtime\",\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
+  state_db_import "$root/.build/megabrain" "$state"
 }
 
 run_binary_content() {
@@ -135,21 +138,21 @@ scenario_compiled_content_contracts() {
   write_dispatch_fixture "$state" ask
   output="$(run_binary_content "$state" ask ask 'question content')"
   assert_equal "$output" 'ask sent: ask'
-  assert_equal "$(jq -r '.state' "$state/dispatches/ask/meta.json")" waiting_for_reply
+  assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state" ask | jq -r '.meta.state')" waiting_for_reply
   printf 'ask content is produced by the compiled command\n'
 
   state="$work/content-received"
   write_dispatch_fixture "$state" received
   output="$(run_binary_content "$state" received received)"
   assert_equal "$output" 'received sent: received'
-  assert_equal "$(jq -r '.promptReceipt' "$state/dispatches/received/meta.json")" received
+  assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state" received | jq -r '.meta.promptReceipt')" received
   printf 'received content is produced by the compiled command\n'
 
   state="$work/content-done"
   write_dispatch_fixture "$state" done
   output="$(run_binary_content "$state" done done 'summary content')"
   assert_equal "$output" 'done sent: done'
-  assert_equal "$(jq -r '.state' "$state/dispatches/done/meta.json")" done
+  assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state" done | jq -r '.meta.state')" done
   printf 'done content is produced by the compiled command\n'
 
   state="$work/content-check"
@@ -162,7 +165,7 @@ scenario_compiled_content_contracts() {
   write_dispatch_fixture "$state" reply unknown
   output="$(env -i HOME="$work/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_SESSION_HOST=unknown MEGABRAIN_SESSION_ID=parent-terminal "$root/.build/megabrain" orchestrate reply reply --text 'reply content' --json)"
   assert_json "$output" '.dispatchId == "reply" and .status == "queued" and .nudge == "not-typed"'
-  assert_equal "$(jq -r '.text' "$state/dispatches/reply/messages"/*.json)" 'reply content'
+  assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state" reply | jq -r '.messages[0].text')" 'reply content'
   printf 'reply content includes the queued response and status\n'
 
   state="$work/content-liveness"
@@ -332,6 +335,7 @@ scenario_terminal_list_content() {
   cat >"$state/terminals/terminal-7.json" <<EOF
 {"terminalId":"terminal-7","host":"superset","workspaceId":"workspace-7","worktree":"$work/worktree","title":"DEV content","command":"run content","createdAt":"now","pid":777,"rootPid":777,"port":8082,"status":"active"}
 EOF
+  state_db_import "$root/.build/megabrain" "$state"
   cat >"$bin/superset" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' '{"terminals":[{"terminalId":"terminal-7","pid":777,"status":"active"}]}'
@@ -352,6 +356,7 @@ EOF
   cat >"$state/terminals/terminal-proven.json" <<EOF
 {"terminalId":"terminal-proven","host":"superset","workspaceId":"workspace-7","worktree":"$work/worktree","title":"DEV proven","command":"run proven","createdAt":"now","pid":999,"rootPid":999,"port":null,"status":"active"}
 EOF
+  state_db_import "$root/.build/megabrain" "$state"
   cat >"$bin/superset" <<'EOF'
 #!/usr/bin/env bash
 case "${MEGABRAIN_TEST_TERMINAL_MODE:-identity}" in

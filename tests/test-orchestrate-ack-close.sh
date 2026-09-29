@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/support/state-db.bash"
 
 binary="$root/.build/megabrain"
 
@@ -12,6 +13,7 @@ if [ ! -x "$binary" ]; then
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-ack-close.XXXXXX")"
+
 fake_dir="$work_dir/bin"
 mkdir -p "$fake_dir" "$work_dir/home"
 
@@ -104,6 +106,7 @@ run_parent_ack() {
   local implementation="$1" state_dir="$2" dispatch_id="$3" delivery_id="$4" close="$5" mode="$6"
   local output rc
   export MEGABRAIN_STATE_DIR="$state_dir"
+  if [ ! -f "$state_dir/megabrain.db" ]; then state_db_import "$root/.build/megabrain" "$state_dir"; fi
   export MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION="$implementation"
   export MEGABRAIN_TEST_CLOSE_MODE="$mode"
   set +e
@@ -127,6 +130,7 @@ run_child_ack() {
   local implementation="$1" state_dir="$2" delivery_id="$3"
   local output rc
   export MEGABRAIN_STATE_DIR="$state_dir"
+  if [ ! -f "$state_dir/megabrain.db" ]; then state_db_import "$root/.build/megabrain" "$state_dir"; fi
   export MEGABRAIN_ORCHESTRATE_ACK_IMPLEMENTATION="$implementation"
   export SUPERSET_TERMINAL_ID=child-terminal
   set +e
@@ -154,9 +158,9 @@ implementation=binary
   export MEGABRAIN_TEST_HOST_LOG="$work_dir/host.log"
   run_parent_ack "$implementation" "$state_dir" "$dispatch_id" "$delivery_id" true success
   assert_equal "$ACK_RC" 0
-  assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_id/deliveries/$delivery_id.json")" acknowledged
-  assert_equal "$(jq -r '.state' "$state_dir/dispatches/$dispatch_id/meta.json")" closed
-  assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/$dispatch_id/meta.json")" released
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.deliveries[0].status')" acknowledged
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.meta.state')" closed
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.meta.terminalState')" released
   assert_equal "$(wc -l <"$work_dir/host.log" | tr -d ' ')" 1
   assert_equal "$(printf '%s' "$ACK_OUTPUT" | jq -r '.close.status')" closed
   assert_equal "$(printf '%s' "$ACK_OUTPUT" | jq -r '.duplicate')" false
@@ -170,8 +174,8 @@ implementation=binary
   run_parent_ack "$implementation" "$state_dir" "$dispatch_id" "$delivery_id" true success
   assert_equal "$ACK_RC" 1
   assert_contains "$ACK_ERROR" dispatch-not-done
-  assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_id/deliveries/$delivery_id.json")" outstanding
-  assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/$dispatch_id/meta.json")" owned
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.deliveries[0].status')" outstanding
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.meta.terminalState')" owned
   assert_equal "$(wc -l <"$work_dir/host.log" | tr -d ' ')" 0
   printf '%s: running ack-close refuses without side effects\n' "$implementation"
 
@@ -195,9 +199,9 @@ implementation=binary
   run_parent_ack "$implementation" "$state_dir" "$dispatch_id" "$delivery_id" true failure
   assert_equal "$ACK_RC" 1
   assert_contains "$ACK_ERROR" acknowledged
-  assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_id/deliveries/$delivery_id.json")" acknowledged
-  assert_equal "$(jq -r '.state' "$state_dir/dispatches/$dispatch_id/meta.json")" done
-  assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/$dispatch_id/meta.json")" owned
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.deliveries[0].status')" acknowledged
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.meta.state')" done
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.meta.terminalState')" owned
   printf '%s: close failure preserves durable acknowledgement\n' "$implementation"
 
   state_dir="$work_dir/$implementation-plain"
@@ -207,8 +211,8 @@ implementation=binary
   run_parent_ack "$implementation" "$state_dir" "$dispatch_id" "$delivery_id" false success
   assert_equal "$ACK_RC" 0
   assert_equal "$(printf '%s' "$ACK_OUTPUT" | jq -r 'has("close")')" false
-  assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_id/deliveries/$delivery_id.json")" acknowledged
-  assert_equal "$(jq -r '.terminalState' "$state_dir/dispatches/$dispatch_id/meta.json")" owned
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.deliveries[0].status')" acknowledged
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.meta.terminalState')" owned
   printf '%s: ack without close keeps its JSON shape\n' "$implementation"
 
   state_dir="$work_dir/$implementation-child"
@@ -220,7 +224,7 @@ implementation=binary
   run_child_ack "$implementation" "$state_dir" "$delivery_id"
   assert_equal "$CHILD_RC" 2
   assert_contains "$CHILD_ERROR" 'unknown orchestrate ack option: --close'
-  assert_equal "$(jq -r '.status' "$state_dir/dispatches/$dispatch_id/deliveries/$delivery_id.json")" outstanding
+  assert_equal "$(state_db_dispatch "$binary" "$state_dir" "$dispatch_id" | jq -r '.deliveries[0].status')" outstanding
   printf '%s: child ack rejects close as a usage error\n' "$implementation"
 }
 
@@ -240,6 +244,7 @@ set_parent_workspace() {
 hook_state="$work_dir/hook-state"
 make_dispatch "$hook_state" hook-owned done hook-delivery
 set_parent_workspace "$hook_state/dispatches/hook-owned/meta.json"
+state_db_import "$binary" "$hook_state"
 "$binary" hook turn-end '{}' >/dev/null
 assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 1
 assert_contains "$(cat "$MEGABRAIN_TEST_SEND_LOG")" 'orchestrate close hook-owned'
@@ -249,9 +254,10 @@ printf 'turn-end hook notices an owned done dispatch with a retained terminal\n'
 waiter_state="$work_dir/hook-waiter"
 make_dispatch "$waiter_state" hook-waiter done waiter-delivery
 set_parent_workspace "$waiter_state/dispatches/hook-waiter/meta.json"
+state_db_import "$binary" "$waiter_state"
 sleep 30 &
 waiter_pid=$!
-printf '%s\n' "{\"pid\":$waiter_pid}" >"$waiter_state/dispatches/hook-waiter/waiter.json"
+state_db_put_waiter "$waiter_state" hook-waiter "$waiter_pid"
 "$binary" hook turn-end '{}' >/dev/null
 assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 0
 kill "$waiter_pid" 2>/dev/null || true
@@ -265,6 +271,7 @@ make_dispatch "$foreign_state" hook-foreign done foreign-delivery
 set_parent_workspace "$foreign_state/dispatches/hook-foreign/meta.json"
 jq '.parentSessionId = "other-parent"' "$foreign_state/dispatches/hook-foreign/meta.json" >"$foreign_state/meta.tmp"
 mv "$foreign_state/meta.tmp" "$foreign_state/dispatches/hook-foreign/meta.json"
+state_db_import "$binary" "$foreign_state"
 "$binary" hook turn-end '{}' >/dev/null
 assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 0
 printf 'turn-end hook suppresses a done dispatch owned by another session\n'

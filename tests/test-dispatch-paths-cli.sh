@@ -5,7 +5,9 @@ set -euo pipefail
 # Scenarios written before implementation: archived state-changing verbs refuse without writes,
 # archived close succeeds before any host call, and invalid identifiers stay rejected.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$root/tests/support/state-db.bash"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-dispatch-paths.XXXXXX")"
+
 trap 'rm -rf "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -18,7 +20,7 @@ make_archived() {
   local state="$1"
   mkdir -p "$state/dispatches/archive/2026-09/arq/messages" "$state/dispatches/archive/2026-09/arq/deliveries"
   printf '%s\n' '{"dispatchId":"arq","parentSessionId":"p","parentHost":"orca","state":"running","processState":"running","runtime":"host","childHost":"orca","terminalId":"child","terminalState":"retained"}' >"$state/dispatches/archive/2026-09/arq/meta.json"
-  printf '%s\n' '{"id":"delivery","dispatchId":"arq","status":"outstanding","messageSeqs":[1]}' >"$state/dispatches/archive/2026-09/arq/deliveries/delivery.json"
+  printf '%s\n' '{"id":"delivery","dispatchId":"arq","recipient":"child","status":"outstanding","messageSeqs":[1],"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}' >"$state/dispatches/archive/2026-09/arq/deliveries/delivery.json"
 }
 
 mkdir -p "$work/home" "$work/bin"
@@ -31,8 +33,10 @@ chmod +x "$work/bin/orca"
 make_archived "$work/archive"
 export PATH="$work/bin:$PATH" HOST_CALL_LOG="$work/host-calls" MEGABRAIN_STATE_DIR="$work/archive"
 export MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=p ORCA_TERMINAL_HANDLE=p
-meta_path="$work/archive/dispatches/archive/2026-09/arq/meta.json"
-before_meta="$(cat "$meta_path")"
+state_db_import "$root/.build/megabrain" "$work/archive"
+ [ "$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -r '.archived')" = true ] || fail 'archive fixture was not imported as archived'
+before_meta="$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -c '.meta')"
+before_delivery="$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -c '.deliveries[0]')"
 
 run_archived() {
   local expected_status="$1"; shift
@@ -46,7 +50,7 @@ run_archived() {
 
 close_output="$(run_archived 0 orchestrate close arq)"
 [ "$close_output" = 'dispatch arq is archived; nothing to close' ] || fail "archived close response: $close_output"
-[ "$(cat "$meta_path")" = "$before_meta" ] || fail 'archived close changed metadata'
+[ "$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -c '.meta')" = "$before_meta" ] || fail 'archived close changed metadata'
 [ ! -e "$HOST_CALL_LOG" ] || fail 'archived close called the host'
 printf 'compiled archived close is a no-op before any host call\n'
 
@@ -58,14 +62,14 @@ for verb in reply stop change reconcile; do
     reconcile) output="$(run_archived 1 orchestrate reconcile arq)" ;;
   esac
   case "$output" in *'dispatch arq is archived'*) ;; *) fail "archived $verb did not report its state: $output" ;; esac
-  [ "$(cat "$meta_path")" = "$before_meta" ] || fail "archived $verb changed metadata"
+  [ "$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -c '.meta')" = "$before_meta" ] || fail "archived $verb changed metadata"
 done
 printf 'reply, stop, change and reconcile refuse archived dispatches\n'
 
 ack_output="$(run_archived 1 orchestrate ack arq delivery --close)"
 case "$ack_output" in *'dispatch arq is archived'*) ;; *) fail "archived ack --close did not report its state: $ack_output" ;; esac
-[ "$(cat "$meta_path")" = "$before_meta" ] || fail 'archived ack --close changed metadata'
-[ "$(cat "$work/archive/dispatches/archive/2026-09/arq/deliveries/delivery.json")" = '{"id":"delivery","dispatchId":"arq","status":"outstanding","messageSeqs":[1]}' ] || fail 'archived ack --close changed delivery state'
+[ "$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -c '.meta')" = "$before_meta" ] || fail 'archived ack --close changed metadata'
+[ "$(state_db_dispatch "$root/.build/megabrain" "$work/archive" arq | jq -c '.deliveries[0]')" = "$before_delivery" ] || fail 'archived ack --close changed delivery state'
 [ ! -e "$HOST_CALL_LOG" ] || fail 'an archived state-changing verb called the host'
 printf 'ack --close refuses archived dispatches before acknowledging\n'
 
@@ -74,35 +78,11 @@ invalid_output="$(MEGABRAIN_STATE_DIR="$work/invalid" "$root/.build/megabrain" o
 set -e
 [ "$invalid_status" -eq 1 ] || fail "invalid dispatch identifier unexpectedly succeeded: $invalid_output"
 case "$invalid_output" in
-  *'invalid dispatch id'*) ;;
+  *'dispatch not found'*) ;;
   *) fail "invalid dispatch identifier content was not reported by the compiled command: $invalid_output" ;;
 esac
 printf 'compiled invalid-dispatch path reports the rejected identifier\n'
 
-store_module_candidates="$(grep -rl '^export function dispatchRoot(' "$root/src")"
-[ -n "$store_module_candidates" ] || fail 'could not locate the module that exports dispatchRoot'
-case "$store_module_candidates" in
-  *$'\n'*) fail "multiple modules export dispatchRoot:\n$store_module_candidates" ;;
-esac
-store_module="$(realpath "$store_module_candidates")"
-
-set +e
-grep -rn 'dispatches/' "$root/src" >"$work/dispatch-path-matches"
-dispatch_path_status=$?
-set -e
-case "$dispatch_path_status" in
-  0)
-    : >"$work/offending-dispatch-path-matches"
-    while IFS= read -r match; do
-      matched_file="${match%%:*}"
-      [ "$(realpath "$matched_file")" = "$store_module" ] || printf '%s\n' "$match" >>"$work/offending-dispatch-path-matches"
-    done <"$work/dispatch-path-matches"
-    if [ -s "$work/offending-dispatch-path-matches" ]; then
-      fail "dispatch path construction exists outside the dispatch store:
-$(cat "$work/offending-dispatch-path-matches")"
-    fi
-    ;;
-  1) ;;
-  *) fail "could not scan src for dispatch path construction (rg exit $dispatch_path_status)" ;;
-esac
-printf 'dispatch path construction is confined to the dispatch store\n'
+db_check="$(MEGABRAIN_STATE_DIR="$work/archive" "$root/.build/megabrain" db check --json)"
+[ "$(printf '%s' "$db_check" | jq -r '.clean')" = true ] || fail 'archived dispatch database failed integrity check'
+printf 'archived dispatch state is stored in a healthy database\n'
