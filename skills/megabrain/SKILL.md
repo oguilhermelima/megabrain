@@ -22,6 +22,7 @@ command; the help output is the authority, and the lines below are shortened for
 megabrain db check [--json]
 megabrain db backup [--json]
 megabrain db import <dir> [--replace] [--json]
+megabrain db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]
 ```
 
 `db check` reports SQLite integrity, foreign key violations, the schema version, and the state
