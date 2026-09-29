@@ -11,6 +11,10 @@ if [ ! -x "$binary" ]; then
 fi
 
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-turn-end.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME="$state_dir/home"
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 guard_db_state() {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/state-dir-guard.bash"
 
 set -euo pipefail
 
@@ -109,6 +110,7 @@ set_state_dir() {
   # form the pane's shell takes.
   export HOME="$state_dir/home"
   mkdir -p "$HOME" "$state_dir/bin"
+  require_megabrain_test_state "$MEGABRAIN_STATE_DIR"
   if [ -z "${MEGABRAIN_STATE_DIR:-}" ]; then
     printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2
     return 1

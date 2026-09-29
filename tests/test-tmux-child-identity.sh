@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 source "$root/tests/support/state-db.bash"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-ident.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 socket_name="megabrainident"
 session_name="megabrain-ident-test"

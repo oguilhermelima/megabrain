@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-list-performance.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME="$state_dir/home"
 mkdir -p "$HOME" "$state_dir"
 assert_safe_state_dir() {

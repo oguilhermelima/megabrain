@@ -1,3 +1,4 @@
+import { guardedStateDatabase, guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,9 +6,9 @@ import { join } from "node:path";
 import { executeOrchestratePrune } from "../../src/cli/commands/orchestrate-prune.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { openDatabase, withWrite } from "../../src/db/db.js";
+import { withWrite } from "../../src/db/db.js";
 import { parseJsonState, applyJsonStateImport } from "../../src/db/import/json-state.js";
-import { appendMessage, createDelivery, createDispatch, deleteDispatch, getDispatch, listDeliveries, listDispatches, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, deleteDispatch, getDispatch, listDeliveries, listDispatches, listMessages } from "../../src/adapters/state-db.js";
 
 const oldDate = "2020-01-01T00:00:00.000Z";
 
@@ -26,7 +27,7 @@ async function fixture(meta: Record<string, unknown>): Promise<{ root: string; d
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "meta.json"), `${JSON.stringify({ dispatchId, state: "done", createdAt: oldDate, updatedAt: oldDate, terminalState: "owned", ...meta })}\n`);
   const parsed = await parseJsonState(root);
-  const database = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const imported = withWrite(database.value, (db) => applyJsonStateImport(db, parsed));
   if (imported.kind !== "ok" || imported.value.malformed.length > 0) throw new Error("could not seed dispatch database");
@@ -34,7 +35,7 @@ async function fixture(meta: Record<string, unknown>): Promise<{ root: string; d
 }
 
 function records(root: string, includeArchived = false) {
-  const database = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const result = listDispatches(database.value, { includeArchived });
   if (result.kind !== "ok") throw new Error(result.error);
@@ -50,7 +51,7 @@ describe("dispatch deletion", () => {
   test("deletes a dispatch with its messages and deliveries and reports an absent id", async () => {
     const root = await mkdtemp(join(tmpdir(), "megabrain-delete-dispatch-"));
     try {
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
       const handle = database.value;
       expect(createDispatch(handle, { dispatchId: "delete-me", state: "running" }).kind).toBe("ok");

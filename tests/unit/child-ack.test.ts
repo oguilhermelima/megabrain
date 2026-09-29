@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { executeChildAck } from "../../src/cli/commands/child-ack.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch } from "../../src/adapters/state-db.js";
 
 function fakeProcess(behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter {
   return {
@@ -21,7 +22,7 @@ async function withRoot<T>(body: (root: string) => Promise<T>): Promise<T> {
 }
 
 async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
   if (created.kind !== "ok") throw new Error(created.error);

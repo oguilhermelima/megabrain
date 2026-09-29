@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-usage.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 binary="$root/.build/megabrain"
 
 cleanup() {

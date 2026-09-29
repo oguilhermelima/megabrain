@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { isDispatchArchived, getDispatch, listDeliveries, listMessages } from "../../src/adapters/state-db.js";
 import { openDatabase, withWrite } from "../../src/db/db.js";
 import { applyJsonStateImport, parseJsonState } from "../../src/db/import/json-state.js";
+import { assertUnitStateDirectory } from "./state-db-guard.js";
 
 export async function importDispatchFixture(stateDir: string, dispatchId: string): Promise<void> {
   const source = await mkdtemp(join(tmpdir(), "megabrain-unit-fixture-"));
@@ -17,6 +18,7 @@ export async function importDispatchFixture(stateDir: string, dispatchId: string
 }
 
 export async function importStateFixture(stateDir: string, sourceDir = stateDir, replace = true): Promise<void> {
+  assertUnitStateDirectory({ MEGABRAIN_STATE_DIR: stateDir });
   const parsed = await parseJsonState(sourceDir);
   const opened = openDatabase({ MEGABRAIN_STATE_DIR: stateDir });
   if (opened.kind !== "ok") throw new Error(opened.error);
@@ -32,6 +34,7 @@ export async function importStateFixture(stateDir: string, sourceDir = stateDir,
 }
 
 export function readDispatchFixture(stateDir: string, dispatchId: string) {
+  assertUnitStateDirectory({ MEGABRAIN_STATE_DIR: stateDir });
   const opened = openDatabase({ MEGABRAIN_STATE_DIR: stateDir });
   if (opened.kind !== "ok") throw new Error(opened.error);
   try {

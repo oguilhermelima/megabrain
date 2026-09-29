@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { runMachineInstall } from "../../src/cli/commands/install-machine.js";
 import { SetupCancelled, type MachinePrompter } from "../../src/cli/commands/install-ui.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
-import { getInstallState, stateDatabase } from "../../src/adapters/state-db.js";
+import { getInstallState } from "../../src/adapters/state-db.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -21,7 +22,7 @@ function environment(): { HOME: string; MEGABRAIN_STATE_DIR: string } {
 }
 
 function machineState(env: ReturnType<typeof environment>): Record<string, unknown> {
-  const opened = stateDatabase(env);
+  const opened = guardedStateDatabase(env);
   if (opened.kind !== "ok") throw new Error(opened.error);
   const result = getInstallState(opened.value);
   if (result.kind !== "ok") throw new Error(result.error);

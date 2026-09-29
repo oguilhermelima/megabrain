@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { selectChain, type ChainConfig } from "../../src/core/chain.js";
 import { executeChain } from "../../src/cli/commands/chain.js";
@@ -7,7 +8,7 @@ import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ModelRegistry } from "../../src/core/model.js";
-import { stateDatabase, saveModels } from "../../src/adapters/state-db.js";
+import { saveModels } from "../../src/adapters/state-db.js";
 
 const step = { agent: "codex", model: "m", effort: "high" };
 const config: ChainConfig = {
@@ -45,7 +46,7 @@ describe("chain validation reads the state model registry", () => {
       writeFileSync(join(root, ".megabrain/models.json"), JSON.stringify(registry([
         { agent: "codex", model: "gpt-5.5", reasoning: { separateAxis: true, levels: ["low"] }, provenance: { kind: "sourced" } },
       ])));
-      const opened = stateDatabase({ MEGABRAIN_STATE_DIR: state });
+      const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: state });
       if (opened.kind !== "ok") throw new Error(opened.error);
       saveModels(opened.value, registry([
         { agent: "codex", model: "gpt-6-luna", reasoning: { separateAxis: true, levels: ["high"] }, provenance: { kind: "curated", method: "manual curation", obtainedAt: "2026-09-23" } },
@@ -67,7 +68,7 @@ describe("chain validation reads the state model registry", () => {
       const environment = { MEGABRAIN_STATE_DIR: state, HOME: state, MEGABRAIN_ROOT: root };
       const result = await executeChain(["add", "uses-template-model", "--when", "{}", "--steps", JSON.stringify([{ agent: "codex", model: "gpt-6-luna", effort: "high" }])], environment);
       expect(result.kind).toBe("ok");
-      const opened = stateDatabase(environment);
+      const opened = guardedStateDatabase(environment);
       if (opened.kind !== "ok") throw new Error(opened.error);
       const loaded = (await import("../../src/adapters/state-db.js")).loadModels(opened.value);
       expect(loaded.kind).toBe("ok");

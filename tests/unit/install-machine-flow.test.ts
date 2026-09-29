@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,13 +6,13 @@ import { join } from "node:path";
 import { parseMachineInstallArgs, resolveDefaultModules, runMachineInstall } from "../../src/cli/commands/install-machine.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
-import { deleteInstallModule, getInstallState, mutateInstallModule, putInstallModule, stateDatabase } from "../../src/adapters/state-db.js";
+import { deleteInstallModule, getInstallState, mutateInstallModule, putInstallModule } from "../../src/adapters/state-db.js";
 import { executeDatabase } from "../../src/cli/commands/db.js";
 
 const temporaryDirectories: string[] = [];
 
 function machineState(environment: { MEGABRAIN_STATE_DIR: string }): Record<string, any> {
-  const opened = stateDatabase(environment);
+  const opened = guardedStateDatabase(environment);
   if (opened.kind !== "ok") throw new Error(opened.error);
   const result = getInstallState(opened.value);
   if (result.kind !== "ok") throw new Error(result.error);
@@ -19,7 +20,7 @@ function machineState(environment: { MEGABRAIN_STATE_DIR: string }): Record<stri
 }
 
 function seedInstallState(directory: string, state: Record<string, unknown>): void {
-  const opened = stateDatabase({ MEGABRAIN_STATE_DIR: directory });
+  const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: directory });
   if (opened.kind !== "ok") throw new Error(opened.error);
   for (const [moduleId, value] of Object.entries(state)) {
     const result = putInstallModule(opened.value, moduleId, value);
@@ -30,7 +31,7 @@ function seedInstallState(directory: string, state: Record<string, unknown>): vo
 test("install state module updates preserve sibling fields, delete rows, and round-trip through db show", async () => {
   const directory = temporaryDirectory();
   const environment = { MEGABRAIN_STATE_DIR: directory };
-  const opened = stateDatabase(environment);
+  const opened = guardedStateDatabase(environment);
   if (opened.kind !== "ok") throw new Error(opened.error);
   expect(putInstallModule(opened.value, "orchestration-hooks", { installed: true, details: "existing" }).kind).toBe("ok");
   expect(mutateInstallModule(opened.value, "orchestration-hooks", (value) => ({

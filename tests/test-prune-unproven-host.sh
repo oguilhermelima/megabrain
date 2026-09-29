@@ -4,6 +4,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-prune-unproven-host.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 trap 'rm -rf "$work"' EXIT
 state="$work/state"
 export HOME="$work/home"

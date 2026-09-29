@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 state_root="$(mktemp -d /tmp/megabrain-model-registry-upgrade.XXXXXX)"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 
 cleanup() {
   local rc=$?

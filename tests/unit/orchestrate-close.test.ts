@@ -1,3 +1,4 @@
+import { guardedStateDatabase, guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,20 +7,20 @@ import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { openDatabase, withWrite } from "../../src/db/db.js";
+import { withWrite } from "../../src/db/db.js";
 import { parseJsonState, applyJsonStateImport } from "../../src/db/import/json-state.js";
-import { getDispatch, stateDatabase } from "../../src/adapters/state-db.js";
+import { getDispatch } from "../../src/adapters/state-db.js";
 
 async function importFixture(root: string): Promise<void> {
   const parsed = await parseJsonState(root);
-  const database = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const result = withWrite(database.value, (db) => applyJsonStateImport(db, parsed));
   if (result.kind !== "ok" || result.value.malformed.length > 0) throw new Error("could not import close fixture");
 }
 
 function dispatch(root: string, id: string): Record<string, unknown> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const result = getDispatch(database.value, id);
   if (result.kind !== "ok" || result.value === undefined) throw new Error(`dispatch missing: ${id}`);

@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-db-import-show.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$tmp/.megabrain-test-state"
+require_megabrain_test_state
+
 trap 'rm -rf "$tmp"' EXIT
 export MEGABRAIN_STATE_DIR="$tmp/state"
 binary="$root/.build/megabrain"

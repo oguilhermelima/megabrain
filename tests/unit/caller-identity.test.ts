@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,7 +26,7 @@ import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.j
 import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/dispatch.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
-import { createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch } from "../../src/adapters/state-db.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -120,7 +121,7 @@ function baseMeta(overrides: JsonRecord = {}): JsonRecord {
 }
 
 async function writeDispatch(root: string, id: string, meta: JsonRecord): Promise<void> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const created = createDispatch(database.value, { ...meta, dispatchId: id });
   if (created.kind !== "ok") throw new Error(created.error);

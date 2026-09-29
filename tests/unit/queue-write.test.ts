@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientFor
 import { findChild } from "../../src/cli/commands/queue-write.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { archiveDispatch, createDispatch, isDispatchArchived, stateDatabase } from "../../src/adapters/state-db.js";
+import { archiveDispatch, createDispatch, isDispatchArchived } from "../../src/adapters/state-db.js";
 import { appendMessage, claimOutbox, createDelivery, finishNotification, listDeliveries, listMessages, listNudges, listOutbox } from "../../src/adapters/state-db.js";
 import type { DatabaseHandle } from "../../src/db/db.js";
 
@@ -86,7 +87,7 @@ describe("findChild: tmux-runtime records", () => {
   }
 
   async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
     if (database.kind !== "ok") throw new Error(database.error);
     const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
     if (created.kind !== "ok") throw new Error(created.error);
@@ -173,7 +174,7 @@ describe("findChild: MEGABRAIN_DISPATCH_ID fast path only short-circuits for the
   }
 
   async function writeDispatch(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
     if (database.kind !== "ok") throw new Error(database.error);
     const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
     if (created.kind !== "ok") throw new Error(created.error);
@@ -241,7 +242,7 @@ describe("queue facade transactions", () => {
   async function withDatabase<T>(body: (handle: DatabaseHandle) => Promise<T>): Promise<T> {
     const root = await mkdtemp(join(tmpdir(), "megabrain-queue-atomic-"));
     try {
-      const opened = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (opened.kind !== "ok") throw new Error(opened.error);
       const dispatch = createDispatch(opened.value, { dispatchId: "atomic", state: "running" });
       if (dispatch.kind !== "ok") throw new Error(dispatch.error);

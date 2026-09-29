@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-queue-control.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 pane_fixture="$state_dir/pane.transcript"
 stop_calls_file="$state_dir/stop.calls"
 terminal_status_fixture=proven

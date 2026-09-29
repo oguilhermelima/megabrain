@@ -3,6 +3,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-install-doctor.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 binary="$root/.build/megabrain"
 export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
 modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync)

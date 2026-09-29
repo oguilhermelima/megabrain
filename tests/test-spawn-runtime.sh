@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 binary="$root/.build/megabrain"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-runtime.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME
 assert_safe_state_dir() {
   [ -n "${MEGABRAIN_STATE_DIR:-}" ] || { printf 'FAIL: MEGABRAIN_STATE_DIR is unset\n' >&2; exit 1; }

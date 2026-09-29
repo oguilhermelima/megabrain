@@ -7,6 +7,10 @@ binary="$root/.build/megabrain"
 source "$root/tests/support/state-db.bash"
 [ -x "$binary" ] || { printf 'skip: compiled doctor binary is missing at %s; run bun run build\n' "$binary"; exit 0; }
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-state-doctor.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 
 export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
 

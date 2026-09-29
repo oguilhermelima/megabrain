@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-skill-sync.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 cleanup() {
   local rc=$?
   chmod -R u+rwX "$work" 2>/dev/null || true

@@ -1,9 +1,9 @@
+import { guardedOpenDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeNative } from "../../src/cli/commands/native.js";
-import { openDatabase } from "../../src/db/db.js";
 import { listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -117,7 +117,7 @@ describe("native Appium session store", () => {
 
     const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(1);
-    const database = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+    const database = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
     expect(database.kind).toBe("ok");
     if (database.kind === "ok") {
       expect(listNativeSessions(database.value)).toEqual([{ udid: "one", bundleId: "com.example.app", sessionId: "created-1" }]);
@@ -187,7 +187,7 @@ describe("native Appium session store", () => {
 
     await Promise.all([health(directory, processAdapter), health(directory, processAdapter)]);
 
-    const database = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+    const database = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
     expect(database.kind).toBe("ok");
     if (database.kind === "ok") {
       expect(listNativeSessions(database.value)).toHaveLength(1);

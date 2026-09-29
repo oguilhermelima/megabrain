@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/support/state-db.bash"
 export MEGABRAIN_ROOT="$root"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-real-use.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 node_bin="$state_dir/node-bin"
 mkdir -p "$node_bin"

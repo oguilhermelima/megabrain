@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 binary="$root/.build/megabrain"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-parent-visibility.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME="$state_dir/home"
 mkdir -p "$HOME"
 

@@ -1,3 +1,4 @@
+import { guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,7 +8,6 @@ import { defaultResolveWorktree, executeSpawn, markRunningIfSpawning, type Spawn
 import { tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 import { appendMessage, mutateDispatch } from "../../src/adapters/state-db.js";
-import { openDatabase } from "../../src/db/db.js";
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -106,7 +106,7 @@ function readMeta(root: string, dispatchId: string): Record<string, unknown> {
 }
 
 function appendReceived(root: string, dispatchId: string): void {
-  const opened = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
   if (opened.kind !== "ok") throw new Error(opened.error);
   try {
     const result = appendMessage(opened.value, dispatchId, { from: "child", type: "received", text: "prompt received", sessionId: "child-terminal" });
@@ -117,7 +117,7 @@ function appendReceived(root: string, dispatchId: string): void {
 }
 
 function markWaitingForReply(root: string, dispatchId: string): void {
-  const opened = openDatabase({ MEGABRAIN_STATE_DIR: root });
+  const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
   if (opened.kind !== "ok") throw new Error(opened.error);
   try {
     const result = mutateDispatch(opened.value, dispatchId, (current) => ({ ...current, state: "waiting_for_reply", processState: "running" }));

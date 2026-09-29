@@ -4,6 +4,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 if [ ! -x "$root/.build/megabrain" ]; then printf 'skip: compiled prune binary is missing; run bun run build\n'; exit 0; fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-prune-cli.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME="$work/home"
 mkdir -p "$HOME"
 assert_safe_state_dir() {

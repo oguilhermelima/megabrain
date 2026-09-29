@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 source "$root/tests/support/state-db.bash"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-integrations.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 
 work="$(cd "$work" && pwd -P)"
 trap 'rm -rf "$work"' EXIT

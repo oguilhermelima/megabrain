@@ -1,10 +1,11 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeDoctor, executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
-import { createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch } from "../../src/adapters/state-db.js";
 
 function processFor(values: Record<string, string>): ProcessAdapter {
   return {
@@ -26,7 +27,7 @@ function report(result: Awaited<ReturnType<typeof executeDoctor>>) {
 }
 
 function writeDispatchMeta(stateDir: string, dispatchId: string, dispatchState: string, updatedAt: string, extra: Record<string, unknown> = {}): void {
-  const opened = stateDatabase({ MEGABRAIN_STATE_DIR: stateDir });
+  const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: stateDir });
   if (opened.kind !== "ok") throw new Error(opened.error);
   const result = createDispatch(opened.value, {
     dispatchId,

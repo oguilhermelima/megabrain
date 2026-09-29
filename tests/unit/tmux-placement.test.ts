@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,13 +7,13 @@ import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
-import { deleteTmuxSession, getDispatch, getTmuxSession, listTmuxSessions, putTmuxSession, stateDatabase } from "../../src/adapters/state-db.js";
+import { deleteTmuxSession, getDispatch, getTmuxSession, listTmuxSessions, putTmuxSession } from "../../src/adapters/state-db.js";
 
 describe("tmux placement", () => {
   test("lists, looks up, and deletes tmux sessions through the state facade", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-registry-`);
     try {
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
       const handle = database.value;
       expect(putTmuxSession(handle, { tmuxSession: "z-session", workingDirectory: "/z" }, "$2").kind).toBe("ok");
@@ -67,7 +68,7 @@ describe("tmux placement", () => {
         TMUX: "isolated", TMUX_PANE: "%caller", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-orca-tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, { resolveWorktree: async () => ok({ path: root, branch: "main", ownership: "existing", workspaceId: null }) });
       expect(result.kind).toBe("ok");
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: `${root}/state` });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: `${root}/state` });
       if (database.kind !== "ok") throw new Error(database.error);
       const stored = getDispatch(database.value, "dispatch-orca-tmux");
       if (stored.kind !== "ok" || stored.value === undefined) throw new Error("spawned dispatch missing from database");
@@ -85,7 +86,7 @@ describe("tmux placement", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-wrapper-reuse-`);
     const state = `${root}/state`;
     const calls: { command: string; args: readonly string[] }[] = [];
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: state });
+    const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: state });
     if (database.kind !== "ok") throw new Error(database.error);
     putTmuxSession(database.value, { tmuxSession: "wrapper-session", workingDirectory: "/work/tree", tmuxPane: "%main", role: "main" }, "$1");
     const process: ProcessAdapter = {

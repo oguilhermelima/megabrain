@@ -1,10 +1,11 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { executeInstall } from "../../src/cli/commands/install-doctor.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
-import { getInstallState, stateDatabase } from "../../src/adapters/state-db.js";
+import { getInstallState } from "../../src/adapters/state-db.js";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 
@@ -298,7 +299,7 @@ describe("executeInstall", () => {
     expect(tuningInstalled.length).toBeGreaterThan(0);
     const zshrc = readFileSync(join(home, ".zshrc"), "utf8");
     expect(zshrc).toContain("megabrain tmux wrapper");
-    const opened = stateDatabase(environment);
+    const opened = guardedStateDatabase(environment);
     if (opened.kind !== "ok") throw new Error(opened.error);
     const loaded = getInstallState(opened.value);
     if (loaded.kind !== "ok") throw new Error(loaded.error);

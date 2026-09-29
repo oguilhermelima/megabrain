@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-lock.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 holder_pid=""
 cleanup() {
   [ -z "$holder_pid" ] || kill -9 "$holder_pid" 2>/dev/null || true

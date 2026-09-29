@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-reply-nudge.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 state_root="$(cd -P "$state_root" && pwd -P)"
 state_dir="$state_root/state"
 socket_name=mbreply

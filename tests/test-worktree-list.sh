@@ -12,6 +12,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-list.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 wrapper_dir="$state_root/bin"
 git_log="$state_root/git.log"
 real_git="$(command -v git)"

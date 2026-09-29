@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../support" && pwd -P)/state-dir-guard.bash"
 
 # Lane-A test fixture: build a dispatch meta.json directly with jq, matching the shape the
 # compiled binary itself writes (src/cli/commands/orchestrate-spawn.ts's initialMeta) and reads
@@ -14,6 +15,7 @@
 # state=running
 write_dispatch_meta() {
   local state_dir="$1" dispatch_id="$2" dispatch_dir now
+  require_megabrain_test_state "$state_dir"
   shift 2
   local parentSessionId=parent-terminal parentHost=superset childHost=superset workspaceId=""
   local terminalId="$dispatch_id-terminal" worktreePath="." branch=main agent=codex agentId=""
@@ -124,6 +126,7 @@ write_dispatch_meta() {
 # Usage: append_dispatch_message <state-dir> <dispatch-id> <from> <type> <text> [session-id]
 append_dispatch_message() {
   local state_dir="$1" dispatch_id="$2" from="$3" type="$4" text="$5" session_id="${6:-}"
+  require_megabrain_test_state "$state_dir"
   local dispatch_dir="$state_dir/dispatches/$dispatch_id" messages_dir seq name now
   local has_prior_done=false recipient="" delivery_id
   messages_dir="$dispatch_dir/messages"

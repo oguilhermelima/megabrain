@@ -1,8 +1,9 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { archiveDispatch, createDispatch, listDispatchEntries, stateDatabase } from "../../src/adapters/state-db.js";
+import { archiveDispatch, createDispatch, listDispatchEntries } from "../../src/adapters/state-db.js";
 
 let stateDirectory = "";
 const environment = (): { MEGABRAIN_STATE_DIR: string } => ({ MEGABRAIN_STATE_DIR: stateDirectory });
@@ -22,7 +23,7 @@ afterEach(() => {
 
 describe("listDispatchEntries", () => {
   test("returns each record with archive status from the same listing", () => {
-    const database = requireOk(stateDatabase(environment()));
+    const database = requireOk(guardedStateDatabase(environment()));
     requireOk(createDispatch(database, { dispatchId: "live", state: "running" }));
     requireOk(createDispatch(database, { dispatchId: "archived", state: "done" }));
     requireOk(archiveDispatch(database, "archived", "2026-09-01T00:00:00.000Z"));
@@ -35,7 +36,7 @@ describe("listDispatchEntries", () => {
   });
 
   test("uses the same default live-only filter as listDispatches", () => {
-    const database = requireOk(stateDatabase(environment()));
+    const database = requireOk(guardedStateDatabase(environment()));
     requireOk(createDispatch(database, { dispatchId: "live", state: "running" }));
     requireOk(createDispatch(database, { dispatchId: "archived", state: "done" }));
     requireOk(archiveDispatch(database, "archived"));

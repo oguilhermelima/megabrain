@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-done-idempotency.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 export MEGABRAIN_STATE_DIR="$state_dir"
 export HOME="$state_dir/home"
 mkdir -p "$HOME"

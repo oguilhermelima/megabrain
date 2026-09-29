@@ -7,6 +7,10 @@ if [ ! -x "$root/.build/megabrain" ]; then
   exit 0
 fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-check-cli.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 trap 'rm -rf "$work_dir"' EXIT
 
 assert_equal() {

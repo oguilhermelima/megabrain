@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-tmux-panes.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$tmp/.megabrain-test-state"
+require_megabrain_test_state
+
 socket="mbpane$$"
 state="$tmp/state"
 export HOME="$tmp/home"

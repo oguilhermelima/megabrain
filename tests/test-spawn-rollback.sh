@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 node_bin="$(dirname "$(command -v node)")"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-spawn-rollback.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 cleanup() {
   rm -rf "$work_dir"

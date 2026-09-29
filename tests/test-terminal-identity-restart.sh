@@ -9,6 +9,10 @@ binary="$root/.build/megabrain"
   exit 0
 }
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-terminal.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 fake_bin="$state_dir/bin"
 fake_port_state="$state_dir/fake-port-state"
 fake_port_recreated_file="$state_dir/fake-port-recreated"

@@ -11,6 +11,10 @@ fi
 source "$root/tests/fixtures/entrypoint-routing.sh"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-child-ack.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME="$work_dir/home"
 export MEGABRAIN_STATE_DIR="$work_dir/safe-state"
 guard_db_state() {

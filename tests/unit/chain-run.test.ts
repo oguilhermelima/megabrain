@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { continueRefusedChain, executeChainRun, type ChainRunDependencies } from "../../src/cli/commands/chain-run.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { createDispatch, getDispatch, listMessages, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch, getDispatch, listMessages } from "../../src/adapters/state-db.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -41,7 +42,7 @@ function environment(root: string, extra: Record<string, string | undefined> = {
 }
 
 function readDispatch(root: string, id: string): Record<string, unknown> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const result = getDispatch(database.value, id);
   if (result.kind !== "ok" || result.value === undefined) throw new Error(`dispatch missing: ${id}`);
@@ -333,7 +334,7 @@ describe("executeChainRun: dispatch side effects", () => {
         chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }],
         usageLimits: { liveProviders: [], cacheTtlSeconds: 30, timeoutSeconds: 5, notice: { enabled: true, intervalSeconds: 3600 } },
       });
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
       createDispatch(database.value, { dispatchId: "dispatch-notice", state: "running", chain: null });
       const result = await executeChainRun(["--worktree", "/w", "--prompt", "notice-prompt", "--json"], environment(root), fakeProcess(), { spawn: okSpawn("dispatch-notice") });
@@ -350,7 +351,7 @@ describe("executeChainRun: dispatch side effects", () => {
   test("merges the prompt into an already-established chain context", async () => {
     await withRoot("chain-context", async (root) => {
       await writeConfig(root, { chains: {}, defaultSteps: [{ agent: "codex", model: "m1" }] });
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
       createDispatch(database.value, { dispatchId: "dispatch-ctx", state: "running", chain: { name: "defaultSteps", step: 1, total: 1 } });
       const result = await executeChainRun(["--worktree", "/w", "--prompt", "carried-prompt", "--json"], environment(root), fakeProcess(), { spawn: okSpawn("dispatch-ctx") });
@@ -404,7 +405,7 @@ describe("executeChainRun: in-process spawn hand-off", () => {
 
 describe("continueRefusedChain", () => {
   async function writeDispatchMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
     if (database.kind !== "ok") throw new Error(database.error);
     const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
     if (created.kind !== "ok") throw new Error(created.error);

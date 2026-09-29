@@ -1,8 +1,9 @@
+import { guardedOpenDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase, type DatabaseHandle } from "../../src/db/db.js";
+import { type DatabaseHandle } from "../../src/db/db.js";
 import { readJsonStateParity, importJsonState } from "../../src/db/import/json-state.js";
 import { insertDispatch, getDispatch, updateDispatch } from "../../src/db/queries/dispatches.js";
 import { insertMessage, listMessages } from "../../src/db/queries/messages.js";
@@ -12,7 +13,7 @@ let current: { directory: string; handle: DatabaseHandle } | undefined;
 
 async function database(): Promise<{ directory: string; db: DatabaseHandle["db"] }> {
   const directory = await mkdtemp(join(tmpdir(), "megabrain-dispatch-db-"));
-  const result = openDatabase({ MEGABRAIN_STATE_DIR: directory });
+  const result = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
   if (result.kind !== "ok") {
     await rm(directory, { recursive: true, force: true });
     throw new Error(result.error);

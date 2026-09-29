@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 binary="$root/.build/megabrain"
 source "$root/tests/support/state-db.bash"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-e2e-findings.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 
 
 cleanup() {

@@ -7,6 +7,10 @@ unset MEGABRAIN_SESSION_ID MEGABRAIN_SESSION_HOST CLAUDE_CODE_SESSION_ID CODEX_T
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-orchestrate-adopt.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 export HOME="$state_dir/home"
 mkdir -p "$HOME" "$state_dir/state"
 assert_safe_state_dir() {

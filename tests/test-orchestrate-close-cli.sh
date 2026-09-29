@@ -5,6 +5,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 test_real_home="${HOME:-}"
 source "$root/tests/fixtures/a-dispatch-meta.sh"
 state_binary="$(mktemp -d /tmp/mbclose-binary.XXXXXX)"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_binary/.megabrain-test-state"
+require_megabrain_test_state
+
 fake_dir="$(mktemp -d /tmp/mbclose-bin.XXXXXX)"
 trap 'rm -rf "$state_binary" "$fake_dir"' EXIT
 export HOME="$state_binary/home"

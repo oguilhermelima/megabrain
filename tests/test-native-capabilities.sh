@@ -4,6 +4,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-native-capabilities.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
+require_megabrain_test_state
+
 trap 'rm -rf "$work"' EXIT
 if [ ! -x "$root/.build/megabrain" ]; then
   printf 'FAIL: compiled native binary is missing at %s; run bun run build\n' "$root/.build/megabrain" >&2

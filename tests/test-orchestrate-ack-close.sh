@@ -13,6 +13,10 @@ if [ ! -x "$binary" ]; then
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-ack-close.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
+require_megabrain_test_state
+
 
 fake_dir="$work_dir/bin"
 mkdir -p "$fake_dir" "$work_dir/home"

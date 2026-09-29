@@ -10,6 +10,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_root="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-chain-validation.XXXXXX")"
+source "$root/tests/support/state-dir-guard.bash"
+export MEGABRAIN_STATE_DIR="$state_root/.megabrain-test-state"
+require_megabrain_test_state
+
 wrapper_dir="$state_root/bin"
 real_jq="$(command -v jq)"
 path_without_wrapper="$PATH"

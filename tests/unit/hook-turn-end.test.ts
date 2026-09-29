@@ -1,3 +1,4 @@
+import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import { appendMessage } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { createDispatch, getDispatch, listDispatches, listMessages, putWaiter, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch, getDispatch, listDispatches, listMessages, putWaiter } from "../../src/adapters/state-db.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 type Behavior = (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>;
@@ -37,14 +38,14 @@ function environment(root: string, extra: Record<string, string | undefined> = {
 }
 
 async function writeMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
   if (created.kind !== "ok") throw new Error(created.error);
 }
 
 async function readMeta(root: string, dispatchId: string): Promise<Record<string, unknown>> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const record = getDispatch(database.value, dispatchId);
   if (record.kind !== "ok" || record.value === undefined) throw new Error(record.kind === "ok" ? `missing dispatch ${dispatchId}` : record.error);
@@ -52,7 +53,7 @@ async function readMeta(root: string, dispatchId: string): Promise<Record<string
 }
 
 function readMessages(root: string, dispatchId: string): readonly Record<string, unknown>[] {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const messages = listMessages(database.value, dispatchId);
   if (messages.kind !== "ok") throw new Error(messages.error);
@@ -60,7 +61,7 @@ function readMessages(root: string, dispatchId: string): readonly Record<string,
 }
 
 function readDispatchIds(root: string): readonly string[] {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   const dispatches = listDispatches(database.value);
   if (dispatches.kind !== "ok") throw new Error(dispatches.error);
@@ -150,7 +151,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     await withRoot("active-waiter", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "done", terminalState: "owned" });
       await mkdir(join(root, "dispatches", "d1"), { recursive: true });
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
       const waiter = putWaiter(database.value, { dispatchId: "d1", pid: process.pid, parentSessionId: "coord-term", parentHost: "orca", createdAt: new Date().toISOString() });
       if (waiter.kind !== "ok") throw new Error(waiter.error);

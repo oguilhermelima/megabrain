@@ -1,9 +1,10 @@
+import { guardedStateDatabase, guardedOpenDatabase } from "./state-db-guard.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { latestSchemaVersion, openDatabase } from "../../src/db/db.js";
+import { latestSchemaVersion } from "../../src/db/db.js";
 import { updateDispatch, type DispatchRow } from "../../src/db/queries/dispatches.js";
 import {
   ackDelivery,
@@ -42,7 +43,7 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 
 describe("state database facade", () => {
   test("mutateDispatch retries a version conflict and keeps all patches", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "retry", state: "running", counter: 0, other: 0 }));
     let calls = 0;
     const result = mutateDispatch(db, "retry", (current) => {
@@ -57,12 +58,12 @@ describe("state database facade", () => {
       return { counter: Number(current.counter) + 1, other: Number(current.other) + 1 };
     });
     expect(result.kind).toBe("ok");
-    const final = requireOk(stateDatabase(environment));
+    const final = requireOk(guardedStateDatabase(environment));
     expect(requireOk(listDispatches(final)).find((record) => record.dispatchId === "retry")).toMatchObject({ counter: 2, other: 1 });
   });
 
   test("four OS processes preserve 1000 concurrent dispatch counter updates", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "counter", state: "running", counter: 0 }));
     const script = `const { stateDatabase, mutateDispatch } = await import(${JSON.stringify(moduleUrl)});\nconst directory = process.argv[1];\nconst db = stateDatabase({ MEGABRAIN_STATE_DIR: directory });\nif (db.kind !== "ok") throw Error(db.error);\nfor (let i = 0; i < 250; i++) { const result = mutateDispatch(db.value, "counter", (record) => ({ counter: Number(record.counter) + 1 })); if (result.kind !== "ok") throw Error(result.error); }`;
     const children = Array.from({ length: 4 }, () => spawnSync(process.execPath, ["-e", script, stateDirectory], {
@@ -70,12 +71,12 @@ describe("state database facade", () => {
       env: { ...process.env, MEGABRAIN_STATE_DIR: stateDirectory, HOME: stateDirectory },
     }));
     for (const child of children) expect(child.status, child.stderr || child.stdout).toBe(0);
-    const rows = requireOk(listDispatches(requireOk(stateDatabase(environment))));
+    const rows = requireOk(listDispatches(requireOk(guardedStateDatabase(environment))));
     expect(rows.find((record) => record.dispatchId === "counter")?.counter).toBe(1000);
   });
 
   test("four OS processes allocate contiguous, unique message sequences", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "messages", state: "running" }));
     const script = `const { stateDatabase, appendMessage } = await import(${JSON.stringify(moduleUrl)});\nconst directory = process.argv[1];\nconst worker = process.argv[2];\nconst db = stateDatabase({ MEGABRAIN_STATE_DIR: directory });\nif (db.kind !== "ok") throw Error(db.error);\nfor (let i = 0; i < 250; i++) { const result = appendMessage(db.value, "messages", { from: worker, type: "reply", text: String(i), createdAt: new Date().toISOString() }); if (result.kind !== "ok") throw Error(result.error); }`;
     const children = Array.from({ length: 4 }, (_, index) => spawnSync(process.execPath, ["-e", script, stateDirectory, `worker-${index}`], {
@@ -83,14 +84,14 @@ describe("state database facade", () => {
       env: { ...process.env, MEGABRAIN_STATE_DIR: stateDirectory, HOME: stateDirectory },
     }));
     for (const child of children) expect(child.status, child.stderr || child.stdout).toBe(0);
-    const messages = requireOk(listMessages(requireOk(stateDatabase(environment)), "messages"));
+    const messages = requireOk(listMessages(requireOk(guardedStateDatabase(environment)), "messages"));
     expect(messages).toHaveLength(1000);
     expect(messages.map((message) => message.seq)).toEqual(Array.from({ length: 1000 }, (_, index) => index + 1));
     expect(new Set(messages.map((message) => message.seq)).size).toBe(1000);
   });
 
   test("message idempotency returns the original sequence without inserting", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "idem", state: "running" }));
     const first = requireOk(appendMessage(db, "idem", { from: "parent", type: "reply", text: "first", idempotencyKey: "reply-1" }));
     const repeated = requireOk(appendMessage(db, "idem", { from: "parent", type: "reply", text: "changed", idempotencyKey: "reply-1" }));
@@ -100,7 +101,7 @@ describe("state database facade", () => {
   });
 
   test("message and outbox row commit together and roll back together", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "atomic", state: "running" }));
     const message = requireOk(appendMessage(db, "atomic", { from: "child", type: "ask", text: "help" }, {
       outbox: { id: "outbox-1", targetKind: "parent", target: "session", payload: { pointer: "mail" } },
@@ -116,7 +117,7 @@ describe("state database facade", () => {
   });
 
   test("outbox claim is exclusive, expired claims return, and finish reports success", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "outbox", state: "running" }));
     const appended = requireOk(appendMessage(db, "outbox", { from: "child", type: "ask", text: "notify" }, {
       outbox: { id: "outbox-claim", targetKind: "parent", target: "session", payload: {} },
@@ -131,7 +132,7 @@ describe("state database facade", () => {
   });
 
   test("delivery ack and fence preserve consumer and generation rules", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "deliveries", state: "running" }));
     requireOk(createDelivery(db, { id: "unclaimed", dispatchId: "deliveries", messageSeqs: [1], status: "outstanding" }));
     const delivery = requireOk(listDeliveries(db, "deliveries"))[0];
@@ -149,7 +150,7 @@ describe("state database facade", () => {
   });
 
   test("archiveDispatch removes records from the default list only", () => {
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "archive", state: "done" }));
     requireOk(archiveDispatch(db, "archive"));
     expect(requireOk(listDispatches(db)).some((record) => record.dispatchId === "archive")).toBe(false);
@@ -158,7 +159,7 @@ describe("state database facade", () => {
 
   test("schema 003 migrates an existing version 2 database", () => {
     expect(latestSchemaVersion).toBe(3);
-    const db = requireOk(stateDatabase(environment));
+    const db = requireOk(guardedStateDatabase(environment));
     db.db.run("DROP TABLE nudge_events");
     db.db.run("DROP TABLE waiters");
     db.db.exec("ALTER TABLE outbox DROP COLUMN detail");
@@ -166,7 +167,7 @@ describe("state database facade", () => {
     db.db.run("DELETE FROM schema_migrations WHERE version = 3");
     db.db.exec("PRAGMA user_version = 2");
     db.close();
-    const migrated = requireOk(openDatabase(environment));
+    const migrated = requireOk(guardedOpenDatabase(environment));
     const version = migrated.db.query<{ user_version: number }>("PRAGMA user_version").get();
     expect(version?.user_version).toBe(3);
     expect(migrated.db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version).toBe(3);
