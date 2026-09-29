@@ -35,10 +35,25 @@ export function getInstallState(handle: DatabaseHandle): Result<InstallState> {
 }
 
 export function putInstallModule(handle: DatabaseHandle, moduleId: string, value: unknown): Result<void> {
+  return write(handle, ({ db }) => putInstallValue(db, moduleId, value));
+}
+
+function putInstallValue(db: DatabaseHandle["db"], moduleId: string, value: unknown): void {
+  const updatedAt = typeof value === "object" && value !== null && "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString();
+  db.run("INSERT INTO install_state (module_id, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(module_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [moduleId, encode(value), updatedAt]);
+}
+
+export function mutateInstallModule(handle: DatabaseHandle, moduleId: string, mutate: (value: unknown | undefined) => unknown): Result<unknown> {
   return write(handle, ({ db }) => {
-    const updatedAt = typeof value === "object" && value !== null && "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString();
-    db.run("INSERT INTO install_state (module_id, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(module_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [moduleId, encode(value), updatedAt]);
+    const row = db.query<{ value: string }>("SELECT value FROM install_state WHERE module_id = ?").get(moduleId);
+    const next = mutate(row === null ? undefined : decode(row.value));
+    putInstallValue(db, moduleId, next);
+    return next;
   });
+}
+
+export function deleteInstallModule(handle: DatabaseHandle, moduleId: string): Result<boolean> {
+  return write(handle, ({ db }) => db.run("DELETE FROM install_state WHERE module_id = ?", [moduleId]).changes > 0);
 }
 
 export function loadModels(handle: DatabaseHandle): Result<ModelRegistry> {

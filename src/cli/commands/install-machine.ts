@@ -1,11 +1,11 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { deleteInstallModule, getInstallState, putInstallModule, stateDatabase } from "../../adapters/state-db.js";
 import { dirname, join } from "node:path";
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
-import { resolveStateDirectory } from "../../core/state.js";
 import { discoverAgentDirectories, type AgentEnvironment, type MachineAgent, type MachineAgentDirectories } from "../../core/agent-directories.js";
 import { executeTmux } from "./tmux.js";
 import { agentLabel, createClackPrompter, moduleLabel, SetupCancelled, type AgentChoice, type MachinePrompter, type ModuleChoice, type SkillMode } from "./install-ui.js";
@@ -299,15 +299,11 @@ export async function retireLegacyInstructions(
   return ok(messages.length === 0 ? "" : `${messages.join("\n")}\n`);
 }
 
-function readMachineState(path: string): Record<string, unknown> | undefined {
-  if (!existsSync(path)) return {};
-  try {
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-    return value as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
+function readMachineState(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>): Record<string, unknown> | undefined {
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return undefined;
+  const loaded = getInstallState(opened.value);
+  return loaded.kind === "ok" ? loaded.value : undefined;
 }
 
 type PersistedMachineSelection = Readonly<{
@@ -341,17 +337,12 @@ function matchingMachineInstall(left: unknown, right: PersistedMachineSelection)
   };
 }
 
-function writeMachineState(path: string, state: Record<string, unknown>, selection: MachineSelection, configuredModules: readonly string[]): void {
-  const next = { ...state, machineInstall: { agents: selection.agents, skill: selection.skill, tmux: selection.tmux, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version } };
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-    renameSync(temporary, path);
-  } catch (cause: unknown) {
-    try { unlinkSync(temporary); } catch { /* preserve the original failure */ }
-    throw cause;
-  }
+function writeMachineState(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, selection: MachineSelection, configuredModules: readonly string[]): Result<void> {
+  const opened = stateDatabase(environment);
+  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+  const value = { agents: selection.agents, skill: selection.skill, tmux: selection.tmux, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version };
+  const saved = putInstallModule(opened.value, "machineInstall", value);
+  return saved.kind === "ok" ? ok(undefined) : saved;
 }
 
 export async function runMachineInstall(
@@ -391,9 +382,8 @@ async function installMachine(
   const defaults = await resolveDefaultModuleSelection(environment, processAdapter);
   const availableAgents = await detectAgents(processAdapter);
   const directories = discoverAgentDirectories(environment);
-  const statePath = join(resolveStateDirectory(environment), "state.json");
-  const state = readMachineState(statePath);
-  if (state === undefined) return failed(`could not read valid megabrain state at ${statePath}`);
+  const state = readMachineState(environment);
+  if (state === undefined) return failed("could not read valid megabrain install state");
   const tmuxState = state["tmux-runtime"];
   const tmuxInstalled = typeof tmuxState === "object" && tmuxState !== null && !Array.isArray(tmuxState) && (tmuxState as Record<string, unknown>).installed === true;
 
@@ -465,7 +455,10 @@ async function installMachine(
       return failed(`tmux runtime revert failed: ${reason}`);
     }
     step?.done("tmux runtime turned off");
-    delete state["tmux-runtime"];
+    const opened = stateDatabase(environment);
+    if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+    const deleted = deleteInstallModule(opened.value, "tmux-runtime");
+    if (deleted.kind !== "ok") return deleted;
     tmuxReverted = true;
   }
   const recordedSelection: PersistedMachineSelection = { agents: selectedAgents, skill, tmux, requestedModules: modulesToInstall, modules: modulesToInstall, version: packageJson.version };
@@ -486,7 +479,12 @@ async function installMachine(
   }
 
   try {
-    if (!modulesToInstall.includes("tmux-runtime")) delete state["tmux-runtime"];
+    if (!modulesToInstall.includes("tmux-runtime")) {
+      const opened = stateDatabase(environment);
+      if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+      const deleted = deleteInstallModule(opened.value, "tmux-runtime");
+      if (deleted.kind !== "ok") return deleted;
+    }
     const retired = await retireLegacyChannels(availableAgents, processAdapter, parsed.yes, confirm);
     if (retired.kind !== "ok") return retired;
     if (ui !== undefined && retired.value.length > 0 && !retired.value.includes("no legacy plugin registrations found")) ui.info(retired.value.trim());
@@ -499,7 +497,8 @@ async function installMachine(
     }
     // Record the selected skill configuration before attempting modules so a failed module does
     // not make a later run rewrite the skill files that already succeeded.
-    writeMachineState(statePath, state, selection, configuredModules);
+    const saved = writeMachineState(environment, selection, configuredModules);
+    if (saved.kind !== "ok") return saved;
     const failures: string[] = [];
     for (const module of pendingModules) {
       const step = ui?.step(`Setting up ${moduleLabel(module)}`);
@@ -515,9 +514,8 @@ async function installMachine(
         step?.done(moduleLabel(module));
         const warning = /\(warning: ([^;)]+)/.exec(result.value)?.[1];
         if (ui !== undefined && warning !== undefined) ui.warn(`${moduleLabel(module)}: ${warning}. Review with megabrain orchestrate list --uncertain`);
-        const latestState = readMachineState(statePath);
-        if (latestState === undefined) throw new Error(`could not read valid megabrain state at ${statePath}`);
-        writeMachineState(statePath, latestState, selection, configuredModules);
+        const saved = writeMachineState(environment, selection, configuredModules);
+        if (saved.kind !== "ok") throw new Error(saved.kind === "failed" ? saved.error : "could not save megabrain install state");
       } catch (error: unknown) {
         const reason = error instanceof Error ? error.message : "module installation failed";
         failures.push(`${module}: ${reason}`);
