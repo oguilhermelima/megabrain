@@ -6,8 +6,25 @@ import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
+import { deleteTmuxSession, getTmuxSession, listTmuxSessions, putTmuxSession, stateDatabase } from "../../src/adapters/state-db.js";
 
 describe("tmux placement", () => {
+  test("lists, looks up, and deletes tmux sessions through the state facade", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-tmux-registry-`);
+    try {
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const handle = database.value;
+      expect(putTmuxSession(handle, { tmuxSession: "z-session", workingDirectory: "/z" }, "$2").kind).toBe("ok");
+      expect(putTmuxSession(handle, { tmuxSession: "a-session", workingDirectory: "/a" }, "$1").kind).toBe("ok");
+      expect(getTmuxSession(handle, "a-session")).toMatchObject({ kind: "ok", value: { tmuxSession: "a-session" } });
+      expect(listTmuxSessions(handle)).toMatchObject({ kind: "ok", value: [{ tmuxSession: "a-session" }, { tmuxSession: "z-session" }] });
+      expect(deleteTmuxSession(handle, "z-session")).toEqual({ kind: "ok", value: true });
+      expect(deleteTmuxSession(handle, "z-session")).toEqual({ kind: "ok", value: false });
+      expect(listTmuxSessions(handle)).toMatchObject({ kind: "ok", value: [{ tmuxSession: "a-session" }] });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   test("opens beside a caller in the same worktree even when its host resolves as orca and runtime is disabled", () => {
     expect(decideTmuxPlacement({ callerInTmux: true, sameWorktree: true, tmuxRuntimeSelected: false, existingSession: true })).toEqual({ kind: "caller-window" });
   });
