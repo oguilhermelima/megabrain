@@ -222,8 +222,8 @@ async function gitLabPR(process: ProcessAdapter, data: StackData, draft: boolean
 async function nativeStacks(process: ProcessAdapter, repo: string, slug: string): Promise<{ available: boolean; stacks: GitHubStack[]; error?: string }> {
   const result = await gh(process, repo, ["api", `repos/${slug}/stacks`]);
   if (result.kind !== "ok") {
-    if (/403|forbidden|401|unauthorized/i.test(result.error)) return { available: false, stacks: [], error: result.error };
-    return { available: false, stacks: [] };
+    if (/404|not found/i.test(result.error)) return { available: false, stacks: [] };
+    return { available: false, stacks: [], error: result.error };
   }
   try {
     const parsed = JSON.parse(result.value.stdout) as GitHubStack[];
