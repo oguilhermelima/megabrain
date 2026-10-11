@@ -1,81 +1,80 @@
 # megabrain recipes
 
 - Read shared worktree, orchestration, simulator, and browser instructions at https://github.com/oguilhermelima/megabrain/blob/main/AGENTS.md.
-- Run megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert].
-- Run megabrain doctor [module-id] [--json].
-- Run megabrain db check [--json].
-- Run megabrain db backup [--json].
-- Run megabrain db import <dir> [--replace] [--json].
-- Run megabrain db migrate [--dry-run] [--json].
-- Run megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json].
-- Run megabrain context [--json].
-- Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json].
-- Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json].
-- Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json].
-- Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json].
-- Run megabrain worktree adopt <path|branch> [--json].
-- Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json].
-- Run megabrain terminal list [--worktree <path>] [--json].
-- Run megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json].
-- Run megabrain terminal close <selector> [--json].
-- Run megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json].
-- Run megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json].
-- Run megabrain orchestrate adopt <dispatch-id> [--force] [--json].
-- Run megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json].
-- Run megabrain orchestrate reconcile <dispatch-id> [--all] [--json].
-- Run megabrain orchestrate liveness <dispatch-id> [--json].
-- Run megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json].
-- Run megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json].
-- Run megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json].
-- Run megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json].
-- Run megabrain orchestrate stop <dispatch-id-or-suffix> [--json].
-- Run megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json].
-- Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json].
-- Run megabrain ask "question" | megabrain ask --text "question".
-- Run megabrain done "summary" | megabrain done --text "summary".
+- Run megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert]. — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
+- Run megabrain doctor [module-id] [--json]. — recommended when you need to check whether a module or the whole installation is healthy.
+- Run megabrain db check [--json]. — recommended when you need to check SQLite integrity, foreign keys, schema version, and database path.
+- Run megabrain db backup [--json]. — recommended when you need to create a consistent backup before a risky database operation.
+- Run megabrain db import <dir> [--replace] [--json]. — recommended when you need to import a legacy state directory into the SQLite database.
+- Run megabrain db migrate [--dry-run] [--json]. — recommended when you need to preview or perform the one-time legacy JSON migration.
+- Run megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]. — recommended when you need to inspect a dispatch record, message history, or another stored record.
+- Run megabrain context [--json]. — recommended when you need to identify the orchestration host and runtime available in this session.
+- Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]. — recommended when you need to create and register a shared worktree for a task.
+- Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]. — recommended when you need to open a pull request for a worktree branch.
+- Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]. — recommended when you need to remove a completed worktree after its safety checks pass.
+- Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]. — recommended when you need to find registered worktrees and inspect their parent relationships.
+- Run megabrain worktree adopt <path|branch> [--json]. — recommended when you need to register an existing worktree missing from one orchestrator.
+- Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]. — recommended when you need to open a managed terminal in a worktree or current orchestrator.
+- Run megabrain terminal list [--worktree <path>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
+- Run megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]. — recommended when you need to restart a managed terminal after its command or server needs a fresh run.
+- Run megabrain terminal close <selector> [--json]. — recommended when you need to close a managed terminal and remove its local record.
+- Run megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]. — recommended when you need to start a child agent on a new or existing worktree.
+- Run megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]. — recommended when you need to find active, archived, orphaned, or uncertain dispatches.
+- Run megabrain orchestrate adopt <dispatch-id> [--force] [--json]. — recommended when you need to take ownership of an existing dispatch in this coordinator session.
+- Run megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]. — recommended when you need to archive or delete old terminal dispatch records.
+- Run megabrain orchestrate reconcile <dispatch-id> [--all] [--json]. — recommended when you need to refresh a dispatch record from its terminal without starting it again.
+- Run megabrain orchestrate liveness <dispatch-id> [--json]. — recommended when you need to check the child terminal execution state without waiting for a message.
+- Run megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]. — recommended when you need to wait for or retrieve a child message delivery that can be replayed until acknowledged.
+- Run megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json]. — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
+- Run megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]. — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
+- Run megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json]. — recommended when you need to send an answer to a child that has asked a question.
+- Run megabrain orchestrate stop <dispatch-id-or-suffix> [--json]. — recommended when you need to interrupt a working child while keeping its pane and dispatch open.
+- Run megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]. — recommended when you need to redirect a child that is working on the wrong thing or replace queued directions.
+- Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
+- Run megabrain ask "question" | megabrain ask --text "question". — recommended when you need to ask the coordinator for a decision that affects the work.
+- Run megabrain done "summary" | megabrain done --text "summary". — recommended when you need to report the completed work and what was verified to the coordinator.
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.
-- Run megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json].
-- Run megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json].
-- Run megabrain chain list [--json].
-- Run megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>].
-- Run megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json].
-- Run megabrain chain edit <name> [--allow-unknown-model] [--json].
-- Run megabrain chain delete <name> [--json].
-- Run megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json].
-- Run megabrain chain run [name] [--chain <name>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--repo <name|path>] [--branch <branch>] [--base <ref>] [--name <slug>] [--worktree <path>] [--prompt <text>] [--label <text>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json].
-- Run megabrain model list [--json].
-- Run megabrain model add <agent> <model> --reasoning <levels>.
-- Run megabrain model refresh <agent>.
+- Run megabrain check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]. — recommended when you need to poll for a reply from the coordinator after asking a question.
+- Run megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]. — recommended when you need to acknowledge a reply delivery after acting on it.
+- Run megabrain chain list [--json]. — recommended when you need to inspect the configured agent-selection chains.
+- Run megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>]. — recommended when you need to inspect or change provider usage-limit settings and notices.
+- Run megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json]. — recommended when you need to define a chain with matching rules and ordered agent steps.
+- Run megabrain chain edit <name> [--allow-unknown-model] [--json]. — recommended when you need to change an existing chain configuration.
+- Run megabrain chain delete <name> [--json]. — recommended when you need to remove a chain that is no longer used.
+- Run megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json]. — recommended when you need to replace a broken or unavailable model in a chain step.
+- Run megabrain chain run [name] [--chain <name>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--repo <name|path>] [--branch <branch>] [--base <ref>] [--name <slug>] [--worktree <path>] [--prompt <text>] [--label <text>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json]. — recommended when you need to launch work through a named or automatically selected fallback chain.
+- Run megabrain model list [--json]. — recommended when you need to inspect models available to agent selection.
+- Run megabrain model add <agent> <model> --reasoning <levels>. — recommended when you need to add a model and its supported reasoning levels to the registry.
+- Run megabrain model refresh <agent>. — recommended when you need to refresh one agent provider’s model registry.
 - Run megabrain native appium start.
 - Run megabrain native appium status.
 - Run megabrain native appium stop.
-- Run megabrain native sim list <phone|tv> [--json].
-- Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json].
-- Run megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json].
-- Run megabrain native runtime install <ios|tvos> <version> [--json].
-- Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json].
-- Run megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json].
-- Run megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json].
-- Run megabrain native crashes <phone|tv> [--last N] [--json].
-- Run megabrain native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json].
-- Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json].
-- Run megabrain tv connect <ip> [--port <port>].
-- Run megabrain tv disconnect [<ip>].
-- Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json].
-- Run megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json].
-- Run megabrain web [--device SLUG|--category NAME|--viewport WxH] ....
-- Run megabrain web viewport|userscript ....
-- Run megabrain web viewport set|show|devices ....
-- Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape].
-- Run megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG.
-- Run megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options].
-- Run megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options].
-- Run megabrain web session save --url URL --output FILE [options].
-- Run megabrain web viewport show [--browser chromium|firefox|both].
-- Run megabrain web userscript install|list|remove ....
-- Run megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
-- Run megabrain web userscript list.
-- Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape].
+- Run megabrain native sim list <phone|tv> [--json]. — recommended when you need to find available iOS or tvOS simulators.
+- Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]. — recommended when you need to boot and prepare the requested Apple simulator.
+- Run megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]. — recommended when you need to check which Apple simulator runtimes are installed or available.
+- Run megabrain native runtime install <ios|tvos> <version> [--json]. — recommended when you need to install an Apple simulator runtime needed by a device.
+- Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]. — recommended when you need to verify that the native app is rendering on its simulator.
+- Run megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to open a specific route in the running native app.
+- Run megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to read native app state through Metro.
+- Run megabrain native crashes <phone|tv> [--last N] [--json]. — recommended when you need to inspect recent native app crash reports.
+- Run megabrain native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json]. — recommended when you need to build, install, and launch the configured native app.
+- Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to restart a native app and navigate it to a route.
+- Run megabrain tv connect <ip> [--port <port>]. — recommended when you need to connect an Android TV device over adb.
+- Run megabrain tv disconnect [<ip>]. — recommended when you need to disconnect an Android TV device from adb.
+- Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json]. — recommended when you need to apply or remove the native tmux theme and agent badges.
+- Run megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json]. — recommended when you need to install or remove the shell wrapper for hand-typed agent commands.
+- Run megabrain web [--device SLUG|--category NAME|--viewport WxH] .... — recommended when you need to see browser viewport and visual-testing operations.
+- Run megabrain web viewport set|show|devices .... — recommended when you need to set viewport dimensions, inspect settings, or manage device presets.
+- Run megabrain web viewport set [--browser chromium|firefox|both] [--viewport WxH|--device SLUG|--category NAME|--width W --height H] [--orientation portrait|landscape]. — recommended when you need to set the browser viewport or device emulation for visual checks.
+- Run megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG. — recommended when you need to list, add, or remove named viewport device presets.
+- Run megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]. — recommended when you need to capture a browser screenshot after the page reaches the requested state.
+- Run megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]. — recommended when you need to measure browser element geometry and computed styles.
+- Run megabrain web session save --url URL --output FILE [options]. — recommended when you need to save a headful browser session for a workflow that needs a signed-in profile.
+- Run megabrain web viewport show [--browser chromium|firefox|both]. — recommended when you need to inspect the current browser viewport settings.
+- Run megabrain web userscript install|list|remove .... — recommended when you need to install, list, or remove userscripts in the Chromium profile.
+- Run megabrain web userscript install <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]. — recommended when you need to install a userscript in the Chromium browser profile.
+- Run megabrain web userscript list. — recommended when you need to inspect userscripts installed in the Chromium profile.
+- Run megabrain web userscript remove <file.user.js> [--viewport WxH|--device SLUG|--category NAME] [--orientation portrait|landscape]. — recommended when you need to remove a userscript from the Chromium profile.
 
 ## State database
 
