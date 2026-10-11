@@ -82,7 +82,6 @@ exec node "$root/tests/fixtures/paste-agent.mjs"
 EOF
 chmod +x "$fake_bin/codex"
 export MEGABRAIN_STATE_DIR="$state"
-export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=0
 export MEGABRAIN_AGENT_READY_TIMEOUT_MS=5000
 export PATH="$fake_bin:$PATH"
 unset TMUX TMUX_PANE MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID

@@ -10,7 +10,7 @@ const afterFirstPaste = (events: readonly string[]): readonly string[] => events
 
 describe("spawn first prompt", () => {
   test.each(agents)("%s: pastes the whole prompt as one paste and submits it once the composer shows it", async (agent) => {
-    const run = await runComposerSpawn(`dispatch-paste-${agent}`, { agent, onSubmit: (_prompt, root) => appendReceived(root, `dispatch-paste-${agent}`) }, { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "2" });
+    const run = await runComposerSpawn(`dispatch-paste-${agent}`, { agent, onSubmit: (_prompt, root) => appendReceived(root, `dispatch-paste-${agent}`) }, {});
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(1);
@@ -27,7 +27,7 @@ describe("spawn first prompt", () => {
 
   test.each(agents)("%s: delivers a long collapsed brief whole", async (agent) => {
     const id = `dispatch-long-${agent}`;
-    const run = await runComposerSpawn(id, { agent, onSubmit: (_prompt, root) => appendReceived(root, id) }, { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "2" }, ["--prompt", longBrief]);
+    const run = await runComposerSpawn(id, { agent, onSubmit: (_prompt, root) => appendReceived(root, id) }, {}, ["--prompt", longBrief]);
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.submissions).toHaveLength(1);
@@ -39,7 +39,7 @@ describe("spawn first prompt", () => {
 
   test.each(agents)("%s: clears and pastes again once when only the tail of the prompt arrived", async (agent) => {
     const id = `dispatch-repaste-${agent}`;
-    const run = await runComposerSpawn(id, { agent, swallowPastes: 1, tailBytes: 400, onSubmit: (_prompt, root) => appendReceived(root, id) }, { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "2" }, ["--prompt", longBrief]);
+    const run = await runComposerSpawn(id, { agent, swallowPastes: 1, tailBytes: 400, onSubmit: (_prompt, root) => appendReceived(root, id) }, {}, ["--prompt", longBrief]);
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(2);
@@ -69,7 +69,7 @@ describe("spawn first prompt", () => {
 
   test.each(agents)("%s: presses Enter a second time when the first one did not start a turn", async (agent) => {
     const id = `dispatch-second-enter-${agent}`;
-    const run = await runComposerSpawn(id, { agent, ignoreEnters: 1, onSubmit: (_prompt, root) => appendReceived(root, id) }, { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "2" });
+    const run = await runComposerSpawn(id, { agent, ignoreEnters: 1, onSubmit: (_prompt, root) => appendReceived(root, id) }, {});
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(1);

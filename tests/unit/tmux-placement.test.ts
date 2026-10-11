@@ -66,7 +66,7 @@ describe("tmux placement", () => {
     try {
       const result = await executeSpawn(["--worktree", root, "--agent", "codex", "--prompt", "spawn"], {
         MEGABRAIN_STATE_DIR: `${root}/state`, MEGABRAIN_SESSION_ID: "orca-parent", ORCA_TERMINAL_HANDLE: "orca-terminal",
-        TMUX: "isolated", TMUX_PANE: "%caller", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-orca-tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+        TMUX: "isolated", TMUX_PANE: "%caller", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-orca-tmux",
       }, process, { resolveWorktree: async () => ok({ path: root, branch: "main", ownership: "existing", workspaceId: null }) });
       expect(result.kind).toBe("ok");
       const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: `${root}/state` });
@@ -107,7 +107,7 @@ describe("tmux placement", () => {
     registerTmux({ ...original, ...composerTmux() });
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], {
-        MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "orca-parent", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-wrapper-reuse", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+        MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "orca-parent", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-wrapper-reuse",
       }, process, { resolveWorktree: async () => ok({ path: "/work/tree", branch: "main", ownership: "existing", workspaceId: null }) });
       expect(result.kind).toBe("ok");
       const stored = getDispatch(database.value, "dispatch-wrapper-reuse");

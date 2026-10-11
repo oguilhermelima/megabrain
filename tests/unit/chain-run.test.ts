@@ -384,7 +384,7 @@ describe("executeChainRun: in-process spawn hand-off", () => {
             if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
             return ok({ stdout: "", stderr: "", exitCode: 0 });
           });
-          const result = await executeChainRun(["--worktree", worktreeDir, "--prompt", "p", "--tmux", "true", "--json"], environment(root, { MEGABRAIN_SESSION_ID: "parent-terminal", MEGABRAIN_SESSION_HOST: "tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" }), process);
+          const result = await executeChainRun(["--worktree", worktreeDir, "--prompt", "p", "--tmux", "true", "--json"], environment(root, { MEGABRAIN_SESSION_ID: "parent-terminal", MEGABRAIN_SESSION_HOST: "tmux" }), process);
           expect(result.kind).toBe("ok");
           if (result.kind !== "ok") return;
           const body = JSON.parse(result.value);
@@ -502,7 +502,7 @@ describe("continueRefusedChain", () => {
             if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%30\n", stderr: "", exitCode: 0 });
             return ok({ stdout: "", stderr: "", exitCode: 0 });
           });
-          const result = await continueRefusedChain("d1", environment(root, { ORCA_TERMINAL_HANDLE: "coord-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" }), process);
+          const result = await continueRefusedChain("d1", environment(root, { ORCA_TERMINAL_HANDLE: "coord-term" }), process);
           expect(result.kind).toBe("ok");
           if (result.kind !== "ok") return;
           expect(result.value).toContain("chain defaultSteps, step 2 of 2");

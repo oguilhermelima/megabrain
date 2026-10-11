@@ -56,7 +56,6 @@ function environment(root: string, dispatchId: string): Record<string, string> {
     MEGABRAIN_SESSION_ID: "parent-terminal",
     MEGABRAIN_SESSION_HOST: "tmux",
     MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
-    MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
     MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300",
     MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300",
   };
@@ -500,7 +499,6 @@ describe("executeSpawn", () => {
       await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "identity", "--tmux", "false"], {
         ...environment(root, "dispatch-host-identity"),
         MEGABRAIN_SESSION_HOST: "orca",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
       const command = process.calls.find((call) => call.command === "orca" && call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
       const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
@@ -520,7 +518,6 @@ describe("executeSpawn", () => {
       await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "environment", "--tmux", "false"], {
         ...environment(root, "dispatch-host-environment"),
         MEGABRAIN_SESSION_HOST: "orca",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
       const command = process.calls.find((call) => call.command === "orca" && call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
       const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
@@ -543,7 +540,6 @@ describe("executeSpawn", () => {
       await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "superset", "--tmux", "false"], {
         ...environment(root, "dispatch-superset-identity"),
         MEGABRAIN_SESSION_HOST: "superset",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
       const command = process.calls.find((call) => call.command === "superset" && argsContain(call.args, "MEGABRAIN_DISPATCH_ID"));
       const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
@@ -568,7 +564,6 @@ describe("executeSpawn", () => {
       await executeSpawn(["--worktree", path, "--agent", "codex", "--prompt", "quoted", "--tmux", "false"], {
         ...environment(root, "dispatch-path-quote"),
         MEGABRAIN_SESSION_HOST: "orca",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing", path)));
       const command = process.calls.find((call) => call.command === "orca" && argsContain(call.args, "MEGABRAIN_DISPATCH_ID"));
       const text = command?.args[command.args.indexOf("--text") + 1] ?? "";
@@ -653,7 +648,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_STRUCTURED_SESSION: "1", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_STRUCTURED_SESSION: "1", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
         const meta = readMeta(root, dispatchId);
@@ -674,7 +669,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
         const meta = readMeta(root, dispatchId);
@@ -704,7 +699,7 @@ describe("executeSpawn", () => {
       registerTmux({ ...original, ...composerTmux() });
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
-          MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-attach-failure", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+          MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-attach-failure",
         }, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error(result.error);
@@ -731,7 +726,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", AI_AGENT: "codex", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", AI_AGENT: "codex", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result).toMatchObject({ kind: "ok" });
         const meta = readMeta(root, dispatchId);
@@ -755,7 +750,7 @@ describe("executeSpawn", () => {
     });
   });
 
-  test("returns success while receipt is pending and points to reconcile", async () => {
+  test("returns success while the receipt is missing and records it without a deadline", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-`);
     const process = processFor([]);
     const dispatchId = "dispatch-awaiting";
@@ -766,9 +761,9 @@ describe("executeSpawn", () => {
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") throw new Error(result.error);
       expect(result.exitCode).toBe(0);
-      expect(result.value).toContain(`megabrain orchestrate reconcile ${dispatchId}`);
       const meta = readMeta(root, dispatchId);
-      expect(meta).toMatchObject({ state: "spawning", promptTransport: "transported", promptState: "awaiting-receipt", promptReceipt: "pending" });
+      // The prompt left the composer, so the turn started: the dispatch runs and the missing receipt is only a recorded fact.
+      expect(meta).toMatchObject({ state: "running", promptTransport: "transported", promptState: "confirmed", promptReceipt: "not-received", receiptMissing: { reason: "no-receipt-after-turn" } });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -859,7 +854,6 @@ describe("executeSpawn", () => {
       await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "launch", "--tmux", "false"], {
         ...environment(root, "dispatch-host-create"),
         MEGABRAIN_SESSION_HOST: "orca",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
       expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "create", "--worktree", "path:/work/tree", "--title", "codex /work/tree", "--json"] });
     } finally {
@@ -1013,7 +1007,6 @@ describe("executeSpawn", () => {
       await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "order", "--tmux", "false"], {
         ...environment(root, dispatchId),
         MEGABRAIN_SESSION_HOST: "orca",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       }, process, options(worktree("existing")));
       const hostCalls = process.calls.filter((call) => call.command === "orca");
       const commandIndex = hostCalls.findIndex((call) => call.args[1] === "send" && (call.args[call.args.indexOf("--text") + 1] ?? "").includes("MEGABRAIN_DISPATCH_ID"));
@@ -1451,7 +1444,6 @@ describe("executeSpawn", () => {
         const prompt = "a".repeat(12000 - wrapperOverheadBytes);
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], {
           ...environment(root, dispatchId),
-          MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
         }, processFor([]), options(worktree("existing")));
         expect(result.kind).toBe("ok");
       } finally {
@@ -1490,7 +1482,6 @@ describe("executeSpawn", () => {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], {
           ...environment(root, dispatchId),
           MEGABRAIN_SESSION_HOST: "orca",
-          MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
         }, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
       } finally {
@@ -1628,7 +1619,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
           : ok({ stdout: "", stderr: "", exitCode: 0 }));
       await executeSpawn(
         ["--repo", "/repo", "--branch", "feat/auto-tmux", "--agent", "codex", "--prompt", "spawn"],
-        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-tmux", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-tmux" },
         process,
         { resolveWorktree: async () => ok(worktree("created")) },
       );
@@ -1649,7 +1640,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
       const process = processFor([]);
       await executeSpawn(
         ["--repo", "/repo", "--branch", "feat/auto-host", "--agent", "codex", "--prompt", "spawn"],
-        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-host", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-host" },
         process,
         { resolveWorktree: async () => ok(worktree("created")) },
       );
@@ -1670,7 +1661,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
       const process = processFor([]);
       await executeSpawn(
         ["--repo", "/repo", "--branch", "feat/auto-malformed", "--agent", "codex", "--prompt", "spawn"],
-        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-malformed", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-malformed" },
         process,
         { resolveWorktree: async () => ok(worktree("created")) },
       );
@@ -1690,7 +1681,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
       const process = processFor([]);
       await executeSpawn(
         ["--repo", "/repo", "--branch", "feat/explicit-host", "--agent", "codex", "--prompt", "spawn", "--tmux", "false"],
-        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-explicit-host", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" },
+        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-explicit-host" },
         process,
         { resolveWorktree: async () => ok(worktree("created")) },
       );

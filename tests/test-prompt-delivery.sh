@@ -78,9 +78,9 @@ create_dispatch() {
 
 # megabrain_dispatch_send_prompt_with_receipt's bounded resend (MEGABRAIN_PROMPT_RECEIPT_ATTEMPTS
 # retries, re-pressing Enter/Tab until a receipt appears or attempts are exhausted) has no
-# equivalent: the compiled spawn path's awaitReceipt (src/cli/commands/orchestrate-spawn.ts)
-# sends the prompt exactly once and then only polls for an existing receipt for
-# MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS -- it never resends, and a timeout never fails the
+# equivalent: the compiled spawn path (src/cli/commands/spawn-prompt.ts)
+# sends the prompt exactly once and checks once for an existing receipt -- it never resends,
+# has no receipt deadline, and a missing receipt never fails the
 # spawn (it returns success with promptState="awaiting-receipt", pointing at `orchestrate
 # reconcile`; see tests/unit/spawn.test.ts: "returns success while receipt is pending and points
 # to reconcile"). The three scenarios built on the old resend contract -- a bounded resend that

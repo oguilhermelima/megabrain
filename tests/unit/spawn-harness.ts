@@ -41,7 +41,6 @@ export function spawnEnvironment(root: string, dispatchId: string, extra: Record
     MEGABRAIN_SESSION_ID: "parent-terminal",
     MEGABRAIN_SESSION_HOST: "tmux",
     MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
-    MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
     MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300",
     MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300",
     ...extra,

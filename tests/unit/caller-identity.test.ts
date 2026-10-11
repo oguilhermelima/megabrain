@@ -481,7 +481,6 @@ describe("spawn refuses a tmux spawn from an unknown caller host", () => {
       MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-g",
       MEGABRAIN_SESSION_ID: "parent-1",
       MEGABRAIN_SESSION_HOST: "orca",
-      MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       MEGABRAIN_AGENT_READY_TIMEOUT_MS: "50",
     };
     const result = await executeSpawn(
@@ -524,7 +523,6 @@ describe("spawn starts children without the parent's identity", () => {
           MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
           MEGABRAIN_SESSION_ID: "parent-1",
           MEGABRAIN_SESSION_HOST: "orca",
-          MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
           MEGABRAIN_AGENT_READY_TIMEOUT_MS: "50",
         },
         process,
@@ -562,7 +560,6 @@ describe("spawn starts children without the parent's identity", () => {
         MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
         MEGABRAIN_SESSION_ID: "parent-1",
         MEGABRAIN_SESSION_HOST: "orca",
-        MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
       },
       process,
       { resolveWorktree: async () => ok(worktree) },
@@ -680,7 +677,7 @@ describe("megabrain done from the parent that spawned a tmux dispatch is not att
     });
     try {
       const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-done-no-self-worktree-`);
-      const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+      const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" };
       const process = fakeProcess((command, args) => {
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%41\n", stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
