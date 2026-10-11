@@ -251,6 +251,8 @@ megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json] — recomm
 megabrain worktree adopt <path|branch> [--json] — recommended when you need to register an existing worktree missing from one orchestrator.
 megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json] — recommended when you need to open a managed terminal in a worktree or current orchestrator.
 megabrain terminal list [--worktree <path>] [--json] — recommended when you need to find managed terminals and check whether they are alive.
+megabrain terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json] — recommended when you need to open a native terminal window attached to an existing tmux session, or print the attach command.
+megabrain terminal default [<name>|auto|none|--clear] — recommended when you need to show, set or clear the default native terminal.
 megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json] — recommended when you need to restart a managed terminal after its command or server needs a fresh run.
 megabrain terminal close <selector> [--json] — recommended when you need to close a managed terminal and remove its local record.
 ```
@@ -290,7 +292,12 @@ stored in the SQLite state database, so `terminal list` reports `alive` or `dead
 and retains a host-gone terminal as `stale`. `terminal restart` accepts `id:`, `title:`, `port:` or
 `worktree:` selectors, kills only the recorded process tree after proving a port listener belongs
 to it, waits for the old port to be free, and optionally waits for it to listen again with
-`--wait-port`. `terminal close` removes the host terminal and local record, and reports when the
+`--wait-port`. `terminal open` shows a tmux session in the operator's own terminal: Terminal.app, iTerm2, Ghostty,
+WezTerm, kitty, Alacritty, gnome-terminal, Konsole, xterm or Windows Terminal. The choice is the
+`--terminal` flag, then `MEGABRAIN_TERMINAL`, then the file set by `terminal default`, then detection
+from the environment, then none (print the attach command). Only Terminal.app has been opened and
+inspected on a real machine; the others are tested with a recording fake and `megabrain doctor
+terminal-openers` marks them unverified. `terminal close` removes the host terminal and local record, and reports when the
 host already forgot it or process identity was unavailable.
 
 ## Setup and diagnosis

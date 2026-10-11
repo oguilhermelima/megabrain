@@ -313,6 +313,44 @@ megabrain terminal restart port:3000 --wait-port 3000 --timeout 30 --json
 megabrain terminal close id:<terminal-id> --json
 ```
 
+### Native terminals
+
+`megabrain terminal open` shows a tmux session in the terminal you already use, so a child can run
+under tmux (delivery, liveness and the supervisor keep using tmux) while you watch it in a normal
+window.
+
+```sh
+megabrain terminal open --session <tmux session> [--server <tmux -L name>] [--terminal <name>|auto|none]
+megabrain terminal default            # show the default and where it came from
+megabrain terminal default kitty      # store a default; --clear removes it
+megabrain doctor terminal-openers     # which openers exist on this machine
+```
+
+The terminal is chosen by, in order: the `--terminal` flag, the `MEGABRAIN_TERMINAL` variable, the
+`terminal-default` file in the state directory (written by `terminal default`), detection from the
+environment, then none. `auto` means detect, and `none` prints the `tmux attach` command instead of
+opening a window. Detection reads `TERM_PROGRAM` (`Apple_Terminal`, `iTerm.app`, `ghostty`,
+`WezTerm`), `KITTY_WINDOW_ID`, `ALACRITTY_WINDOW_ID`, `KONSOLE_VERSION`, `GNOME_TERMINAL_SCREEN` or
+`VTE_VERSION`, and `WT_SESSION`. Arguments go to every opener as an argv array; only the two
+AppleScript openers build a shell string, and each word is single-quoted and escaped first.
+
+| Name | Opens a window with |
+|---|---|
+| `terminal-app` | `osascript` `do script` (verified on a real Mac) |
+| `iterm2` | AppleScript `create window with default profile command` |
+| `ghostty` | `open -na Ghostty --args -e` on macOS, `ghostty -e` on Linux |
+| `wezterm` | `wezterm cli spawn --new-window` inside WezTerm, else `wezterm start` |
+| `kitty` | `kitten @ launch --type=os-window` with remote control, else `kitty` |
+| `alacritty` | `alacritty -e` |
+| `gnome-terminal` | `gnome-terminal --` |
+| `konsole` | `konsole -e` |
+| `xterm` | `xterm -e` |
+| `windows-terminal` | `wt.exe -w new new-tab` |
+
+Only Terminal.app has been opened and inspected on a real machine. The others are tested with a fake
+that records the command, and `doctor` reports them as unverified. Wiring these openers into
+`orchestrate spawn` and `terminal create` is a later phase.
+
 Terminal records live in the state database. Listing keeps a terminal whose host identity
 disappeared and marks it `stale`, while a host-known process is reported as `alive` or `dead`. The
 create wrapper asks the process to publish its own PID before replacing the command

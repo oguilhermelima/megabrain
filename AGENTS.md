@@ -18,6 +18,8 @@
 - Run megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]. — recommended when you need to review or remove old worktrees safely.
 - Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]. — recommended when you need to open a managed terminal in a worktree or current orchestrator.
 - Run megabrain terminal list [--worktree <path>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
+- Run megabrain terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]. — recommended when you need to open a native terminal window attached to an existing tmux session, or print the attach command.
+- Run megabrain terminal default [<name>|auto|none|--clear]. — recommended when you need to show, set or clear the default native terminal.
 - Run megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]. — recommended when you need to restart a managed terminal after its command or server needs a fresh run.
 - Run megabrain terminal close <selector> [--json]. — recommended when you need to close a managed terminal and remove its local record.
 - Run megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]. — recommended when you need to start a child agent with context limits or a bounded loop.
