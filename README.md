@@ -243,8 +243,13 @@ megabrain done "what I verified"
 Three properties do the work:
 
 - **A delivery replays until it is acknowledged.** Reading one and not acting on it loses nothing.
-- **Typing is a nudge, not the delivery.** A pointer lands in the parent's terminal to say there
-  is mail. If the pane is gone or the composer is busy, the notice is lost and the message is not.
+- **Messages use the agent's native path when available.** A live Codex thread receives the full
+  message through `codex queue`. Claude, agy and Codex without a proven live thread use the
+  terminal only after it is idle and its composer is empty. A busy terminal or foreign draft leaves
+  the message queued for a detached deliverer, which retries for up to ten minutes and stops when
+  `check` pulls the delivery or it is acknowledged.
+- **Delivery transport is recorded.** `db show` reports whether each message used `queue`,
+  `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
 - **Your own turn end is a second chance.** When you finish speaking, megabrain points at any
   dispatch of yours holding unread mail, once per message, so a missed nudge recovers.
 
@@ -268,10 +273,11 @@ Orca proves terminal identity and sends `--interrupt`, but cannot observe workin
 pending-check frame; Superset refuses because `terminals send` has no interrupt capability. A refusal
 names the missing proof or capability. `orchestrate change` first supersedes queued directions,
 then interrupts and waits for a stable idle composer (10 seconds by default, up to three interrupts).
-It clears the composer, verifies it is empty, and submits the full direction using the agent's submit
-key. Use `--idle-timeout <seconds>` and `--attempts <n>` to change those bounds. Directions over
-12000 bytes through tmux stay queued and send a pointer to `megabrain check` instead. The result
-reports whether delivery was confirmed by the child starting work.
+It submits only into an empty composer and clears a draft only when it matches the direction being
+sent. A different draft is preserved and the direction is deferred for up to ten minutes. Use
+`--idle-timeout <seconds>` and `--attempts <n>` to change those bounds. Directions over 12000 bytes
+through tmux stay queued and send a pointer to `megabrain check` instead. The result reports whether
+delivery was confirmed by the child starting work.
 
 ## Where it runs
 

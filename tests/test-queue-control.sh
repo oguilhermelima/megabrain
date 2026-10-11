@@ -208,9 +208,10 @@ scenario_supersede_delivered() {
   assert_contains "$(jq -r '.text' <<<"$withdrawal")" "$old_seq"
   export SUPERSET_TERMINAL_ID=supersede-delivered-child
   child_view="$(compiled_check --timeout 0 --poll-interval 0 --json)"
-  assert_equal "$(jq -r '.messages[0].type' <<<"$child_view")" withdrawal
-  assert_contains "$(jq -r '.text' <<<"$child_view")" "$old_seq"
-  printf 'delivered replies produce a withdrawal naming their sequence\n'
+  assert_equal "$(jq -r '[.messages[] | select(.type == "withdrawal")] | length' <<<"$child_view")" 0
+  child_full_view="$(compiled_check --timeout 0 --poll-interval 0 --full --json)"
+  assert_equal "$(jq -r '[.messages[] | select(.type == "withdrawal")] | length' <<<"$child_full_view")" 0
+  printf 'delivered replies produce an audit withdrawal without child mail\n'
 }
 
 scenario_stop_pending_check() {

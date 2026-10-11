@@ -149,15 +149,15 @@ Commands:
   orchestrate watch <dispatch-id> ...  Watch a dispatch file channel for child messages
   orchestrate read <dispatch-id> ...   Read a tmux dispatch pane
   orchestrate ack <dispatch-id> ...    Acknowledge a delivery batch
-  orchestrate reply <dispatch-id> ...  Queue a reply for a child dispatch (--supersede replaces old replies)
+  orchestrate reply <dispatch-id> ...  Queue and safely deliver a reply (--supersede replaces old replies)
   orchestrate stop <dispatch-id> ...   Interrupt a working child without closing its pane
   orchestrate change <dispatch-id> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id> ...  Close a Superset dispatch terminal
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
-  ask "question"                       Ask the direct coordinator from a child dispatch
-  done "summary"                        Mark a child dispatch done
+  ask "question"                       Ask the coordinator and use its native delivery path
+  done "summary"                        Report completion through the native delivery path
   check [options]                       Check for replies from the direct coordinator
   ack <delivery-id> [options]          Acknowledge a child reply delivery
   received                            Confirm receipt of a dispatch prompt

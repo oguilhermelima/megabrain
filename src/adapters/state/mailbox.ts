@@ -87,14 +87,19 @@ export function appendParentReply(handle: DatabaseHandle, dispatchId: string, me
       insertMessage(db, dispatchId, assigned);
       const row = queryMessages(db, dispatchId).at(-1);
       if (row === undefined) throw new Error("parent reply insert was not visible");
-      const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
-      insertDelivery(db, { id: deliveryId, dispatchId, recipient: "child", messageSeqs: [row.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
+      if (value.type === "reply") {
+        const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
+        insertDelivery(db, { id: deliveryId, dispatchId, recipient: "child", messageSeqs: [row.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
+      }
       return row;
     };
 
     if (summary.delivered > 0) append({ from: "parent", type: "withdrawal", text: `withdrawn parent direction message sequence(s): ${summary.deliveredSequences.join(", ")}`, sessionId: "" });
     const reply = append({ ...message, from: "parent", type: "reply", text: message.text, sessionId: message.sessionId ?? "" });
-    if (options.outbox !== undefined) enqueueOutboxValue(db, { ...options.outbox, dispatchId }, now);
+    if (options.outbox !== undefined) {
+      const payload = object(options.outbox.payload);
+      enqueueOutboxValue(db, { ...options.outbox, dispatchId, payload: { ...payload, dispatchId, sequence: reply.seq } }, now);
+    }
     return { ...reply, supersedeSummary: summary };
   });
 }
@@ -116,6 +121,14 @@ export function createDelivery(handle: DatabaseHandle, delivery: Readonly<Record
 
 export function listDeliveries(handle: DatabaseHandle, dispatchId: string): Result<DeliveryRecord[]> {
   return read(handle, ({ db }) => queryDeliveries(db, dispatchId));
+}
+
+export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string, sequence: number, transport: string): Result<void> {
+  return write(handle, ({ db }) => {
+    const row = db.query<{ id: string; extra: string }>("SELECT id, extra FROM deliveries WHERE dispatch_id = ? AND message_seq = ?").get(dispatchId, sequence);
+    if (row === null) return;
+    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport }), row.id]);
+  });
 }
 
 export function claimDelivery(handle: DatabaseHandle, id: string, consumer: string, generation: number): Result<DeliveryRecord | undefined> {

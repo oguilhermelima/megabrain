@@ -3,10 +3,14 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { normalizeDispatchState, parseParentChangeArgs, parseParentReplyArgs, replyStateError, type SupersedeSummary } from "../../core/parent-reply.js";
 import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
 import { notifyChild, resolveCaller, appendMessage, type QueueEnvironment } from "./queue-write.js";
+import { setDeliveryTransport, claimOutbox, finishOutbox, acquireLease, releaseLease, enqueueOutbox, listDeliveries } from "../../adapters/state-db.js";
+import { startDeliveryWorker, deliveryTarget } from "./delivery-worker.js";
+import { randomUUID } from "node:crypto";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
-import { terminalStatus } from "./orchestrate-terminal.js";
+import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
+import { deliverWhenIdle, type IdleDeliveryOutcome } from "../../core/idle-delivery.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
@@ -35,48 +39,7 @@ function stopReason(value: string): string {
   return value;
 }
 
-type ChangeRead = (meta: JsonRecord, process: ProcessAdapter) => Promise<Result<string>>;
-
-function screenText(agent: string, output: string): string {
-  if (classifyLiveness(agent, output).status !== "unknown") return output;
-  if (agent === "codex" && /Conversation interrupted/.test(output) && /^\s*› (?!Ask Codex to do anything\s*$).+$/m.test(output)) return `${output}\n› Ask Codex to do anything`;
-  if (agent === "claude" && /Interrupted · What should Claude do instead\?/.test(output) && /^\s*❯\s*\S.+$/m.test(output)) return `${output}\n❯`;
-  return output;
-}
-
-function terminalScreen(stdout: string): Result<string> {
-  try {
-    const root = recordValue(JSON.parse(stdout));
-    const terminal = recordValue(recordValue(root?.result)?.terminal);
-    const tail = terminal?.tail;
-    const output = typeof tail === "string" ? tail : Array.isArray(tail) && tail.every((line) => typeof line === "string") ? tail.join("\n") : undefined;
-    if (output === undefined) return failed("terminal screen read did not include result.terminal.tail");
-    const draft = typeof terminal?.draft === "string" ? terminal.draft : "";
-    return ok(draft === "" ? output : `${output}\n${draft}`);
-  } catch {
-    return failed("terminal screen read returned invalid JSON");
-  }
-}
-
-async function readChangeScreen(meta: JsonRecord, process: ProcessAdapter): Promise<Result<string>> {
-  const agent = typeof meta.agent === "string" ? meta.agent : "";
-  if (meta.runtime === "tmux") {
-    const identity = await terminalStatus(meta, process);
-    if (identity !== "proven") return failed(identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven");
-    const capture = await getTmux().capturePane(String(meta.tmuxPane ?? ""), 200, process, true);
-    return capture.kind === "ok" ? ok(screenText(agent, capture.value)) : capture;
-  }
-  const identity = await terminalStatus(meta, process);
-  if (identity !== "proven") return failed(identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven");
-  const provider = getHost(String(meta.childHost ?? ""));
-  if (provider === undefined) return failed(`screen read is unavailable for host ${String(meta.childHost ?? "unknown")}`);
-  const call = provider.read({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: String(meta.terminalId ?? "") });
-  if (call.kind !== "ok") return call.kind === "failed" ? failed(call.error, call.exitCode) : failed(call.reason);
-  const captured = await process.run(call.value.command, [...call.value.args, "--screen"]);
-  if (captured.kind !== "ok") return failed(captured.error, captured.exitCode);
-  const raw = terminalScreen(captured.value.stdout);
-  return raw.kind === "ok" ? ok(screenText(agent, raw.value)) : raw;
-}
+type ChangeRead = typeof readDeliveryScreen;
 
 function changeOutput(dispatch: string, json: boolean, value: {
   attempts: number;
@@ -114,7 +77,7 @@ async function clearChangeComposer(meta: JsonRecord, process: ProcessAdapter): P
 async function sendChange(meta: JsonRecord, root: string, text: string, process: ProcessAdapter, env: QueueEnvironment, afterClear?: () => Promise<Result<void>>): Promise<Result<void>> {
   const submit = submitKey(String(meta.agent ?? ""));
   if (submit.kind !== "ok") return failed(submit.kind === "failed" ? submit.error : submit.reason);
-  if (meta.runtime === "tmux") return sendTmuxPair(root, String(meta.tmuxPane ?? ""), text, submit.value, env, process, true, afterClear);
+  if (meta.runtime === "tmux") return sendTmuxPair(root, String(meta.tmuxPane ?? ""), text, submit.value, env, process, false, afterClear);
   const host = String(meta.childHost ?? "");
   const provider = getHost(host);
   if (provider === undefined) return failed(`send capability is unavailable for host ${host || "unknown"}`);
@@ -170,10 +133,30 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   const stateError = replyStateError(parsed.value.dispatchId, state, false); if (stateError !== undefined) return failed(stateError);
   const caller = await resolveCaller(environment, processAdapter);
   const sessionId = caller.id || caller.terminalId || "";
-  const append = appendParentReply(opened.value, parsed.value.dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId }, { supersede: parsed.value.supersede });
+  const outboxId = `delivery-${randomUUID()}`;
+  const append = appendParentReply(opened.value, parsed.value.dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId }, {
+    supersede: parsed.value.supersede,
+    outbox: { id: outboxId, targetKind: "child-delivery", target: deliveryTarget(parent.value), payload: { meta: parent.value, fullMessage: parsed.value.text, targetKind: "child-delivery" } },
+  });
   if (append.kind !== "ok") return append;
   const summary: SupersedeSummary = append.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter).catch(() => ({ outcome: "failed", reason: "notification failed" }));
+  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, parsed.value.text).catch(() => ({ outcome: "failed", reason: "notification failed", transport: "failed" as const }));
+  let transport = notification.transport ?? "failed";
+  if (transport === "queue") {
+    const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+    if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "sent", "Codex queue delivery");
+  } else if (transport === "deferred") {
+    const scheduled = await startDeliveryWorker(root, parsed.value.dispatchId, outboxId, parent.value, processAdapter);
+    transport = scheduled === "failed" ? "failed" : "deferred";
+    if (scheduled === "failed") {
+      const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+      if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "failed", "Could not start deferred delivery");
+    }
+  } else {
+    const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+    if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "failed", notification.reason);
+  }
+  setDeliveryTransport(opened.value, parsed.value.dispatchId, append.value.seq, transport);
   if (state !== "done") {
     const updated = mutateDispatch(opened.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
     if (updated.kind !== "ok") return updated;
@@ -201,29 +184,49 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   const timeoutMs = parsed.value.idleTimeout * 1000;
   const summary = { attempts: 0, idleReached: false, delivered: false, confirmed: false, superseded, oversized: false };
   const agent = typeof meta.agent === "string" ? meta.agent : "";
+  const formatted = `[megabrain] Change of direction from your coordinator. Stop the approach you were on and follow this instead:\n${parsed.value.text}\n(The same text is available with megabrain check.)`;
+  summary.oversized = meta.runtime === "tmux" && promptByteLength(formatted) > PROMPT_BUDGET_TMUX_BYTES;
+  const deliveryText = summary.oversized ? "[megabrain] A new direction is queued; run megabrain check to read it." : formatted;
   const recordIdle = (attempt: number, idle: boolean, detail: string): Promise<Result<void>> => recordChangeEvent(root, parsed.value.dispatchId, "idle-result", `after interrupt ${attempt}: idle=${idle}; ${detail}`, session, environment, processAdapter);
+  const deferChange = async (reason: string): Promise<Result<string>> => {
+    const outboxId = `change-delivery-${randomUUID()}`;
+    const queued = enqueueOutbox(database.value.db, {
+      id: outboxId, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", target: deliveryTarget(meta),
+      payload: { meta, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: deliveryText, pointer: "mail: megabrain check", pointerOnly: summary.oversized },
+    });
+    if (queued.kind !== "ok") return queued;
+    const scheduled = await startDeliveryWorker(root, parsed.value.dispatchId, outboxId, { ...meta, targetKind: "child-delivery" }, processAdapter);
+    const transport = scheduled === "failed" ? "failed" : "deferred";
+    setDeliveryTransport(database.value, parsed.value.dispatchId, appended.value.seq, transport);
+    if (scheduled === "failed") {
+      const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+      if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(database.value, outboxId, "failed", "Could not start deferred delivery");
+    }
+    await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", `${reason}; delivery ${transport}`, session, environment, processAdapter);
+    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, delivered: false, reason: `${reason}; delivery ${transport}` }));
+  };
 
   if (meta.runtime !== "tmux" && meta.childHost === "superset") {
     const stopped = await executeOrchestrateStop([parsed.value.dispatchId, "--json"], environment, processAdapter);
     const reason = stopped.kind === "failed" ? stopReason(stopped.error) : "Superset terminals send offers no interrupt capability";
     await recordChangeEvent(root, parsed.value.dispatchId, "interrupt-result", reason, session, environment, processAdapter);
-    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: `queue changed; agent was not interrupted: ${reason}` }));
+    return deferChange(`queue changed; agent was not interrupted: ${reason}`);
   }
 
-  let screen = await readChangeScreen(meta, processAdapter);
+  let screen = await readDeliveryScreen(meta, processAdapter);
   if (screen.kind !== "ok") {
     await recordIdle(0, false, `screen unavailable: ${screen.error}`);
-    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: `queue changed; agent was not interrupted: ${screen.error}` }));
+    return deferChange(`queue changed; agent was not interrupted: ${screen.error}`);
   }
   let liveness = classifyLiveness(agent, screen.value).status;
   if (liveness === "idle") {
-    const idle = await waitForChangeIdle(agent, timeoutMs, readChangeScreen, meta, processAdapter);
+    const idle = await waitForChangeIdle(agent, timeoutMs, readDeliveryScreen, meta, processAdapter);
     summary.idleReached = idle.kind === "ok";
     const recorded = await recordIdle(0, summary.idleReached, summary.idleReached ? "composer idle and stable before interrupt" : "idle was not stable");
     if (recorded.kind !== "ok") return recorded;
   } else if (liveness !== "working") {
     await recordIdle(0, false, `child liveness is ${liveness}`);
-    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: `queue changed; agent was not interrupted: child liveness is ${liveness}` }));
+    return deferChange(`queue changed; agent liveness is ${liveness}`);
   }
 
   for (let attempt = 1; !summary.idleReached && attempt <= parsed.value.attempts; attempt += 1) {
@@ -239,20 +242,20 @@ export async function executeOrchestrateChange(args: readonly string[], environm
       const reason = stopReason(stopped.error);
       if (reason.includes("Superset terminals send offers no interrupt capability")) {
         await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", "direction not typed because the host cannot interrupt; direction remains queued", session, environment, processAdapter);
-        return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: `queue changed; agent was not interrupted: ${reason}` }));
+        return deferChange(`queue changed; agent was not interrupted: ${reason}`);
       }
-      screen = await readChangeScreen(meta, processAdapter);
+      screen = await readDeliveryScreen(meta, processAdapter);
       if (screen.kind !== "ok") {
         await recordIdle(attempt, false, `screen unavailable: ${screen.error}`);
-        return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: `queue changed; agent was not interrupted: ${screen.error}` }));
+        return deferChange(`queue changed; agent was not interrupted: ${screen.error}`);
       }
       liveness = classifyLiveness(agent, screen.value).status;
       if (liveness !== "idle") {
         await recordIdle(attempt, false, `stop refused: ${reason}`);
-        return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: `queue changed; agent was not interrupted: ${reason}` }));
+        return deferChange(`queue changed; agent was not interrupted: ${reason}`);
       }
     }
-    const idle = await waitForChangeIdle(agent, timeoutMs, readChangeScreen, meta, processAdapter);
+    const idle = await waitForChangeIdle(agent, timeoutMs, readDeliveryScreen, meta, processAdapter);
     summary.idleReached = idle.kind === "ok";
     const recorded = await recordIdle(attempt, summary.idleReached, summary.idleReached ? "composer idle and stable" : "child remained busy or screen was unreadable");
     if (recorded.kind !== "ok") return recorded;
@@ -260,37 +263,64 @@ export async function executeOrchestrateChange(args: readonly string[], environm
 
   if (!summary.idleReached) {
     const message = `child did not stop after ${summary.attempts} interrupts; direction stays queued for megabrain check`;
-    if (parsed.value.json) return failed(JSON.stringify({ dispatchId: parsed.value.dispatchId, status: "queued", attempts: summary.attempts, idleReached: false, delivered: false, confirmed: false, supersededQueued: superseded.queued, supersededDelivered: superseded.delivered, deliveredSequences: superseded.deliveredSequences, oversized: false, message }, null, 2), 1);
-    return failed(`${message}\nattempts: ${summary.attempts}\nidle reached: false\ndelivered: false\nconfirmed: false\nsuperseded queued: ${superseded.queued}\nsuperseded delivered: ${superseded.delivered}`, 1);
+    return deferChange(message);
   }
 
-  const verifyClearedComposer = async (): Promise<Result<void>> => {
-    const empty = await waitForChangeIdle(agent, timeoutMs, readChangeScreen, meta, processAdapter);
-    const recorded = await recordChangeEvent(root, parsed.value.dispatchId, "composer-clear", empty.kind === "ok" ? "Ctrl-U sent and screen proved the composer empty" : "Ctrl-U sent but the composer was not proven empty", session, environment, processAdapter);
-    if (recorded.kind !== "ok") return recorded;
-    return empty.kind === "ok" ? ok(undefined) : failed("composer was not proven empty after clearing");
+  const verifyEmptyComposer = async (): Promise<Result<void>> => {
+    const screen = await readDeliveryScreen(meta, processAdapter);
+    if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
+    return classifyLiveness(agent, screen.value).status === "idle" && deliveryComposer(agent, screen.value) === ""
+      ? ok(undefined)
+      : failed("target is no longer idle with an empty composer");
   };
-  if (meta.runtime !== "tmux") {
-    const cleared = await clearChangeComposer(meta, processAdapter);
-    if (cleared.kind !== "ok") {
-      const recorded = await recordChangeEvent(root, parsed.value.dispatchId, "composer-clear", `clear failed: ${cleared.error}`, session, environment, processAdapter);
-      if (recorded.kind !== "ok") return recorded;
-      return failed(`direction stays queued for megabrain check; composer could not be cleared: ${cleared.error}`);
+  const targetLeaseKey = `delivery-target:${deliveryTarget(meta)}`;
+  const targetLeaseHolder = `change-${process.pid}-${randomUUID()}`;
+  const targetLease = acquireLease(database.value, targetLeaseKey, targetLeaseHolder, Math.ceil(timeoutMs / 1000) + 30);
+  let deliveryResult: IdleDeliveryOutcome = "failed";
+  if (targetLease.kind === "ok" && targetLease.value) {
+    try {
+      deliveryResult = await deliverWhenIdle({
+        timeoutMs,
+        initialDelayMs: 100,
+        maxDelayMs: 1000,
+        ownDraft: deliveryText,
+        inspect: async () => {
+          const screen = await readDeliveryScreen(meta, processAdapter);
+          return screen.kind === "ok" && classifyLiveness(agent, screen.value).status === "idle" ? "idle" : "busy";
+        },
+        composer: async () => {
+          const screen = await readDeliveryScreen(meta, processAdapter);
+          return screen.kind === "ok" ? deliveryComposer(agent, screen.value) : undefined;
+        },
+        clear: async () => {
+          const cleared = await clearChangeComposer(meta, processAdapter);
+          return cleared.kind === "ok" && (await verifyEmptyComposer()).kind === "ok";
+        },
+        send: async () => (await sendChange(meta, root, deliveryText, processAdapter, environment, verifyEmptyComposer)).kind === "ok",
+        isRead: async () => {
+          const deliveries = listDeliveries(database.value, parsed.value.dispatchId);
+          const row = deliveries.kind === "ok" ? deliveries.value.find((delivery) => Array.isArray(delivery.messageSeqs) && delivery.messageSeqs.includes(appended.value.seq)) : undefined;
+          return row !== undefined && (row.status === "acknowledged" || (typeof row.consumer === "string" && row.consumer !== ""));
+        },
+      });
+    } finally {
+      releaseLease(database.value, targetLeaseKey, targetLeaseHolder);
     }
-    const empty = await verifyClearedComposer();
-    if (empty.kind !== "ok") return failed(`direction stays queued for megabrain check; ${empty.error}`);
   }
-
-  const formatted = `[megabrain] Change of direction from your coordinator. Stop the approach you were on and follow this instead:\n${parsed.value.text}\n(The same text is available with megabrain check.)`;
-  summary.oversized = meta.runtime === "tmux" && promptByteLength(formatted) > PROMPT_BUDGET_TMUX_BYTES;
-  const deliveryText = summary.oversized ? "[megabrain] A new direction is queued; run megabrain check to read it." : formatted;
-  const delivery = await sendChange(meta, root, deliveryText, processAdapter, environment, meta.runtime === "tmux" ? verifyClearedComposer : undefined);
-  summary.delivered = delivery.kind === "ok";
-  const deliveryError = delivery.kind === "ok" ? "" : delivery.error;
+  const composerRecorded = await recordChangeEvent(root, parsed.value.dispatchId, "composer-clear", deliveryResult === "delivered" ? "empty composer verified; no foreign text cleared" : "composer was not proven empty; existing text preserved", session, environment, processAdapter);
+  if (composerRecorded.kind !== "ok") return composerRecorded;
+  summary.delivered = deliveryResult === "delivered";
+  if (summary.delivered && !summary.oversized) setDeliveryTransport(database.value, parsed.value.dispatchId, appended.value.seq, "typed");
+  if (deliveryResult === "cancelled") {
+    const recorded = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", "direction was read before typing; no terminal message sent", session, environment, processAdapter);
+    if (recorded.kind !== "ok") return recorded;
+    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: "direction was read before terminal delivery" }));
+  }
+  const deliveryError = deliveryResult === "failed" ? "target did not become idle with an empty composer before timeout" : "direction was read before delivery";
   const deliveryEvent = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", summary.delivered ? `direction submitted${summary.oversized ? " as check pointer because it exceeded 12000 bytes" : ""}` : `direction not submitted: ${deliveryError}`, session, environment, processAdapter);
   if (deliveryEvent.kind !== "ok") return deliveryEvent;
-  if (!summary.delivered) return failed(`direction stays queued for megabrain check; could not submit the direction: ${deliveryError}`);
-  summary.confirmed = await waitForChangeWorking(agent, timeoutMs, readChangeScreen, meta, processAdapter);
+  if (!summary.delivered) return deferChange(`direction stays queued for megabrain check; could not submit the direction: ${deliveryError}`);
+  summary.confirmed = await waitForChangeWorking(agent, timeoutMs, readDeliveryScreen, meta, processAdapter);
   const confirmed = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-confirmation", `agent started working: ${summary.confirmed}`, session, environment, processAdapter);
   if (confirmed.kind !== "ok") return confirmed;
   return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, summary));

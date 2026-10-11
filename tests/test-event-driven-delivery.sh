@@ -95,36 +95,35 @@ nudge_count() {
   printf '%s\n' "$total"
 }
 
-# A child ask is an event: append alone creates its parent delivery and one nudge.
+# A child ask creates its parent delivery and records that terminal notification is deferred.
 create_dispatch child-ask
 export SUPERSET_TERMINAL_ID=child-child-ask
 run_child_message child-ask ask 'needs a decision' >/dev/null
 assert_equal "$(delivery_count child-ask)" 1
-assert_equal "$(nudge_count child-ask)" 1
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-ask | jq -r '.deliveries[0].transport')" deferred
 assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-ask | jq -r '.deliveries[0].recipient')" parent
-printf 'child ask creates one parent delivery and one nudge\n'
+printf 'child ask creates one parent delivery and defers terminal notification\n'
 
 # A child done has the same event-driven behavior.
 create_dispatch child-done
 export SUPERSET_TERMINAL_ID=child-child-done
 run_child_message child-done done 'finished successfully' >/dev/null
 assert_equal "$(delivery_count child-done)" 1
-assert_equal "$(nudge_count child-ask child-done)" 2
-printf 'child done creates one parent delivery and one nudge\n'
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-done | jq -r '.deliveries[0].transport')" deferred
+printf 'child done creates one parent delivery and defers terminal notification\n'
 
 # A "child stalled" message is not user-invoked; only the turn-end hook writes one
 # (hook-turn-end.ts's own appendMessage call), when stalledIsDue finds the terminal unproven (our
 # fake superset's empty "terminals list" makes it "missing") or no recent child activity. Driven
-# through the real hook so the same production appendMessage path creates both the delivery and
-# the nudge, instead of a fixture that could only fabricate the delivery half.
+# through the real hook so the production appendMessage path creates the delivery.
 create_dispatch child-stalled
 env -i HOME="$state_dir/home" PATH="$PATH" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state_dir" \
   MEGABRAIN_DISPATCH_ID=child-stalled SUPERSET_TERMINAL_ID=child-child-stalled MEGABRAIN_HOOK_AGENT=codex \
   "$root/.build/megabrain" hook turn-end '{"last_assistant_message":"needs intervention"}' >/dev/null
 assert_equal "$(delivery_count child-stalled)" 1
 assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-stalled | jq -r '.messages[0].type')" stalled
-assert_equal "$(nudge_count child-ask child-done child-stalled)" 3
-printf 'child stalled creates one parent delivery and one nudge\n'
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" child-stalled | jq -r '.deliveries[0].transport')" deferred
+printf 'child stalled creates one parent delivery and defers terminal notification\n'
 
 # Protocol evidence remains durable without creating an actionable nudge. A plain "received"
 # message still creates a (protocol) delivery, since recipientForQueueMessage returns "parent" for
@@ -138,21 +137,20 @@ create_dispatch protocol-only
 export SUPERSET_TERMINAL_ID=child-protocol-only
 run_child_message protocol-only received 'prompt received' >/dev/null
 assert_equal "$(delivery_count protocol-only)" 1
-assert_equal "$(nudge_count child-ask child-done child-stalled protocol-only)" 3
+assert_equal "$(nudge_count protocol-only)" 0
 printf 'received mail is durable and protocol-only\n'
 
-# A parent reply creates the child's delivery before the child checks, and notifies the child's
-# host directly (`superset terminals send`) -- orchestrate reply forwards unconditionally to the
-# compiled binary (megabrain_dispatch_reply, the shell implementation this used to call, has no
-# production caller left), so the child's own notify-child path (queue-write.ts's notifyChild) is
-# what fires here, not a shell nudge function.
+# A parent reply creates the child's delivery before the child checks. With no proof that the
+# child's terminal is idle and its composer empty, the message stays durable and its transport is
+# recorded as deferred without issuing a terminal send.
 export SUPERSET_TERMINAL_ID=parent-terminal
 create_dispatch parent-reply
 "$root/.build/megabrain" orchestrate reply parent-reply --text 'continue' --json >/dev/null
 assert_equal "$(delivery_count parent-reply)" 1
 assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" parent-reply | jq -r '.deliveries[0].recipient')" child
-assert_equal "$(send_count)" 1
-printf 'parent reply creates one child delivery and one nudge\n'
+assert_equal "$(send_count)" 0
+assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" parent-reply | jq -r '.deliveries[0].transport')" deferred
+printf 'parent reply creates one child delivery and defers the nudge\n'
 
 # The unclaimed delivery is claimed by the child and replays until acknowledged.
 export SUPERSET_TERMINAL_ID=child-parent-reply

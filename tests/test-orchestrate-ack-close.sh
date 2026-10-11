@@ -250,9 +250,8 @@ make_dispatch "$hook_state" hook-owned done hook-delivery
 set_parent_workspace "$hook_state/dispatches/hook-owned/meta.json"
 state_db_import "$binary" "$hook_state"
 "$binary" hook turn-end '{}' >/dev/null
-assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 1
-assert_contains "$(cat "$MEGABRAIN_TEST_SEND_LOG")" 'orchestrate close hook-owned'
-printf 'turn-end hook notices an owned done dispatch with a retained terminal\n'
+assert_equal "$(wc -l <"$MEGABRAIN_TEST_SEND_LOG" | tr -d ' ')" 0
+printf 'turn-end hook does not type into an unverified parent composer\n'
 
 : >"$MEGABRAIN_TEST_SEND_LOG"
 waiter_state="$work_dir/hook-waiter"

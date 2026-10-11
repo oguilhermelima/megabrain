@@ -114,8 +114,8 @@ assert_equal "$(printf '%s' "$reply_fail_output" | jq -r '.status')" queued
 assert_equal "$(printf '%s' "$reply_fail_output" | jq -r '.nudge')" not-typed
 printf 'a failed terminal send is reported as nudge=not-typed while status stays queued\n'
 
-# Scenario: a successful terminal send is reported as nudge=typed.
-# Falsification: a live pane is misreported as not-typed.
+# Scenario: a successful fake host send is still insufficient proof that the parent is idle and
+# its composer is empty, so no terminal typing occurs.
 ok_state="$state_dir/nudge-succeeds"
 write_meta "$ok_state" nudge-succeeds
 cat >"$bin_dir/superset" <<'EOF'
@@ -129,7 +129,7 @@ EOF
 chmod +x "$bin_dir/superset"
 reply_ok_output="$(PATH="$bin_dir:$PATH" SUPERSET_TERMINAL_ID=parent-terminal MEGABRAIN_STATE_DIR="$ok_state" "$binary" orchestrate reply nudge-succeeds --text 'answer reaches a live pane' --json)"
 assert_equal "$(printf '%s' "$reply_ok_output" | jq -r '.status')" queued
-assert_equal "$(printf '%s' "$reply_ok_output" | jq -r '.nudge')" typed
-printf 'a successful terminal send is reported as nudge=typed\n'
+assert_equal "$(printf '%s' "$reply_ok_output" | jq -r '.nudge')" not-typed
+printf 'an unverified terminal composer is left untouched and reported as nudge=not-typed\n'
 
 printf 'ok: reply nudge honesty covered (stalled debounce, mail classification, and usage routing are bun-covered, see report)\n'

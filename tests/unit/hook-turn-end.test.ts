@@ -6,11 +6,12 @@ import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeHookTurnEnd, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
+import { executeCheck } from "../../src/cli/commands/check.js";
 import { appendMessage } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { createDispatch, getDispatch, listDispatches, listMessages, putWaiter } from "../../src/adapters/state-db.js";
+import { createDispatch, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 type Behavior = (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>;
@@ -109,8 +110,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       });
       const result = await executeHookTurnEnd([], parentEnv(root), process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
-      const send = process.calls.find((call) => call.command === "orca" && call.args.includes("send"));
-      expect(send?.args).toContain("dispatch d1 finished but still owns its terminal; run megabrain orchestrate close d1");
+      expect(process.calls.some((call) => call.command === "orca" && call.args.includes("send"))).toBe(false);
     });
   });
 
@@ -123,9 +123,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       });
       await executeHookTurnEnd([], parentEnv(root), process, noStdin);
-      const sends = process.calls.filter((call) => call.command === "orca" && call.args.includes("send"));
-      expect(sends).toHaveLength(1);
-      expect(sends[0]?.args).toContain("2 finished dispatches still own terminals: d1, d2; run megabrain orchestrate close <id> for each");
+      expect(process.calls.some((call) => call.command === "orca" && call.args.includes("send"))).toBe(false);
     });
   });
 
@@ -304,6 +302,40 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
 });
 
 describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
+  test("does not replay a delivered change or block on its bookkeeping after the child is done", async () => {
+    await withRoot("delivered-change", async (root) => {
+      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+      const env = childEnv(root);
+      const process = fakeProcess();
+      await appendMessage(root, "d1", "parent", "reply", "follow the new direction", "coordinator", env, process);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const reply = readMessages(root, "d1").find((message) => message.type === "reply");
+      if (reply === undefined) throw new Error("reply missing");
+      const transported = setDeliveryTransport(db.value, "d1", Number(reply.seq), "typed");
+      if (transported.kind !== "ok") throw new Error(transported.error);
+      for (const type of ["withdrawal", "interrupt", "interrupt-result", "idle-result", "composer-clear", "delivery-result", "delivery-confirmation"]) {
+        await appendMessage(root, "d1", "parent", type, "change bookkeeping", "coordinator", env, process);
+      }
+      await appendMessage(root, "d1", "child", "done", "completed the new direction", "child-term", env, process);
+
+      const checked = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
+      const fullCheck = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--full", "--json"], env, process);
+      const result = await executeHookTurnEnd([], env, process, noStdin);
+      expect(checked).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(checked.kind === "ok" ? checked.value : "{}")).toMatchObject({ status: "empty", messages: [] });
+      expect(fullCheck).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(fullCheck.kind === "ok" ? fullCheck.value : "{}")).toMatchObject({ status: "empty", messages: [] });
+      const deliveries = listDeliveries(db.value, "d1");
+      expect(deliveries).toMatchObject({ kind: "ok" });
+      if (deliveries.kind === "ok") {
+        const auditSeqs = new Set(readMessages(root, "d1").filter((message) => message.from === "parent" && message.type !== "reply").map((message) => Number(message.seq)));
+        expect(deliveries.value.some((delivery) => delivery.recipient === "child" && delivery.messageSeqs.some((seq) => auditSeqs.has(seq)))).toBe(false);
+      }
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
   test("blocks (reason: reply available) when the parent has queued a reply", async () => {
     await withRoot("reply-available", async (root) => {
       await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });

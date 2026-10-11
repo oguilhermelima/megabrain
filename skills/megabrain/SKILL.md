@@ -82,10 +82,12 @@ megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--
 do not act. Ack it once you have acted; acking twice is safe and reports `duplicate`.
 When no delivery is available, watch and check report status `empty`; a timeout is not implied.
 
-**Do not assume you will be told.** When a child runs `ask` or `done`, megabrain tries to type a
-one-line pointer into the parent's terminal, but that nudge is best effort and the transport can
-still fail. **The queue is the truth; the pointer is only a nudge.** If you are waiting on a
-worker, run `watch` yourself rather than waiting for the pointer to arrive.
+**Do not assume you will be told.** When a child runs `ask` or `done`, a live Codex parent receives
+the full message through `codex queue`. Other messages use the parent's terminal only after the
+agent is idle and the composer is empty. A busy terminal or foreign draft starts a detached retry
+for up to ten minutes; it stops when `check` pulls the delivery or it is acknowledged. The queue
+is the truth, and `db show` records whether delivery used `queue`, `typed`, `deferred`, or `failed`.
+If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
 When your own turn ends, megabrain checks the dispatches you own and points at any that
 have unread child mail, once per message. That is what makes a missed pointer recover
@@ -131,11 +133,12 @@ dispatch session. `orchestrate reply` rejects a settled dispatch with a non-zero
 you to open a new dispatch rather than queueing an undeliverable message.
 
 `orchestrate change` supersedes queued directions first, then interrupts a working child until its
-composer is idle and stable (10 seconds per wait, up to three interrupts by default). It clears and
-verifies the composer before submitting the full direction with the agent's submit key.
-`--idle-timeout` changes each idle and confirmation wait, and `--attempts` sets a limit from one to
-three. If the direction exceeds the 12000-byte tmux limit, the child receives a pointer to
-`megabrain check`; the full text remains queued.
+composer is idle and stable (10 seconds per wait, up to three interrupts by default). It submits
+only into an empty composer and clears a draft only when it matches the direction being sent. A
+foreign draft is preserved; if delivery cannot happen now, a detached deliverer retries for up to
+ten minutes. `--idle-timeout` changes each idle and confirmation wait, and `--attempts` sets a limit
+from one to three. If the direction exceeds the 12000-byte tmux limit, the child receives a pointer
+to `megabrain check`; the full text remains queued.
 
 ## If you are the child
 
