@@ -51,7 +51,7 @@ assert_contains() {
 
 printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "$*" >>"$MEGABRAIN_TEST_SEND_LOG"' >"$bin_dir/superset"
 chmod +x "$bin_dir/superset"
-printf '%s\n' '#!/bin/sh' 'if [ "$1" = capture-pane ]; then cat "$MEGABRAIN_TEST_PANE_OUTPUT"; fi' >"$bin_dir/tmux"
+printf '%s\n' '#!/bin/sh' 'case "$1" in list-panes) printf "refusal-pane|1\\n" ;; capture-pane) cat "$MEGABRAIN_TEST_PANE_OUTPUT" ;; esac' >"$bin_dir/tmux"
 chmod +x "$bin_dir/tmux"
 : >"$send_log"
 

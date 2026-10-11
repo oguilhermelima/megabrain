@@ -140,11 +140,11 @@ assert_equal "$("$root/.build/megabrain" orchestrate list --all --archived --jso
 
 cat >"$fake_bin/tmux" <<'EOF'
 #!/usr/bin/env bash
-if [ "$1" = capture-pane ]; then
-  printf 'archived pane output\n'
-else
-  exit 1
-fi
+case "$1" in
+  list-panes) printf 'pane-1|1\n' ;;
+  capture-pane) printf 'archived pane output\n' ;;
+  *) exit 1 ;;
+esac
 EOF
 chmod +x "$fake_bin/tmux"
 read_result="$(PATH="$fake_bin:$PATH" SUPERSET_TERMINAL_ID=parent-terminal "$root/.build/megabrain" orchestrate read archive-dispatch --json)"
