@@ -1097,8 +1097,8 @@
       },
       "provenance": {
         "kind": "sourced",
-        "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations",
-        "fetchedAt": "2026-09-07"
+        "source": "Claude Code status line",
+        "fetchedAt": "2026-10-11"
       },
       "status": "active",
       "contextWindow": 200000
