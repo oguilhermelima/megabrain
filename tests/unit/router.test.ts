@@ -118,7 +118,7 @@ describe("CLI router", () => {
 
     expect(result).toEqual({
       kind: "failed",
-      error: "cannot launch agent from unknown orchestration host: unknown",
+      error: expect.stringMatching(/^tmux session megabrain-wt-.* has no pane$/),
       exitCode: 1,
     });
     expect(calls).toContainEqual({
@@ -132,7 +132,7 @@ describe("CLI router", () => {
 
     expect(result).toEqual({
       kind: "failed",
-      error: "cannot launch agent from unknown orchestration host: unknown",
+      error: expect.stringMatching(/^tmux session megabrain-wt-.* has no pane$/),
       exitCode: 1,
     });
     expect(calls).toContainEqual({

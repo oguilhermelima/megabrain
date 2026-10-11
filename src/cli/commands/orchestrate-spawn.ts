@@ -782,24 +782,18 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const existingWorktreeSession = selectedRuntime === "tmux" && !sameWorktree
     ? await existingTmuxSessionForWorktree(root, worktree.path, process)
     : undefined;
+  const parentContext = await resolveCaller(environment, process);
   const placement = decideTmuxPlacement({ callerInTmux, sameWorktree, tmuxRuntimeSelected: selectedRuntime === "tmux", existingSession: existingWorktreeSession !== undefined });
-  const runtime: SpawnRuntime = placement.kind === "host" ? "host" : "tmux";
+  // A caller under no terminal host (a plain shell, a bare agent session) has no host terminal to
+  // open a tab in, so its children always run in tmux.
+  const runtime: SpawnRuntime = placement.kind === "host" && getHost(parentContext.host) !== undefined ? "host" : "tmux";
   // Runtime selection depends on same-worktree tmux placement, so budget after resolving it.
   if (runtime !== selectedRuntime) {
     const budget = validatePromptBudget(prompt, runtime);
     if (budget.kind !== "ok") return budget;
   }
-  const parentContext = await resolveCaller(environment, process);
   const parentWorkspace = parentWorkspaceId(environment);
   const parentTmux = parentTmuxChannel(environment);
-  // F: a tmux spawn from a caller whose host could not be resolved would otherwise record an
-  // empty owner (parentContext.id === "" with host "unknown") — a dispatch nobody can later
-  // supervise, close or reply to. Refuse before anything is created. The host runtime path
-  // already refuses below (getHost(parentContext.host) === undefined), so this only needs to
-  // cover tmux.
-  if (runtime === "tmux" && parentContext.host === "unknown") {
-    return failed("cannot spawn on tmux from an unknown caller host; run inside a managed terminal or set MEGABRAIN_SESSION_HOST so the dispatch has a supervisable owner");
-  }
   const chatName = options.label ?? worktree.branch;
   const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}` : agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
@@ -1013,10 +1007,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     }
     if (plan.nextStep === null) {
       await startSupervisorWorker(root, environment, process);
-      const output = { status: "spawned", reason: null, dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
+      const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
-      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${attempts}${warning}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
+      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${parentContext.host === "local" ? "delivery: hook-and-watch\n" : ""}${attempts}${warning}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
     }
     step = plan.nextStep;
   }

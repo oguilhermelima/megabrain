@@ -302,6 +302,11 @@ cause changes or after 30 minutes unresolved.
 
 ### Managed terminals
 
+Terminal creation opens a tab in Orca or Superset when the session runs in one. Anywhere else it
+opens a tmux window in the caller's session, or a detached tmux session when the caller is not in
+tmux; the result prints the `tmux attach -t <session>` line. `list` marks each tmux terminal `alive`
+or `stale`, and `close` and `restart` act on the same record.
+
 Terminal creation returns the host identity in JSON and records it with the worktree, command,
 title, creation time, process identity and optional caller-supplied port:
 
@@ -393,8 +398,14 @@ A dispatch runs as a **tmux split** or as a **tab in an orchestrator**, and the 
 IDE gives you cards, tabs and shared worktrees, and tmux gives you cheap panes and a real close.
 `megabrain context` reports which one a session is in.
 
-**And tmux stands alone.** With neither app installed, a session inside tmux identifies itself by
-its own session and pane, so the whole delegate-supervise-close loop works on a bare Linux box.
+**And neither app is required.** megabrain works from any terminal: Terminal.app, iTerm, Ghostty, the
+VS Code terminal, a plain tmux or an ssh session. A caller under no app is a **local** caller. It is
+identified by its agent session (`claude:<session>` or `codex:<thread>`) and, with no agent, by the
+tty of its shell (`shell:<tty>`, or `shell:pid<pid>` when the shell has no tty). Children always run
+in tmux, and `spawn` reports `deliveryChannel: hook-and-watch`: a local parent has no terminal to
+type into, so child mail waits in the queue, the parent's Stop hook surfaces it once, and
+`megabrain orchestrate watch` reads it. `owner`, `list`, `watch`, `reply`, `ack`, `close` and `adopt`
+behave exactly as under an app.
 
 ### Where dispatched children open
 

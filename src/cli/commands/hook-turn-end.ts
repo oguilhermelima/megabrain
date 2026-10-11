@@ -51,6 +51,10 @@ async function computeSessionId(environment: HookEnvironment, processAdapter: Pr
     const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
     if (result.kind === "ok" && result.value !== "") return { id: `${result.value}:${environment.TMUX_PANE}`, host: "tmux" };
   }
+  // No terminal at all: a coordinator in a plain shell is a local parent, identified by its agent
+  // session (the id spawn recorded as parentSessionId).
+  if (present(environment.CLAUDE_CODE_SESSION_ID)) return { id: `claude:${environment.CLAUDE_CODE_SESSION_ID}`, host: "local" };
+  if (present(environment.CODEX_THREAD_ID)) return { id: `codex:${environment.CODEX_THREAD_ID}`, host: "local" };
   return undefined;
 }
 
@@ -501,7 +505,8 @@ export async function executeHookTurnEnd(
     // computeSessionId and findChild already resolve a tmux caller by tmuxSession+tmuxPane.
     const hasTerminalMarker = present(environment.SUPERSET_TERMINAL_ID) || present(environment.ORCA_TERMINAL_HANDLE);
     const hasTmuxPane = present(environment.TMUX) && present(environment.TMUX_PANE);
-    if (!hasTerminalMarker && !hasTmuxPane) {
+    const hasAgentSession = present(environment.CLAUDE_CODE_SESSION_ID) || present(environment.CODEX_THREAD_ID);
+    if (!hasTerminalMarker && !hasTmuxPane && !hasAgentSession) {
       return finish(defaultText);
     }
 

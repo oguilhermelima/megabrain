@@ -140,7 +140,7 @@ function structuredClaudeEnvironment(root: string, extra: Record<string, string>
   };
 }
 
-const identityRefusal = "this command requires a managed terminal identity; run it inside an Orca or Superset terminal";
+const identityRefusal = "this command cannot tell who is running it: no agent session and no shell were found";
 
 function isOwnershipRefusal(result: Result<string>): boolean {
   return result.kind === "failed" && (result.error.includes(identityRefusal) || result.error.includes("is owned by"));
@@ -151,8 +151,8 @@ function isOwnershipRefusal(result: Result<string>): boolean {
 // ---------------------------------------------------------------------------
 
 describe("resolveCallerIdentity", () => {
-  test("nothing set resolves to unknown host and no id", () => {
-    expect(resolveCallerIdentity({})).toEqual({ id: "", host: "unknown", terminalId: null, tmuxSession: null, tmuxPane: null });
+  test("nothing set resolves to the local host and no id", () => {
+    expect(resolveCallerIdentity({})).toEqual({ id: "", host: "local", terminalId: null, tmuxSession: null, tmuxPane: null });
   });
 
   test("MEGABRAIN_SESSION_ID is an explicit override that wins over every other source", () => {
@@ -209,7 +209,7 @@ describe("resolveCallerIdentity", () => {
 
   test("tmux present without a probed session name resolves to nothing (never guesses a bare host)", () => {
     const identity = resolveCallerIdentity({ tmux: "1", tmuxPane: "%4" });
-    expect(identity).toEqual({ id: "", host: "unknown", terminalId: null, tmuxSession: null, tmuxPane: null });
+    expect(identity).toEqual({ id: "", host: "local", terminalId: null, tmuxSession: null, tmuxPane: null });
   });
 
   test("a structured Orca session (ORCA_STRUCTURED_SESSION=1) resolves host orca with no id", () => {
@@ -234,8 +234,8 @@ describe("resolveCallerIdentity", () => {
   });
 
   test("ORCA_STRUCTURED_SESSION must be exactly \"1\"", () => {
-    expect(resolveCallerIdentity({ orcaStructuredSession: "true" }).host).toBe("unknown");
-    expect(resolveCallerIdentity({ orcaStructuredSession: "0" }).host).toBe("unknown");
+    expect(resolveCallerIdentity({ orcaStructuredSession: "true" }).host).toBe("local");
+    expect(resolveCallerIdentity({ orcaStructuredSession: "0" }).host).toBe("local");
   });
 });
 
@@ -247,7 +247,7 @@ describe("hasCallerIdentity", () => {
     expect(hasCallerIdentity({ id: "", host: "orca", terminalId: "term-1", tmuxSession: null, tmuxPane: null })).toBe(true);
   });
   test("neither counts as no identity at all", () => {
-    expect(hasCallerIdentity({ id: "", host: "unknown", terminalId: null, tmuxSession: null, tmuxPane: null })).toBe(false);
+    expect(hasCallerIdentity({ id: "", host: "local", terminalId: null, tmuxSession: null, tmuxPane: null })).toBe(false);
   });
   test("host orca with no id (a bare structured session) is still no identity", () => {
     expect(hasCallerIdentity({ id: "", host: "orca", terminalId: null, tmuxSession: null, tmuxPane: null })).toBe(false);
@@ -430,13 +430,13 @@ describe("a different session is refused", () => {
     expect(result.kind === "failed" ? result.error : "").toContain("is owned by");
   });
 
-  test("a caller with no identity at all is refused with the same message every verb uses", async () => {
+  test("a plain-shell caller is refused as a different owner, never as an unknown one", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
     const process = orcaHostProcess("child-term-1");
     const result = await executeOrchestrateClose(["dispatch-1", "--json"], { MEGABRAIN_STATE_DIR: root }, process);
     expect(result.kind).toBe("failed");
-    expect(result.kind === "failed" ? result.error : "").toBe(identityRefusal);
+    expect(result.kind === "failed" ? result.error : "").toContain("is owned by orca/claude:test-uuid, not local/");
   });
 });
 
@@ -444,25 +444,30 @@ describe("a different session is refused", () => {
 // F: a tmux spawn from an unknown caller host must refuse, not record an empty owner
 // ---------------------------------------------------------------------------
 
-describe("spawn refuses a tmux spawn from an unknown caller host", () => {
+describe("spawn from a caller with no terminal host", () => {
   function spawnDependencies(worktreePath: string): SpawnDependencies {
     const resolved: SpawnWorktree = { path: worktreePath, branch: "feat/example", ownership: "existing", workspaceId: null };
     return { resolveWorktree: async () => ok(resolved) };
   }
 
-  test("refuses before creating a tmux session or a dispatch record", async () => {
+  test("a caller with no terminal host is local and never refused as unknown", async () => {
     const root = await tempStateDir();
     const worktree = await mkdtemp(`${tmpdir()}/megabrain-caller-identity-worktree-`);
-    const process = fakeProcess();
-    const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-f" };
+    const process = fakeProcess((command, args) => {
+      if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
+      if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: "❯\n", stderr: "", exitCode: 0 });
+      if (command === "tmux") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-f", CLAUDE_CODE_SESSION_ID: "f-session", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0", MEGABRAIN_AGENT_READY_TIMEOUT_MS: "50" };
     const result = await executeSpawn(
       ["--worktree", worktree, "--agent", "claude", "--prompt", "hello", "--tmux", "true"],
       environment,
       process,
       spawnDependencies(worktree),
     );
-    expect(result.kind).toBe("failed");
-    expect(process.calls.some((call) => call.command === "tmux")).toBe(false);
+    if (result.kind === "failed") expect(result.error).not.toContain("unknown caller host");
+    expect(process.calls.some((call) => call.command === "tmux")).toBe(true);
   });
 
   test("an explicit MEGABRAIN_SESSION_HOST still allows the tmux spawn to proceed past the identity check", async () => {
