@@ -278,15 +278,26 @@ a finding. A provider error counts only when it is the last thing the agent reco
 progress for two minutes by the record's own timestamp, or when the agent is back at an idle prompt
 after it. Causes: usage-limit (with the reset time), rate-limited (429), server-error (5xx,
 overloaded), network (timeout, connection error, stream disconnected), auth-required, dialog-waiting,
-prompt-unsubmitted, process-exited and pane-gone. Anything it cannot place is unknown and is never
-reported.
+prompt-unsubmitted, prompt-lost, process-exited and pane-gone. Anything it cannot place is unknown and
+is never reported.
+
+The first prompt has no deadline. Spawn stops once the prompt is pasted, proven in the composer and
+submitted; a missing `received` is only recorded. On every check the supervisor reads the state of the
+prompt, and of any later message, from the terminal: delivered-working (the agent is working: its
+spinner line, or for Codex the braille spinner in the pane title), queued (a message waits for the turn
+to end: Claude shows "Press up to edit queued messages", Codex a "›" block above its working line),
+delivered (shown as a submitted turn, agent idle), unsubmitted (text in an idle composer) and lost
+(idle at an empty composer, prompt in neither the screen nor the scrollback, no `received`, `ask` or
+`done`). A Codex child can code for twenty minutes without reading its queue, so queued and
+delivered-working are never findings, however long they last. Only unsubmitted and lost are.
 
 Each finding becomes one parent-bound message of type supervise, delivered like any child message,
 with a recommended action: switch agent in the same worktree or wait for the reset (usage-limit); wait
 for the provider and then send "continue" with `orchestrate change` (rate-limited, server-error,
 network); log in (auth-required); answer the dialog or respawn (dialog-waiting); respawn in the same
 worktree, listing uncommitted changes (process-exited, pane-gone). The only automatic action is
-prompt-unsubmitted: it presses Enter once and reports the outcome. A notice repeats only when the
+prompt-unsubmitted: it closes any open paste, presses Enter once and reports the outcome. A lost prompt
+recommends resending the brief with `orchestrate reply`. A notice repeats only when the
 cause changes or after 30 minutes unresolved.
 
 ### Managed terminals
@@ -780,8 +791,9 @@ terminal keystroke ---------------------> nudge only
 ```
 
 Prompt delivery is confirmed by the child writing a received message to the durable queue. The
-parent sends the prompt as a best-effort transport action, waits for that receipt, and retries a
-bounded number of times when it does not arrive. A keystroke typed into a terminal is only a nudge
+parent sends the prompt as a best-effort transport action and does not wait for that receipt: there is
+no deadline, because a busy child reads its queue late. The supervisor judges a missing receipt from
+the child's terminal instead. A keystroke typed into a terminal is only a nudge
 that may wake a participant; the message it points at is already durable.
 
 ## Testing

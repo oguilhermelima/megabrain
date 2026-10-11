@@ -183,8 +183,11 @@ to `megabrain check`; the full text remains queued.
 `megabrain supervise` is started by `orchestrate spawn` and watches every open dispatch from the
 agent's own session records, never from silence. It sends the parent one message of type supervise per
 finding (usage-limit, rate-limited, server-error, network, auth-required, dialog-waiting,
-prompt-unsubmitted, process-exited, pane-gone) with a recommended action, and only auto-recovers an
-unsubmitted prompt. Read it with `orchestrate watch`; `megabrain supervise --status` and `--stop`
+prompt-unsubmitted, prompt-lost, process-exited, pane-gone) with a recommended action, and only
+auto-recovers an unsubmitted prompt. Spawn has no receipt deadline: the supervisor reads the first
+prompt from the terminal (delivered-working, queued, delivered, unsubmitted, lost) and only unsubmitted
+and lost are findings; a queued or working prompt is never one, however long it lasts. For a lost
+prompt, resend the brief with `orchestrate reply`. Read it with `orchestrate watch`; `megabrain supervise --status` and `--stop`
 inspect and end the watcher.
 
 ## If you are the child
@@ -197,8 +200,9 @@ megabrain ack <delivery-id> [--consumer <id>] [--generation <number>] [--json] â
 megabrain done "summary" | megabrain done --text "summary" â€” recommended when you need to report the completed work and what was verified to the coordinator.
 ```
 
-`received` confirms prompt delivery by writing a durable message to the queue; the parent waits
-for that receipt before considering the launch delivered and retries when it does not arrive. A
+`received` confirms prompt delivery by writing a durable message to the queue. The parent does not
+wait for it, so send it before starting work, and the supervisor tells a busy child from a failed one
+by its terminal. A
 reply reaches you only if you look for it. `ask` queues the question and returns; it does not
 block. Poll with
 `check` and do not proceed on a default when the answer would change the work.
