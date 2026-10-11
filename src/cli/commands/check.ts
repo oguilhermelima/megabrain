@@ -5,10 +5,11 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
-import { claimDelivery, createDelivery, getDispatch, listDeliveries, listDispatches, listMessages, stateDatabase } from "../../adapters/state-db.js";
+import { claimDelivery, createDelivery, getDispatch, listDeliveries, listDispatches, listMessages, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DeliveryRecord } from "../../db/queries/deliveries.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
+export type CheckOptions = Readonly<{ acknowledge?: boolean; excludedTransports?: readonly string[] }>;
 
 function checkMessages(root: string, dispatch: string): CheckMessage[] {
   const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -94,7 +95,7 @@ export function report(dispatch: string, delivery: CheckDelivery | undefined, me
   return `delivery: ${delivery.id}\nreplayed: ${replayed}\nstatus: ${value.status}\n${batch.map((message) => `[${message.seq}] ${message.type || "message"}: ${message.text ?? ""}`).join("\n")}\n`;
 }
 
-export async function executeCheck(args: readonly string[], environment: CheckEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
+export async function executeCheck(args: readonly string[], environment: CheckEnvironment, processAdapter: ProcessAdapter = createProcessAdapter(), options: CheckOptions = {}): Promise<Result<string>> {
   let timeout = 120; let pollInterval = 3; let waitMode = "poll"; let full = false; let json = false; let consumer = "";
   let generation = environment.MEGABRAIN_CONSUMER_GENERATION === undefined ? 1 : Number(environment.MEGABRAIN_CONSUMER_GENERATION);
   for (let index = 0; index < args.length; index += 1) {
@@ -129,12 +130,17 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
     const messages = checkMessages(root, dispatch);
     const deliveries = checkDeliveries(root, dispatch);
     await migrateDeliveries(root, dispatch, messages, deliveries);
-    const selected = selectDelivery("child", full, checkDeliveries(root, dispatch), messages, resolvedConsumer, generation);
+    const selected = selectDelivery("child", full, checkDeliveries(root, dispatch), messages, resolvedConsumer, generation, options.excludedTransports);
     if (selected.kind === "selected") {
       if (selected.delivery.consumer === null) {
         const claim = claimDelivery(database.value, selected.delivery.id, resolvedConsumer, generation);
         if (claim.kind !== "ok") return claim;
         if (claim.value === undefined) continue;
+      }
+      if (options.acknowledge !== false && selected.delivery.recipient === "child") {
+        for (const sequence of selected.delivery.messageSeqs) {
+          setDeliveryTransport(database.value, dispatch, sequence, "checked");
+        }
       }
       return ok(report(dispatch, selected.delivery, messages, selected.replayed, json));
     }

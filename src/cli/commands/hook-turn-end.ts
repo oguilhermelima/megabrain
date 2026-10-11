@@ -8,7 +8,7 @@ import { terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDispatches, listMessages, mutateDispatch, noDispatchChange, stateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 
 export type HookEnvironment = QueueEnvironment;
 type JsonRecord = Record<string, unknown>;
@@ -256,15 +256,18 @@ export async function executeHookTurnEnd(
     if (meta === undefined) return finish(defaultText);
     const state = typeof meta.state === "string" ? meta.state : "";
 
-    const checkResult = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--wait-mode", "poll", "--json"], environment, processAdapter);
+    const checkResult = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--wait-mode", "poll", "--json"], environment, processAdapter, { acknowledge: false, excludedTransports: ["checked", "hook-notified"] });
     let messageCount = 0;
+    let messageSeqs: number[] = [];
     if (checkResult.kind === "ok") {
       try {
-        const parsed = JSON.parse(checkResult.value) as { readonly messages?: readonly unknown[] };
+        const parsed = JSON.parse(checkResult.value) as { readonly messages?: readonly unknown[]; readonly messageSeqs?: readonly unknown[] };
         messageCount = Array.isArray(parsed.messages) ? parsed.messages.length : 0;
+        messageSeqs = Array.isArray(parsed.messageSeqs) ? parsed.messageSeqs.filter((value): value is number => typeof value === "number") : [];
       } catch { messageCount = 0; }
     }
     if (messageCount > 0) {
+      for (const sequence of messageSeqs) setDeliveryTransport(database.value, dispatchId, sequence, "hook-notified");
       if (environment.MEGABRAIN_HOOK_AGENT === "cursor") return finish('{"continue":true}');
       return finish('{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}');
     }

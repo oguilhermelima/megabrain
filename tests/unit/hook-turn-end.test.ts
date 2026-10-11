@@ -336,14 +336,67 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
-  test("blocks (reason: reply available) when the parent has queued a reply", async () => {
+  test("replays checked replies until the child reports, without blocking the hook again", async () => {
     await withRoot("reply-available", async (root) => {
       await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
       const fp = fakeProcess();
       await appendMessage(root, "d1", "parent", "reply", "do the other thing", "coord-term", childEnv(root), fp);
-      const result = await executeHookTurnEnd([], childEnv(root), fp, noStdin);
-      expect(result).toEqual({ kind: "ok", value: '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+      const check = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
+      expect(check).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(check.kind === "ok" ? check.value : "{}")).toMatchObject({ replayed: false, text: "do the other thing" });
+      const repeated = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
+      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ replayed: true, text: "do the other thing" });
+      const afterShown = await executeHookTurnEnd([], childEnv(root), fp, noStdin);
+      expect(afterShown).toEqual({ kind: "ok", value: "{}\n" });
+
+      await appendMessage(root, "d1", "child", "done", "completed", "child-term", childEnv(root), fp);
+      const deliveries = listDeliveries(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }).value, "d1");
+      expect(deliveries).toMatchObject({ kind: "ok" });
+      if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "acknowledged" });
+      const afterDone = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
+      expect(JSON.parse(afterDone.kind === "ok" ? afterDone.value : "{}")).toMatchObject({ status: "empty", messages: [] });
     });
+  });
+
+  test("leaves never-shown mail outstanding and blocks its hook only once", async () => {
+    await withRoot("unshown-reply", async (root) => {
+      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+      const env = childEnv(root);
+      const fp = fakeProcess();
+      await appendMessage(root, "d1", "parent", "reply", "not shown yet", "coord-term", env, fp);
+
+      await appendMessage(root, "d1", "child", "done", "finished", "child-term", env, fp);
+      const deliveries = listDeliveries(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }).value, "d1");
+      expect(deliveries).toMatchObject({ kind: "ok" });
+      if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "outstanding" });
+
+      const firstHook = await executeHookTurnEnd([], env, fp, noStdin);
+      const secondHook = await executeHookTurnEnd([], env, fp, noStdin);
+      expect(firstHook).toEqual({ kind: "ok", value: '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+      expect(secondHook).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
+  test("acknowledges a reply delivered in full by queue or typing when the child reports", async () => {
+    for (const transport of ["queue", "typed"]) {
+      await withRoot(`delivered-${transport}`, async (root) => {
+        await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+        const env = childEnv(root);
+        const fp = fakeProcess();
+        await appendMessage(root, "d1", "parent", "reply", `delivered by ${transport}`, "coord-term", env, fp);
+        const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+        if (db.kind !== "ok") throw new Error(db.error);
+        const reply = readMessages(root, "d1").find((message) => message.type === "reply");
+        if (reply === undefined) throw new Error("reply missing");
+        const marked = setDeliveryTransport(db.value, "d1", Number(reply.seq), transport);
+        if (marked.kind !== "ok") throw new Error(marked.error);
+
+        await appendMessage(root, "d1", "child", "ask", "need clarification", "child-term", env, fp);
+        const deliveries = listDeliveries(db.value, "d1");
+        expect(deliveries).toMatchObject({ kind: "ok" });
+        if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "acknowledged" });
+      });
+    }
   });
 
   test("cursor gets {\"continue\":true} instead of a block decision when a reply is available", async () => {

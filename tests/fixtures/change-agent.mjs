@@ -5,10 +5,16 @@ import { appendFileSync } from "node:fs";
 let interrupts = 0;
 let draft = "";
 let submitted = false;
+const agent = process.env.MB_AGENT ?? "codex";
 
 function render() {
   process.stdout.write("\u001b[2J\u001b[H");
-  if (submitted || interrupts >= 2) {
+  const idle = submitted || interrupts >= 2;
+  if (agent === "claude") {
+    process.stdout.write(idle ? "❯\n" : "✳ Working · thinking\nesc to interrupt\n❯\n");
+    return;
+  }
+  if (idle) {
     process.stdout.write(`› ${draft || "Ask Codex to do anything"}\n`);
     if (submitted) process.stdout.write("• Working (1s • esc to interrupt)\n");
     return;
@@ -31,7 +37,7 @@ process.stdin.on("data", (bytes) => {
     } else if (byte === 0x15) {
       draft = "";
       render();
-    } else if (byte === 0x09) {
+    } else if (byte === 0x09 || (agent === "claude" && byte === 0x0d)) {
       submitted = true;
       appendFileSync(process.env.MB_CHANGE_LOG ?? "/tmp/megabrain-change-agent.log", `${draft}\n`);
       render();

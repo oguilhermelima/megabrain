@@ -17,6 +17,15 @@ export type AppendMessageEffects = Readonly<{ delivery?: DeliveryInput; outbox?:
 export type AppendMessageOptions = AppendMessageEffects & Readonly<{ derive?: (previous: readonly MessageRecord[]) => AppendMessageEffects }>;
 export type AppendParentReplyOptions = Readonly<{ supersede: boolean; outbox?: OutboxInput }>;
 
+function acknowledgeShownChildMail(db: DatabaseAdapter, dispatchId: string, reportType: string, now: string): void {
+  if (!["ask", "done", "stalled"].includes(reportType)) return;
+  for (const delivery of queryDeliveries(db, dispatchId)) {
+    if (delivery.recipient !== "child" || (delivery.status !== "outstanding" && delivery.status !== "superseded")) continue;
+    if (!["checked", "queue", "typed"].includes(String(delivery.transport ?? ""))) continue;
+    db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, delivery.id]);
+  }
+}
+
 function findMessageByKey(db: DatabaseAdapter, key: string): MessageRecord | undefined {
   const row = db.query<{ dispatch_id: string; seq: number; from: string; type: string; text: string; body: string | null; session_id: string | null; created_at: string; idempotency_key: string | null; extra: string }>("SELECT * FROM messages WHERE idempotency_key = ?").get(key);
   return row === null ? undefined : toMessage(row);
@@ -54,6 +63,7 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       });
     }
     if (outbox !== undefined) enqueueOutboxValue(db, { ...outbox, dispatchId }, new Date().toISOString());
+    if (message.from === "child") acknowledgeShownChildMail(db, dispatchId, String(message.type ?? ""), String(assigned.createdAt));
     return queryMessages(db, dispatchId).at(-1) as MessageRecord;
   });
 }
