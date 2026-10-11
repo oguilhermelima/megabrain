@@ -28,10 +28,11 @@ describe("spawn prompt receipt (tmux)", () => {
       if (run.result.kind !== "failed") throw new Error("expected a failure");
       expect(run.result.error).toContain("prompt-not-received");
       expect(run.result.error).toContain("kept for inspection");
-      // One resend: the composer is cleared, the whole prompt pasted again, and Enter pressed twice each time.
+      // One resend: the composer is cleared and the whole prompt pasted again; each delivery presses
+      // Enter twice, then closes any open paste and presses Enter a third time.
       expect(run.pane.pastes).toHaveLength(2);
       expect(run.pane.pastes[1]).toBe(run.pane.pastes[0]);
-      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:Enter", "key:Enter", "key:C-u", "paste", "key:Enter", "key:Enter"]);
+      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:Enter", "key:Enter", "end-marker", "key:Enter", "key:C-u", "paste", "key:Enter", "key:Enter", "end-marker", "key:Enter"]);
       expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "failed", reason: "prompt-not-received", terminalState: "owned", processState: "start-unproven", promptReceipt: "not-received" });
       expect(killedPane(run.process.calls)).toBe(false);
       expect(removed).toEqual([]);
@@ -62,7 +63,7 @@ describe("spawn prompt receipt (tmux)", () => {
 
   test("succeeds when the resend is the one that reaches the child", async () => {
     const id = "dispatch-resend-received";
-    const run = await runComposerSpawn(id, { agent: "codex", ignoreEnters: 2, onSubmit: (_prompt, root) => appendReceived(root, id) }, waitsForReceipt);
+    const run = await runComposerSpawn(id, { agent: "codex", ignoreEnters: 3, onSubmit: (_prompt, root) => appendReceived(root, id) }, waitsForReceipt);
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(2);
