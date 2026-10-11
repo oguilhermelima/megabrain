@@ -24,16 +24,16 @@ cat >"$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 case "${1:-} ${2:-} ${3:-}" in
-  "auth status ") exit 0 ;;
-  "api repos/owner/repo/stacks ")
+  "auth status "*) exit 0 ;;
+  "api repos/owner/repo/stacks"*)
     if [ "${GH_NATIVE:-yes}" = yes ]; then printf '{"stacks":[]}\n'; else exit 1; fi
     ;;
-  "api --method POST") printf '{"number":12}\n' ;;
-  "pr list ") printf '[]\n' ;;
-  "pr create ") printf 'https://github.com/owner/repo/pull/12\n' ;;
-  "pr view ") printf '{"number":12,"state":"OPEN","baseRefName":"main","headRefName":"stack/base","url":"https://github.com/owner/repo/pull/12"}\n' ;;
-  "pr edit ") printf '{}\n' ;;
-  "pr merge ") printf '{}\n' ;;
+  "api --method POST"*) printf '{"number":12}\n' ;;
+  "pr list"*) printf '[]\n' ;;
+  "pr create"*) printf 'https://github.com/owner/repo/pull/12\n' ;;
+  "pr view"*) printf '{"number":12,"state":"OPEN","baseRefName":"main","headRefName":"stack/base","url":"https://github.com/owner/repo/pull/12"}\n' ;;
+  "pr edit"*) printf '{}\n' ;;
+  "pr merge"*) printf '{}\n' ;;
   *) exit 2 ;;
 esac
 EOF
@@ -54,6 +54,7 @@ run() { "$root/.build/megabrain" "$@"; }
 
 # Scenario: native GitHub capability is detected and the PR chain becomes a native stack.
 run stack create stack/base --on main --repo "$work/repo" >/dev/null
+cd "$work/repo"
 printf 'base change\n' >"$work/shared/stack-base/base.txt"
 git -C "$work/shared/stack-base" add base.txt
 git -C "$work/shared/stack-base" commit -qm 'base change'
