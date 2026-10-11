@@ -20,6 +20,16 @@ function processFor(values: Record<string, string>): ProcessAdapter {
   };
 }
 
+function hookInstallEnvironment(home: string) {
+  const root = join(home, "megabrain-package");
+  const build = join(root, ".build");
+  mkdirSync(build, { recursive: true });
+  const entrypoint = join(build, "megabrain");
+  writeFileSync(entrypoint, "test hook entrypoint\n");
+  chmodSync(entrypoint, 0o755);
+  return { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state"), MEGABRAIN_ROOT: root };
+}
+
 function report(result: Awaited<ReturnType<typeof executeDoctor>>) {
   expect(result.kind).toBe("ok");
   if (result.kind !== "ok") throw new Error("doctor failed");
@@ -217,7 +227,7 @@ describe("install orchestration-hooks backups", () => {
       invocationCount: () => 0,
     };
 
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    const environment = hookInstallEnvironment(home);
     const first = await executeInstall(["orchestration-hooks"], environment, process);
     expect(first.kind).toBe("ok");
     const second = await executeInstall(["orchestration-hooks"], environment, process);
@@ -253,7 +263,7 @@ describe("revert orchestration-hooks", () => {
     mkdirSync(directory, { recursive: true });
     const original = '{\n  "theme": "dark",\n  "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "user-hook"}]}]}\n}\n';
     writeFileSync(config, original);
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    const environment = hookInstallEnvironment(home);
 
     expect((await executeInstall(["orchestration-hooks"], environment, hookProcess("claude"))).kind).toBe("ok");
     const reverted = await executeInstall(["orchestration-hooks", "--revert"], environment, hookProcess());
@@ -268,7 +278,7 @@ describe("revert orchestration-hooks", () => {
     const config = join(directory, "settings.json");
     mkdirSync(directory, { recursive: true });
     writeFileSync(config, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "user-hook" }] }] } }));
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    const environment = hookInstallEnvironment(home);
     expect((await executeInstall(["orchestration-hooks"], environment, hookProcess("claude"))).kind).toBe("ok");
 
     const current = JSON.parse(readFileSync(config, "utf8")) as { hooks: { Stop: Array<{ hooks: unknown[] }> } };
@@ -287,7 +297,7 @@ describe("revert orchestration-hooks", () => {
     const directory = join(home, ".claude");
     const config = join(directory, "settings.json");
     mkdirSync(directory, { recursive: true });
-    const environment = { HOME: home, MEGABRAIN_STATE_DIR: join(home, "state") };
+    const environment = hookInstallEnvironment(home);
 
     expect((await executeInstall(["orchestration-hooks"], environment, hookProcess("claude"))).kind).toBe("ok");
     const reverted = await executeInstall(["orchestration-hooks", "--revert"], environment, hookProcess());
