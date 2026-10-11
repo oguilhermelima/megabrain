@@ -38,7 +38,7 @@ case "${1:-} ${2:-} ${3:-}" in
     else printf '[]\n'; fi
     ;;
   "pr create"*)
-    head="${*#*--head }"; head="${head%% *}"
+    all="$*"; head="${all#*--head }"; head="${head%% *}"
     git --git-dir="$GH_REMOTE" rev-parse --verify --quiet "refs/heads/$head" >/dev/null \
       || { printf 'GraphQL: Head sha can'"'"'t be blank, Head ref must be a branch (createPullRequest)\n' >&2; exit 1; }
     number=12
