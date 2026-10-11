@@ -1,0 +1,23 @@
+
+  >_ OpenAI Codex (v0.162.1)
+     ~/Workspaces/Worktrees/fix-liveness-and-short-ids
+  permissions: YOLO mode
+
+⚠ Heads up, you have less than 50% of your 5h limit left. Run /status for a
+  breakdown.
+
+
+› Think carefully for one minute, then say READY.
+
+
+■ Conversation interrupted - use /feedback if something went wrong
+
+
+
+
+                                                 ⚠ 5h limit: 33% left · /status
+
+› Ask Codex to do anything
+
+  GPT-6-Luna medium · Context 97% left · weekly 62% left · 5h 33% left
+  ? for shortcuts                                     ⚠ 2 warnings · f2 to view
