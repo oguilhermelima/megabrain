@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, releaseLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -16,20 +16,19 @@ import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
 const MAX_DELIVERY_MS = 10 * 60 * 1000;
+const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
+  status === "idle" ? "idle" : status === "unknown" ? "unknown" : "busy";
 
-async function claudeStatus(meta: Meta, environment: WorkerEnvironment): Promise<"idle" | "busy" | undefined> {
+type ClaudeStatus = Readonly<{ status: "idle" | "busy" | "unknown"; pid?: number; statusUpdatedAt?: number; reason?: string }>;
+
+async function claudeStatus(meta: Meta, environment: WorkerEnvironment): Promise<ClaudeStatus | undefined> {
   const pid = Number(meta.agentPid);
+  const sessionId = typeof meta.agentSessionId === "string" ? meta.agentSessionId : "";
   const home = environment.HOME;
-  if (meta.agent !== "claude" || !Number.isSafeInteger(pid) || pid <= 0 || !home) return undefined;
-  try {
-    const value: unknown = JSON.parse(await readFile(resolve(home, ".claude", "sessions", `${pid}.json`), "utf8"));
-    if (typeof value !== "object" || value === null) return undefined;
-    const record = value as Record<string, unknown>;
-    if (record.pid !== pid) return undefined;
-    return record.status === "idle" ? "idle" : record.status === "busy" || record.status === "not_fully_idle" ? "busy" : undefined;
-  } catch {
-    return undefined;
-  }
+  if (meta.agent !== "claude") return undefined;
+  if (!home || sessionId === "") return { status: "unknown", reason: "Claude session identity is unavailable" };
+  const session = await resolveClaudeSession(home, pid, sessionId);
+  return session ?? { status: "unknown", reason: "no session file matched the recorded Claude session id" };
 }
 
 export function deliveryTarget(meta: Meta): string {
@@ -76,14 +75,31 @@ async function readWasPulled(root: string, dispatch: string, sequence: number): 
   return row !== undefined && (row.status === "acknowledged" || row.status === "fenced" || row.transport === "checked");
 }
 
-async function sendTyped(root: string, meta: Meta, text: string, process: ProcessAdapter): Promise<boolean> {
+async function sendTyped(
+  root: string,
+  meta: Meta,
+  text: string,
+  environment: WorkerEnvironment,
+  process: ProcessAdapter,
+  expectedClaudeStatus?: Readonly<{ pid: number; statusUpdatedAt: number }>,
+  adoptStatus?: (status: ClaudeStatus | undefined) => Promise<void>,
+): Promise<boolean> {
   const agent = String(meta.agent ?? "");
   const submit = submitKey(agent);
   if (submit.kind !== "ok") return false;
   const preflight = async (): Promise<Result<void>> => {
     const screen = await readDeliveryScreen(meta, process);
     if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
-    if (classifyLiveness(agent, screen.value).status !== "idle" || deliveryComposer(agent, screen.value) !== "") return failed("target is no longer idle with an empty composer");
+    const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
+    const composer = deliveryComposer(agent, screen.value);
+    const status = await claudeStatus(meta, environment);
+    await adoptStatus?.(status);
+    if (screenStatus !== "idle" || composer !== "") return failed("target is no longer idle with an empty composer");
+    if (status?.pid !== undefined && status.status !== "idle") return failed("Claude session is no longer idle");
+    if (status?.pid !== undefined && status.statusUpdatedAt === undefined) return failed("Claude session status has no freshness timestamp");
+    if (expectedClaudeStatus !== undefined) {
+      if (status?.status !== "idle" || status.pid !== expectedClaudeStatus.pid || status.statusUpdatedAt !== expectedClaudeStatus.statusUpdatedAt) return failed("Claude session status changed after the idle check");
+    }
     return ok(undefined);
   };
   if (meta.runtime === "tmux") {
@@ -125,13 +141,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     if (!nested) releaseLease(database.value, leaseKey, holder);
     return claimed.kind === "ok" ? ok("delivery already claimed\n") : claimed;
   }
+  const targetKind = claimed.value.targetKind;
   const target = claimed.value.target;
   const payload = typeof claimed.value.payload === "object" && claimed.value.payload !== null ? claimed.value.payload as Meta : {};
   const dispatch = String(payload.dispatchId ?? claimed.value.dispatchId ?? "");
   const sequence = Number(payload.sequence ?? 0);
   const stored = dispatch === "" ? undefined : getDispatch(database.value, dispatch);
   const persistedMeta = typeof payload.meta === "object" && payload.meta !== null ? payload.meta as Meta : stored?.kind === "ok" && stored.value ? stored.value : {};
-  let meta = claimed.value.targetKind === "parent-pointer"
+  let meta = targetKind === "parent-pointer"
     ? {
       ...persistedMeta,
       runtime: typeof persistedMeta.parentTmuxPane === "string" ? "tmux" : "host",
@@ -141,16 +158,25 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       workspaceId: persistedMeta.parentWorkspaceId,
       terminalId: persistedMeta.parentTerminalId ?? persistedMeta.parentSessionId,
       agent: persistedMeta.parentAgent ?? persistedMeta.agent,
+      agentPid: persistedMeta.parentAgentPid,
+      agentSessionId: persistedMeta.parentAgentSessionId,
     }
     : persistedMeta;
-  if (claimed.value.targetKind === "parent-pointer" && meta.runtime === "tmux" && typeof meta.tmuxSession !== "string") {
+  if (targetKind === "parent-pointer" && meta.runtime === "tmux" && typeof meta.tmuxSession !== "string") {
     const session = await getTmux().sessionForPane(String(meta.tmuxPane ?? ""), process);
     if (session.kind === "ok") meta = { ...meta, tmuxSession: session.value };
   }
   const text = typeof payload.fullMessage === "string" ? payload.fullMessage : "";
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
+  let checkedClaudeStatus: { pid: number; statusUpdatedAt: number } | undefined;
   let transport = "failed";
   let outcome = "failed";
+  const adoptClaudePid = (status: ClaudeStatus | undefined): void => {
+    if (status?.pid === undefined || status.pid === Number(meta.agentPid)) return;
+    const field = targetKind === "parent-pointer" ? "parentAgentPid" : "agentPid";
+    mutateDispatch(database.value, dispatch, () => ({ [field]: status.pid }));
+    meta = { ...meta, agentPid: status.pid };
+  };
   if (text !== "" && dispatch !== "" && sequence > 0) {
     let result: Awaited<ReturnType<typeof deliverWhenIdle>>;
     try {
@@ -161,16 +187,26 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       ownDraft: text,
       inspect: async () => {
         const screen = await readDeliveryScreen(meta, process);
-        if (screen.kind !== "ok") return "unknown";
+        if (screen.kind !== "ok") {
+          checkedClaudeStatus = undefined;
+          return "unknown";
+        }
         const status = await claudeStatus(meta, environment);
-        return (status ?? classifyLiveness(String(meta.agent ?? ""), screen.value).status) === "idle" ? "idle" : "busy";
+        adoptClaudePid(status);
+        const screenStatus = deliveryStatus(classifyLiveness(String(meta.agent ?? ""), screen.value).status);
+        const sessionProven = status?.pid !== undefined;
+        const observed = sessionProven && status.status !== "unknown" ? status.status : screenStatus;
+        checkedClaudeStatus = status?.status === "idle" && status.pid !== undefined && status.statusUpdatedAt !== undefined
+          ? { pid: status.pid, statusUpdatedAt: status.statusUpdatedAt }
+          : undefined;
+        return observed;
       },
       composer: async () => {
         const screen = await readDeliveryScreen(meta, process);
         return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
       },
       clear: async () => clearOwnComposer(root, meta, process),
-      send: async () => sendTyped(root, meta, text, process),
+      send: async () => sendTyped(root, meta, text, environment, process, checkedClaudeStatus, async (status) => adoptClaudePid(status)),
       isRead: async () => readWasPulled(root, dispatch, sequence),
       record: async (result) => { outcome = result; },
       });
