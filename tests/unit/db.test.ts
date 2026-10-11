@@ -98,6 +98,7 @@ describe("SQLite database", () => {
       current.close();
       const raw = rawDatabase(directory);
       raw.exec("DELETE FROM schema_migrations WHERE version > 5");
+      raw.exec("DROP INDEX IF EXISTS worktrees_repo_parent_branch; ALTER TABLE worktrees DROP COLUMN parent_branch;");
       raw.exec("ALTER TABLE dispatches DROP COLUMN chat_name");
       raw.exec("INSERT INTO dispatches (id, state, branch, extra) VALUES ('label-row', 'running', 'branch-name', '{\"label\":\"chosen-label\"}')");
       raw.exec("INSERT INTO dispatches (id, state, branch, extra) VALUES ('branch-row', 'running', 'branch-name', '{}')");
@@ -117,6 +118,7 @@ describe("SQLite database", () => {
       current.close();
       const raw = rawDatabase(directory);
       raw.exec("DELETE FROM schema_migrations WHERE version > 6");
+      raw.exec("DROP INDEX IF EXISTS worktrees_repo_parent_branch; ALTER TABLE worktrees DROP COLUMN parent_branch;");
       raw.exec(`INSERT INTO dispatches (id, state, agent, worktree_path, branch, chat_name, extra) VALUES
         ('branch-row', 'running', 'codex', '/tmp/branch-folder', 'feature/branch', 'codex /tmp/branch-folder', '{}'),
         ('folder-row', 'running', 'claude', '/tmp/folder-name', NULL, 'claude /tmp/folder-name', '{}'),
