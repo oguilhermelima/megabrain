@@ -21,6 +21,7 @@ import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTm
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
+import { validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -65,6 +66,7 @@ type SpawnOptions = Readonly<{
   readonly browser: boolean;
   readonly agentArgs: readonly string[];
   readonly json: boolean;
+  readonly contextPolicy?: ContextPolicy;
 }>;
 
 type RecordValue = Record<string, unknown>;
@@ -95,11 +97,17 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let tmux: boolean | null = null;
   let browser = false;
   let json = false;
+  let contextCeiling: number | undefined;
+  let compactAt: number | undefined;
+  let loop: boolean | undefined;
+  let maxIterations: number | undefined;
   const agentArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") json = true;
     else if (arg === "--browser") browser = true;
+    else if (arg === "--loop") loop = true;
+    else if (arg === "--no-loop") loop = false;
     else if (unsupportedOptions.includes(arg as typeof unsupportedOptions[number])) return failed(`unsupported orchestrate spawn option: ${arg}`, 2);
     else if (arg === "--tmux") {
       const value = args[index + 1];
@@ -108,7 +116,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       if (parsed === undefined) return failed("--tmux requires true or false", 2);
       tmux = parsed;
       index += 1;
-    } else if (["--worktree", "--repo", "--branch", "--base", "--name", "--agent", "--model", "--effort", "--prompt", "--label", "--agent-arg"].includes(arg)) {
+    } else if (["--worktree", "--repo", "--branch", "--base", "--name", "--agent", "--model", "--effort", "--prompt", "--label", "--agent-arg", "--context-ceiling", "--compact-at", "--max-iterations"].includes(arg)) {
       const value = args[index + 1];
       if (value === undefined || value === "") return failed(`${arg} requires a non-empty value`, 2);
       if (arg === "--worktree") worktree = value;
@@ -121,6 +129,9 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       else if (arg === "--effort") effort = value;
       else if (arg === "--prompt") prompt = value;
       else if (arg === "--label") label = value;
+      else if (arg === "--context-ceiling") contextCeiling = Number(value);
+      else if (arg === "--compact-at") compactAt = Number(value);
+      else if (arg === "--max-iterations") maxIterations = Number(value);
       else agentArgs.push(value);
       index += 1;
     } else if (arg === "-h" || arg === "--help") {
@@ -132,7 +143,13 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   }
   if (agent === undefined) return failed("--agent is required", 2);
   if (prompt === undefined) return failed("--prompt is required", 2);
-  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, browser, agentArgs, json });
+  const hasPolicy = contextCeiling !== undefined || compactAt !== undefined || loop !== undefined || maxIterations !== undefined;
+  const contextPolicy = hasPolicy ? { contextCeiling, compactAt, loop, maxIterations } : undefined;
+  if (contextPolicy !== undefined) {
+    const valid = validateContextPolicy(contextPolicy);
+    if (valid.kind !== "ok") return valid;
+  }
+  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, browser, agentArgs, json, contextPolicy });
 }
 
 function dispatchId(environment: SpawnEnvironment): string {
@@ -593,6 +610,11 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     tmuxPane: pane,
     label: options.label ?? worktree.branch,
     chain: null,
+    ...(options.contextPolicy === undefined ? {} : {
+      contextPolicy: options.contextPolicy,
+      contextPolicyState: { ceilingLatched: false, compactLatched: false, loopIterations: 0, actions: [] },
+      ...(options.contextPolicy.loop === true || options.contextPolicy.compactAt !== undefined ? { contextLoopPrompt: options.prompt } : {}),
+    }),
     state: "spawning",
     promptDelivered: false,
     promptDelivery: "pending",
@@ -658,6 +680,10 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const options = parsed.value;
   const agent = getAgent(options.agent);
   if (agent === undefined) return unknown(`agent cannot be determined: ${options.agent}`);
+  if (options.contextPolicy !== undefined) {
+    if (options.contextPolicy.compactAt !== undefined && agent.compactCommand === undefined) return failed(`${options.agent} has no measured context compact command`);
+    if (agent.contextSource === undefined) return failed(`${options.agent} has no measured context meter`);
+  }
   const agentCommand = agent.commandLine?.({
     model: options.model,
     effort: options.effort,

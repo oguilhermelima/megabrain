@@ -7,43 +7,6 @@ export const TMUX_READINESS_STABLE_MS = 1000;
 
 export type { Liveness, LivenessResult } from "../agents/types.js";
 
-export type ContextMeter = Readonly<
-  | { readonly status: "known"; readonly percentUsed: number; readonly sourceFrame: string }
-  | { readonly status: "unknown" }
->;
-
-function tokenScale(unit: string | undefined): number {
-  if (unit?.toLowerCase() === "k") return 1_000;
-  if (unit?.toLowerCase() === "m") return 1_000_000;
-  return 1;
-}
-
-export function readContextMeter(agent: string, output: string): ContextMeter {
-  const patterns = getAgent(agent)?.contextMeterPatterns;
-  if (patterns === undefined) return { status: "unknown" };
-  const lines = output.split(/\r?\n/);
-  for (const candidate of patterns) {
-    for (const line of lines.toReversed()) {
-      const match = candidate.pattern.exec(line);
-      if (match === null || match.groups === undefined) continue;
-      let percentUsed: number;
-      if (candidate.reading === "percent-left") {
-        const left = Number(match.groups.value);
-        if (!Number.isFinite(left) || left < 0 || left > 100) continue;
-        percentUsed = 100 - left;
-      } else {
-        const used = Number(match.groups.used) * tokenScale(match.groups.usedUnit);
-        const total = Number(match.groups.total) * tokenScale(match.groups.totalUnit);
-        if (!Number.isFinite(used) || !Number.isFinite(total) || used < 0 || total <= 0) continue;
-        percentUsed = (used / total) * 100;
-      }
-      if (!Number.isFinite(percentUsed) || percentUsed < 0) continue;
-      return { status: "known", percentUsed: Math.round(percentUsed * 10) / 10, sourceFrame: line.trim() };
-    }
-  }
-  return { status: "unknown" };
-}
-
 export function classifyLiveness(agent: string, output: string): LivenessResult {
   const strategy = getAgent(agent);
   if (strategy === undefined) return { status: "unknown", reason: null };

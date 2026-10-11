@@ -12,10 +12,7 @@ export const claude: Agent = {
   id: "claude",
   matchesDescriptor: (descriptor) => descriptor === "claude" || /^claude-code_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
-  contextMeterPatterns: [
-    { pattern: /\bFree space:\s*[\d.]+[kKmM]?\s*\((?<value>\d+(?:\.\d+)?)%\)/, reading: "percent-left" },
-    { pattern: /(?<used>\d+(?:\.\d+)?)(?<usedUnit>[kKmM]?)\s*\/\s*(?<total>\d+(?:\.\d+)?)(?<totalUnit>[kKmM]?)\s+ctx\b/, reading: "token-count" },
-  ],
+  contextSource: "claude-transcript",
   compactCommand: "/compact",
   commandLine: ({ model, effort, agentArgs }) => {
     const parts = ["claude", "--dangerously-skip-permissions"];

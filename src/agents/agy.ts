@@ -16,9 +16,6 @@ export const agy: Agent = {
   id: "agy",
   matchesDescriptor: (descriptor) => descriptor === "agy" || /^agy_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
-  contextMeterPatterns: [
-    { pattern: /(?<used>\d+(?:\.\d+)?)(?<usedUnit>[kKmM]?)\s*\/\s*(?<total>\d+(?:\.\d+)?)(?<totalUnit>[kKmM]?)\s+ctx\b/, reading: "token-count" },
-  ],
   firstRunDialog: trustDialog,
   commandLine: ({ model, agentArgs }) => {
     const parts = ["agy", "--dangerously-skip-permissions"];

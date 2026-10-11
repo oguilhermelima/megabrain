@@ -13,9 +13,7 @@ export const codex: Agent = {
   id: "codex",
   matchesDescriptor: (descriptor) => descriptor === "codex" || /^codex_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
-  contextMeterPatterns: [
-    { pattern: /\bContext\s+(?<value>\d{1,3})%\s+left\b/, reading: "percent-left" },
-  ],
+  contextSource: "codex-rollout",
   compactCommand: "/compact",
   commandLine: ({ model, effort, browser, agentArgs }) => {
     const parts = ["codex", "--dangerously-bypass-hook-trust", "--dangerously-bypass-approvals-and-sandbox"];
