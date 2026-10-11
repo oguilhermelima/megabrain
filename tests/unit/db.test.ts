@@ -8,7 +8,7 @@ import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
 import { latestSchemaVersion, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
-import { insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
+import { getDispatch, insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
 
@@ -63,6 +63,20 @@ describe("SQLite database", () => {
     });
   });
 
+  test("reads chatName from the column when older metadata does not mark it present", async () => {
+    await withStateDirectory(async (directory) => {
+      const handle = database(directory);
+      try {
+        insertDispatch(handle.db, { dispatchId: "read-chat-name", state: "running", branch: "feat/read-chat-name", chatName: "feat/read-chat-name" });
+        handle.db.run("UPDATE dispatches SET extra = json_set(extra, '$.$present', json_array('dispatchId', 'state', 'branch')) WHERE id = ?", ["read-chat-name"]);
+
+        expect(getDispatch(handle.db, "read-chat-name")?.chatName).toBe("feat/read-chat-name");
+      } finally {
+        handle.close();
+      }
+    });
+  });
+
   test("fresh databases use the required pragmas and initialize their identity and version", async () => {
     await withStateDirectory(async (directory) => {
       const handle = database(directory);
@@ -93,6 +107,32 @@ describe("SQLite database", () => {
       try {
         expect(migrated.db.query<{ chat_name: string }>("SELECT chat_name FROM dispatches WHERE id = 'label-row'").get()?.chat_name).toBe("chosen-label");
         expect(migrated.db.query<{ chat_name: string }>("SELECT chat_name FROM dispatches WHERE id = 'branch-row'").get()?.chat_name).toBe("branch-name");
+      } finally { migrated.close(); }
+    });
+  });
+
+  test("repairs only auto-label chat names, falling back to branch, folder, then id", async () => {
+    await withStateDirectory(async (directory) => {
+      const current = database(directory);
+      current.close();
+      const raw = rawDatabase(directory);
+      raw.exec("DELETE FROM schema_migrations WHERE version > 6");
+      raw.exec(`INSERT INTO dispatches (id, state, agent, worktree_path, branch, chat_name, extra) VALUES
+        ('branch-row', 'running', 'codex', '/tmp/branch-folder', 'feature/branch', 'codex /tmp/branch-folder', '{}'),
+        ('folder-row', 'running', 'claude', '/tmp/folder-name', NULL, 'claude /tmp/folder-name', '{}'),
+        ('id-row', 'running', 'codex', '/', NULL, 'codex /', '{}'),
+        ('explicit-row', 'running', 'codex', '/tmp/explicit-folder', 'feature/explicit', 'operator title', '{"label":"operator title"}')`);
+      raw.close();
+
+      const migrated = database(directory);
+      try {
+        const rows = migrated.db.query<{ id: string; chat_name: string }>("SELECT id, chat_name FROM dispatches ORDER BY id").all();
+        expect(rows).toEqual([
+          { id: "branch-row", chat_name: "feature/branch" },
+          { id: "explicit-row", chat_name: "operator title" },
+          { id: "folder-row", chat_name: "folder-name" },
+          { id: "id-row", chat_name: "id-row" },
+        ]);
       } finally { migrated.close(); }
     });
   });
