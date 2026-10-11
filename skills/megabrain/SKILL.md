@@ -233,6 +233,7 @@ the chain at the next step.
 ```
 megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json] — recommended when you need to create and register a shared worktree for a task.
 megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json] — recommended when you need to open a pull request for a worktree branch.
+megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab] — recommended when you need to manage dependent branches and pull or merge requests.
 megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json] — recommended when you need to remove a completed worktree after its safety checks pass.
 megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json] — recommended when you need to find registered worktrees and inspect their parent relationships.
 megabrain worktree adopt <path|branch> [--json] — recommended when you need to register an existing worktree missing from one orchestrator.
@@ -259,6 +260,10 @@ so an Orca-only or bare host cannot provide that part of the flow.
 `--base` overrides it. Its default title is the branch name and its default body is empty. It refuses
 to call `gh pr create` when the branch has no commits ahead of its base, and distinguishes missing gh
 from unauthenticated gh. The command requires gh only when opening the PR.
+`stack create` registers a new dependent worktree and records its parent branch. `stack pr` uses
+GitHub's native stacked pull request API when available and falls back to chained PRs if it is not;
+GitLab uses chained merge requests with `glab`. `stack sync` and `stack merge` require `--yes`, show
+their plan, and refuse to merge branches with local commits that have not been pushed.
 Human `worktree list` prints the stack as a tree; `--flat` preserves the path/branch table and JSON
 remains flat with parent and optional pull-request fields. Pull-request state is best-effort and does
 not make listing depend on gh or Orca.

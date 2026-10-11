@@ -11,6 +11,7 @@
 - Run megabrain context [--json]. — recommended when you need to identify the orchestration host and runtime available in this session.
 - Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]. — recommended when you need to create and register a shared worktree for a task.
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]. — recommended when you need to open a pull request for a worktree branch.
+- Run megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]. — recommended when you need to manage dependent branches and pull or merge requests.
 - Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]. — recommended when you need to remove a completed worktree after its safety checks pass.
 - Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]. — recommended when you need to find registered worktrees and inspect their parent relationships.
 - Run megabrain worktree adopt <path|branch> [--json]. — recommended when you need to register an existing worktree missing from one orchestrator.
