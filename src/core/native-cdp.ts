@@ -1,3 +1,4 @@
+import { sleep, systemClock, type Clock, type ClockTimer } from "./clock.js";
 import WebSocket from "ws";
 import { failed, ok, type Result } from "./result.js";
 
@@ -20,14 +21,14 @@ export type MetroInspector = Readonly<{
   close: () => void;
 }>;
 
-function deadlineSignal(timeoutMs: number): { signal: AbortSignal; clear: () => void } {
+function deadlineSignal(clock: Clock, timeoutMs: number): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+  const timer = clock.setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, clear: () => clock.clearTimeout(timer) };
 }
 
-async function listTargets(port: number, timeoutMs: number): Promise<Result<MetroTarget[]>> {
-  const request = deadlineSignal(timeoutMs);
+async function listTargets(clock: Clock, port: number, timeoutMs: number): Promise<Result<MetroTarget[]>> {
+  const request = deadlineSignal(clock, timeoutMs);
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: request.signal });
     if (!response.ok) return failed(`Metro /json/list returned HTTP ${response.status}`);
@@ -46,11 +47,11 @@ async function listTargets(port: number, timeoutMs: number): Promise<Result<Metr
   }
 }
 
-function openSocket(url: string, origin: string, timeoutMs: number): Promise<Result<WebSocket>> {
+function openSocket(clock: Clock, url: string, origin: string, timeoutMs: number): Promise<Result<WebSocket>> {
   return new Promise((resolve) => {
     let settled = false;
     const socket = new WebSocket(url, { headers: { Origin: origin } });
-    const timer = setTimeout(() => {
+    const timer = clock.setTimeout(() => {
       if (settled) return;
       settled = true;
       socket.close();
@@ -59,7 +60,7 @@ function openSocket(url: string, origin: string, timeoutMs: number): Promise<Res
     const finish = (result: Result<WebSocket>) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clock.clearTimeout(timer);
       resolve(result);
     };
     socket.once("open", () => finish(ok(socket)));
@@ -67,10 +68,10 @@ function openSocket(url: string, origin: string, timeoutMs: number): Promise<Res
   });
 }
 
-function inspectorFor(socket: WebSocket): MetroInspector {
+function inspectorFor(clock: Clock, socket: WebSocket): MetroInspector {
   let nextId = 1;
   let closed = false;
-  const pending = new Map<number, { resolve: (result: Result<MetroEvaluation>) => void; timer: ReturnType<typeof setTimeout> }>();
+  const pending = new Map<number, { resolve: (result: Result<MetroEvaluation>) => void; timer: ClockTimer }>();
 
   socket.on("message", (message) => {
     let response: CdpResponse;
@@ -79,7 +80,7 @@ function inspectorFor(socket: WebSocket): MetroInspector {
     const request = pending.get(response.id);
     if (request === undefined) return;
     pending.delete(response.id);
-    clearTimeout(request.timer);
+    clock.clearTimeout(request.timer);
     if (response.error) {
       request.resolve(failed(`Runtime.evaluate failed: ${response.error.message ?? "unknown protocol error"}`));
       return;
@@ -101,7 +102,7 @@ function inspectorFor(socket: WebSocket): MetroInspector {
   const rejectPending = (message: string) => {
     for (const [id, request] of pending) {
       pending.delete(id);
-      clearTimeout(request.timer);
+      clock.clearTimeout(request.timer);
       request.resolve(failed(message));
     }
   };
@@ -116,7 +117,7 @@ function inspectorFor(socket: WebSocket): MetroInspector {
       if (closed || socket.readyState !== WebSocket.OPEN) return failed("Metro inspector socket is not open");
       const id = nextId++;
       return new Promise<Result<MetroEvaluation>>((resolve) => {
-        const timer = setTimeout(() => {
+        const timer = clock.setTimeout(() => {
           pending.delete(id);
           resolve(failed(`Runtime.evaluate did not answer within ${timeoutMs}ms`));
         }, timeoutMs);
@@ -124,7 +125,7 @@ function inspectorFor(socket: WebSocket): MetroInspector {
         try {
           socket.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
         } catch {
-          clearTimeout(timer);
+          clock.clearTimeout(timer);
           pending.delete(id);
           resolve(failed("Metro inspector could not send Runtime.evaluate"));
         }
@@ -138,43 +139,43 @@ function inspectorFor(socket: WebSocket): MetroInspector {
   };
 }
 
-function wait(timeoutMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 20)));
+function wait(clock: Clock, timeoutMs: number): Promise<void> {
+  return sleep(clock, Math.min(timeoutMs, 20));
 }
 
-export async function waitForMetroInspectorTarget(port: number, timeoutMs: number): Promise<Result<MetroTarget>> {
-  const started = Date.now();
+export async function waitForMetroInspectorTarget(port: number, timeoutMs: number, clock: Clock = systemClock): Promise<Result<MetroTarget>> {
+  const started = clock.now();
   let lastError = "Metro has no inspector target";
-  while (Date.now() - started < timeoutMs) {
-    const remaining = timeoutMs - (Date.now() - started);
-    const targets = await listTargets(port, Math.max(1, Math.min(remaining, 250)));
+  while (clock.now() - started < timeoutMs) {
+    const remaining = timeoutMs - (clock.now() - started);
+    const targets = await listTargets(clock, port, Math.max(1, Math.min(remaining, 250)));
     if (targets.kind === "ok" && targets.value.length > 0) return ok(targets.value[0] as MetroTarget);
     if (targets.kind === "failed") lastError = targets.error;
-    const afterAttempt = timeoutMs - (Date.now() - started);
-    if (afterAttempt > 0) await wait(afterAttempt);
+    const afterAttempt = timeoutMs - (clock.now() - started);
+    if (afterAttempt > 0) await wait(clock, afterAttempt);
   }
   return failed(`Metro inspector target was not ready within ${timeoutMs}ms: ${lastError}`);
 }
 
-export async function connectMetroInspector(port: number, timeoutMs: number): Promise<Result<MetroInspector>> {
-  const started = Date.now();
+export async function connectMetroInspector(port: number, timeoutMs: number, clock: Clock = systemClock): Promise<Result<MetroInspector>> {
+  const started = clock.now();
   let lastError = "Metro has no inspector target";
-  while (Date.now() - started < timeoutMs) {
-    const remaining = timeoutMs - (Date.now() - started);
-    const target = await waitForMetroInspectorTarget(port, remaining);
+  while (clock.now() - started < timeoutMs) {
+    const remaining = timeoutMs - (clock.now() - started);
+    const target = await waitForMetroInspectorTarget(port, remaining, clock);
     if (target.kind === "ok") {
-      const attemptMs = Math.max(1, Math.min(timeoutMs - (Date.now() - started), 250));
-      const socket = await openSocket(target.value.webSocketDebuggerUrl, `http://127.0.0.1:${port}`, attemptMs);
+      const attemptMs = Math.max(1, Math.min(timeoutMs - (clock.now() - started), 250));
+      const socket = await openSocket(clock, target.value.webSocketDebuggerUrl, `http://127.0.0.1:${port}`, attemptMs);
       if (socket.kind === "ok") {
-        const inspector = inspectorFor(socket.value);
+        const inspector = inspectorFor(clock, socket.value);
         const probe = await inspector.evaluate("1+1", attemptMs);
         if (probe.kind === "ok" && probe.value.kind === "value" && probe.value.value === 2) return ok(inspector);
         lastError = probe.kind === "failed" ? probe.error : "Metro inspector probe returned an unexpected value";
         inspector.close();
       } else lastError = socket.error;
     } else lastError = target.error;
-    const afterAttempt = timeoutMs - (Date.now() - started);
-    if (afterAttempt > 0) await wait(afterAttempt);
+    const afterAttempt = timeoutMs - (clock.now() - started);
+    if (afterAttempt > 0) await wait(clock, afterAttempt);
   }
   return failed(`Metro inspector was not ready within ${timeoutMs}ms: ${lastError}`);
 }

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { afterEach, describe, expect, test } from "bun:test";
 import { connectMetroInspector } from "../../src/core/native-cdp.js";
+import type { Clock } from "../../src/core/clock.js";
 import { executeNative } from "../../src/cli/commands/native.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -142,8 +143,10 @@ async function fakeMetro(initialTargets: FakeTarget, onUnansweredProbe?: () => F
   wsServer.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("message", (message) => {
-      if (targets === "hang") targets = onUnansweredProbe?.() ?? targets;
-      else if (targets !== "none") sendProbeResult(socket, message.toString());
+      if (targets === "hang") {
+        evaluations.push((JSON.parse(message.toString()) as { params?: { expression?: string } }).params?.expression ?? "");
+        targets = onUnansweredProbe?.() ?? targets;
+      } else if (targets !== "none") sendProbeResult(socket, message.toString());
     });
     socket.on("close", () => sockets.delete(socket));
   });
@@ -234,6 +237,45 @@ function captureArgs(args: readonly string[]): string[] {
   return [...args.slice(0, timeoutIndex + 2), "--stable-window", "0.04", ...args.slice(timeoutIndex + 2)];
 }
 
+// Virtual time. Timers never fire by themselves: "auto" fires each one as soon as it is
+// armed (for code that only sleeps), "manual" fires them when advance() is called.
+function fakeClock(mode: "auto" | "manual") {
+  let current = 0;
+  let nextHandle = 0;
+  const timers = new Map<number, { due: number; callback: () => void }>();
+  const clock: Clock = {
+    now: () => current,
+    setTimeout: (callback, ms) => {
+      const handle = nextHandle++;
+      timers.set(handle, { due: current + ms, callback });
+      if (mode === "auto") queueMicrotask(() => advance());
+      return handle;
+    },
+    clearTimeout: (handle) => { timers.delete(handle as number); },
+  };
+  const advance = (): boolean => {
+    const next = [...timers.entries()].sort((a, b) => a[1].due - b[1].due)[0];
+    if (next === undefined) return false;
+    timers.delete(next[0]);
+    current = Math.max(current, next[1].due);
+    next[1].callback();
+    return true;
+  };
+  return { clock, advance, elapsed: () => current };
+}
+
+// Fires the next virtual timer each time `ready` says the fake server has seen what the
+// code under test is waiting on, until the operation settles.
+async function driveUntilSettled<T>(operation: Promise<T>, ready: () => boolean, advance: () => boolean): Promise<T> {
+  let settled = false;
+  const result = operation.finally(() => { settled = true; });
+  while (!settled) {
+    if (ready()) advance();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  return result;
+}
+
 afterEach(async () => {
   while (servers.length > 0) await servers.pop()?.close();
 });
@@ -241,23 +283,26 @@ afterEach(async () => {
 describe("Metro inspector transport", () => {
   test("fails within its deadline when the listing has no target", async () => {
     const server = await fakeMetro("none");
-    const started = performance.now();
+    const time = fakeClock("manual");
+    let seen = 0;
 
-    const result = await connectMetroInspector(server.port, 120);
+    const result = await driveUntilSettled(connectMetroInspector(server.port, 120, time.clock), () => server.listRequests > seen && (seen = server.listRequests) > 0, time.advance);
 
     expect(result.kind).toBe("failed");
-    expect(performance.now() - started).toBeLessThan(600);
+    expect(time.elapsed()).toBeGreaterThanOrEqual(120);
+    expect(time.elapsed()).toBeLessThanOrEqual(120 + 20);
     expect(server.listRequests).toBeGreaterThan(0);
   });
 
   test("fails within its deadline when a socket never answers the runtime probe", async () => {
     const server = await fakeMetro("hang");
-    const started = performance.now();
+    const time = fakeClock("manual");
 
-    const result = await connectMetroInspector(server.port, 120);
+    const result = await driveUntilSettled(connectMetroInspector(server.port, 120, time.clock), () => server.evaluations.includes("1+1"), time.advance);
 
     expect(result.kind).toBe("failed");
-    expect(performance.now() - started).toBeLessThan(600);
+    expect(time.elapsed()).toBeGreaterThanOrEqual(120);
+    expect(time.elapsed()).toBeLessThanOrEqual(120 + 20);
     expect(server.listRequests).toBeGreaterThan(0);
   });
 
@@ -613,13 +658,13 @@ describe("Metro inspector transport", () => {
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
     const process = captureProcess(server, false, ["same-frame", "same-frame", "same-frame"]);
-    const started = performance.now();
+    const time = fakeClock("auto");
 
     try {
-      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "deadline", "--timeout", "1", "--stable-window", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "deadline", "--timeout", "1", "--stable-window", "2", "--json"], { MEGABRAIN_NATIVE_WORKTREE: worktree }, process, time.clock);
 
       expect(result.kind).toBe("ok");
-      expect(performance.now() - started).toBeLessThan(1250);
+      expect(time.elapsed()).toBe(1000);
       if (result.kind === "ok") expect(result.value).toContain("screen first: frame did not settle within 1000ms");
       expect(await Bun.file(join(outputRoot, "phone/deadline/light/default/first.png")).exists()).toBe(false);
     } finally {
@@ -667,13 +712,13 @@ describe("Metro inspector transport", () => {
     await writeFile(join(worktree, ".megabrain/native.json"), JSON.stringify({ version: 1, surfaces: { phone: { metroPort: String(server.port) } } }));
     await writeFile(screensFile, JSON.stringify([{ name: "first", route: "/first" }]));
     const process = captureProcess(server, false, ["frame-1", "frame-2", "frame-3"], false);
-    const started = performance.now();
+    const time = fakeClock("auto");
 
     try {
-      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "unsettled", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process);
+      const result = await executeNative(captureArgs(["capture", "phone", "--screens", screensFile, "--bundle-id", "com.example.app", "--device", "Phone", "--metro-port", String(server.port), "--output-root", outputRoot, "--capture-id", "unsettled", "--timeout", "1", "--json"]), { MEGABRAIN_NATIVE_WORKTREE: worktree }, process, time.clock);
 
       expect(result.kind).toBe("ok");
-      expect(performance.now() - started).toBeLessThan(1250);
+      expect(time.elapsed()).toBe(1000);
       if (result.kind === "ok") expect(result.value).toContain("screen first: frame did not settle");
       expect(await Bun.file(join(outputRoot, "phone/unsettled/light/default/first.png")).exists()).toBe(false);
     } finally {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, DEFAULT_NATIVE_STABLE_WINDOW_MS, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateStableWindow, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../core/native.js";
+import { sleep, systemClock, type Clock } from "../../core/clock.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../core/native-session.js";
@@ -810,16 +811,16 @@ type NativeSettledFrame = Readonly<{
   sampleCount: number;
 }>;
 
-async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string, timeoutMs: number, stableWindowMs: number): Promise<Result<NativeSettledFrame>> {
-  const deadline = Date.now() + timeoutMs;
+async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, path: string, timeoutMs: number, stableWindowMs: number, clock: Clock): Promise<Result<NativeSettledFrame>> {
+  const deadline = clock.now() + timeoutMs;
   let previousHash: string | undefined;
   let stableSince: number | undefined;
   let sampleCount = 0;
-  while (Date.now() < deadline) {
+  while (clock.now() < deadline) {
     const frame = await captureNativeFrame(processAdapter, udid, path);
     if (frame.kind !== "ok") return frame;
     sampleCount += 1;
-    const sampledAt = Date.now();
+    const sampledAt = clock.now();
     if (frame.value === previousHash) {
       const stableDurationMs = sampledAt - (stableSince ?? sampledAt);
       if (stableDurationMs >= stableWindowMs) return ok({ hash: frame.value, stableDurationMs, sampleCount });
@@ -827,9 +828,9 @@ async function settleNativeFrame(processAdapter: ProcessAdapter, udid: string, p
       stableSince = sampledAt;
     }
     previousHash = frame.value;
-    const remaining = deadline - Date.now();
+    const remaining = deadline - clock.now();
     if (remaining <= 0) break;
-    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.min(50, remaining)));
+    await sleep(clock, Math.min(50, remaining));
   }
   return error(`frame did not settle within ${timeoutMs}ms`);
 }
@@ -901,7 +902,7 @@ function captureNavigationArgs(kind: NativeKind, route: string, metroPort: strin
   return [kind, route, "--metro-port", metroPort, "--timeout", timeout];
 }
 
-async function nativeCapture(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+async function nativeCapture(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("capture"));
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   const validOptions = validateCaptureOptions(args); if (validOptions.kind !== "ok") return validOptions;
@@ -1002,7 +1003,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
       }
       let reachedPathname = navigationResult.value.after.pathname;
       let framePath = join(tempDirectory, `screen-${index}.png`);
-      let frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value);
+      let frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value, clock);
       if (frame.kind !== "ok") {
         recordScreenFailure(screen, `screen ${screen.name}: ${frame.error}`);
         continue;
@@ -1052,7 +1053,7 @@ async function nativeCapture(args: readonly string[], environment: Environment, 
         }
         reachedPathname = retryNavigationResult.value.after.pathname;
         framePath = join(tempDirectory, `screen-${index}-retry.png`);
-        frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value);
+        frame = await settleNativeFrame(processAdapter, selected.value.udid, framePath, timeout.value * 1000, stableWindow.value, clock);
         if (frame.kind !== "ok") {
           outcomeFrames.push(makeRecord());
           recordScreenFailure(screen, `screen ${screen.name}: duplicate retry failed: ${frame.error}`);
@@ -1159,7 +1160,7 @@ async function appium(args: readonly string[], environment: Environment, process
   if (stopped.kind !== "ok") return error(`failed to stop appium (pid ${pid}): ${stopped.error}`);
   return ok(`appium: stopped (pid ${pid})\n`);
 }
-export async function executeNative(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
+export async function executeNative(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter = createProcessAdapter(), clock: Clock = systemClock): Promise<Result<string>> {
   const [family, operation, ...rest] = args;
   if (family === "-h" || family === "--help" || family === undefined) return ok(nativeUsage("native"));
   const json = args.includes("--json");
@@ -1174,7 +1175,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "eval") result = await nativeEval([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "navigate") result = await nativeNavigate([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
-  else if (family === "capture") result = await nativeCapture([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "capture") result = await nativeCapture([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter, clock);
   else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
   else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
   else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));
