@@ -238,7 +238,7 @@ export async function defaultResolveWorktree(target: string | undefined, options
     return ok({ path: direct, branch: branch.kind === "ok" && branch.value !== "" ? branch.value : "detached", ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
   }
   if (options.repo === undefined) return failed("--repo is required to resolve a worktree by name");
-  const repository = await repoFromOrca(process, options.repo);
+  const repository = await repoFromOrca(process, options.repo, environment);
   if (repository.kind !== "ok") return repository;
   const listed = await runGit(process, ["-C", repository.value, "worktree", "list", "--porcelain"]);
   if (listed.kind === "ok") {

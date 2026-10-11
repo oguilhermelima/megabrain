@@ -134,14 +134,14 @@ describe("formatWorktreeList", () => {
   test("formats byte-stable JSON, flat, and tree output", () => {
     expect(formatWorktreeList(entries, { json: true, flat: false })).toBe(`${JSON.stringify(entries, null, 2)}\n`);
     expect(formatWorktreeList(entries, { json: false, flat: true })).toBe(
-      "PATH                                                 BRANCH                           IN_SUPERSET\n" +
-      "/shared/detached                                      detached                         no\n" +
-      "/shared/one                                           feature/one                      yes\n",
+      "PATH                                                 BRANCH                           IN_SUPERSET AGE PURPOSE ORIGIN\n" +
+      "/shared/detached                                      detached                         no          -   -       discovered\n" +
+      "/shared/one                                           feature/one                      yes         -   -       discovered\n",
     );
     expect(formatWorktreeList(entries, { json: false, flat: false })).toBe(
       "BRANCH                                               PATH\n" +
-      "detached /shared/detached\n" +
-      "feature/one /shared/one [OPEN]\n",
+      "detached /shared/detached [age: unknown; purpose: unknown; origin: discovered]\n" +
+      "feature/one /shared/one [OPEN] [age: unknown; purpose: unknown; origin: discovered]\n",
     );
   });
 });
@@ -161,6 +161,18 @@ describe("executeWorktreeList", () => {
     const result = await listForRepo(fixture, gitWorktrees(fixture.repo, fixture.linked));
 
     expect(paths(result)).toEqual([fixture.repo, fixture.linked]);
+  });
+
+  test("reports registry provenance, purpose and age with discovered defaults", async () => {
+    const fixture = await createFixture();
+    const result = await listForRepo(fixture, gitWorktrees(fixture.repo, fixture.linked));
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const records = JSON.parse(result.value) as Array<{ origin: string; createdByMegabrain: boolean; purpose: string | null; createdAt: string | null; ageDays: number | null }>;
+    expect(records.map(({ origin, createdByMegabrain, purpose, createdAt, ageDays }) => ({ origin, createdByMegabrain, purpose, createdAt, ageDays }))).toEqual([
+      { origin: "discovered", createdByMegabrain: false, purpose: null, createdAt: null, ageDays: null },
+      { origin: "discovered", createdByMegabrain: false, purpose: null, createdAt: null, ageDays: null },
+    ]);
   });
 
   test("refuses a repository Git cannot resolve and names the selector", async () => {

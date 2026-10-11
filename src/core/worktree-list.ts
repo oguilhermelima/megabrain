@@ -23,6 +23,11 @@ export type WorktreeListEntry = {
   readonly inSuperset: boolean;
   readonly inSharedRoot: boolean;
   readonly pullRequest: PullRequest | null;
+  readonly createdAt?: string | null;
+  readonly ageDays?: number | null;
+  readonly purpose?: string | null;
+  readonly origin?: "created" | "adopted" | "discovered";
+  readonly createdByMegabrain?: boolean;
 };
 
 export type WorktreeListFormat = {
@@ -120,7 +125,10 @@ function treeLines(entries: readonly WorktreeListEntry[], parent: string, indent
   for (const entry of entries) {
     if ((entry.parent ?? "") !== parent) continue;
     const suffix = entry.pullRequest === null ? "" : ` [${entry.pullRequest.state}]`;
-    lines.push(`${indent}${entry.branch} ${entry.path}${suffix}`);
+    const age = entry.ageDays === null || entry.ageDays === undefined ? "unknown" : `${entry.ageDays}d`;
+    const purpose = entry.purpose ?? "unknown";
+    const origin = entry.origin ?? "discovered";
+    lines.push(`${indent}${entry.branch} ${entry.path}${suffix} [age: ${age}; purpose: ${purpose}; origin: ${origin}]`);
     lines.push(...treeLines(entries, entry.branch, `${indent}  `));
   }
   return lines;
@@ -129,8 +137,11 @@ function treeLines(entries: readonly WorktreeListEntry[], parent: string, indent
 export function formatWorktreeList(entries: readonly WorktreeListEntry[], format: WorktreeListFormat): string {
   if (format.json) return `${JSON.stringify(entries, null, 2)}\n`;
   if (format.flat) {
-    const lines = ["PATH                                                 BRANCH                           IN_SUPERSET"];
-    for (const entry of entries) lines.push(`${entry.path.padEnd(53)} ${entry.branch.padEnd(32)} ${entry.inSuperset ? "yes" : "no"}`);
+    const lines = ["PATH                                                 BRANCH                           IN_SUPERSET AGE PURPOSE ORIGIN"];
+    for (const entry of entries) {
+      const age = entry.ageDays === null || entry.ageDays === undefined ? "-" : `${entry.ageDays}d`;
+      lines.push(`${entry.path.padEnd(53)} ${entry.branch.padEnd(32)} ${(entry.inSuperset ? "yes" : "no").padEnd(11)} ${age.padEnd(3)} ${(entry.purpose ?? "-").padEnd(7)} ${entry.origin ?? "discovered"}`);
+    }
     return `${lines.join("\n")}\n`;
   }
   return `${["BRANCH                                               PATH", ...treeLines(entries, "", "")].join("\n")}\n`;

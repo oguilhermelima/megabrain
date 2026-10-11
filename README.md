@@ -438,7 +438,27 @@ distinguish an incomplete finish without parsing stderr. Remover failures use `e
 
 `megabrain worktree list` shows the stack as a tree and includes pull-request state when gh can
 answer cheaply. Use `--flat` for the original path/branch table; JSON remains a flat, scriptable
-array and does not require gh or Orca to list the local stack.
+array and does not require gh or Orca to list the local stack. Its entries include age, purpose,
+origin, and whether megabrain created the worktree. Worktrees predating the registry appear with
+origin `discovered` and unknown age until adopted. `worktree create --label <text>` records a
+purpose; when the label is absent, the first line of `--prompt` is used.
+Repository names supplied to create and inferred during adopt are stored with the worktree;
+megabrain can use those names to resolve a later `--repo` selector when Orca cannot.
+
+Prune old worktrees with a dry run first:
+
+```sh
+megabrain worktree prune --older-than 30 --json
+megabrain worktree prune --older-than 30 --yes --json
+```
+
+The command lists each candidate's age, disk size, purpose, and eligibility reason. It only
+removes a worktree when its registry age meets the threshold, its files are clean, all commits
+have been pushed, its branch is merged into its known base, and no open dispatch uses it. An
+unknown condition keeps the worktree. `--yes` applies eligible removals; the default and
+`--dry-run` only report. `--repo <name|path>` limits the report and removal to one repository.
+Removal uses the normal worktree finish flow and deletes the merged local branch, then checks
+both Git's worktree list and the filesystem to confirm the directory is gone.
 
 > [!TIP]
 > Keep it beside your repositories rather than inside one — `~/Workspaces/Worktrees` next to
