@@ -31,6 +31,7 @@ import { executeChildAck } from "./commands/child-ack.js";
 import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
 import { usageTable, usageText } from "../core/usage.js";
 import { ensureAutomaticCutover } from "../db/cutover.js";
+import { executeDeliveryWorker } from "./commands/delivery-worker.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -45,6 +46,7 @@ export async function route(
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
   const [command, ...commandArgs] = args;
+  if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__usage-table") return Promise.resolve(ok(usageTable()));
   if (command === undefined || command === "help" || command === "-h" || command === "--help") {
     return Promise.resolve(ok(ROOT_USAGE));

@@ -5,12 +5,11 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
-import { getHost, runHostSend } from "../../hosts/index.js";
-import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
-import { submitKey } from "../../agents/index.js";
+import { getTmux } from "../../hosts/tmux.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
 import { deliverCodexQueue, findCodexProcessId } from "../../core/codex-delivery.js";
+import { startDeliveryWorker } from "./delivery-worker.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -230,29 +229,8 @@ export async function sendParentPointer(root: string, meta: JsonRecord, pointer:
       if (queued.kind === "queued") return { outcome: "delivered", reason: "parent-notified", transport: "queue" };
     }
   }
-  const channel = await readParentTmuxChannel(meta, processAdapter);
-  const host = channel === undefined && typeof meta.parentHost === "string" ? meta.parentHost : channel === undefined ? "" : "tmux";
-  let result;
-  if (host === "tmux") {
-    const pane = channel?.pane ?? "";
-    const parentAgent = typeof meta.parentAgent === "string" && meta.parentAgent !== "" ? meta.parentAgent : typeof meta.agent === "string" ? meta.agent : "";
-    const affordance = submitKey(parentAgent);
-    if (affordance.kind !== "ok") return { outcome: "failed", reason: affordance.error };
-    const sent = await sendTmuxPair(root, pane, pointer, affordance.value, environment, processAdapter);
-    if (sent.kind !== "ok") return { outcome: "failed", reason: sent.kind === "unknown" ? sent.reason : sent.error };
-    result = sent;
-  } else {
-    const provider = getHost(host);
-    if (provider === undefined) return { outcome: "failed", reason: `unsupported parent host: ${host}` };
-    const call = provider.send({
-      workspaceId: typeof meta.parentWorkspaceId === "string" ? meta.parentWorkspaceId : null,
-      terminalId: typeof meta.parentTerminalId === "string" && meta.parentTerminalId !== "" ? meta.parentTerminalId : typeof meta.parentSessionId === "string" ? meta.parentSessionId : "",
-      text: pointer,
-    });
-    if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
-    result = await runHostSend(host, processAdapter, call.value);
-  }
-  return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified", transport: "typed" } : { outcome: "failed", reason: result.error, transport: "failed" };
+  void root; void environment;
+  return { outcome: "deferred", reason: `parent requires idle-gated delivery: ${pointer}`, transport: "deferred" };
 }
 
 async function notifyParent(root: string, meta: JsonRecord, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
@@ -267,35 +245,13 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, en
 }
 
 export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}, fullMessage = `[megabrain] reply available; run megabrain check`) : Promise<NotificationResult> {
-  const pointer = `[megabrain] reply available; run megabrain check`;
-  if (typeof meta.agentThreadId === "string" && typeof meta.agentPid === "number") {
-    const queued = await deliverCodexQueue(meta.agentThreadId, meta.agentPid, fullMessage, processAdapter);
+  void root; void dispatch; void environment;
+  if (typeof meta.agentThreadId === "string") {
+    const pid = typeof meta.agentPid === "number" ? meta.agentPid : await findCodexProcessId(meta.agentThreadId, processAdapter);
+    const queued = pid === undefined ? { kind: "fallback" as const, reason: "Codex process is not alive" } : await deliverCodexQueue(meta.agentThreadId, pid, fullMessage, processAdapter);
     if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
   }
-  const host = typeof meta.childHost === "string" ? meta.childHost : "";
-  const runtime = typeof meta.runtime === "string" ? meta.runtime : "host";
-  let result;
-  if (runtime === "tmux") {
-    const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
-    const session = typeof meta.tmuxSession === "string" ? meta.tmuxSession : "";
-    if (pane === "" || session === "") return { outcome: "failed", reason: "tmux dispatch metadata has no session or pane" };
-    const affordance = submitKey(typeof meta.agent === "string" ? meta.agent : "");
-    if (affordance.kind !== "ok") return { outcome: "failed", reason: affordance.error };
-    const sent = await sendTmuxPair(root, pane, pointer, affordance.value, environment, processAdapter);
-    if (sent.kind !== "ok") return { outcome: "failed", reason: sent.kind === "unknown" ? sent.reason : sent.error };
-    result = sent;
-  } else {
-    const provider = getHost(host);
-    if (provider === undefined) return { outcome: "failed", reason: `unsupported child host: ${host}` };
-    const call = provider.send({
-      workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null,
-      terminalId: typeof meta.terminalId === "string" ? meta.terminalId : "",
-      text: pointer,
-    });
-    if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
-    result = await runHostSend(host, processAdapter, call.value);
-  }
-  return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified", transport: "typed" } : { outcome: "failed", reason: result.error, transport: "failed" };
+  return { outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" };
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
@@ -328,7 +284,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
           outbox: {
             id: outboxId, dispatchId: dispatch, targetKind: "parent-pointer",
             target: typeof metaRecord.parentSessionId === "string" ? metaRecord.parentSessionId : dispatch,
-            payload: { meta: metaRecord, pointer, fullMessage: `[megabrain] ${type}: ${text}` },
+            payload: { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: (previous.at(-1)?.seq ?? 0) + 1, pointer, fullMessage: `[megabrain] ${type}: ${text}` },
           },
         }),
       };
@@ -337,19 +293,29 @@ export async function appendMessage(root: string, dispatch: string, from: string
   if (appended.kind !== "ok") return appended;
   if (outboxId !== undefined) {
     try {
-      const claim = claimOutbox(database.value, outboxId, process.pid + ":" + randomUUID(), 30);
-      if (claim.kind === "ok" && claim.value !== undefined) {
-        const payload = claim.value.payload;
-        const record = typeof payload === "object" && payload !== null ? payload as JsonRecord : {};
-        const meta = typeof record.meta === "object" && record.meta !== null ? record.meta as JsonRecord : metaRecord;
-        let notification: NotificationResult;
-        if (!(await parentContextMatches(root, meta, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch" };
-        else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter" };
-        else notification = await sendParentPointer(root, meta, typeof record.pointer === "string" ? record.pointer : pointer, environment, processAdapter, typeof record.fullMessage === "string" ? record.fullMessage : pointer);
-        const status = notification.outcome === "delivered" ? "sent" : notification.outcome === "suppressed" ? "suppressed" : "failed";
-        finishNotification(database.value, outboxId, status, { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
-        if (notification.transport !== undefined) setDeliveryTransport(database.value, dispatch, appended.value.seq, notification.transport);
+      const payload = { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: appended.value.seq, pointer, fullMessage: `[megabrain] ${type}: ${text}` };
+      let notification: NotificationResult;
+      if (!(await parentContextMatches(root, metaRecord, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch", transport: "failed" };
+      else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter", transport: "failed" };
+      else notification = await sendParentPointer(root, metaRecord, pointer, environment, processAdapter, payload.fullMessage);
+      if (notification.transport === "queue") {
+        const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+        if (claim.kind === "ok" && claim.value !== undefined) finishNotification(database.value, outboxId, "sent", { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
+      } else if (notification.transport === "deferred") {
+        const scheduled = await startDeliveryWorker(root, dispatch, outboxId, { ...metaRecord, ...payload }, processAdapter);
+        notification = { ...notification, transport: scheduled === "failed" ? "failed" : "deferred" };
+        if (scheduled === "failed") {
+          const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+          if (claim.kind === "ok" && claim.value !== undefined) finishNotification(database.value, outboxId, "failed", { dispatchId: dispatch, pointer, outcome: "failed", reason: "could not start deferred delivery" });
+        }
+      } else {
+        const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
+        if (claim.kind === "ok" && claim.value !== undefined) {
+          const suppressed = notification.outcome === "suppressed";
+          finishNotification(database.value, outboxId, suppressed ? "suppressed" : "failed", { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
+        }
       }
+      if (notification.transport !== undefined) setDeliveryTransport(database.value, dispatch, appended.value.seq, notification.transport);
     } catch {
       // Queue writes are durable even when the best-effort pointer transport fails.
     }
@@ -357,11 +323,17 @@ export async function appendMessage(root: string, dispatch: string, from: string
   return ok(appended.value.seq);
 }
 
-export async function updateMeta(root: string, dispatch: string, type: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+export async function updateMeta(root: string, dispatch: string, type: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, tmuxPane?: string): Promise<Result<void>> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
   const agentThreadId = type === "received" && typeof environment.CODEX_THREAD_ID === "string" ? environment.CODEX_THREAD_ID : undefined;
-  const agentPid = agentThreadId === undefined ? undefined : await findCodexProcessId(agentThreadId, processAdapter);
+  const current = getDispatch(database.value, dispatch);
+  const agent = current.kind === "ok" ? current.value?.agent : undefined;
+  let agentPid = agentThreadId === undefined ? undefined : await findCodexProcessId(agentThreadId, processAdapter);
+  if (agentPid === undefined && type === "received" && agent === "claude" && tmuxPane !== undefined) {
+    const panePid = await getTmux().panePid(tmuxPane, processAdapter);
+    if (panePid.kind === "ok" && /^\d+$/.test(panePid.value.trim())) agentPid = Number(panePid.value.trim());
+  }
   let refused: Result<void> | undefined;
   const updated = mutateDispatch(database.value, dispatch, (current) => {
     const state = typeof current.state === "string" ? current.state : "running";
@@ -393,7 +365,7 @@ export async function executeQueueWrite(type: "received" | "ask" | "done", args:
   if ("kind" in child) return child;
   const append = await appendMessage(root, child.dispatch, "child", type, parsed.value, child.session.id, environment, processAdapter);
   if (append.kind !== "ok") return append;
-  const updated = await updateMeta(root, child.dispatch, type, environment, processAdapter);
+  const updated = await updateMeta(root, child.dispatch, type, environment, processAdapter, child.session.tmuxPane);
   if (updated.kind !== "ok") return updated;
   return ok(`${type} sent: ${child.dispatch}\n`);
 }

@@ -94,7 +94,10 @@ export function appendParentReply(handle: DatabaseHandle, dispatchId: string, me
 
     if (summary.delivered > 0) append({ from: "parent", type: "withdrawal", text: `withdrawn parent direction message sequence(s): ${summary.deliveredSequences.join(", ")}`, sessionId: "" });
     const reply = append({ ...message, from: "parent", type: "reply", text: message.text, sessionId: message.sessionId ?? "" });
-    if (options.outbox !== undefined) enqueueOutboxValue(db, { ...options.outbox, dispatchId }, now);
+    if (options.outbox !== undefined) {
+      const payload = object(options.outbox.payload);
+      enqueueOutboxValue(db, { ...options.outbox, dispatchId, payload: { ...payload, dispatchId, sequence: reply.seq } }, now);
+    }
     return { ...reply, supersedeSummary: summary };
   });
 }
