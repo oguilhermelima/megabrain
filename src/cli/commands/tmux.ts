@@ -166,7 +166,7 @@ async function apply(context: TmuxContext, config: FileReading, processAdapter: 
   return ok({ backup, serverApplied: false });
 }
 
-async function revert(context: TmuxContext, config: FileReading, verb: TmuxVerb): Promise<Result<boolean>> {
+async function revert(context: TmuxContext, config: FileReading, verb: TmuxVerb, processAdapter: ProcessAdapter): Promise<Result<boolean>> {
   if (!config.exists) return ok(false);
   if (!config.regular) return failed(verb === "tune" ? `tmux config exists but is not a regular file: ${context.config}` : `zsh config exists but is not a regular file: ${context.config}`);
   if (!validateManagedConfig(config.content, context.start, context.end)) return failed(verb === "tune" ? `tmux config has an incomplete legacy tuning block: ${context.config}` : `zsh config has an incomplete megabrain tmux wrapper block: ${context.config}`);
@@ -175,6 +175,10 @@ async function revert(context: TmuxContext, config: FileReading, verb: TmuxVerb)
     await writeAtomic(context.config, removeManagedBlock(config.content, context.start, context.end));
   } catch {
     return failed(verb === "tune" ? `could not remove the legacy tuning block from ${context.config}` : `could not remove the megabrain tmux wrapper block from ${context.config}`);
+  }
+  if (verb === "tune" && (await serverState(processAdapter)).running) {
+    const sourceResult = await getTmux().sourceFile(context.config, processAdapter);
+    if (sourceResult.kind !== "ok") return failed("could not restore tmux configuration on the running server");
   }
   return ok(true);
 }
@@ -199,7 +203,7 @@ async function executeVerb(verb: TmuxVerb, options: TmuxOptions, environment: En
     return ok(`${verb === "tune" ? tunePlan(context.config, context.install, next) : wrapperPlan(context.config, context.install, next)}  - dry-run: no files${verb === "tune" ? " or tmux server options" : ""} will change\n`);
   }
   if (options.revert) {
-    const result = await revert(context, config, verb);
+    const result = await revert(context, config, verb, processAdapter);
     if (result.kind !== "ok") return errorResult(result.error, options.json, verb, "revert");
     const backupPrefix = verb === "tune" ? ".tmux.conf.megabrain-backup-" : ".zshrc.megabrain-backup-";
     const backups = await backupPaths(wrapperBackupDirectory(environment), backupPrefix);
