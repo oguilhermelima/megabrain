@@ -623,7 +623,7 @@ describe("executeHookTurnEnd: context policy notices", () => {
   });
 
   test.each([
-    { name: "compact", policy: { compactAtTokens: 80_000 }, usedTokens: 85_000, expected: "Compaction requested" },
+    { name: "compact", policy: { compactAtTokens: 80_000 }, usedTokens: 85_000, expected: "Compaction completed" },
     { name: "loop", policy: { loop: true, maxIterations: 3 }, usedTokens: 85_000, expected: "Loop iteration 1 re-injected" },
   ])("writes a parent-bound notice for the $name action", async ({ name, policy, usedTokens, expected }) => {
     await withRoot(`policy-${name}-notice`, async (root) => {
@@ -635,7 +635,16 @@ describe("executeHookTurnEnd: context policy notices", () => {
       });
       await writeClaudeUsage(root, sessionId, usedTokens);
 
-      await executeHookTurnEnd([], childEnv(root), fakeProcess(), noStdin);
+      const process = fakeProcess((command, args) => {
+        if (command === "superset" && args[0] === "terminals" && args[1] === "list") {
+          return ok({ stdout: JSON.stringify({ sessions: [{ terminalId: "child-term" }] }), stderr: "", exitCode: 0 });
+        }
+        if (command === "superset" && args[0] === "terminals" && args[1] === "read") {
+          return ok({ stdout: JSON.stringify({ text: "❯ Try \"edit module-orchestrate.sh to...\"" }), stderr: "", exitCode: 0 });
+        }
+        return ok({ stdout: "{}", stderr: "", exitCode: 0 });
+      });
+      await executeHookTurnEnd([], childEnv(root), process, noStdin);
 
       const messages = readMessages(root, `policy-${name}`).filter((message) => message.type === "policy");
       expect(messages).toHaveLength(1);
@@ -645,6 +654,39 @@ describe("executeHookTurnEnd: context policy notices", () => {
       const deliveries = listDeliveries(database.value, `policy-${name}`);
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);
       expect(deliveries.value.some((delivery) => delivery.recipient === "parent")).toBe(true);
+    });
+  });
+
+  test("writes a parent-bound notice when the loop reaches its iteration budget", async () => {
+    await withRoot("policy-loop-budget", async (root) => {
+      const sessionId = "policy-loop-budget-session";
+      await writeMeta(root, "policy-loop-budget", {
+        ...childBase, workspaceId: "workspace-child", state: "running", processState: "running",
+        agent: "claude", chatName: "context-loop", model: "claude-sonnet-5-5", agentSessionId: sessionId,
+        contextPolicy: { loop: true, maxIterations: 2 },
+      });
+      await writeClaudeUsage(root, sessionId, 85_000);
+      const process = fakeProcess((command, args) => {
+        if (command === "superset" && args[0] === "terminals" && args[1] === "list") {
+          return ok({ stdout: JSON.stringify({ sessions: [{ terminalId: "child-term" }] }), stderr: "", exitCode: 0 });
+        }
+        return ok({ stdout: "{}", stderr: "", exitCode: 0 });
+      });
+
+      await executeHookTurnEnd([], childEnv(root), process, noStdin);
+      const result = await executeHookTurnEnd([], childEnv(root), process, noStdin);
+
+      expect(result).toEqual({ kind: "ok", value: `${JSON.stringify({
+        hookSpecificOutput: { hookEventName: "Stop", additionalContext: "loop iteration budget reached; stop working and await the coordinator." },
+      })}\n` });
+      const messages = readMessages(root, "policy-loop-budget").filter((message) => message.type === "policy");
+      expect(messages).toHaveLength(2);
+      expect(messages[1]?.text).toContain("Stopped — loop iteration budget reached.");
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const deliveries = listDeliveries(database.value, "policy-loop-budget");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.filter((delivery) => delivery.recipient === "parent")).toHaveLength(2);
     });
   });
 });
