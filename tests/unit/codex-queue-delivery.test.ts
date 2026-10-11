@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { deliverCodexQueue } from "../../src/core/codex-delivery.js";
+import { notifyChild } from "../../src/cli/commands/queue-write.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -34,5 +35,20 @@ describe("Codex queue delivery", () => {
 
     expect(result).toEqual({ kind: "fallback", reason: "Codex process is not alive" });
     expect(process.calls).toEqual([{ command: "ps", args: ["eww", "-p", "4242", "-o", "command="] }]);
+  });
+
+  test("rediscovers a live Codex thread when the stored pid is stale", async () => {
+    const process = processFor((command, args) => {
+      if (command !== "ps") return ok({ stdout: "", stderr: "", exitCode: 0 });
+      if (args[1] === "-ax") return ok({ stdout: "987 /usr/local/bin/codex CODEX_THREAD_ID=thread-1", stderr: "", exitCode: 0 });
+      if (args[1] === "-p" && args[2] === "42") return failed("process not found", 1);
+      if (args[1] === "-p" && args[2] === "987") return ok({ stdout: "/usr/local/bin/codex CODEX_THREAD_ID=thread-1", stderr: "", exitCode: 0 });
+      return failed("unexpected ps arguments", 1);
+    });
+
+    const result = await notifyChild("/unused", { agent: "codex", agentThreadId: "thread-1", agentPid: 42 }, "dispatch-1", process, {}, "full reply body");
+
+    expect(result).toMatchObject({ outcome: "delivered", transport: "queue" });
+    expect(process.calls).toContainEqual({ command: "codex", args: ["queue", "--thread", "thread-1", "--message", "full reply body"] });
   });
 });
