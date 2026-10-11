@@ -1,0 +1,8 @@
+{
+  "type": "assistant",
+  "message": {
+    "content": [
+      { "type": "text", "text": "429 Too Many Requests" }
+    ]
+  }
+}

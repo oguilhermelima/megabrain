@@ -34,6 +34,7 @@
 - Run megabrain orchestrate stop <dispatch-id-or-suffix> [--json]. — recommended when you need to interrupt a working child while keeping its pane and dispatch open.
 - Run megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]. — recommended when you need to redirect a child that is working on the wrong thing or replace queued directions.
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
+- Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain ask "question" | megabrain ask --text "question". — recommended when you need to ask the coordinator for a decision that affects the work.
 - Run megabrain done "summary" | megabrain done --text "summary". — recommended when you need to report the completed work and what was verified to the coordinator.
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.

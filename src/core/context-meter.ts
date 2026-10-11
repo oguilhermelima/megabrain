@@ -40,7 +40,7 @@ async function listNames(directory: string): Promise<string[]> {
   try { return await readdir(directory); } catch { return []; }
 }
 
-async function findCodexRollout(home: string, threadId: string): Promise<string | undefined> {
+export async function findCodexRollout(home: string, threadId: string): Promise<string | undefined> {
   const root = join(home, ".codex", "sessions");
   for (const year of (await listNames(root)).sort().reverse()) {
     for (const month of (await listNames(join(root, year))).sort().reverse()) {
@@ -53,7 +53,7 @@ async function findCodexRollout(home: string, threadId: string): Promise<string 
   return undefined;
 }
 
-async function findClaudeTranscript(home: string, sessionId: string): Promise<string | undefined> {
+export async function findClaudeTranscript(home: string, sessionId: string): Promise<string | undefined> {
   const root = join(home, ".claude", "projects");
   for (const project of await listNames(root)) {
     if ((await listNames(join(root, project))).includes(`${sessionId}.jsonl`)) return join(root, project, `${sessionId}.jsonl`);

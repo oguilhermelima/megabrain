@@ -265,6 +265,30 @@ whose session is no longer alive when that can be established. `--force` takes o
 dispatch regardless of owner liveness. Each takeover is recorded in the dispatch metadata; an
 archived dispatch cannot be adopted.
 
+### Supervising stuck or dead children
+
+`megabrain supervise` is a detached watcher that `orchestrate spawn` starts for you. One instance runs
+per state directory (a database lease keeps it single), it checks every open dispatch about once a
+minute (`MEGABRAIN_SUPERVISE_INTERVAL_SECONDS` changes that), and it exits when no dispatch is open.
+`megabrain supervise` starts it by hand, `--status` shows the watcher and each dispatch's last check
+and finding, and `--stop` ends it.
+
+It judges a child by what the agent recorded, never by silence: a long tool call with no output is not
+a finding. A provider error counts only when it is the last thing the agent recorded, with no newer
+progress for two minutes by the record's own timestamp, or when the agent is back at an idle prompt
+after it. Causes: usage-limit (with the reset time), rate-limited (429), server-error (5xx,
+overloaded), network (timeout, connection error, stream disconnected), auth-required, dialog-waiting,
+prompt-unsubmitted, process-exited and pane-gone. Anything it cannot place is unknown and is never
+reported.
+
+Each finding becomes one parent-bound message of type supervise, delivered like any child message,
+with a recommended action: switch agent in the same worktree or wait for the reset (usage-limit); wait
+for the provider and then send "continue" with `orchestrate change` (rate-limited, server-error,
+network); log in (auth-required); answer the dialog or respawn (dialog-waiting); respawn in the same
+worktree, listing uncommitted changes (process-exited, pane-gone). The only automatic action is
+prompt-unsubmitted: it presses Enter once and reports the outcome. A notice repeats only when the
+cause changes or after 30 minutes unresolved.
+
 ### Managed terminals
 
 Terminal creation returns the host identity in JSON and records it with the worktree, command,

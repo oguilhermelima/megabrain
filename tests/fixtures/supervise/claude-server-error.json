@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-10-11T12:00:00.000Z",
+  "type": "assistant",
+  "error": "server_error",
+  "message": {
+    "content": [
+      { "type": "text", "text": "API Error: 529 Overloaded. This is a server-side issue, usually temporary." }
+    ]
+  }
+}
