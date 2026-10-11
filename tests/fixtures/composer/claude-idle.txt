@@ -1,0 +1,30 @@
+
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Haiku 5.5 with low effort · Claude Max
+ ▝▝   ▝▝   ~/Workspaces/Worktrees/fix-spawn-prompt-receipt
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                       ○ low · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "edit module-orchestrate.sh to..."
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 1M (Low) │ 0/1M ctx
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents

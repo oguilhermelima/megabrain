@@ -76,11 +76,9 @@ fi
 exit "$status"
 EOF
 chmod +x "$fake_bin/tmux"
-cat > "$fake_bin/codex" <<'EOF'
+cat > "$fake_bin/codex" <<EOF
 #!/usr/bin/env bash
-stty -echo -icanon
-printf '› Ask Codex to do anything\n'
-exec sleep 300
+exec node "$root/tests/fixtures/paste-agent.mjs"
 EOF
 chmod +x "$fake_bin/codex"
 export MEGABRAIN_STATE_DIR="$state"
@@ -110,6 +108,7 @@ for index in 1 2 3 4 5; do
   dispatch="dispatch-pane-child-$index"
   output="$(MEGABRAIN_SPAWN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt "child $index" --tmux true --json 2>&1 || true)"
   if ! jq -e '.dispatchId' <<<"$output" >/dev/null 2>&1; then
+    "$root/.build/megabrain" db show "$dispatch" --json 2>&1 | jq -r '.. | objects | select(.type? == "composer-frame") | .text' >&2 || true
     transcript="$state/transcripts/$dispatch.txt"
     [ ! -f "$transcript" ] || cat "$transcript" >&2
     if [ -n "$session" ]; then

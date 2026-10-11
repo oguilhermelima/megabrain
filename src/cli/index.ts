@@ -33,6 +33,7 @@ if (result.kind === "ok") {
   if (result.stderr !== undefined && result.stderr.length > 0) process.stderr.write(result.stderr);
   if (result.exitCode !== undefined) process.exitCode = result.exitCode;
 } else if (result.kind === "failed") {
+  if (result.stdout !== undefined && result.stdout.length > 0) process.stdout.write(result.stdout);
   process.stderr.write(`${result.error.startsWith("megabrain ") || result.error.startsWith("megabrain:") ? result.error : `megabrain: ${result.error}`}\n`);
   if (result.error.startsWith("unknown command: ")) process.stderr.write(ROOT_USAGE);
   process.exitCode = result.exitCode;

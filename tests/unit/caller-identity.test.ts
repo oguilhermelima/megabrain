@@ -27,6 +27,7 @@ import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/disp
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
 import { createDispatch } from "../../src/adapters/state-db.js";
+import { composerTmux } from "./composer-tmux.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -660,9 +661,7 @@ describe("megabrain done from the parent that spawned a tmux dispatch is not att
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
-      capturePane: async () => ok("› Ask Codex to do anything"),
+      ...composerTmux(),
     });
     try {
       const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-done-no-self-worktree-`);
