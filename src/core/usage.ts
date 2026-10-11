@@ -19,12 +19,12 @@ export const USAGE_LINES = {
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
   "terminal-close": "terminal close <selector> [--json]",
   "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]",
-  "orchestrate-policy": "orchestrate policy <dispatch-id> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json]",
-  "orchestrate-adopt": "orchestrate adopt <dispatch-id> [--force] [--json]",
+  "orchestrate-policy": "orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json]",
+  "orchestrate-adopt": "orchestrate adopt <dispatch-id-or-suffix> [--force] [--json]",
   "orchestrate-list": "orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]",
   "orchestrate-prune": "orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]",
-  "orchestrate-reconcile": "orchestrate reconcile <dispatch-id> [--all] [--json]",
-  "orchestrate-liveness": "orchestrate liveness <dispatch-id> [--json]",
+  "orchestrate-reconcile": "orchestrate reconcile <dispatch-id-or-suffix> [--all] [--json]",
+  "orchestrate-liveness": "orchestrate liveness <dispatch-id-or-suffix> [--json]",
   "orchestrate-watch": "orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
   "orchestrate-read": "orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json]",
   "orchestrate-ack": "orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]",
@@ -147,8 +147,8 @@ Commands:
   orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
   orchestrate list [--all|--orphans|--uncertain] [--archived] [--json]  List managed dispatches
   orchestrate prune ...                Archive or delete old terminal dispatches
-  orchestrate reconcile <dispatch-id>  Reconcile an open dispatch without respawning
-  orchestrate liveness <dispatch-id>     Read execution state from a dispatch terminal
+  orchestrate reconcile <dispatch-id-or-suffix>  Reconcile an open dispatch without respawning
+  orchestrate liveness <dispatch-id-or-suffix>     Read execution state from a dispatch terminal
   orchestrate watch <dispatch-id-or-suffix> ...  Watch a dispatch file channel for child messages
   orchestrate read <dispatch-id-or-suffix> ...   Read a tmux dispatch pane
   orchestrate ack <dispatch-id-or-suffix> ...    Acknowledge a delivery batch

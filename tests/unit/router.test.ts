@@ -110,7 +110,7 @@ describe("CLI router", () => {
     const result = await route(["orchestrate", "policy", "--help"], dependencies());
     expect(result).toEqual({
       kind: "ok",
-      value: "Usage: megabrain orchestrate policy <dispatch-id> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json]\n",
+      value: "Usage: megabrain orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json]\n",
     });
   });
 
