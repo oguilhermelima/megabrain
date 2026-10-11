@@ -28,7 +28,9 @@ export function toMeta(row: DispatchRow): DispatchRecord {
   const result: Record<string, unknown> = { ...extra };
   if (present.has("dispatchId")) result.dispatchId = row.id;
   if (present.has("state")) result.state = row.state;
-  for (const [field, column] of Object.entries(promoted)) if (present.has(field)) result[field] = columnValue(row, column);
+  for (const [field, column] of Object.entries(promoted)) {
+    if (present.has(field) || field === "chatName") result[field] = columnValue(row, column);
+  }
   return result as DispatchRecord;
 }
 
