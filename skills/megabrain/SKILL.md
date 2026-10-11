@@ -40,8 +40,8 @@ start empty, so add one with `megabrain chain add <name> ...` first. Use `chain 
 explicit chain runner when you want its ordered fallback across steps and usage-window checks.
 
 ```
-megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <percent>] [--compact-at <percent>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json] — recommended when you need to start a child agent on a new or existing worktree.
-megabrain orchestrate policy <dispatch-id> [--context-ceiling <percent>] [--compact-at <percent>] [--loop|--no-loop] [--max-iterations <n>] [--json] — recommended when you need to change context policies on an active dispatch.
+megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json] — recommended when you need to start a child agent on a new or existing worktree.
+megabrain orchestrate policy <dispatch-id> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json] — recommended when you need to change context policies on an active dispatch.
 ```
 
 `--chain <name>` bypasses selector matching on both commands. An explicit `--agent` wins over

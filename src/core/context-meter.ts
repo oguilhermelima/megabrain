@@ -2,7 +2,7 @@ import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 export type ContextMeter = Readonly<
-  | { readonly status: "known"; readonly percentUsed: number; readonly sourceFrame: string }
+  | { readonly status: "known"; readonly usedTokens: number; readonly percentUsed?: number; readonly sourceFrame: string }
   | { readonly status: "unknown" }
 >;
 
@@ -10,6 +10,8 @@ export type ContextSubject = Readonly<{
   readonly agent: string;
   readonly agentThreadId?: string;
   readonly agentSessionId?: string;
+  /** Window of the launch model from the registry; outranks any inference from the transcript. */
+  readonly contextWindow?: number;
 }>;
 
 const unknown: ContextMeter = { status: "unknown" };
@@ -78,9 +80,10 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
-function measured(source: string, used: number, window: number): ContextMeter {
+function measured(source: string, used: number, window: number | undefined): ContextMeter {
+  if (window === undefined) return { status: "known", usedTokens: used, sourceFrame: `${source}: ${used} tokens, window unknown` };
   if (window <= 0) return unknown;
-  return { status: "known", percentUsed: Math.round((used / window) * 1000) / 10, sourceFrame: `${source}: ${used}/${window} tokens` };
+  return { status: "known", usedTokens: used, percentUsed: Math.round((used / window) * 1000) / 10, sourceFrame: `${source}: ${used}/${window} tokens` };
 }
 
 function codexMeter(tail: string): ContextMeter {
@@ -97,19 +100,30 @@ function codexMeter(tail: string): ContextMeter {
   return unknown;
 }
 
-function claudeMeter(tail: string): ContextMeter {
+/** Tokens in the context for one assistant entry, or undefined when its usage is malformed. */
+function claudeUsed(tokens: Record<string, unknown>): number | undefined {
+  const parts = [tokens.input_tokens, tokens.cache_read_input_tokens, tokens.cache_creation_input_tokens].map((part) => part === undefined ? 0 : count(part));
+  return parts.some((part) => part === undefined) ? undefined : parts.reduce<number>((sum, part) => sum + (part ?? 0), 0);
+}
+
+/** The transcript's model id never says whether the window is 200k or 1M; only a [1m] marker or usage past 200k does. */
+function claudeMeter(tail: string, registryWindow: number | undefined): ContextMeter {
+  let latest: Readonly<{ used: number; model: string }> | undefined;
+  let provenLong = false;
   for (const entry of records(tail)) {
     const message = object(entry.message);
     const tokens = object(message?.usage);
     if (entry.type !== "assistant" || entry.isSidechain === true || tokens === undefined) continue;
     const model = typeof message?.model === "string" ? message.model : "";
     if (model === "" || model.startsWith("<")) continue;
-    const parts = [tokens.input_tokens, tokens.cache_read_input_tokens, tokens.cache_creation_input_tokens].map((part) => part === undefined ? 0 : count(part));
-    if (parts.some((part) => part === undefined)) return unknown;
-    const used = parts.reduce<number>((sum, part) => sum + (part ?? 0), 0);
-    return measured("claude transcript usage", used, /\[1m\]/i.test(model) ? CLAUDE_LONG_WINDOW : CLAUDE_WINDOW);
+    const used = claudeUsed(tokens);
+    if (used === undefined) { if (latest === undefined) return unknown; continue; }
+    if (used > CLAUDE_WINDOW) provenLong = true;
+    latest ??= { used, model };
   }
-  return unknown;
+  if (latest === undefined) return unknown;
+  const window = registryWindow ?? (/\[1m\]/i.test(latest.model) || provenLong ? CLAUDE_LONG_WINDOW : undefined);
+  return measured("claude transcript usage", latest.used, window);
 }
 
 /** Context in use, read from the agent's own structured session file. Anything not observed there is unknown. */
@@ -122,7 +136,7 @@ export async function readContextMeter(subject: ContextSubject, home: string): P
   if (subject.agent === "claude" && subject.agentSessionId !== undefined && subject.agentSessionId !== "") {
     const path = await findClaudeTranscript(home, subject.agentSessionId);
     const tail = path === undefined ? undefined : await readTail(path);
-    return tail === undefined ? unknown : claudeMeter(tail);
+    return tail === undefined ? unknown : claudeMeter(tail, subject.contextWindow);
   }
   return unknown;
 }

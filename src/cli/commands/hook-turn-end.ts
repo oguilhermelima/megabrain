@@ -13,7 +13,8 @@ import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { randomUUID } from "node:crypto";
 import { waitForStableIdle } from "../../core/liveness.js";
 import { readContextMeter } from "../../core/context-meter.js";
-import { decideLoopTurn, evaluateContextThreshold, type ContextPolicy, type ContextThresholdState } from "../../core/context-policy.js";
+import { decideLoopTurn, evaluateContextThreshold, hasCeilingThreshold, hasCompactThreshold, type ContextPolicy, type ContextThresholdState } from "../../core/context-policy.js";
+import { contextWindowOf, loadModelRegistry } from "../../core/model.js";
 import { getAgent } from "../../agents/index.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 
@@ -138,7 +139,9 @@ function policyValue(value: unknown): ContextPolicy {
   const source = value as Record<string, unknown>;
   return {
     ...(typeof source.contextCeiling === "number" ? { contextCeiling: source.contextCeiling } : {}),
+    ...(typeof source.contextCeilingTokens === "number" ? { contextCeilingTokens: source.contextCeilingTokens } : {}),
     ...(typeof source.compactAt === "number" ? { compactAt: source.compactAt } : {}),
+    ...(typeof source.compactAtTokens === "number" ? { compactAtTokens: source.compactAtTokens } : {}),
     ...(typeof source.loop === "boolean" ? { loop: source.loop } : {}),
     ...(typeof source.maxIterations === "number" ? { maxIterations: source.maxIterations } : {}),
   };
@@ -169,11 +172,14 @@ async function applyContextPolicy(
   processAdapter: ProcessAdapter,
 ): Promise<ContextPolicyEffect> {
   const policy = policyValue(meta.contextPolicy);
-  if (policy.contextCeiling === undefined && policy.compactAt === undefined && policy.loop !== true) return { response: null, handled: false };
+  if (!hasCeilingThreshold(policy) && !hasCompactThreshold(policy) && policy.loop !== true) return { response: null, handled: false };
   const agentId = typeof meta.agent === "string" ? meta.agent : "";
   const home = environment.HOME ?? "";
+  const registry = typeof meta.model === "string" && meta.model !== "" ? loadModelRegistry({ ...environment, MEGABRAIN_STATE_DIR: root }) : undefined;
+  const contextWindow = registry?.kind === "loaded" ? contextWindowOf(registry.registry, agentId, String(meta.model)) : undefined;
   const meter = home === "" ? { status: "unknown" as const } : await readContextMeter({
     agent: agentId,
+    ...(contextWindow === undefined ? {} : { contextWindow }),
     ...(typeof meta.agentThreadId === "string" ? { agentThreadId: meta.agentThreadId } : {}),
     ...(typeof meta.agentSessionId === "string" ? { agentSessionId: meta.agentSessionId } : {}),
   }, home);
@@ -190,7 +196,7 @@ async function applyContextPolicy(
   let stopReason = "";
   const updated = mutateDispatch(database.value, dispatchId, (current) => {
     plannedPolicy = policyValue(current.contextPolicy);
-    if (plannedPolicy.contextCeiling === undefined && plannedPolicy.compactAt === undefined && plannedPolicy.loop !== true) return noDispatchChange;
+    if (!hasCeilingThreshold(plannedPolicy) && !hasCompactThreshold(plannedPolicy) && plannedPolicy.loop !== true) return noDispatchChange;
     const previous = policyStateValue(current.contextPolicyState);
     const thresholdState: ContextThresholdState = {
       ceilingLatched: previous.ceilingLatched === true,
@@ -223,7 +229,8 @@ async function applyContextPolicy(
         id: eventId,
         action,
         reason: action === "stop" ? stopReason : action === "compact" ? "context threshold reached" : "loop prompt re-injected",
-        percentUsed: meter.status === "known" ? meter.percentUsed : null,
+        percentUsed: meter.status === "known" ? meter.percentUsed ?? null : null,
+        usedTokens: meter.status === "known" ? meter.usedTokens : null,
         sourceFrame: meter.status === "known" ? meter.sourceFrame.slice(0, 500) : null,
         reading: meter.status,
         outcome: "pending",

@@ -41,6 +41,12 @@ function modelEntry(registry: ModelRegistry, agent: string, model: string): Mode
   return registry.models.find((entry) => entry.agent === agent && entry.model === model);
 }
 
+/** Context window in tokens recorded for a launch model; absent when unknown. */
+export function contextWindowOf(registry: ModelRegistry, agent: string, model: string): number | undefined {
+  const window = modelEntry(registry, agent, model)?.contextWindow;
+  return typeof window === "number" && Number.isSafeInteger(window) && window > 0 ? window : undefined;
+}
+
 export function validateReasoning(
   registry: ModelRegistry,
   agent: string,
@@ -94,7 +100,7 @@ export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry
   for (const templateModel of template.models) {
     const index = models.findIndex((entry) => entry.agent === templateModel.agent && entry.model === templateModel.model);
     if (index < 0) models.push(templateModel);
-    else if (models[index].provenance.kind !== "curated") models[index] = { ...models[index], reasoning: templateModel.reasoning, status: templateModel.status };
+    else if (models[index].provenance.kind !== "curated") models[index] = { ...models[index], reasoning: templateModel.reasoning, status: templateModel.status, contextWindow: templateModel.contextWindow };
   }
   return { ...registry, models };
 }

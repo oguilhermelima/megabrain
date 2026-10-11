@@ -148,10 +148,12 @@ at turn end:
 
 ```sh
 megabrain orchestrate spawn --worktree ~/code/api --agent codex --prompt "finish the API" \
-  --compact-at 80 --context-ceiling 95 --loop --max-iterations 8
+  --compact-at 80% --context-ceiling 95% --loop --max-iterations 8
 ```
 
-Thresholds are percentages of context used. `--compact-at` runs the agent's compact command and
+A threshold is either a percentage of the context window (`80%`) or an absolute token count (`150k`,
+`1m`, or a bare number above 100 such as `150000`). A bare number up to 100 is refused as ambiguous.
+Token thresholds work even when the window is unknown. `--compact-at` runs the agent's compact command and
 then re-sends the original task. `--context-ceiling` stops the dispatch and records the reading and
 reason. `--loop` re-sends the task after a turn ends without a `done` message; it requires either
 `--max-iterations` or a context ceiling. The hook checks `done` in the dispatch queue and reads the
@@ -159,8 +161,12 @@ session file once per turn, so there is no background polling loop.
 
 Context comes from structured files, never from screen text. Codex: the latest token_count event in
 its rollout file (last turn tokens against the model context window). Claude: the latest assistant
-usage in its session transcript (input plus cache read plus cache creation tokens against a 200k
-window, or 1M for a 1M model variant). agy has no structured source, so it is always unknown and
+usage in its session transcript (input plus cache read plus cache creation tokens). The transcript's
+model id does not say whether the window is 200k or 1M, so the window is resolved in order: the
+`contextWindow` recorded in the model registry for the dispatch's launch model (set for the models
+megabrain launches where it was measured), a `[1m]` marker in the transcript's model id, or proof from
+the data (any usage above 200000 tokens means at least 1M). Otherwise the window is unknown: the
+percentage is unknown, percentage thresholds never fire, and only token thresholds act. agy has no structured source, so it is always unknown and
 policies are refused for it. Anything not found in the file is
 unknown and never triggers a threshold. When a loop is bounded only by context and its
 meter is unknown, it stops because the budget cannot be checked. Each automatic stop, compaction,
@@ -169,7 +175,7 @@ or continuation is stored with its reading in the dispatch metadata.
 Change an active dispatch policy with:
 
 ```sh
-megabrain orchestrate policy <dispatch-id> --context-ceiling 90 --no-loop
+megabrain orchestrate policy <dispatch-id> --context-ceiling 90% --no-loop
 ```
 
 Dispatch workers do not inherit the Playwright MCP by default. Use `--browser` on `orchestrate
