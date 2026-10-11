@@ -100,6 +100,107 @@ describe("terminal create reads the Orca handle, not the request id", () => {
     expect(JSON.parse(result.value)).toMatchObject({ terminalId: "child-handle", pid: 4242, host: "orca" });
   });
 
+  test("matches the launch marker when numeric environment variables follow it", async () => {
+    const worktreePath = await mktemp();
+    const stateDir = await mktemp();
+    let launch = "";
+    const process = fakeProcess((command, args) => {
+      if (command === "git" && args.includes("rev-parse")) return ok({ stdout: `${worktreePath}\n`, stderr: "", exitCode: 0 });
+      if (command === "orca" && args[0] === "terminal" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "probe-parent" }] } }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[0] === "terminal" && args[1] === "create") {
+        launch = args[args.indexOf("--command") + 1] ?? "";
+        return ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-handle" } } }), stderr: "", exitCode: 0 });
+      }
+      if (command === "ps" && args.includes("-A")) {
+        const marker = /([A-Z0-9_]+)=\$\$/.exec(launch)?.[1];
+        return ok({ stdout: marker === undefined ? "" : `4242 /bin/sh ${marker}=4242 SHLVL=2 COLUMNS=80 LINES=24\n`, stderr: "", exitCode: 0 });
+      }
+      if (command === "orca" && args[0] === "terminal" && args[1] === "read") {
+        const marker = /([A-Z0-9_]+)=\$\$/.exec(launch)?.[1];
+        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: marker === undefined ? [] : [`${marker}=9999`] } } }), stderr: "", exitCode: 0 });
+      }
+      return failed(`unexpected call: ${command} ${args.join(" ")}`);
+    });
+
+    const result = await executeTerminalLifecycle(
+      ["create", "--worktree", worktreePath, "--command", "node app.js", "--json"],
+      { MEGABRAIN_STATE_DIR: stateDir, MEGABRAIN_TERMINAL_HOST: "orca", MEGABRAIN_TERMINAL_PARENT_ID: "probe-parent", TMUX: "private", TMUX_PANE: "%8" },
+      process,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value)).toMatchObject({ terminalId: "child-handle", pid: 4242, host: "orca" });
+  });
+
+  test("ignores another process's terminal marker", async () => {
+    const worktreePath = await mktemp();
+    const stateDir = await mktemp();
+    let launch = "";
+    const process = fakeProcess((command, args) => {
+      if (command === "git" && args.includes("rev-parse")) return ok({ stdout: `${worktreePath}\n`, stderr: "", exitCode: 0 });
+      if (command === "orca" && args[0] === "terminal" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "probe-parent" }] } }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[0] === "terminal" && args[1] === "create") {
+        launch = args[args.indexOf("--command") + 1] ?? "";
+        return ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-handle" } } }), stderr: "", exitCode: 0 });
+      }
+      if (command === "ps" && args.includes("-A")) {
+        const marker = /([A-Z0-9_]+)=\$\$/.exec(launch)?.[1];
+        return ok({ stdout: marker === undefined ? "" : `1111 /bin/sh MEGABRAIN_TERMINAL_PID_DEADBEEF=1111\n4242 /bin/sh ${marker}=4242\n`, stderr: "", exitCode: 0 });
+      }
+      if (command === "orca" && args[0] === "terminal" && args[1] === "read") {
+        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: [] } } }), stderr: "", exitCode: 0 });
+      }
+      return failed(`unexpected call: ${command} ${args.join(" ")}`);
+    });
+
+    const result = await executeTerminalLifecycle(
+      ["create", "--worktree", worktreePath, "--command", "node app.js", "--json"],
+      { MEGABRAIN_STATE_DIR: stateDir, MEGABRAIN_TERMINAL_HOST: "orca", MEGABRAIN_TERMINAL_PARENT_ID: "probe-parent", TMUX: "private", TMUX_PANE: "%8" },
+      process,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value)).toMatchObject({ terminalId: "child-handle", pid: 4242, host: "orca" });
+  });
+
+  test("retries the process table while the launch marker is not published yet", async () => {
+    const worktreePath = await mktemp();
+    const stateDir = await mktemp();
+    let launch = "";
+    let processListReads = 0;
+    const process = fakeProcess((command, args) => {
+      if (command === "git" && args.includes("rev-parse")) return ok({ stdout: `${worktreePath}\n`, stderr: "", exitCode: 0 });
+      if (command === "orca" && args[0] === "terminal" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "probe-parent" }] } }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[0] === "terminal" && args[1] === "create") {
+        launch = args[args.indexOf("--command") + 1] ?? "";
+        return ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-handle" } } }), stderr: "", exitCode: 0 });
+      }
+      if (command === "ps" && args.includes("-A")) {
+        processListReads += 1;
+        const marker = /([A-Z0-9_]+)=\$\$/.exec(launch)?.[1];
+        return ok({ stdout: processListReads === 1 || marker === undefined ? "" : `4242 /bin/sh ${marker}=4242\n`, stderr: "", exitCode: 0 });
+      }
+      if (command === "orca" && args[0] === "terminal" && args[1] === "read") {
+        const marker = /([A-Z0-9_]+)=\$\$/.exec(launch)?.[1];
+        return ok({ stdout: JSON.stringify({ result: { terminal: { tail: marker === undefined ? [] : [`${marker}=9999`] } } }), stderr: "", exitCode: 0 });
+      }
+      return failed(`unexpected call: ${command} ${args.join(" ")}`);
+    });
+
+    const result = await executeTerminalLifecycle(
+      ["create", "--worktree", worktreePath, "--command", "node app.js", "--json"],
+      { MEGABRAIN_STATE_DIR: stateDir, MEGABRAIN_TERMINAL_HOST: "orca", MEGABRAIN_TERMINAL_PARENT_ID: "probe-parent", TMUX: "private", TMUX_PANE: "%8" },
+      process,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value)).toMatchObject({ terminalId: "child-handle", pid: 4242, host: "orca" });
+    expect(processListReads).toBe(2);
+  });
+
   test("refuses a stale Orca parent before creating a terminal", async () => {
     const worktreePath = await mktemp();
     let creates = 0;
