@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { listTerminals, stateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { tmuxPanePids } from "./terminal-tmux.js";
 import { formatTerminalList, processStatus, type HostTerminal, type TerminalRecord } from "../../core/terminal-list.js";
 import { getHost } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
@@ -99,9 +100,17 @@ export async function executeTerminalList(args: readonly string[], environment: 
   const stored = listTerminals(opened.value);
   if (stored.kind !== "ok") return stored;
   const entries: TerminalRecord[] = [];
+  let panePids: Awaited<ReturnType<typeof tmuxPanePids>>;
   for (const storedRecord of stored.value) {
     const record = terminalRecord(storedRecord);
     if (record === undefined || (filter !== undefined && record.worktree !== filter.value)) continue;
+    if (record.host === "tmux") {
+      const panes = panePids ??= await tmuxPanePids(process);
+      const pid = panes?.get(record.terminalId);
+      const status = panes === undefined ? "unknown" : pid === undefined ? "stale" : pid === (record.rootPid ?? record.pid) ? "alive" : "unknown";
+      entries.push({ ...record, status });
+      continue;
+    }
     const host = await hostRecords(process, record);
     let processAlive = true;
     const hostState = host.terminal?.status ?? host.terminal?.state;

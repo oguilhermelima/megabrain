@@ -8,6 +8,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../core/terminal-lifecycle.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
+import { closeTmuxTerminal, createTmuxTerminal, splitTmuxTerminalId } from "./terminal-tmux.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type JsonObject = { readonly [key: string]: unknown };
@@ -404,6 +405,16 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     if (currentHost === "superset" && workspace === undefined) return failed(`no Superset workspace is registered for ${path.value}; run megabrain worktree adopt ${path.value} first`);
     const resolvedCommand = command ?? await commandFromConfig(path.value);
     if (resolvedCommand === undefined) return failed(`no --command given and no .superset/config.json run script found in ${path.value}`, 2);
+    if (currentHost === "unknown") {
+      const opened = await createTmuxTerminal(process, env, path.value, resolvedCommand);
+      if (opened.kind !== "ok") return opened;
+      const tmuxRecord: TerminalLifecycleRecord = { terminalId: opened.value.terminalId, host: "tmux", workspaceId: null, worktree: path.value, title, command: resolvedCommand, createdAt: new Date().toISOString(), pid: opened.value.pid, rootPid: opened.value.pid, port: port ?? null };
+      const savedTmux = save(env, tmuxRecord);
+      if (savedTmux.kind !== "ok") return savedTmux;
+      return ok(json
+        ? output({ host: "tmux", worktree: path.value, title, terminalId: tmuxRecord.terminalId, pid: tmuxRecord.pid, rootPid: tmuxRecord.rootPid, port: tmuxRecord.port, attach: opened.value.attach }, true)
+        : `terminal: ${tmuxRecord.terminalId}\nattach: ${opened.value.attach}\n`);
+    }
     const created = await createHost(process, currentHost, workspace ?? null, path.value, title, resolvedCommand);
     if (created.kind !== "ok") return created;
     const id = getHost(currentHost)?.terminalIdentity(created.value.value);
@@ -434,6 +445,14 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     }
     return failed(operation === "restart" ? `terminal selector could not be resolved: ${selector}` : "terminal selector could not be resolved");
   }
+  if (operation === "close" && record.host === "tmux") {
+    const closedPane = await closeTmuxTerminal(process, record.terminalId);
+    if (closedPane.kind !== "ok") return closedPane;
+    const removedTmux = remove(env, record.terminalId);
+    if (removedTmux.kind !== "ok") return failed(`tmux terminal ${record.terminalId} closed but its record could not be removed`);
+    const status = closedPane.value ? "closed" : "stale";
+    return ok(json ? output({ selector, terminalId: record.terminalId, status, recordRemoved: true }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: ${status}\nrecord removed: true\n`, closedPane.value ? 0 : 1);
+  }
   if (operation === "close") {
     const call = hostCommand(record.host, "close", record);
     if (call === undefined) return failed(`could not verify host terminal ${record.terminalId} before close`);
@@ -452,6 +471,24 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     return ok(json ? output({ selector, terminalId: record.terminalId, status: "closed", identity, recordRemoved: true }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: closed\nidentity: ${identity}\nrecord removed: true\n`);
   }
   if (operation !== "restart") return failed(`unknown terminal operation: ${operation}`, 2);
+  if (record.host === "tmux") {
+    const target = splitTmuxTerminalId(record.terminalId);
+    if (target === undefined) return failed(`not a tmux terminal id: ${record.terminalId}`);
+    const closedPane = await closeTmuxTerminal(process, record.terminalId);
+    if (closedPane.kind !== "ok") return closedPane;
+    const reopened = await createTmuxTerminal(process, env, record.worktree, command ?? record.command, target.session);
+    if (reopened.kind !== "ok") return reopened;
+    const replacementRecord: TerminalLifecycleRecord = { ...record, terminalId: reopened.value.terminalId, pid: reopened.value.pid, rootPid: reopened.value.pid };
+    const savedReplacement = save(env, replacementRecord);
+    if (savedReplacement.kind !== "ok") return savedReplacement;
+    if (replacementRecord.terminalId !== record.terminalId) {
+      const removedOld = remove(env, record.terminalId);
+      if (removedOld.kind !== "ok") return failed("terminal was restarted but the old record could not be removed");
+    }
+    return ok(json
+      ? output({ selector, killedPid: record.rootPid ?? record.pid, recreated: true, recreatedTerminalId: replacementRecord.terminalId, attach: reopened.value.attach }, true)
+      : `selector: ${selector}\nrecreated terminal: ${replacementRecord.terminalId}\nattach: ${reopened.value.attach}\n`);
+  }
   const root = record.rootPid ?? record.pid;
   if (root === null) return failed(`terminal ${selectorValue(selector)} has no recorded process identity; refusing to kill an unowned process`);
   const targetPort = selector.startsWith("port:") ? selectorValue(selector) : record.port;
