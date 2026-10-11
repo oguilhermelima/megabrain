@@ -29,7 +29,13 @@ case "${1:-} ${2:-} ${3:-}" in
     if [ "${GH_NATIVE:-yes}" = yes ]; then printf '[]\n'; else printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1; fi
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
-  "pr list"*) printf '[]\n' ;;
+  "api --method PUT"*) printf '{"status":"pending","details":{"uuid":"merge-id"}}\n' ;;
+  "api repos/owner/repo/pulls/13/merge-async/merge-id"*) printf '{"status":"merged","details":{"sha":"abc"}}\n' ;;
+  "pr list"*)
+    if [ "${GH_LIST_MODE:-empty}" = open ]; then
+      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"OPEN"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN"}]\n'
+    else printf '[]\n'; fi
+    ;;
   "pr create"*)
     number=12
     case "$*" in *'--head stack/child'*) number=13 ;; esac
@@ -74,8 +80,18 @@ contains "$(cat "$GH_LOG")" 'POST repos/owner/repo/stacks'
 contains "$(cat "$GH_LOG")" 'pull_requests'
 printf 'GitHub creates native stacks after opening dependent pull requests\n'
 
+# Scenario: native GitHub stack merges use the asynchronous endpoint and wait for its result.
+export GH_LIST_MODE=open
+: >"$GH_LOG"
+output="$(run stack merge --yes)"
+contains "$(cat "$GH_LOG")" 'PUT repos/owner/repo/pulls/13/merge-async'
+contains "$(cat "$GH_LOG")" 'repos/owner/repo/pulls/13/merge-async/merge-id'
+contains "$output" 'GitHub stack merge completed'
+printf 'GitHub native stack merge polls the asynchronous API to completion\n'
+
 # Scenario: unsupported stacks use chained PR bases and include their position in the body.
 export GH_NATIVE=no
+export GH_LIST_MODE=empty
 : >"$GH_LOG"
 run stack pr >/dev/null
 contains "$(cat "$GH_LOG")" '--base stack/base'
