@@ -9,7 +9,7 @@ require_megabrain_test_state
 
 binary="$root/.build/megabrain"
 export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
-modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync)
+modules=(orchestration orchestration-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync terminal-openers)
 trap 'rm -rf "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -283,7 +283,7 @@ for module in "${modules[@]}"; do
 done
 
 # The all-healthy path is a distinct contract: a complete doctor run must return zero and an
-# array of nine healthy reports when every module's recorded live check is healthy.
+# array of ten healthy reports when every module's recorded live check is healthy.
 healthy_state="$work/healthy-state"
 mkdir -p "$healthy_state"
 jq -n --argjson modules "$(printf '%s\n' "${modules[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
@@ -293,7 +293,7 @@ export MEGABRAIN_STATE_DIR="$healthy_state"
 healthy_json="$work/healthy-json"
 run_capture "$healthy_json" "$binary" doctor --json
 [ "$(cat "$healthy_json.status")" -eq 1 ] &&
-  jq -e 'type == "array" and length == 9 and any(.[]; .status == "ok")' "$healthy_json.stdout" >/dev/null ||
+  jq -e 'type == "array" and length == 10 and any(.[]; .status == "ok")' "$healthy_json.stdout" >/dev/null ||
   fail 'all-healthy doctor scenario did not exercise the complete report'
 
-printf 'install remains shell-owned; compiled doctor reports all nine modules\n'
+printf 'install remains shell-owned; compiled doctor reports all ten modules\n'
