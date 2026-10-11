@@ -368,6 +368,7 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
       ...(agentThreadId === undefined ? {} : { agentThreadId }),
       ...(agentPid === undefined ? {} : { agentPid }),
       ...(type === "received" && agentPid === undefined && agentThreadId !== undefined ? { agentPid: null } : {}),
+      ...(type === "received" && agent === "claude" && typeof environment.CLAUDE_CODE_SESSION_ID === "string" ? { agentSessionId: environment.CLAUDE_CODE_SESSION_ID } : {}),
       ...(type === "received" ? { promptReceipt: "received", promptState: "confirmed" } : {}),
     };
   });

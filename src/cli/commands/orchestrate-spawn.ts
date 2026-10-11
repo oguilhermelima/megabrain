@@ -19,6 +19,7 @@ import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
 import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
+import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
@@ -552,7 +553,7 @@ export async function markRunningIfSpawning(root: string, id: string, processAda
   return updateMeta(root, id, { state: "running" }, processAdapter);
 }
 
-async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null, parentChatName: string, parentAgentThreadId?: string, parentAgent?: string): Promise<RecordValue> {
+async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null, parentChatName: string, parentAgentThreadId?: string, parentAgent?: string, parentAgentSessionId?: string, parentAgentPid?: number): Promise<RecordValue> {
   const now = new Date().toISOString();
   return {
     dispatchId: id,
@@ -563,6 +564,8 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     parentSessionId: parentContext.id,
     ...(parentAgentThreadId === undefined ? {} : { parentAgentThreadId }),
     ...(parentAgent === undefined ? {} : { parentAgent }),
+    ...(parentAgentSessionId === undefined ? {} : { parentAgentSessionId }),
+    ...(parentAgentPid === undefined ? {} : { parentAgentPid }),
     parentHost: parentContext.host,
     parentTerminalId: parentContext.terminalId,
     parentWorkspaceId: parentWorkspace,
@@ -807,8 +810,12 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   }
 
   const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
+  const parentAgentSessionId = parentAgent === "claude" ? environment.CLAUDE_CODE_SESSION_ID : undefined;
+  const parentAgentPid = parentAgentSessionId !== undefined && environment.HOME !== undefined
+    ? await findClaudeSessionPid(parentAgentSessionId, environment.HOME, process)
+    : undefined;
   const parentChatName = await coordinatorChatName(environment, process);
-  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, environment.CODEX_THREAD_ID, parentAgent);
+  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, environment.CODEX_THREAD_ID, parentAgent, parentAgentSessionId, parentAgentPid);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);

@@ -156,6 +156,41 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("persists the parent Claude session id and matching ancestor pid", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-parent-claude-`);
+    const sessionId = "parent-session-fixture";
+    await mkdir(`${root}/.claude/sessions`, { recursive: true });
+    await writeFile(`${root}/.claude/sessions/700.json`, JSON.stringify({ pid: 700, sessionId, status: "idle", statusUpdatedAt: 1000 }));
+    const process = processFor([], (command, args) => command === "ps"
+      ? ok({ stdout: Number(args[args.indexOf("-p") + 1]) === globalThis.process.pid ? "700\n" : "1\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    registerTmux({
+      ...original,
+      id: "tmux",
+      paneExists: async () => ok(true),
+      sessionExists: async () => ok(true),
+      panesForSession: async () => ok(["%9"]),
+      capturePane: async () => ok(codexIdleOutput),
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
+    });
+    try {
+      const result = await executeSpawn(
+        ["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"],
+        { ...environment(root, "dispatch-parent-claude"), HOME: root, CLAUDE_CODE_SESSION_ID: sessionId },
+        process,
+        options(worktree("existing")),
+      );
+      if (result.kind !== "ok") throw new Error(result.error);
+      expect(result.kind).toBe("ok");
+      expect(readMeta(root, "dispatch-parent-claude")).toMatchObject({ parentAgent: "claude", parentAgentSessionId: sessionId, parentAgentPid: 700 });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test.each([
     ["without --label uses the branch", [], "feat/example"],
     ["with --label uses the explicit label", ["--label", "operator name"], "operator name"],

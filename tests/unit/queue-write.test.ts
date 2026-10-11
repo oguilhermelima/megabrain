@@ -4,10 +4,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../src/core/queue-write.js";
-import { findChild } from "../../src/cli/commands/queue-write.js";
+import { findChild, updateMeta } from "../../src/cli/commands/queue-write.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { archiveDispatch, createDispatch, isDispatchArchived } from "../../src/adapters/state-db.js";
+import { archiveDispatch, createDispatch, getDispatch, isDispatchArchived } from "../../src/adapters/state-db.js";
 import { appendMessage, claimOutbox, createDelivery, finishNotification, listDeliveries, listMessages, listNudges, listOutbox } from "../../src/adapters/state-db.js";
 import type { DatabaseHandle } from "../../src/db/db.js";
 
@@ -68,6 +68,32 @@ describe("queue message decisions", () => {
   test("allocates the next sequence from message filenames", () => {
     expect(nextMessageSequence(["0001-child-ask.json", "0009-parent-reply.json", "garbage.json"])).toBe(10);
     expect(nextMessageSequence([])).toBe(1);
+  });
+});
+
+describe("Claude child session identity", () => {
+  test("records the Claude session id when the child confirms receipt", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-child-session-`);
+    try {
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const created = createDispatch(database.value, { dispatchId: "claude-child-session", state: "running", agent: "claude" });
+      if (created.kind !== "ok") throw new Error(created.error);
+      const process: ProcessAdapter = {
+        async run(command, args) { return failed(`unexpected process call ${command} ${args.join(" ")}`); },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      };
+      const received = await updateMeta(root, "claude-child-session", "received", {
+        HOME: root,
+        MEGABRAIN_STATE_DIR: root,
+        CLAUDE_CODE_SESSION_ID: "child-session-fixture",
+      }, process);
+      expect(received.kind).toBe("ok");
+      expect(getDispatch(database.value, "claude-child-session")).toMatchObject({ kind: "ok", value: { agentSessionId: "child-session-fixture" } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
