@@ -44,7 +44,7 @@ case "${1:-} ${2:-} ${3:-}" in
   "mr view"*)
     if [ "${GLAB_MERGED:-no}" = yes ]; then printf '{"iid":%s,"state":"merged","detailed_merge_status":"merged"}\n' "${3:-1}"; else printf '{"iid":%s,"state":"opened","detailed_merge_status":"mergeable"}\n' "${3:-1}"; fi
     ;;
-  "api projects/group/project")
+  "api projects/group%2Fproject"*)
     if [ "${GLAB_TRAINS:-no}" = yes ]; then printf '{"id":42,"merge_trains_enabled":true}\n'; else printf '{"id":42,"merge_trains_enabled":false}\n'; fi
     ;;
   "api"*) printf '[]\n' ;;
@@ -52,7 +52,18 @@ case "${1:-} ${2:-} ${3:-}" in
 esac
 EOF
 chmod +x "$work/bin/glab"
+cat >"$work/bin/git-ssh" <<'EOF'
+#!/usr/bin/env bash
+case "${*: -1}" in
+  *git-upload-pack*) exec git-upload-pack "$REMOTE_GIT_DIR" ;;
+  *git-receive-pack*) exec git-receive-pack "$REMOTE_GIT_DIR" ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$work/bin/git-ssh"
 export PATH="$work/bin:$PATH"
+export REMOTE_GIT_DIR="$work/remote.git"
+export GIT_SSH_COMMAND="$work/bin/git-ssh"
 
 setup_fixture() {
   rm -rf "$work/repo" "$work/remote.git" "$work/shared" "$work/state" "$work/glab.log"
