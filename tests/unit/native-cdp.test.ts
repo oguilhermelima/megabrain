@@ -35,7 +35,7 @@ type FakeMetro = {
 
 const servers: FakeMetro[] = [];
 
-async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
+async function fakeMetro(initialTargets: FakeTarget, onUnansweredProbe?: () => FakeTarget | undefined): Promise<FakeMetro> {
   const http = createServer();
   const sockets = new Set<WebSocket>();
   const wsServer = new WebSocketServer({ noServer: true });
@@ -142,7 +142,8 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   wsServer.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("message", (message) => {
-      if (targets !== "none" && targets !== "hang") sendProbeResult(socket, message.toString());
+      if (targets === "hang") targets = onUnansweredProbe?.() ?? targets;
+      else if (targets !== "none") sendProbeResult(socket, message.toString());
     });
     socket.on("close", () => sockets.delete(socket));
   });
@@ -271,8 +272,7 @@ describe("Metro inspector transport", () => {
   });
 
   test("rereads the target listing after an unresponsive target", async () => {
-    const server = await fakeMetro("hang");
-    setTimeout(() => server.setTargets("probe"), 90);
+    const server = await fakeMetro("hang", () => "probe");
 
     const result = await connectMetroInspector(server.port, 700);
 
