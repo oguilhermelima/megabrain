@@ -21,6 +21,7 @@ import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTm
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
+import { receiptTimeoutMs, transportTmuxPrompt } from "./spawn-prompt.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -36,6 +37,9 @@ type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly SUPERSET_WORKSPACE_ID?: string;
   readonly MEGABRAIN_SPAWN_DISPATCH_ID?: string;
   readonly MEGABRAIN_AGENT_READY_TIMEOUT_MS?: string;
+  readonly MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS?: string;
+  readonly MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS?: string;
+  readonly MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS?: string;
 }>;
 
 export type SpawnWorktree = Readonly<{
@@ -502,8 +506,7 @@ function hasReceipt(root: string, id: string): boolean {
 }
 
 async function awaitReceipt(root: string, id: string, environment: SpawnEnvironment): Promise<boolean> {
-  const seconds = Number(environment.MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS ?? "30");
-  const timeout = Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 0;
+  const timeout = receiptTimeoutMs(environment);
   const started = Date.now();
   do {
     if (hasReceipt(root, id)) return true;
@@ -879,10 +882,9 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         // The readiness wait just proved the composer idle, so this is a normal submit, not a
         // queued one (submitKey(agent) is for queue-write.ts typing into a possibly busy
         // composer, where Codex's Tab queues instead of submitting). Every agent's composer
-        // submits an idle prompt on Enter.
-        const sent = await sendTmuxPair(root, pane ?? "", prompt, "Enter", environment, process);
-        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
-        else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
+        // submits an idle prompt on Enter. The text goes in as one bracketed paste that is proven
+        // to be in the composer before Enter, never as keystrokes.
+        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process }, () => awaitReceipt(root, id, environment));
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
