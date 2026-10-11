@@ -11,6 +11,7 @@ type Worktree = ReturnType<typeof listWorktrees>[number];
 type GitHubPull = { number: number; headRefName: string; baseRefName: string; url?: string; state?: string; reviewDecision?: string; statusCheckRollup?: unknown[] };
 type GitHubStack = { number: number; pull_requests: Array<{ number: number; head?: { ref?: string } }> };
 type StackData = { repo: string; slug: string; defaultBranch: string; branches: Worktree[] };
+type GitLabMR = { iid: number; source_branch: string; target_branch: string; state: string; web_url?: string; detailed_merge_status?: string; head_pipeline?: { status?: string } };
 
 async function run(process: ProcessAdapter, command: string, args: readonly string[], cwd?: string) {
   return process.run(command, args, cwd === undefined ? undefined : { cwd });
@@ -35,8 +36,15 @@ async function repoFromCwd(process: ProcessAdapter, cwd: string): Promise<Result
 }
 
 function slugFromRemote(remote: string): string | undefined {
-  const match = remote.trim().match(/(?:github\.com[:/]|\/)([^/:]+\/[^/:]+?)(?:\.git)?$/i);
-  return match?.[1];
+  const value = remote.trim();
+  const ssh = value.match(/^[^@]+@[^:]+:(.+)$/);
+  let path = ssh?.[1];
+  if (path === undefined) {
+    try { path = new URL(value).pathname.replace(/^\//, ""); }
+    catch { return undefined; }
+  }
+  const clean = path.replace(/\.git$/, "").replace(/\/$/, "");
+  return clean.includes("/") ? clean : undefined;
 }
 
 async function repositorySlug(process: ProcessAdapter, repo: string): Promise<Result<string>> {
@@ -127,6 +135,90 @@ async function gh(process: ProcessAdapter, repo: string, args: readonly string[]
   return run(process, "gh", args, repo);
 }
 
+async function glab(process: ProcessAdapter, repo: string, args: readonly string[]) {
+  const auth = await run(process, "glab", ["auth", "status"], repo);
+  if (auth.kind !== "ok") return failed(auth.error.includes("not found") ? "glab CLI is not installed" : "glab CLI is not authenticated");
+  return run(process, "glab", args, repo);
+}
+
+function encodedProject(slug: string): string { return encodeURIComponent(slug); }
+
+async function listGitLabMRs(process: ProcessAdapter, repo: string): Promise<Result<GitLabMR[]>> {
+  const result = await glab(process, repo, ["mr", "list", "--state", "all", "--output", "json", "--per-page", "100"]);
+  if (result.kind !== "ok") return failed(result.error);
+  try {
+    const parsed = JSON.parse(result.value.stdout) as GitLabMR[];
+    return Array.isArray(parsed) ? ok(parsed) : failed("glab mr list returned invalid JSON");
+  } catch { return failed("glab mr list returned invalid JSON"); }
+}
+
+async function gitLabProject(process: ProcessAdapter, data: StackData): Promise<{ id: number | string; merge_trains_enabled?: boolean } | undefined> {
+  const result = await glab(process, data.repo, ["api", `projects/${encodedProject(data.slug)}`]);
+  if (result.kind !== "ok") return undefined;
+  try { return JSON.parse(result.value.stdout) as { id: number | string; merge_trains_enabled?: boolean }; }
+  catch { return undefined; }
+}
+
+async function gitLabDependenciesAvailable(process: ProcessAdapter, data: StackData, mr: GitLabMR): Promise<boolean> {
+  const result = await glab(process, data.repo, ["api", `projects/${encodedProject(data.slug)}/merge_requests/${mr.iid}/blocks`]);
+  return result.kind === "ok";
+}
+
+async function gitLabShow(process: ProcessAdapter, data: StackData): Promise<Result<string>> {
+  const list = await listGitLabMRs(process, data.repo);
+  if (list.kind !== "ok") return list;
+  const project = await gitLabProject(process, data);
+  const entries = data.branches.map((branch, index) => ({
+    index: index + 1,
+    branch: branch.branch,
+    parent: branch.parentBranch,
+    mergeRequest: list.value.find((mr) => mr.source_branch === branch.branch) ?? null,
+  }));
+  const firstMR = entries.find((entry) => entry.mergeRequest !== null)?.mergeRequest;
+  const dependenciesAvailable = firstMR === undefined || firstMR === null
+    ? false
+    : await gitLabDependenciesAvailable(process, data, firstMR);
+  return ok(output({ provider: "gitlab", defaultBranch: data.defaultBranch, mergeTrains: project?.merge_trains_enabled ?? "unknown",
+    mergeRequestDependencies: dependenciesAvailable ? "available" : "unavailable on this project or account", branches: entries }));
+}
+
+async function gitLabPR(process: ProcessAdapter, data: StackData, draft: boolean): Promise<Result<string>> {
+  const listed = await listGitLabMRs(process, data.repo);
+  if (listed.kind !== "ok") return listed;
+  const merged: GitLabMR[] = [];
+  for (const [index, branch] of data.branches.entries()) {
+    const target = branch.parentBranch ?? data.defaultBranch;
+    const description = `Stack: ${index + 1}/${data.branches.length}\n\nDepends on ${target}.`;
+    const existing = listed.value.find((mr) => mr.source_branch === branch.branch && mr.state === "opened");
+    let mr: GitLabMR;
+    if (existing !== undefined) {
+      const updated = await glab(process, data.repo, ["mr", "update", String(existing.iid), "--target-branch", target, "--description", description]);
+      if (updated.kind !== "ok") return failed(`could not update MR for ${branch.branch}: ${updated.error}`);
+      mr = { ...existing, target_branch: target };
+    } else {
+      const created = await glab(process, data.repo, ["mr", "create", "--source-branch", branch.branch, "--target-branch", target,
+        "--title", branch.branch, "--description", description, "--yes", ...(draft ? ["--draft"] : [])]);
+      if (created.kind !== "ok") return failed(`could not create MR for ${branch.branch}: ${created.error}`);
+      const iid = Number(created.value.stdout.match(/merge_requests\/(\d+)/)?.[1]);
+      if (!Number.isInteger(iid) || iid < 1) return failed(`glab mr create did not return an MR number for ${branch.branch}`);
+      mr = { iid, source_branch: branch.branch, target_branch: target, state: "opened", web_url: created.value.stdout.trim() };
+    }
+    merged.push(mr);
+  }
+  let dependencies = false;
+  if (merged.length > 1) dependencies = await gitLabDependenciesAvailable(process, data, merged[1]!);
+  if (dependencies) {
+    for (let i = 1; i < merged.length; i++) {
+      const child = merged[i]!;
+      const parent = merged[i - 1]!;
+      const result = await glab(process, data.repo, ["api", "--method", "POST",
+        `projects/${encodedProject(data.slug)}/merge_requests/${child.iid}/blocks`, `--field=blocking_merge_request_iid=${parent.iid}`]);
+      if (result.kind !== "ok") return failed(`could not record MR dependency ${parent.iid} -> ${child.iid}: ${result.error}`);
+    }
+  }
+  return ok(output({ provider: "gitlab", mergeRequestDependencies: dependencies, mergeRequests: merged }));
+}
+
 async function nativeStacks(process: ProcessAdapter, repo: string, slug: string): Promise<{ available: boolean; stacks: GitHubStack[]; error?: string }> {
   const result = await gh(process, repo, ["api", `repos/${slug}/stacks`]);
   if (result.kind !== "ok") {
@@ -186,7 +278,7 @@ async function show(process: ProcessAdapter, environment: Environment, repoOptio
   if (data.kind !== "ok") return data;
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
-  if (provider.value === "gitlab") return failed("GitLab stacks are not available until the GitLab provider is configured");
+  if (provider.value === "gitlab") return gitLabShow(process, data.value);
   const capability = await nativeStacks(process, data.value.repo, data.value.slug);
   if (capability.error !== undefined) return failed(capability.error);
   const pulls = await listPulls(process, data.value.repo);
@@ -213,7 +305,7 @@ async function pr(process: ProcessAdapter, environment: Environment, repoOption:
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
-  if (provider.value === "gitlab") return failed("GitLab merge request support is not available until the GitLab provider is configured");
+  if (provider.value === "gitlab") return gitLabPR(process, data.value, draft);
   const capability = await nativeStacks(process, data.value.repo, data.value.slug);
   if (capability.error !== undefined) return failed(capability.error);
   const pulls = await listPulls(process, data.value.repo);
@@ -234,18 +326,36 @@ async function plan(process: ProcessAdapter, data: StackData, action: string, ye
   return ok(text);
 }
 
-async function sync(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, yes: boolean): Promise<Result<string>> {
+async function sync(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, yes: boolean, override?: Provider): Promise<Result<string>> {
   const data = await dataFor(process, environment, repoOption);
   if (data.kind !== "ok") return data;
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const shown = await plan(process, data.value, "rebase and push", yes);
   if (shown.kind !== "ok") return shown;
+  const provider = await detectProvider(process, data.value.repo, override);
+  if (provider.kind !== "ok") return provider;
+  const targetByBranch = new Map<string, string>();
+  if (provider.value === "gitlab") {
+    const listed = await listGitLabMRs(process, data.value.repo);
+    if (listed.kind !== "ok") return listed;
+    for (const branch of data.value.branches) {
+      const parent = branch.parentBranch ?? data.value.defaultBranch;
+      const parentMR = listed.value.find((mr) => mr.source_branch === parent);
+      const target = parentMR?.state === "merged" ? data.value.defaultBranch : parent;
+      targetByBranch.set(branch.branch, target);
+      const mr = listed.value.find((item) => item.source_branch === branch.branch && item.state === "opened");
+      if (mr !== undefined && mr.target_branch !== target) {
+        const updated = await glab(process, data.value.repo, ["mr", "update", String(mr.iid), "--target-branch", target]);
+        if (updated.kind !== "ok") return failed(`could not retarget MR !${mr.iid} to ${target}: ${updated.error}`);
+      }
+    }
+  }
   const refs = [data.value.defaultBranch, ...data.value.branches.map((item) => item.branch)];
   const refspecs = [...new Set(refs)].map((ref) => `+refs/heads/${ref}:refs/remotes/origin/${ref}`);
   const fetched = await git(process, data.value.repo, ["fetch", "origin", ...refspecs]);
   if (fetched.kind !== "ok") return failed(`could not fetch origin: ${fetched.error}`);
   for (const branch of data.value.branches) {
-    const parent = branch.parentBranch ?? data.value.defaultBranch;
+    const parent = targetByBranch.get(branch.branch) ?? branch.parentBranch ?? data.value.defaultBranch;
     const parentRemote = await git(process, data.value.repo, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${parent}`]);
     const base = parentRemote.kind === "ok" ? `origin/${parent}` : `origin/${data.value.defaultBranch}`;
     const rebased = await git(process, branch.path, ["rebase", base]);
@@ -272,6 +382,60 @@ async function assertPushed(process: ProcessAdapter, data: StackData): Promise<R
   return ok(null);
 }
 
+async function waitForGitLabMerge(process: ProcessAdapter, environment: Environment, repo: string, iid: number): Promise<Result<null>> {
+  const timeout = Number(environment.MEGABRAIN_STACK_MERGE_TIMEOUT_MS ?? 120_000);
+  const deadline = Date.now() + Math.max(1_000, timeout);
+  while (Date.now() < deadline) {
+    const result = await glab(process, repo, ["mr", "view", String(iid), "--output", "json"]);
+    if (result.kind !== "ok") return failed(`could not check MR !${iid}: ${result.error}`);
+    let mr: GitLabMR;
+    try { mr = JSON.parse(result.value.stdout) as GitLabMR; }
+    catch { return failed(`glab mr view returned invalid JSON for !${iid}`); }
+    if (mr.state === "merged") return ok(null);
+    if (mr.state === "closed") return failed(`MR !${iid} was closed without merging`);
+    globalThis.process.stderr.write(`GitLab MR !${iid} is waiting for its pipeline or merge train.\n`);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+  }
+  return failed(`GitLab MR !${iid} is still pending; check its pipeline and merge train`);
+}
+
+async function mergeGitLab(process: ProcessAdapter, environment: Environment, data: StackData): Promise<Result<string>> {
+  const project = await gitLabProject(process, data);
+  if (project === undefined || project.id === undefined) return failed("could not read GitLab project settings");
+  const listed = await listGitLabMRs(process, data.repo);
+  if (listed.kind !== "ok") return listed;
+  const open = data.branches.map((branch) => {
+    const mr = listed.value.find((item) => item.source_branch === branch.branch && item.state === "opened");
+    return { branch, mr };
+  });
+  const absent = open.find((item) => item.mr === undefined);
+  if (absent !== undefined) return failed(`no open merge request found for ${absent.branch.branch}`);
+  for (let index = 0; index < open.length; index++) {
+    const entry = open[index]!;
+    const mr = entry.mr!;
+    if (project.merge_trains_enabled) {
+      const queued = await glab(process, data.repo, ["api", "--method", "POST", `projects/${project.id}/merge_trains/merge_requests/${mr.iid}`]);
+      if (queued.kind !== "ok") return failed(`could not add MR !${mr.iid} to the GitLab merge train: ${queued.error}`);
+    } else {
+      const merged = await glab(process, data.repo, ["mr", "merge", String(mr.iid), "--yes"]);
+      if (merged.kind !== "ok") return failed(`could not merge MR !${mr.iid}: ${merged.error}`);
+    }
+    const completed = await waitForGitLabMerge(process, environment, data.repo, mr.iid);
+    if (completed.kind !== "ok") return completed;
+    const next = open[index + 1];
+    if (next !== undefined) {
+      const latest = await listGitLabMRs(process, data.repo);
+      if (latest.kind !== "ok") return latest;
+      const current = latest.value.find((item) => item.iid === next.mr!.iid);
+      if (current !== undefined && current.target_branch !== data.defaultBranch) {
+        const retargeted = await glab(process, data.repo, ["mr", "update", String(current.iid), "--target-branch", data.defaultBranch]);
+        if (retargeted.kind !== "ok") return failed(`MR !${mr.iid} merged, but could not retarget !${current.iid} to ${data.defaultBranch}: ${retargeted.error}`);
+      }
+    }
+  }
+  return ok(project.merge_trains_enabled ? "Merge requests were added bottom-up to the GitLab merge train and completed.\n" : "Merge requests completed bottom-up.\n");
+}
+
 async function merge(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, yes: boolean, override?: Provider): Promise<Result<string>> {
   const data = await dataFor(process, environment, repoOption);
   if (data.kind !== "ok") return data;
@@ -282,7 +446,7 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
   if (pushed.kind !== "ok") return pushed;
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
-  if (provider.value === "gitlab") return failed("GitLab merge support is not available until the GitLab provider is configured");
+  if (provider.value === "gitlab") return mergeGitLab(process, environment, data.value);
   const pulls = await listPulls(process, data.value.repo);
   if (pulls.kind !== "ok") return pulls;
   const top = data.value.branches.at(-1)!;
@@ -352,7 +516,7 @@ export async function executeStack(args: readonly string[], environment: Environ
   }
   if (action === "show") return show(process, environment, repoOption, provider);
   if (action === "pr") return pr(process, environment, repoOption, draft, provider);
-  if (action === "sync") return sync(process, environment, repoOption, yes);
+  if (action === "sync") return sync(process, environment, repoOption, yes, provider);
   if (action === "merge") return merge(process, environment, repoOption, yes, provider);
   return failed(`unknown stack action: ${action}`, 2);
 }
