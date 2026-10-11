@@ -57,7 +57,7 @@ start empty, so add one with `megabrain chain add <name> ...` first. Use `chain 
 explicit chain runner when you want its ordered fallback across steps and usage-window checks.
 
 ```
-megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json] — recommended when you need to start a child agent on a new or existing worktree.
+megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json] — recommended when you need to start a child agent on a new or existing worktree.
 megabrain orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json] — recommended when you need to change context policies on an active dispatch.
 ```
 
@@ -251,7 +251,7 @@ megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft
 megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json] — recommended when you need to remove a completed worktree after its safety checks pass.
 megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json] — recommended when you need to find registered worktrees and inspect their parent relationships.
 megabrain worktree adopt <path|branch> [--json] — recommended when you need to register an existing worktree missing from one orchestrator.
-megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json] — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
+megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json] — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
 megabrain terminal list [--worktree <path>] [--json] — recommended when you need to find managed terminals and check whether they are alive.
 megabrain terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json] — recommended when you need to open a native terminal window attached to an existing tmux session, or print the attach command.
 megabrain terminal default [<name>|auto|none|--clear] — recommended when you need to show, set or clear the default native terminal.
@@ -297,7 +297,10 @@ to it, waits for the old port to be free, and optionally waits for it to listen 
 `--wait-port`. `terminal open` shows a tmux session in the operator's own terminal: Terminal.app, iTerm2, Ghostty,
 WezTerm, kitty, Alacritty, gnome-terminal, Konsole, xterm or Windows Terminal. The choice is the
 `--terminal` flag, then `MEGABRAIN_TERMINAL`, then the file set by `terminal default`, then detection
-from the environment, then none (print the attach command). Only Terminal.app has been opened and
+from the environment, then none (print the attach command). `orchestrate spawn` and `terminal create`
+take the same flag and open a viewer on their own for a caller outside Orca, Superset and tmux (or when
+`--terminal` names one); the result's `viewer` reports `terminal`, `opened`, `attachCommand` and `error`,
+and a viewer that cannot open never fails the command. Only Terminal.app has been opened and
 inspected on a real machine; the others are tested with a recording fake and `megabrain doctor
 terminal-openers` marks them unverified. `terminal close` removes the host terminal and local record, and reports when the
 host already forgot it or process identity was unavailable.
