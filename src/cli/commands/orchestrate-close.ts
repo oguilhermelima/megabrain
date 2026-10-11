@@ -2,7 +2,6 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { closeDecision, closeOutput, hostCloseReason, isHostTerminalAbsent, parseCloseArgs } from "../../core/orchestrate-close.js";
-import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
@@ -10,6 +9,7 @@ import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
+import { resolveParentDispatchId } from "./parent-dispatch.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -80,31 +80,31 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   const parsed = parseCloseArgs(args); if (parsed.kind !== "ok") return parsed;
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const metaResult = getDispatch(database.value, parsed.value.dispatchId);
+  const current = await resolveCaller(environment, process);
+  const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId, current);
+  if (resolved.kind !== "ok") return resolved;
+  const dispatchId = resolved.value;
+  const metaResult = getDispatch(database.value, dispatchId);
   if (metaResult.kind !== "ok") return metaResult;
   const meta = metaResult.value;
-  if (meta === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+  if (meta === undefined) return failed(`dispatch not found: ${dispatchId}`);
   const active = listDispatches(database.value);
   if (active.kind !== "ok") return active;
-  if (!active.value.some((item) => item.dispatchId === parsed.value.dispatchId)) {
-    const message = `dispatch ${parsed.value.dispatchId} is archived; nothing to close`;
-    return ok(parsed.value.json ? `${JSON.stringify({ dispatchId: parsed.value.dispatchId, status: "archived", message }, null, 2)}\n` : `${message}\n`);
+  if (!active.value.some((item) => item.dispatchId === dispatchId)) {
+    const message = `dispatch ${dispatchId} is archived; nothing to close`;
+    return ok(parsed.value.json ? `${JSON.stringify({ dispatchId, status: "archived", message }, null, 2)}\n` : `${message}\n`);
   }
-  const current = await resolveCaller(environment, process);
-  if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  const expectedHost = text(meta.parentHost); const expectedId = text(meta.parentSessionId);
-  if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${parsed.value.dispatchId} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
   let tmuxSession = current.tmuxSession ?? undefined;
   const callerSession = await tmuxSessionForEnvironment(environment, process);
   if (callerSession !== undefined) tmuxSession = callerSession;
   const decision = closeDecision(meta, { host: current.host, id: current.id, tmuxPane: environment.TMUX_PANE, tmuxSession }, parsed.value.forceRelease);
   if (decision.kind !== "ok") return decision;
-  if (decision.value === "retained") return failed(`dispatch ${parsed.value.dispatchId} terminal is retained because identity is unproven; refusing release; verify it manually or rerun with --force-release`);
-  if (decision.value === "duplicate") return ok(parsed.value.json ? `${JSON.stringify({ dispatchId: parsed.value.dispatchId, status: "closed", duplicate: true }, null, 2)}\n` : `closed: ${parsed.value.dispatchId}\n`);
+  if (decision.value === "retained") return failed(`dispatch ${dispatchId} terminal is retained because identity is unproven; refusing release; verify it manually or rerun with --force-release`);
+  if (decision.value === "duplicate") return ok(parsed.value.json ? `${JSON.stringify({ dispatchId, status: "closed", duplicate: true }, null, 2)}\n` : `closed: ${dispatchId}\n`);
 
   const host = text(meta.childHost); const runtime = text(meta.runtime) || "host";
   let outcome = "unknown";
-  await preserveTranscript(environment, parsed.value.dispatchId, meta, process);
+  await preserveTranscript(environment, dispatchId, meta, process);
   if (runtime === "tmux") {
     const session = text(meta.tmuxSession); const pane = text(meta.tmuxPane); const parentSession = text(meta.parentTmuxSession);
     const stableId = text(meta.tmuxSessionId);
@@ -124,7 +124,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
         const proof = await verifyTmuxPane(pane, process, stableId === "" ? undefined : stableId);
         if (proof.kind !== "ok") return failed(`could not verify tmux pane ${pane} before close`);
         paneExists = proof.value;
-        if (!paneExists) return failed(`tmux pane ${pane} is no longer available; refusing to close dispatch ${parsed.value.dispatchId}`);
+        if (!paneExists) return failed(`tmux pane ${pane} is no longer available; refusing to close dispatch ${dispatchId}`);
         const panes = await getTmux().panesForSession(session, process);
         if (panes.kind !== "ok") return failed(`could not verify tmux panes for session ${session} before close`);
         paneCount = panes.value.length;
@@ -135,7 +135,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       if (namedRecord.kind !== "ok") return failed(namedRecord.error, namedRecord.exitCode);
       const sessionRecord = namedRecord.value;
       const legacyUnregisteredSession = meta.tmuxSessionOwned === undefined && sessionRecord === undefined;
-      const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${parsed.value.dispatchId}` || legacyUnregisteredSession;
+      const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${dispatchId}` || legacyUnregisteredSession;
       if (paneExists && paneCount > 1) {
         outcome = "exclusive-pane";
         if ((await getTmux().killPane(pane, process, stableId || undefined)).kind !== "ok") return failed("could not close dispatch terminal");
@@ -165,7 +165,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     }
   } else {
     const hostClose = await closeHostTerminal(meta, process);
-    if (hostClose.kind !== "ok") return failed(`could not close dispatch ${parsed.value.dispatchId}: ${hostClose.error}`);
+    if (hostClose.kind !== "ok") return failed(`could not close dispatch ${dispatchId}: ${hostClose.error}`);
     if (hostClose.value === "absent") outcome = "absent";
   }
   const now = new Date().toISOString();
@@ -178,7 +178,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     terminalState: "released",
     terminalReason: null,
   };
-  const updated = mutateDispatch(database.value, parsed.value.dispatchId, () => next);
+  const updated = mutateDispatch(database.value, dispatchId, () => next);
   if (updated.kind !== "ok") return updated;
-  return ok(closeOutput(parsed.value.dispatchId, parsed.value.json, runtime, host, outcome));
+  return ok(closeOutput(dispatchId, parsed.value.json, runtime, host, outcome));
 }

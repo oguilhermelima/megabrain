@@ -6,7 +6,6 @@ import { notifyChild, resolveCaller, appendMessage, type QueueEnvironment } from
 import { setDeliveryTransport, claimOutbox, finishOutbox, acquireLease, releaseLease, enqueueOutbox, listDeliveries } from "../../adapters/state-db.js";
 import { startDeliveryWorker, deliveryTarget } from "./delivery-worker.js";
 import { randomUUID } from "node:crypto";
-import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
 import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
@@ -20,6 +19,7 @@ import type { DatabaseHandle } from "../../db/db.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
 import { dispatchMessageHeader, formatDispatchMessage, formatFullDirection } from "../../core/chat-message-format.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
+import { resolveParentDispatchId } from "./parent-dispatch.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -101,19 +101,18 @@ async function waitForChangeWorking(agent: string, timeoutMs: number, read: Chan
   }
 }
 
-async function requireParent(database: DatabaseHandle, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<JsonRecord>> {
-  const stored = getDispatch(database, dispatch);
+async function requireParent(database: DatabaseHandle, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<JsonRecord & { dispatchId: string }>> {
+  const current = await resolveCaller(environment, processAdapter);
+  const resolved = resolveParentDispatchId(database, dispatch, current);
+  if (resolved.kind !== "ok") return resolved;
+  const stored = getDispatch(database, resolved.value);
   if (stored.kind !== "ok") return stored;
   const meta = stored.value;
-  if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
+  if (meta === undefined) return failed(`dispatch not found: ${resolved.value}`);
   const live = listDispatches(database);
   if (live.kind !== "ok") return live;
-  if (!live.value.some((record) => record.dispatchId === dispatch)) return failed(`dispatch ${dispatch} is archived; refusing to change it`);
-  const current = await resolveCaller(environment, processAdapter);
-  if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  const expectedHost = String(meta.parentHost ?? ""); const expectedId = String(meta.parentSessionId ?? "");
-  if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${dispatch} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
-  return ok(meta);
+  if (!live.value.some((record) => record.dispatchId === resolved.value)) return failed(`dispatch ${resolved.value} is archived; refusing to change it`);
+  return ok({ ...meta, dispatchId: resolved.value });
 }
 
 function outputReply(dispatch: string, json: boolean, nudge: string, summary: SupersedeSummary): string {
@@ -126,30 +125,32 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   const parsed = parseParentReplyArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);
   const opened = stateDatabase(environment); if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-  const parent = await requireParent(opened.value, parsed.value.dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
+  let dispatchId = parsed.value.dispatchId;
+  const parent = await requireParent(opened.value, dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
+  dispatchId = parent.value.dispatchId;
   // The shell normalizes a persisted "stalled"/"timeout" state to "running" on every meta read
   // (megabrain_dispatch_meta_normalize), before the reply's own state check ever runs — so it,
   // and the "state !== done" guard below that decides whether to resume the dispatch, both see
   // the normalized value, never the raw legacy one.
   const state = normalizeDispatchState(typeof parent.value.state === "string" ? parent.value.state : "");
-  const stateError = replyStateError(parsed.value.dispatchId, state, false); if (stateError !== undefined) return failed(stateError);
+  const stateError = replyStateError(dispatchId, state, false); if (stateError !== undefined) return failed(stateError);
   const caller = await resolveCaller(environment, processAdapter);
   const sessionId = caller.id || caller.terminalId || "";
-  const childMessage = formatDispatchMessage({ dispatchId: parsed.value.dispatchId, chatName: String(parent.value.chatName ?? parent.value.branch ?? parsed.value.dispatchId), agent: String(parent.value.agent ?? "unknown"), type: "reply", text: parsed.value.text, direction: "child-bound", parentAgent: String(parent.value.parentAgent ?? "megabrain"), parentChatName: String(parent.value.parentChatName ?? "megabrain/main") });
+  const childMessage = formatDispatchMessage({ dispatchId: dispatchId, chatName: String(parent.value.chatName ?? parent.value.branch ?? dispatchId), agent: String(parent.value.agent ?? "unknown"), type: "reply", text: parsed.value.text, direction: "child-bound", parentAgent: String(parent.value.parentAgent ?? "megabrain"), parentChatName: String(parent.value.parentChatName ?? "megabrain/main") });
   const outboxId = `delivery-${randomUUID()}`;
-  const append = appendParentReply(opened.value, parsed.value.dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId }, {
+  const append = appendParentReply(opened.value, dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId }, {
     supersede: parsed.value.supersede,
     outbox: { id: outboxId, targetKind: "child-delivery", target: deliveryTarget(parent.value), payload: { meta: parent.value, fullMessage: childMessage, targetKind: "child-delivery" } },
   });
   if (append.kind !== "ok") return append;
   const summary: SupersedeSummary = append.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, childMessage).catch((error: unknown) => ({ outcome: "failed", reason: error instanceof Error ? `notification failed: ${error.message}` : "notification failed", transport: "failed" as const }));
+  const notification = await notifyChild(root, parent.value, dispatchId, processAdapter, environment, childMessage).catch((error: unknown) => ({ outcome: "failed", reason: error instanceof Error ? `notification failed: ${error.message}` : "notification failed", transport: "failed" as const }));
   let transport = notification.transport ?? "failed";
   if (transport === "queue") {
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
     if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "sent", "Codex queue delivery");
   } else if (transport === "deferred") {
-    const scheduled = await startDeliveryWorker(root, parsed.value.dispatchId, outboxId, parent.value, processAdapter);
+    const scheduled = await startDeliveryWorker(root, dispatchId, outboxId, parent.value, processAdapter);
     transport = scheduled === "failed" ? "failed" : "deferred";
     if (scheduled === "failed") {
       const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
@@ -159,13 +160,13 @@ export async function executeOrchestrateReply(args: readonly string[], environme
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
     if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "failed", notification.reason);
   }
-  setDeliveryTransport(opened.value, parsed.value.dispatchId, append.value.seq, transport, notification.reason);
+  setDeliveryTransport(opened.value, dispatchId, append.value.seq, transport, notification.reason);
   if (state !== "done") {
-    const updated = mutateDispatch(opened.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
+    const updated = mutateDispatch(opened.value, dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
     if (updated.kind !== "ok") return updated;
-    if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? parsed.value.dispatchId), "running", processAdapter);
+    if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? dispatchId), "running", processAdapter);
   }
-  return ok(outputReply(parsed.value.dispatchId, parsed.value.json, notification.outcome === "delivered" ? "typed" : "not-typed", summary));
+  return ok(outputReply(dispatchId, parsed.value.json, notification.outcome === "delivered" ? "typed" : "not-typed", summary));
 }
 
 export async function executeOrchestrateChange(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -173,49 +174,51 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   const parsed = parseParentChangeArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(environment);
   const database = stateDatabase(environment); if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const parent = await requireParent(database.value, parsed.value.dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
+  let dispatchId = parsed.value.dispatchId;
+  const parent = await requireParent(database.value, dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
+  dispatchId = parent.value.dispatchId;
   const state = normalizeDispatchState(typeof parent.value.state === "string" ? parent.value.state : "");
-  const stateError = replyStateError(parsed.value.dispatchId, state, true); if (stateError !== undefined) return failed(stateError);
+  const stateError = replyStateError(dispatchId, state, true); if (stateError !== undefined) return failed(stateError);
   const caller = await resolveCaller(environment, processAdapter);
   const session = caller.id || caller.terminalId || "";
-  const appended = appendParentReply(database.value, parsed.value.dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId: session }, { supersede: true });
+  const appended = appendParentReply(database.value, dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId: session }, { supersede: true });
   if (appended.kind !== "ok") return appended;
   const superseded = appended.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const updated = mutateDispatch(database.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
+  const updated = mutateDispatch(database.value, dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
   if (updated.kind !== "ok") return updated;
-  if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? parsed.value.dispatchId), "running", processAdapter);
+  if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? dispatchId), "running", processAdapter);
 
   const meta = parent.value;
   const timeoutMs = parsed.value.idleTimeout * 1000;
   const summary = { attempts: 0, idleReached: false, delivered: false, confirmed: false, superseded, oversized: false };
   const agent = typeof meta.agent === "string" ? meta.agent : "";
-  const directionInput = { dispatchId: parsed.value.dispatchId, chatName: String(meta.chatName ?? meta.branch ?? parsed.value.dispatchId), agent: String(meta.agent ?? "unknown"), type: "change", text: parsed.value.text, direction: "child-bound" as const, parentAgent: String(meta.parentAgent ?? "megabrain"), parentChatName: String(meta.parentChatName ?? "megabrain/main") };
+  const directionInput = { dispatchId: dispatchId, chatName: String(meta.chatName ?? meta.branch ?? dispatchId), agent: String(meta.agent ?? "unknown"), type: "change", text: parsed.value.text, direction: "child-bound" as const, parentAgent: String(meta.parentAgent ?? "megabrain"), parentChatName: String(meta.parentChatName ?? "megabrain/main") };
   const formatted = formatFullDirection(directionInput, `Stop the approach you were on and follow this instead:\n${parsed.value.text}\n(The same text is available with megabrain check.)`);
   summary.oversized = meta.runtime === "tmux" && promptByteLength(formatted) > PROMPT_BUDGET_TMUX_BYTES;
   const deliveryText = summary.oversized ? `${dispatchMessageHeader(directionInput)}\nA new direction is queued; run megabrain check to read it.` : formatted;
-  const recordIdle = (attempt: number, idle: boolean, detail: string): Promise<Result<void>> => recordChangeEvent(root, parsed.value.dispatchId, "idle-result", `after interrupt ${attempt}: idle=${idle}; ${detail}`, session, environment, processAdapter);
+  const recordIdle = (attempt: number, idle: boolean, detail: string): Promise<Result<void>> => recordChangeEvent(root, dispatchId, "idle-result", `after interrupt ${attempt}: idle=${idle}; ${detail}`, session, environment, processAdapter);
   const deferChange = async (reason: string): Promise<Result<string>> => {
     const outboxId = `change-delivery-${randomUUID()}`;
     const queued = enqueueOutbox(database.value.db, {
-      id: outboxId, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", target: deliveryTarget(meta),
-      payload: { meta, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: deliveryText, pointer: "mail: megabrain check", pointerOnly: summary.oversized, fullDirection: !summary.oversized },
+      id: outboxId, dispatchId: dispatchId, targetKind: "child-delivery", target: deliveryTarget(meta),
+      payload: { meta, dispatchId: dispatchId, targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: deliveryText, pointer: "mail: megabrain check", pointerOnly: summary.oversized, fullDirection: !summary.oversized },
     });
     if (queued.kind !== "ok") return queued;
-    const scheduled = await startDeliveryWorker(root, parsed.value.dispatchId, outboxId, { ...meta, targetKind: "child-delivery" }, processAdapter);
+    const scheduled = await startDeliveryWorker(root, dispatchId, outboxId, { ...meta, targetKind: "child-delivery" }, processAdapter);
     const transport = scheduled === "failed" ? "failed" : "deferred";
-    setDeliveryTransport(database.value, parsed.value.dispatchId, appended.value.seq, transport);
+    setDeliveryTransport(database.value, dispatchId, appended.value.seq, transport);
     if (scheduled === "failed") {
       const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
       if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(database.value, outboxId, "failed", "Could not start deferred delivery");
     }
-    await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", `${reason}; delivery ${transport}`, session, environment, processAdapter);
-    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, delivered: false, reason: `${reason}; delivery ${transport}` }));
+    await recordChangeEvent(root, dispatchId, "delivery-result", `${reason}; delivery ${transport}`, session, environment, processAdapter);
+    return ok(changeOutput(dispatchId, parsed.value.json, { ...summary, delivered: false, reason: `${reason}; delivery ${transport}` }));
   };
 
   if (meta.runtime !== "tmux" && meta.childHost === "superset") {
-    const stopped = await executeOrchestrateStop([parsed.value.dispatchId, "--json"], environment, processAdapter);
+    const stopped = await executeOrchestrateStop([dispatchId, "--json"], environment, processAdapter);
     const reason = stopped.kind === "failed" ? stopReason(stopped.error) : "Superset terminals send offers no interrupt capability";
-    await recordChangeEvent(root, parsed.value.dispatchId, "interrupt-result", reason, session, environment, processAdapter);
+    await recordChangeEvent(root, dispatchId, "interrupt-result", reason, session, environment, processAdapter);
     return deferChange(`queue changed; agent was not interrupted: ${reason}`);
   }
 
@@ -236,10 +239,10 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   }
 
   for (let attempt = 1; !summary.idleReached && attempt <= parsed.value.attempts; attempt += 1) {
-    const before = listMessages(database.value, parsed.value.dispatchId);
+    const before = listMessages(database.value, dispatchId);
     if (before.kind !== "ok") return before;
-    const stopped = await executeOrchestrateStop([parsed.value.dispatchId, "--json"], environment, processAdapter);
-    const after = listMessages(database.value, parsed.value.dispatchId);
+    const stopped = await executeOrchestrateStop([dispatchId, "--json"], environment, processAdapter);
+    const after = listMessages(database.value, dispatchId);
     if (after.kind !== "ok") return after;
     const attemptsBefore = (before.value as JsonRecord[]).filter((message) => message.type === "interrupt").length;
     const attemptsAfter = (after.value as JsonRecord[]).filter((message) => message.type === "interrupt").length;
@@ -247,7 +250,7 @@ export async function executeOrchestrateChange(args: readonly string[], environm
     if (stopped.kind === "failed" && attemptsAfter === attemptsBefore) {
       const reason = stopReason(stopped.error);
       if (reason.includes("Superset terminals send offers no interrupt capability")) {
-        await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", "direction not typed because the host cannot interrupt; direction remains queued", session, environment, processAdapter);
+        await recordChangeEvent(root, dispatchId, "delivery-result", "direction not typed because the host cannot interrupt; direction remains queued", session, environment, processAdapter);
         return deferChange(`queue changed; agent was not interrupted: ${reason}`);
       }
       screen = await readDeliveryScreen(meta, processAdapter);
@@ -304,7 +307,7 @@ export async function executeOrchestrateChange(args: readonly string[], environm
         },
         send: async () => (await sendChange(meta, root, deliveryText, processAdapter, environment, verifyEmptyComposer)).kind === "ok",
         isRead: async () => {
-          const deliveries = listDeliveries(database.value, parsed.value.dispatchId);
+          const deliveries = listDeliveries(database.value, dispatchId);
           const row = deliveries.kind === "ok" ? deliveries.value.find((delivery) => Array.isArray(delivery.messageSeqs) && delivery.messageSeqs.includes(appended.value.seq)) : undefined;
           return row !== undefined && (row.status === "acknowledged" || (typeof row.consumer === "string" && row.consumer !== ""));
         },
@@ -313,21 +316,21 @@ export async function executeOrchestrateChange(args: readonly string[], environm
       releaseLease(database.value, targetLeaseKey, targetLeaseHolder);
     }
   }
-  const composerRecorded = await recordChangeEvent(root, parsed.value.dispatchId, "composer-clear", deliveryResult === "delivered" ? "empty composer verified; no foreign text cleared" : "composer was not proven empty; existing text preserved", session, environment, processAdapter);
+  const composerRecorded = await recordChangeEvent(root, dispatchId, "composer-clear", deliveryResult === "delivered" ? "empty composer verified; no foreign text cleared" : "composer was not proven empty; existing text preserved", session, environment, processAdapter);
   if (composerRecorded.kind !== "ok") return composerRecorded;
   summary.delivered = deliveryResult === "delivered";
-  if (summary.delivered && !summary.oversized) setDeliveryTransport(database.value, parsed.value.dispatchId, appended.value.seq, "typed", "full-direction");
+  if (summary.delivered && !summary.oversized) setDeliveryTransport(database.value, dispatchId, appended.value.seq, "typed", "full-direction");
   if (deliveryResult === "cancelled") {
-    const recorded = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", "direction was read before typing; no terminal message sent", session, environment, processAdapter);
+    const recorded = await recordChangeEvent(root, dispatchId, "delivery-result", "direction was read before typing; no terminal message sent", session, environment, processAdapter);
     if (recorded.kind !== "ok") return recorded;
-    return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, { ...summary, reason: "direction was read before terminal delivery" }));
+    return ok(changeOutput(dispatchId, parsed.value.json, { ...summary, reason: "direction was read before terminal delivery" }));
   }
   const deliveryError = deliveryResult === "failed" ? "target did not become idle with an empty composer before timeout" : "direction was read before delivery";
-  const deliveryEvent = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", summary.delivered ? `direction submitted${summary.oversized ? " as check pointer because it exceeded 12000 bytes" : ""}` : `direction not submitted: ${deliveryError}`, session, environment, processAdapter);
+  const deliveryEvent = await recordChangeEvent(root, dispatchId, "delivery-result", summary.delivered ? `direction submitted${summary.oversized ? " as check pointer because it exceeded 12000 bytes" : ""}` : `direction not submitted: ${deliveryError}`, session, environment, processAdapter);
   if (deliveryEvent.kind !== "ok") return deliveryEvent;
   if (!summary.delivered) return deferChange(`direction stays queued for megabrain check; could not submit the direction: ${deliveryError}`);
   summary.confirmed = await waitForChangeWorking(agent, timeoutMs, readDeliveryScreen, meta, processAdapter);
-  const confirmed = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-confirmation", `agent started working: ${summary.confirmed}`, session, environment, processAdapter);
+  const confirmed = await recordChangeEvent(root, dispatchId, "delivery-confirmation", `agent started working: ${summary.confirmed}`, session, environment, processAdapter);
   if (confirmed.kind !== "ok") return confirmed;
-  return ok(changeOutput(parsed.value.dispatchId, parsed.value.json, summary));
+  return ok(changeOutput(dispatchId, parsed.value.json, summary));
 }
