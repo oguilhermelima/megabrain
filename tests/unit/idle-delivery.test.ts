@@ -74,4 +74,39 @@ describe("idle-gated message delivery", () => {
     expect(await startDeferredDelivery("terminal-1", "two", reserve, start, release)).toBe("already-running");
     expect(starts).toBe(1);
   });
+
+  test("retries a failed send on the backoff schedule and delivers", async () => {
+    const h = harness({ timeoutMs: 10_000, retryDelaysMs: [5, 15, 60] });
+    h.setState("idle");
+    const waits: number[] = [];
+    h.input.wait = async (ms) => { waits.push(ms); };
+    h.input.send = async () => { h.calls.sends += 1; return h.calls.sends >= 3; };
+    expect(await deliverWhenIdle(h.input)).toBe("delivered");
+    expect(h.calls.sends).toBe(3);
+    expect(waits).toEqual([5, 15]);
+  });
+
+  test("gives up after the last backoff step and records why every attempt failed", async () => {
+    const h = harness({ timeoutMs: 10_000, retryDelaysMs: [5, 15, 60] });
+    h.setState("idle");
+    h.input.wait = async () => {};
+    h.input.send = async () => { h.calls.sends += 1; return false; };
+    h.input.sendError = () => "orca terminal send exited 1: no such terminal";
+    const attempts: { decision: string; reason?: string }[] = [];
+    h.input.attempt = async (details) => { attempts.push({ decision: details.decision, reason: details.reason }); };
+    expect(await deliverWhenIdle(h.input)).toBe("failed");
+    expect(h.calls.sends).toBe(4);
+    const sendFailures = attempts.filter((a) => a.decision === "send-failed");
+    expect(sendFailures).toHaveLength(4);
+    for (const failure of sendFailures) expect(failure.reason).toBe("orca terminal send exited 1: no such terminal");
+  });
+
+  test("a message pulled by the child during a retry wait is cancelled, not resent", async () => {
+    const h = harness({ timeoutMs: 10_000, retryDelaysMs: [5, 15] });
+    h.setState("idle");
+    h.input.wait = async () => { h.setRead(true); };
+    h.input.send = async () => { h.calls.sends += 1; return false; };
+    expect(await deliverWhenIdle(h.input)).toBe("cancelled");
+    expect(h.calls.sends).toBe(1);
+  });
 });

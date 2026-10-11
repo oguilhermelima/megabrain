@@ -192,6 +192,28 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
+  test("blocks for failed parent mail when the parent is recorded by agent session, even at a repeat stop", async () => {
+    await withRoot("failed-mail-agent-session", async (root) => {
+      // Shape measured from a real Orca-parented dispatch: parentSessionId is the agent session,
+      // the terminal handle lives in parentTerminalId.
+      await writeMeta(root, "d1", {
+        childHost: "tmux", terminalId: "tmux:s:%0", parentHost: "orca", parentTerminalId: "coord-term",
+        parentSessionId: "claude:agent-session-1", parentAgentSessionId: "agent-session-1", state: "running", processState: "running",
+      });
+      const appended = await appendMessage(root, "d1", "child", "ask", "which branch?", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "failed");
+      const payload = JSON.stringify({ session_id: "agent-session-1", transcript_path: "/nowhere.jsonl", stop_hook_active: true });
+      const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), async () => payload);
+      if (result.kind !== "ok") throw new Error(result.error);
+      const verdict = JSON.parse(result.value) as { decision?: string; reason?: string };
+      expect(verdict.decision).toBe("block");
+      expect(verdict.reason).toContain("which branch?");
+    });
+  });
+
   test("marks an open dispatch limit-refused when its pane shows the usage-limit marker", async () => {
     await withRoot("limit-refused", async (root) => {
       await writeMeta(root, "d1", {
