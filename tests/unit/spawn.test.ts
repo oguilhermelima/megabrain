@@ -167,7 +167,7 @@ describe("executeSpawn", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-context-policy-`);
     const dispatchId = "dispatch-context-policy";
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    registerTmux({ ...original, id: "tmux", ...composerTmux() });
     try {
       const result = await executeSpawn([
         "--worktree", "/work/tree", "--agent", "codex", "--prompt", "finish the task",
@@ -190,7 +190,7 @@ describe("executeSpawn", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-context-tokens-`);
     const dispatchId = "dispatch-context-tokens";
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    registerTmux({ ...original, id: "tmux", ...composerTmux() });
     try {
       const bare = await executeSpawn([
         "--worktree", "/work/tree", "--agent", "codex", "--prompt", "finish the task", "--context-ceiling", "90", "--tmux", "true",
