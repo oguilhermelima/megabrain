@@ -127,8 +127,8 @@ for up to ten minutes; it stops when `check` pulls the delivery or it is acknowl
 is the truth, and `db show` records whether delivery used `queue`, `typed`, `deferred`, or `failed`.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
-When your own turn ends, megabrain checks the dispatches you own and points at any that
-have unread child mail, once per message. That is what makes a missed pointer recover
+When your own turn ends, megabrain checks the dispatches you own and blocks once, one line per
+message, for child mail whose delivery ended failed. That is what makes a missed pointer recover
 instead of being lost, and it is why a notice can appear immediately after you finish
 speaking. It stays quiet for a dispatch you already have a `watch` open on.
 

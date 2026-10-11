@@ -273,8 +273,11 @@ Three properties do the work:
   `check` pulls the delivery or it is acknowledged.
 - **Delivery transport is recorded.** `db show` reports whether each message used `queue`,
   `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
-- **Your own turn end is a second chance.** When you finish speaking, megabrain points at any
-  dispatch of yours holding unread mail, once per message, so a missed nudge recovers.
+- **Your own turn end is a second chance.** When you finish speaking, megabrain blocks once with
+  one line per child message whose delivery ended failed (its first line and the `watch` command),
+  then marks it so the same message never blocks twice. A deliverer that cannot read the parent's
+  screen for two minutes stops waiting, never types, and leaves the delivery failed with reason
+  `proof-unavailable`, so that notice picks it up.
 
 > [!IMPORTANT]
 > Closing a finished child is the coordinator's job. Nothing does it for you, and the child cannot:

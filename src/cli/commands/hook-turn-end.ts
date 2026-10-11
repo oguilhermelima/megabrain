@@ -8,7 +8,8 @@ import { terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDeliveries, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 export type HookEnvironment = QueueEnvironment;
@@ -137,17 +138,40 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
 // continuation. Every per-dispatch step is best-effort: one dispatch's failure must not stop the
 // scan from reaching the rest (mirrors the shell's `|| true` / `|| continue` at each of these
 // points).
-async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<void> {
+// Parent-bound mail whose deliverer ended failed is invisible unless something says so: no pointer
+// reached the terminal, and the pointer path never retries. One line per message, marked
+// hook-notified so the same message never blocks twice.
+function failedMailLines(database: DatabaseHandle, dispatchId: string): readonly string[] {
+  const deliveries = listDeliveries(database, dispatchId);
+  const messages = listMessages(database, dispatchId);
+  if (deliveries.kind !== "ok" || messages.kind !== "ok") return [];
+  const lines: string[] = [];
+  for (const delivery of deliveries.value) {
+    if (delivery.recipient !== "parent" || delivery.status !== "outstanding" || delivery.transport !== "failed") continue;
+    const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
+    const message = messages.value.find((candidate) => sequences.includes(candidate.seq));
+    const summary = (message?.text ?? "").split("\n")[0]?.trim() ?? "";
+    lines.push(`${dispatchId}: ${message?.type ?? "mail"} ${summary === "" ? "(no text)" : summary} — megabrain orchestrate watch ${dispatchId}`);
+    for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+  }
+  return lines;
+}
+
+async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind !== "ok") return;
+  if (database.kind !== "ok") return undefined;
   const listed = listDispatches(database.value);
-  if (listed.kind !== "ok") return;
+  if (listed.kind !== "ok") return undefined;
   const doneIds: string[] = [];
+  const failedMail: string[] = [];
   let doneFirstMeta: JsonRecord | undefined;
 
   for (const meta of listed.value) {
     const dispatchId = meta.dispatchId;
     if (dispatchId === undefined) continue;
+    if (meta.parentSessionId === session.id && meta.parentHost === session.host && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
+      failedMail.push(...failedMailLines(database.value, dispatchId));
+    }
     const state = typeof meta.state === "string" ? meta.state : "";
     const terminalState = typeof meta.terminalState === "string" ? meta.terminalState : "owned";
     const isOpen = (openDispatchStates as readonly string[]).includes(state);
@@ -181,6 +205,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
     const pointer = pointerForFinishedDispatches(doneIds.length, doneIds.join(", "));
     await sendParentPointer(root, doneFirstMeta, pointer, environment, processAdapter).catch(() => undefined);
   }
+  return failedMail.length === 0 ? undefined : `${failedMail.length} child message${failedMail.length === 1 ? "" : "s"} could not be delivered and still wait unread:\n${failedMail.join("\n")}`;
 }
 
 // jq's `.a // .b // empty`: falls through null/false/missing (but not an empty string, which is
@@ -251,8 +276,9 @@ export async function executeHookTurnEnd(
 
     const child = await findChild(root, environment, processAdapter);
     if ("kind" in child) {
-      await hookParentNotify(root, session, environment, processAdapter);
-      return finish(defaultText);
+      const notice = await hookParentNotify(root, session, environment, processAdapter);
+      if (notice === undefined) return finish(defaultText);
+      return finish(environment.MEGABRAIN_HOOK_AGENT === "cursor" ? '{"continue":true}' : JSON.stringify({ decision: "block", reason: notice }));
     }
 
     const dispatchId = child.dispatch;

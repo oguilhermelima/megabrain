@@ -18,6 +18,7 @@ type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
 const MAX_DELIVERY_MS = 10 * 60 * 1000;
 const GHOST_STATIC_MS = 30_000;
+const PROOF_UNAVAILABLE_MS = 2 * 60 * 1000;
 const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
   status === "idle" ? "idle" : status === "unknown" ? "unknown" : "busy";
 
@@ -153,7 +154,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const dispatch = String(payload.dispatchId ?? claimed.value.dispatchId ?? "");
   const sequence = Number(payload.sequence ?? 0);
   const stored = dispatch === "" ? undefined : getDispatch(database.value, dispatch);
-  const persistedMeta = typeof payload.meta === "object" && payload.meta !== null ? payload.meta as Meta : stored?.kind === "ok" && stored.value ? stored.value : {};
+  const snapshotMeta = typeof payload.meta === "object" && payload.meta !== null ? payload.meta as Meta : {};
+  const persistedMeta = { ...snapshotMeta, ...(stored?.kind === "ok" && stored.value ? stored.value : {}) };
   let meta = targetKind === "parent-pointer"
     ? {
       ...persistedMeta,
@@ -182,6 +184,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let transport = "failed";
   let outcome = "failed";
   let lastDecision: string | undefined;
+  let screenDownSince: number | undefined;
+  let screenError = "";
+  const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
+  const giveUpAfterMs = Number.isFinite(unavailableMs) && unavailableMs > 0 ? unavailableMs : PROOF_UNAVAILABLE_MS;
   const staticMs = Number(environment.MEGABRAIN_GHOST_STATIC_MS);
   const ghost = meta.runtime === "tmux" ? undefined : ghostTracker(Number.isFinite(staticMs) && staticMs > 0 ? staticMs : GHOST_STATIC_MS);
   const decisionLog = createDecisionLog(root);
@@ -201,16 +207,20 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       ownDraft: text,
       inspect: async () => {
         const screen = await readDeliveryScreen(meta, process);
-        if (screen.kind !== "ok") {
-          checkedClaudeStatus = undefined;
-          proofSource = "screen-unavailable";
-          statusRead = "unknown";
-          statusUpdatedAtRead = undefined;
-          proofReason = "terminal screen unavailable";
-          return "unknown";
-        }
         const status = await claudeStatus(meta, environment);
         adoptClaudePid(status);
+        if (screen.kind !== "ok") {
+          screenDownSince ??= Date.now();
+          screenError = screen.kind === "failed" ? screen.error : screen.reason;
+          const sessionProven = status?.pid !== undefined;
+          checkedClaudeStatus = undefined;
+          proofSource = sessionProven ? "claude-session" : "screen-unavailable";
+          statusRead = sessionProven && status.status !== "unknown" ? status.status : "unknown";
+          statusUpdatedAtRead = status?.statusUpdatedAt;
+          proofReason = `terminal screen unavailable: ${screenError}`;
+          return statusRead;
+        }
+        screenDownSince = undefined;
         const screenStatus = deliveryStatus(classifyLiveness(String(meta.agent ?? ""), screen.value).status);
         const sessionProven = status?.pid !== undefined;
         proofSource = sessionProven ? "claude-session" : "screen";
@@ -239,6 +249,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         statusUpdatedAtRead = status?.statusUpdatedAt;
       }, ghost),
       isRead: async () => readWasPulled(root, dispatch, sequence),
+      giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
       attempt: async (details) => {
         lastDecision = details.decision;
         const entry = {
@@ -262,8 +273,9 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     outcome = result;
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
-  const reason = outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : `deferred delivery ${outcome}`;
-  setDeliveryTransport(database.value, dispatch, sequence, transport, payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
+  const unavailable = outcome === "unavailable";
+  const reason = unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : `deferred delivery ${outcome}`;
+  setDeliveryTransport(database.value, dispatch, sequence, transport, unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
     ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
     : finishOutbox(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", reason);
