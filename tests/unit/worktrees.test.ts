@@ -7,18 +7,41 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 describe("worktree registry", () => {
-  test("schema 8 stores provenance, purpose and finish time", async () => {
+  test("schema 9 stores worktree parent relations", async () => {
     const directory = await mkdtemp(join(tmpdir(), "megabrain-worktrees-"));
     const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      expect(latestSchemaVersion).toBe(8);
+      expect(latestSchemaVersion).toBe(9);
       expect(opened.value.db.query<{ name: string }>("PRAGMA table_info(worktrees)").all().map(({ name }) => name)).toEqual([
-        "path", "repo", "repo_name", "branch", "created_at", "created_by", "purpose", "origin", "finished_at",
+        "path", "repo", "repo_name", "branch", "created_at", "created_by", "purpose", "origin", "finished_at", "parent_branch",
       ]);
     } finally {
       opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("schema 8 upgrade backs up the existing registry before adding parent relations", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "megabrain-worktrees-v8-"));
+    const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
+    expect(opened.kind).toBe("ok");
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    opened.value.db.run("INSERT INTO worktrees (path, repo, repo_name, branch, created_at, origin) VALUES (?, ?, ?, ?, ?, ?)", ["/trees/old", "/repos/app", "app", "old", "2026-01-01T00:00:00.000Z", "created"]);
+    opened.value.db.run("DELETE FROM schema_migrations WHERE version > 8");
+    opened.value.db.exec("PRAGMA user_version = 8");
+    opened.value.close();
+    const upgraded = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
+    expect(upgraded.kind).toBe("ok");
+    if (upgraded.kind !== "ok") throw new Error(upgraded.error);
+    try {
+      expect(upgraded.value.db.query<{ parent_branch: string | null }>("SELECT parent_branch FROM worktrees WHERE path = ?").get("/trees/old")).toEqual({ parent_branch: null });
+      expect(upgraded.value.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(9);
+      const backups = await (await import("node:fs/promises")).readdir(join(directory, "backups"));
+      expect(backups.length).toBeGreaterThan(0);
+    } finally {
+      upgraded.value.close();
       await rm(directory, { recursive: true, force: true });
     }
   });
