@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { failed, ok } from "../../src/core/result.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { appendReceived, cleanupRun, dispatchMessages, existingWorktree, processFor, readMeta, runComposerSpawn, spawnEnvironment } from "./spawn-harness.js";
+import { receiptTimeoutMs } from "../../src/cli/commands/spawn-prompt.js";
 import { composerPane } from "./composer-tmux.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
@@ -13,6 +14,10 @@ const killedPane = (calls: readonly { readonly command: string; readonly args: r
 const afterFirstPaste = (events: readonly string[]): readonly string[] => events.slice(events.indexOf("paste"));
 
 describe("spawn prompt receipt (tmux)", () => {
+  test("waits 300 seconds for a receipt by default", () => {
+    expect(receiptTimeoutMs({})).toBe(300_000);
+  });
+
   test("sends the prompt once more when no turn started and no receipt came, then fails keeping the pane", async () => {
     const removed: string[] = [];
     const run = await runComposerSpawn(
@@ -42,19 +47,16 @@ describe("spawn prompt receipt (tmux)", () => {
     }
   });
 
-  test("never resends once a turn started, and fails with the reason that says so", async () => {
+  test("never resends once a turn started, records receiptMissing silently and keeps running", async () => {
     const run = await runComposerSpawn("dispatch-turn-no-receipt", { agent: "claude", afterSubmit: "working" }, waitsForReceipt);
     try {
-      expect(run.result.kind).toBe("failed");
-      if (run.result.kind !== "failed") throw new Error("expected a failure");
-      expect(run.result.error).toContain("no-receipt-after-turn");
-      expect(run.result.error).toContain("kept for inspection");
+      expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(1);
       expect(run.pane.submissions).toHaveLength(1);
-      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "failed", reason: "no-receipt-after-turn", terminalState: "owned", processState: "running" });
-      const stalled = dispatchMessages(run.root, run.dispatchId).filter((m) => m.from === "child" && m.type === "stalled");
-      expect(stalled).toHaveLength(1);
-      expect(stalled[0]?.text).toContain("no-receipt-after-turn");
+      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "running", terminalState: "owned", processState: "running", promptReceipt: "not-received", receiptMissing: { reason: "no-receipt-after-turn" } });
+      expect(readMeta(run.root, run.dispatchId).reason ?? null).toBeNull();
+      // Silent: no parent notice of any kind, a started turn proves the prompt arrived.
+      expect(dispatchMessages(run.root, run.dispatchId).filter((m) => m.from === "child")).toEqual([]);
       expect(killedPane(run.process.calls)).toBe(false);
     } finally {
       await cleanupRun(run);
@@ -167,12 +169,23 @@ describe("spawn --json", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("an unreceived prompt fails as JSON naming the dispatch and the kept pane", async () => {
-    const run = await runComposerSpawn("dispatch-json-unreceived", { agent: "claude", afterSubmit: "working" }, waitsForReceipt, ["--json"]);
+  test("a prompt that was never received fails as JSON naming the dispatch and the kept pane", async () => {
+    const run = await runComposerSpawn("dispatch-json-unreceived", { agent: "codex", ignoreEnters: 99 }, waitsForReceipt, ["--json"]);
     try {
       expect(run.result.kind).toBe("failed");
       if (run.result.kind !== "failed") throw new Error("expected a failure");
-      expect(parse(run.result.stdout)).toMatchObject({ status: "failed", reason: "no-receipt-after-turn", dispatchId: run.dispatchId, tmuxPane: "%9" });
+      expect(parse(run.result.stdout)).toMatchObject({ status: "failed", reason: "prompt-not-received", dispatchId: run.dispatchId, tmuxPane: "%9" });
+    } finally {
+      await cleanupRun(run);
+    }
+  });
+
+  test("a turn without a receipt succeeds as JSON with receiptMissing attached", async () => {
+    const run = await runComposerSpawn("dispatch-json-warning", { agent: "claude", afterSubmit: "working" }, waitsForReceipt, ["--json"]);
+    try {
+      expect(run.result.kind).toBe("ok");
+      if (run.result.kind !== "ok") throw new Error("expected success");
+      expect(parse(run.result.value)).toMatchObject({ status: "spawned", reason: null, dispatchId: run.dispatchId, state: "running", receiptMissing: "no-receipt-after-turn" });
     } finally {
       await cleanupRun(run);
     }

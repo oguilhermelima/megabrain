@@ -32,9 +32,9 @@ const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 const SPAWN_ENVIRONMENT_HELP = `
 Environment:
-  MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS  Seconds to wait for the child's megabrain received (default 30).
+  MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS  Seconds to wait for the child's megabrain received (default 300).
     On tmux, a prompt with no turn and no receipt is sent once more, then the dispatch fails with
-    prompt-not-received; a turn that started without a receipt fails with no-receipt-after-turn.
+    prompt-not-received; a turn that started without a receipt only records receiptMissing and keeps running.
     On other hosts the dispatch fails with no-receipt-unproven. The pane or terminal is always kept.
     0 means do not wait: spawn returns at once and the dispatch stays awaiting its receipt.
 `;
@@ -938,6 +938,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   if (runtime === "host" && parentContext.host === "orca") {
     await process.run("orca", ["terminal", "rename", "--terminal", terminalId, "--title", `${options.agent} · ${chatName}`]);
   }
+  let receiptMissing: string | null = null;
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };
   let step: SpawnStep = runtime === "tmux" ? "transcript-start" : "prompt-publication";
   const baseInput = (): Omit<SpawnDecisionInput, "step" | "outcome"> => ({ dispatchId: id, runtime, worktree: worktree.ownership, state });
@@ -1015,11 +1016,12 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       Object.assign(metadataUpdate, { state: state.dispatch, processState: state.process, terminalState: state.terminal });
     }
     if (step === "prompt-publication" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptPublication: "published", promptState: "awaiting-transport" });
-    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "unreceived" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt" });
+    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "unreceived" || outcome.status === "turn-without-receipt" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt", ...(outcome.receiptMissing === undefined ? {} : { processState: "running", receiptMissing: { reason: outcome.receiptMissing, at: new Date().toISOString() } }) });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: plan.state.dispatch, processState: plan.state.process, terminalState: plan.state.terminal, reason: plan.reason, promptState: "failed" });
+    if (outcome.kind === "prompt-transport" && outcome.receiptMissing !== undefined) receiptMissing = outcome.receiptMissing;
     await updateMeta(root, id, metadataUpdate, process);
-    if (step === "prompt-transport" && outcome.kind === "prompt-transport" && outcome.status === "delivered") {
+    if (step === "prompt-transport" && outcome.kind === "prompt-transport" && (outcome.status === "delivered" || outcome.status === "turn-without-receipt")) {
       const marked = await markRunningIfSpawning(root, id, process);
       if (marked.kind !== "ok") return marked;
     }
@@ -1035,7 +1037,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     }
     if (plan.nextStep === null) {
       await startSupervisorWorker(root, environment, process);
-      const output = { status: "spawned", reason: null, dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
+      const output = { status: "spawned", reason: null, dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
       return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${attempts}${warning}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
