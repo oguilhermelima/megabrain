@@ -96,7 +96,7 @@ describe("CLI router", () => {
 
     expect(result).toEqual({
       kind: "ok",
-      value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <percent>] [--compact-at <percent>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n",
+      value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n",
     });
   });
 
@@ -104,7 +104,7 @@ describe("CLI router", () => {
     const result = await route(["orchestrate", "policy", "--help"], dependencies());
     expect(result).toEqual({
       kind: "ok",
-      value: "Usage: megabrain orchestrate policy <dispatch-id> [--context-ceiling <percent>] [--compact-at <percent>] [--loop|--no-loop] [--max-iterations <n>] [--json]\n",
+      value: "Usage: megabrain orchestrate policy <dispatch-id> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json]\n",
     });
   });
 

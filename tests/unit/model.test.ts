@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   addModel,
+  contextWindowOf,
+  parseModelRegistry,
   formatModelList,
   refreshAgyModels,
   upgradeRegistry,
@@ -91,5 +94,40 @@ describe("registry operations", () => {
   test("formats the human-readable registry table", () => {
     expect(formatModelList(registry)).toContain("AGENT      MODEL");
     expect(formatModelList(registry)).toContain("codex      separate");
+  });
+});
+
+describe("context window", () => {
+  const windowed: ModelRegistry = {
+    version: 1,
+    models: [
+      { agent: "claude", model: "with-window", reasoning: { separateAxis: true, levels: ["low"] }, provenance: { kind: "sourced" }, contextWindow: 1000000 },
+      { agent: "claude", model: "without-window", reasoning: { separateAxis: true, levels: ["low"] }, provenance: { kind: "sourced" } },
+      { agent: "claude", model: "bad-window", reasoning: { separateAxis: true, levels: ["low"] }, provenance: { kind: "sourced" }, contextWindow: -5 },
+    ],
+  };
+
+  test("is read from the registry entry and is absent when unknown, invalid or unregistered", () => {
+    expect(contextWindowOf(windowed, "claude", "with-window")).toBe(1000000);
+    expect(contextWindowOf(windowed, "claude", "without-window")).toBeUndefined();
+    expect(contextWindowOf(windowed, "claude", "bad-window")).toBeUndefined();
+    expect(contextWindowOf(windowed, "claude", "missing")).toBeUndefined();
+    expect(contextWindowOf(windowed, "codex", "with-window")).toBeUndefined();
+  });
+
+  test("a non-curated row takes the template window and a curated row keeps its own", () => {
+    const state: ModelRegistry = { version: 1, models: [{ ...windowed.models[1], provenance: { kind: "sourced" } }] };
+    const template: ModelRegistry = { version: 1, models: [{ ...windowed.models[1], contextWindow: 1000000 }] };
+    expect(contextWindowOf(upgradeRegistry(state, template), "claude", "without-window")).toBe(1000000);
+    const curated: ModelRegistry = { version: 1, models: [{ ...windowed.models[1], provenance: { kind: "curated", obtainedAt: "old" } }] };
+    expect(contextWindowOf(upgradeRegistry(curated, template), "claude", "without-window")).toBeUndefined();
+  });
+
+  test("the shipped registry sets the measured 1M window for the Claude models megabrain launches", () => {
+    const shipped = parseModelRegistry(readFileSync(new URL("../../.megabrain/models.json", import.meta.url), "utf8"));
+    if (shipped === undefined) throw new Error("shipped registry does not parse");
+    expect(contextWindowOf(shipped, "claude", "claude-opus-5-5")).toBe(1000000);
+    expect(contextWindowOf(shipped, "claude", "claude-sonnet-5")).toBe(1000000);
+    expect(contextWindowOf(shipped, "claude", "claude-opus-4-1-20250805")).toBeUndefined();
   });
 });

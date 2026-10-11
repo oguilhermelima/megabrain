@@ -27,6 +27,7 @@ describe("Codex rollout", () => {
     await put(rollout, [tokenCount(null), tokenCount(codexInfo(30000, 258400)), tokenCount(codexInfo(63729, 258400)), tokenCount(null)]);
     expect(await readContextMeter({ agent: "codex", agentThreadId: thread }, home)).toEqual({
       status: "known",
+      usedTokens: 63729,
       percentUsed: 24.7,
       sourceFrame: "codex rollout token_count: 63729/258400 tokens",
     });
@@ -57,18 +58,46 @@ const assistant = (model: string, usage: Record<string, number>, extra: Record<s
 const usage = { input_tokens: 2, cache_creation_input_tokens: 1271, cache_read_input_tokens: 95984, output_tokens: 389 };
 
 describe("Claude transcript", () => {
-  test("sums input, cache read and cache creation of the latest assistant entry over a 200k window", async () => {
+  test("sums input, cache read and cache creation of the latest assistant entry over the registry window", async () => {
     await put(transcript, [assistant("claude-sonnet-5-5", { ...usage, cache_read_input_tokens: 1000 }), { type: "user" }, assistant("claude-sonnet-5-5", usage)]);
-    expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toEqual({
+    expect(await readContextMeter({ agent: "claude", agentSessionId: session, contextWindow: 200000 }, home)).toEqual({
       status: "known",
+      usedTokens: 97257,
       percentUsed: 48.6,
       sourceFrame: "claude transcript usage: 97257/200000 tokens",
     });
   });
 
-  test("uses a 1M window only for a 1M model variant", async () => {
+  test("a plain model id above 200000 tokens proves a 1M window", async () => {
+    await put(transcript, [assistant("claude-opus-5-5", { input_tokens: 5, cache_read_input_tokens: 372000, cache_creation_input_tokens: 800 })]);
+    expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toEqual({
+      status: "known",
+      usedTokens: 372805,
+      percentUsed: 37.3,
+      sourceFrame: "claude transcript usage: 372805/1000000 tokens",
+    });
+  });
+
+  test("an earlier entry above 200000 tokens proves 1M for a later smaller one", async () => {
+    await put(transcript, [assistant("claude-opus-5-5", { input_tokens: 250000 }), assistant("claude-opus-5-5", { input_tokens: 50000 })]);
+    expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toMatchObject({ status: "known", usedTokens: 50000, percentUsed: 5 });
+  });
+
+  test("a plain model id at 50000 tokens with no registry window has tokens but no percentage", async () => {
+    await put(transcript, [assistant("claude-opus-5-5", { input_tokens: 50000 })]);
+    const meter = await readContextMeter({ agent: "claude", agentSessionId: session }, home);
+    expect(meter).toEqual({ status: "known", usedTokens: 50000, sourceFrame: "claude transcript usage: 50000 tokens, window unknown" });
+    expect("percentUsed" in meter).toBe(false);
+  });
+
+  test("the registry window wins over the 1M proof", async () => {
+    await put(transcript, [assistant("claude-opus-5-5", { input_tokens: 372805 })]);
+    expect(await readContextMeter({ agent: "claude", agentSessionId: session, contextWindow: 400000 }, home)).toMatchObject({ status: "known", usedTokens: 372805, percentUsed: 93.2 });
+  });
+
+  test("uses a 1M window for a 1M model variant marker", async () => {
     await put(transcript, [assistant("claude-opus-5-5[1m]", usage)]);
-    expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toMatchObject({ status: "known", percentUsed: 9.7 });
+    expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toMatchObject({ status: "known", usedTokens: 97257, percentUsed: 9.7 });
   });
 
   test("ignores sidechain and synthetic entries", async () => {
@@ -77,7 +106,7 @@ describe("Claude transcript", () => {
       assistant("claude-sonnet-5-5", { input_tokens: 150000 }, { isSidechain: true }),
       assistant("<synthetic>", { input_tokens: 0 }),
     ]);
-    expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toMatchObject({ status: "known", percentUsed: 48.6 });
+    expect(await readContextMeter({ agent: "claude", agentSessionId: session, contextWindow: 200000 }, home)).toMatchObject({ status: "known", percentUsed: 48.6 });
   });
 
   test("is unknown without a usage entry, a session id or a matching file", async () => {

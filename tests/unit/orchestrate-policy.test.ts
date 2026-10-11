@@ -55,7 +55,7 @@ describe("executeOrchestratePolicy", () => {
     const stateRoot = await setup({
       contextPolicy: { contextCeiling: 80, compactAt: 60, loop: true, maxIterations: 4 },
     });
-    const result = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90", "--json"], ownedEnvironment(stateRoot), process);
+    const result = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%", "--json"], ownedEnvironment(stateRoot), process);
 
     expect(result).toMatchObject({ kind: "ok" });
     expect(readMeta(stateRoot)).toMatchObject({
@@ -64,9 +64,20 @@ describe("executeOrchestratePolicy", () => {
     });
   });
 
+  test("accepts an absolute token threshold and refuses an ambiguous bare number", async () => {
+    const stateRoot = await setup({ contextPolicy: { contextCeiling: 80, compactAt: 60 } });
+    const tokens = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "150k", "--json"], ownedEnvironment(stateRoot), process);
+    expect(tokens).toMatchObject({ kind: "ok" });
+    expect(readMeta(stateRoot).contextPolicy).toEqual({ contextCeilingTokens: 150000, compactAt: 60 });
+
+    const bare = await executeOrchestratePolicy(["dispatch-policy-test", "--compact-at", "90"], ownedEnvironment(stateRoot), process);
+    expect(bare).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(readMeta(stateRoot).contextPolicy).toEqual({ contextCeilingTokens: 150000, compactAt: 60 });
+  });
+
   test("requires ownership and refuses to change a completed dispatch", async () => {
     const stateRoot = await setup();
-    const unauthorized = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90"], {
+    const unauthorized = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%"], {
       MEGABRAIN_STATE_DIR: stateRoot,
       MEGABRAIN_SESSION_ID: "someone-else",
       MEGABRAIN_SESSION_HOST: "superset",
@@ -76,7 +87,7 @@ describe("executeOrchestratePolicy", () => {
     if (stateDb === undefined) throw new Error("dispatch database is missing");
     const completed = mutateDispatch(stateDb, "dispatch-policy-test", (current) => ({ ...current, state: "done" }));
     if (completed.kind !== "ok") throw new Error(completed.error);
-    const inactive = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90"], ownedEnvironment(stateRoot), process);
+    const inactive = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%"], ownedEnvironment(stateRoot), process);
     expect(inactive).toMatchObject({ kind: "failed", error: "dispatch dispatch-policy-test is not active" });
   });
 

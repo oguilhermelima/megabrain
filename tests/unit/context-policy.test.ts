@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   decideLoopTurn,
+  parseContextThreshold,
   evaluateContextThreshold,
   validateContextPolicy,
   type ContextPolicy,
@@ -24,14 +25,64 @@ describe("context policy validation", () => {
   });
 });
 
+describe("parseContextThreshold", () => {
+  test("reads percentages and token counts with an optional k or m suffix", () => {
+    expect(parseContextThreshold("80%")).toEqual({ kind: "ok", value: { unit: "percent", amount: 80 } });
+    expect(parseContextThreshold("150k")).toEqual({ kind: "ok", value: { unit: "tokens", amount: 150000 } });
+    expect(parseContextThreshold("1m")).toEqual({ kind: "ok", value: { unit: "tokens", amount: 1000000 } });
+    expect(parseContextThreshold("1.5M")).toEqual({ kind: "ok", value: { unit: "tokens", amount: 1500000 } });
+    expect(parseContextThreshold("150000")).toEqual({ kind: "ok", value: { unit: "tokens", amount: 150000 } });
+  });
+
+  test("refuses a bare number up to 100, zero, negatives, junk and out-of-range percentages", () => {
+    for (const bad of ["90", "100", "0", "0%", "0k", "-5k", "-1%", "101%", "abc", "", "k", "%", "12kk", "1e5", "NaN", "Infinity"]) {
+      expect(parseContextThreshold(bad)).toMatchObject({ kind: "failed" });
+    }
+  });
+});
+
+describe("token thresholds", () => {
+  const unknownWindow = { status: "known" as const, usedTokens: 160000, sourceFrame: "claude transcript usage: 160000 tokens, window unknown" };
+
+  test("an absolute 150k ceiling fires at 160000 tokens with an unknown window", () => {
+    const decision = evaluateContextThreshold({ contextCeilingTokens: 150000 }, emptyState, unknownWindow);
+    expect(decision.action).toBe("stop");
+    expect(decision.record).toEqual({ action: "stop", percentUsed: null, usedTokens: 160000, sourceFrame: unknownWindow.sourceFrame });
+  });
+
+  test("a percentage threshold never fires without a percentage, and does not clear its latch", () => {
+    const armed = { ceilingLatched: true, compactLatched: true };
+    const decision = evaluateContextThreshold({ contextCeiling: 10, compactAt: 5 }, armed, unknownWindow);
+    expect(decision).toEqual({ action: "none", state: armed, record: null });
+  });
+
+  test("an absolute compact threshold fires once and rearms below it", () => {
+    const policy: ContextPolicy = { compactAtTokens: 100000, contextCeilingTokens: 200000 };
+    const first = evaluateContextThreshold(policy, emptyState, unknownWindow);
+    expect(first.action).toBe("compact");
+    expect(evaluateContextThreshold(policy, first.state, unknownWindow).action).toBe("none");
+    const below = evaluateContextThreshold(policy, first.state, { ...unknownWindow, usedTokens: 50000 });
+    expect(below.state.compactLatched).toBe(false);
+  });
+
+  test("validation refuses a threshold given in both units, a bad token count, and compact not below ceiling in the same unit", () => {
+    expect(validateContextPolicy({ contextCeiling: 90, contextCeilingTokens: 150000 })).toMatchObject({ kind: "failed" });
+    expect(validateContextPolicy({ compactAtTokens: 0 })).toMatchObject({ kind: "failed" });
+    expect(validateContextPolicy({ compactAtTokens: 150000, contextCeilingTokens: 150000 })).toMatchObject({ kind: "failed" });
+    expect(validateContextPolicy({ compactAtTokens: 100000, contextCeilingTokens: 150000 })).toMatchObject({ kind: "ok" });
+    expect(validateContextPolicy({ compactAt: 80, contextCeilingTokens: 150000 })).toMatchObject({ kind: "ok" });
+    expect(validateContextPolicy({ loop: true, contextCeilingTokens: 150000 })).toMatchObject({ kind: "ok" });
+  });
+});
+
 describe("evaluateContextThreshold", () => {
   const policy: ContextPolicy = { contextCeiling: 90, compactAt: 80, loop: false };
 
   test("fires once on a threshold crossing and rearms only after a known lower reading", () => {
-    const reading = { status: "known" as const, percentUsed: 82, sourceFrame: "Context 18% left" };
+    const reading = { status: "known" as const, usedTokens: 82000, percentUsed: 82, sourceFrame: "Context 18% left" };
     const first = evaluateContextThreshold(policy, emptyState, reading);
     expect(first.action).toBe("compact");
-    expect(first.record).toEqual({ action: "compact", percentUsed: 82, sourceFrame: "Context 18% left" });
+    expect(first.record).toEqual({ action: "compact", usedTokens: 82000, percentUsed: 82, sourceFrame: "Context 18% left" });
 
     const repeated = evaluateContextThreshold(policy, first.state, { ...reading, percentUsed: 85 });
     expect(repeated.action).toBe("none");
@@ -49,11 +100,12 @@ describe("evaluateContextThreshold", () => {
   test("stops at the ceiling and records the reading that caused it", () => {
     const decision = evaluateContextThreshold(policy, emptyState, {
       status: "known",
+      usedTokens: 91000,
       percentUsed: 91,
       sourceFrame: "Context 9% left",
     });
     expect(decision.action).toBe("stop");
-    expect(decision.record).toEqual({ action: "stop", percentUsed: 91, sourceFrame: "Context 9% left" });
+    expect(decision.record).toEqual({ action: "stop", percentUsed: 91, usedTokens: 91000, sourceFrame: "Context 9% left" });
   });
 
   test("never acts on unknown and does not let unknown clear an existing crossing latch", () => {
