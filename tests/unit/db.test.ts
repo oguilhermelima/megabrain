@@ -8,7 +8,7 @@ import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
 import { latestSchemaVersion, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
-import { insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
+import { getDispatch, insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
 
@@ -57,6 +57,20 @@ describe("SQLite database", () => {
       try {
         insertDispatch(handle.db, { dispatchId: "quote-owner", state: "running", parentSessionId: ownerId });
         expect(listDispatchesByOwner(handle.db, ownerId).map(({ dispatchId }) => dispatchId)).toEqual(["quote-owner"]);
+      } finally {
+        handle.close();
+      }
+    });
+  });
+
+  test("reads chatName from the column when older metadata does not mark it present", async () => {
+    await withStateDirectory(async (directory) => {
+      const handle = database(directory);
+      try {
+        insertDispatch(handle.db, { dispatchId: "read-chat-name", state: "running", branch: "feat/read-chat-name", chatName: "feat/read-chat-name" });
+        handle.db.run("UPDATE dispatches SET extra = json_set(extra, '$.$present', json_array('dispatchId', 'state', 'branch')) WHERE id = ?", ["read-chat-name"]);
+
+        expect(getDispatch(handle.db, "read-chat-name")?.chatName).toBe("feat/read-chat-name");
       } finally {
         handle.close();
       }
