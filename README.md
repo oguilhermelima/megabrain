@@ -442,6 +442,8 @@ array and does not require gh or Orca to list the local stack. Its entries inclu
 origin, and whether megabrain created the worktree. Worktrees predating the registry appear with
 origin `discovered` and unknown age until adopted. `worktree create --label <text>` records a
 purpose; when the label is absent, the first line of `--prompt` is used.
+Repository names supplied to create and inferred during adopt are stored with the worktree;
+megabrain can use those names to resolve a later `--repo` selector when Orca cannot.
 
 Prune old worktrees with a dry run first:
 

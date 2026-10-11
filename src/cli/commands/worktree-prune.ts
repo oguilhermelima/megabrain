@@ -44,7 +44,7 @@ async function repoRootFor(process: ProcessAdapter, path: string): Promise<strin
 
 async function discoverCandidates(process: ProcessAdapter, environment: Environment, selector?: string): Promise<Result<Array<{ path: string; repo: string; branch: string }>>> {
   if (selector !== undefined) {
-    const selected = await repoFromOrca(process, selector);
+    const selected = await repoFromOrca(process, selector, environment);
     if (selected.kind !== "ok") return selected;
     const repo = await realpath(selected.value).catch(() => selected.value);
     const output = await run(process, "git", ["-C", repo, "worktree", "list", "--porcelain"]);

@@ -820,7 +820,7 @@ export async function executeWorktreeCreate(
   const value: CreateOptions = options.value;
   const shared = await root(environment);
   if (shared.kind !== "ok") return shared;
-  const repo = await repoFromOrca(process, value.repo as string);
+  const repo = await repoFromOrca(process, value.repo as string, environment);
   if (repo.kind !== "ok") return repo;
   const branch = value.branch as string;
   // Validated before anything is created: an unresolvable --parent must refuse with nothing left
@@ -975,7 +975,7 @@ export async function executeWorktreeCreate(
   if (registry.kind !== "ok") return failed(`worktree created at ${path}, but registry could not be opened: ${registry.error}`);
   try {
     const stored = withWrite(registry.value, (db) => insertWorktree(db, {
-      path, repo: repo.value, branch, createdAt: new Date().toISOString(),
+      path, repo: repo.value, repoName: value.repo as string, branch, createdAt: new Date().toISOString(),
       createdBy: caller.id || null,
       purpose: value.label?.trim() || value.prompt?.split(/\r?\n/, 1)[0]?.trim() || null,
       origin: "created", finishedAt: null,

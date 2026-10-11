@@ -4,6 +4,7 @@ export type WorktreeOrigin = "created" | "adopted" | "discovered";
 export type WorktreeRecord = Readonly<{
   path: string;
   repo: string;
+  repoName: string;
   branch: string;
   createdAt: string;
   createdBy: string | null;
@@ -13,20 +14,20 @@ export type WorktreeRecord = Readonly<{
 }>;
 
 type WorktreeRow = Readonly<{
-  path: string; repo: string; branch: string; created_at: string; created_by: string | null;
+  path: string; repo: string; repo_name: string; branch: string; created_at: string; created_by: string | null;
   purpose: string | null; origin: WorktreeOrigin; finished_at: string | null;
 }>;
 
 function fromRow(row: WorktreeRow): WorktreeRecord {
-  return { path: row.path, repo: row.repo, branch: row.branch, createdAt: row.created_at, createdBy: row.created_by, purpose: row.purpose, origin: row.origin, finishedAt: row.finished_at };
+  return { path: row.path, repo: row.repo, repoName: row.repo_name, branch: row.branch, createdAt: row.created_at, createdBy: row.created_by, purpose: row.purpose, origin: row.origin, finishedAt: row.finished_at };
 }
 
 export function insertWorktree(db: DatabaseAdapter, worktree: WorktreeRecord): void {
-  db.run("INSERT INTO worktrees (path, repo, branch, created_at, created_by, purpose, origin, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [worktree.path, worktree.repo, worktree.branch, worktree.createdAt, worktree.createdBy, worktree.purpose, worktree.origin, worktree.finishedAt]);
+  db.run("INSERT INTO worktrees (path, repo, repo_name, branch, created_at, created_by, purpose, origin, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [worktree.path, worktree.repo, worktree.repoName, worktree.branch, worktree.createdAt, worktree.createdBy, worktree.purpose, worktree.origin, worktree.finishedAt]);
 }
 
 export function upsertWorktree(db: DatabaseAdapter, worktree: WorktreeRecord): void {
-  db.run("INSERT INTO worktrees (path, repo, branch, created_at, created_by, purpose, origin, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET repo = excluded.repo, branch = excluded.branch, created_by = excluded.created_by, purpose = excluded.purpose, origin = excluded.origin, finished_at = excluded.finished_at", [worktree.path, worktree.repo, worktree.branch, worktree.createdAt, worktree.createdBy, worktree.purpose, worktree.origin, worktree.finishedAt]);
+  db.run("INSERT INTO worktrees (path, repo, repo_name, branch, created_at, created_by, purpose, origin, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET repo = excluded.repo, repo_name = excluded.repo_name, branch = excluded.branch, created_by = excluded.created_by, purpose = excluded.purpose, origin = excluded.origin, finished_at = excluded.finished_at", [worktree.path, worktree.repo, worktree.repoName, worktree.branch, worktree.createdAt, worktree.createdBy, worktree.purpose, worktree.origin, worktree.finishedAt]);
 }
 
 export function getWorktree(db: DatabaseAdapter, path: string): WorktreeRecord | undefined {

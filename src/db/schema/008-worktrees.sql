@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS worktrees (
   path TEXT PRIMARY KEY,
   repo TEXT NOT NULL,
+  repo_name TEXT NOT NULL,
   branch TEXT NOT NULL,
   created_at TEXT NOT NULL,
   created_by TEXT,

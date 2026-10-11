@@ -37,6 +37,8 @@ marker already exists. `db show` reads dispatches and auxiliary records from SQL
 `worktree list` shows each worktree's age, purpose, origin, and whether megabrain created it.
 Create with `--label <text>` to record a purpose; otherwise the first line of `--prompt` is used.
 Older worktrees without a registry entry appear as discovered with unknown age.
+Repo names provided during create and inferred during adopt are available to resolve later
+`--repo` selectors when Orca is unavailable or its lookup fails.
 
 ```
 megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json] — recommended when you need to review or remove old worktrees safely.

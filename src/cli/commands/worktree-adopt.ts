@@ -99,7 +99,7 @@ export async function executeWorktreeAdopt(args: readonly string[], environment:
   try {
     const caller = await resolveCaller(environment, process);
     const stored = withWrite(registry.value, (db) => upsertWorktree(db, {
-      path: path.value, repo: repoPath, branch: branch.value.trim(), createdAt: new Date().toISOString(),
+      path: path.value, repo: repoPath, repoName: basename(repoPath), branch: branch.value.trim(), createdAt: new Date().toISOString(),
       createdBy: caller.id || null, purpose: null, origin: "adopted", finishedAt: null,
     }));
     if (stored.kind !== "ok") return failed(`worktree adopted in Superset, but registry write failed: ${stored.error}`);

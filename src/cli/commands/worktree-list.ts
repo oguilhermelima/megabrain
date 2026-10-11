@@ -118,7 +118,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   let filter: string | undefined;
   let selectedRepository: Repository | undefined;
   if (options.value.repo !== undefined) {
-    const selector = await repoFromOrca(process, options.value.repo);
+    const selector = await repoFromOrca(process, options.value.repo, environment);
     if (selector.kind !== "ok") return failed(`repo not found: ${options.value.repo}`);
     selectedRepository = await repositoryForDirectory(process, selector.value);
     if (selectedRepository === undefined) return failed(`repo not found: ${options.value.repo}`);
