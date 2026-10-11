@@ -3,11 +3,12 @@ import { failed, ok, type Result } from "../../core/result.js";
 import type { StateEnvironment } from "../../core/state.js";
 import { usageText } from "../../core/usage.js";
 import { parseJsonState, applyJsonStateImport } from "../../db/import/json-state.js";
-import { getDispatch, type DispatchRow } from "../../db/queries/dispatches.js";
+import { getDispatch, listDispatches, type DispatchRow } from "../../db/queries/dispatches.js";
 import { listMessages } from "../../db/queries/messages.js";
 import { listDeliveries } from "../../db/queries/deliveries.js";
 import { getInstallState, getTerminal, getTmuxSession, listInstallState, listModels } from "../../db/queries/aux-state.js";
 import { dryRunLegacyMigration, markExplicitImport, migrateLegacyState } from "../../db/cutover.js";
+import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
 
 function parseJson(args: readonly string[]): Result<boolean> {
   let json = false;
@@ -137,14 +138,20 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
         const value = getTmuxSession(db, id as string);
         return value === undefined ? { kind: "missing" as const } : { kind: "found" as const, value };
       }
-      const meta = getDispatch(db, id as string);
+      const resolved = resolveDispatchIdSuffix(id as string, listDispatches(db, { includeArchived: true }).map((dispatch) => dispatch.dispatchId));
+      if (resolved.kind === "too-short") return { kind: "invalid" as const, error: "dispatch id must contain at least 8 characters" };
+      if (resolved.kind === "ambiguous") return { kind: "invalid" as const, error: `dispatch id suffix ${id} is ambiguous: ${resolved.dispatchIds.join(", ")}` };
+      if (resolved.kind === "unknown") return { kind: "missing" as const };
+      const dispatchId = resolved.dispatchId;
+      const meta = getDispatch(db, dispatchId);
       if (meta === undefined) return { kind: "missing" as const };
-      const row = db.query<Pick<DispatchRow, "archived_at">>("SELECT archived_at FROM dispatches WHERE id = ?").get(id as string);
-      const nudges = db.query<{ id: number; dispatch_id: string; pointer: string; outcome: string; reason: string; created_at: string }>("SELECT id, dispatch_id, pointer, outcome, reason, created_at FROM nudge_events WHERE dispatch_id = ? ORDER BY id").all(id as string)
+      const row = db.query<Pick<DispatchRow, "archived_at">>("SELECT archived_at FROM dispatches WHERE id = ?").get(dispatchId);
+      const nudges = db.query<{ id: number; dispatch_id: string; pointer: string; outcome: string; reason: string; created_at: string }>("SELECT id, dispatch_id, pointer, outcome, reason, created_at FROM nudge_events WHERE dispatch_id = ? ORDER BY id").all(dispatchId)
         .map((nudge) => ({ id: nudge.id, dispatchId: nudge.dispatch_id, pointer: nudge.pointer, outcome: nudge.outcome, reason: nudge.reason, createdAt: nudge.created_at }));
-      return { kind: "found" as const, value: { meta, messages: listMessages(db, id as string), deliveries: listDeliveries(db, id as string), nudges, archived: row?.archived_at !== null && row?.archived_at !== undefined } };
+      return { kind: "found" as const, value: { meta, messages: listMessages(db, dispatchId), deliveries: listDeliveries(db, dispatchId), nudges, archived: row?.archived_at !== null && row?.archived_at !== undefined } };
     });
     if (result.kind !== "ok") return failed(result.error, result.exitCode);
+    if (result.value.kind === "invalid") return failed(result.value.error, 2);
     if (result.value.kind === "missing") return failed(`${mode === "terminal" ? "terminal" : mode === "tmux-session" ? "tmux session" : "dispatch"} not found: ${id}`);
     if (json) return ok(`${JSON.stringify(result.value.value, null, 2)}\n`);
     if (mode === "dispatch") {

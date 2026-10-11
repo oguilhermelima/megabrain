@@ -4,7 +4,6 @@ import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
-import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
@@ -14,6 +13,7 @@ import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatch } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
+import { resolveParentDispatchId } from "./parent-dispatch.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -38,19 +38,18 @@ function normalize(meta: RecordValue): RecordValue {
   };
 }
 
-async function parentMeta(database: DatabaseHandle, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue>> {
-  const stored = getDispatch(database, dispatch);
+async function parentMeta(database: DatabaseHandle, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue & { dispatchId: string }>> {
+  const current = await resolveCaller(env, process);
+  const resolved = resolveParentDispatchId(database, dispatch, current);
+  if (resolved.kind !== "ok") return resolved;
+  const stored = getDispatch(database, resolved.value);
   if (stored.kind !== "ok") return stored;
   const meta = stored.value;
-  if (meta === undefined) return failed(`dispatch not found: ${dispatch}`);
+  if (meta === undefined) return failed(`dispatch not found: ${resolved.value}`);
   const live = listDispatches(database);
   if (live.kind !== "ok") return live;
-  if (!live.value.some((record) => record.dispatchId === dispatch)) return failed(`dispatch ${dispatch} is archived; refusing to change it`);
-  const current = await resolveCaller(env, process);
-  if (!hasCallerIdentity(current)) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
-  const expectedHost = value(meta.parentHost); const expectedId = value(meta.parentSessionId);
-  if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${dispatch} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
-  return ok(meta);
+  if (!live.value.some((record) => record.dispatchId === resolved.value)) return failed(`dispatch ${resolved.value} is archived; refusing to change it`);
+  return ok({ ...meta, dispatchId: resolved.value });
 }
 
 async function tmuxLiveness(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: string; readonly reason: string; readonly identity: TerminalStatus }> {
@@ -120,7 +119,9 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-stop"));
   const parsed = parseStopArgs(args); if (parsed.kind !== "ok") return parsed;
   const root = resolveStateDirectory(env); const database = stateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const parent = await parentMeta(database.value, parsed.value.dispatchId, env, process); if (parent.kind !== "ok") return parent;
+  let dispatchId = parsed.value.dispatchId;
+  const parent = await parentMeta(database.value, dispatchId, env, process); if (parent.kind !== "ok") return parent;
+  dispatchId = parent.value.dispatchId;
   const caller = await resolveCaller(env, process); const session = caller.id || caller.terminalId || "";
   const meta = parent.value; const runtime = value(meta.runtime) || "host"; let status = "unknown"; let interruptStatus: "landed" | "not-landed" = "not-landed"; let reason = ""; let interruptReason = "";
   if (runtime === "tmux") {
@@ -128,33 +129,33 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
     reason = status === "pending-check" ? "pending check frame: messages are waiting for the next tool call" : status === "unknown" ? `unknown liveness: ${live.reason || "liveness is not proven"}` : live.reason || `${status}: agent is not working`;
     const affordance = interruptKey(value(meta.agent));
     const decision = stopDecision(status, affordance.kind === "ok" ? "known" : "unknown");
-    if (decision.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${reason || decision.error}`);
-    if (affordance.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${affordance.error}`);
-    const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with ${affordance.value}`;
-    const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
+    if (decision.kind !== "ok") return failed(`dispatch ${dispatchId} cannot be stopped: ${reason || decision.error}`);
+    if (affordance.kind !== "ok") return failed(`dispatch ${dispatchId} cannot be stopped: ${affordance.error}`);
+    const attempted = `interrupt attempted for dispatch ${dispatchId} with ${affordance.value}`;
+    const append = await appendMessage(root, dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
     const sent = await getTmux().sendKey(value(meta.tmuxPane), affordance.value, process); interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
   } else {
     const host = value(meta.childHost);
     const provider = getHost(host);
-    if (provider === undefined) return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: interrupt capability is unavailable for host ${host || "unknown"}`);
+    if (provider === undefined) return failed(`dispatch ${dispatchId} cannot be stopped: interrupt capability is unavailable for host ${host || "unknown"}`);
     const interrupt = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: value(meta.terminalId), interrupt: true });
     if (interrupt.kind === "unknown") {
       const reason = host === "superset" ? "Superset terminals send offers no interrupt capability" : interrupt.reason;
-      return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${reason}`);
+      return failed(`dispatch ${dispatchId} cannot be stopped: ${reason}`);
     }
-    if (interrupt.kind !== "ok") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: ${interrupt.error}`);
+    if (interrupt.kind !== "ok") return failed(`dispatch ${dispatchId} cannot be stopped: ${interrupt.error}`);
     const identity = await terminalStatus(meta, process);
-    if (identity === "missing") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is missing; cannot safely interrupt`);
-    if (identity !== "proven") return failed(`dispatch ${parsed.value.dispatchId} cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt`);
-    const attempted = `interrupt attempted for dispatch ${parsed.value.dispatchId} with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca`;
-    const append = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
+    if (identity === "missing") return failed(`dispatch ${dispatchId} cannot be stopped: Orca terminal identity is missing; cannot safely interrupt`);
+    if (identity !== "proven") return failed(`dispatch ${dispatchId} cannot be stopped: Orca terminal identity is unproven; cannot safely interrupt`);
+    const attempted = `interrupt attempted for dispatch ${dispatchId} with --interrupt; terminal identity is proven, but working liveness and pending-check frame are unavailable on Orca`;
+    const append = await appendMessage(root, dispatchId, "parent", "interrupt", attempted, session, env, process); if (append.kind !== "ok") return append;
     const sent = await runHostSend(host, process, interrupt.value);
     interruptStatus = sent.kind === "ok" ? "landed" : "not-landed";
     interruptReason = sent.kind === "failed" ? sent.error : "";
   }
-  const resultText = interruptStatus === "landed" ? `interrupt landed for dispatch ${parsed.value.dispatchId}` : `interrupt did not land for dispatch ${parsed.value.dispatchId}${interruptReason === "" ? "" : `: ${interruptReason}`}`;
-  const resultAppend = await appendMessage(root, parsed.value.dispatchId, "parent", "interrupt-result", resultText, session, env, process); if (resultAppend.kind !== "ok") return resultAppend;
-  const output = stopOutput(parsed.value.dispatchId, interruptStatus, parsed.value.json, interruptReason);
+  const resultText = interruptStatus === "landed" ? `interrupt landed for dispatch ${dispatchId}` : `interrupt did not land for dispatch ${dispatchId}${interruptReason === "" ? "" : `: ${interruptReason}`}`;
+  const resultAppend = await appendMessage(root, dispatchId, "parent", "interrupt-result", resultText, session, env, process); if (resultAppend.kind !== "ok") return resultAppend;
+  const output = stopOutput(dispatchId, interruptStatus, parsed.value.json, interruptReason);
   return interruptStatus === "landed" ? ok(output) : failed(output);
 }
 

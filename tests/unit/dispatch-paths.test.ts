@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveDispatchId } from "../../src/core/dispatch-paths.js";
+import { resolveDispatchId, resolveDispatchIdSuffix } from "../../src/core/dispatch-paths.js";
 
 describe("resolveDispatchId", () => {
   test.each(["", "../outside", "dispatch/child", "dispatch child", "dispatch$child"]) (
@@ -9,5 +9,36 @@ describe("resolveDispatchId", () => {
 
   test.each(["dispatch-1", "a.b_c-2"]) ("accepts %j", (dispatchId) => {
     expect(resolveDispatchId(dispatchId)).toEqual({ kind: "valid", dispatchId });
+  });
+});
+
+describe("resolveDispatchIdSuffix", () => {
+  const visible = ["dispatch-20261011120144320-50861-ddb1bbe0", "dispatch-20261010120000000-12345-1122aabb"];
+
+  test("resolves a unique suffix of at least eight characters", () => {
+    expect(resolveDispatchIdSuffix("ddb1bbe0", visible)).toEqual({ kind: "resolved", dispatchId: visible[0] });
+  });
+
+  test("prefers an exact full id even when it is another id's suffix", () => {
+    expect(resolveDispatchIdSuffix("dispatch-12345678", ["dispatch-12345678", "other-dispatch-12345678"]))
+      .toEqual({ kind: "resolved", dispatchId: "dispatch-12345678" });
+  });
+
+  test("preserves exact legacy ids shorter than eight characters", () => {
+    expect(resolveDispatchIdSuffix("legacy", ["legacy", "dispatch-legacy"]))
+      .toEqual({ kind: "resolved", dispatchId: "legacy" });
+  });
+
+  test("reports every match for an ambiguous suffix", () => {
+    const matches = ["dispatch-20261011120144320-50861-aabbccdd", "dispatch-20261010120000000-12345-aabbccdd"];
+    expect(resolveDispatchIdSuffix("aabbccdd", matches)).toEqual({ kind: "ambiguous", dispatchIds: matches });
+  });
+
+  test("reports an unknown suffix", () => {
+    expect(resolveDispatchIdSuffix("00000000", visible)).toEqual({ kind: "unknown" });
+  });
+
+  test("refuses suffixes shorter than eight characters", () => {
+    expect(resolveDispatchIdSuffix("b1bbe0", visible)).toEqual({ kind: "too-short" });
   });
 });

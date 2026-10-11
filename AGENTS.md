@@ -7,7 +7,7 @@
 - Run megabrain db backup [--json].
 - Run megabrain db import <dir> [--replace] [--json].
 - Run megabrain db migrate [--dry-run] [--json].
-- Run megabrain db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json].
+- Run megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json].
 - Run megabrain context [--json].
 - Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json].
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json].
@@ -24,13 +24,13 @@
 - Run megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json].
 - Run megabrain orchestrate reconcile <dispatch-id> [--all] [--json].
 - Run megabrain orchestrate liveness <dispatch-id> [--json].
-- Run megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json].
-- Run megabrain orchestrate read <dispatch-id> [--lines <count>] [--json].
-- Run megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json].
-- Run megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json].
-- Run megabrain orchestrate stop <dispatch-id> [--json].
-- Run megabrain orchestrate change <dispatch-id> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json].
-- Run megabrain orchestrate close <dispatch-id> [--force-release] [--json].
+- Run megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json].
+- Run megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json].
+- Run megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json].
+- Run megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json].
+- Run megabrain orchestrate stop <dispatch-id-or-suffix> [--json].
+- Run megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json].
+- Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json].
 - Run megabrain ask "question" | megabrain ask --text "question".
 - Run megabrain done "summary" | megabrain done --text "summary".
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.

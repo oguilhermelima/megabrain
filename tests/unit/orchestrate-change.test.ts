@@ -15,7 +15,7 @@ type JsonRecord = Record<string, unknown>;
 const codexIdle = "› Ask Codex to do anything";
 const codexWorking = "• Working (1s • esc to interrupt)";
 const direction = "Use the existing parser, preserve the current behavior, and update the docs.";
-const formatted = `[megabrain][codex][change - megabrain/main] - NEW DIRECTION\nStop the approach you were on and follow this instead:\n${direction}\n(The same text is available with megabrain check.)`;
+const formatted = `🔀 codex · megabrain/main new direction\nStop the approach you were on and follow this instead:\n${direction}\n(The same text is available with megabrain check.)`;
 
 function requireOk<T>(result: Result<T>): T {
   if (result.kind !== "ok") throw new Error(result.error);
@@ -219,7 +219,7 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", large, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, oversized: true });
-      expect(harness.events).toContain("text:[megabrain][codex][change - megabrain/main] - NEW DIRECTION\nA new direction is queued; run megabrain check to read it.");
+      expect(harness.events).toContain("text:🔀 codex · megabrain/main new direction\nA new direction is queued; run megabrain check to read it.");
       expect(harness.events.some((event) => event.includes(large))).toBe(false);
     } finally {
       harness.restore();

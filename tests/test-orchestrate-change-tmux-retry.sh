@@ -53,7 +53,7 @@ assert_equal "$status" '0'
 assert_contains "$output" '"attempts": 2'
 assert_contains "$output" '"idleReached": true'
 assert_contains "$output" '"delivered": true'
-assert_contains "$(cat "$work/submitted")" "[megabrain][codex][${dispatch: -8} - megabrain/main] - NEW DIRECTION"
+assert_contains "$(cat "$work/submitted")" "🔀 codex · megabrain/main new direction"
 assert_contains "$(cat "$work/submitted")" 'Stop the approach you were on and follow this instead:'
 assert_contains "$(cat "$work/submitted")" "$direction"
 printf 'change retries Escape in a private tmux server, proves idle, and submits the full direction\n'

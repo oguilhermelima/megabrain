@@ -5,7 +5,7 @@ export const USAGE_LINES = {
   "db-backup": "db backup [--json]",
   "db-import": "db import <dir> [--replace] [--json]",
   "db-migrate": "db migrate [--dry-run] [--json]",
-  "db-show": "db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]",
+  "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
@@ -23,13 +23,13 @@ export const USAGE_LINES = {
   "orchestrate-prune": "orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]",
   "orchestrate-reconcile": "orchestrate reconcile <dispatch-id> [--all] [--json]",
   "orchestrate-liveness": "orchestrate liveness <dispatch-id> [--json]",
-  "orchestrate-watch": "orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
-  "orchestrate-read": "orchestrate read <dispatch-id> [--lines <count>] [--json]",
-  "orchestrate-ack": "orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]",
-  "orchestrate-reply": "orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]",
-  "orchestrate-stop": "orchestrate stop <dispatch-id> [--json]",
-  "orchestrate-change": "orchestrate change <dispatch-id> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
-  "orchestrate-close": "orchestrate close <dispatch-id> [--force-release] [--json]",
+  "orchestrate-watch": "orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
+  "orchestrate-read": "orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json]",
+  "orchestrate-ack": "orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]",
+  "orchestrate-reply": "orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json]",
+  "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--json]",
+  "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
+  "orchestrate-close": "orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]",
   "ask": "ask \"question\" | megabrain ask --text \"question\"",
   "done": "done \"summary\" | megabrain done --text \"summary\"",
   "received": "received",
@@ -131,7 +131,7 @@ Commands:
   db backup [--json]                   Create and rotate a SQLite backup
   db import <dir> [--replace] [--json] Import JSON state into SQLite
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
-  db show <id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored records
+  db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
@@ -146,13 +146,13 @@ Commands:
   orchestrate prune ...                Archive or delete old terminal dispatches
   orchestrate reconcile <dispatch-id>  Reconcile an open dispatch without respawning
   orchestrate liveness <dispatch-id>     Read execution state from a dispatch terminal
-  orchestrate watch <dispatch-id> ...  Watch a dispatch file channel for child messages
-  orchestrate read <dispatch-id> ...   Read a tmux dispatch pane
-  orchestrate ack <dispatch-id> ...    Acknowledge a delivery batch
-  orchestrate reply <dispatch-id> ...  Queue and safely deliver a reply (--supersede replaces old replies)
-  orchestrate stop <dispatch-id> ...   Interrupt a working child without closing its pane
-  orchestrate change <dispatch-id> ... Replace queued direction and interrupt the child
-  orchestrate close <dispatch-id> ...  Close a Superset dispatch terminal
+  orchestrate watch <dispatch-id-or-suffix> ...  Watch a dispatch file channel for child messages
+  orchestrate read <dispatch-id-or-suffix> ...   Read a tmux dispatch pane
+  orchestrate ack <dispatch-id-or-suffix> ...    Acknowledge a delivery batch
+  orchestrate reply <dispatch-id-or-suffix> ...  Queue and safely deliver a reply (--supersede replaces old replies)
+  orchestrate stop <dispatch-id-or-suffix> ...   Interrupt a working child without closing its pane
+  orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
+  orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
