@@ -29,7 +29,7 @@
 - Run megabrain orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json].
 - Run megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json].
 - Run megabrain orchestrate stop <dispatch-id> [--json].
-- Run megabrain orchestrate change <dispatch-id> --text <text> [--json].
+- Run megabrain orchestrate change <dispatch-id> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json].
 - Run megabrain orchestrate close <dispatch-id> [--force-release] [--json].
 - Run megabrain ask "question" | megabrain ask --text "question".
 - Run megabrain done "summary" | megabrain done --text "summary".

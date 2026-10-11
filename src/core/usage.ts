@@ -28,7 +28,7 @@ export const USAGE_LINES = {
   "orchestrate-ack": "orchestrate ack <dispatch-id> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]",
   "orchestrate-reply": "orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]",
   "orchestrate-stop": "orchestrate stop <dispatch-id> [--json]",
-  "orchestrate-change": "orchestrate change <dispatch-id> --text <text> [--json]",
+  "orchestrate-change": "orchestrate change <dispatch-id> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
   "orchestrate-close": "orchestrate close <dispatch-id> [--force-release] [--json]",
   "ask": "ask \"question\" | megabrain ask --text \"question\"",
   "done": "done \"summary\" | megabrain done --text \"summary\"",
