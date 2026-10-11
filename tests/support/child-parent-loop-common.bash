@@ -242,7 +242,6 @@ run_flow() {
   local push_check push_delivery push_ack push_receipt push_receipt_id
   local done_delivery done_delivery_id close_output
   MEGABRAIN_TEST_RUNTIME="$runtime"
-  export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=0
   set_state_dir "$(mktemp -d "/tmp/mblp-$runtime.XXXXXX")"
   export MEGABRAIN_TEST_DISPATCH_ID=""
   if [ "$runtime" = tmux ]; then

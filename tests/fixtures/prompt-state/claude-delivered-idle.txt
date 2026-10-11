@@ -1,0 +1,9 @@
+❯ Run this shell command and report its output: sleep 60; echo done
+  Ran 2 shell commands
+⏺ Command running in background. Notified when done in ~60 seconds.
+✻ Churned for 10s · done 7:43 PM · 1 shell still running
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 4.5 200k │ 53k/200k ctx │ 88% left 3h 56m │ 30% left 3d 17h
+  ⏸ manual mode on · ← 3 agents

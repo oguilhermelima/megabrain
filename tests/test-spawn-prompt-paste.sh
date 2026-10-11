@@ -64,7 +64,7 @@ printf 'export PATH=%q:$PATH\n' "$fake_bin" > "$HOME/.bashrc"
 printf '. "$HOME/.bashrc"\n' > "$HOME/.bash_profile"
 tmux_cmd() { tmux -f /dev/null -L "$socket" "$@"; }
 export MB_PASTE_LOG="$log" MB_PASTE_RECEIVE=1 MB_MEGABRAIN="$root/.build/megabrain"
-export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=15 MEGABRAIN_AGENT_READY_TIMEOUT_MS=15000
+export MEGABRAIN_AGENT_READY_TIMEOUT_MS=15000
 unset TMUX TMUX_PANE MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID MEGABRAIN_DISPATCH_ID
 
 tmux_cmd new-session -d -s parent -c "$tmp" -x 160 -y 50 bash

@@ -303,7 +303,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
         const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-hook-chain-worktree-`);
         try {
           const resolvedWorktree = await realpath(worktreeDir);
-          const hookEnvironment = environment(root, { ORCA_TERMINAL_HANDLE: "coord-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
+          const hookEnvironment = environment(root, { ORCA_TERMINAL_HANDLE: "coord-term" });
           const process = fakeProcess((command, args) => {
             if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: `${resolvedWorktree}\n`, stderr: "", exitCode: 0 });
             if (command === "git" && args.includes("symbolic-ref")) return ok({ stdout: "feat/chain\n", stderr: "", exitCode: 0 });
@@ -762,7 +762,7 @@ describe("executeHookTurnEnd: the parent is never mistaken for its own just-spaw
       await withRoot("no-self-attribution", async (root) => {
         const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-hook-no-self-worktree-`);
         try {
-          const hookEnvironment = environment(root, { ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
+          const hookEnvironment = environment(root, { ORCA_TERMINAL_HANDLE: "coord-orca-term" });
           const process = fakeProcess((command, args) => {
             if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%40\n", stderr: "", exitCode: 0 });
             return ok({ stdout: "", stderr: "", exitCode: 0 });
@@ -781,7 +781,7 @@ describe("executeHookTurnEnd: the parent is never mistaken for its own just-spaw
           const messages = readMessages(root, dispatchId).filter((message) => message.type === "stalled");
           expect(messages).toHaveLength(0);
           const afterMeta = await readMeta(root, dispatchId);
-          expect(afterMeta.state).toBe("spawning");
+          expect(afterMeta.state).toBe("running");
           expect(afterMeta.reconcileOutcome ?? null).toBeNull();
         } finally {
           await rm(worktreeDir, { recursive: true, force: true });
@@ -840,7 +840,7 @@ describe("executeHookTurnEnd: a caller inside a tmux pane passes the top gate", 
           // The coordinator itself runs inside tmux pane %0 of session "coord-session" — no
           // SUPERSET_TERMINAL_ID or ORCA_TERMINAL_HANDLE at all, exactly the shape this lead's own
           // structured-session-over-tmux setup has.
-          const coordinatorEnvironment = environment(root, { TMUX: "coord-tmux-server", TMUX_PANE: "%0", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
+          const coordinatorEnvironment = environment(root, { TMUX: "coord-tmux-server", TMUX_PANE: "%0" });
           let nextPane = 30;
           const process = fakeProcess((command, args) => {
             if (command === "tmux" && args[0] === "display-message" && args.includes("#{session_name}")) return ok({ stdout: "coord-session\n", stderr: "", exitCode: 0 });

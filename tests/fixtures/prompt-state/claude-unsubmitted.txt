@@ -1,0 +1,9 @@
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Haiku 4.5 · Claude Max
+ ▝▝   ▝▝   ~/Workspaces/Worktrees/feat-supervise-prompt-state
+⚠ ~/.claude/CLAUDE.md is over the 40.0k-char limit (56.0k chars) · /memory to free up context
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Run this shell command and report its output: sleep 60; echo done
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 4.5 200k │ 0/200k ctx
+  ⏸ manual mode on

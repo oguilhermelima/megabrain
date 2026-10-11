@@ -16,15 +16,12 @@ export const spawnFailureReasons = {
   "prompt-state-persist": "prompt-state-persist-failed",
 } as const;
 
-// A prompt that was sent but never acknowledged, with no turn ever seen. The dispatch fails, yet the
-// terminal stays owned so the coordinator decides what happens to it. A later received, ask or done
-// from the child recovers it. no-receipt-after-turn is not a failure any more (the screen showed the
-// child working, so the prompt arrived): it is recorded as receiptMissing on a running dispatch.
-export const unreceivedReasons = ["prompt-not-received", "no-receipt-after-turn", "no-receipt-unproven"] as const;
-export type UnreceivedReason = typeof unreceivedReasons[number];
-export const isReceiptFailure = (reason: unknown): reason is UnreceivedReason => unreceivedReasons.some((candidate) => candidate === reason);
+// Spawn no longer fails a dispatch for a missing receipt, at any age. These reasons survive only on
+// records written by older builds, which a later received, ask or done from the child still recovers.
+const legacyReceiptFailures = ["prompt-not-received", "no-receipt-after-turn", "no-receipt-unproven"] as const;
+export const isReceiptFailure = (reason: unknown): boolean => legacyReceiptFailures.some((candidate) => candidate === reason);
 
-export type SpawnReason = typeof spawnFailureReasons[keyof typeof spawnFailureReasons] | UnreceivedReason;
+export type SpawnReason = typeof spawnFailureReasons[keyof typeof spawnFailureReasons];
 export type SpawnRuntime = "tmux" | "host";
 export type WorktreeOwnership = "created" | "existing" | "unknown";
 
@@ -51,8 +48,7 @@ export type SpawnState = {
 export type SpawnStepOutcome =
   | { readonly kind: "succeeded" }
   | { readonly kind: "failed"; readonly failure?: SpawnFailure }
-  | { readonly kind: "prompt-transport"; readonly status: "delivered" | "turn-without-receipt" | "awaiting-receipt" | "failed"; readonly receiptMissing?: "no-receipt-after-turn"; readonly failure?: SpawnFailure }
-  | { readonly kind: "prompt-transport"; readonly status: "unreceived"; readonly reason: UnreceivedReason; readonly receiptMissing?: undefined; readonly failure?: SpawnFailure };
+  | { readonly kind: "prompt-transport"; readonly status: "delivered" | "turn-without-receipt" | "awaiting-receipt" | "failed"; readonly receiptMissing?: "no-receipt-after-turn"; readonly failure?: SpawnFailure };
 
 type PromptTransportStatus = Extract<SpawnStepOutcome, { readonly kind: "prompt-transport" }>["status"];
 
@@ -177,27 +173,6 @@ function planFailure(input: SpawnDecisionInput, reason: SpawnReason): Result<Spa
   return ok(plan, plan.exitCode);
 }
 
-function planUnreceived(input: SpawnDecisionInput, reason: UnreceivedReason, failure: SpawnFailure | null): Result<SpawnPlan> {
-  const state = transitionState(input.state, {
-    dispatch: "failed",
-    process: "start-unproven",
-    terminal: input.state.terminal,
-  });
-  if (state.kind !== "ok") return state;
-  const plan: SpawnPlan = {
-    action: "fail",
-    nextStep: null,
-    state: state.value,
-    reason,
-    failure,
-    cleanup: { kind: "none" },
-    exitCode: 1,
-    lifecycle: "open",
-    reconcile: null,
-  };
-  return ok(plan, plan.exitCode);
-}
-
 function planSuccess(input: SpawnDecisionInput, status?: SpawnStepOutcome["kind"] | PromptTransportStatus): Result<SpawnPlan> {
   const isAwaitingReceipt = input.step === "prompt-transport" && status === "awaiting-receipt" || input.step === "prompt-state-persist";
   const isRunning = input.step === "state-persist";
@@ -231,7 +206,6 @@ export function decideSpawnStep(input: SpawnDecisionInput): Result<SpawnPlan> {
       return unknown("prompt transport outcome cannot be determined");
     }
     if (input.outcome.status === "failed") return planFailure(input, spawnFailureReasons[input.step]);
-    if (input.outcome.status === "unreceived") return planUnreceived(input, input.outcome.reason, input.outcome.failure ?? null);
     return planSuccess(input, input.outcome.status);
   }
 

@@ -1,0 +1,8 @@
+• Vou executar exatamente o comando pedido e retornar a saída.
+› 💬 claude · megabrain/main reply
+  Keep it in @canto/experiences, no AppRouter import there.
+  → full text: megabrain check
+• Working (18s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+› Ask Codex to do anything
+  GPT-6-Luna medium · Context 96% left · weekly 57% left · 5h 98% left
+  ← for agents · ? for shortcuts

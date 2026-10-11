@@ -98,11 +98,10 @@ describe("CLI router", () => {
       kind: "ok",
       value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n"
         + "\nEnvironment:\n"
-        + "  MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS  Seconds to wait for the child's megabrain received (default 300).\n"
-        + "    On tmux, a prompt with no turn and no receipt is sent once more, then the dispatch fails with\n"
-        + "    prompt-not-received; a turn that started without a receipt only records receiptMissing and keeps running.\n"
-        + "    On other hosts the dispatch fails with no-receipt-unproven. The pane or terminal is always kept.\n"
-        + "    0 means do not wait: spawn returns at once and the dispatch stays awaiting its receipt.\n",
+        + "  MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS  Milliseconds to wait for the pasted prompt to show whole in the composer (default 2000).\n"
+        + "  MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS  Milliseconds to wait for a turn to start after each Enter (default 3000).\n"
+        + "    Spawn has no receipt deadline. Once the prompt is pasted and submitted it returns, and a missing\n"
+        + "    megabrain received is only recorded; the supervisor judges the prompt from the terminal.\n",
     });
   });
 

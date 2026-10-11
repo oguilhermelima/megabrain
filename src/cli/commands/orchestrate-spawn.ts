@@ -22,7 +22,7 @@ import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
-import { receiptTimeoutMs, transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
+import { transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
 import { startSupervisorWorker } from "./supervise.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
@@ -32,11 +32,10 @@ const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 const SPAWN_ENVIRONMENT_HELP = `
 Environment:
-  MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS  Seconds to wait for the child's megabrain received (default 300).
-    On tmux, a prompt with no turn and no receipt is sent once more, then the dispatch fails with
-    prompt-not-received; a turn that started without a receipt only records receiptMissing and keeps running.
-    On other hosts the dispatch fails with no-receipt-unproven. The pane or terminal is always kept.
-    0 means do not wait: spawn returns at once and the dispatch stays awaiting its receipt.
+  MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS  Milliseconds to wait for the pasted prompt to show whole in the composer (default 2000).
+  MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS  Milliseconds to wait for a turn to start after each Enter (default 3000).
+    Spawn has no receipt deadline. Once the prompt is pasted and submitted it returns, and a missing
+    megabrain received is only recorded; the supervisor judges the prompt from the terminal.
 `;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
@@ -48,7 +47,6 @@ type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly SUPERSET_WORKSPACE_ID?: string;
   readonly MEGABRAIN_SPAWN_DISPATCH_ID?: string;
   readonly MEGABRAIN_AGENT_READY_TIMEOUT_MS?: string;
-  readonly MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS?: string;
   readonly MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS?: string;
   readonly MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS?: string;
 }>;
@@ -558,27 +556,10 @@ function hasReceipt(root: string, id: string): boolean {
   return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "received");
 }
 
-async function awaitReceipt(root: string, id: string, environment: SpawnEnvironment): Promise<boolean> {
-  const timeout = receiptTimeoutMs(environment);
-  const started = Date.now();
-  do {
-    if (hasReceipt(root, id)) return true;
-    if (Date.now() - started >= timeout) return false;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  } while (true);
-}
-
-// A host terminal gives no proof of whether a turn started, so an unreceived prompt is never
-// resent there. A zero timeout is the explicit opt-out that leaves the dispatch awaiting.
-async function settleHostReceipt(root: string, id: string, terminalId: string, environment: SpawnEnvironment): Promise<PromptTransportOutcome> {
-  if (await awaitReceipt(root, id, environment)) return { kind: "prompt-transport", status: "delivered" };
-  if (receiptTimeoutMs(environment) === 0) return { kind: "prompt-transport", status: "awaiting-receipt" };
-  return {
-    kind: "prompt-transport",
-    status: "unreceived",
-    reason: "no-receipt-unproven",
-    failure: { call: "prompt receipt", detail: `no megabrain received within ${receiptTimeoutMs(environment) / 1000}s and this host cannot show whether a turn started; terminal ${terminalId} is kept for inspection` },
-  };
+// A host terminal gives no proof of whether a turn started, so nothing is resent there. A receipt
+// already in the queue settles it; otherwise the dispatch stays awaiting one.
+function settleHostReceipt(root: string, id: string): PromptTransportOutcome {
+  return hasReceipt(root, id) ? { kind: "prompt-transport", status: "delivered" } : { kind: "prompt-transport", status: "awaiting-receipt" };
 }
 
 async function updateMeta(root: string, id: string, update: RecordValue, process: ProcessAdapter): Promise<Result<void>> {
@@ -993,7 +974,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         // composer, where Codex's Tab queues instead of submitting). Every agent's composer
         // submits an idle prompt on Enter. The text goes in as one bracketed paste that is proven
         // to be in the composer before Enter, never as keystrokes.
-        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => awaitReceipt(root, id, environment));
+        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => hasReceipt(root, id));
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
@@ -1001,7 +982,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt });
         const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
-        else outcome = await settleHostReceipt(root, id, terminalId, environment);
+        else outcome = settleHostReceipt(root, id);
       }
     } else {
       outcome = { kind: "succeeded" };
@@ -1016,7 +997,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       Object.assign(metadataUpdate, { state: state.dispatch, processState: state.process, terminalState: state.terminal });
     }
     if (step === "prompt-publication" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptPublication: "published", promptState: "awaiting-transport" });
-    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "unreceived" || outcome.status === "turn-without-receipt" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt", ...(outcome.receiptMissing === undefined ? {} : { processState: "running", receiptMissing: { reason: outcome.receiptMissing, at: new Date().toISOString() } }) });
+    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "turn-without-receipt" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt", ...(outcome.receiptMissing === undefined ? {} : { processState: "running", receiptMissing: { reason: outcome.receiptMissing, at: new Date().toISOString() } }) });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: plan.state.dispatch, processState: plan.state.process, terminalState: plan.state.terminal, reason: plan.reason, promptState: "failed" });
     if (outcome.kind === "prompt-transport" && outcome.receiptMissing !== undefined) receiptMissing = outcome.receiptMissing;
@@ -1027,11 +1008,6 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     }
     if (plan.action === "fail") {
       trace.reason = plan.reason ?? undefined;
-      // A spawn that gave up on the receipt left a live pane behind; tell the parent the way a
-      // stalled child would, so the coordinator does not have to poll to find out.
-      if (step === "prompt-transport" && outcome.kind === "prompt-transport" && outcome.status === "unreceived") {
-        await appendMessage(root, id, "child", "stalled", `${plan.reason}: ${plan.failure?.detail ?? "prompt was not acknowledged"}`, parentContext.id, environment, process);
-      }
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
