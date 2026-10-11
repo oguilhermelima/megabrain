@@ -13,7 +13,9 @@ export type Call = Readonly<{ command: string; args: readonly string[] }>;
 
 export const existingWorktree: SpawnWorktree = { path: "/work/tree", branch: "feat/example", ownership: "existing", workspaceId: "workspace-1" };
 
-export function processFor(behavior?: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>): ProcessAdapter & { readonly calls: Call[] } {
+export type DetachedBehavior = (command: string, args: readonly string[]) => Result<{ readonly pid: number }>;
+
+export function processFor(behavior?: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>, detached?: DetachedBehavior): ProcessAdapter & { readonly calls: Call[] } {
   const calls: Call[] = [];
   const fallback = (command: string, args: readonly string[]): Result<ProcessOutput> => {
     if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
@@ -30,7 +32,7 @@ export function processFor(behavior?: (command: string, args: readonly string[])
       }
       return result;
     },
-    async startDetached() { return failed("not used"); },
+    async startDetached(command, args) { return detached === undefined ? failed("not used") : detached(command, args); },
     invocationCount() { return calls.length; },
   };
 }
@@ -91,12 +93,13 @@ export async function runComposerSpawn(
   extraArgs: readonly string[] = [],
   behavior?: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>,
   dependencies: Partial<SpawnDependencies> = {},
+  detached?: DetachedBehavior,
 ): Promise<SpawnRun> {
   const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-composer-`);
   const events: string[] = [];
   const composer = composerPane({ ...pane, events, onSubmit: (prompt) => pane.onSubmit?.(prompt, root) });
   const original = getTmux();
-  const process = processFor(behavior);
+  const process = processFor(behavior, detached);
   registerTmux({
     ...original,
     id: "tmux",
