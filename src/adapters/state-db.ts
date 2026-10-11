@@ -31,6 +31,7 @@ export {
   finishOutbox,
   getWaiter,
   listDeliveries,
+  setDeliveryTransport,
   listMessages,
   listNudges,
   listOutbox,

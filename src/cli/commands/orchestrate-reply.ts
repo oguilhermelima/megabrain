@@ -3,6 +3,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { normalizeDispatchState, parseParentChangeArgs, parseParentReplyArgs, replyStateError, type SupersedeSummary } from "../../core/parent-reply.js";
 import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
 import { notifyChild, resolveCaller, appendMessage, type QueueEnvironment } from "./queue-write.js";
+import { setDeliveryTransport } from "../../adapters/state-db.js";
 import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { executeOrchestrateStop } from "./orchestrate-stop-reconcile.js";
@@ -173,7 +174,8 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   const append = appendParentReply(opened.value, parsed.value.dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId }, { supersede: parsed.value.supersede });
   if (append.kind !== "ok") return append;
   const summary: SupersedeSummary = append.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter).catch(() => ({ outcome: "failed", reason: "notification failed" }));
+  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, parsed.value.text).catch(() => ({ outcome: "failed", reason: "notification failed", transport: "failed" as const }));
+  setDeliveryTransport(opened.value, parsed.value.dispatchId, append.value.seq, notification.transport ?? "failed");
   if (state !== "done") {
     const updated = mutateDispatch(opened.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
     if (updated.kind !== "ok") return updated;

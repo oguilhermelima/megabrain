@@ -6,7 +6,7 @@ export type DispatchRow = Readonly<{
   id: string; state: string; owner_session_id: string | null; parent_host: string | null; parent_terminal_id: string | null;
   agent: string | null; model: string | null; effort: string | null; worktree_path: string | null; branch: string | null;
   runtime: string | null; child_host: string | null; tmux_session_id: string | null; tmux_session: string | null;
-  tmux_pane: string | null; terminal_id: string | null; agent_thread_id: string | null; created_at: string | null;
+  tmux_pane: string | null; terminal_id: string | null; agent_thread_id: string | null; parent_agent_thread_id: string | null; agent_pid: number | null; created_at: string | null;
   updated_at: string | null; archived_at: string | null; version: number; extra: string;
 }>;
 
@@ -14,7 +14,7 @@ const promoted: Readonly<Record<string, keyof DispatchRow>> = {
   parentSessionId: "owner_session_id", parentHost: "parent_host", parentTerminalId: "parent_terminal_id", agent: "agent",
   model: "model", effort: "effort", worktreePath: "worktree_path", branch: "branch", runtime: "runtime",
   childHost: "child_host", tmuxSessionId: "tmux_session_id", tmuxSession: "tmux_session", tmuxPane: "tmux_pane",
-  terminalId: "terminal_id", agentThreadId: "agent_thread_id", createdAt: "created_at", updatedAt: "updated_at",
+  terminalId: "terminal_id", agentThreadId: "agent_thread_id", parentAgentThreadId: "parent_agent_thread_id", agentPid: "agent_pid", createdAt: "created_at", updatedAt: "updated_at",
 };
 
 function columnValue(row: DispatchRow, column: keyof DispatchRow): unknown {
@@ -44,7 +44,7 @@ function values(meta: Readonly<Record<string, unknown>>): { columns: SqlValue[];
     value("dispatchId"), value("state"), value("parentSessionId"), value("parentHost"), value("parentTerminalId"),
     value("agent"), value("model"), value("effort"), value("worktreePath"), value("branch"), value("runtime"),
     value("childHost"), value("tmuxSessionId"), value("tmuxSession"), value("tmuxPane"), value("terminalId"),
-    value("agentThreadId"), value("createdAt"), value("updatedAt"), value("archivedAt"), extra,
+    value("agentThreadId"), value("parentAgentThreadId"), value("agentPid"), value("createdAt"), value("updatedAt"), value("archivedAt"), extra,
   ];
   return { columns, extra };
 }
@@ -59,9 +59,9 @@ export function insertDispatch(db: DatabaseAdapter, meta: Readonly<Record<string
   if (!isState(meta.state)) throw new TypeError(`invalid dispatch state: ${String(meta.state)}`);
   const data = values(meta);
   data.columns[1] = meta.state;
-  data.columns[19] = archivedAt;
-  db.run(`INSERT INTO dispatches (id, state, owner_session_id, parent_host, parent_terminal_id, agent, model, effort, worktree_path, branch, runtime, child_host, tmux_session_id, tmux_session, tmux_pane, terminal_id, agent_thread_id, created_at, updated_at, archived_at, extra)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, data.columns);
+  data.columns[21] = archivedAt;
+  db.run(`INSERT INTO dispatches (id, state, owner_session_id, parent_host, parent_terminal_id, agent, model, effort, worktree_path, branch, runtime, child_host, tmux_session_id, tmux_session, tmux_pane, terminal_id, agent_thread_id, parent_agent_thread_id, agent_pid, created_at, updated_at, archived_at, extra)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, data.columns);
   return { kind: "inserted" };
 }
 
@@ -109,8 +109,8 @@ export function updateDispatch(db: DatabaseAdapter, id: string, expectedVersion:
   const next = { ...current, ...patch, dispatchId: id };
   if (!isState(next.state)) throw new TypeError(`invalid dispatch state: ${String(next.state)}`);
   const data = values(next);
-  const changed = db.run(`UPDATE dispatches SET state = ?, owner_session_id = ?, parent_host = ?, parent_terminal_id = ?, agent = ?, model = ?, effort = ?, worktree_path = ?, branch = ?, runtime = ?, child_host = ?, tmux_session_id = ?, tmux_session = ?, tmux_pane = ?, terminal_id = ?, agent_thread_id = ?, created_at = ?, updated_at = ?, extra = ?, version = version + 1 WHERE id = ? AND version = ?`, [
-    data.columns[1], ...data.columns.slice(2, 19), data.extra, id, expectedVersion,
+  const changed = db.run(`UPDATE dispatches SET state = ?, owner_session_id = ?, parent_host = ?, parent_terminal_id = ?, agent = ?, model = ?, effort = ?, worktree_path = ?, branch = ?, runtime = ?, child_host = ?, tmux_session_id = ?, tmux_session = ?, tmux_pane = ?, terminal_id = ?, agent_thread_id = ?, parent_agent_thread_id = ?, agent_pid = ?, created_at = ?, updated_at = ?, extra = ?, version = version + 1 WHERE id = ? AND version = ?`, [
+    data.columns[1], ...data.columns.slice(2, 21), data.extra, id, expectedVersion,
   ]);
   if (changed.changes === 0) {
     const moved = readDispatch(db, id);

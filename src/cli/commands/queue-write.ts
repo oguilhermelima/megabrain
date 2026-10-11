@@ -9,7 +9,8 @@ import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
-import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange } from "../../adapters/state-db.js";
+import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
+import { deliverCodexQueue, findCodexProcessId } from "../../core/codex-delivery.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -24,6 +25,7 @@ type Session = {
 type NotificationResult = {
   readonly outcome: string;
   readonly reason: string;
+  readonly transport?: "queue" | "typed" | "deferred" | "failed";
 };
 
 // The one caller-identity resolver (core/context.js), reached through the same env-var mapping
@@ -220,7 +222,14 @@ export async function waiterIsActive(root: string, dispatch: string): Promise<bo
 // path, and the turn-end hook's own parent-notify scan layers them on again for its own dispatches.
 // Exported so the hook can reuse this exact delivery mechanism for its own pointer text (a batched
 // "N dispatches finished" line) instead of the fixed "mail: megabrain orchestrate watch" one below.
-export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
+export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, fullMessage = pointer): Promise<NotificationResult> {
+  if (typeof meta.parentAgentThreadId === "string") {
+    const pid = await findCodexProcessId(meta.parentAgentThreadId, processAdapter);
+    if (pid !== undefined) {
+      const queued = await deliverCodexQueue(meta.parentAgentThreadId, pid, fullMessage, processAdapter);
+      if (queued.kind === "queued") return { outcome: "delivered", reason: "parent-notified", transport: "queue" };
+    }
+  }
   const channel = await readParentTmuxChannel(meta, processAdapter);
   const host = channel === undefined && typeof meta.parentHost === "string" ? meta.parentHost : channel === undefined ? "" : "tmux";
   let result;
@@ -243,7 +252,7 @@ export async function sendParentPointer(root: string, meta: JsonRecord, pointer:
     if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
     result = await runHostSend(host, processAdapter, call.value);
   }
-  return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified" } : { outcome: "failed", reason: result.error };
+  return result.kind === "ok" ? { outcome: "delivered", reason: "parent-notified", transport: "typed" } : { outcome: "failed", reason: result.error, transport: "failed" };
 }
 
 async function notifyParent(root: string, meta: JsonRecord, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
@@ -257,8 +266,12 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, en
   return sendParentPointer(root, meta, pointer, environment, processAdapter);
 }
 
-export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}): Promise<NotificationResult> {
+export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}, fullMessage = `[megabrain] reply available; run megabrain check`) : Promise<NotificationResult> {
   const pointer = `[megabrain] reply available; run megabrain check`;
+  if (typeof meta.agentThreadId === "string" && typeof meta.agentPid === "number") {
+    const queued = await deliverCodexQueue(meta.agentThreadId, meta.agentPid, fullMessage, processAdapter);
+    if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
+  }
   const host = typeof meta.childHost === "string" ? meta.childHost : "";
   const runtime = typeof meta.runtime === "string" ? meta.runtime : "host";
   let result;
@@ -282,7 +295,7 @@ export async function notifyChild(root: string, meta: JsonRecord, dispatch: stri
     if (call.kind !== "ok") return { outcome: "failed", reason: call.error };
     result = await runHostSend(host, processAdapter, call.value);
   }
-  return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified" } : { outcome: "failed", reason: result.error };
+  return result.kind === "ok" ? { outcome: "delivered", reason: "child-notified", transport: "typed" } : { outcome: "failed", reason: result.error, transport: "failed" };
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
@@ -315,7 +328,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
           outbox: {
             id: outboxId, dispatchId: dispatch, targetKind: "parent-pointer",
             target: typeof metaRecord.parentSessionId === "string" ? metaRecord.parentSessionId : dispatch,
-            payload: { meta: metaRecord, pointer },
+            payload: { meta: metaRecord, pointer, fullMessage: `[megabrain] ${type}: ${text}` },
           },
         }),
       };
@@ -332,9 +345,10 @@ export async function appendMessage(root: string, dispatch: string, from: string
         let notification: NotificationResult;
         if (!(await parentContextMatches(root, meta, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch" };
         else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter" };
-        else notification = await sendParentPointer(root, meta, typeof record.pointer === "string" ? record.pointer : pointer, environment, processAdapter);
+        else notification = await sendParentPointer(root, meta, typeof record.pointer === "string" ? record.pointer : pointer, environment, processAdapter, typeof record.fullMessage === "string" ? record.fullMessage : pointer);
         const status = notification.outcome === "delivered" ? "sent" : notification.outcome === "suppressed" ? "suppressed" : "failed";
         finishNotification(database.value, outboxId, status, { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
+        if (notification.transport !== undefined) setDeliveryTransport(database.value, dispatch, appended.value.seq, notification.transport);
       }
     } catch {
       // Queue writes are durable even when the best-effort pointer transport fails.
@@ -343,9 +357,11 @@ export async function appendMessage(root: string, dispatch: string, from: string
   return ok(appended.value.seq);
 }
 
-export async function updateMeta(root: string, dispatch: string, type: string): Promise<Result<void>> {
+export async function updateMeta(root: string, dispatch: string, type: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<void>> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
+  const agentThreadId = type === "received" && typeof environment.CODEX_THREAD_ID === "string" ? environment.CODEX_THREAD_ID : undefined;
+  const agentPid = agentThreadId === undefined ? undefined : await findCodexProcessId(agentThreadId, processAdapter);
   let refused: Result<void> | undefined;
   const updated = mutateDispatch(database.value, dispatch, (current) => {
     const state = typeof current.state === "string" ? current.state : "running";
@@ -358,6 +374,8 @@ export async function updateMeta(root: string, dispatch: string, type: string): 
     }
     return {
       state: nextState, processState: nextProcess, updatedAt: new Date().toISOString(),
+      ...(agentThreadId === undefined ? {} : { agentThreadId }),
+      ...(agentPid === undefined ? {} : { agentPid }),
       ...(type === "received" ? { promptReceipt: "received", promptState: "confirmed" } : {}),
     };
   });
@@ -375,7 +393,7 @@ export async function executeQueueWrite(type: "received" | "ask" | "done", args:
   if ("kind" in child) return child;
   const append = await appendMessage(root, child.dispatch, "child", type, parsed.value, child.session.id, environment, processAdapter);
   if (append.kind !== "ok") return append;
-  const updated = await updateMeta(root, child.dispatch, type);
+  const updated = await updateMeta(root, child.dispatch, type, environment, processAdapter);
   if (updated.kind !== "ok") return updated;
   return ok(`${type} sent: ${child.dispatch}\n`);
 }

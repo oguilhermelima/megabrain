@@ -531,7 +531,7 @@ export async function markRunningIfSpawning(root: string, id: string): Promise<R
   return updateMeta(root, id, { state: "running" });
 }
 
-async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null): Promise<RecordValue> {
+async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null, parentAgentThreadId?: string): Promise<RecordValue> {
   const now = new Date().toISOString();
   return {
     dispatchId: id,
@@ -540,6 +540,7 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     // caller whose agent session later changes can still be recognised by the terminal it ran in
     // (see core/context.js ownsDispatch).
     parentSessionId: parentContext.id,
+    ...(parentAgentThreadId === undefined ? {} : { parentAgentThreadId }),
     parentHost: parentContext.host,
     parentTerminalId: parentContext.terminalId,
     parentWorkspaceId: parentWorkspace,
@@ -777,7 +778,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     terminalCreateAttempts = createdTerminal.value.attempts;
   }
 
-  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane);
+  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, environment.CODEX_THREAD_ID);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);

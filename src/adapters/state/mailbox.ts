@@ -118,6 +118,14 @@ export function listDeliveries(handle: DatabaseHandle, dispatchId: string): Resu
   return read(handle, ({ db }) => queryDeliveries(db, dispatchId));
 }
 
+export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string, sequence: number, transport: string): Result<void> {
+  return write(handle, ({ db }) => {
+    const row = db.query<{ id: string; extra: string }>("SELECT id, extra FROM deliveries WHERE dispatch_id = ? AND message_seq = ?").get(dispatchId, sequence);
+    if (row === null) return;
+    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport }), row.id]);
+  });
+}
+
 export function claimDelivery(handle: DatabaseHandle, id: string, consumer: string, generation: number): Result<DeliveryRecord | undefined> {
   return write(handle, ({ db }) => {
     const row = db.query<Parameters<typeof toDelivery>[0]>("SELECT * FROM deliveries WHERE id = ?").get(id);
