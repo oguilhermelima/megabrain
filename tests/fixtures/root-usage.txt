@@ -15,6 +15,7 @@ Commands:
   worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata
   worktree adopt <path|branch>         Register an existing worktree in Superset
   worktree prune ...                   Prune old, safe worktrees (dry-run unless --yes)
+  stack create|show|pr|sync|merge ... Manage dependent branches and pull or merge requests
   terminal create ...                  Open a terminal in the current orchestrator
   terminal list [--worktree <path>]    List terminals created by megabrain
   terminal restart <selector> ...      Restart a terminal created by megabrain
