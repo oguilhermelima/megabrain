@@ -30,7 +30,11 @@ case "${1:-} ${2:-} ${3:-}" in
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
   "pr list"*) printf '[]\n' ;;
-  "pr create"*) printf 'https://github.com/owner/repo/pull/12\n' ;;
+  "pr create"*)
+    number=12
+    case "$*" in *'--head stack/child'*) number=13 ;; esac
+    printf 'https://github.com/owner/repo/pull/%s\n' "$number"
+    ;;
   "pr view"*) printf '{"number":12,"state":"OPEN","baseRefName":"main","headRefName":"stack/base","url":"https://github.com/owner/repo/pull/12"}\n' ;;
   "pr edit"*) printf '{}\n' ;;
   "pr merge"*) printf '{}\n' ;;
@@ -48,6 +52,7 @@ printf 'base\n' >"$work/repo/base.txt"
 git -C "$work/repo" add base.txt
 git -C "$work/repo" commit -qm base
 git -C "$work/repo" remote add origin git@github.com:owner/repo.git
+git -C "$work/repo" remote set-url --push origin "$work/remote.git"
 git -C "$work/repo" push -qu "$work/remote.git" main
 
 run() { "$root/.build/megabrain" "$@"; }
@@ -58,12 +63,14 @@ cd "$work/repo"
 printf 'base change\n' >"$work/shared/stack-base/base.txt"
 git -C "$work/shared/stack-base" add base.txt
 git -C "$work/shared/stack-base" commit -qm 'base change'
+git -C "$work/shared/stack-base" push -qu origin stack/base
 run stack create stack/child --on stack/base >/dev/null
 printf 'child change\n' >"$work/shared/stack-child/child.txt"
 git -C "$work/shared/stack-child" add child.txt
 git -C "$work/shared/stack-child" commit -qm 'child change'
+git -C "$work/shared/stack-child" push -qu origin stack/child
 run stack pr >/dev/null
-contains "$(cat "$GH_LOG")" 'POST /repos/owner/repo/stacks'
+contains "$(cat "$GH_LOG")" 'POST repos/owner/repo/stacks'
 contains "$(cat "$GH_LOG")" 'pull_requests'
 printf 'GitHub creates native stacks after opening dependent pull requests\n'
 
@@ -87,6 +94,9 @@ printf 'GitHub sync and merge show a plan and refuse mutation without --yes\n'
 
 # Scenario: never merge a branch with commits that have not been pushed.
 export GH_UNPUSHED=yes
+printf 'local-only commit\n' >"$work/shared/stack-child/local-only.txt"
+git -C "$work/shared/stack-child" add local-only.txt
+git -C "$work/shared/stack-child" commit -qm 'local only'
 : >"$GH_LOG"
 if run stack merge --yes >"$work/unpushed.out" 2>&1; then fail 'stack merge accepted unpushed commits'; fi
 contains "$(cat "$work/unpushed.out")" 'unpushed local commits'
