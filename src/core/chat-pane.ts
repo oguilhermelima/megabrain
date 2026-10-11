@@ -11,13 +11,13 @@ export function chatPaneState(state: ChatPaneState): "working" | "question" | "f
   return "idle";
 }
 
-export async function setTmuxChatPane(pane: string, agent: string, chatName: string, state: ChatPaneState, process: ProcessAdapter): Promise<Result<void>> {
+export async function setTmuxChatPane(pane: string, agent: string, chatName: string, state: ChatPaneState | undefined, process: ProcessAdapter): Promise<Result<void>> {
   const title = `${agent} · ${chatName}`;
   const settings: readonly (readonly string[])[] = [
     ["select-pane", "-t", pane, "-T", title],
     ["set-option", "-p", "-t", pane, "@megabrain_agent", agent],
     ["set-option", "-p", "-t", pane, "@megabrain_name", chatName],
-    ["set-option", "-p", "-t", pane, "@megabrain_state", chatPaneState(state)],
+    ...(state === undefined ? [] : [["set-option", "-p", "-t", pane, "@megabrain_state", chatPaneState(state)]]),
   ];
   for (const args of settings) {
     const result = await process.run("tmux", args);

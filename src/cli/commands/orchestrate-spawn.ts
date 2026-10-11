@@ -13,7 +13,7 @@ import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-wri
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
-import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, waitForTmuxSession } from "../../hosts/tmux.js";
+import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, verifyTmuxPane, waitForTmuxSession } from "../../hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
@@ -528,8 +528,13 @@ async function coordinatorChatName(environment: SpawnEnvironment, process: Proce
     const parent = database.kind === "ok" ? getDispatch(database.value, parentDispatchId) : database;
     if (parent.kind === "ok" && typeof parent.value?.chatName === "string" && parent.value.chatName !== "") return parent.value.chatName;
   }
-  const branch = await process.run("git", ["branch", "--show-current"]);
-  return branch.kind === "ok" && branch.value.stdout.trim() !== "" ? branch.value.stdout.trim() : "megabrain/main";
+  const [repository, branch] = await Promise.all([
+    process.run("git", ["rev-parse", "--show-toplevel"]),
+    process.run("git", ["branch", "--show-current"]),
+  ]);
+  const repoName = repository.kind === "ok" ? basename(repository.value.stdout.trim()) : "";
+  const branchName = branch.kind === "ok" ? branch.value.stdout.trim() : "";
+  return repoName !== "" && branchName !== "" ? `${repoName}/${branchName}` : "megabrain/main";
 }
 
 export async function markRunningIfSpawning(root: string, id: string, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<void>> {
@@ -809,6 +814,11 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const createdDispatch = createDispatch(database.value, meta);
   if (createdDispatch.kind !== "ok") return createdDispatch;
+  const callerPane = environment.TMUX_PANE;
+  if (callerPane !== undefined && callerPane.trim() !== "") {
+    const exists = await verifyTmuxPane(callerPane, process);
+    if (exists.kind === "ok" && exists.value) await setTmuxChatPane(callerPane, parentAgent ?? "unknown", parentChatName, undefined, process);
+  }
   if (runtime === "tmux" && pane !== null) await setTmuxChatPane(pane, options.agent, chatName, "spawning", process);
   if (runtime === "host" && parentContext.host === "orca") {
     await process.run("orca", ["terminal", "rename", "--terminal", terminalId, "--title", `${options.agent} · ${chatName}`]);
