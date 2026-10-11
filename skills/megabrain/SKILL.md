@@ -6,8 +6,8 @@ description: >-
   limits and pick a provider, and to drive iOS and tvOS simulators, Android TV over adb, and
   Playwright MCP browser testing. Use when the user asks to hand work to another agent,
   parallelize across agents, spawn or supervise a worker, check on a dispatch, create or finish
-  a shared worktree, choose between Codex, Claude and agy, or set up simulator or browser
-  testing. Also use when a chat needs to answer a question from an agent it started.
+  a shared worktree, or set up simulator or browser testing. Also use when a chat needs to
+  answer a question from an agent it started.
 ---
 
 # megabrain
@@ -154,7 +154,7 @@ behind.
 ```
 megabrain chain list [--json]
 megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>]
-megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--allow-unknown-model] [--json]
+megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json]
 megabrain chain edit <name> [--allow-unknown-model] [--json]
 megabrain chain delete <name> [--json]
 megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json]
@@ -182,9 +182,9 @@ the chain at the next step.
 ## Worktrees and terminals
 
 ```
-megabrain worktree create --repo <name|path> --branch <branch> [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--json]
+megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]
 megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]
-megabrain worktree finish <branch|path|slug> [--delete-branch] [--force] [--json]
+megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]
 megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]
 megabrain worktree adopt <path|branch> [--json]
 megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]
@@ -279,7 +279,9 @@ megabrain native runtime install <ios|tvos> <version> [--json]
 megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]
 megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]
 megabrain native crashes <phone|tv> [--last N] [--json]
-megabrain native build <phone|tv> [--runtime <version>] [--json]
+megabrain native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json]
+megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]
+megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]
 megabrain tv connect <ip> [--port <port>]
 megabrain tv disconnect [<ip>]
 megabrain doctor simulator-native      iOS and tvOS simulators, macOS only
@@ -291,9 +293,9 @@ megabrain web viewport|devices|userscript ...
 megabrain web viewport set|show|devices ...
 megabrain web viewport set
 megabrain web viewport show
-megabrain web devices [FILTER] [--orientation portrait|landscape|all]
-megabrain web capture --url URL --screen NAME [options]
-megabrain web measure --url URL --screen NAME [options]
+megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG
+megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]
+megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options]
 megabrain web session save --url URL --output FILE [options]
 megabrain web userscript install <file.user.js>
 megabrain web userscript list
@@ -320,9 +322,19 @@ is the default and landscape/all are explicit options.
 The set command accepts `--browser chromium|firefox|both`, `--viewport WxH`, `--device SLUG`,
 `--category NAME`, `--width W --height H`, and `--orientation portrait|landscape`.
 
-Visual parity commands use non-persistent contexts and can reuse a private storage state. Capture
-writes candidates by default, and baseline replacement requires an explicit flag. Screens listed
-in a JSON file run sequentially in declaration order; separate invocations can run in parallel.
+## Testing surfaces
+
+Use `megabrain web capture` for screenshots, `megabrain web measure` for geometry and styles, and
+the Playwright MCP for interactive browser steps. Keep browser testing headless. Never automate
+`megabrain web session save`: it is headful by design. Do not use Computer Use or Orca's embedded
+browser for testing; Computer Use moves the operator's real mouse. Check the screenshot, measured
+state, or rendered app after an action; a successful exit code alone does not prove it happened.
+
+For iOS and tvOS, use `megabrain native appium status` (then `start` if needed), `native sim ensure`,
+`native navigate`, `native eval`, and `native health`. Every Appium session must include
+`appium:isHeadless: true`. `native navigate` and `native eval` use Metro's inspector. Do not use
+`xcrun simctl openurl` to navigate: it only delivers a URL and can leave a system alert over the app.
+Check `native health`, the evaluated value, or a changed screenshot after navigation.
 
 ## tmux
 
@@ -339,13 +351,14 @@ pane; otherwise it opens as a tab in the IDE that launched the session. Override
 ## Where state lives
 
 Dispatches, messages, deliveries, terminals, install state, models, and tmux sessions live in
-`$MEGABRAIN_STATE_DIR/megabrain.db`, which defaults to `~/.megabrain/megabrain.db`. The first
-non-`db` command imports legacy JSON state, checks parity, moves dispatch transcripts to
-`transcripts/<dispatch-id>.txt`, and seals the remaining JSON trees under
-`legacy/json-<UTC timestamp>/`. A fresh state with no legacy JSON is marked without a snapshot;
-`db import` also sets the marker for explicit fixture or operator imports. `db check` verifies the
-database, and `db backup` creates a consistent backup.
+`$MEGABRAIN_STATE_DIR/megabrain.db`, defaulting to `~/.megabrain/megabrain.db`. Use `db show` to
+inspect records, `db check` for integrity and foreign keys, `db backup` for a consistent backup,
+`db migrate --dry-run --json` to preview cutover, and `db import <dir>` for an explicit import.
+Migration moves transcripts to `~/.megabrain/transcripts/<dispatch-id>.txt` and seals the legacy
+JSON tree under `~/.megabrain/legacy/json-<UTC timestamp>/`; a fresh state with no legacy JSON has
+no snapshot. For rollback, restore that snapshot and run the previous binary. SQLite changes made
+after cutover are lost by that rollback; restore a database backup to retain them.
+Direct-parent ownership is required for `reply` and `close`.
 
-For rollback, restore the sealed legacy tree to its original paths and use the previous binary.
-Changes made after cutover are stored only in SQLite and are lost by that rollback. Direct-parent
-ownership is required for `reply` and `close`.
+Before any megabrain call in tests, export `MEGABRAIN_STATE_DIR` to an isolated temporary
+directory so tests never touch `~/.megabrain`.

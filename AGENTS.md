@@ -54,6 +54,8 @@
 - Run megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json].
 - Run megabrain native runtime install <ios|tvos> <version> [--json].
 - Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json].
+- Run megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json].
+- Run megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json].
 - Run megabrain native crashes <phone|tv> [--last N] [--json].
 - Run megabrain native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json].
 - Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json].
@@ -78,9 +80,11 @@
 ## State database
 
 Dispatches and other runtime state live in `$MEGABRAIN_STATE_DIR/megabrain.db` (default
-`~/.megabrain/megabrain.db`). Use `megabrain db show` to inspect rows, `db check` for integrity,
-`db backup` for a consistent backup, and `db migrate --dry-run --json` to preview a legacy JSON
-cutover. The first non-`db` command imports legacy state, verifies parity, moves transcripts to
-`transcripts/<dispatch-id>.txt`, and seals the remaining JSON trees under `legacy/json-<UTC>/`.
-Rollback restores that legacy tree and runs the previous binary; database changes made after
-cutover are lost when rolling back.
+`~/.megabrain/megabrain.db`). Use `megabrain db show` to inspect records, `db check` for integrity
+and foreign keys, `db backup` for a consistent backup, `db migrate --dry-run --json` to preview a
+legacy JSON cutover, and `db import <dir>` for an explicit import. The first non-`db` command
+imports legacy state, verifies parity, moves transcripts to
+`~/.megabrain/transcripts/<dispatch-id>.txt`, and seals the remaining tree under
+`~/.megabrain/legacy/json-<UTC>/`. A fresh state with no legacy JSON has no snapshot. For rollback,
+restore the snapshot and run the previous binary; database changes made after cutover are lost.
+Tests must export `MEGABRAIN_STATE_DIR` to an isolated temporary directory before any megabrain call.

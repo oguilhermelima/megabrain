@@ -96,16 +96,18 @@ source of truth. `db show` reads a dispatch or auxiliary record; `db check` chec
 foreign keys; `db backup` writes a consistent backup under `backups/` and keeps the newest seven.
 
 On the first non-`db` command, Megabrain imports a legacy JSON state directory when one is present,
-checks parity, moves each dispatch transcript to `transcripts/<dispatch-id>.txt`, and seals the
-remaining legacy tree under `legacy/json-<UTC timestamp>/`. A marker in the database makes this a
-one-time operation. A fresh state with no JSON gets the marker without a snapshot. `db import`
+checks parity, moves each dispatch transcript to
+`~/.megabrain/transcripts/<dispatch-id>.txt`, and seals the remaining legacy tree under
+`~/.megabrain/legacy/json-<UTC timestamp>/`. A marker in the database makes this a one-time
+operation. A fresh state with no JSON gets the marker without a snapshot. `db import`
 also sets the marker because an explicit import means the operator has chosen the database store.
 
 Use `db migrate --dry-run --json` to inspect the parity report without changing the state
 directory. `db migrate --json` performs the same migration explicitly and refuses if a cutover
 marker already exists. If rollback is needed, restore the sealed legacy tree to its original paths
 and run the previous binary. Changes made after cutover exist only in SQLite and are lost by that
-rollback; restore a database backup instead when those changes must be retained.
+rollback; restore a database backup instead when those changes must be retained. Direct-parent
+ownership is required for `reply` and `close`.
 
 ## Chains: choosing who does the work
 
@@ -419,15 +421,31 @@ megabrain install simulator-web --browser chromium
 ```
 
 ```sh
-megabrain native appium start|status|stop   # one shared Appium server, not one per project
+megabrain native appium start|stop|status   # one shared Appium server, not one per project
 megabrain native sim list phone             # list available iOS simulators
 megabrain native sim ensure phone --device <name-or-udid>  # boot and wait for an iOS simulator
 megabrain native build tv --runtime <version>  # prebuild, pod install, build, install and launch
 megabrain native app reload phone --route <route> --bundle-id <id>  # terminate and open a deep link
+megabrain native navigate phone /settings    # navigate through Metro's inspector
+megabrain native eval phone 'globalThis.__DEV__' # evaluate through Metro's inspector
 megabrain tv connect 192.168.1.50           # pair an Android TV
 megabrain tv disconnect
 megabrain doctor simulator-native           # what is missing and how to get it
 ```
+
+### Testing surfaces
+
+Use `megabrain web capture` for screenshots, `megabrain web measure` for geometry and styles, and
+the Playwright MCP for interactive browser steps. Keep browser testing headless. Never automate
+`megabrain web session save`: it is headful by design. Do not use Computer Use or Orca's embedded
+browser for testing; Computer Use moves the operator's real mouse. After each action, check the
+screenshot, measured state, or rendered app; a successful exit code alone does not prove the effect.
+
+For iOS and tvOS, use `megabrain native appium status` (then `start` if needed), `native sim ensure`,
+`native navigate`, `native eval`, and `native health`. Every Appium session must include
+`appium:isHeadless: true`. `native navigate` and `native eval` use Metro's inspector. Do not use
+`xcrun simctl openurl` to navigate: it only delivers a URL and can leave a system alert over the app.
+Check `native health`, the evaluated value, or a changed screenshot after navigation.
 
 `megabrain doctor skill-sync` checks the installed copies of this skill. During normal command
 invocations, megabrain compares and repairs registered agent copies when needed; `--help` and
@@ -481,7 +499,7 @@ or use a Playwright device preset for a named device:
 ```sh
 megabrain web viewport set --category mobile
 megabrain web --device iphone17pro
-megabrain web devices iphone --orientation portrait
+megabrain web devices list iphone --orientation portrait
 megabrain web viewport show
 ```
 
@@ -495,19 +513,19 @@ availability conventions because no market-share figures were found.
 Userscript install and removal also accept `--viewport WIDTHxHEIGHT`, `--category NAME`, or
 `--device SLUG` for a one-time override. Device slugs are curated and stable: registry-backed
 slugs resolve through Playwright's registry, while laptop and desktop slugs use owned CSS viewport
-sizes. Use `megabrain web devices [FILTER] --orientation portrait|landscape|all` to inspect the
+sizes. Use `megabrain web devices list [FILTER] --orientation portrait|landscape|all` to inspect the
 available presets. Unknown slugs are refused with matching registry suggestions when available.
 
 Visual parity workflows use non-persistent browser contexts, so one private storage state can be
-used by multiple captures without profile locking. Save a signed-in session once, then pass it to
-capture or measure:
+used by multiple captures without profile locking. Pass an existing storage-state file to capture
+or measure:
 
 ```sh
-megabrain web session save --url http://localhost:3000/login --output .megabrain/session.json
 megabrain web capture --url http://localhost:3000/movie/42 --screen details \
   --content-id movie-42 --theme dark --device macbookpro14 \
   --storage-state .megabrain/session.json --output-root visual-captures
-megabrain web measure --screens screens.json --storage-state .megabrain/session.json
+megabrain web measure --url http://localhost:3000/movie/42 --screen details \
+  --storage-state .megabrain/session.json
 ```
 
 Capture writes candidate/ by default. Use `--baseline` deliberately; an existing baseline is
@@ -524,7 +542,7 @@ Custom devices are stored separately from installed browser profiles and use pri
 ```sh
 megabrain web devices add office --viewport 1512x982 --device-scale-factor 2 \
   --source 'Apple MacBook Pro technical specifications; panel 3024x1964'
-megabrain web devices --filter office
+megabrain web devices list office
 ```
 
 Custom descriptors require a source so their owned values remain traceable. Their registry is
@@ -585,6 +603,9 @@ bounded number of times when it does not arrive. A keystroke typed into a termin
 that may wake a participant; the message it points at is already durable.
 
 ## Testing
+
+Tests must export `MEGABRAIN_STATE_DIR` to an isolated temporary directory before any megabrain
+call, so test state cannot touch `~/.megabrain`.
 
 ```sh
 bun run build                            # the build gate: confirms the CLI compiles
