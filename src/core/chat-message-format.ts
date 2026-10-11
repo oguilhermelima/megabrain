@@ -1,4 +1,4 @@
-export type DispatchMessageType = "done" | "ask" | "stalled" | "reply" | "change" | string;
+export type DispatchMessageType = "done" | "ask" | "stalled" | "policy" | "reply" | "change" | string;
 
 export type DispatchMessageInput = Readonly<{
   dispatchId: string;
@@ -16,6 +16,7 @@ const labels: Readonly<Record<string, Readonly<{ icon: string; words: string }>>
   done: { icon: "✅", words: "finished" },
   ask: { icon: "❓", words: "has a question" },
   stalled: { icon: "⚠️", words: "is stuck" },
+  policy: { icon: "⚠️", words: "policy action" },
   reply: { icon: "💬", words: "reply" },
   change: { icon: "🔀", words: "new direction" },
 };
