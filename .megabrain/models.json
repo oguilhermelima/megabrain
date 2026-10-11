@@ -1067,8 +1067,7 @@
         "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations",
         "fetchedAt": "2026-09-07"
       },
-      "status": "active",
-      "contextWindow": 200000
+      "status": "active"
     },
     {
       "agent": "claude",
