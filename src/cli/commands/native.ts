@@ -423,7 +423,10 @@ async function nativeHealth(args: readonly string[], environment: Environment, p
       const response = appiumResponse(source.value.stdout);
       if (response === undefined) tree = unknownTree("Appium source request failed: response did not include an HTTP status");
       else if (response.status < 200 || response.status >= 300) tree = unknownTree(appiumHttpFailure("Appium source request", response));
-      else tree = { count: (response.body.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? []).length };
+      else {
+        const elements = response.body.match(/<XCUIElementType[A-Za-z0-9]+\b/g) ?? [];
+        tree = { count: elements.length, loadingOnly: elements.length === 1 && /<XCUIElementTypeActivityIndicator\b/.test(response.body) };
+      }
     }
     if (!activeSession.stored) await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${activeSession.sessionId}`]);
   }
