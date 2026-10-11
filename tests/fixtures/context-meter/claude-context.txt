@@ -1,0 +1,7 @@
+      ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Memory files: 13.9k tokens (6.9%)
+                           ⛁ Skills: 2k tokens (1.0%)
+                           ⛁ Messages: 6.4k tokens (3.2%)
+     ⛶ Free space: 144.9k (72.4%)
+     /context all to expand
+Not logged in · Run /login
+Haiku 4.5 200k │ 0/200k ctx
