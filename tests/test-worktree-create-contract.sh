@@ -287,12 +287,17 @@ scenario_repo_selector_refusal_causes() {
     absent="$(env HOME="$work_dir/absent-$implementation/home" MEGABRAIN_STATE_DIR="$work_dir/absent-$implementation/state" MEGABRAIN_WORKTREE_WRITE_IMPLEMENTATION=binary PATH="$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree create --repo selector-that-does-not-match --branch feat/refusal-absent --json 2>&1 || true)"
     unresponsive="$(refusal_output "$implementation" unavailable)"
     unmatched="$(refusal_output "$implementation" registry)"
-    assert_contains "$absent" 'when orca is not installed'
-    assert_contains "$unresponsive" 'orca did not respond'
+    assert_contains "$absent" 'repo not found: selector-that-does-not-match'
+    assert_contains "$absent" 'Orca is unavailable'
+    assert_contains "$absent" "worktree registry has no live repository named 'selector-that-does-not-match'"
+    assert_contains "$unresponsive" 'repo not found: selector-that-does-not-match'
+    assert_contains "$unresponsive" 'Orca repository lookup failed'
+    assert_contains "$unresponsive" "worktree registry has no live repository named 'selector-that-does-not-match'"
     assert_contains "$unmatched" 'repo not found: selector-that-does-not-match'
-    assert_not_contains "$unresponsive" 'orca is not installed'
-    assert_not_contains "$unmatched" 'orca did not respond'
-    assert_not_contains "$absent" 'repo not found: selector-that-does-not-match'
+    assert_contains "$unmatched" "Orca has no repository named 'selector-that-does-not-match'"
+    assert_contains "$unmatched" "worktree registry has no live repository named 'selector-that-does-not-match'"
+    assert_not_contains "$unresponsive" 'Orca is unavailable'
+    assert_not_contains "$unmatched" 'Orca repository lookup failed'
     [ "$absent" != "$unresponsive" ] || fail "$implementation collapsed absent and unresponsive refusals"
     [ "$unresponsive" != "$unmatched" ] || fail "$implementation collapsed unresponsive and unmatched refusals"
   done
