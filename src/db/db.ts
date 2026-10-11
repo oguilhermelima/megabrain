@@ -9,6 +9,7 @@ import nativeDeliveryMigration from "./schema/005-native-delivery.sql" with { ty
 import chatNamesMigration from "./schema/006-chat-names.sql" with { type: "text" };
 import chatNameSourceMigration from "./schema/007-chat-name-source.sql" with { type: "text" };
 import worktreesMigration from "./schema/008-worktrees.sql" with { type: "text" };
+import stackParentMigration from "./schema/009-stack-parent.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -118,6 +119,7 @@ const migrations: readonly Migration[] = [
   { version: 6, sql: chatNamesMigration },
   { version: 7, sql: chatNameSourceMigration },
   { version: 8, sql: worktreesMigration },
+  { version: 9, sql: stackParentMigration },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 

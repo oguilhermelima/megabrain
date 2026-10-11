@@ -14,6 +14,7 @@ export const USAGE_LINES = {
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
   "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
+  "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json]",
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
@@ -140,6 +141,7 @@ Commands:
   worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata
   worktree adopt <path|branch>         Register an existing worktree in Superset
   worktree prune ...                   Prune old, safe worktrees (dry-run unless --yes)
+  stack create|show|pr|sync|merge ... Manage dependent branches and pull or merge requests
   terminal create ...                  Open a terminal in the current orchestrator
   terminal list [--worktree <path>]    List terminals created by megabrain
   terminal restart <selector> ...      Restart a terminal created by megabrain
