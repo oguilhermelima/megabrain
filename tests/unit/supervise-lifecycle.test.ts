@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { executeSupervisorWorker } from "../../src/cli/commands/supervise.js";
+import { createDispatch } from "../../src/adapters/state-db.js";
+import { failed } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { acquireSupervisorLease, hasOpenDispatches, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
 
@@ -37,4 +40,22 @@ describe("supervisor lifecycle decisions", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+describe("supervisor worker", () => {
+  test("exits when its state directory is deleted underneath it", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-gone-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SUPERVISE_INTERVAL_SECONDS: "1" };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const created = createDispatch(opened.value, { dispatchId: "d1", state: "running" });
+    if (created.kind !== "ok") throw new Error(created.error);
+    opened.value.close();
+    const process = { async run() { return failed("not used"); }, async startDetached() { return failed("not used"); }, invocationCount() { return 0; } };
+    const worker = executeSupervisorWorker(["1-00000000-0000-0000-0000-000000000000"], environment, process);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await rm(directory, { recursive: true, force: true });
+    const outcome = await Promise.race([worker.then(() => "exited"), new Promise<string>((resolve) => setTimeout(() => resolve("still running"), 4000))]);
+    expect(outcome).toBe("exited");
+  }, 10000);
 });

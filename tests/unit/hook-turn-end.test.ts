@@ -511,6 +511,34 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
+  const backgroundFrame = "✻ Brewed for 9m 47s · done 6:49 PM · 1 shell, 1 monitor still running\n\n❯ \n⏵⏵ bypass permissions on · 1 shell, 1 monitor · ← 3 agents\n";
+  const tmuxChildProcess = (frame: string) => fakeProcess((command, args) => {
+    if (command === "tmux" && args[0] === "display-message" && args.includes("#{session_name}")) return ok({ stdout: "work\n", stderr: "", exitCode: 0 });
+    if (command === "tmux" && args[0] === "has-session") return failed("no session");
+    if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: frame, stderr: "", exitCode: 0 });
+    return ok({ stdout: "", stderr: "", exitCode: 0 });
+  });
+  const tmuxChild = { childHost: "tmux", terminalId: "tmux:work:%3", parentSessionId: "coord-term", parentHost: "orca", runtime: "tmux", tmuxSession: "work", tmuxPane: "%3", agent: "claude", state: "running", processState: "running" };
+
+  test("records backgroundTasks instead of a stalled message when the pane shows running shells", async () => {
+    await withRoot("background-tasks", async (root) => {
+      await writeMeta(root, "d1", tmuxChild);
+      const result = await executeHookTurnEnd(["Container suite is running; I'm waiting on it."], environment(root, { TMUX: "t", TMUX_PANE: "%3" }), tmuxChildProcess(backgroundFrame), noStdin);
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+      expect(readMessages(root, "d1").some((message) => message.type === "stalled")).toBe(false);
+      expect((await readMeta(root, "d1")).backgroundTasks).toBe(2);
+    });
+  });
+
+  test("control: the same pane without background tasks still reports stalled", async () => {
+    await withRoot("background-control", async (root) => {
+      await writeMeta(root, "d1", tmuxChild);
+      await executeHookTurnEnd(["waiting"], environment(root, { TMUX: "t", TMUX_PANE: "%3" }), tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n"), noStdin);
+      expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
+      expect((await readMeta(root, "d1")).backgroundTasks ?? null).toBeNull();
+    });
+  });
+
   test("appends the fallback stalled text when the terminal is missing and no payload text is given", async () => {
     await withRoot("stalled-missing-terminal", async (root) => {
       await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { classifyRecordedError, recommendationFor } from "../../src/core/supervise.js";
+import { backgroundTasks, classifyRecordedError, recommendationFor } from "../../src/core/supervise.js";
 
 const now = Date.parse("2026-10-11T12:03:00.000Z");
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(resolve(import.meta.dir, "../fixtures/supervise", name), "utf8")) as Record<string, unknown>;
@@ -42,5 +42,22 @@ describe("supervision classification", () => {
     expect(recommendationFor({ cause: "process-exited", worktreePath: "/repo", dirtyFiles: ["src/a.ts"] })).toContain("src/a.ts");
     expect(recommendationFor({ cause: "pane-gone", worktreePath: "/repo", dirtyFiles: [] })).toContain("respawn");
     expect(recommendationFor({ cause: "unknown" })).toBeUndefined();
+  });
+});
+
+describe("background task detection", () => {
+  const turnLine = "✻ Brewed for 9m 47s · done 6:49 PM · 1 shell, 1 monitor still running";
+  const footer = "⏵⏵ bypass permissions on · 1 shell, 1 monitor · ← 3 agents";
+
+  test("counts shells and monitors from the turn line and from the footer", () => {
+    expect(backgroundTasks(`${turnLine}\n\n❯ \n${footer}`)).toBe(2);
+    expect(backgroundTasks(footer)).toBe(2);
+    expect(backgroundTasks("✻ Cooked for 1m 2s · 3 shells still running")).toBe(3);
+  });
+
+  test("returns undefined when no shell or monitor runs, and never counts agents", () => {
+    expect(backgroundTasks("✻ Brewed for 9m 47s\n❯ \n⏵⏵ bypass permissions on · ← 3 agents")).toBeUndefined();
+    expect(backgroundTasks("the shell script exited; run the monitor later")).toBeUndefined();
+    expect(backgroundTasks("")).toBeUndefined();
   });
 });
