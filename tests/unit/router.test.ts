@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -12,10 +12,19 @@ const process: ProcessAdapter = {
   invocationCount: () => 0,
 };
 
-const dependencies: RouterDependencies = {
-  environment: { MEGABRAIN_STATE_DIR: "/tmp/megabrain-router-test" },
-  processAdapter: process,
-};
+let stateRoot: string;
+
+beforeEach(async () => {
+  stateRoot = await mkdtemp(`${tmpdir()}/megabrain-router-test-`);
+});
+
+afterEach(async () => {
+  await rm(stateRoot, { recursive: true, force: true });
+});
+
+function dependencies(): RouterDependencies {
+  return { environment: { MEGABRAIN_STATE_DIR: stateRoot }, processAdapter: process };
+}
 
 const spawnArgs = [
   "orchestrate",
@@ -83,7 +92,7 @@ async function routeAcceptedSpawn(flag: "--base" | "--name", value: string) {
 
 describe("CLI router", () => {
   test("routes orchestrate spawn to executeSpawn", async () => {
-    const result = await route([...spawnArgs, "--help"], dependencies);
+    const result = await route([...spawnArgs, "--help"], dependencies());
 
     expect(result).toEqual({
       kind: "ok",
@@ -129,7 +138,7 @@ describe("CLI router", () => {
     ["--chain", "default"],
     ["--orchestrate", undefined],
   ] as const)("refuses unsupported spawn flag %s by name", async (flag, value) => {
-    const result = await route([...spawnArgs, flag, ...(value === undefined ? [] : [value])], dependencies);
+    const result = await route([...spawnArgs, flag, ...(value === undefined ? [] : [value])], dependencies());
 
     expect(result).toEqual({
       kind: "failed",
