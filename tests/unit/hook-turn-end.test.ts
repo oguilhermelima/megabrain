@@ -515,6 +515,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
   const tmuxChildProcess = (frame: string) => fakeProcess((command, args) => {
     if (command === "tmux" && args[0] === "display-message" && args.includes("#{session_name}")) return ok({ stdout: "work\n", stderr: "", exitCode: 0 });
     if (command === "tmux" && args[0] === "has-session") return failed("no session");
+    if (command === "tmux" && args[0] === "list-panes" && args[1] === "-a") return ok({ stdout: "%3|$1\n", stderr: "", exitCode: 0 });
     if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: frame, stderr: "", exitCode: 0 });
     return ok({ stdout: "", stderr: "", exitCode: 0 });
   });
