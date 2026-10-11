@@ -55,3 +55,34 @@ current_status="$(option status)"
 current_status="$(option status)"
 [ "$current_status" = off ] || fail "status must return off with one window (got: $current_status)"
 printf 'status: off with one window, on with two, off again with one\n'
+
+# Reverting a live server must remove the settings that the managed block applied, even when the
+# user's original config did not define those options.
+revert_home="$work/revert-home"
+revert_socket="mb-revert-theme-$$"
+revert_server=(tmux -L "$revert_socket")
+mkdir -p "$revert_home"
+: > "$revert_home/.tmux.conf"
+"${revert_server[@]}" -f /dev/null new-session -d -s revert
+"${revert_server[@]}" new-window -t revert
+revert_pane="$("${revert_server[@]}" display-message -p -t revert:0 '#{pane_id}')"
+"${revert_server[@]}" send-keys -t "$revert_pane" "HOME='$revert_home' MEGABRAIN_ROOT='$root' MEGABRAIN_STATE_DIR='$work/revert-state' '$root/.build/megabrain' tmux tune --yes" Enter
+for _ in {1..50}; do
+  output="$("${revert_server[@]}" capture-pane -p -t "$revert_pane" -S -10)"
+  [[ "$output" == *"tmux tuning applied"* ]] && break
+  sleep 0.1
+done
+[[ "$output" == *"tmux tuning applied"* ]] || fail "could not apply the theme to the isolated server: $output"
+revert_theme="$("${revert_server[@]}" show-window-options -g pane-border-status | awk '{print $2}')"
+[ "$revert_theme" = top ] || fail "isolated server did not get the theme (got: $revert_theme)"
+"${revert_server[@]}" send-keys -t "$revert_pane" "HOME='$revert_home' MEGABRAIN_ROOT='$root' MEGABRAIN_STATE_DIR='$work/revert-state' '$root/.build/megabrain' tmux tune --revert" Enter
+for _ in {1..50}; do
+  output="$("${revert_server[@]}" capture-pane -p -t "$revert_pane" -S -10)"
+  [[ "$output" == *"tmux tuning reverted"* ]] && break
+  sleep 0.1
+done
+[[ "$output" == *"tmux tuning reverted"* ]] || fail "could not revert the theme on the isolated server: $output"
+reverted_theme="$("${revert_server[@]}" show-window-options -g pane-border-status | awk '{print $2}')"
+[ "$reverted_theme" = off ] || fail "revert left the running server's pane border theme applied (got: $reverted_theme)"
+"${revert_server[@]}" kill-server >/dev/null
+printf 'revert: live server options return to defaults\n'
