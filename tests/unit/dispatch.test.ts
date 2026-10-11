@@ -51,7 +51,12 @@ describe("filterDispatchRecords", () => {
 describe("formatDispatchList", () => {
   test("matches the exact plain header and columns", () => {
     const value = decorateDispatchRecord(record({ dispatchId: "one" }), { id: "caller", host: "host" });
-    expect(formatDispatchList([value], false)).toBe("DISPATCH                               STATE                PROCESS            TERMINAL     OWNER      ORIGIN     WORKTREE\none                                    running              running            owned        unknown    live       /worktree\n");
+    const expected = [
+      `${"DISPATCH".padEnd(38)} ${"CHAT NAME".padEnd(28)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNER".padEnd(10)} ${"ORIGIN".padEnd(10)} WORKTREE`,
+      `${"one".padEnd(38)} ${"".padEnd(28)} ${"running".padEnd(20)} ${"running".padEnd(18)} ${"owned".padEnd(12)} ${"unknown".padEnd(10)} ${"live".padEnd(10)} /worktree`,
+      "",
+    ].join("\n");
+    expect(formatDispatchList([value], false)).toBe(expected);
   });
   test("serializes JSON with computed inventory fields", () => {
     const value = decorateDispatchRecord(record({ dispatchId: "one" }), { id: "caller", host: "host" });

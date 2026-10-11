@@ -78,6 +78,25 @@ describe("SQLite database", () => {
     });
   });
 
+  test("chat-name migration backfills extra.label first and branch second", async () => {
+    await withStateDirectory(async (directory) => {
+      const current = database(directory);
+      current.close();
+      const raw = rawDatabase(directory);
+      raw.exec("DELETE FROM schema_migrations WHERE version > 5");
+      raw.exec("ALTER TABLE dispatches DROP COLUMN chat_name");
+      raw.exec("INSERT INTO dispatches (id, state, branch, extra) VALUES ('label-row', 'running', 'branch-name', '{\"label\":\"chosen-label\"}')");
+      raw.exec("INSERT INTO dispatches (id, state, branch, extra) VALUES ('branch-row', 'running', 'branch-name', '{}')");
+      raw.close();
+
+      const migrated = database(directory);
+      try {
+        expect(migrated.db.query<{ chat_name: string }>("SELECT chat_name FROM dispatches WHERE id = 'label-row'").get()?.chat_name).toBe("chosen-label");
+        expect(migrated.db.query<{ chat_name: string }>("SELECT chat_name FROM dispatches WHERE id = 'branch-row'").get()?.chat_name).toBe("branch-name");
+      } finally { migrated.close(); }
+    });
+  });
+
   test("refuses a foreign application id and a schema newer than this binary", async () => {
     await withStateDirectory(async (directory) => {
       const raw = rawDatabase(directory);

@@ -1034,6 +1034,7 @@ describe("executeSpawn", () => {
       id: "tmux",
       sendText: async (_pane, text) => {
         events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        events.push(text);
         if (text.startsWith("[megabrain dispatch")) {
           appendReceived(root, dispatchId);
         }
@@ -1046,6 +1047,11 @@ describe("executeSpawn", () => {
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
+      if (agent === "claude") expect(events.some((event) => event.includes("--name 'feat/example'"))).toBe(true);
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["select-pane", "-t", "%9", "-T", `${agent} · feat/example`] });
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_agent", agent] });
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_name", "feat/example"] });
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_state", "working"] });
       expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
     } finally {
       registerTmux(original);

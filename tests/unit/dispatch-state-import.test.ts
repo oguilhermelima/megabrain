@@ -89,7 +89,7 @@ describe("dispatch state schema and JSON import", () => {
     expect(parity.totals.dispatches).toBe(2);
     expect(parity.totals.messages).toBe(3);
     expect(parity.totals.deliveries).toBe(2);
-    expect(parity.records.dispatches.find((record) => record.dispatchId === liveId)).toEqual(live);
+    expect(parity.records.dispatches.find((record) => record.dispatchId === liveId)).toEqual({ ...live, chatName: "feat/example" });
     expect(listMessages(db, liveId).map((message) => message.seq)).toEqual([1, 2, 3]);
     expect(listDeliveries(db, liveId).map((delivery) => delivery.id)).toEqual(["delivery-open", "delivery-acked"]);
 

@@ -171,6 +171,7 @@ describe("state database facade", () => {
     db.db.exec("ALTER TABLE outbox DROP COLUMN lease_holder");
     db.db.exec("ALTER TABLE dispatches DROP COLUMN agent_pid");
     db.db.exec("ALTER TABLE dispatches DROP COLUMN parent_agent_thread_id");
+    db.db.exec("ALTER TABLE dispatches DROP COLUMN chat_name");
     db.db.run("DELETE FROM schema_migrations WHERE version > 2");
     db.db.exec("DROP TABLE settings");
     db.db.exec("PRAGMA user_version = 2");
