@@ -141,6 +141,37 @@ The result always says which step it took and why the earlier ones were skipped,
 is recorded in the dispatch. When your first choice is exhausted you get the second one with an
 explanation, instead of a failure you have to diagnose.
 
+## Context policies
+
+`orchestrate spawn` can read the context meter from the agent's own session file and apply a policy
+at turn end:
+
+```sh
+megabrain orchestrate spawn --worktree ~/code/api --agent codex --prompt "finish the API" \
+  --compact-at 80 --context-ceiling 95 --loop --max-iterations 8
+```
+
+Thresholds are percentages of context used. `--compact-at` runs the agent's compact command and
+then re-sends the original task. `--context-ceiling` stops the dispatch and records the reading and
+reason. `--loop` re-sends the task after a turn ends without a `done` message; it requires either
+`--max-iterations` or a context ceiling. The hook checks `done` in the dispatch queue and reads the
+session file once per turn, so there is no background polling loop.
+
+Context comes from structured files, never from screen text. Codex: the latest token_count event in
+its rollout file (last turn tokens against the model context window). Claude: the latest assistant
+usage in its session transcript (input plus cache read plus cache creation tokens against a 200k
+window, or 1M for a 1M model variant). agy has no structured source, so it is always unknown and
+policies are refused for it. Anything not found in the file is
+unknown and never triggers a threshold. When a loop is bounded only by context and its
+meter is unknown, it stops because the budget cannot be checked. Each automatic stop, compaction,
+or continuation is stored with its reading in the dispatch metadata.
+
+Change an active dispatch policy with:
+
+```sh
+megabrain orchestrate policy <dispatch-id> --context-ceiling 90 --no-loop
+```
+
 Dispatch workers do not inherit the Playwright MCP by default. Use `--browser` on `orchestrate
 spawn` or `chain run` when the brief needs browser access; Codex receives a layered configuration
 override that disables or enables only `mcp_servers.playwright`. Interactive Codex keeps its
