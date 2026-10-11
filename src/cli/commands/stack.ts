@@ -299,12 +299,26 @@ async function show(process: ProcessAdapter, environment: Environment, repoOptio
   return ok(output({ provider: provider.value, nativeStacks: capability.available, ghStackInstalled, defaultBranch: data.value.defaultBranch, branches: entries }));
 }
 
+async function pushBranches(process: ProcessAdapter, data: StackData): Promise<Result<null>> {
+  for (const branch of data.branches) {
+    const pushed = await git(process, branch.path, ["push", "-u", "origin", `${branch.branch}:${branch.branch}`]);
+    if (pushed.kind === "ok") continue;
+    if (/rejected|non-fast-forward|fetch first/i.test(pushed.error)) {
+      return failed(`origin/${branch.branch} has diverged from the local branch; run megabrain stack sync --yes to rebase and push`);
+    }
+    return failed(`could not push ${branch.branch}: ${pushed.error}`);
+  }
+  return ok(null);
+}
+
 async function pr(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, draft: boolean, override?: Provider): Promise<Result<string>> {
   const data = await dataFor(process, environment, repoOption);
   if (data.kind !== "ok") return data;
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
+  const pushed = await pushBranches(process, data.value);
+  if (pushed.kind !== "ok") return pushed;
   if (provider.value === "gitlab") return gitLabPR(process, data.value, draft);
   const capability = await nativeStacks(process, data.value.repo, data.value.slug);
   if (capability.error !== undefined) return failed(capability.error);
