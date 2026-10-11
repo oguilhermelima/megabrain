@@ -73,7 +73,7 @@ MEGABRAIN_STATE_DIR="$work/state" REPO="$repo" ROOT="$work/shared" bun -e '
   const db = handle.value.db;
   for (const [name, branch] of [["eligible", "prune/eligible"], ["dirty", "prune/dirty"], ["unpushed", "prune/unpushed"], ["unmerged", "prune/unmerged"], ["open", "prune/open"]]) {
     const path = `${process.env.ROOT}/${name}`;
-    insertWorktree(db, { path, repo: process.env.REPO, branch, createdAt: "2020-01-01T00:00:00.000Z", createdBy: "test", purpose: `purpose ${name}`, origin: "created", finishedAt: null });
+    insertWorktree(db, { path, repo: process.env.REPO, repoName: "repo", branch, createdAt: "2020-01-01T00:00:00.000Z", createdBy: "test", purpose: `purpose ${name}`, origin: "created", finishedAt: null });
   }
   insertDispatch(db, { dispatchId: "open-worktree-dispatch", state: "running", worktreePath: `${process.env.ROOT}/open` });
   handle.value.close();
