@@ -37,7 +37,7 @@ function milliseconds(raw: string | undefined, fallback: number): number {
 // Seconds the spawn waits for the child's received message. Zero is the explicit opt-out: spawn
 // returns at once and leaves the dispatch awaiting its receipt.
 export function receiptTimeoutMs(environment: SpawnPromptEnvironment): number {
-  const seconds = Number(environment.MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS ?? "30");
+  const seconds = Number(environment.MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS ?? "300");
   return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 0;
 }
 
@@ -148,10 +148,16 @@ function unreceived(reason: UnreceivedReason, detail: string): PromptTransportOu
   return { kind: "prompt-transport", status: "unreceived", reason, failure };
 }
 
+// A started turn proves the prompt arrived; the child may simply still be queued behind its own
+// work, so this is recorded silently and never fails the dispatch.
+function turnWithoutReceipt(): PromptTransportOutcome {
+  return { kind: "prompt-transport", status: "turn-without-receipt", receiptMissing: "no-receipt-after-turn" };
+}
+
 // Delivers the first prompt to a tmux pane and settles its receipt. No receipt within the timeout:
 // a turn that never started means the prompt was probably lost, so it is sent once more; a turn
-// that did start means the child saw it, so it is never resent. Either way a dispatch that still
-// has no receipt is failed rather than left awaiting one. The pane is always kept.
+// that did start means the child saw it, so it is never resent and the dispatch keeps running. Only a
+// pane that never showed a turn fails the dispatch. The pane is always kept.
 export async function transportTmuxPrompt(target: PromptTarget, awaitReceipt: () => Promise<boolean>): Promise<PromptTransportOutcome> {
   const first = await deliverPrompt(target);
   if (first.kind !== "ok") return transportFailure(target, first.error);
@@ -159,13 +165,13 @@ export async function transportTmuxPrompt(target: PromptTarget, awaitReceipt: ()
   if (receiptTimeoutMs(target.environment) === 0) return { kind: "prompt-transport", status: "awaiting-receipt" };
   const waited = `${receiptTimeoutMs(target.environment) / 1000}s`;
   const kept = `pane ${target.pane} is kept for inspection`;
-  if (first.value || await paneShowsTurn(target)) return unreceived("no-receipt-after-turn", `the child started a turn but sent no megabrain received within ${waited}; not resent; ${kept}`);
+  if (first.value || await paneShowsTurn(target)) return turnWithoutReceipt();
 
   const cleared = await clearComposer(target);
   if (cleared.kind !== "ok") return transportFailure(target, cleared.error);
   const second = await deliverPrompt(target);
   if (second.kind !== "ok") return transportFailure(target, second.error);
   if (await awaitReceipt()) return { kind: "prompt-transport", status: "delivered" };
-  if (second.value || await paneShowsTurn(target)) return unreceived("no-receipt-after-turn", `the child started a turn after the prompt was sent again but sent no megabrain received within ${waited}; ${kept}`);
+  if (second.value || await paneShowsTurn(target)) return turnWithoutReceipt();
   return unreceived("prompt-not-received", `no turn started and no megabrain received within ${waited} after sending the prompt twice; ${kept}`);
 }

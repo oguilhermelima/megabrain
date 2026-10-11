@@ -54,7 +54,7 @@ describe("spawn prompt receipt (tmux)", () => {
       expect(run.pane.pastes).toHaveLength(1);
       expect(run.pane.submissions).toHaveLength(1);
       expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "running", terminalState: "owned", processState: "running", promptReceipt: "not-received", receiptMissing: { reason: "no-receipt-after-turn" } });
-      expect(readMeta(run.root, run.dispatchId).reason).toBeUndefined();
+      expect(readMeta(run.root, run.dispatchId).reason ?? null).toBeNull();
       // Silent: no parent notice of any kind, a started turn proves the prompt arrived.
       expect(dispatchMessages(run.root, run.dispatchId).filter((m) => m.from === "child")).toEqual([]);
       expect(killedPane(run.process.calls)).toBe(false);

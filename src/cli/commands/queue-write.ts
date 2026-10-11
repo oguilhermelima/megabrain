@@ -9,6 +9,7 @@ import { getTmux } from "../../hosts/tmux.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
+import { isReceiptFailure } from "../../core/spawn-plan.js";
 import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
 import { deliverCodexQueue, findCodexProcess } from "../../core/codex-delivery.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
@@ -355,7 +356,10 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
   }
   let refused: Result<void> | undefined;
   const updated = mutateDispatch(database.value, dispatch, (current) => {
-    const state = typeof current.state === "string" ? current.state : "running";
+    // A dispatch whose only problem is a receipt failure is still a live child: whatever it reports
+    // later is accepted, and the failure is recorded as recovered rather than left standing.
+    const recovering = current.state === "failed" && isReceiptFailure(current.reason);
+    const state = recovering ? "running" : typeof current.state === "string" ? current.state : "running";
     const processState = typeof current.processState === "string" ? current.processState : "running";
     const nextState = type === "ask" ? "waiting_for_reply" : type === "done" ? "done" : state === "spawning" ? "running" : state;
     const nextProcess = type === "done" ? "succeeded" : processState === "starting" || processState === "start-unproven" ? "running" : processState;
@@ -370,6 +374,8 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
       ...(type === "received" && agentPid === undefined && agentThreadId !== undefined ? { agentPid: null } : {}),
       ...(type === "received" && agent === "claude" && typeof environment.CLAUDE_CODE_SESSION_ID === "string" ? { agentSessionId: environment.CLAUDE_CODE_SESSION_ID } : {}),
       ...(type === "received" ? { promptReceipt: "received", promptState: "confirmed" } : {}),
+      ...(recovering ? { reason: null, recoveredFrom: current.reason } : {}),
+      ...(current.receiptMissing === undefined || current.receiptMissing === null ? {} : { receiptMissing: null }),
     };
   });
   if (refused !== undefined) return refused;
