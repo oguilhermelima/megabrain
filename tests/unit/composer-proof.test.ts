@@ -58,4 +58,22 @@ describe("composerHoldsText", () => {
     expect(composerHoldsText("codex", fixture("codex-idle"), longPrompt)).toBe(false);
     expect(composerHoldsText("codex", fixture("codex-idle"), shortPrompt)).toBe(false);
   });
+
+  test("accepts Codex's scrolled composer when it ends where the prompt ends", () => {
+    const prompt = fixture("prompt-900-bytes");
+    const frame = fixture("codex-clipped-inline-60x12");
+    expect(frame).toContain("↑");
+    // A 60x12 pane cannot show 900 bytes: Codex scrolls the composer and marks it with an arrow.
+    expect(composerHoldsText("codex", frame, prompt)).toBe(true);
+  });
+
+  test("rejects a scrolled Codex composer whose end is not the prompt's end", () => {
+    const frame = fixture("codex-clipped-inline-60x12");
+    expect(composerHoldsText("codex", frame, `${fixture("prompt-900-bytes")}\nand one more line`)).toBe(false);
+  });
+
+  test("rejects a short tail shown without the scroll arrow", () => {
+    const frame = fixture("codex-clipped-inline-60x12").replace("↑", " ");
+    expect(composerHoldsText("codex", frame, fixture("prompt-900-bytes"))).toBe(false);
+  });
 });
