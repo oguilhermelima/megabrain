@@ -492,6 +492,14 @@ For iOS and tvOS, use `megabrain native appium status` (then `start` if needed),
 `xcrun simctl openurl` to navigate: it only delivers a URL and can leave a system alert over the app.
 Check `native health`, the evaluated value, or a changed screenshot after navigation.
 
+Use `megabrain native capture` to capture settled screenshots for one or more native simulator
+routes and write a manifest with the capture metadata. Pass one route with `--screen` and `--route`,
+or provide a JSON array of `{ "name": "...", "route": "/..." }` entries with `--screens`.
+
+```sh
+megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]
+```
+
 `megabrain doctor skill-sync` checks the installed copies of this skill. During normal command
 invocations, megabrain compares and repairs registered agent copies when needed; `--help` and
 `doctor` skip that runtime repair. A per-target stamp makes an unchanged copy a no-op. Drift is
