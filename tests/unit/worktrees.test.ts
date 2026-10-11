@@ -15,7 +15,7 @@ describe("worktree registry", () => {
     try {
       expect(latestSchemaVersion).toBe(8);
       expect(opened.value.db.query<{ name: string }>("PRAGMA table_info(worktrees)").all().map(({ name }) => name)).toEqual([
-        "path", "repo", "branch", "created_at", "created_by", "purpose", "origin", "finished_at",
+        "path", "repo", "repo_name", "branch", "created_at", "created_by", "purpose", "origin", "finished_at",
       ]);
     } finally {
       opened.value.close();
@@ -29,7 +29,7 @@ describe("worktree registry", () => {
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      const record = { path: "/trees/feature", repo: "/repos/project", branch: "feature", createdAt: "2026-01-01T00:00:00.000Z", createdBy: "session-1", purpose: "Implement feature", origin: "created" as const };
+      const record = { path: "/trees/feature", repo: "/repos/project", repoName: "Project", branch: "feature", createdAt: "2026-01-01T00:00:00.000Z", createdBy: "session-1", purpose: "Implement feature", origin: "created" as const };
       insertWorktree(opened.value.db, record);
       expect(getWorktree(opened.value.db, record.path)).toMatchObject({ ...record, finishedAt: null });
       finishWorktree(opened.value.db, record.path, "2026-01-02T00:00:00.000Z");
