@@ -86,10 +86,10 @@ function display(value: unknown, fallback = ""): string {
 
 export function formatDispatchList(records: readonly DecoratedDispatch[], json: boolean): string {
   if (json) return `${JSON.stringify(records, null, 2)}\n`;
-  const lines = [`${"DISPATCH".padEnd(38)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNER".padEnd(10)} ${"ORIGIN".padEnd(10)} WORKTREE`];
+  const lines = [`${"DISPATCH".padEnd(38)} ${"CHAT NAME".padEnd(28)} ${"STATE".padEnd(20)} ${"PROCESS".padEnd(18)} ${"TERMINAL".padEnd(12)} ${"OWNER".padEnd(10)} ${"ORIGIN".padEnd(10)} WORKTREE`];
   for (const record of records) {
     const origin = record.archived === true ? "archived" : "live";
-    lines.push(`${display(record.dispatchId).padEnd(38)} ${display(record.state).padEnd(20)} ${display(record.processState, "unknown").padEnd(18)} ${display(record.terminalState, "unknown").padEnd(12)} ${display(record.owner, "unknown").padEnd(10)} ${origin.padEnd(10)} ${display(record.worktreePath)}`);
+    lines.push(`${display(record.dispatchId).padEnd(38)} ${display(record.chatName).padEnd(28)} ${display(record.state).padEnd(20)} ${display(record.processState, "unknown").padEnd(18)} ${display(record.terminalState, "unknown").padEnd(12)} ${display(record.owner, "unknown").padEnd(10)} ${origin.padEnd(10)} ${display(record.worktreePath)}`);
   }
   return `${lines.join("\n")}\n`;
 }

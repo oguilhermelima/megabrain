@@ -141,6 +141,26 @@ async function serverState(processAdapter: ProcessAdapter): Promise<Readonly<{ r
   return { running: true, rgb };
 }
 
+async function resetLiveTheme(processAdapter: ProcessAdapter): Promise<Result<void>> {
+  const commands: readonly (readonly string[])[] = [
+    ...["default-terminal", "terminal-features", "history-limit", "focus-events", "allow-passthrough", "set-clipboard", "escape-time", "mouse", "aggressive-resize", "set-titles", "set-titles-string", "status", "status-position", "status-style", "status-left", "status-right", "window-status-format", "window-status-current-format", "message-style", "mode-style", "copy-mode-match-style", "copy-mode-current-match-style"].map((option) => ["set-option", "-gu", option]),
+    ...["pane-border-lines", "pane-border-indicators", "pane-border-status", "pane-border-style", "pane-active-border-style", "pane-border-format"].map((option) => ["set-window-option", "-gu", option]),
+    ...["after-new-session", "after-new-window", "window-unlinked"].map((hook) => ["set-hook", "-gu", hook]),
+    ["unbind-key", "-T", "root", "|"],
+    ["unbind-key", "-T", "root", "-"],
+    ["bind-key", "-T", "root", "c", "new-window"],
+    ["bind-key", "-T", "root", "%", "split-window", "-h"],
+    ["bind-key", "-T", "root", "\"", "split-window", "-v"],
+    ["bind-key", "-T", "copy-mode", "y", "send-keys", "-X", "copy-selection-and-cancel"],
+    ["bind-key", "-T", "copy-mode-vi", "y", "send-keys", "-X", "copy-selection-and-cancel"],
+  ];
+  for (const args of commands) {
+    const result = await processAdapter.run("tmux", args);
+    if (result.kind !== "ok") return failed(`could not reset live tmux theme setting: ${args.join(" ")}`);
+  }
+  return ok(undefined);
+}
+
 async function apply(context: TmuxContext, config: FileReading, processAdapter: ProcessAdapter, verb: TmuxVerb): Promise<Result<Readonly<{ backup?: string; serverApplied: boolean }>>> {
   const repository = await readPath(context.repo);
   if (!repository.regular) return failed(`${verb === "tune" ? "tmux tuning" : "tmux wrapper"} file is missing: ${context.repo}`);
@@ -177,6 +197,8 @@ async function revert(context: TmuxContext, config: FileReading, verb: TmuxVerb,
     return failed(verb === "tune" ? `could not remove the legacy tuning block from ${context.config}` : `could not remove the megabrain tmux wrapper block from ${context.config}`);
   }
   if (verb === "tune" && (await serverState(processAdapter)).running) {
+    const reset = await resetLiveTheme(processAdapter);
+    if (reset.kind !== "ok") return reset;
     const sourceResult = await getTmux().sourceFile(context.config, processAdapter);
     if (sourceResult.kind !== "ok") return failed("could not restore tmux configuration on the running server");
   }

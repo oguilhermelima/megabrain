@@ -34,7 +34,7 @@ dispatch="change-tmux-retry"
 pane="$(tmux -L "$server" new-session -d -s change -P -F '#{pane_id}' "env MEGABRAIN_DISPATCH_ID=$dispatch MB_CHANGE_LOG=$work/submitted node $root/tests/fixtures/change-agent.mjs")"
 session_id="$(tmux -L "$server" display-message -p -t "$pane" '#{session_id}')"
 cat >"$work/meta.json" <<EOF
-{"dispatchId":"$dispatch","parentHost":"orca","parentSessionId":"parent","runtime":"tmux","tmuxSession":"change","tmuxSessionId":"$session_id","tmuxPane":"$pane","agent":"codex","agentId":"codex","state":"running","processState":"running","terminalState":"owned","createdAt":"2026-10-11T00:00:00.000Z","updatedAt":"2026-10-11T00:00:00.000Z"}
+{"dispatchId":"$dispatch","parentHost":"orca","parentSessionId":"parent","parentAgent":"codex","parentChatName":"megabrain/main","runtime":"tmux","tmuxSession":"change","tmuxSessionId":"$session_id","tmuxPane":"$pane","agent":"codex","agentId":"codex","state":"running","processState":"running","terminalState":"owned","createdAt":"2026-10-11T00:00:00.000Z","updatedAt":"2026-10-11T00:00:00.000Z"}
 EOF
 mkdir -p "$work/legacy/dispatches/$dispatch"
 cp "$work/meta.json" "$work/legacy/dispatches/$dispatch/meta.json"
@@ -53,6 +53,7 @@ assert_equal "$status" '0'
 assert_contains "$output" '"attempts": 2'
 assert_contains "$output" '"idleReached": true'
 assert_contains "$output" '"delivered": true'
-assert_contains "$(cat "$work/submitted")" '[megabrain] Change of direction from your coordinator. Stop the approach you were on and follow this instead:'
+assert_contains "$(cat "$work/submitted")" "[megabrain][codex][${dispatch: -8} - megabrain/main] - NEW DIRECTION"
+assert_contains "$(cat "$work/submitted")" 'Stop the approach you were on and follow this instead:'
 assert_contains "$(cat "$work/submitted")" "$direction"
 printf 'change retries Escape in a private tmux server, proves idle, and submits the full direction\n'

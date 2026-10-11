@@ -165,7 +165,8 @@ describe("executeSpawn", () => {
     const original = getTmux();
     registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
     try {
-      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+      const process = processFor([]);
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), process, {
         resolveWorktree: async (target, options) => {
           receivedTarget = target;
           receivedRepo = options.repo;
@@ -178,6 +179,7 @@ describe("executeSpawn", () => {
       expect(receivedRepo).toBe("/repo");
       expect(receivedBranch).toBe("feat/primary");
       expect(readMeta(root, dispatchId)).toMatchObject({ worktreePath: "/work/tree", branch: "feat/example" });
+      expect(process.calls.some((call) => call.command === "tmux" && call.args[0] === "set-option" && call.args.includes("%0"))).toBe(false);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -598,6 +600,7 @@ describe("executeSpawn", () => {
       const dispatchId = "dispatch-tmux-parent";
       const process = processFor([], (command, args) => {
         if (command === "tmux" && args[0] === "display-message") return ok({ stdout: "caller-session\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "list-panes" && args.includes("-a")) return ok({ stdout: "%0|$1\n%13|$2\n%14|$2\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "split-window") return ok({ stdout: "%13\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%14\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
@@ -606,7 +609,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
+        const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", AI_AGENT: "codex", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result).toMatchObject({ kind: "ok" });
         const meta = readMeta(root, dispatchId);
@@ -620,6 +623,9 @@ describe("executeSpawn", () => {
         expect(meta.parentSessionId).toBe("caller-session:%0");
         expect(meta.parentHost).toBe("tmux");
         expect(meta.terminalId).not.toBe(meta.parentSessionId);
+        expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%0", "@megabrain_agent", "codex"] });
+        expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%0", "@megabrain_name", "megabrain/main"] });
+        expect(process.calls.some((call) => call.command === "tmux" && call.args.includes("%0") && call.args.includes("@megabrain_state"))).toBe(false);
       } finally {
         registerTmux(original);
         await rm(root, { recursive: true, force: true });
@@ -1034,6 +1040,7 @@ describe("executeSpawn", () => {
       id: "tmux",
       sendText: async (_pane, text) => {
         events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        events.push(text);
         if (text.startsWith("[megabrain dispatch")) {
           appendReceived(root, dispatchId);
         }
@@ -1046,6 +1053,11 @@ describe("executeSpawn", () => {
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
+      if (agent === "claude") expect(events.some((event) => event.includes("--name 'feat/example'"))).toBe(true);
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["select-pane", "-t", "%9", "-T", `${agent} · feat/example`] });
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_agent", agent] });
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_name", "feat/example"] });
+      expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_state", "working"] });
       expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
     } finally {
       registerTmux(original);

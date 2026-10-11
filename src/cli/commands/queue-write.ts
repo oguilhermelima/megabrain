@@ -6,6 +6,8 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { formatDispatchMessage } from "../../core/chat-message-format.js";
+import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
 import { deliverCodexQueue, findCodexProcess } from "../../core/codex-delivery.js";
@@ -296,16 +298,19 @@ export async function appendMessage(root: string, dispatch: string, from: string
           outbox: {
             id: outboxId, dispatchId: dispatch, targetKind: "parent-pointer",
             target: typeof metaRecord.parentSessionId === "string" ? metaRecord.parentSessionId : dispatch,
-            payload: { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: (previous.at(-1)?.seq ?? 0) + 1, pointer, fullMessage: `[megabrain] ${type}: ${text}` },
+            payload: { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: (previous.at(-1)?.seq ?? 0) + 1, pointer, fullMessage: formatDispatchMessage({ dispatchId: dispatch, chatName: String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), agent: String(metaRecord.agent ?? "unknown"), type, text, direction: "parent-bound" }) },
           },
         }),
       };
     },
   });
   if (appended.kind !== "ok") return appended;
+  if (from === "child" && type === "stalled" && metaRecord.runtime === "tmux" && typeof metaRecord.tmuxPane === "string") {
+    await setTmuxChatPane(metaRecord.tmuxPane, String(metaRecord.agent ?? "unknown"), String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), "stalled", processAdapter);
+  }
   if (outboxId !== undefined) {
     try {
-      const payload = { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: appended.value.seq, pointer, fullMessage: `[megabrain] ${type}: ${text}` };
+      const payload = { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: appended.value.seq, pointer, fullMessage: formatDispatchMessage({ dispatchId: dispatch, chatName: String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), agent: String(metaRecord.agent ?? "unknown"), type, text, direction: "parent-bound" }) };
       let notification: NotificationResult;
       if (!(await parentContextMatches(root, metaRecord, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch", transport: "failed" };
       else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter", transport: "failed" };
@@ -341,7 +346,7 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
   const agentThreadId = type === "received" && typeof environment.CODEX_THREAD_ID === "string" ? environment.CODEX_THREAD_ID : undefined;
   const current = getDispatch(database.value, dispatch);
   const agent = current.kind === "ok" ? current.value?.agent : undefined;
-  const scope = current.kind === "ok" && current.value !== undefined ? current.value : {};
+  const scope: Record<string, unknown> = current.kind === "ok" && current.value !== undefined ? current.value : {};
   const codexProcess = agentThreadId === undefined ? undefined : await findCodexProcess(agentThreadId, scope, processAdapter);
   let agentPid = codexProcess !== undefined && "pid" in codexProcess ? codexProcess.pid : undefined;
   if (agentPid === undefined && type === "received" && agent === "claude" && tmuxPane !== undefined) {
@@ -368,6 +373,10 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
   });
   if (refused !== undefined) return refused;
   if (updated.kind !== "ok") return updated;
+  if (scope.runtime === "tmux" && typeof scope.tmuxPane === "string") {
+    const chatState = type === "ask" ? "waiting_for_reply" : type === "done" ? "done" : type === "stalled" ? "stalled" : "running";
+    await setTmuxChatPane(scope.tmuxPane, String(agent ?? "unknown"), String(scope.chatName ?? scope.branch ?? dispatch), chatState, processAdapter);
+  }
   return ok(undefined);
 }
 

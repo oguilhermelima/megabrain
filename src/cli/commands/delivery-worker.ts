@@ -180,7 +180,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     outcome = result;
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
-  setDeliveryTransport(database.value, dispatch, sequence, transport);
+  setDeliveryTransport(database.value, dispatch, sequence, transport, payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
     ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason: `deferred delivery ${outcome}` })
     : finishOutbox(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", `deferred delivery ${outcome}`);

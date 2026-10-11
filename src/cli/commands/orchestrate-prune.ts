@@ -11,6 +11,7 @@ import { hostCloseReason, isHostTerminalAbsent } from "../../core/orchestrate-cl
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, listDispatches, listMessages, mutateDispatch, archiveDispatch, deleteDispatch, transcriptPath } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
+import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 type RecordValue = Record<string, unknown>;
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -65,6 +66,9 @@ async function reconcileEntry(handle: DatabaseHandle, entry: Entry, process: Pro
   if (decision.outcome === "unchanged") return entry.meta;
   const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
   const updated = mutateDispatch(handle, entry.id, () => next);
+  if (updated.kind === "ok" && next.state !== entry.meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
+    await setTmuxChatPane(next.tmuxPane, text(next.agent) || "unknown", text(next.chatName) || text(next.branch) || entry.id, text(next.state) || "idle", process);
+  }
   return updated.kind === "ok" ? updated.value : entry.meta;
 }
 

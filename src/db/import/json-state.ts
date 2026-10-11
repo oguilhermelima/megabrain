@@ -39,6 +39,13 @@ export type AtomicImportReport = Readonly<{
 const emptyCounts = (): Counts => ({ dispatches: 0, messages: 0, deliveries: 0, terminals: 0, installState: 0, models: 0, tmuxSessions: 0 });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+function withChatName(meta: Record<string, unknown>): Record<string, unknown> {
+  const chatName = typeof meta.chatName === "string" && meta.chatName !== "" ? meta.chatName
+    : typeof meta.label === "string" && meta.label !== "" ? meta.label
+      : typeof meta.branch === "string" && meta.branch !== "" ? meta.branch : String(meta.dispatchId ?? "");
+  return { ...meta, chatName };
+}
+
 async function files(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
   return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => join(directory, entry.name)).sort();
@@ -288,7 +295,7 @@ export function applyJsonStateImport(db: DatabaseAdapter, parsed: ParsedJsonStat
     const expectedDeliveries = (deliveriesByDispatch.get(id) ?? []).map(({ value }) => legacyDelivery(value, id)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const actualMessages = listMessages(db, id);
     const actualDeliveries = listDeliveries(db, id).map((value) => ({ ...value }));
-    const same = canonical(toMeta(row)) === canonical(record.value)
+    const same = canonical(toMeta(row)) === canonical(withChatName(record.value))
       && (row.archived_at !== null) === (record.archivedAt !== null)
       && canonical(expectedMessages) === canonical(actualMessages)
       && canonical(expectedDeliveries) === canonical(actualDeliveries);
@@ -429,7 +436,7 @@ export function readParsedJsonStateParity(
   const outbox = listOutbox(db);
   const ignoredLeaseKeys = new Set(options.ignoredLeaseKeys ?? []);
   const leases = listLeases(db).filter((lease) => !ignoredLeaseKeys.has(lease.key));
-  const sourceDispatches = source.dispatches.map(({ value }) => value);
+  const sourceDispatches = source.dispatches.map(({ value }) => withChatName(value));
   const sourceDispatchById = new Map(sourceDispatches.map((value) => [String(value.dispatchId), value]));
   const actualDispatchById = new Map(records.dispatches.map((value) => [value.dispatchId, value]));
   idSets([...sourceDispatchById.keys()], [...actualDispatchById.keys()], "dispatch", mismatches);

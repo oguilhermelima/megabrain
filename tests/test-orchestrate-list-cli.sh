@@ -145,10 +145,10 @@ printf '%s' "$all_owners" | jq -e '([.[] | select(.owner == "mine")] | length) =
 all_owners_text="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
   MEGABRAIN_STATE_DIR="$ownership_state" MEGABRAIN_SESSION_HOST=claude CLAUDE_CODE_SESSION_ID=session-a "$root/.build/megabrain" orchestrate list --all)"
 printf '%s\n' "$all_owners_text" | awk '
-  NR == 1 { if ($0 !~ /OWNER/) exit 1; next }
-  $1 == "session-a" { if ($5 != "mine") exit 1; seen_a = 1 }
-  $1 == "session-b" { if ($5 != "foreign") exit 1; seen_b = 1 }
-  $1 == "legacy" { if ($5 != "unknown") exit 1; seen_legacy = 1 }
+  NR == 1 { owner_pos = index($0, "OWNER"); if (!owner_pos) exit 1; next }
+  $1 == "session-a" { if (substr($0, owner_pos) !~ /^mine([[:space:]]|$)/) exit 1; seen_a = 1 }
+  $1 == "session-b" { if (substr($0, owner_pos) !~ /^foreign([[:space:]]|$)/) exit 1; seen_b = 1 }
+  $1 == "legacy" { if (substr($0, owner_pos) !~ /^unknown([[:space:]]|$)/) exit 1; seen_legacy = 1 }
   END { if (!seen_a || !seen_b || !seen_legacy) exit 1 }
 ' || fail "text output did not expose owner classifications by dispatch: $all_owners_text"
 printf 'dispatch lists show mine, foreign, and unknown ownership by agent session\n'

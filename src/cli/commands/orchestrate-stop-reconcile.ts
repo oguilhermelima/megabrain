@@ -13,6 +13,7 @@ import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatch } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
+import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -108,6 +109,9 @@ async function reconcileOne(database: DatabaseHandle, dispatch: string, process:
   if (decision.outcome !== "unchanged") {
     const updated = mutateDispatch(database, dispatch, () => next);
     if (updated.kind !== "ok") return updated;
+    if (next.state !== meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
+      await setTmuxChatPane(next.tmuxPane, value(next.agent) || "unknown", value(next.chatName) || value(next.branch) || dispatch, value(next.state) || "idle", process);
+    }
   }
   return ok({ ...next, reconcileResult: decision.outcome });
 }

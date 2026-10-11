@@ -312,7 +312,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       if (db.kind !== "ok") throw new Error(db.error);
       const reply = readMessages(root, "d1").find((message) => message.type === "reply");
       if (reply === undefined) throw new Error("reply missing");
-      const transported = setDeliveryTransport(db.value, "d1", Number(reply.seq), "typed");
+      const transported = setDeliveryTransport(db.value, "d1", Number(reply.seq), "typed", "full-direction");
       if (transported.kind !== "ok") throw new Error(transported.error);
       for (const type of ["withdrawal", "interrupt", "interrupt-result", "idle-result", "composer-clear", "delivery-result", "delivery-confirmation"]) {
         await appendMessage(root, "d1", "parent", type, "change bookkeeping", "coordinator", env, process);
@@ -377,13 +377,13 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
-  test("acknowledges a reply delivered in full by queue or typing when the child reports", async () => {
+  test("keeps queued and typed summaries unread until check shows them", async () => {
     for (const transport of ["queue", "typed"]) {
-      await withRoot(`delivered-${transport}`, async (root) => {
+      await withRoot(`summary-${transport}`, async (root) => {
         await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
         const env = childEnv(root);
         const fp = fakeProcess();
-        await appendMessage(root, "d1", "parent", "reply", `delivered by ${transport}`, "coord-term", env, fp);
+        await appendMessage(root, "d1", "parent", "reply", `summary delivered by ${transport}`, "coord-term", env, fp);
         const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
         if (db.kind !== "ok") throw new Error(db.error);
         const reply = readMessages(root, "d1").find((message) => message.type === "reply");
@@ -391,12 +391,44 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
         const marked = setDeliveryTransport(db.value, "d1", Number(reply.seq), transport);
         if (marked.kind !== "ok") throw new Error(marked.error);
 
-        await appendMessage(root, "d1", "child", "ask", "need clarification", "child-term", env, fp);
+        await appendMessage(root, "d1", "child", "done", "finished", "child-term", env, fp);
         const deliveries = listDeliveries(db.value, "d1");
         expect(deliveries).toMatchObject({ kind: "ok" });
-        if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "acknowledged" });
+        if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "outstanding" });
+
+        const firstHook = await executeHookTurnEnd([], env, fp, noStdin);
+        const secondHook = await executeHookTurnEnd([], env, fp, noStdin);
+        expect(firstHook).toEqual({ kind: "ok", value: '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+        expect(secondHook).toEqual({ kind: "ok", value: "{}\n" });
+
+        const check = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
+        expect(JSON.parse(check.kind === "ok" ? check.value : "{}")).toMatchObject({ text: `summary delivered by ${transport}` });
+        await appendMessage(root, "d1", "child", "ask", "need clarification", "child-term", env, fp);
+        const afterCheck = listDeliveries(db.value, "d1");
+        expect(afterCheck).toMatchObject({ kind: "ok" });
+        if (afterCheck.kind === "ok") expect(afterCheck.value[0]).toMatchObject({ status: "acknowledged" });
       });
     }
+  });
+
+  test("acknowledges a full typed change direction when the child reports", async () => {
+    await withRoot("full-change-direction", async (root) => {
+      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+      const env = childEnv(root);
+      const fp = fakeProcess();
+      await appendMessage(root, "d1", "parent", "reply", "the full direction", "coord-term", env, fp);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const change = readMessages(root, "d1").find((message) => message.type === "reply");
+      if (change === undefined) throw new Error("change missing");
+      const marked = setDeliveryTransport(db.value, "d1", Number(change.seq), "typed", "full-direction");
+      if (marked.kind !== "ok") throw new Error(marked.error);
+
+      await appendMessage(root, "d1", "child", "done", "completed direction", "child-term", env, fp);
+      const deliveries = listDeliveries(db.value, "d1");
+      expect(deliveries).toMatchObject({ kind: "ok" });
+      if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "acknowledged" });
+    });
   });
 
   test("cursor gets {\"continue\":true} instead of a block decision when a reply is available", async () => {
