@@ -38,7 +38,11 @@ const fourthHost: HostProvider = {
 describe("host providers", () => {
   test("orca send keeps a multi-line message in one terminal input", () => {
     const call = getHost("orca")?.send({ workspaceId: null, terminalId: "terminal-child", text: "first line\nsecond line", enter: true });
-    expect(call).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "send", "--terminal", "terminal-child", "--text", "first line | second line", "--enter", "--json"] } });
+    expect(call).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "send", "--terminal", "terminal-child", "--text", "first line — second line", "--enter", "--json"] } });
+    if (call.kind === "ok") {
+      expect(call.value.args.join(" ")).not.toContain("|");
+      expect(call.value.args[call.value.args.indexOf("--text") + 1]).not.toContain("\n");
+    }
   });
 
   test("orca readiness waits for a stable idle composer from the rendered screen", async () => {

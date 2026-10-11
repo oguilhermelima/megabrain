@@ -6,6 +6,7 @@ let interrupts = 0;
 let draft = "";
 let submitted = false;
 const agent = process.env.MB_AGENT ?? "codex";
+const decoder = new TextDecoder("utf-8");
 
 function render() {
   process.stdout.write("\u001b[2J\u001b[H");
@@ -30,22 +31,23 @@ process.stdin.resume();
 render();
 
 process.stdin.on("data", (bytes) => {
-  for (const byte of bytes) {
-    if (byte === 0x1b) {
+  for (const character of decoder.decode(bytes, { stream: true })) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint === 0x1b) {
       interrupts += 1;
       render();
-    } else if (byte === 0x15) {
+    } else if (codePoint === 0x15) {
       draft = "";
       render();
-    } else if (byte === 0x09 || (agent === "claude" && byte === 0x0d)) {
+    } else if (codePoint === 0x09 || (agent === "claude" && codePoint === 0x0d)) {
       submitted = true;
       appendFileSync(process.env.MB_CHANGE_LOG ?? "/tmp/megabrain-change-agent.log", `${draft}\n`);
       render();
-    } else if (byte === 0x7f || byte === 0x08) {
+    } else if (codePoint === 0x7f || codePoint === 0x08) {
       draft = draft.slice(0, -1);
       render();
-    } else if (byte >= 0x20) {
-      draft += Buffer.from([byte]).toString("utf8");
+    } else if (codePoint >= 0x20) {
+      draft += character;
       render();
     }
   }
