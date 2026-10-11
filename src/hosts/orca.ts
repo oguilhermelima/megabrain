@@ -1,4 +1,5 @@
 import type { ProcessAdapter } from "../adapters/proc.js";
+import { formatOneLine } from "../core/chat-message-format.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { hasLivenessClassifier, waitForStableIdle } from "../core/liveness.js";
 import { unavailable, type HostCommand, type HostProvider, type SendText } from "./types.js";
@@ -21,7 +22,7 @@ function terminalTail(stdout: string): Result<string> {
 }
 
 function sendText({ terminalId, text, interrupt, enter = true }: SendText): Result<HostCommand> {
-  const singleInput = text?.replace(/\r\n?/g, "\n").replace(/\n/g, " — ");
+  const singleInput = text === undefined ? undefined : formatOneLine(text);
   return interrupt === true
     ? ok({ command: "orca", args: ["terminal", "send", "--terminal", terminalId, "--interrupt", "--json"] })
     : singleInput === undefined

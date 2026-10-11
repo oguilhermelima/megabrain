@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
+import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -184,6 +184,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let lastDecision: string | undefined;
   const staticMs = Number(environment.MEGABRAIN_GHOST_STATIC_MS);
   const ghost = meta.runtime === "tmux" ? undefined : ghostTracker(Number.isFinite(staticMs) && staticMs > 0 ? staticMs : GHOST_STATIC_MS);
+  const decisionLog = createDecisionLog(root);
   const adoptClaudePid = (status: ClaudeStatus | undefined): void => {
     if (status?.pid === undefined || status.pid === Number(meta.agentPid)) return;
     const field = targetKind === "parent-pointer" ? "parentAgentPid" : "agentPid";
@@ -241,7 +242,6 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       attempt: async (details) => {
         lastDecision = details.decision;
         const entry = {
-          timestamp: new Date().toISOString(),
           dispatchId: dispatch,
           outboxId,
           proofSource,
@@ -252,7 +252,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           ...(proofReason === undefined ? {} : { proofReason }),
           ...(details.decision === "send" && ghost?.assumed() === true ? { reason: "ghost-assumed-static" } : {}),
         };
-        await appendFile(resolve(root, "delivery-decisions.jsonl"), `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
+        await decisionLog.record(entry);
       },
       record: async (result) => { outcome = result; },
       });
