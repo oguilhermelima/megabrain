@@ -9,6 +9,7 @@ import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { findCodexProcess } from "../../core/codex-delivery.js";
+import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
 
 type AdoptionLiveness = "alive" | "not-alive" | "unknown";
 type Meta = Record<string, unknown>;
@@ -86,13 +87,20 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
 
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const initial = getDispatch(database.value, parsed.value.dispatchId);
+  const dispatches = listDispatches(database.value, { includeArchived: true });
+  if (dispatches.kind !== "ok") return dispatches;
+  const resolved = resolveDispatchIdSuffix(parsed.value.dispatchId, dispatches.value.map((record) => record.dispatchId));
+  if (resolved.kind === "ambiguous") return failed(`dispatch id suffix ${parsed.value.dispatchId} is ambiguous: ${resolved.dispatchIds.join(", ")}`);
+  if (resolved.kind === "too-short") return failed("dispatch id must contain at least 8 characters", 2);
+  if (resolved.kind === "unknown") return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+  const dispatchId = resolved.dispatchId;
+  const initial = getDispatch(database.value, dispatchId);
   if (initial.kind !== "ok") return initial;
-  if (initial.value === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+  if (initial.value === undefined) return failed(`dispatch not found: ${dispatchId}`);
   const initialLive = listDispatches(database.value);
   if (initialLive.kind !== "ok") return initialLive;
-  if (!initialLive.value.some((record) => record.dispatchId === parsed.value.dispatchId)) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to adopt it`);
-  const lockPath = `dispatches/.${parsed.value.dispatchId}.adopt.lock`;
+  if (!initialLive.value.some((record) => record.dispatchId === dispatchId)) return failed(`dispatch ${dispatchId} is archived; refusing to adopt it`);
+  const lockPath = `dispatches/.${dispatchId}.adopt.lock`;
   const holder = `${process.pid}:${randomUUID()}`;
   const deadline = Date.now() + Math.max(0, Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15")) * 1000;
   let locked = false;
@@ -105,22 +113,22 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
     await delay(20);
   }
   try {
-    const resolved = getDispatch(database.value, parsed.value.dispatchId);
-    if (resolved.kind !== "ok") return resolved;
-    if (resolved.value === undefined) return failed(`dispatch not found: ${parsed.value.dispatchId}`);
+    const refreshed = getDispatch(database.value, dispatchId);
+    if (refreshed.kind !== "ok") return refreshed;
+    if (refreshed.value === undefined) return failed(`dispatch not found: ${dispatchId}`);
     const live = listDispatches(database.value);
     if (live.kind !== "ok") return live;
-    if (!live.value.some((record) => record.dispatchId === parsed.value.dispatchId)) return failed(`dispatch ${parsed.value.dispatchId} is archived; refusing to adopt it`);
-    const meta = resolved.value as Meta;
+    if (!live.value.some((record) => record.dispatchId === dispatchId)) return failed(`dispatch ${dispatchId} is archived; refusing to adopt it`);
+    const meta = refreshed.value as Meta;
     const previousOwner = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
     const ownerHost = typeof meta.parentHost === "string" ? meta.parentHost : "";
-    if (previousOwner === current.id && ownerHost === current.host) return ok(output(parsed.value.dispatchId, false, current.id, parsed.value.json));
+    if (previousOwner === current.id && ownerHost === current.host) return ok(output(dispatchId, false, current.id, parsed.value.json));
 
     const knownAgentOwner = isAgentSessionId(previousOwner);
     if (knownAgentOwner && !parsed.value.force) {
       const liveness = await ownerLiveness(previousOwner, meta, environment, processAdapter);
-      if (liveness === "alive") return failed(`dispatch ${parsed.value.dispatchId} has a live owner ${previousOwner}; use --force to take it over`);
-      if (liveness === "unknown") return failed(`dispatch ${parsed.value.dispatchId} owner liveness is unknown for ${previousOwner}; refusing adoption without --force`);
+      if (liveness === "alive") return failed(`dispatch ${dispatchId} has a live owner ${previousOwner}; use --force to take it over`);
+      if (liveness === "unknown") return failed(`dispatch ${dispatchId} owner liveness is unknown for ${previousOwner}; refusing adoption without --force`);
     }
 
     const now = new Date().toISOString();
@@ -132,9 +140,9 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
       adoptions: [...adoptions, { previousOwner, adoptedBy: current.id, adoptedAt: now }],
       updatedAt: now,
     };
-    const updated = mutateDispatch(database.value, parsed.value.dispatchId, () => next);
+    const updated = mutateDispatch(database.value, dispatchId, () => next);
     if (updated.kind !== "ok") return failed(`could not record dispatch adoption: ${updated.error}`);
-    return ok(output(parsed.value.dispatchId, true, current.id, parsed.value.json));
+    return ok(output(dispatchId, true, current.id, parsed.value.json));
   } finally {
     releaseLease(database.value, lockPath, holder);
   }

@@ -175,7 +175,7 @@ or continuation is stored with its reading in the dispatch metadata.
 Change an active dispatch policy with:
 
 ```sh
-megabrain orchestrate policy <dispatch-id> --context-ceiling 90% --no-loop
+megabrain orchestrate policy <dispatch-id-or-suffix> --context-ceiling 90% --no-loop
 ```
 
 Dispatch workers do not inherit the Playwright MCP by default. Use `--browser` on `orchestrate

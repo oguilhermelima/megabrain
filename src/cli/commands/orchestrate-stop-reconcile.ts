@@ -14,6 +14,7 @@ import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatc
 import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
+import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -165,7 +166,17 @@ export async function executeOrchestrateReconcile(args: readonly string[], env: 
   for (const arg of args) { if (arg === "--all") all = true; else if (arg === "--json") json = true; else if (dispatch === "") dispatch = arg; else return failed(`unknown reconcile option: ${arg}`, 2); }
   const database = stateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const live = listDispatches(database.value); if (live.kind !== "ok") return live;
-  const ids = all ? live.value.map((record) => record.dispatchId) : [dispatch]; if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
+  if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
+  let ids: string[];
+  if (all) ids = live.value.map((record) => record.dispatchId);
+  else {
+    const allDispatches = listDispatches(database.value, { includeArchived: true }); if (allDispatches.kind !== "ok") return allDispatches;
+    const resolved = resolveDispatchIdSuffix(dispatch, allDispatches.value.map((record) => record.dispatchId));
+    if (resolved.kind === "ambiguous") return failed(`dispatch id suffix ${dispatch} is ambiguous: ${resolved.dispatchIds.join(", ")}`);
+    if (resolved.kind === "too-short") return failed("dispatch id must contain at least 8 characters", 2);
+    if (resolved.kind === "unknown") return failed(`dispatch not found: ${dispatch}`);
+    ids = [resolved.dispatchId];
+  }
   const entries: RecordValue[] = [];
   for (const id of ids) {
     const stored = getDispatch(database.value, id); if (stored.kind !== "ok") return stored;
