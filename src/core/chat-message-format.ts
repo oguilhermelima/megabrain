@@ -12,32 +12,47 @@ export type DispatchMessageInput = Readonly<{
   fullTextCommand?: string;
 }>;
 
-const labels: Readonly<Record<string, string>> = {
-  done: "FINISHED", ask: "QUESTION", stalled: "STUCK", reply: "REPLY", change: "NEW DIRECTION",
+const labels: Readonly<Record<string, Readonly<{ icon: string; words: string }>>> = {
+  done: { icon: "✅", words: "finished" },
+  ask: { icon: "❓", words: "has a question" },
+  stalled: { icon: "⚠️", words: "is stuck" },
+  reply: { icon: "💬", words: "reply" },
+  change: { icon: "🔀", words: "new direction" },
 };
 
 export function dispatchMessageHeader(input: DispatchMessageInput): string {
   const agent = input.direction === "child-bound" ? input.parentAgent ?? "megabrain" : input.agent;
   const chatName = input.direction === "child-bound" ? input.parentChatName ?? "megabrain" : input.chatName;
-  const label = labels[input.type] ?? input.type.toUpperCase();
-  return `[megabrain][${agent}][${input.dispatchId.slice(-8)} - ${chatName}] - ${label}`;
+  const label = labels[input.type] ?? { icon: "💬", words: input.type };
+  return `${label.icon} ${agent} · ${chatName} ${label.words}`;
 }
 
-function sentences(text: string): string[] {
-  return text.trim().split(/(?<=[.!?])\s+/u).filter(Boolean);
+function removeBulletMarkers(text: string): string {
+  return text.replace(/^\s*(?:(?:[-*•])|(?:\d+[.)]))\s+/u, "").trim();
+}
+
+function firstSentence(text: string): string {
+  const normalized = text.trim();
+  const boundary = /[.!?](?=\s|$)/u.exec(normalized);
+  return boundary === null ? normalized : normalized.slice(0, boundary.index + 1).trim();
+}
+
+function summary(text: string): string {
+  const firstLine = text.trim().split(/\r?\n/u, 1)[0] ?? "";
+  const firstSentenceText = firstSentence(text);
+  const selected = firstLine.length < firstSentenceText.length ? firstLine : firstSentenceText;
+  const cleaned = removeBulletMarkers(selected);
+  if (cleaned.length <= 140) return cleaned;
+  const prefix = cleaned.slice(0, 139);
+  const boundary = prefix.lastIndexOf(" ");
+  return `${(boundary > 0 ? prefix.slice(0, boundary) : prefix).trimEnd()}…`;
 }
 
 export function formatDispatchMessage(input: DispatchMessageInput): string {
-  const rawLines = input.text.split(/\r?\n/);
-  const hasBullets = rawLines.some((line) => /^\s*[-*]\s/u.test(line));
-  const sourceLines = hasBullets ? rawLines.filter((line) => /^\s*[-*]\s/u.test(line)).map((line) => line.trim()) : sentences(input.text).map((sentence) => `- ${sentence}`);
-  const selected = sourceLines.slice(0, 4);
-  const body = selected.map((line) => {
-    if (line.length <= 120) return line;
-    return `${line.slice(0, 119)}…`;
-  });
-  const pointer = input.direction === "child-bound" ? "Full text: megabrain check" : `Full report: megabrain orchestrate watch ${input.dispatchId}`;
-  return [dispatchMessageHeader(input), ...body, pointer].join("\n");
+  const pointer = input.direction === "child-bound"
+    ? "→ full text: megabrain check"
+    : `→ details: megabrain orchestrate watch ${input.dispatchId.slice(-8)}`;
+  return [dispatchMessageHeader(input), summary(input.text), pointer].join("\n");
 }
 
 export function formatFullDirection(input: DispatchMessageInput, text: string): string {

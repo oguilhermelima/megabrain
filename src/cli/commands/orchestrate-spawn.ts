@@ -176,7 +176,7 @@ const clearCallerIdentityEnv = `env ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u
 
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
-  return `[megabrain dispatch: ${label}]\n\nRun megabrain received before work. Ask coordinator with megabrain ask "question"; wait with megabrain check and confirm using megabrain ack <delivery-id>. Finish with megabrain done "short outcome summary". Do not print protocol markers or continue past unanswered question. For megabrain done and ask, start with up to four short bullet lines: the outcome, what you verified, and what is pending or the question. Put any details after those bullets.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
+  return `[megabrain dispatch: ${label}]\n\nRun megabrain received before work. Ask coordinator with megabrain ask "question"; wait with megabrain check and confirm using megabrain ack <delivery-id>. Finish with megabrain done "short outcome summary". Do not print protocol markers or continue past unanswered question. For megabrain done and ask, start with one plain-language sentence a non-technical person understands: what changed, or what you need. Use no file names, commands, or test counts in that sentence; put technical detail after it.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
 }
 
 // Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the
