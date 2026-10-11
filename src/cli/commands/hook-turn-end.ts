@@ -380,6 +380,12 @@ function failedMailLines(database: DatabaseHandle, dispatchId: string): readonly
   return lines;
 }
 
+// Dispatch records name the parent two ways: older ones put the terminal handle in parentSessionId,
+// current ones put "<agent>:<agent session>" there and keep the handle in parentTerminalId.
+function parentsSession(meta: JsonRecord, session: Readonly<{ id: string; host: string }>): boolean {
+  return meta.parentHost === session.host && (meta.parentSessionId === session.id || meta.parentTerminalId === session.id);
+}
+
 async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return undefined;
@@ -392,7 +398,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
   for (const meta of listed.value) {
     const dispatchId = meta.dispatchId;
     if (dispatchId === undefined) continue;
-    if (meta.parentSessionId === session.id && meta.parentHost === session.host && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
+    if (parentsSession(meta, session) && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
       failedMail.push(...failedMailLines(database.value, dispatchId));
     }
     const state = typeof meta.state === "string" ? meta.state : "";
@@ -401,9 +407,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
     const isDoneOwned = state === "done" && terminalState === "owned";
     if (!isOpen && !isDoneOwned) continue;
 
-    const parentSessionId = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
-    const parentHost = typeof meta.parentHost === "string" ? meta.parentHost : "";
-    if (session.id !== parentSessionId || session.host !== parentHost) continue;
+    if (!parentsSession(meta, session)) continue;
     if (!(await parentContextMatches(root, meta, processAdapter).catch(() => false))) continue;
     if (await waiterIsActive(root, dispatchId).catch(() => false)) continue;
 
