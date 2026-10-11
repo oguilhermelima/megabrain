@@ -323,6 +323,15 @@ after four panes, the next child starts in a new window of the same session. Clo
 its pane. Megabrain closes its worktree session and attached host tab after the last child leaves;
 wrapper sessions and the caller's pane stay open.
 
+### The tmux theme
+
+`megabrain tmux tune --yes` installs a terminal-relative theme with a thin header on each pane.
+Headers use the agent, chat name and state when present, then fall back to the pane command and
+title. The bottom status line stays hidden with one window and appears with multiple windows.
+Colours use the terminal defaults and ANSI palette, so the theme follows the host terminal's light
+or dark appearance. `megabrain tmux tune --revert` removes the managed config block and reloads the
+remaining tmux config.
+
 ### The shell wrapper: every agent starts in tmux
 
 `megabrain tmux wrapper` installs a shell function for `claude`, `codex` and `agy`, so typing the
