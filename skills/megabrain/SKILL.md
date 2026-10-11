@@ -353,10 +353,12 @@ megabrain tmux tune [--yes] [--dry-run] [--revert] [--json]
 megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json]
 ```
 
-`tune` fixes tmux colours to match the default terminal. `wrapper` installs the zsh wrapper for
-hand-typed agent commands. When the `tmux-runtime` module is installed a child opens as a split
-pane; otherwise it opens as a tab in the IDE that launched the session. Override per call with
-`--tmux true|false`.
+`tune` installs a terminal-relative theme with a thin agent, chat and state header on each pane.
+It uses the terminal defaults and ANSI palette; the bottom status line appears only when a session
+has multiple windows. `--revert` removes the managed source block and reloads the remaining tmux
+config. `wrapper` installs the zsh wrapper for hand-typed agent commands. When the `tmux-runtime`
+module is installed a child opens as a split pane; otherwise it opens as a tab in the IDE that
+launched the session. Override per call with `--tmux true|false`.
 
 ## Where state lives
 
