@@ -343,6 +343,13 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       await appendMessage(root, "d1", "parent", "reply", "do the other thing", "coord-term", childEnv(root), fp);
       const result = await executeHookTurnEnd([], childEnv(root), fp, noStdin);
       expect(result).toEqual({ kind: "ok", value: '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+      const nextTurn = await executeHookTurnEnd([], childEnv(root), fp, noStdin);
+      expect(nextTurn).toEqual({ kind: "ok", value: "{}\n" });
+      const check = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
+      expect(check).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(check.kind === "ok" ? check.value : "{}")).toMatchObject({ text: "do the other thing" });
+      const repeated = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
+      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ status: "empty", messages: [] });
     });
   });
 
