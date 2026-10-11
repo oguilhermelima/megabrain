@@ -1,0 +1,13 @@
+❯ Use the Bash tool in the foreground to run exactly: python3 -c 'import time; time.sleep(50); print("finished")'  and then report the output.
+  Running python3 -c 'import time; time.sleep(50); print("f… · 19s
+  ⎿  $ python3 -c 'import time; time.sleep(50); print("finished")' (10s)
+     (ctrl+b ctrl+b (twice) to run in background)
+❯ queued note: also say hi
+  ctrl+x ctrl+s to send now
+✽ Zigzagging… (13s · ↓ 237 tokens)
+  ⎿  Tip: Double-tap esc to rewind the code and/or conversation to a previous point in time
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 4.5 200k │ 54k/200k ctx │ NN% left
+  ⏸ manual mode on · ← 3 agents
