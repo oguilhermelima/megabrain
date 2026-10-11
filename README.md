@@ -315,11 +315,14 @@ wrapper sessions and the caller's pane stay open.
 ### The tmux theme
 
 `megabrain tmux tune --yes` installs a terminal-relative theme with a thin header on each pane.
-Headers use the agent, chat name and state when present, then fall back to the pane command and
-title. The bottom status line stays hidden with one window and appears with multiple windows.
-Colours use the terminal defaults and ANSI palette, so the theme follows the host terminal's light
-or dark appearance. `megabrain tmux tune --revert` removes the managed config block and reloads the
-remaining tmux config.
+Headers show the agent in a padded badge: Codex uses black on white, Claude uses white on orange,
+and agy uses white on blue. Other agents use the terminal's bright-black foreground. A version-like
+pane command falls back to the Claude badge. The chat title is bold with the terminal's default
+foreground on the active pane and dimmed on inactive panes. State glyphs appear only when a state is
+set. Apart from Claude's orange, colours use the terminal palette so the theme follows the host
+terminal's light or dark appearance. The bottom status line stays hidden with one window and appears
+with multiple windows. `megabrain tmux tune --revert` removes the managed config block and reloads
+the remaining tmux config.
 
 ### The shell wrapper: every agent starts in tmux
 
