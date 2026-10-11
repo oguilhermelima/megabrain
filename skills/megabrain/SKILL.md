@@ -32,6 +32,21 @@ the newest seven backups. `db migrate --dry-run --json` previews legacy JSON imp
 without changing the state directory; `db migrate --json` runs it and refuses when the cutover
 marker already exists. `db show` reads dispatches and auxiliary records from SQLite.
 
+## Worktree registry and prune
+
+`worktree list` shows each worktree's age, purpose, origin, and whether megabrain created it.
+Create with `--label <text>` to record a purpose; otherwise the first line of `--prompt` is used.
+Older worktrees without a registry entry appear as discovered with unknown age.
+
+```
+megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json] — recommended when you need to review or remove old worktrees safely.
+```
+
+Prune defaults to a dry run. It reports each candidate's age, disk size, purpose, and reason.
+Only old, clean worktrees with no open dispatch, no unpushed commits, and a branch merged into a
+known base are eligible. Unknown status is kept. Add `--yes` to remove eligible worktrees and
+their merged local branches through the normal finish flow.
+
 ## Delegating work to another agent
 
 **Start here: `megabrain orchestrate spawn --prompt <brief> [--worktree <path>]`.** When no
