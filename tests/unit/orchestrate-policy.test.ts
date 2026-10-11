@@ -55,7 +55,7 @@ describe("executeOrchestratePolicy", () => {
     const stateRoot = await setup({
       contextPolicy: { contextCeiling: 80, compactAt: 60, loop: true, maxIterations: 4 },
     });
-    const result = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%", "--json"], ownedEnvironment(stateRoot), process);
+    const result = await executeOrchestratePolicy(["policy-test", "--context-ceiling", "90%", "--json"], ownedEnvironment(stateRoot), process);
 
     expect(result).toMatchObject({ kind: "ok" });
     expect(readMeta(stateRoot)).toMatchObject({

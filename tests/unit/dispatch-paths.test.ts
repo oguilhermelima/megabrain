@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveDispatchId, resolveDispatchIdSuffix } from "../../src/core/dispatch-paths.js";
+import { USAGE_LINES } from "../../src/core/usage.js";
 
 describe("resolveDispatchId", () => {
   test.each(["", "../outside", "dispatch/child", "dispatch child", "dispatch$child"]) (
@@ -40,5 +41,15 @@ describe("resolveDispatchIdSuffix", () => {
 
   test("refuses suffixes shorter than eight characters", () => {
     expect(resolveDispatchIdSuffix("b1bbe0", visible)).toEqual({ kind: "too-short" });
+  });
+});
+
+describe("orchestrate dispatch id usage", () => {
+  test("every verb taking a dispatch id documents suffix support", () => {
+    const unsupported = Object.entries(USAGE_LINES)
+      .filter(([key, line]) => key.startsWith("orchestrate-") && /<dispatch-id>/.test(line))
+      .map(([key]) => key);
+
+    expect(unsupported).toEqual([]);
   });
 });

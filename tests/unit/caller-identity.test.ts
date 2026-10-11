@@ -18,6 +18,7 @@ import { executeContext } from "../../src/cli/commands/context.js";
 import { executeSpawn, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "../../src/cli/commands/orchestrate-read-liveness.js";
+import { executeOrchestrateAdopt } from "../../src/cli/commands/orchestrate-adopt.js";
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "../../src/cli/commands/orchestrate-parent.js";
@@ -337,10 +338,12 @@ describe("parent verbs accept the structured-session caller that spawned the dis
 
   test("liveness", async () => {
     const root = await tempStateDir();
-    await writeDispatch(root, "dispatch-1", baseMeta());
+    const dispatchId = "dispatch-20261011-abcdef01";
+    await writeDispatch(root, dispatchId, baseMeta());
     const process = orcaHostProcess("child-term-1");
-    const result = await executeOrchestrateLiveness(["dispatch-1", "--json"], structuredClaudeEnvironment(root), process);
-    expect(isOwnershipRefusal(result)).toBe(false);
+    const result = await executeOrchestrateLiveness(["abcdef01", "--json"], structuredClaudeEnvironment(root), process);
+    expect(result.kind).toBe("ok");
+    expect(result.kind === "ok" ? JSON.parse(result.value).dispatchId : "").toBe(dispatchId);
   });
 
   test("reply", async () => {
@@ -361,10 +364,22 @@ describe("parent verbs accept the structured-session caller that spawned the dis
 
   test("reconcile", async () => {
     const root = await tempStateDir();
-    await writeDispatch(root, "dispatch-1", baseMeta());
+    const dispatchId = "dispatch-20261011-abcdef01";
+    await writeDispatch(root, dispatchId, baseMeta());
     const process = orcaHostProcess("child-term-1");
-    const result = await executeOrchestrateReconcile(["dispatch-1", "--json"], structuredClaudeEnvironment(root), process);
-    expect(isOwnershipRefusal(result)).toBe(false);
+    const result = await executeOrchestrateReconcile(["abcdef01", "--json"], structuredClaudeEnvironment(root), process);
+    expect(result.kind).toBe("ok");
+    expect(result.kind === "ok" ? JSON.parse(result.value).dispatchId : "").toBe(dispatchId);
+  });
+
+  test("adopt resolves a unique dispatch suffix", async () => {
+    const root = await tempStateDir();
+    const dispatchId = "dispatch-20261011-abcdef01";
+    await writeDispatch(root, dispatchId, baseMeta({ parentHost: "superset", parentSessionId: "old-parent" }));
+    const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SESSION_HOST: "superset", MEGABRAIN_SESSION_ID: "claude:test-uuid" };
+    const result = await executeOrchestrateAdopt(["abcdef01", "--json"], environment, fakeProcess());
+    expect(result.kind).toBe("ok");
+    expect(result.kind === "ok" ? JSON.parse(result.value).dispatchId : "").toBe(dispatchId);
   });
 
   test("watch", async () => {
