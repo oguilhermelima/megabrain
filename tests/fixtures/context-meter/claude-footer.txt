@@ -1,2 +1,0 @@
-Haiku 4.5 200k │ 0/200k ctx
-Not logged in · Run /login

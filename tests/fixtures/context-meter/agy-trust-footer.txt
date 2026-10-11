@@ -1,6 +1,0 @@
-Do you trust the contents of this project?
-Antigravity CLI requires permission to read, edit, and execute files here.
-> Yes, I trust this folder
-No, exit
-↑/↓ Navigate · enter Confirm
-Gemini 3.8 Flash (High) │ 0 ctx │ 42% left │ 57% left
