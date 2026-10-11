@@ -34,6 +34,7 @@ import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
 import { usageTable, usageText } from "../core/usage.js";
 import { ensureAutomaticCutover } from "../db/cutover.js";
 import { executeDeliveryWorker } from "./commands/delivery-worker.js";
+import { executeStack } from "./commands/stack.js";
 import { executeSupervise, executeSupervisorWorker } from "./commands/supervise.js";
 
 export type RouterDependencies = {
@@ -58,7 +59,7 @@ export async function route(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "terminal", "received", "ask", "done", "hook", "supervise"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -169,6 +170,10 @@ export async function route(
   if (command === "worktree" && commandArgs[0] === "create") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-create"))); return executeWorktreeCreate(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "worktree" && commandArgs[0] === "finish") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-finish"))); return executeWorktreeFinish(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "worktree" && (commandArgs[0] === "pr" || commandArgs[0] === "open-pr")) { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-pr"))); return executeWorktreePr(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
+  if (command === "stack") {
+    if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("stack")));
+    return executeStack(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
   }

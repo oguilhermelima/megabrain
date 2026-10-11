@@ -487,6 +487,46 @@ repository default. `--base` overrides either choice. The default title is the b
 default body is empty. megabrain refuses to invoke `gh pr create` when there are no commits ahead
 of the selected base, and reports missing gh separately from an unauthenticated gh.
 
+Manage a dependent stack of worktrees and its review requests with `stack`:
+
+```sh
+megabrain stack create feat/rate-limit-api --on feat/rate-limit
+megabrain stack show
+megabrain stack pr --draft
+megabrain stack sync --yes
+megabrain stack merge --yes
+```
+
+`stack create` creates a registered worktree from the parent branch and records the parent in the
+worktree registry. Commands use the current repository; pass `--repo <path>` when running from
+another directory. The provider comes from the `origin` URL. Pass `--provider github` or
+`--provider gitlab` to override it.
+
+On GitHub, megabrain probes the repository's stacked pull request API. When the API is available,
+`stack pr` creates native stack membership through `gh api`; the `gh-stack` extension is not
+required. A 404 means the API is unavailable and megabrain creates ordinary pull requests chained
+by base branch, with each PR's stack position in its description. Other probe errors stop the
+command so authentication or connectivity problems do not silently change the workflow. If the
+extension is installed, `stack show` reports it but does not rely on it.
+
+On GitLab, `stack pr` creates one merge request per branch, targeting its parent. The documented
+`glab stack` commands are experimental and are not used. GitLab normally retargets the next merge
+request after a parent merges; `stack sync` checks the target and repairs it if needed, then rebases
+and pushes the stack branches with `--force-with-lease`. If merge request dependency API access is
+available, megabrain records those dependencies; `stack show` reports when the instance or account
+does not provide it. When the project has merge trains enabled, `stack merge --yes` adds merge
+requests from the bottom up to the train and waits for each one to merge.
+
+`stack sync` and `stack merge` print their plan and require `--yes` before changing anything. A
+sync conflict stops the operation, aborts the in-progress rebase, and names the conflicting files.
+Merge refuses any stack branch with local commits that have not been pushed. GitHub native stack
+merges use the asynchronous API and poll for a bounded time; a still-pending merge is left for the
+operator to inspect. Set `MEGABRAIN_STACK_MERGE_TIMEOUT_MS` to change the default two-minute wait.
+
+GitLab is not installed in the development environment. Its adapter is covered by a fake `glab`
+using documented command flags and JSON fields; validate it against a real GitLab instance before
+relying on instance-specific behavior.
+
 When finishing with `--delete-branch`, the recorded parent is used as the merge base for a
 stacked worktree; a root worktree uses the repository default. Pass `--base <ref>` to override
 the recorded base. If the recorded parent was already deleted, finish falls back to the

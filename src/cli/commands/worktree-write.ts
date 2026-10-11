@@ -978,7 +978,7 @@ export async function executeWorktreeCreate(
       path, repo: repo.value, repoName: value.repo as string, branch, createdAt: new Date().toISOString(),
       createdBy: caller.id || null,
       purpose: value.label?.trim() || value.prompt?.split(/\r?\n/, 1)[0]?.trim() || null,
-      origin: "created", finishedAt: null,
+      origin: "created", finishedAt: null, parentBranch: resolvedParent?.branch ?? null,
     }));
     if (stored.kind !== "ok") return failed(`worktree created at ${path}, but registry write failed: ${stored.error}`);
   } finally { registry.value.close(); }
