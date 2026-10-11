@@ -59,3 +59,8 @@ export function formatFullDirection(input: DispatchMessageInput, text: string): 
   const header = dispatchMessageHeader({ ...input, type: "change" });
   return `${header}\n${text}`;
 }
+
+/** Joins a message onto one line for hosts that cannot take newlines; the pointer arrow only reads right on its own line. */
+export function formatOneLine(message: string): string {
+  return message.replace(/\r\n?/g, "\n").replace(/\n→ /g, "\n").replace(/\n/g, " — ");
+}
