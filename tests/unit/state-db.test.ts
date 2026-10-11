@@ -116,6 +116,12 @@ describe("state database facade", () => {
     expect(requireOk(listOutbox(db))).toHaveLength(1);
   });
 
+  test("schema stores the parent Codex thread independently from terminal identity", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    const columns = db.db.query<{ name: string }>("PRAGMA table_info(dispatches)").all().map(({ name }) => name);
+    expect(columns).toContain("parent_agent_thread_id");
+  });
+
   test("outbox claim is exclusive, expired claims return, and finish reports success", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "outbox", state: "running" }));
@@ -163,6 +169,8 @@ describe("state database facade", () => {
     db.db.run("DROP TABLE waiters");
     db.db.exec("ALTER TABLE outbox DROP COLUMN detail");
     db.db.exec("ALTER TABLE outbox DROP COLUMN lease_holder");
+    db.db.exec("ALTER TABLE dispatches DROP COLUMN agent_pid");
+    db.db.exec("ALTER TABLE dispatches DROP COLUMN parent_agent_thread_id");
     db.db.run("DELETE FROM schema_migrations WHERE version > 2");
     db.db.exec("DROP TABLE settings");
     db.db.exec("PRAGMA user_version = 2");
