@@ -44,6 +44,9 @@ case "${1:-} ${2:-} ${3:-}" in
   "mr view"*)
     if [ "${GLAB_MERGED:-no}" = yes ]; then printf '{"iid":%s,"state":"merged","detailed_merge_status":"merged"}\n' "${3:-1}"; else printf '{"iid":%s,"state":"opened","detailed_merge_status":"mergeable"}\n' "${3:-1}"; fi
     ;;
+  "api projects/group%2Fproject/merge_requests/"*"/blocks"*)
+    if [ "${GLAB_DEPENDENCIES:-yes}" = yes ]; then printf '[]\n'; else printf 'HTTP 403 Forbidden\n' >&2; exit 1; fi
+    ;;
   "api projects/group%2Fproject"*)
     if [ "${GLAB_TRAINS:-no}" = yes ]; then printf '{"id":42,"merge_trains_enabled":true}\n'; else printf '{"id":42,"merge_trains_enabled":false}\n'; fi
     ;;
@@ -81,7 +84,7 @@ setup_fixture() {
   git -C "$work/repo" remote set-url --push origin "$work/remote.git"
   git -C "$work/repo" push -qu origin main
   : >"$GLAB_LOG"
-  export GLAB_LIST_MODE=empty GLAB_TRAINS=no GLAB_MERGED=no
+  export GLAB_LIST_MODE=empty GLAB_TRAINS=no GLAB_MERGED=no GLAB_DEPENDENCIES=yes
 }
 run() { "$root/.build/megabrain" "$@"; }
 create_empty_stack() {
@@ -105,6 +108,18 @@ run stack pr --provider gitlab >/dev/null
 contains "$(cat "$GLAB_LOG")" 'mr create --source-branch stack/base --target-branch main'
 contains "$(cat "$GLAB_LOG")" 'mr create --source-branch stack/child --target-branch stack/base'
 printf 'GitLab creates chained merge requests by target branch\n'
+
+# Scenario: premium-only dependency endpoints are optional and unavailable access is reported.
+setup_fixture
+create_empty_stack
+export GLAB_DEPENDENCIES=no
+run stack pr --provider gitlab >/dev/null
+export GLAB_LIST_MODE=open
+: >"$GLAB_LOG"
+output="$(run stack show --provider gitlab)"
+contains "$output" 'unavailable on this project or account'
+not_contains "$(cat "$GLAB_LOG")" 'api --method POST projects/group%2Fproject/merge_requests/'
+printf 'GitLab skips MR dependency writes when the project API refuses access\n'
 
 # Scenario: after the parent merges, stale target metadata is corrected and the child rebases.
 git -C "$work/repo" checkout -q main
