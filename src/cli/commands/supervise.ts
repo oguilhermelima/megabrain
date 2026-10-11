@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
@@ -279,6 +281,7 @@ export async function executeSupervisorWorker(args: readonly string[], environme
     while (running) {
       const renewed = acquireSupervisorLease(database.value, holder, leaseSeconds(intervalSeconds(environment)));
       if (renewed.kind !== "ok" || !renewed.value) break;
+      if (!existsSync(resolve(root, "megabrain.db"))) break;
       const status = await superviseOnce(root, database.value, environment, process);
       if (!status.open) break;
       for (let elapsed = 0; running && elapsed < delay; elapsed += 250) await new Promise((resolve) => setTimeout(resolve, Math.min(250, delay - elapsed)));
