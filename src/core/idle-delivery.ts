@@ -8,13 +8,14 @@ export type IdleDeliveryInput = Readonly<{
   clear: () => Promise<boolean>;
   send: () => Promise<boolean>;
   isRead: () => Promise<boolean>;
+  giveUp?: () => boolean;
   attempt?: (details: IdleDeliveryAttempt) => Promise<void>;
   wait?: (milliseconds: number) => Promise<void>;
   now?: () => number;
   record?: (outcome: IdleDeliveryOutcome) => Promise<void>;
 }>;
 
-export type IdleDeliveryOutcome = "delivered" | "cancelled" | "failed";
+export type IdleDeliveryOutcome = "delivered" | "cancelled" | "failed" | "unavailable";
 export type IdleDeliveryAttempt = Readonly<{
   status: "idle" | "busy" | "unknown";
   composer: "empty" | "draft" | "unknown" | "unread";
@@ -71,6 +72,7 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
       await input.attempt?.({ status, composer, decision: "wait-busy" });
     }
     if (now() >= deadline) break;
+    if (input.giveUp?.() === true) return finish("unavailable");
     await wait(Math.min(delay, deadline - now()));
     delay = Math.min(Math.max(delay * 2, 1), Math.max(1, input.maxDelayMs));
   }

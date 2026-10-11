@@ -159,6 +159,29 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
+  test("blocks once with one line per failed delivery and never twice for the same message", async () => {
+    await withRoot("failed-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const appended = await appendMessage(root, "d1", "child", "done", "migration finished\nsecond line", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "failed", "proof-unavailable");
+      const first = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      if (first.kind !== "ok") throw new Error(first.error);
+      const verdict = JSON.parse(first.value) as { decision?: string; reason?: string };
+      expect(verdict.decision).toBe("block");
+      expect(verdict.reason).toContain("d1");
+      expect(verdict.reason).toContain("migration finished");
+      expect(verdict.reason).not.toContain("second line");
+      expect(verdict.reason).toContain("megabrain orchestrate watch d1");
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
   test("marks an open dispatch limit-refused when its pane shows the usage-limit marker", async () => {
     await withRoot("limit-refused", async (root) => {
       await writeMeta(root, "d1", {
