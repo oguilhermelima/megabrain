@@ -154,6 +154,18 @@ contains "$output" 'unpushed local commits'
 not_contains "$(cat "$GLAB_LOG")" 'mr merge'
 printf 'GitLab merge refuses local commits that have not been pushed\n'
 
+# Scenario: without merge trains, auto-merge waits for each MR's pipeline before advancing.
+setup_fixture
+create_empty_stack
+run stack pr --provider gitlab >/dev/null
+export GLAB_LIST_MODE=open GLAB_TRAINS=no GLAB_MERGED=yes
+: >"$GLAB_LOG"
+output="$(run stack merge --yes --provider gitlab)"
+contains "$(cat "$GLAB_LOG")" 'mr merge 1'
+contains "$(cat "$GLAB_LOG")" 'mr merge 2'
+contains "$output" 'completed bottom-up'
+printf 'GitLab direct merge waits for each pipeline before continuing\n'
+
 # Scenario: projects with merge trains use auto-merge and wait for GitLab's merged state.
 setup_fixture
 create_empty_stack
