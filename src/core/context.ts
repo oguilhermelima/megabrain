@@ -52,6 +52,9 @@ export type CallerEnvironment = {
 export type CallerProbes = {
   readonly tmuxSessionName?: string;
   readonly orcaWorktree?: boolean;
+  // The calling shell's identity ("shell:<tty>"), for a caller that carries neither an agent
+  // session id nor a terminal handle.
+  readonly shellIdentity?: string;
 };
 
 // The resolved identity of whoever is running the current megabrain command: a stable id for
@@ -137,7 +140,8 @@ function callerTerminal(
 // MEGABRAIN_SESSION_ID is an explicit override and always wins; then the agent's own session id
 // (Claude, then Codex); then a terminal handle (superset, then orca, then a probed tmux pane);
 // then, host only, a structured Orca session (ORCA_STRUCTURED_SESSION=1 or a successful orca
-// worktree probe) with no stable id; otherwise unknown with no id. The terminal handle is
+// worktree probe) with no stable id. A caller under none of those hosts is "local": no terminal
+// exists to type into, and its id is its agent session or, failing that, the shell probe. The terminal handle is
 // returned separately from id so callers that need it (ownership, notification routing) do not
 // have to re-derive it, and so a caller whose agent session changes while its terminal does not
 // can still be recognised (see ownsDispatch).
@@ -149,14 +153,14 @@ export function resolveCallerIdentity(environment: CallerEnvironment, probes: Ca
       ? terminal.host
       : environment.orcaStructuredSession === "1" || probes.orcaWorktree === true
         ? "orca"
-        : "unknown";
+        : "local";
   const id = present(environment.megabrainSessionId)
     ? environment.megabrainSessionId
     : present(environment.claudeCodeSessionId)
       ? `claude:${environment.claudeCodeSessionId}`
       : present(environment.codexThreadId)
         ? `codex:${environment.codexThreadId}`
-        : terminal?.terminalId ?? "";
+        : terminal?.terminalId ?? (host === "local" ? probes.shellIdentity ?? "" : "");
   return {
     id,
     host,

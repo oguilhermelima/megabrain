@@ -4,7 +4,7 @@ import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
 import { failed, type Result } from "../../core/result.js";
 import { listDispatches } from "../../adapters/state-db.js";
 
-const missingIdentity = "this command requires a managed terminal identity; run it inside an Orca or Superset terminal";
+const missingIdentity = "this command cannot tell who is running it: no agent session and no shell were found";
 
 export function resolveParentDispatchId(database: DatabaseHandle, requested: string, caller: CallerIdentity): Result<string> {
   if (!hasCallerIdentity(caller)) return failed(missingIdentity);

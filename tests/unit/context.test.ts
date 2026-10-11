@@ -50,9 +50,9 @@ describe("resolveContext", () => {
     });
   });
 
-  test("returns unknown when no host can be determined", () => {
+  test("returns local when no host can be determined", () => {
     expect(resolveContext(environment({ workspaceId: "workspace", agentId: "agent" }), probes())).toEqual({
-      host: "unknown",
+      host: "local",
       workspaceId: "workspace",
       terminalId: null,
       agentId: "agent",

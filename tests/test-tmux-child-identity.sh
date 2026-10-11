@@ -215,7 +215,7 @@ stale_command="env -u SUPERSET_TERMINAL_ID -u ORCA_TERMINAL_HANDLE MEGABRAIN_STA
 tmux_cmd send-keys -t "$tmux_pane_two" -l "$stale_command"
 tmux_cmd send-keys -t "$tmux_pane_two" Enter
 wait_for_file "$stale_done"
-assert_contains "$(cat "$stale_output")" 'this command requires a managed terminal identity'
+assert_contains "$(cat "$stale_output")" 'this command cannot tell who is running it'
 assert_equal "$(state_db_dispatch "$root/.build/megabrain" "$state_dir" "$dispatch_one" | jq -r '.messages | length')" 1
 
 tab_dispatch="dispatch-tab"

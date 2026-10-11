@@ -77,7 +77,21 @@ export async function resolveCaller(environment: QueueEnvironment, processAdapte
     && fields.tmux !== undefined && fields.tmux.length > 0
     && fields.tmuxPane !== undefined && fields.tmuxPane.length > 0;
   const tmuxSessionName = needsTmuxProbe ? await tmuxSessionNameFor(fields.tmuxPane as string, processAdapter) : undefined;
-  return resolveCallerIdentity(fields, { tmuxSessionName });
+  const identity = resolveCallerIdentity(fields, { tmuxSessionName });
+  if (identity.id !== "" || identity.host !== "local" || needsTmuxProbe) return identity;
+  return resolveCallerIdentity(fields, { tmuxSessionName, shellIdentity: await shellIdentityFor(processAdapter) });
+}
+
+// A caller with no agent session and no terminal is a person at a plain shell. Its stable identity
+// is the controlling tty of the shell that ran this command: the pid changes with every pipeline
+// or subshell, the tty does not, so `spawn` in one command and `watch` in the next own the same
+// dispatches. No tty (cron, ssh without one) falls back to the shell pid, which still holds for
+// the life of that shell.
+async function shellIdentityFor(processAdapter: ProcessAdapter): Promise<string> {
+  const shellPid = process.ppid;
+  const result = await processAdapter.run("ps", ["-o", "tty=", "-p", String(shellPid)]);
+  const tty = result.kind === "ok" ? result.value.stdout.trim() : "";
+  return /^[A-Za-z0-9/]+$/.test(tty) && !/^\?+$/.test(tty) ? `shell:${tty.replace(/\//g, "-")}` : `shell:pid${shellPid}`;
 }
 
 // The child's own identity, for matching against the dispatch record spawn wrote for it
@@ -149,7 +163,7 @@ function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boo
 
 export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
   const current = await session(environment, processAdapter);
-  if (current === undefined) return failed("this command requires a managed terminal identity; run it inside an Orca or Superset terminal");
+  if (current === undefined) return failed("this command cannot tell who is running it: no agent session and no shell were found");
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
   if (database.kind !== "ok") return database;
   const direct = environment.MEGABRAIN_DISPATCH_ID;
@@ -313,7 +327,8 @@ export async function appendMessage(root: string, dispatch: string, from: string
     try {
       const payload = { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: appended.value.seq, pointer, fullMessage: formatDispatchMessage({ dispatchId: dispatch, chatName: String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), agent: String(metaRecord.agent ?? "unknown"), type, text, direction: "parent-bound" }) };
       let notification: NotificationResult;
-      if (!(await parentContextMatches(root, metaRecord, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch", transport: "failed" };
+      if (metaRecord.parentHost === "local" && typeof metaRecord.parentAgentThreadId !== "string") notification = { outcome: "queued", reason: "local parent has no terminal to type into; the Stop hook and orchestrate watch surface it", transport: "failed" };
+      else if (!(await parentContextMatches(root, metaRecord, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch", transport: "failed" };
       else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter", transport: "failed" };
       else notification = await sendParentPointer(root, metaRecord, pointer, environment, processAdapter, payload.fullMessage);
       if (notification.transport === "queue") {

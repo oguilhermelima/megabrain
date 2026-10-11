@@ -140,7 +140,7 @@ function structuredClaudeEnvironment(root: string, extra: Record<string, string>
   };
 }
 
-const identityRefusal = "this command requires a managed terminal identity; run it inside an Orca or Superset terminal";
+const identityRefusal = "this command cannot tell who is running it: no agent session and no shell were found";
 
 function isOwnershipRefusal(result: Result<string>): boolean {
   return result.kind === "failed" && (result.error.includes(identityRefusal) || result.error.includes("is owned by"));
@@ -430,13 +430,13 @@ describe("a different session is refused", () => {
     expect(result.kind === "failed" ? result.error : "").toContain("is owned by");
   });
 
-  test("a caller with no identity at all is refused with the same message every verb uses", async () => {
+  test("a plain-shell caller is refused as a different owner, never as an unknown one", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
     const process = orcaHostProcess("child-term-1");
     const result = await executeOrchestrateClose(["dispatch-1", "--json"], { MEGABRAIN_STATE_DIR: root }, process);
     expect(result.kind).toBe("failed");
-    expect(result.kind === "failed" ? result.error : "").toBe(identityRefusal);
+    expect(result.kind === "failed" ? result.error : "").toContain("is owned by orca/claude:test-uuid, not local/");
   });
 });
 
