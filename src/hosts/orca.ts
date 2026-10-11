@@ -21,11 +21,12 @@ function terminalTail(stdout: string): Result<string> {
 }
 
 function sendText({ terminalId, text, interrupt, enter = true }: SendText): Result<HostCommand> {
+  const singleInput = text?.replace(/\r\n?/g, "\n").replace(/\n/g, " | ");
   return interrupt === true
     ? ok({ command: "orca", args: ["terminal", "send", "--terminal", terminalId, "--interrupt", "--json"] })
-    : text === undefined
+    : singleInput === undefined
       ? unavailable("orca", "send terminal text or interrupt")
-      : ok({ command: "orca", args: ["terminal", "send", "--terminal", terminalId, "--text", text, ...(enter ? ["--enter"] : []), "--json"] });
+      : ok({ command: "orca", args: ["terminal", "send", "--terminal", terminalId, "--text", singleInput, ...(enter ? ["--enter"] : []), "--json"] });
 }
 
 async function sendEnter(terminalId: string, process: ProcessAdapter): Promise<Result<void>> {

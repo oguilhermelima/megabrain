@@ -18,6 +18,8 @@ import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, appendParentReply, listMessages } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
+import { dispatchMessageHeader, formatDispatchMessage, formatFullDirection } from "../../core/chat-message-format.js";
+import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -133,14 +135,15 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   const stateError = replyStateError(parsed.value.dispatchId, state, false); if (stateError !== undefined) return failed(stateError);
   const caller = await resolveCaller(environment, processAdapter);
   const sessionId = caller.id || caller.terminalId || "";
+  const childMessage = formatDispatchMessage({ dispatchId: parsed.value.dispatchId, chatName: String(parent.value.chatName ?? parent.value.branch ?? parsed.value.dispatchId), agent: String(parent.value.agent ?? "unknown"), type: "reply", text: parsed.value.text, direction: "child-bound", parentAgent: String(parent.value.parentAgent ?? "megabrain"), parentChatName: String(parent.value.parentChatName ?? "megabrain/main") });
   const outboxId = `delivery-${randomUUID()}`;
   const append = appendParentReply(opened.value, parsed.value.dispatchId, { from: "parent", type: "reply", text: parsed.value.text, sessionId }, {
     supersede: parsed.value.supersede,
-    outbox: { id: outboxId, targetKind: "child-delivery", target: deliveryTarget(parent.value), payload: { meta: parent.value, fullMessage: parsed.value.text, targetKind: "child-delivery" } },
+    outbox: { id: outboxId, targetKind: "child-delivery", target: deliveryTarget(parent.value), payload: { meta: parent.value, fullMessage: childMessage, targetKind: "child-delivery" } },
   });
   if (append.kind !== "ok") return append;
   const summary: SupersedeSummary = append.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, parsed.value.text).catch((error: unknown) => ({ outcome: "failed", reason: error instanceof Error ? `notification failed: ${error.message}` : "notification failed", transport: "failed" as const }));
+  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, childMessage).catch((error: unknown) => ({ outcome: "failed", reason: error instanceof Error ? `notification failed: ${error.message}` : "notification failed", transport: "failed" as const }));
   let transport = notification.transport ?? "failed";
   if (transport === "queue") {
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
@@ -160,6 +163,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   if (state !== "done") {
     const updated = mutateDispatch(opened.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
     if (updated.kind !== "ok") return updated;
+    if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? parsed.value.dispatchId), "running", processAdapter);
   }
   return ok(outputReply(parsed.value.dispatchId, parsed.value.json, notification.outcome === "delivered" ? "typed" : "not-typed", summary));
 }
@@ -179,14 +183,16 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   const superseded = appended.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
   const updated = mutateDispatch(database.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
   if (updated.kind !== "ok") return updated;
+  if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? parsed.value.dispatchId), "running", processAdapter);
 
   const meta = parent.value;
   const timeoutMs = parsed.value.idleTimeout * 1000;
   const summary = { attempts: 0, idleReached: false, delivered: false, confirmed: false, superseded, oversized: false };
   const agent = typeof meta.agent === "string" ? meta.agent : "";
-  const formatted = `[megabrain] Change of direction from your coordinator. Stop the approach you were on and follow this instead:\n${parsed.value.text}\n(The same text is available with megabrain check.)`;
+  const directionInput = { dispatchId: parsed.value.dispatchId, chatName: String(meta.chatName ?? meta.branch ?? parsed.value.dispatchId), agent: String(meta.agent ?? "unknown"), type: "change", text: parsed.value.text, direction: "child-bound" as const, parentAgent: String(meta.parentAgent ?? "megabrain"), parentChatName: String(meta.parentChatName ?? "megabrain/main") };
+  const formatted = formatFullDirection(directionInput, `Stop the approach you were on and follow this instead:\n${parsed.value.text}\n(The same text is available with megabrain check.)`);
   summary.oversized = meta.runtime === "tmux" && promptByteLength(formatted) > PROMPT_BUDGET_TMUX_BYTES;
-  const deliveryText = summary.oversized ? "[megabrain] A new direction is queued; run megabrain check to read it." : formatted;
+  const deliveryText = summary.oversized ? `${dispatchMessageHeader(directionInput)}\nA new direction is queued; run megabrain check to read it.` : formatted;
   const recordIdle = (attempt: number, idle: boolean, detail: string): Promise<Result<void>> => recordChangeEvent(root, parsed.value.dispatchId, "idle-result", `after interrupt ${attempt}: idle=${idle}; ${detail}`, session, environment, processAdapter);
   const deferChange = async (reason: string): Promise<Result<string>> => {
     const outboxId = `change-delivery-${randomUUID()}`;

@@ -9,6 +9,7 @@ import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
 import { getDispatch, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 export type HookEnvironment = QueueEnvironment;
 type JsonRecord = Record<string, unknown>;
@@ -110,7 +111,7 @@ async function readLimitRefusal(meta: JsonRecord, processAdapter: ProcessAdapter
 // reads back to confirm this dispatch really was marked here before resuming its chain. Refuses
 // (mirroring megabrain_dispatch_meta_update_fields's own transition validation) rather than write
 // an illegal state/processState transition.
-async function markLimitRefused(root: string, dispatchId: string, reason: string): Promise<boolean> {
+async function markLimitRefused(root: string, dispatchId: string, reason: string, processAdapter: ProcessAdapter): Promise<boolean> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
   let refused = false;
@@ -120,7 +121,13 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
     if (checkDispatchTransition("dispatch", state, "failed").kind !== "ok" || checkDispatchTransition("process", processState, "failed").kind !== "ok") { refused = true; return noDispatchChange; }
     return { promptReceipt: "unknown", promptState: "failed", promptDeliveryReason: reason, state: "failed", processState: "failed", stage: "limit-refused", reason, reconcileOutcome: "limit-refused", updatedAt: new Date().toISOString() };
   });
-  return updated.kind === "ok" && !refused;
+  if (updated.kind !== "ok" || refused) return false;
+  const stored = getDispatch(database.value, dispatchId);
+  const meta = stored.kind === "ok" ? stored.value : undefined;
+  if (meta?.runtime === "tmux" && typeof meta.tmuxPane === "string") {
+    await setTmuxChatPane(meta.tmuxPane, typeof meta.agent === "string" ? meta.agent : "unknown", typeof meta.chatName === "string" ? meta.chatName : typeof meta.branch === "string" ? meta.branch : dispatchId, "failed", processAdapter);
+  }
+  return true;
 }
 
 // megabrain_hook_parent_notify: scans every dispatch this session parents. A "done" dispatch that
@@ -162,7 +169,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
     if (await hasPromptReceipt(root, dispatchId)) continue;
     const refusal = await readLimitRefusal(meta, processAdapter).catch(() => ({ refused: false, reason: "" }));
     if (!refusal.refused) continue;
-    const marked = await markLimitRefused(root, dispatchId, refusal.reason).catch(() => false);
+    const marked = await markLimitRefused(root, dispatchId, refusal.reason, processAdapter).catch(() => false);
     if (!marked) continue;
     // WHY caught here and not left to propagate: a chain continuation failing (or a chain that
     // has no further step to take) must not stop the scan from reaching the remaining dispatches,
