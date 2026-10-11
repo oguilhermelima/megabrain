@@ -23,7 +23,7 @@ megabrain db check [--json]
 megabrain db backup [--json]
 megabrain db import <dir> [--replace] [--json]
 megabrain db migrate [--dry-run] [--json]
-megabrain db show <dispatch-id>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]
+megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]
 ```
 
 `db check` reports SQLite integrity, foreign key violations, the schema version, and the state
@@ -55,15 +55,25 @@ Either way: pass `--worktree <path>` to reuse a checkout that already exists, or
 `--branch` to have one created.
 
 Every dispatch has a chat name: `--label` when supplied, otherwise its worktree branch. `orchestrate
-list` shows the name, and `db show <dispatch-id>` includes `chatName`. tmux pane titles use
+list` shows the name, and `db show <dispatch-id-or-suffix>` includes `chatName`. tmux pane titles use
 `agent · name` and set `@megabrain_agent`, `@megabrain_name`, and `@megabrain_state`; Orca tabs use
 the same title, and Claude starts with `--name <chat name>`.
 
-Typed and queued messages begin with `[megabrain][agent][last-eight-id - chat-name] - LABEL`, followed
-by up to four short bullets. The labels are `FINISHED`, `QUESTION`, `STUCK`, `REPLY`, and
-`NEW DIRECTION`; extra report text points to `megabrain orchestrate watch <dispatch-id>` or
-`megabrain check`. Orca terminal sends submit embedded newlines separately, so those messages use
-` | ` between lines.
+Typed and queued messages have three parts: `<icon> <agent> · <chat name> <status words>`, one
+plain-language summary sentence of at most 140 characters, and a details pointer. The status words
+are `finished`, `has a question`, `is stuck`, `reply`, and `new direction`, with icons ✅, ❓, ⚠️, 💬,
+and 🔀. A parent-bound message points to `megabrain orchestrate watch <last-eight-id>`; a
+child-bound message uses the coordinator's agent and chat name and points to `megabrain check` for
+the full text. Orca receives all three parts on one line joined with ` — `.
+
+The spawn preamble tells children to start `megabrain done` and `megabrain ask` with one
+plain-language sentence: what changed or what they need. That sentence has no file names, commands,
+or test counts; technical detail follows it.
+
+The watch, read, ack, reply, stop, change, and close commands accept a unique dispatch ID suffix of
+at least eight characters. They resolve within the dispatches owned by the current caller. An
+ambiguous suffix lists the matching IDs. `db show` accepts the same minimum suffix length and
+searches all dispatches, including archived ones.
 
 A dispatch runs either as a tmux split or as a tab in the orchestrator that owns the session.
 **tmux needs neither Orca nor Superset**: inside tmux a session identifies itself by its own
@@ -78,14 +88,14 @@ through tmux; over the limit is refused before anything is created, never trunca
 megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]
 megabrain orchestrate adopt <dispatch-id> [--force] [--json]
 megabrain orchestrate liveness <dispatch-id> [--json]
-megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]
-megabrain orchestrate ack <dispatch-id> <delivery-id> [--close] [--json]
-megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]
-megabrain orchestrate stop <dispatch-id> [--json]
-megabrain orchestrate change <dispatch-id> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]
-megabrain orchestrate read <dispatch-id> [--lines <count>] [--json]
+megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]
+megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--close] [--json]
+megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json]
+megabrain orchestrate stop <dispatch-id-or-suffix> [--json]
+megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]
+megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json]
 megabrain orchestrate reconcile <dispatch-id> [--all] [--json]
-megabrain orchestrate close <dispatch-id> [--force-release] [--json]
+megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]
 ```
 
@@ -106,7 +116,7 @@ instead of being lost, and it is why a notice can appear immediately after you f
 speaking. It stays quiet for a dispatch you already have a `watch` open on.
 
 The same notice flags a dispatch in state `done` whose terminal is still retained. Use
-`megabrain orchestrate ack <dispatch-id> <delivery-id> --close` when appropriate: it acknowledges
+`megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> --close` when appropriate: it acknowledges
 the delivery and releases the finished dispatch in one call.
 
 Nothing removes a finished dispatch on its own. `prune` archives terminal ones past an
@@ -128,8 +138,8 @@ scrollback, and closing destroys it: the queue keeps every message, but the tran
 what the agent actually did is gone. A `done` is a claim, and the pane is where you check it.
 
 ```sh
-megabrain orchestrate read <dispatch-id>    # what the agent really did
-megabrain orchestrate close <dispatch-id>   # then take the pane back
+megabrain orchestrate read <dispatch-id-or-suffix>    # what the agent really did
+megabrain orchestrate close <dispatch-id-or-suffix>   # then take the pane back
 ```
 
 `close` refuses to close the pane it is running in, and `--force-release` does not override that.

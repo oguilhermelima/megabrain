@@ -190,11 +190,11 @@ megabrain orchestrate watch <id> --json          # blocks until there is mail
 megabrain orchestrate list --mine --json         # show dispatches owned by this session
 megabrain orchestrate list --all --json          # include foreign and unknown owners
 megabrain orchestrate adopt <id> [--force] --json # take ownership of a dispatch
-megabrain orchestrate reply <id> --text "..."   # answer a question
-megabrain orchestrate ack <id> <delivery-id> [--close] # mark it consumed and optionally release the terminal
-megabrain orchestrate read <id>                 # what the agent actually did
+megabrain orchestrate reply <dispatch-id-or-suffix> --text "..."   # answer a question
+megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--close] # mark it consumed and optionally release the terminal
+megabrain orchestrate read <dispatch-id-or-suffix> # what the agent actually did
 megabrain orchestrate reconcile <id>            # settle its state against reality
-megabrain orchestrate close <id>                # take the pane back
+megabrain orchestrate close <dispatch-id-or-suffix> # take the pane back
 ```
 
 Every dispatch has a chat name: `--label` when supplied, otherwise its worktree branch. The list
@@ -202,11 +202,23 @@ shows it in the `CHAT NAME` column, and `db show <id>` includes `chatName`. tmux
 `agent · name` and expose `@megabrain_agent`, `@megabrain_name`, and `@megabrain_state` for themes;
 Orca tabs use the same title. Claude sessions start with `--name <chat name>`.
 
-Typed and queued dispatch messages start with a sender header such as
-`[megabrain][claude][a1b2c3d4 - fix-chat-names] - FINISHED`. The body uses up to four short bullet
-lines; long reports point to `megabrain orchestrate watch <dispatch-id>` or `megabrain check`.
-Orca terminal sends submit embedded newlines separately, so Megabrain joins those lines with ` | `
-for Orca targets.
+Typed and queued messages use a short header, one plain-language summary sentence, and a details
+pointer. For example:
+
+```text
+✅ codex · fix/chat-name-source finished
+Chat names now show the branch, and old names were fixed.
+→ details: megabrain orchestrate watch ddb1bbe0
+```
+
+Question, stuck, reply, and direction messages use ❓ has a question, ⚠️ is stuck, 💬 reply, and 🔀
+new direction. Child-bound messages use the coordinator's name and point to `megabrain check` for
+the full text. Orca receives the same three parts on one line, joined with ` — `.
+
+The dispatch commands that take an ID accept a unique suffix of at least eight characters. They
+resolve against dispatches owned by the current caller; an ambiguous suffix lists its matches.
+`db show` accepts the same suffix length and resolves across all dispatches, including archived
+ones.
 
 Dispatch ownership belongs to the agent session that created it and survives a resumed
 conversation. A new session does not inherit that ownership. `list` shows only your dispatches by
