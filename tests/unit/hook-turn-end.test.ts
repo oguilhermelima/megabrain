@@ -12,6 +12,7 @@ import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { createDispatch, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
+import { composerTmux } from "./composer-tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 type Behavior = (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>;
@@ -159,6 +160,29 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
+  test("blocks once with one line per failed delivery and never twice for the same message", async () => {
+    await withRoot("failed-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const appended = await appendMessage(root, "d1", "child", "done", "migration finished\nsecond line", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "failed", "proof-unavailable");
+      const first = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      if (first.kind !== "ok") throw new Error(first.error);
+      const verdict = JSON.parse(first.value) as { decision?: string; reason?: string };
+      expect(verdict.decision).toBe("block");
+      expect(verdict.reason).toContain("d1");
+      expect(verdict.reason).toContain("migration finished");
+      expect(verdict.reason).not.toContain("second line");
+      expect(verdict.reason).toContain("megabrain orchestrate watch d1");
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
   test("marks an open dispatch limit-refused when its pane shows the usage-limit marker", async () => {
     await withRoot("limit-refused", async (root) => {
       await writeMeta(root, "d1", {
@@ -235,12 +259,12 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     const original = getTmux();
     let nextPane = 20;
     let refusedPane: string | undefined;
+    const composer = composerTmux({ afterSubmit: "idle" });
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
-      capturePane: async (pane) => (pane === refusedPane ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : ok("› Ask Codex to do anything")),
+      ...composer,
+      capturePane: async (pane) => (pane === refusedPane ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : composer.capturePane()),
     });
     try {
       await withRoot("chain-continue-e2e", async (root) => {
@@ -573,9 +597,7 @@ describe("executeHookTurnEnd: the parent is never mistaken for its own just-spaw
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
-      capturePane: async () => ok("› Ask Codex to do anything"),
+      ...composerTmux(),
     });
     try {
       await withRoot("no-self-attribution", async (root) => {
@@ -643,12 +665,12 @@ describe("executeHookTurnEnd: a caller inside a tmux pane passes the top gate", 
   test("a limit-refused dispatch continues its chain when the parent itself runs inside a tmux pane", async () => {
     const original = getTmux();
     let refusedPane: string | undefined;
+    const composer = composerTmux({ afterSubmit: "idle" });
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
-      capturePane: async (pane) => (pane === refusedPane ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : ok("› Ask Codex to do anything")),
+      ...composer,
+      capturePane: async (pane) => (pane === refusedPane ? ok("You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n") : composer.capturePane()),
     });
     try {
       await withRoot("tmux-parent-continue", async (root) => {

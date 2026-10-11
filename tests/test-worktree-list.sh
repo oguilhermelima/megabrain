@@ -20,6 +20,7 @@ wrapper_dir="$state_root/bin"
 git_log="$state_root/git.log"
 real_git="$(command -v git)"
 original_path="$PATH"
+node_bin="$(dirname "$(command -v node)")"
 
 cleanup() {
   local rc=$?
@@ -87,7 +88,7 @@ run_binary() {
   local state="$1" shared_root="$2"
   shift 2
   printf '%s\n' "$shared_root" >"$state/worktree-root"
-  env -i HOME="$state_root/home" PATH="$wrapper_dir:/usr/bin:/bin" \
+  env -i HOME="$state_root/home" PATH="$wrapper_dir:$node_bin:/usr/bin:/bin" \
     MEGABRAIN_STATE_DIR="$state" MEGABRAIN_TEST_GIT_LOG="$git_log" \
     MEGABRAIN_TEST_GIT_REAL="$real_git" "$root/.build/megabrain" worktree list "$@"
 }
@@ -149,9 +150,9 @@ scenario_listing_json_and_repo_filter() {
     --arg one "$fixture_shared_root/one-main" \
     --arg two "$fixture_shared_root/two-main" \
     '[
-      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null},
-      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null},
-      {path: $two, branch: "feature/two", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null}
+      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
+      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
+      {path: $two, branch: "feature/two", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false}
     ]')"
   assert_equal "$output" "$expected"
   assert_contains "$output" "$fixture_shared_root/one-detached"
@@ -166,9 +167,9 @@ scenario_listing_json_and_repo_filter() {
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
     '[
-      {path: $repo, branch: "main", parent: null, inSuperset: false, inSharedRoot: false, pullRequest: null},
-      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null},
-      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null}
+      {path: $repo, branch: "main", parent: null, inSuperset: false, inSharedRoot: false, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
+      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
+      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false}
     ]')"
   assert_equal "$filtered" "$filtered_expected"
   case "$filtered" in

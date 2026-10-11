@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { deliveryComposer } from "../../src/cli/commands/delivery-screen.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
-import { stateDatabase, createDispatch, appendMessage } from "../../src/adapters/state-db.js";
+import { stateDatabase, createDispatch, appendMessage, listDeliveries } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { ok, failed } from "../../src/core/result.js";
 
@@ -35,7 +35,7 @@ function processFor(screen: string, onScreenRead?: (read: number) => Promise<voi
   return { process, calls };
 }
 
-async function setupWorker(home: string, session: Record<string, unknown>, metaOverrides: Record<string, unknown> = {}) {
+async function setupWorker(home: string, session: Record<string, unknown>, metaOverrides: Record<string, unknown> = {}, payloadMeta?: Record<string, unknown>) {
   const db = stateDatabase({ HOME: home, MEGABRAIN_STATE_DIR: home });
   if (db.kind !== "ok") throw new Error(db.error);
   const dispatchId = "dispatch-parent-gate";
@@ -52,7 +52,9 @@ async function setupWorker(home: string, session: Record<string, unknown>, metaO
   };
   const created = createDispatch(db.value, { dispatchId, state: "running", ...metadata });
   if (created.kind !== "ok") throw new Error(created.error);
+  const now = new Date().toISOString();
   const appended = appendMessage(db.value, dispatchId, { from: "child", type: "done", text: "finished" }, {
+    delivery: { id: "parent-delivery-test", recipient: "parent", messageSeqs: [], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null },
     outbox: {
       id: "parent-pointer-test",
       targetKind: "parent-pointer",
@@ -60,7 +62,7 @@ async function setupWorker(home: string, session: Record<string, unknown>, metaO
       payload: {
         dispatchId,
         sequence: 1,
-        meta: metadata,
+        meta: payloadMeta ?? metadata,
         pointer: "megabrain check",
         fullMessage: "✅ Claude · test finished — The task is complete.",
       },
@@ -70,11 +72,11 @@ async function setupWorker(home: string, session: Record<string, unknown>, metaO
   return { dispatchId, outboxId: "parent-pointer-test" };
 }
 
-async function runWorker(home: string, ids: { dispatchId: string; outboxId: string }, process: ProcessAdapter, deadlineMs = 100) {
+async function runWorker(home: string, ids: { dispatchId: string; outboxId: string }, process: ProcessAdapter, deadlineMs = 100, extraEnvironment: Record<string, string> = {}) {
   const now = Date.now();
   return executeDeliveryWorker(
     [ids.outboxId, "holder", "delivery-target:orca:parent-terminal", String(now + deadlineMs)],
-    { HOME: home, MEGABRAIN_STATE_DIR: home },
+    { HOME: home, MEGABRAIN_STATE_DIR: home, ...extraEnvironment },
     process,
   );
 }
@@ -158,6 +160,68 @@ describe("Claude parent idle delivery", () => {
     try {
       await runWorker(root, ids, fake.process);
       expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("loads the parent proof from the dispatch record when the payload snapshot has no parent fields", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    const pid = 16180;
+    session.pid = pid;
+    await fs.writeFile(path.join(sessions, `${pid}.json`), JSON.stringify(session));
+    const ids = await setupWorker(root, session, {}, { agent: "claude", agentPid: 99999 });
+    const fake = processFor(await fs.readFile(screenShape, "utf8"));
+    try {
+      await runWorker(root, ids, fake.process);
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+      const decisions = (await fs.readFile(path.join(root, "delivery-decisions.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(decisions.at(-1)).toMatchObject({ proofSource: "claude-session", decision: "send" });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("stops waiting after the screen stays unavailable, records why, and never types", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    const pid = 14142;
+    session.pid = pid;
+    await fs.writeFile(path.join(sessions, `${pid}.json`), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const calls: string[][] = [];
+    const broken: ProcessAdapter = {
+      async run(command, args) {
+        calls.push([command, ...args]);
+        if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "parent-terminal" }] }), stderr: "", exitCode: 0 });
+        return failed("orca terminal read broke");
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    const started = Date.now();
+    try {
+      await runWorker(root, ids, broken, 8000, { MEGABRAIN_PROOF_UNAVAILABLE_MS: "200" });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(calls.some((call) => call[2] === "send")).toBe(false);
+      const decisions = (await fs.readFile(path.join(root, "delivery-decisions.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(decisions[0]).toMatchObject({ proofSource: "claude-session", proofReason: expect.stringContaining("orca terminal read broke") });
+      const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const deliveries = listDeliveries(db.value, ids.dispatchId);
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value[0]).toMatchObject({ transport: "failed", transportReason: "proof-unavailable" });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

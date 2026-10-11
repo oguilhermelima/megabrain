@@ -1,5 +1,7 @@
 import { type ProcessAdapter } from "../adapters/proc.js";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { failed, ok, unknown, type Result } from "../core/result.js";
 
 export type TmuxSendEnvironment = Readonly<Record<string, string | undefined>>;
@@ -12,9 +14,10 @@ export type TmuxProvider = Readonly<{
   readonly sessionExists: (session: string, process: ProcessAdapter) => Promise<Result<boolean>>;
   readonly panesForSession: (session: string, process: ProcessAdapter) => Promise<Result<readonly string[]>>;
   readonly panePid: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<string>>;
-  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean, expectedSessionId?: string) => Promise<Result<string>>;
+  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean, expectedSessionId?: string, withEscapes?: boolean) => Promise<Result<string>>;
   readonly sendText: (pane: string, text: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly sendKey: (pane: string, key: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
+  readonly pasteText: (pane: string, text: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly killPane: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly killSession: (session: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly listSessions: (process: ProcessAdapter, format?: string) => Promise<Result<readonly string[]>>;
@@ -88,11 +91,11 @@ const provider: TmuxProvider = {
     const pid = result.value.stdout.trim();
     return pid.length > 0 ? ok(pid) : unavailable(`PID for pane ${pane}`);
   },
-  capturePane: async (pane, lines, process, screenOnly = false, expectedSessionId) => {
+  capturePane: async (pane, lines, process, screenOnly = false, expectedSessionId, withEscapes = false) => {
     const exists = await verifyPane(pane, process, expectedSessionId);
     if (exists.kind !== "ok") return exists;
     if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to capture it`);
-    const result = await process.run("tmux", screenOnly ? ["capture-pane", "-p", "-t", pane] : ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
+    const result = await process.run("tmux", screenOnly ? ["capture-pane", "-p", ...(withEscapes ? ["-e"] : []), "-t", pane] : ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
     return result.kind === "ok" ? ok(result.value.stdout) : unavailable(`capture of pane ${pane}`);
   },
   sendText: async (pane, text, process, expectedSessionId) => {
@@ -108,6 +111,30 @@ const provider: TmuxProvider = {
     if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to send a key`);
     const result = await process.run("tmux", ["send-keys", "-t", pane, key]);
     return result.kind === "ok" ? ok(undefined) : failed(result.error);
+  },
+  // One bracketed paste through a private buffer: the agent receives the whole text as a single
+  // paste event instead of a stream of keystrokes it may split, collapse or drop (measured against
+  // Claude Code 2.1.296 and Codex 0.162.1: a fast send-keys of a ~5 KB brief reached Claude as
+  // several pasted chunks plus a loose tail, while paste-buffer -p arrived as one).
+  pasteText: async (pane, text, process, expectedSessionId) => {
+    const exists = await verifyPane(pane, process, expectedSessionId);
+    if (exists.kind !== "ok") return failed(`could not verify tmux pane ${pane} before pasting`);
+    if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to paste`);
+    const directory = await mkdtemp(join(tmpdir(), "megabrain-paste-"));
+    const buffer = `megabrain-${basename(directory)}`;
+    try {
+      await writeFile(join(directory, "text"), text, { mode: 0o600 });
+      const loaded = await process.run("tmux", ["load-buffer", "-b", buffer, join(directory, "text")]);
+      if (loaded.kind !== "ok") return failed(loaded.error);
+      const pasted = await process.run("tmux", ["paste-buffer", "-p", "-d", "-b", buffer, "-t", pane]);
+      if (pasted.kind !== "ok") {
+        await process.run("tmux", ["delete-buffer", "-b", buffer]);
+        return failed(pasted.error);
+      }
+      return ok(undefined);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   },
   killPane: async (pane, process, expectedSessionId) => {
     const exists = await verifyPane(pane, process, expectedSessionId);
@@ -287,6 +314,24 @@ async function acquireLock(path: string, environment: TmuxSendEnvironment): Prom
 // C-u clears their idle composer without submitting the retained draft. Other callers that type
 // into an active agent composer must leave this off; an explicit opt-in prevents a control key
 // from reaching a working turn or a terminal that interprets it differently.
+// Runs fn with the pane's send lock held, so a multi-step write (paste, verify, submit) is not
+// interleaved with another writer typing into the same composer.
+export async function withTmuxPaneLock<T>(root: string, pane: string, environment: TmuxSendEnvironment, fn: () => Promise<Result<T>>): Promise<Result<T>> {
+  const lock = lockPath(root, pane);
+  try {
+    await mkdir(`${root}/locks/tmux`, { recursive: true });
+  } catch {
+    return failed(`could not prepare tmux send lock: ${lock}`);
+  }
+  const acquired = await acquireLock(lock, environment);
+  if (acquired.kind !== "ok") return acquired;
+  try {
+    return await fn();
+  } finally {
+    await rm(lock, { recursive: true, force: true });
+  }
+}
+
 export async function sendTmuxPair(
   root: string,
   pane: string,

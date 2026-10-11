@@ -32,6 +32,23 @@ the newest seven backups. `db migrate --dry-run --json` previews legacy JSON imp
 without changing the state directory; `db migrate --json` runs it and refuses when the cutover
 marker already exists. `db show` reads dispatches and auxiliary records from SQLite.
 
+## Worktree registry and prune
+
+`worktree list` shows each worktree's age, purpose, origin, and whether megabrain created it.
+Create with `--label <text>` to record a purpose; otherwise the first line of `--prompt` is used.
+Older worktrees without a registry entry appear as discovered with unknown age.
+Repo names provided during create and inferred during adopt are available to resolve later
+`--repo` selectors when Orca is unavailable or its lookup fails.
+
+```
+megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json] — recommended when you need to review or remove old worktrees safely.
+```
+
+Prune defaults to a dry run. It reports each candidate's age, disk size, purpose, and reason.
+Only old, clean worktrees with no open dispatch, no unpushed commits, and a branch merged into a
+known base are eligible. Unknown status is kept. Add `--yes` to remove eligible worktrees and
+their merged local branches through the normal finish flow.
+
 ## Delegating work to another agent
 
 **Start here: `megabrain orchestrate spawn --prompt <brief> [--worktree <path>]`.** When no
@@ -111,8 +128,8 @@ for up to ten minutes; it stops when `check` pulls the delivery or it is acknowl
 is the truth, and `db show` records whether delivery used `queue`, `typed`, `deferred`, or `failed`.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
-When your own turn ends, megabrain checks the dispatches you own and points at any that
-have unread child mail, once per message. That is what makes a missed pointer recover
+When your own turn ends, megabrain checks the dispatches you own and blocks once, one line per
+message, for child mail whose delivery ended failed. That is what makes a missed pointer recover
 instead of being lost, and it is why a notice can appear immediately after you finish
 speaking. It stays quiet for a dispatch you already have a `watch` open on.
 
@@ -313,6 +330,7 @@ megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-t
 megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json] — recommended when you need to verify that the native app is rendering on its simulator.
 megabrain native crashes <phone|tv> [--last N] [--json] — recommended when you need to inspect recent native app crash reports.
 megabrain native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json] — recommended when you need to build, install, and launch the configured native app.
+megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json] — recommended when you need stable screenshots of one or more native simulator routes and a capture manifest.
 megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json] — recommended when you need to open a specific route in the running native app.
 megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json] — recommended when you need to read native app state through Metro.
 megabrain tv connect <ip> [--port <port>] — recommended when you need to connect an Android TV device over adb.

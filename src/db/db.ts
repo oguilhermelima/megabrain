@@ -8,6 +8,7 @@ import cutoverSettingsMigration from "./schema/004-cutover-settings.sql" with { 
 import nativeDeliveryMigration from "./schema/005-native-delivery.sql" with { type: "text" };
 import chatNamesMigration from "./schema/006-chat-names.sql" with { type: "text" };
 import chatNameSourceMigration from "./schema/007-chat-name-source.sql" with { type: "text" };
+import worktreesMigration from "./schema/008-worktrees.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -116,6 +117,7 @@ const migrations: readonly Migration[] = [
   { version: 5, sql: nativeDeliveryMigration },
   { version: 6, sql: chatNamesMigration },
   { version: 7, sql: chatNameSourceMigration },
+  { version: 8, sql: worktreesMigration },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 

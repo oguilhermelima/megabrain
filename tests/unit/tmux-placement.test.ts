@@ -8,6 +8,7 @@ import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
 import { deleteTmuxSession, getDispatch, getTmuxSession, listTmuxSessions, putTmuxSession } from "../../src/adapters/state-db.js";
+import { composerTmux } from "./composer-tmux.js";
 
 describe("tmux placement", () => {
   test("lists, looks up, and deletes tmux sessions through the state facade", async () => {
@@ -61,7 +62,7 @@ describe("tmux placement", () => {
       invocationCount() { return calls.length; },
     };
     const original = getTmux();
-    registerTmux({ ...original, sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
+    registerTmux({ ...original, ...composerTmux() });
     try {
       const result = await executeSpawn(["--worktree", root, "--agent", "codex", "--prompt", "spawn"], {
         MEGABRAIN_STATE_DIR: `${root}/state`, MEGABRAIN_SESSION_ID: "orca-parent", ORCA_TERMINAL_HANDLE: "orca-terminal",
@@ -103,7 +104,7 @@ describe("tmux placement", () => {
       invocationCount() { return calls.length; },
     };
     const original = getTmux();
-    registerTmux({ ...original, sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok("› Ask Codex to do anything") });
+    registerTmux({ ...original, ...composerTmux() });
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], {
         MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "orca-parent", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-wrapper-reuse", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",

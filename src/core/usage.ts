@@ -7,12 +7,13 @@ export const USAGE_LINES = {
   "db-migrate": "db migrate [--dry-run] [--json]",
   "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]",
   "context": "context [--json]",
-  "worktree": "worktree create|pr|finish|list|adopt ...",
+  "worktree": "worktree create|pr|finish|list|adopt|prune ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
   "worktree-finish": "worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
+  "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json]",
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
@@ -136,8 +137,9 @@ Commands:
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
-  worktree list [--repo <name|path>]   List shared-root worktrees
+  worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata
   worktree adopt <path|branch>         Register an existing worktree in Superset
+  worktree prune ...                   Prune old, safe worktrees (dry-run unless --yes)
   terminal create ...                  Open a terminal in the current orchestrator
   terminal list [--worktree <path>]    List terminals created by megabrain
   terminal restart <selector> ...      Restart a terminal created by megabrain

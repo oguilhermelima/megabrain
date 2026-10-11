@@ -96,7 +96,13 @@ describe("CLI router", () => {
 
     expect(result).toEqual({
       kind: "ok",
-      value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n",
+      value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n"
+        + "\nEnvironment:\n"
+        + "  MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS  Seconds to wait for the child's megabrain received (default 30).\n"
+        + "    On tmux, a prompt with no turn and no receipt is sent once more, then the dispatch fails with\n"
+        + "    prompt-not-received; a turn that started without a receipt fails with no-receipt-after-turn.\n"
+        + "    On other hosts the dispatch fails with no-receipt-unproven. The pane or terminal is always kept.\n"
+        + "    0 means do not wait: spawn returns at once and the dispatch stays awaiting its receipt.\n",
     });
   });
 

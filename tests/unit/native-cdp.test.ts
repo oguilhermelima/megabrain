@@ -35,7 +35,7 @@ type FakeMetro = {
 
 const servers: FakeMetro[] = [];
 
-async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
+async function fakeMetro(initialTargets: FakeTarget, onUnansweredProbe?: () => FakeTarget | undefined): Promise<FakeMetro> {
   const http = createServer();
   const sockets = new Set<WebSocket>();
   const wsServer = new WebSocketServer({ noServer: true });
@@ -61,10 +61,12 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
 
   const currentRoute = { pathname: "/home", segments: ["(tabs)", "home"], params: {} };
   const changedRoute = { pathname: "/home", segments: ["(tabs)", "home"], params: { filter: "favorites" } };
+  let captureRoute: { pathname: string; segments: string[]; params: Record<string, never> } | undefined;
 
   const routeInfo = () => {
     const read = routeInfoReads++;
     routeReadsSinceLaunch += 1;
+    if (["reset-delayed", "logbox-present", "logbox-react-native-tvos", "logbox-react-native", "dev-loading-view-react-native-tvos", "dev-loading-view-read-only"].includes(targets) && captureRoute !== undefined) return captureRoute;
     if ((targets === "reset-delayed" || targets === "logbox-present" || targets === "logbox-react-native-tvos" || targets === "logbox-react-native" || targets === "dev-loading-view-react-native-tvos" || targets === "dev-loading-view-read-only") && routeReadsSinceLaunch > 1 && navigationCalls > 0) return changedRoute;
     if (targets === "changed" && read > 0) return changedRoute;
     if ((targets === "delayed" || targets === "delayed-queued") && read > 1) return changedRoute;
@@ -109,7 +111,20 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
           value = { present: true, prevented };
         }
       }
-    } else if (expression.includes("megabrain:navigate")) value = (navigationCalls += 1, firstNavigationListRequest ||= listRequests, { ok: true });
+    } else if (expression.includes("megabrain:navigate")) {
+      navigationCalls += 1;
+      firstNavigationListRequest ||= listRequests;
+      if (["reset-delayed", "logbox-present", "logbox-react-native-tvos", "logbox-react-native", "dev-loading-view-react-native-tvos", "dev-loading-view-read-only"].includes(targets)) {
+        const match = expression.match(/modules\.router\.navigate\((".*?")\)/);
+        if (match?.[1]) {
+          const pathname = JSON.parse(match[1]) as string;
+          if (captureRoute !== undefined || pathname === "/") {
+            captureRoute = { pathname, segments: [pathname.replace(/^\//, "")], params: {} };
+          }
+        }
+      }
+      value = { ok: true };
+    }
     else if (expression.includes("megabrain:navigation-queue") && targets !== "queued-hang") value = (
       queueReads += 1,
       targets === "queued" ? 3
@@ -127,7 +142,8 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
   wsServer.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("message", (message) => {
-      if (targets !== "none" && targets !== "hang") sendProbeResult(socket, message.toString());
+      if (targets === "hang") targets = onUnansweredProbe?.() ?? targets;
+      else if (targets !== "none") sendProbeResult(socket, message.toString());
     });
     socket.on("close", () => sockets.delete(socket));
   });
@@ -175,7 +191,7 @@ async function fakeMetro(initialTargets: FakeTarget): Promise<FakeMetro> {
     get hideDevLoadingViewCalls() { return hideDevLoadingViewCalls; },
     get preventDevLoadingViewCalls() { return preventDevLoadingViewCalls; },
     get showMessageCalls() { return showMessageCalls; },
-    markLaunch() { launches += 1; launched = true; routeReadsSinceLaunch = 0; },
+    markLaunch() { launches += 1; launched = true; routeReadsSinceLaunch = 0; captureRoute = undefined; },
     setTargets(value) { targets = value; },
     simulateDevLoadingViewRefresh() {
       if (!devLoadingViewPatched) showMessageCalls += 1;
@@ -256,8 +272,7 @@ describe("Metro inspector transport", () => {
   });
 
   test("rereads the target listing after an unresponsive target", async () => {
-    const server = await fakeMetro("hang");
-    setTimeout(() => server.setTargets("probe"), 90);
+    const server = await fakeMetro("hang", () => "probe");
 
     const result = await connectMetroInspector(server.port, 700);
 

@@ -12,6 +12,7 @@ import { executeQueueWrite } from "./commands/queue-write.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeOrchestrateAdopt } from "./commands/orchestrate-adopt.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
+import { executeWorktreePrune } from "./commands/worktree-prune.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
 import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
 import { executeTerminalList } from "./commands/terminal-list.js";
@@ -149,6 +150,9 @@ export async function route(
   }
   if (command === "worktree" && commandArgs[0] === "adopt") {
     return executeWorktreeAdopt(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "worktree" && commandArgs[0] === "prune") {
+    return executeWorktreePrune(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "terminal" && commandArgs[0] === "list") {
     return executeTerminalList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

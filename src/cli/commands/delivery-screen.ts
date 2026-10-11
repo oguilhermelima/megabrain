@@ -37,8 +37,8 @@ export async function readDeliveryScreen(meta: DeliveryMeta, process: ProcessAda
   const identity = await terminalStatus(meta, process);
   if (identity !== "proven") return failed(identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven");
   if (meta.runtime === "tmux") {
-    const capture = await getTmux().capturePane(String(meta.tmuxPane ?? ""), 200, process, true);
-    return capture.kind === "ok" ? ok(normalizeInterruptedScreen(agent, capture.value)) : capture;
+    const capture = await getTmux().capturePane(String(meta.tmuxPane ?? ""), 200, process, true, undefined, true);
+    return capture.kind === "ok" ? ok(normalizeInterruptedScreen(agent, withoutGhostText(capture.value))) : capture;
   }
   const provider = getHost(String(meta.childHost ?? ""));
   if (provider === undefined) return failed(`screen read is unavailable for host ${String(meta.childHost ?? "unknown")}`);
@@ -50,12 +50,75 @@ export async function readDeliveryScreen(meta: DeliveryMeta, process: ProcessAda
   return raw.kind === "ok" ? ok(normalizeInterruptedScreen(agent, raw.value)) : raw;
 }
 
+const PROMPT_GLYPH = /^\s*[❯›>$]/;
+const SGR = /\x1b\[([0-9;:]*)m/g;
+const RULE = /^\s*─{8,}\s*$/;
+
+function stripStyles(line: string, dropDim: boolean): string {
+  let dim = false;
+  let out = "";
+  let last = 0;
+  for (const match of line.matchAll(SGR)) {
+    if (!dim) out += line.slice(last, match.index);
+    last = match.index + match[0].length;
+    const codes = (match[1] ?? "").split(/[;:]/).map((code) => (code === "" ? 0 : Number(code)));
+    for (let i = 0; i < codes.length; i += 1) {
+      const code = codes[i];
+      if (code === 38 || code === 48) i += codes[i + 1] === 5 ? 2 : codes[i + 1] === 2 ? 4 : 0;
+      else if (code === 0 || code === 22) dim = false;
+      else if (code === 2) dim = true;
+    }
+  }
+  if (!dim) out += line.slice(last);
+  return dropDim ? out : line.replace(SGR, "");
+}
+
+// A finished Claude turn leaves a dim (SGR 2) next-prompt suggestion in the empty composer; tmux
+// can tell it from typed text, so drop dim text on prompt lines and return a plain screen.
+function withoutGhostText(escaped: string): string {
+  return escaped.split("\n").map((line) => {
+    const plain = stripStyles(line, false);
+    return PROMPT_GLYPH.test(plain) ? stripStyles(line, true) : plain;
+  }).join("\n");
+}
+
+export type GhostTracker = Readonly<{
+  observe: (text: string | undefined, stamp: number | undefined) => string | undefined;
+  reset: () => void;
+  assumed: () => boolean;
+}>;
+
+// Orca shows no colour, so a ghost suggestion and typed text read the same. A composer line that
+// stays byte-identical for `thresholdMs` of continuous idle under one status stamp is a ghost.
+export function ghostTracker(thresholdMs: number, now: () => number = Date.now): GhostTracker {
+  let seen: { text: string; stamp: number | undefined; since: number } | undefined;
+  let assumed = false;
+  const reset = (): void => { seen = undefined; assumed = false; };
+  return {
+    reset,
+    assumed: () => assumed,
+    observe: (text, stamp) => {
+      if (text === undefined || text === "") { reset(); return text; }
+      if (seen === undefined || seen.text !== text || seen.stamp !== stamp) {
+        seen = { text, stamp, since: now() };
+        assumed = false;
+        return text;
+      }
+      if (now() - seen.since >= thresholdMs) assumed = true;
+      return assumed ? "" : text;
+    },
+  };
+}
+
 export function deliveryComposer(agent: string, screen: string): string | undefined {
   const draftLine = [...screen.split("\n")].reverse().find((line: string) => line.startsWith("MEGABRAIN_COMPOSER_DRAFT:"));
   if (draftLine !== undefined) return draftLine.slice("MEGABRAIN_COMPOSER_DRAFT:".length);
-  const prompt = agent === "claude" ? /^\s*❯ ?(.*)$/ : agent === "codex" ? /^\s*› ?(.*)$/ : /^\s*[>$] ?(.*)$/;
+  const prompt = agent === "claude" ? /^\s*❯[  ]?(.*)$/ : agent === "codex" ? /^\s*›[  ]?(.*)$/ : /^\s*[>$] ?(.*)$/;
   const lines = screen.split("\n");
-  const match = [...lines].reverse().find((line: string) => prompt.test(line));
+  const rules = lines.flatMap((line, index) => (RULE.test(line) ? [index] : []));
+  const boxed = rules.length >= 2;
+  const region = boxed ? lines.slice((rules.at(-2) ?? 0) + 1, rules.at(-1)) : lines;
+  const match = boxed ? region.find((line: string) => prompt.test(line)) : [...region].reverse().find((line: string) => prompt.test(line));
   if (match === undefined) return undefined;
   const value = prompt.exec(match)?.[1] ?? "";
   if (agent === "codex" && value.trim() === "Ask Codex to do anything") return "";

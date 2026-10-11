@@ -2,6 +2,8 @@ import { realpath, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { openDatabase } from "../../db/db.js";
+import { listWorktrees as listRegisteredWorktrees } from "../../db/queries/worktrees.js";
 import { formatWorktreeList, parseGitWorktrees, parseParentConfig, parsePullRequests, parseWorkspacePaths, type GitWorktree, type ParentConfig, type WorktreeListEntry } from "../../core/worktree-list.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { usageText } from "../../core/usage.js";
@@ -116,7 +118,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   let filter: string | undefined;
   let selectedRepository: Repository | undefined;
   if (options.value.repo !== undefined) {
-    const selector = await repoFromOrca(process, options.value.repo);
+    const selector = await repoFromOrca(process, options.value.repo, environment);
     if (selector.kind !== "ok") return failed(`repo not found: ${options.value.repo}`);
     selectedRepository = await repositoryForDirectory(process, selector.value);
     if (selectedRepository === undefined) return failed(`repo not found: ${options.value.repo}`);
@@ -135,6 +137,12 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   const workspaces = parseWorkspacePaths(await batchJson(process, "superset", ["workspaces", "list", "--json"]));
   const orcaParents = parentFromOrca(await batchJson(process, "orca", ["worktree", "list", "--json"]));
   const pullRequests = parsePullRequests(await batchJson(process, "gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"]));
+  const registry = openDatabase(environment);
+  const registered = new Map<string, ReturnType<typeof listRegisteredWorktrees>[number]>();
+  if (registry.kind === "ok") {
+    try { for (const item of listRegisteredWorktrees(registry.value.db)) registered.set(item.path, item); }
+    finally { registry.value.close(); }
+  }
   const entries: WorktreeListEntry[] = [];
   for (const record of gitRecords) {
     const path = await canonical(record.path);
@@ -144,7 +152,14 @@ export async function executeWorktreeList(args: readonly string[], environment: 
     if (filter !== undefined && record.repository !== filter) continue;
     const config = parents.find((item) => item.repository === record.repository && item.branch === record.branch);
     const parent = config?.parent ?? orcaParents.get(path) ?? null;
-    entries.push({ path, branch: record.branch, parent, inSuperset: workspaces.has(path), inSharedRoot, pullRequest: pullRequests.get(record.branch) ?? null });
+    const stored = registered.get(path);
+    const ageDays = stored === undefined ? null : Math.max(0, Math.floor((Date.now() - Date.parse(stored.createdAt)) / 86_400_000));
+    entries.push({
+      path, branch: record.branch, parent, inSuperset: workspaces.has(path), inSharedRoot,
+      pullRequest: pullRequests.get(record.branch) ?? null,
+      createdAt: stored?.createdAt ?? null, ageDays, purpose: stored?.purpose ?? null,
+      origin: stored?.origin ?? "discovered", createdByMegabrain: stored?.origin === "created",
+    });
   }
   const formatted = formatWorktreeList(entries, options.value);
   if (options.value.json) return ok(formatted);

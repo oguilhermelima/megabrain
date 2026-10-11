@@ -271,6 +271,45 @@ describe("native build planning", () => {
 });
 
 describe("native health Appium session", () => {
+  test.each([
+    ["an ActivityIndicator-only source", "<XCUIElementTypeActivityIndicator label=\"Loading\"/>", "loading"],
+    ["a source with no matching accessibility nodes", "<OtherElement/>", "loading"],
+    ["a populated accessibility source", "<XCUIElementTypeWindow/><XCUIElementTypeButton/>", "rendered"],
+  ] as const)("reaches a no-control-frame verdict for %s through a headless Appium session", async (_name, sourceTree, expectedStatus) => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-no-frame-"));
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { "iOS-1": [{ udid: "one", state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+        if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: "com.example.app", stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:45678/json/list")) return ok({ stdout: JSON.stringify([{ title: "com.example.app" }]), stderr: "", exitCode: 0 });
+        if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) return ok({ stdout: `${JSON.stringify({ value: { sessionId: "session-no-frame" } })}\n200`, stderr: "", exitCode: 0 });
+        if (command === "curl" && args.some((arg) => arg.includes("/source"))) return ok({ stdout: `${sourceTree}\n200`, stderr: "", exitCode: 0 });
+        if (command === "curl" && args[0] === "-fsS" && args[1] === "-X") return ok({ stdout: "", stderr: "", exitCode: 0 });
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => calls.length,
+    };
+
+    try {
+      const result = await executeNative(["health", "phone", "--bundle-id", "com.example.app", "--device", "one", "--metro-port", "45678", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      const health = JSON.parse(result.value) as { status: string; reason: string; process: { state: string }; metro: { state: string }; frame: { state: string } };
+      expect(health.status).toBe(expectedStatus);
+      expect(health.process.state).toBe("running");
+      expect(health.metro.state).toBe("attached");
+      expect(health.frame.state).toBe("unknown");
+      expect(health.reason).toContain("frame was not checked");
+      const sessionRequest = calls.find((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
+      const capabilities = JSON.parse(sessionRequest?.args.at(-1) ?? "{}").capabilities.alwaysMatch;
+      expect(capabilities["appium:isHeadless"]).toBe(true);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+
   test("requests a headless driver session", async () => {
     const state = await mkdtemp(join(tmpdir(), "megabrain-native-health-"));
     const calls: Array<{ command: string; args: string[] }> = [];

@@ -5,7 +5,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
-import { waitForStableIdle } from "../../core/liveness.js";
+import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
@@ -17,16 +17,26 @@ import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, verify
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
+import { receiptTimeoutMs, transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
 const TERMINAL_CREATE_BACKOFF_MS = 250;
 const PROMPT_BUDGET_ARGV_BYTES = 262144;
+
+const SPAWN_ENVIRONMENT_HELP = `
+Environment:
+  MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS  Seconds to wait for the child's megabrain received (default 30).
+    On tmux, a prompt with no turn and no receipt is sent once more, then the dispatch fails with
+    prompt-not-received; a turn that started without a receipt fails with no-receipt-after-turn.
+    On other hosts the dispatch fails with no-receipt-unproven. The pane or terminal is always kept.
+    0 means do not wait: spawn returns at once and the dispatch stays awaiting its receipt.
+`;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly HOME?: string;
@@ -37,6 +47,9 @@ type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly SUPERSET_WORKSPACE_ID?: string;
   readonly MEGABRAIN_SPAWN_DISPATCH_ID?: string;
   readonly MEGABRAIN_AGENT_READY_TIMEOUT_MS?: string;
+  readonly MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS?: string;
+  readonly MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS?: string;
+  readonly MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS?: string;
 }>;
 
 export type SpawnWorktree = Readonly<{
@@ -228,14 +241,36 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
 // it between polls. So readiness only succeeds once idle has held continuously for
 // TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
 // failing outright, since the composer may still settle before the overall deadline.
-async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Result<void>> {
-  return waitForStableIdle(
+async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Readonly<{ result: Result<void>; lastFrame: string }>> {
+  let lastFrame = "";
+  const result = await waitForStableIdle(
     agentId,
     timeoutMs,
-    () => getTmux().capturePane(pane, 200, process),
+    async () => {
+      const captured = await getTmux().capturePane(pane, 200, process);
+      lastFrame = captured.kind === "ok" ? captured.value : `pane capture failed: ${captured.error}`;
+      return captured;
+    },
     `tmux pane ${pane} did not become ready within ${timeoutMs}ms`,
     () => getTmux().sendKey(pane, "Enter", process),
   );
+  return { result, lastFrame };
+}
+
+const READINESS_FRAME_MAX_LINES = 60;
+
+function recordFrame(root: string, id: string, type: string, text: string): void {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return;
+  appendDatabaseMessage(database.value, id, { from: "megabrain", type, text, createdAt: new Date().toISOString(), sessionId: "" });
+}
+
+// The frame readiness rejected is the only evidence of why a spawn that retries fine failed once,
+// so it is kept in the dispatch's own messages rather than lost with the pane.
+function recordRejectedReadinessFrame(root: string, id: string, agent: string, timeoutMs: number, frame: string): void {
+  const shown = frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd();
+  const status = classifyLiveness(agent, frame).status;
+  recordFrame(root, id, "readiness-frame", `readiness never saw a stable idle ${agent} frame within ${timeoutMs}ms (last classified: ${status}); last frame:\n${shown}`);
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
@@ -259,7 +294,7 @@ export async function defaultResolveWorktree(target: string | undefined, options
     return ok({ path: direct, branch: branch.kind === "ok" && branch.value !== "" ? branch.value : "detached", ownership: "existing", workspaceId: environment.MEGABRAIN_WORKSPACE_ID ?? environment.SUPERSET_WORKSPACE_ID ?? null });
   }
   if (options.repo === undefined) return failed("--repo is required to resolve a worktree by name");
-  const repository = await repoFromOrca(process, options.repo);
+  const repository = await repoFromOrca(process, options.repo, environment);
   if (repository.kind !== "ok") return repository;
   const listed = await runGit(process, ["-C", repository.value, "worktree", "list", "--porcelain"]);
   if (listed.kind === "ok") {
@@ -523,14 +558,26 @@ function hasReceipt(root: string, id: string): boolean {
 }
 
 async function awaitReceipt(root: string, id: string, environment: SpawnEnvironment): Promise<boolean> {
-  const seconds = Number(environment.MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS ?? "30");
-  const timeout = Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 0;
+  const timeout = receiptTimeoutMs(environment);
   const started = Date.now();
   do {
     if (hasReceipt(root, id)) return true;
     if (Date.now() - started >= timeout) return false;
     await new Promise((resolve) => setTimeout(resolve, 50));
   } while (true);
+}
+
+// A host terminal gives no proof of whether a turn started, so an unreceived prompt is never
+// resent there. A zero timeout is the explicit opt-out that leaves the dispatch awaiting.
+async function settleHostReceipt(root: string, id: string, terminalId: string, environment: SpawnEnvironment): Promise<PromptTransportOutcome> {
+  if (await awaitReceipt(root, id, environment)) return { kind: "prompt-transport", status: "delivered" };
+  if (receiptTimeoutMs(environment) === 0) return { kind: "prompt-transport", status: "awaiting-receipt" };
+  return {
+    kind: "prompt-transport",
+    status: "unreceived",
+    reason: "no-receipt-unproven",
+    failure: { call: "prompt receipt", detail: `no megabrain received within ${receiptTimeoutMs(environment) / 1000}s and this host cannot show whether a turn started; terminal ${terminalId} is kept for inspection` },
+  };
 }
 
 async function updateMeta(root: string, id: string, update: RecordValue, process: ProcessAdapter): Promise<Result<void>> {
@@ -677,11 +724,38 @@ function failureResult(plan: SpawnPlan, detail?: string, cleanupFailures: readon
   return failed(cleanup === "" ? message : `${message}; ${cleanup}`, plan.exitCode);
 }
 
+// What a failed spawn knows about itself, so --json can describe it however far it got.
+type SpawnTrace = {
+  json?: boolean;
+  dispatchId?: string;
+  terminalId?: string;
+  pane?: string;
+  reason?: string;
+};
+
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
-  if (args.includes("-h") || args.includes("--help")) return ok(usageText("orchestrate-spawn"));
+  const trace: SpawnTrace = {};
+  const result = await runSpawn(args, environment, process, dependencies, trace);
+  // An argument error leaves trace.json unset: the flag is then read straight from the arguments.
+  if (result.kind === "ok" || !(trace.json ?? args.includes("--json"))) return result;
+  const error = result.kind === "failed" ? result.error : result.reason;
+  const body = {
+    status: "failed",
+    reason: trace.reason ?? "spawn-failed",
+    error,
+    ...(trace.dispatchId === undefined ? {} : { dispatchId: trace.dispatchId }),
+    ...(trace.terminalId === undefined ? {} : { terminalId: trace.terminalId }),
+    ...(trace.pane === undefined ? {} : { tmuxPane: trace.pane }),
+  };
+  return failed(error, result.exitCode, `${JSON.stringify(body)}\n`);
+}
+
+async function runSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies, trace: SpawnTrace): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("orchestrate-spawn")}${SPAWN_ENVIRONMENT_HELP}`);
   const parsed = parseArgs(args);
   if (parsed.kind !== "ok") return parsed;
   const options = parsed.value;
+  trace.json = options.json;
   const agent = getAgent(options.agent);
   if (agent === undefined) return unknown(`agent cannot be determined: ${options.agent}`);
   if (options.contextPolicy !== undefined) {
@@ -851,6 +925,9 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const createdDispatch = createDispatch(database.value, meta);
   if (createdDispatch.kind !== "ok") return createdDispatch;
+  trace.dispatchId = id;
+  trace.terminalId = terminalId;
+  if (pane !== null) trace.pane = pane;
   const callerPane = environment.TMUX_PANE;
   if (callerPane !== undefined && callerPane.trim() !== "") {
     const exists = await verifyTmuxPane(callerPane, process);
@@ -902,17 +979,19 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       }
     } else if (step === "readiness-output-validation") {
       const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process);
-      if (waited.kind !== "ok") readinessError = waited.error;
-      outcome = waited.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+      if (waited.result.kind !== "ok") {
+        readinessError = waited.result.error;
+        recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);
+      }
+      outcome = waited.result.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
         // The readiness wait just proved the composer idle, so this is a normal submit, not a
         // queued one (submitKey(agent) is for queue-write.ts typing into a possibly busy
         // composer, where Codex's Tab queues instead of submitting). Every agent's composer
-        // submits an idle prompt on Enter.
-        const sent = await sendTmuxPair(root, pane ?? "", prompt, "Enter", environment, process);
-        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
-        else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
+        // submits an idle prompt on Enter. The text goes in as one bracketed paste that is proven
+        // to be in the composer before Enter, never as keystrokes.
+        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => awaitReceipt(root, id, environment));
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
@@ -920,7 +999,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
         const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt });
         const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
         if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
-        else outcome = { kind: "prompt-transport", status: await awaitReceipt(root, id, environment) ? "delivered" : "awaiting-receipt" };
+        else outcome = await settleHostReceipt(root, id, terminalId, environment);
       }
     } else {
       outcome = { kind: "succeeded" };
@@ -935,20 +1014,26 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       Object.assign(metadataUpdate, { state: state.dispatch, processState: state.process, terminalState: state.terminal });
     }
     if (step === "prompt-publication" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptPublication: "published", promptState: "awaiting-transport" });
-    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt" });
+    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "unreceived" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt" });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
-    if (plan.action === "fail") Object.assign(metadataUpdate, { state: "failed", processState: "failed", terminalState: "released", reason: plan.reason, promptState: "failed" });
+    if (plan.action === "fail") Object.assign(metadataUpdate, { state: plan.state.dispatch, processState: plan.state.process, terminalState: plan.state.terminal, reason: plan.reason, promptState: "failed" });
     await updateMeta(root, id, metadataUpdate, process);
     if (step === "prompt-transport" && outcome.kind === "prompt-transport" && outcome.status === "delivered") {
       const marked = await markRunningIfSpawning(root, id, process);
       if (marked.kind !== "ok") return marked;
     }
     if (plan.action === "fail") {
+      trace.reason = plan.reason ?? undefined;
+      // A spawn that gave up on the receipt left a live pane behind; tell the parent the way a
+      // stalled child would, so the coordinator does not have to poll to find out.
+      if (step === "prompt-transport" && outcome.kind === "prompt-transport" && outcome.status === "unreceived") {
+        await appendMessage(root, id, "child", "stalled", `${plan.reason}: ${plan.failure?.detail ?? "prompt was not acknowledged"}`, parentContext.id, environment, process);
+      }
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
-      const output = { dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
+      const output = { status: "spawned", reason: null, dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
       return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${attempts}${warning}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);

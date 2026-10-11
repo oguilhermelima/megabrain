@@ -24,6 +24,15 @@ export MEGABRAIN_STATE_DIR="$state_dir/state"
   exit 1
 }
 
+# Native capture has its own detailed help line, but is an additional usage
+# entry rather than part of the table exported for command coverage.
+native_capture_help="$("$binary" native capture --help 2>&1)" || {
+  printf 'FAIL: could not read native capture help from the Node entrypoint\n' >&2
+  exit 1
+}
+native_capture_line="${native_capture_help#Usage: megabrain }"
+printf 'native-capture\t%s\n' "$native_capture_line" >> "$state_dir/typescript-usage.tsv"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -161,6 +170,12 @@ done < <(grep -oE '^megabrain [a-z][a-z-]*( [a-z][a-z-]*)?[^|]*' "$skill")
 # concerned. A documented group invocation covers its children only when that
 # group syntax is itself present in the usage table and the skill.
 skill_text="$(cat "$skill")"
+if ! grep -Fq -- "- Run megabrain $native_capture_line. — recommended" "$root/AGENTS.md"; then
+  record_coverage_failure "AGENTS.md has no recommended entry with the exact native-capture synopsis"
+fi
+if ! grep -Fq -- "megabrain $native_capture_line — recommended" "$skill"; then
+  record_coverage_failure "SKILL.md has no recommended entry with the exact native-capture synopsis"
+fi
 module_ids="$("$binary" doctor --json 2>/dev/null | jq -r '.[].module' || true)"
 while IFS= read -r key; do
   [ -n "$key" ] || continue
@@ -200,7 +215,7 @@ case "$readme_md" in
 esac
 
 if [ "${#coverage_failures[@]}" -gt 0 ]; then
-  printf 'documentation coverage failures:\n' >&2
+  printf 'FAIL: documentation coverage failures (%s):\n' "${#coverage_failures[@]}" >&2
   for coverage_failure in "${coverage_failures[@]}"; do
     printf '%s\n' "$coverage_failure" >&2
   done

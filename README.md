@@ -310,8 +310,11 @@ Three properties do the work:
   `check` pulls the delivery or it is acknowledged.
 - **Delivery transport is recorded.** `db show` reports whether each message used `queue`,
   `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
-- **Your own turn end is a second chance.** When you finish speaking, megabrain points at any
-  dispatch of yours holding unread mail, once per message, so a missed nudge recovers.
+- **Your own turn end is a second chance.** When you finish speaking, megabrain blocks once with
+  one line per child message whose delivery ended failed (its first line and the `watch` command),
+  then marks it so the same message never blocks twice. A deliverer that cannot read the parent's
+  screen for two minutes stops waiting, never types, and leaves the delivery failed with reason
+  `proof-unavailable`, so that notice picks it up.
 
 > [!IMPORTANT]
 > Closing a finished child is the coordinator's job. Nothing does it for you, and the child cannot:
@@ -475,7 +478,27 @@ distinguish an incomplete finish without parsing stderr. Remover failures use `e
 
 `megabrain worktree list` shows the stack as a tree and includes pull-request state when gh can
 answer cheaply. Use `--flat` for the original path/branch table; JSON remains a flat, scriptable
-array and does not require gh or Orca to list the local stack.
+array and does not require gh or Orca to list the local stack. Its entries include age, purpose,
+origin, and whether megabrain created the worktree. Worktrees predating the registry appear with
+origin `discovered` and unknown age until adopted. `worktree create --label <text>` records a
+purpose; when the label is absent, the first line of `--prompt` is used.
+Repository names supplied to create and inferred during adopt are stored with the worktree;
+megabrain can use those names to resolve a later `--repo` selector when Orca cannot.
+
+Prune old worktrees with a dry run first:
+
+```sh
+megabrain worktree prune --older-than 30 --json
+megabrain worktree prune --older-than 30 --yes --json
+```
+
+The command lists each candidate's age, disk size, purpose, and eligibility reason. It only
+removes a worktree when its registry age meets the threshold, its files are clean, all commits
+have been pushed, its branch is merged into its known base, and no open dispatch uses it. An
+unknown condition keeps the worktree. `--yes` applies eligible removals; the default and
+`--dry-run` only report. `--repo <name|path>` limits the report and removal to one repository.
+Removal uses the normal worktree finish flow and deletes the merged local branch, then checks
+both Git's worktree list and the filesystem to confirm the directory is gone.
 
 > [!TIP]
 > Keep it beside your repositories rather than inside one — `~/Workspaces/Worktrees` next to
@@ -528,6 +551,14 @@ For iOS and tvOS, use `megabrain native appium status` (then `start` if needed),
 `appium:isHeadless: true`. `native navigate` and `native eval` use Metro's inspector. Do not use
 `xcrun simctl openurl` to navigate: it only delivers a URL and can leave a system alert over the app.
 Check `native health`, the evaluated value, or a changed screenshot after navigation.
+
+Use `megabrain native capture` to capture settled screenshots for one or more native simulator
+routes and write a manifest with the capture metadata. Pass one route with `--screen` and `--route`,
+or provide a JSON array of `{ "name": "...", "route": "/..." }` entries with `--screens`.
+
+```sh
+megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]
+```
 
 `megabrain doctor skill-sync` checks the installed copies of this skill. During normal command
 invocations, megabrain compares and repairs registered agent copies when needed; `--help` and

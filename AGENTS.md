@@ -14,6 +14,7 @@
 - Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]. — recommended when you need to remove a completed worktree after its safety checks pass.
 - Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]. — recommended when you need to find registered worktrees and inspect their parent relationships.
 - Run megabrain worktree adopt <path|branch> [--json]. — recommended when you need to register an existing worktree missing from one orchestrator.
+- Run megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]. — recommended when you need to review or remove old worktrees safely.
 - Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]. — recommended when you need to open a managed terminal in a worktree or current orchestrator.
 - Run megabrain terminal list [--worktree <path>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
 - Run megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]. — recommended when you need to restart a managed terminal after its command or server needs a fresh run.
@@ -59,6 +60,7 @@
 - Run megabrain native eval <phone|tv> <expression> [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to read native app state through Metro.
 - Run megabrain native crashes <phone|tv> [--last N] [--json]. — recommended when you need to inspect recent native app crash reports.
 - Run megabrain native build <phone|tv> [--runtime <version>] [--device <name-or-udid>] [--json]. — recommended when you need to build, install, and launch the configured native app.
+- Run megabrain native capture <phone|tv> (--screens FILE | --screen NAME --route PATH) [--output-root DIR] [--surface NAME] [--capture-id ID] [--theme NAME] [--viewport NAME] [--device <name-or-udid>] [--bundle-id ID] [--metro-port <p>] [--timeout <s>] [--stable-window <seconds>] [--json]. — recommended when you need stable screenshots of one or more native simulator routes and a capture manifest.
 - Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to restart a native app and navigate it to a route.
 - Run megabrain tv connect <ip> [--port <port>]. — recommended when you need to connect an Android TV device over adb.
 - Run megabrain tv disconnect [<ip>]. — recommended when you need to disconnect an Android TV device from adb.

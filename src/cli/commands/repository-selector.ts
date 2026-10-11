@@ -1,6 +1,10 @@
 import { basename } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
+import { openDatabase } from "../../db/db.js";
+import { listWorktrees } from "../../db/queries/worktrees.js";
+
+type Environment = Readonly<Record<string, string | undefined>>;
 
 async function run(
   process: ProcessAdapter,
@@ -16,6 +20,7 @@ async function run(
 export async function repoFromOrca(
   process: ProcessAdapter,
   selector: string,
+  environment: Environment,
 ): Promise<Result<string>> {
   const direct = await run(process, "git", [
     "-C",
@@ -44,34 +49,59 @@ export async function repoFromOrca(
     return ok(direct.value.stdout.trim());
   }
   const command = await run(process, "sh", ["-c", "command -v orca"]);
-  if (command.kind !== "ok")
-    return failed("repo must be a git path when orca is not installed");
-  const listed = await run(process, "orca", ["repo", "list", "--json"]);
-  if (listed.kind !== "ok")
-    return failed(`could not resolve repo selector '${selector}': orca did not respond; pass a Git path instead`);
-  try {
-    const payload: unknown = JSON.parse(listed.value.stdout);
-    const payloadRecord = typeof payload === "object" && payload !== null
-      ? payload as Record<string, unknown>
-      : undefined;
-    const result = payloadRecord?.result;
-    const resultRecord = typeof result === "object" && result !== null
-      ? result as Record<string, unknown>
-      : undefined;
-    const repos = resultRecord?.repos;
-    if (!Array.isArray(repos)) return failed(`repo not found: ${selector}`);
-    const wanted = selector.toLocaleLowerCase();
-    for (const item of repos) {
-      if (typeof item !== "object" || item === null) continue;
-      const record = item as Record<string, unknown>;
-      const displayName = typeof record.displayName === "string" ? record.displayName : "";
-      const path = typeof record.path === "string" ? record.path : "";
-      if (path.length > 0 && (wanted === displayName.toLocaleLowerCase() || wanted === basename(path).toLocaleLowerCase())) {
-        return ok(path);
+  let orcaReason = "Orca is unavailable";
+  if (command.kind === "ok") {
+    const listed = await run(process, "orca", ["repo", "list", "--json"]);
+    if (listed.kind !== "ok") orcaReason = "Orca repository lookup failed";
+    else {
+      try {
+        const payload: unknown = JSON.parse(listed.value.stdout);
+        const payloadRecord = typeof payload === "object" && payload !== null
+          ? payload as Record<string, unknown>
+          : undefined;
+        const result = payloadRecord?.result;
+        const resultRecord = typeof result === "object" && result !== null
+          ? result as Record<string, unknown>
+          : undefined;
+        const repos = resultRecord?.repos;
+        if (!Array.isArray(repos)) orcaReason = "Orca returned no repository list";
+        const wanted = selector.toLocaleLowerCase();
+        for (const item of Array.isArray(repos) ? repos : []) {
+          if (typeof item !== "object" || item === null) continue;
+          const record = item as Record<string, unknown>;
+          const displayName = typeof record.displayName === "string" ? record.displayName : "";
+          const path = typeof record.path === "string" ? record.path : "";
+          if (path.length > 0 && (wanted === displayName.toLocaleLowerCase() || wanted === basename(path).toLocaleLowerCase())) {
+            return ok(path);
+          }
+        }
+        if (Array.isArray(repos)) orcaReason = `Orca has no repository named '${selector}'`;
+      } catch {
+        orcaReason = "Orca returned invalid repository data";
       }
     }
-    return failed(`repo not found: ${selector}`);
-  } catch {
-    return failed(`repo not found: ${selector}`);
   }
+
+  const registry = openDatabase(environment);
+  if (registry.kind !== "ok") return failed(`repo not found: ${selector} (${orcaReason}; worktree registry could not be read: ${registry.error})`);
+  let matchingPaths: string[];
+  try {
+    const wanted = selector.toLocaleLowerCase();
+    matchingPaths = [...new Set(listWorktrees(registry.value.db)
+      .filter((record) => record.repoName.toLocaleLowerCase() === wanted || basename(record.repo).toLocaleLowerCase() === wanted)
+      .map((record) => record.repo))];
+  } catch (cause: unknown) {
+    registry.value.close();
+    return failed(`repo not found: ${selector} (${orcaReason}; worktree registry could not be read: ${cause instanceof Error ? cause.message : String(cause)})`);
+  }
+  registry.value.close();
+  const validPaths: string[] = [];
+  for (const path of matchingPaths) {
+    const top = await run(process, "git", ["-C", path, "rev-parse", "--path-format=absolute", "--show-toplevel"]);
+    if (top.kind === "ok") validPaths.push(top.value.stdout.trim());
+  }
+  const uniquePaths = [...new Set(validPaths)];
+  if (uniquePaths.length === 1) return ok(uniquePaths[0] as string);
+  if (uniquePaths.length > 1) return failed(`repo name '${selector}' is ambiguous in the worktree registry: ${uniquePaths.join(", ")} (Orca did not resolve it)`);
+  return failed(`repo not found: ${selector} (${orcaReason}; worktree registry has no live repository named '${selector}')`);
 }

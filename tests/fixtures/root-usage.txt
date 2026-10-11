@@ -12,8 +12,9 @@ Commands:
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
-  worktree list [--repo <name|path>]   List shared-root worktrees
+  worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata
   worktree adopt <path|branch>         Register an existing worktree in Superset
+  worktree prune ...                   Prune old, safe worktrees (dry-run unless --yes)
   terminal create ...                  Open a terminal in the current orchestrator
   terminal list [--worktree <path>]    List terminals created by megabrain
   terminal restart <selector> ...      Restart a terminal created by megabrain

@@ -5,6 +5,9 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { formatAdopt, parseAdoptOptions, type AdoptResult } from "../../core/worktree-adopt.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { usageText } from "../../core/usage.js";
+import { openDatabase, withWrite } from "../../db/db.js";
+import { upsertWorktree } from "../../db/queries/worktrees.js";
+import { resolveCaller } from "./queue-write.js";
 
 export type AdoptEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -91,6 +94,16 @@ export async function executeWorktreeAdopt(args: readonly string[], environment:
   let workspaceId = "";
   try { workspaceId = String((JSON.parse(workspace.value) as { result?: { workspace?: { id?: string }; id?: string }; id?: string }).result?.workspace?.id ?? (JSON.parse(workspace.value) as { result?: { id?: string }; id?: string }).result?.id ?? JSON.parse(workspace.value).id ?? ""); } catch { workspaceId = ""; }
   if (workspaceId.length === 0) return failed(`could not create or find Superset workspace for ${branch.value.trim()}`);
+  const registry = openDatabase(environment);
+  if (registry.kind !== "ok") return failed(`worktree adopted in Superset, but registry could not be opened: ${registry.error}`);
+  try {
+    const caller = await resolveCaller(environment, process);
+    const stored = withWrite(registry.value, (db) => upsertWorktree(db, {
+      path: path.value, repo: repoPath, repoName: basename(repoPath), branch: branch.value.trim(), createdAt: new Date().toISOString(),
+      createdBy: caller.id || null, purpose: null, origin: "adopted", finishedAt: null,
+    }));
+    if (stored.kind !== "ok") return failed(`worktree adopted in Superset, but registry write failed: ${stored.error}`);
+  } finally { registry.value.close(); }
   const result: AdoptResult = { worktree: path.value, branch: branch.value.trim(), workspace: workspaceId };
   return ok(formatAdopt(result, options.value.json));
 }

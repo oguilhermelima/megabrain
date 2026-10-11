@@ -9,6 +9,7 @@ import { tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 import { appendMessage, mutateDispatch } from "../../src/adapters/state-db.js";
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
+import { composerProcess, composerTmux, withComposer } from "./composer-tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -23,11 +24,15 @@ const codexIdleOutput = "› Ask Codex to do anything";
 const claudeIdleOutput = "❯";
 const idleOutputFor = (agent: string): string => agent === "claude" ? claudeIdleOutput : codexIdleOutput;
 
-function processFor(events: string[], behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = (command, args) => {
-  if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
-  if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: `${codexIdleOutput}\n`, stderr: "", exitCode: 0 });
-  return ok({ stdout: "", stderr: "", exitCode: 0 });
-}): ProcessAdapter & { readonly calls: readonly Call[] } {
+function defaultBehavior(): (command: string, args: readonly string[]) => Promise<Result<ProcessOutput>> {
+  const composer = composerProcess();
+  return async (command, args) => {
+    if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+    return (await composer(command, args)) ?? ok({ stdout: "", stderr: "", exitCode: 0 });
+  };
+}
+
+function processFor(events: string[], behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = defaultBehavior()): ProcessAdapter & { readonly calls: readonly Call[] } {
   const calls: Call[] = [];
   return {
     calls,
@@ -52,6 +57,8 @@ function environment(root: string, dispatchId: string): Record<string, string> {
     MEGABRAIN_SESSION_HOST: "tmux",
     MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
     MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
+    MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300",
+    MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300",
   };
 }
 
@@ -230,9 +237,7 @@ describe("executeSpawn", () => {
       paneExists: async () => ok(true),
       sessionExists: async () => ok(true),
       panesForSession: async () => ok(["%9"]),
-      capturePane: async () => ok(codexIdleOutput),
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
+      ...composerTmux(),
     });
     try {
       const result = await executeSpawn(
@@ -258,7 +263,7 @@ describe("executeSpawn", () => {
     const dispatchId = "dispatch-chat-name";
     let deliveredPrompt = "";
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async (_pane, text) => { if (text.startsWith("[megabrain dispatch:")) deliveredPrompt = text; return ok(undefined); }, sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    registerTmux(withComposer({ ...original, id: "tmux", sendText: async (_pane, text) => { if (text.startsWith("[megabrain dispatch:")) deliveredPrompt = text; return ok(undefined); }, sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) }));
     try {
       const result = await executeSpawn([
         "--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true", ...labelArgs,
@@ -280,7 +285,7 @@ describe("executeSpawn", () => {
     let receivedRepo: string | undefined;
     let receivedBranch: string | undefined;
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    registerTmux({ ...original, id: "tmux", ...composerTmux() });
     try {
       const process = processFor([]);
       const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), process, {
@@ -317,7 +322,7 @@ describe("executeSpawn", () => {
     const dispatchId = "dispatch-clear-stray";
     const events: string[] = [];
     const original = getTmux();
-    registerTmux({
+    registerTmux(withComposer({
       ...original,
       id: "tmux",
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
@@ -325,7 +330,7 @@ describe("executeSpawn", () => {
         events.push(text.includes("MEGABRAIN_DISPATCH_ID=") ? "text:launch-command" : text.includes("[megabrain dispatch:") ? "text:prompt" : `text:${text}`);
         return ok(undefined);
       },
-    });
+    }));
     try {
       const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/clear-stray", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
         resolveWorktree: async () => ok(worktree("created")),
@@ -578,12 +583,12 @@ describe("executeSpawn", () => {
     const dispatchId = "dispatch-tmux-environment";
     const commandTexts: string[] = [];
     const original = getTmux();
-    registerTmux({
+    registerTmux(withComposer({
       ...original,
       id: "tmux",
       sendText: async (_pane, text) => { commandTexts.push(text); return ok(undefined); },
       sendKey: async () => ok(undefined),
-    });
+    }));
     try {
       await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "tmux", "--tmux", "true"], environment(root, dispatchId), processFor([]), options(worktree("existing")));
       const command = commandTexts.find((text) => text.includes("MEGABRAIN_DISPATCH_ID")) ?? "";
@@ -618,7 +623,7 @@ describe("executeSpawn", () => {
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
       capturePane: async () => ok(codexIdleOutput),
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
@@ -646,7 +651,7 @@ describe("executeSpawn", () => {
       const dispatchId = "dispatch-structured";
       const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%11\n", stderr: "", exitCode: 0 }) : command === "orca" && args[1] === "create" ? ok({ stdout: JSON.stringify({ handle: "orca-attach-terminal" }), stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const original = getTmux();
-      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
         const environment = { MEGABRAIN_STATE_DIR: root, ORCA_STRUCTURED_SESSION: "1", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
@@ -667,7 +672,7 @@ describe("executeSpawn", () => {
       const dispatchId = "dispatch-orca-terminal";
       const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes" ? ok({ stdout: "%12\n", stderr: "", exitCode: 0 }) : command === "orca" && args[1] === "create" ? ok({ stdout: JSON.stringify({ handle: "orca-attach-terminal" }), stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const original = getTmux();
-      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
         const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
@@ -696,7 +701,7 @@ describe("executeSpawn", () => {
           ? failed("orca is unavailable", 1)
           : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const original = getTmux();
-      registerTmux({ ...original, sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      registerTmux({ ...original, ...composerTmux() });
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
           MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-attach-failure", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0",
@@ -724,7 +729,7 @@ describe("executeSpawn", () => {
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       });
       const original = getTmux();
-      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
         const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", AI_AGENT: "codex", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId, MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
@@ -755,7 +760,7 @@ describe("executeSpawn", () => {
     const process = processFor([]);
     const dispatchId = "dispatch-awaiting";
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
+    registerTmux(withComposer({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) }));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "wait", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
@@ -792,7 +797,7 @@ describe("executeSpawn", () => {
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
       capturePane: async () => ok(codexIdleOutput),
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
@@ -1166,7 +1171,7 @@ describe("executeSpawn", () => {
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
       capturePane: async () => ok(idleOutputFor(agent)),
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, agent));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
@@ -1208,7 +1213,7 @@ describe("executeSpawn", () => {
         return ok(captureCalls < 3 ? "" : codexIdleOutput);
       },
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
@@ -1216,9 +1221,9 @@ describe("executeSpawn", () => {
       }, process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
       expect(captureCalls).toBeGreaterThanOrEqual(3);
+      // Reading the composer back after the paste adds captures, so only those before it count.
       const promptIndex = events.indexOf("text:prompt");
-      const lastCaptureIndex = events.lastIndexOf(`capture:${captureCalls}`);
-      expect(promptIndex).toBeGreaterThan(lastCaptureIndex);
+      expect(events.slice(0, promptIndex).filter((event) => event.startsWith("capture:")).length).toBeGreaterThanOrEqual(3);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1253,7 +1258,7 @@ describe("executeSpawn", () => {
         return ok(captureCalls === 1 ? trust : idle);
       },
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "agy", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
@@ -1291,7 +1296,7 @@ describe("executeSpawn", () => {
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
       capturePane: async () => ok(""),
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
@@ -1352,7 +1357,7 @@ describe("executeSpawn", () => {
         return ok(codexIdleOutput);
       },
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
@@ -1392,7 +1397,7 @@ describe("executeSpawn", () => {
         return ok(captureCalls % 2 === 0 ? codexIdleOutput : "Update available! Press enter to continue");
       },
     };
-    registerTmux(fake);
+    registerTmux(withComposer(fake, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
@@ -1414,7 +1419,7 @@ describe("executeSpawn", () => {
     const dispatchId = "dispatch-tmux-default-shell";
     const process = processFor([]);
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    registerTmux({ ...original, id: "tmux", ...composerTmux() });
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
@@ -1441,7 +1446,7 @@ describe("executeSpawn", () => {
       const dispatchId = "dispatch-budget-tmux-exact";
       const wrapperOverheadBytes = 592;
       const original = getTmux();
-      registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+      registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
         const prompt = "a".repeat(12000 - wrapperOverheadBytes);
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], {
@@ -1614,7 +1619,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
     await writeFile(`${state}/state.json`, JSON.stringify({ "tmux-runtime": { installed: true } }));
     await importStateFixture(state);
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    registerTmux({ ...original, id: "tmux", ...composerTmux() });
     try {
       const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
         ? ok({ stdout: "%auto-child\n", stderr: "", exitCode: 0 })

@@ -29,7 +29,7 @@ export type NativeBuildOutcome = { readonly ok: boolean; readonly error?: string
 export type NativeHealth = {
   readonly process: { readonly state: "running" | "not-running" | "unknown"; readonly reason?: string };
   readonly metro: { readonly state: "attached" | "not-attached" | "unknown"; readonly reason?: string };
-  readonly tree: { readonly count: number | null; readonly reason?: string };
+  readonly tree: { readonly count: number | null; readonly loadingOnly?: boolean; readonly reason?: string };
   readonly frame: { readonly state: "differs" | "identical" | "unknown"; readonly reason?: string };
 };
 
@@ -39,10 +39,23 @@ export type NativeHealthResult = NativeHealth & {
 };
 
 export function evaluateNativeHealth(readings: NativeHealth): NativeHealthResult {
-  if (readings.process.state === "not-running") return { ...readings, status: "not-rendered", reason: readings.process.reason ?? "process is not running" };
-  if (readings.process.state === "unknown") return { ...readings, status: "unknown", reason: readings.process.reason ?? "process state is unavailable" };
+  const frameNotChecked = readings.frame.state === "unknown" && readings.frame.reason === "no control frame configured";
+  const result = (status: NativeHealthResult["status"], reason: string): NativeHealthResult => ({
+    ...readings,
+    status,
+    reason: frameNotChecked ? `${reason}; frame was not checked` : reason,
+  });
+  if (readings.process.state === "not-running") return result("not-rendered", readings.process.reason ?? "process is not running");
+  if (readings.process.state === "unknown") return result("unknown", readings.process.reason ?? "process state is unavailable");
   if (readings.frame.state === "identical") return { ...readings, status: "not-rendered", reason: "screen matches the control frame" };
-  if (readings.frame.state === "unknown") return { ...readings, status: "unknown", reason: readings.frame.reason ?? "frame comparison is unavailable" };
+  if (readings.frame.state === "unknown" && !frameNotChecked) return { ...readings, status: "unknown", reason: readings.frame.reason ?? "frame comparison is unavailable" };
+  if (frameNotChecked) {
+    if (readings.tree.count === 0) return result("loading", "accessibility tree exposes 0 elements");
+    if (readings.tree.count !== null && readings.tree.loadingOnly) return result("loading", "accessibility tree exposes only an ActivityIndicator");
+    if (readings.tree.count !== null && readings.tree.count > 0) return result("rendered", `accessibility tree exposes ${readings.tree.count} elements`);
+    if (readings.metro.state === "attached") return result("rendered", "Metro is attached and the accessibility tree is unavailable");
+    return result("unknown", "accessibility tree is unavailable and Metro is not attached");
+  }
   if (readings.tree.count !== null && readings.tree.count <= 1) {
     const noun = readings.tree.count === 1 ? "element" : "elements";
     return { ...readings, status: "loading", reason: `accessibility tree exposes ${readings.tree.count} ${noun}` };
