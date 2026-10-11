@@ -26,7 +26,7 @@ printf '%s\n' "$*" >>"$GH_LOG"
 case "${1:-} ${2:-} ${3:-}" in
   "auth status "*) exit 0 ;;
   "api repos/owner/repo/stacks"*)
-    if [ "${GH_NATIVE:-yes}" = yes ]; then printf '[]\n'; else exit 1; fi
+    if [ "${GH_NATIVE:-yes}" = yes ]; then printf '[]\n'; else printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1; fi
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
   "pr list"*) printf '[]\n' ;;
