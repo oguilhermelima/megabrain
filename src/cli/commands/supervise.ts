@@ -13,13 +13,15 @@ import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
-import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
+import { readDeliveryScreen } from "./delivery-screen.js";
+import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
 const LEASE_KEY = "supervise";
 const DEFAULT_INTERVAL_SECONDS = 60;
 const LEASE_PADDING_SECONDS = 15;
+const PASTE_END_MARKER = "\u001b[201~";
 
 function object(value: unknown): RecordValue | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as RecordValue : undefined;
@@ -70,13 +72,29 @@ async function promptText(database: Parameters<typeof getDispatch>[0], dispatch:
   return messages.value.find((message) => message.from === "parent" && message.type === "prompt")?.text;
 }
 
-function promptIsVisible(meta: RecordValue, dispatch: string, prompt: string | undefined, frame: string, agent: string): boolean {
-  if (prompt === undefined || string(meta.promptReceipt) === "received" || !frame.includes(`[megabrain dispatch:`)) return false;
-  const tail = prompt.replace(/\s+/g, " ").trim().slice(-80);
-  const visible = frame.replace(/\s+/g, " ").trim();
-  const hasIdentity = visible.includes(`Dispatch identity: ${dispatch}`);
-  const draft = deliveryComposer(agent, frame);
-  return hasIdentity && tail.length >= 30 && (visible.includes(tail) || draft?.replace(/\s+/g, " ").includes(tail) === true);
+function childAnswered(database: Parameters<typeof getDispatch>[0], meta: RecordValue, dispatch: string): boolean {
+  if (string(meta.promptReceipt) === "received") return true;
+  const messages = listMessages(database, dispatch);
+  return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && (message.type === "received" || message.type === "ask" || message.type === "done"));
+}
+
+// Codex sets the pane title through OSC 0 with a braille spinner while a turn runs; tmux keeps it as pane_title.
+async function paneTitle(meta: RecordValue, process: ProcessAdapter): Promise<string | undefined> {
+  if (meta.runtime !== "tmux" || string(meta.tmuxPane) === undefined) return undefined;
+  const result = await process.run("tmux", ["display-message", "-p", "-t", String(meta.tmuxPane), "#{pane_title}"]);
+  return result.kind === "ok" ? result.value.stdout.trim() : undefined;
+}
+
+// The visible screen is not enough to call a prompt lost: a long finished turn has scrolled it away. Lost is
+// only judged after the scrollback was searched for the prompt as well.
+async function judgePrompt(database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, frame: string, process: ProcessAdapter): Promise<PromptState> {
+  const prompt = await promptText(database, dispatch);
+  if (prompt === undefined) return "unknown";
+  const input = { agent: string(meta.agent) ?? "", frame, prompt, received: childAnswered(database, meta, dispatch), title: await paneTitle(meta, process) };
+  const first = classifyPromptState(input).state;
+  if (first !== "lost" || meta.runtime !== "tmux" || string(meta.tmuxPane) === undefined) return first;
+  const history = await getTmux().capturePane(String(meta.tmuxPane), 5000, process, false, string(meta.tmuxSessionId));
+  return history.kind === "ok" ? classifyPromptState({ ...input, history: history.value }).state : "unknown";
 }
 
 async function paneExists(meta: RecordValue, process: ProcessAdapter): Promise<boolean | undefined> {
@@ -140,17 +158,20 @@ function findingSentence(finding: SupervisionFinding): string {
   return `${cause}${detail}`;
 }
 
-async function recoverPrompt(meta: RecordValue, finding: SupervisionFinding, frame: string, dispatch: string, process: ProcessAdapter): Promise<string | undefined> {
+async function recoverPrompt(database: Parameters<typeof getDispatch>[0], meta: RecordValue, finding: SupervisionFinding, frame: string, dispatch: string, process: ProcessAdapter): Promise<string | undefined> {
   if (!mayAutoRecover(finding) || meta.runtime !== "tmux" || typeof meta.tmuxPane !== "string") return undefined;
   const existing = object(meta.superviseFinding);
   if (typeof existing?.autoRecoveryAttemptedAt === "number") return "previous automatic submission was already attempted";
   const verified = await verifyTmuxPane(meta.tmuxPane, process, string(meta.tmuxSessionId));
   if (verified.kind !== "ok" || !verified.value) return "submission was not attempted because the pane could not be verified";
-  if (!frame.includes(`Dispatch identity: ${dispatch}`)) return "submission was not attempted because the prompt identity was not visible";
+  if (await judgePrompt(database, dispatch, meta, frame, process) !== "unsubmitted") return "submission was not attempted because the prompt is no longer in the composer";
+  // A composer left inside an unterminated bracketed paste takes Enter as a newline; the end marker closes it first.
+  const closed = await getTmux().sendText(meta.tmuxPane, PASTE_END_MARKER, process, string(meta.tmuxSessionId));
+  if (closed.kind !== "ok") return `submission failed: ${closed.kind === "failed" ? closed.error : closed.reason}`;
   const sent = await getTmux().sendKey(meta.tmuxPane, "Enter", process, string(meta.tmuxSessionId));
   if (sent.kind !== "ok") return `submission failed: ${sent.kind === "failed" ? sent.error : sent.reason}`;
-  const after = await getTmux().capturePane(meta.tmuxPane, 200, process, true, string(meta.tmuxSessionId), true);
-  const confirmed = after.kind === "ok" && !after.value.includes(`Dispatch identity: ${dispatch}`);
+  const after = await getTmux().capturePane(meta.tmuxPane, 200, process, true, string(meta.tmuxSessionId));
+  const confirmed = after.kind === "ok" && await judgePrompt(database, dispatch, meta, after.value, process) !== "unsubmitted";
   return confirmed ? "prompt submission confirmed" : "Enter was sent; submission is not yet confirmed";
 }
 
@@ -195,9 +216,9 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   // Running shells or monitors mean the agent is working in the background, not stuck.
   if (backgroundTasks(frame) !== undefined) return { cause: "unknown" };
   const agent = string(meta.agent) ?? "";
-  const prompt = await promptText(database, dispatch);
-  const submitted = promptIsVisible(meta, dispatch, prompt, frame, agent);
-  if (submitted) return { cause: "prompt-unsubmitted" };
+  const promptState = await judgePrompt(database, dispatch, meta, frame, process);
+  const promptProblem = promptFinding(promptState);
+  if (promptProblem.cause !== "unknown") return promptProblem;
   const idle = classifyLiveness(agent, frame).status === "idle";
   const event = await agentRecord(meta, environment);
   const recorded = classifyRecordedError(agent, event, { now, idlePrompt: idle });
@@ -230,7 +251,7 @@ async function superviseOnce(root: string, database: Parameters<typeof getDispat
     let recovery: string | undefined;
     if (finding.cause === "prompt-unsubmitted") {
       const screen = await readDeliveryScreen(meta, process);
-      if (screen.kind === "ok") recovery = await recoverPrompt(meta, finding, screen.value, dispatch, process);
+      if (screen.kind === "ok") recovery = await recoverPrompt(database, meta, finding, screen.value, dispatch, process);
     }
     if (shouldNotify) {
       await notifyParent(root, database, dispatch, meta, finding, process, now, recovery);

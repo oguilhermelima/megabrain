@@ -9,6 +9,7 @@ export type SupervisionCause =
   | "auth-required"
   | "dialog-waiting"
   | "prompt-unsubmitted"
+  | "prompt-lost"
   | "process-exited"
   | "pane-gone"
   | "unknown";
@@ -183,6 +184,7 @@ export function recommendationFor(finding: SupervisionFinding, dispatchId = "<di
     case "auth-required": return "Ask the operator to log in to the agent, then inspect the dispatch.";
     case "dialog-waiting": return "Please answer the dialog, or respawn this lane in the same worktree.";
     case "prompt-unsubmitted": return "The prompt was resubmitted automatically; inspect the dispatch to confirm it started.";
+    case "prompt-lost": return `The prompt never reached the agent: it is idle at an empty composer with no receipt. Please resend the brief with megabrain orchestrate reply ${dispatchId} --text "<brief>".`;
     case "process-exited":
     case "pane-gone": {
       const changes = finding.dirtyFiles ?? [];
