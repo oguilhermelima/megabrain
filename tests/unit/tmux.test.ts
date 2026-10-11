@@ -21,6 +21,10 @@ function processFor(result: Result<ProcessOutput> = ok({ stdout: "work\n", stder
     calls,
     async run(command, args) {
       calls.push({ command, args: [...args] });
+      if (result.kind === "ok" && command === "tmux" && args[0] === "list-panes" && args[1] === "-a") {
+        const format = args[args.length - 1];
+        return ok({ stdout: format === "#{pane_id}|#{session_id}|#{session_name}" ? "%4|$1|work\n%7|$1|work\n" : "%4|$1\n%7|$1\n", stderr: "", exitCode: 0 });
+      }
       return result;
     },
     async startDetached() { return failed("not used"); },
@@ -43,6 +47,7 @@ describe("tmux identity provider", () => {
       { command: "tmux", args: ["display-message", "-p", "-t", "%4", "#{session_name}"] },
       { command: "tmux", args: ["has-session", "-t", "work"] },
       { command: "tmux", args: ["list-panes", "-s", "-t", "work", "-F", "#{pane_id}"] },
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["display-message", "-p", "-t", "%4", "#{pane_pid}"] },
     ]);
   });
@@ -85,7 +90,9 @@ describe("tmux identity provider", () => {
     expect(await tmux.capturePane("%7", 200, process)).toEqual({ kind: "ok", value: "work\n" });
     expect(await tmux.capturePane("%7", 37, process)).toEqual({ kind: "ok", value: "work\n" });
     expect(process.calls).toEqual([
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["capture-pane", "-p", "-t", "%7", "-S", "-200"] },
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["capture-pane", "-p", "-t", "%7", "-S", "-37"] },
     ]);
   });
@@ -97,9 +104,30 @@ describe("tmux identity provider", () => {
     expect(await tmux.sendText("%7", "pointer", process)).toEqual({ kind: "ok", value: undefined });
     expect(await tmux.sendKey("%7", "Tab", process)).toEqual({ kind: "ok", value: undefined });
     expect(process.calls).toEqual([
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["send-keys", "-t", "%7", "-l", "pointer"] },
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["send-keys", "-t", "%7", "Tab"] },
     ]);
+  });
+
+  test("refuses to type into or kill a pane absent from the exact pane list", async () => {
+    const calls: Call[] = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        if (args[0] === "list-panes") return ok({ stdout: "%0|$1\n%1|$1\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    const tmux = getTmux();
+
+    expect(await tmux.sendText("%38", "must not land", process)).toMatchObject({ kind: "failed" });
+    expect(await tmux.sendKey("%38", "Enter", process)).toMatchObject({ kind: "failed" });
+    expect(await tmux.killPane("%38", process)).toMatchObject({ kind: "failed" });
+    expect(calls.every(({ args }) => args[0] !== "send-keys" && args[0] !== "kill-pane")).toBe(true);
   });
 
   test("keeps each text and submit key pair under one pane lock", async () => {
