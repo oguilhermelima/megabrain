@@ -23,7 +23,7 @@ assert_safe_state_dir() {
     case "$state_path/" in "$home_path/.megabrain/"*) printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1 ;; esac
   done
 }
-trap 'if [ -n "${codex_pid:-}" ]; then kill "$codex_pid" 2>/dev/null || true; wait "$codex_pid" 2>/dev/null || true; fi; rm -rf "$state_dir"' EXIT
+trap 'rm -rf "$state_dir"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 db_import() { export MEGABRAIN_STATE_DIR="$state_dir/state"; assert_safe_state_dir; "$root/.build/megabrain" db import "$state_dir/state" --replace --json >/dev/null; }
 db_show() { MEGABRAIN_STATE_DIR="$state_dir/state" "$root/.build/megabrain" db show "$1" --json; }
@@ -88,18 +88,13 @@ if run_adopt archived --force --json >"$state_dir/archived.out" 2>&1; then
   fail 'adopting an archived dispatch unexpectedly succeeded'
 fi
 
-CODEX_THREAD_ID=live-codex-owner sleep 30 &
-codex_pid=$!
 write_meta codex-foreign codex:live-codex-owner codex "$state_dir/state/dispatches/codex-foreign"
 db_import
 if run_adopt codex-foreign --json >"$state_dir/codex-refused.out" 2>&1; then
-  fail 'adopting a live Codex owner without --force unexpectedly succeeded'
+  fail 'adopting an unproven Codex owner without --force unexpectedly succeeded'
 fi
-forced_codex="$(run_adopt codex-foreign --force --json)" || fail "--force did not adopt a live Codex owner: $forced_codex"
+forced_codex="$(run_adopt codex-foreign --force --json)" || fail "--force did not adopt an unproven Codex owner: $forced_codex"
 printf '%s' "$forced_codex" | jq -e '.adopted == true' >/dev/null || fail "forced Codex adoption result is incorrect: $forced_codex"
-kill "$codex_pid" 2>/dev/null || true
-wait "$codex_pid" 2>/dev/null || true
-codex_pid=""
 
 no_identity="$(env -u MEGABRAIN_SESSION_ID -u MEGABRAIN_SESSION_HOST -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
   MEGABRAIN_STATE_DIR="$state_dir/state" HOME="$state_dir/home" "$root/.build/megabrain" orchestrate adopt unknown --json 2>&1 || true)"
