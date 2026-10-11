@@ -21,7 +21,9 @@ function acknowledgeShownChildMail(db: DatabaseAdapter, dispatchId: string, repo
   if (!["ask", "done", "stalled"].includes(reportType)) return;
   for (const delivery of queryDeliveries(db, dispatchId)) {
     if (delivery.recipient !== "child" || (delivery.status !== "outstanding" && delivery.status !== "superseded")) continue;
-    if (!["checked", "queue", "typed"].includes(String(delivery.transport ?? ""))) continue;
+    const transport = String(delivery.transport ?? "");
+    const readInFull = transport === "checked" || ((transport === "queue" || transport === "typed") && delivery.transportReason === "full-direction");
+    if (!readInFull) continue;
     db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, delivery.id]);
   }
 }
