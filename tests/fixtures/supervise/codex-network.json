@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-10-11T12:00:00.000Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "task_complete",
+    "error": {
+      "codex_error_info": {
+        "message": "stream disconnected before completion: error sending request for url ([URL])"
+      }
+    }
+  }
+}

@@ -13,7 +13,7 @@ describe("supervisor lifecycle decisions", () => {
 
   test("auto-recovers only an unsubmitted prompt and exits when no dispatch is open", () => {
     expect(mayAutoRecover({ cause: "prompt-unsubmitted" })).toBe(true);
-    for (const cause of ["usage-limit", "auth-required", "dialog-waiting", "process-exited", "pane-gone", "no-activity", "unknown"] as const) {
+    for (const cause of ["usage-limit", "rate-limited", "server-error", "network", "auth-required", "dialog-waiting", "process-exited", "pane-gone", "unknown"] as const) {
       expect(mayAutoRecover({ cause })).toBe(false);
     }
     expect(hasOpenDispatches(["spawning", "running", "waiting_for_reply", "orphaned"])).toBe(true);
