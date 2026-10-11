@@ -50,6 +50,13 @@ set_mtime_offset() {
   fi
 }
 
+future_reset_epoch="$(($(date +%s) + 3600))"
+if future_reset_iso="$(date -u -d "@$future_reset_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"; then
+  :
+else
+  future_reset_iso="$(date -u -r "$future_reset_epoch" '+%Y-%m-%dT%H:%M:%SZ')"
+fi
+
 # Fake `security`/`curl` binaries placed ahead of the real ones on PATH so the compiled
 # binary's live-limit fetch (src/core/chain-limits.ts: claudeCredentials/fetchClaudeUsage/
 # agyCredentials/fetchAgyUsage) exercises real subprocess plumbing without touching the
@@ -88,8 +95,8 @@ case "\$mode" in
   timeout) exit 28 ;;
   non200) printf '{"error":"synthetic"}\nMEGABRAIN_HTTP_STATUS:503' ;;
   garbage) printf 'not-json\nMEGABRAIN_HTTP_STATUS:200' ;;
-  claude) printf '{"five_hour":{"utilization":11.0,"resets_at":"2026-09-07T10:00:00Z"},"seven_day":{"utilization":48.0,"resets_at":"2026-09-10T16:00:00Z"}}\nMEGABRAIN_HTTP_STATUS:200' ;;
-  agy) printf '{"quota":{"gemini-5h":{"remaining_fraction":0.80,"reset_time":"2026-09-07T10:00:00Z"},"gemini-weekly":{"remaining_fraction":0.70,"reset_time":"2026-09-10T10:00:00Z"},"3p-5h":{"remaining_fraction":0.60,"reset_time":"2026-09-07T10:00:00Z"},"3p-weekly":{"remaining_fraction":0.50,"reset_time":"2026-09-10T10:00:00Z"}}}\nMEGABRAIN_HTTP_STATUS:200' ;;
+  claude) printf '{"five_hour":{"utilization":11.0,"resets_at":"%s"},"seven_day":{"utilization":48.0,"resets_at":"%s"}}\nMEGABRAIN_HTTP_STATUS:200' "$future_reset_iso" "$future_reset_iso" ;;
+  agy) printf '{"quota":{"gemini-5h":{"remaining_fraction":0.80,"reset_time":"%s"},"gemini-weekly":{"remaining_fraction":0.70,"reset_time":"%s"},"3p-5h":{"remaining_fraction":0.60,"reset_time":"%s"},"3p-weekly":{"remaining_fraction":0.50,"reset_time":"%s"}}}\nMEGABRAIN_HTTP_STATUS:200' "$future_reset_iso" "$future_reset_iso" "$future_reset_iso" "$future_reset_iso" ;;
   *) exit 22 ;;
 esac
 EOF
@@ -137,7 +144,8 @@ printf 'limit real-shaped sample: current at 73/28 percent with reading metadata
 state2="$work_dir/state-go-shaped"
 sessions2="$state2/sessions"
 mkdir -p "$sessions2"
-cp "$root/tests/fixtures/codex-rollout-rate-limits-go.jsonl" "$sessions2/rollout-go-shaped.jsonl"
+jq -c --argjson resetsAt "$future_reset_epoch" '.rate_limits.primary.resets_at = $resetsAt' \
+  "$root/tests/fixtures/codex-rollout-rate-limits-go.jsonl" >"$sessions2/rollout-go-shaped.jsonl"
 result2="$(MEGABRAIN_CODEX_SESSIONS_DIR="$sessions2" chain_limits "$state2")"
 row2="$(row "$result2" codex 5h)"
 assert_equal "$(printf '%s' "$row2" | jq -r '.status')" current
@@ -180,7 +188,7 @@ printf 'limit multi-window without requested window: unknown names every availab
 state5="$work_dir/state-trailing-line"
 sessions5="$state5/sessions"
 mkdir -p "$sessions5"
-future_reset="$(($(date +%s) + 3600))"
+future_reset="$future_reset_epoch"
 printf '%s\n%s\n' \
   "{\"timestamp\":\"2026-09-07T08:15:22.790Z\",\"ordinal\":16,\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":1},\"model_context_window\":258400},\"rate_limits\":{\"limit_id\":\"codex\",\"primary\":{\"used_percent\":97.0,\"window_minutes\":300,\"resets_at\":$future_reset},\"secondary\":{\"used_percent\":19.0,\"window_minutes\":10080,\"resets_at\":$future_reset}}}}" \
   '{"timestamp":"2026-09-07T08:15:23.790Z","ordinal":17,"type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400}}}' \
