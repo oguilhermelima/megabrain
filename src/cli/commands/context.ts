@@ -18,43 +18,11 @@ export async function tmuxSessionName(
   return result.kind === "ok" ? result.value : undefined;
 }
 
-function isOrcaWorktreeResponse(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const root = value as Record<string, unknown>;
-  if (root.ok !== true || typeof root.result !== "object" || root.result === null) {
-    return false;
-  }
-  const result = root.result as Record<string, unknown>;
-  if (typeof result.worktree !== "object" || result.worktree === null) {
-    return false;
-  }
-  const worktree = result.worktree as Record<string, unknown>;
-  if (typeof worktree.path === "string" && worktree.path.length > 0) {
-    return true;
-  }
-  if (typeof worktree.git !== "object" || worktree.git === null) {
-    return false;
-  }
-  const git = worktree.git as Record<string, unknown>;
-  return typeof git.path === "string" && git.path.length > 0;
-}
-
 async function detectContext(
   environment: Environment,
   processAdapter: ProcessAdapter,
 ): Promise<Result<Context>> {
   const tmuxName = await tmuxSessionName(environment, processAdapter);
-  let orcaWorktree = false;
-  const orcaResult = await processAdapter.run("orca", ["worktree", "current", "--json"]);
-  if (orcaResult.kind === "ok") {
-    try {
-      orcaWorktree = isOrcaWorktreeResponse(JSON.parse(orcaResult.value.stdout));
-    } catch {
-      // A malformed probe response is indistinguishable from no host.
-    }
-  }
   const contextEnvironment: ContextEnvironment = {
     megabrainSessionId: environment.MEGABRAIN_SESSION_ID,
     megabrainSessionHost: environment.MEGABRAIN_SESSION_HOST,
@@ -77,7 +45,7 @@ async function detectContext(
       codexSessionId: environment.CODEX_SESSION_ID,
     },
   };
-  return ok(resolveContext(contextEnvironment, { tmuxSessionName: tmuxName, orcaWorktree }));
+  return ok(resolveContext(contextEnvironment, { tmuxSessionName: tmuxName }));
 }
 
 function formatJson(context: Context): string {

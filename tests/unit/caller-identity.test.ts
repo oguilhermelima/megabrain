@@ -304,8 +304,7 @@ describe("context and spawn agree for the same environment", () => {
 
   test("megabrain context and orchestrate spawn agree end to end on host for a structured session", async () => {
     const rawEnvironment: Record<string, string> = { ORCA_STRUCTURED_SESSION: "1", CLAUDE_CODE_SESSION_ID: "test-uuid" };
-    // context's probe (`orca worktree current`) must not itself decide the answer here — make it
-    // fail so agreement is driven purely by ORCA_STRUCTURED_SESSION, the same source spawn reads.
+    // agreement is driven purely by ORCA_STRUCTURED_SESSION, the same source spawn reads.
     const contextProcess = fakeProcess(() => failed("orca: not found"));
     const contextOutput = await executeContext(["--json"], rawEnvironment, contextProcess);
     expect(contextOutput.kind).toBe("ok");
