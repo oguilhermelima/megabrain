@@ -35,6 +35,19 @@ export type PreviousFinding = Readonly<{ cause: SupervisionCause; notifiedAt: nu
 const MIN_UNRESOLVED_ERROR_MS = 2 * 60_000;
 const NOTICE_REPEAT_MS = 30 * 60_000;
 
+// Claude transcripts carry no running-state field, so background work is read from the pane: the
+// turn line ("... 1 shell, 1 monitor still running") and the footer ("... · 1 shell, 1 monitor · ← 3 agents").
+// Both lines describe the same tasks, so the larger per-line count wins; agents are not counted.
+export function backgroundTasks(frame: string): number | undefined {
+  let most = 0;
+  for (const line of frame.split(/\r?\n/)) {
+    let count = 0;
+    for (const match of line.matchAll(/\b(\d+) (?:shell|monitor)s?\b/g)) count += Number(match[1]);
+    most = Math.max(most, count);
+  }
+  return most > 0 ? most : undefined;
+}
+
 export function acquireSupervisorLease(database: DatabaseHandle, holder: string, seconds: number): ReturnType<typeof acquireLease> {
   return acquireLease(database, "supervise", holder, seconds);
 }

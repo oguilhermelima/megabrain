@@ -4,7 +4,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, classifyRecordedError, classifySupervision, hasOpenDispatches, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
@@ -190,6 +190,8 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
     const exitCode = await deadPaneExitCode(meta, process);
     return { ...base, ...(exitCode === undefined ? {} : { exitCode }), ...(lastLines === "" ? {} : { lastLines }) };
   }
+  // Running shells or monitors mean the agent is working in the background, not stuck.
+  if (backgroundTasks(frame) !== undefined) return { cause: "unknown" };
   const agent = string(meta.agent) ?? "";
   const prompt = await promptText(database, dispatch);
   const submitted = promptIsVisible(meta, dispatch, prompt, frame, agent);
@@ -219,6 +221,8 @@ async function superviseOnce(root: string, database: Parameters<typeof getDispat
     if (current.kind !== "ok" || current.value === undefined) continue;
     const meta = current.value as RecordValue;
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now);
+    const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
+    const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
     const previous = previousFinding(meta);
     const shouldNotify = shouldNotifyFinding(previous, finding, now);
     let recovery: string | undefined;
@@ -232,6 +236,7 @@ async function superviseOnce(root: string, database: Parameters<typeof getDispat
     }
     mutateDispatch(database, dispatch, () => ({
       superviseLastCheck: new Date(now).toISOString(),
+      ...(running === undefined ? {} : { backgroundTasks: running }),
       superviseFinding: finding.cause === "unknown"
         ? { cause: "unknown", lastSeenAt: new Date(now).toISOString() }
         : { ...finding, cause: finding.cause, lastSeenAt: new Date(now).toISOString(), notifiedAt: shouldNotify ? now : previous?.notifiedAt ?? now, ...(recovery === undefined ? {} : { autoRecoveryAttemptedAt: now, autoRecoveryResult: recovery }) },
