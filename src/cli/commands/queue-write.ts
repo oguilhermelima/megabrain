@@ -247,9 +247,16 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, en
 export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}, fullMessage = `[megabrain] reply available; run megabrain check`) : Promise<NotificationResult> {
   void root; void dispatch; void environment;
   if (typeof meta.agentThreadId === "string") {
-    const pid = typeof meta.agentPid === "number" ? meta.agentPid : await findCodexProcessId(meta.agentThreadId, processAdapter);
-    const queued = pid === undefined ? { kind: "fallback" as const, reason: "Codex process is not alive" } : await deliverCodexQueue(meta.agentThreadId, pid, fullMessage, processAdapter);
-    if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
+    const recordedPid = typeof meta.agentPid === "number" ? meta.agentPid : undefined;
+    if (recordedPid !== undefined) {
+      const queued = await deliverCodexQueue(meta.agentThreadId, recordedPid, fullMessage, processAdapter);
+      if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
+    }
+    const livePid = await findCodexProcessId(meta.agentThreadId, processAdapter);
+    if (livePid !== undefined && livePid !== recordedPid) {
+      const queued = await deliverCodexQueue(meta.agentThreadId, livePid, fullMessage, processAdapter);
+      if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
+    }
   }
   return { outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" };
 }

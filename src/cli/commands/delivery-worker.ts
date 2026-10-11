@@ -73,7 +73,7 @@ async function readWasPulled(root: string, dispatch: string, sequence: number): 
   const deliveries = listDeliveries(database.value, dispatch);
   if (deliveries.kind !== "ok") return false;
   const row = deliveries.value.find((delivery) => Array.isArray(delivery.messageSeqs) && delivery.messageSeqs.includes(sequence));
-  return row !== undefined && (row.status === "acknowledged" || row.status === "fenced" || (typeof row.consumer === "string" && row.consumer !== ""));
+  return row !== undefined && (row.status === "acknowledged" || row.status === "fenced" || row.transport === "checked");
 }
 
 async function sendTyped(root: string, meta: Meta, text: string, process: ProcessAdapter): Promise<boolean> {
@@ -178,7 +178,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       result = "failed";
     }
     outcome = result;
-    transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "failed" ? "failed" : "deferred";
+    transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
   setDeliveryTransport(database.value, dispatch, sequence, transport);
   const finished = claimed.value.targetKind === "parent-pointer"
