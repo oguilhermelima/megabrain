@@ -11,6 +11,8 @@ export type CreateOptions = {
   readonly issue?: string;
   readonly linearIssue?: string;
   readonly pr?: string;
+  readonly label?: string;
+  readonly prompt?: string;
   readonly json: boolean;
 };
 export type FinishOptions = {
@@ -41,6 +43,8 @@ export function parseCreateOptions(
     issue?: string;
     linearIssue?: string;
     pr?: string;
+    label?: string;
+    prompt?: string;
     json: boolean;
   } = { json: false };
   for (let index = 0; index < args.length; index += 1) {
@@ -67,6 +71,8 @@ export function parseCreateOptions(
         "--issue",
         "--linear-issue",
         "--pr",
+        "--label",
+        "--prompt",
       ].includes(arg)
     ) {
       const next = args[index + 1];
@@ -81,6 +87,8 @@ export function parseCreateOptions(
           "--issue": "issue",
           "--linear-issue": "linearIssue",
           "--pr": "pr",
+          "--label": "label",
+          "--prompt": "prompt",
         } as const
       )[arg as "--repo"];
       value[key] = next;
