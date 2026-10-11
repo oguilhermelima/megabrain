@@ -12,7 +12,7 @@ export type TmuxProvider = Readonly<{
   readonly sessionExists: (session: string, process: ProcessAdapter) => Promise<Result<boolean>>;
   readonly panesForSession: (session: string, process: ProcessAdapter) => Promise<Result<readonly string[]>>;
   readonly panePid: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<string>>;
-  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean, expectedSessionId?: string) => Promise<Result<string>>;
+  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean, expectedSessionId?: string, withEscapes?: boolean) => Promise<Result<string>>;
   readonly sendText: (pane: string, text: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly sendKey: (pane: string, key: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly killPane: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
@@ -88,11 +88,11 @@ const provider: TmuxProvider = {
     const pid = result.value.stdout.trim();
     return pid.length > 0 ? ok(pid) : unavailable(`PID for pane ${pane}`);
   },
-  capturePane: async (pane, lines, process, screenOnly = false, expectedSessionId) => {
+  capturePane: async (pane, lines, process, screenOnly = false, expectedSessionId, withEscapes = false) => {
     const exists = await verifyPane(pane, process, expectedSessionId);
     if (exists.kind !== "ok") return exists;
     if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to capture it`);
-    const result = await process.run("tmux", screenOnly ? ["capture-pane", "-p", "-t", pane] : ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
+    const result = await process.run("tmux", screenOnly ? ["capture-pane", "-p", ...(withEscapes ? ["-e"] : []), "-t", pane] : ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
     return result.kind === "ok" ? ok(result.value.stdout) : unavailable(`capture of pane ${pane}`);
   },
   sendText: async (pane, text, process, expectedSessionId) => {

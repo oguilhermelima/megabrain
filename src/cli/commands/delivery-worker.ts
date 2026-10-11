@@ -12,11 +12,12 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
-import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
+import { deliveryComposer, ghostTracker, readDeliveryScreen, type GhostTracker } from "./delivery-screen.js";
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
 const MAX_DELIVERY_MS = 10 * 60 * 1000;
+const GHOST_STATIC_MS = 30_000;
 const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
   status === "idle" ? "idle" : status === "unknown" ? "unknown" : "busy";
 
@@ -84,6 +85,7 @@ async function sendTyped(
   process: ProcessAdapter,
   expectedClaudeStatus?: Readonly<{ pid: number; statusUpdatedAt: number }>,
   adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
+  ghost?: GhostTracker,
 ): Promise<boolean> {
   const agent = String(meta.agent ?? "");
   const submit = submitKey(agent);
@@ -92,11 +94,13 @@ async function sendTyped(
     const screen = await readDeliveryScreen(meta, process);
     if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
     const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
-    const composer = deliveryComposer(agent, screen.value);
     const status = await claudeStatus(meta, environment);
+    const typed = deliveryComposer(agent, screen.value);
+    const composer = ghost === undefined ? typed : ghost.observe(typed, status?.statusUpdatedAt);
     const observed = status?.pid !== undefined && status.status !== "unknown" ? status.status : screenStatus;
     await adoptStatus?.(status, status?.pid === undefined ? "screen" : "claude-session", observed);
-    if (screenStatus !== "idle" || composer !== "") return failed("target is no longer idle with an empty composer");
+    const ghostIdle = ghost?.assumed() === true && typed !== "" && screenStatus === "unknown" && observed === "idle";
+    if ((screenStatus !== "idle" && !ghostIdle) || composer !== "") return failed("target is no longer idle with an empty composer");
     if (status?.pid !== undefined && status.status !== "idle") return failed("Claude session is no longer idle");
     if (status?.pid !== undefined && status.statusUpdatedAt === undefined) return failed("Claude session status has no freshness timestamp");
     if (expectedClaudeStatus !== undefined) {
@@ -177,6 +181,9 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let proofReason: string | undefined;
   let transport = "failed";
   let outcome = "failed";
+  let lastDecision: string | undefined;
+  const staticMs = Number(environment.MEGABRAIN_GHOST_STATIC_MS);
+  const ghost = meta.runtime === "tmux" ? undefined : ghostTracker(Number.isFinite(staticMs) && staticMs > 0 ? staticMs : GHOST_STATIC_MS);
   const adoptClaudePid = (status: ClaudeStatus | undefined): void => {
     if (status?.pid === undefined || status.pid === Number(meta.agentPid)) return;
     const field = targetKind === "parent-pointer" ? "parentAgentPid" : "agentPid";
@@ -210,6 +217,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         const observed = sessionProven && status.status !== "unknown" ? status.status : screenStatus;
         statusRead = observed;
         statusUpdatedAtRead = status?.statusUpdatedAt;
+        if (observed !== "idle") ghost?.reset();
         checkedClaudeStatus = status?.status === "idle" && status.pid !== undefined && status.statusUpdatedAt !== undefined
           ? { pid: status.pid, statusUpdatedAt: status.statusUpdatedAt }
           : undefined;
@@ -217,7 +225,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       },
       composer: async () => {
         const screen = await readDeliveryScreen(meta, process);
-        return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
+        const typed = screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
+        return ghost === undefined ? typed : ghost.observe(typed, statusUpdatedAtRead);
       },
       clear: async () => clearOwnComposer(root, meta, process),
       send: async () => sendTyped(root, meta, text, environment, process, checkedClaudeStatus, async (status, proof, fallbackStatus) => {
@@ -227,9 +236,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         proofReason = status?.reason;
         statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
         statusUpdatedAtRead = status?.statusUpdatedAt;
-      }),
+      }, ghost),
       isRead: async () => readWasPulled(root, dispatch, sequence),
       attempt: async (details) => {
+        lastDecision = details.decision;
         const entry = {
           timestamp: new Date().toISOString(),
           dispatchId: dispatch,
@@ -240,6 +250,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           composer: details.composer,
           decision: details.decision,
           ...(proofReason === undefined ? {} : { proofReason }),
+          ...(details.decision === "send" && ghost?.assumed() === true ? { reason: "ghost-assumed-static" } : {}),
         };
         await appendFile(resolve(root, "delivery-decisions.jsonl"), `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
       },
@@ -251,10 +262,11 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     outcome = result;
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
+  const reason = outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : `deferred delivery ${outcome}`;
   setDeliveryTransport(database.value, dispatch, sequence, transport, payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
-    ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason: `deferred delivery ${outcome}` })
-    : finishOutbox(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", `deferred delivery ${outcome}`);
+    ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
+    : finishOutbox(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", reason);
   if (!nested) {
     const quietDeadline = Math.min(deadline, Date.now() + 1000);
     while (Date.now() < quietDeadline) {

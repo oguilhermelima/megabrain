@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendMessage, createDispatch, listDeliveries, listOutbox, stateDatabase } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, listDeliveries, listOutbox, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { deliveryComposer, readDeliveryScreen } from "../../src/cli/commands/delivery-screen.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
@@ -89,6 +89,7 @@ async function orcaRun(composer: (read: number) => string, env: Record<string, s
   appendMessage(db.value, "d-ghost", { from: "child", type: "done", text: "finished" }, {
     outbox: { id: "ob-ghost", targetKind: "parent-pointer", target: "orca:parent-terminal", payload: { dispatchId: "d-ghost", sequence: 1, meta, pointer: "megabrain check", fullMessage: "✅ test finished" } },
   });
+  createDelivery(db.value, { id: "dl-ghost", dispatchId: "d-ghost", messageSeqs: [1], status: "outstanding" });
   const screens = await orcaScreen(composer);
   let reads = 0;
   const sends: string[] = [];
