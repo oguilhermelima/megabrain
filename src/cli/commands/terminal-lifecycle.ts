@@ -265,6 +265,10 @@ async function killTree(process: ProcessAdapter, pid: string): Promise<string[] 
   return result;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function waitForPort(process: ProcessAdapter, port: string | number, desired: "free" | "listening", timeout: number): Promise<boolean> {
   const started = Date.now();
   while (true) {
@@ -279,26 +283,35 @@ async function identityFromHost(process: ProcessAdapter, recordHost: Host, works
   // Some Orca terminals run as background PTYs whose output stream is unavailable to `read`
   // until the pane is adopted. The launch shell exports a random marker containing its PID, so
   // the local process table can prove the identity without relying on terminal output.
-  const processList = await process.run("ps", ["eww", "-A", "-o", "pid=,command="]);
-  if (processList.kind === "ok") {
-    for (const line of processList.value.stdout.split("\n")) {
-      const match = /^\s*[0-9]+\s+.*\b([A-Z0-9_]+)=([0-9]+)(?:\s|$)/.exec(line);
-      if (match?.[1] === marker && match[2] !== undefined) return Number(match[2]);
-    }
-  }
+  const markerPattern = new RegExp(`(?:^|\\s)${escapeRegExp(marker)}=([0-9]+)(?=\\s|$)`);
   const provider = getHost(recordHost);
   const call = provider?.read({ workspaceId: workspace, terminalId });
-  if (call?.kind !== "ok") return undefined;
-  const attempts = Math.max(1, Math.ceil(timeoutMs / 100));
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const result = await process.run(call.value.command, call.value.args);
-    if (result.kind === "ok") {
-      const match = result.value.stdout.match(new RegExp(`${marker}=([0-9]+)`));
-      if (match?.[1] !== undefined) return Number(match[1]);
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  let hostIdentity: number | undefined;
+  while (true) {
+    const processList = await process.run("ps", ["eww", "-A", "-o", "pid=,command="]);
+    if (processList.kind === "ok") {
+      for (const line of processList.value.stdout.split("\n")) {
+        const match = markerPattern.exec(line);
+        if (match?.[1] !== undefined) return Number(match[1]);
+      }
     }
-    if (attempt + 1 < attempts) await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+
+    // Give the process table another chance before accepting the host's slower identity source.
+    if (hostIdentity !== undefined) return hostIdentity;
+
+    if (call?.kind === "ok") {
+      const result = await process.run(call.value.command, call.value.args);
+      if (result.kind === "ok") {
+        const match = result.value.stdout.match(new RegExp(`${escapeRegExp(marker)}=([0-9]+)`));
+        if (match?.[1] !== undefined) hostIdentity = Number(match[1]);
+      }
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return undefined;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(100, remaining)));
   }
-  return undefined;
 }
 
 async function createHost(process: ProcessAdapter, recordHost: Host, workspace: string | null, worktreePath: string, title: string | null, command: string): Promise<Result<{ readonly value: JsonObject; readonly launch: string; readonly stdout: string }>> {
