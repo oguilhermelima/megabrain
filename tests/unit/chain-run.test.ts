@@ -297,6 +297,7 @@ describe("executeChainRun: claude/agy live limits", () => {
 
   test("fetches live usage once and reuses the cache for a second window read", async () => {
     await withRoot("live-cache", async (root) => {
+      const futureReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
       await writeConfig(root, {
         chains: {}, defaultSteps: [
           { agent: "claude", model: "m1", until: { usedPercent: 5, window: "5h", onUnknown: "skip" } },
@@ -306,7 +307,7 @@ describe("executeChainRun: claude/agy live limits", () => {
       });
       const process = fakeProcess((command) => {
         if (command === "security") return ok({ stdout: JSON.stringify({ claudeAiOauth: { accessToken: "token", expiresAt: 9999999999 } }), stderr: "", exitCode: 0 });
-        if (command === "curl") return ok({ stdout: `${JSON.stringify({ five_hour: { utilization: 11.0, resets_at: "2026-09-07T10:00:00Z" }, seven_day: { utilization: 48.0, resets_at: "2026-09-10T16:00:00Z" } })}\nMEGABRAIN_HTTP_STATUS:200`, stderr: "", exitCode: 0 });
+        if (command === "curl") return ok({ stdout: `${JSON.stringify({ five_hour: { utilization: 11.0, resets_at: futureReset }, seven_day: { utilization: 48.0, resets_at: futureReset } })}\nMEGABRAIN_HTTP_STATUS:200`, stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       });
       const result = await executeChainRun(["--worktree", "/w", "--prompt", "p", "--json"], environment(root), process, { spawn: okSpawn() });
