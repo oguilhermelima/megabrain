@@ -22,6 +22,14 @@ describe("selectDelivery", () => {
     expect(selectDelivery("parent", true, [delivery("protocol", [1])], messages)).toEqual({ kind: "selected", delivery: delivery("protocol", [1]), replayed: false });
     expect(selectDelivery("child", false, [delivery("reply", [3])], messages)).toEqual({ kind: "selected", delivery: delivery("reply", [3]), replayed: false });
   });
+  test.each(["typed", "queue"] as const)("keeps a %s summary visible to the child until check", (transport) => {
+    const reply = { ...delivery("reply", [3]), recipient: "child", transport };
+    expect(selectDelivery("child", false, [reply], messages)).toMatchObject({ kind: "selected", delivery: reply });
+  });
+  test("keeps a full typed change direction acknowledged", () => {
+    const change = { ...delivery("change", [4]), recipient: "child", transport: "typed", transportReason: "full-direction" };
+    expect(selectDelivery("child", false, [change], [...messages, message(4, "parent", "reply")])).toEqual({ kind: "none" });
+  });
   test("replays a delivery owned by the same consumer and generation", () => { expect(selectDelivery("parent", false, [delivery("owned", [2], "outstanding", "consumer")], messages, "consumer", 1)).toEqual({ kind: "selected", delivery: delivery("owned", [2], "outstanding", "consumer"), replayed: true }); });
   test("returns unknown when no candidate has a valid first sequence", () => { expect(selectDelivery("parent", false, [{ ...delivery("bad", []), messageSeqs: [] }], messages)).toEqual({ kind: "unknown" }); });
 });

@@ -15,6 +15,8 @@ describe("dispatch message formatting", () => {
     const text = ["- one", "* two", "- three", "- four", "- five"].join("\n");
     const result = formatDispatchMessage({ ...base, text });
     expect(result).toContain("\n- one\n* two\n- three\n- four\nFull report: megabrain orchestrate watch dispatch-12345678");
+    expect(result.split("\n")).toHaveLength(6);
+    expect(result.split("\n").slice(1, -1).every((line) => line.length <= 120)).toBe(true);
   });
 
   test("splits prose into sentence bullets", () => {
@@ -29,9 +31,16 @@ describe("dispatch message formatting", () => {
     expect(result).toContain("Full report: megabrain orchestrate watch dispatch-12345678");
   });
 
-  test("adds the report pointer only when content was cut", () => {
-    expect(formatDispatchMessage({ ...base, text: "Done." })).not.toContain("Full report:");
-    expect(formatDispatchMessage({ ...base, text: "a. b. c. d. e." })).toContain("Full report:");
+  test("always ends with a report pointer, including a short single-sentence message", () => {
+    const result = formatDispatchMessage({ ...base, text: "Done." });
+    expect(result).toContain("\n- Done.\nFull report: megabrain orchestrate watch dispatch-12345678");
+    expect(result.split("\n")).toHaveLength(3);
+  });
+
+  test("caps the entire summary at six lines", () => {
+    const result = formatDispatchMessage({ ...base, text: "a. b. c. d. e. f. g." });
+    expect(result.split("\n")).toHaveLength(6);
+    expect(result.split("\n").at(-1)).toBe("Full report: megabrain orchestrate watch dispatch-12345678");
   });
 
   test.each([
