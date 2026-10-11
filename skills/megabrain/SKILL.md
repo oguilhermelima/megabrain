@@ -54,6 +54,17 @@ megabrain chain run [name] [--chain <name>] [--parent-agent <agent>] [--parent-m
 Either way: pass `--worktree <path>` to reuse a checkout that already exists, or `--repo` plus
 `--branch` to have one created.
 
+Every dispatch has a chat name: `--label` when supplied, otherwise its worktree branch. `orchestrate
+list` shows the name, and `db show <dispatch-id>` includes `chatName`. tmux pane titles use
+`agent · name` and set `@megabrain_agent`, `@megabrain_name`, and `@megabrain_state`; Orca tabs use
+the same title, and Claude starts with `--name <chat name>`.
+
+Typed and queued messages begin with `[megabrain][agent][last-eight-id - chat-name] - LABEL`, followed
+by up to four short bullets. The labels are `FINISHED`, `QUESTION`, `STUCK`, `REPLY`, and
+`NEW DIRECTION`; extra report text points to `megabrain orchestrate watch <dispatch-id>` or
+`megabrain check`. Orca terminal sends submit embedded newlines separately, so those messages use
+` | ` between lines.
+
 A dispatch runs either as a tmux split or as a tab in the orchestrator that owns the session.
 **tmux needs neither Orca nor Superset**: inside tmux a session identifies itself by its own
 session and pane, so the whole loop works on any machine that has tmux, and the child pane is

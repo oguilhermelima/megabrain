@@ -197,6 +197,17 @@ megabrain orchestrate reconcile <id>            # settle its state against reali
 megabrain orchestrate close <id>                # take the pane back
 ```
 
+Every dispatch has a chat name: `--label` when supplied, otherwise its worktree branch. The list
+shows it in the `CHAT NAME` column, and `db show <id>` includes `chatName`. tmux panes use the title
+`agent · name` and expose `@megabrain_agent`, `@megabrain_name`, and `@megabrain_state` for themes;
+Orca tabs use the same title. Claude sessions start with `--name <chat name>`.
+
+Typed and queued dispatch messages start with a sender header such as
+`[megabrain][claude][a1b2c3d4 - fix-chat-names] - FINISHED`. The body uses up to four short bullet
+lines; long reports point to `megabrain orchestrate watch <dispatch-id>` or `megabrain check`.
+Orca terminal sends submit embedded newlines separately, so Megabrain joins those lines with ` | `
+for Orca targets.
+
 Dispatch ownership belongs to the agent session that created it and survives a resumed
 conversation. A new session does not inherit that ownership. `list` shows only your dispatches by
 default (`--mine` is an explicit alias); `--all` includes every dispatch and labels each owner as
