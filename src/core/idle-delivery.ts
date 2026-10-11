@@ -9,6 +9,10 @@ export type IdleDeliveryInput = Readonly<{
   send: () => Promise<boolean>;
   isRead: () => Promise<boolean>;
   giveUp?: () => boolean;
+  // Why the last send() returned false; recorded on the send-failed attempt.
+  sendError?: () => string | undefined;
+  // Waits between retries of a failed send; the send fails for good once they run out.
+  retryDelaysMs?: readonly number[];
   attempt?: (details: IdleDeliveryAttempt) => Promise<void>;
   wait?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -20,7 +24,10 @@ export type IdleDeliveryAttempt = Readonly<{
   status: "idle" | "busy" | "unknown";
   composer: "empty" | "draft" | "unknown" | "unread";
   decision: "cancelled" | "wait-busy" | "wait-composer" | "send" | "send-failed" | "failed";
+  reason?: string;
 }>;
+
+const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [5_000, 15_000, 60_000];
 
 const defaultWait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -29,6 +36,8 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
   const wait = input.wait ?? defaultWait;
   const deadline = now() + Math.max(0, input.timeoutMs);
   let delay = Math.max(1, input.initialDelayMs);
+  const retryDelays = input.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  let retries = 0;
   while (now() <= deadline) {
     let status: IdleDeliveryAttempt["status"] = "unknown";
     let composer: IdleDeliveryAttempt["composer"] = "unread";
@@ -63,8 +72,13 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
             await input.attempt?.({ status, composer, decision: "send" });
             return finish("delivered");
           }
-          await input.attempt?.({ status, composer, decision: "send-failed" });
-          return finish("failed");
+          const reason = input.sendError?.() ?? "send returned no error detail";
+          await input.attempt?.({ status, composer, decision: "send-failed", reason });
+          const retryDelay = retryDelays[retries];
+          if (retryDelay === undefined || now() >= deadline) return finish("failed");
+          retries += 1;
+          await wait(Math.min(retryDelay, deadline - now()));
+          continue;
         }
       }
       await input.attempt?.({ status, composer, decision: status !== "idle" ? "wait-busy" : composer === "draft" ? "wait-composer" : "wait-busy" });

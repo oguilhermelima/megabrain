@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-10-11T12:00:00.000Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "task_complete",
+    "error": {
+      "codex_error_info": {
+        "message": "Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again."
+      }
+    }
+  }
+}

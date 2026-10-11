@@ -114,6 +114,7 @@ megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeo
 megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json] — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
 megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--json] — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
+megabrain supervise [--status|--stop] — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.
 ```
 
@@ -178,6 +179,13 @@ foreign draft is preserved; if delivery cannot happen now, a detached deliverer 
 ten minutes. `--idle-timeout` changes each idle and confirmation wait, and `--attempts` sets a limit
 from one to three. If the direction exceeds the 12000-byte tmux limit, the child receives a pointer
 to `megabrain check`; the full text remains queued.
+
+`megabrain supervise` is started by `orchestrate spawn` and watches every open dispatch from the
+agent's own session records, never from silence. It sends the parent one message of type supervise per
+finding (usage-limit, rate-limited, server-error, network, auth-required, dialog-waiting,
+prompt-unsubmitted, process-exited, pane-gone) with a recommended action, and only auto-recovers an
+unsubmitted prompt. Read it with `orchestrate watch`; `megabrain supervise --status` and `--stop`
+inspect and end the watcher.
 
 ## If you are the child
 

@@ -35,6 +35,7 @@ import { usageTable, usageText } from "../core/usage.js";
 import { ensureAutomaticCutover } from "../db/cutover.js";
 import { executeDeliveryWorker } from "./commands/delivery-worker.js";
 import { executeStack } from "./commands/stack.js";
+import { executeSupervise, executeSupervisorWorker } from "./commands/supervise.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -50,6 +51,7 @@ export async function route(
 ): Promise<Result<string>> {
   const [command, ...commandArgs] = args;
   if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "__supervise-worker") return executeSupervisorWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__usage-table") return Promise.resolve(ok(usageTable()));
   if (command === undefined || command === "help" || command === "-h" || command === "--help") {
     return Promise.resolve(ok(ROOT_USAGE));
@@ -57,7 +59,7 @@ export async function route(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -86,6 +88,7 @@ export async function route(
   if (command === "check") {
     return executeCheck(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
+  if (command === "supervise") return executeSupervise(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "model") {
     return executeModel(commandArgs, dependencies.environment, dependencies.processAdapter);
   }

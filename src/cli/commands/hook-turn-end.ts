@@ -10,6 +10,7 @@ import { appendMessage, findChild, parentContextMatches, sendParentPointer, wait
 import { continueRefusedChain } from "./chain-run.js";
 import { getDispatch, listDeliveries, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
+import { backgroundTasks } from "../../core/supervise.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { randomUUID } from "node:crypto";
 import { waitForStableIdle } from "../../core/liveness.js";
@@ -96,6 +97,13 @@ async function stalledIsDue(root: string, dispatchId: string, meta: RecordValue,
   if (status === "missing") return true;
   if (await hasRecentChildActivity(root, dispatchId)) return false;
   return true;
+}
+
+async function readBackgroundTasks(meta: RecordValue, processAdapter: ProcessAdapter): Promise<number | undefined> {
+  const pane = meta.runtime === "tmux" && typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
+  if (pane === "" || meta.agent !== "claude") return undefined;
+  const captured = await getTmux().capturePane(pane, 200, processAdapter);
+  return captured.kind === "ok" ? backgroundTasks(captured.value) : undefined;
 }
 
 // Screen text is used only to see whether the agent is idle after /compact; context itself comes from agent files.
@@ -380,6 +388,12 @@ function failedMailLines(database: DatabaseHandle, dispatchId: string): readonly
   return lines;
 }
 
+// Dispatch records name the parent two ways: older ones put the terminal handle in parentSessionId,
+// current ones put "<agent>:<agent session>" there and keep the handle in parentTerminalId.
+function parentsSession(meta: JsonRecord, session: Readonly<{ id: string; host: string }>): boolean {
+  return meta.parentHost === session.host && (meta.parentSessionId === session.id || meta.parentTerminalId === session.id);
+}
+
 async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return undefined;
@@ -392,7 +406,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
   for (const meta of listed.value) {
     const dispatchId = meta.dispatchId;
     if (dispatchId === undefined) continue;
-    if (meta.parentSessionId === session.id && meta.parentHost === session.host && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
+    if (parentsSession(meta, session) && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
       failedMail.push(...failedMailLines(database.value, dispatchId));
     }
     const state = typeof meta.state === "string" ? meta.state : "";
@@ -401,9 +415,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
     const isDoneOwned = state === "done" && terminalState === "owned";
     if (!isOpen && !isDoneOwned) continue;
 
-    const parentSessionId = typeof meta.parentSessionId === "string" ? meta.parentSessionId : "";
-    const parentHost = typeof meta.parentHost === "string" ? meta.parentHost : "";
-    if (session.id !== parentSessionId || session.host !== parentHost) continue;
+    if (!parentsSession(meta, session)) continue;
     if (!(await parentContextMatches(root, meta, processAdapter).catch(() => false))) continue;
     if (await waiterIsActive(root, dispatchId).catch(() => false)) continue;
 
@@ -538,6 +550,14 @@ export async function executeHookTurnEnd(
 
     const due = await stalledIsDue(root, dispatchId, meta as RecordValue, processAdapter);
     if (!due) return finish(defaultText);
+
+    // A turn that ends with its own shells or monitors still running is waiting, not stalled.
+    const running = await readBackgroundTasks(meta as RecordValue, processAdapter);
+    if (running !== undefined) {
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind === "ok") mutateDispatch(database.value, dispatchId, () => ({ backgroundTasks: running }));
+      return finish(defaultText);
+    }
 
     const payloadRaw = args[0] !== undefined && args[0] !== "" ? args[0] : await readStdin().catch(() => "");
     const { text: payloadText, transcriptPath } = parsePayload(payloadRaw);

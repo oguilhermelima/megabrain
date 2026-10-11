@@ -19,6 +19,7 @@ printf '%s\n' "$work/shared" >"$work/state/worktree-root"
 export GH_LOG="$work/gh.log"
 export GH_NATIVE=yes
 export GH_UNPUSHED=no
+export GH_REMOTE="$work/remote.git"
 
 cat >"$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -37,6 +38,9 @@ case "${1:-} ${2:-} ${3:-}" in
     else printf '[]\n'; fi
     ;;
   "pr create"*)
+    all="$*"; head="${all#*--head }"; head="${head%% *}"
+    git --git-dir="$GH_REMOTE" rev-parse --verify --quiet "refs/heads/$head" >/dev/null \
+      || { printf 'GraphQL: Head sha can'"'"'t be blank, Head ref must be a branch (createPullRequest)\n' >&2; exit 1; }
     number=12
     case "$*" in *'--head stack/child'*) number=13 ;; esac
     printf 'https://github.com/owner/repo/pull/%s\n' "$number"
@@ -69,13 +73,14 @@ cd "$work/repo"
 printf 'base change\n' >"$work/shared/stack-base/base.txt"
 git -C "$work/shared/stack-base" add base.txt
 git -C "$work/shared/stack-base" commit -qm 'base change'
-git -C "$work/shared/stack-base" push -qu origin stack/base
 run stack create stack/child --on stack/base >/dev/null
 printf 'child change\n' >"$work/shared/stack-child/child.txt"
 git -C "$work/shared/stack-child" add child.txt
 git -C "$work/shared/stack-child" commit -qm 'child change'
-git -C "$work/shared/stack-child" push -qu origin stack/child
 run stack pr >/dev/null
+for b in stack/base stack/child; do
+  git --git-dir="$work/remote.git" rev-parse --verify --quiet "refs/heads/$b" >/dev/null || fail "stack pr did not push $b"
+done
 contains "$(cat "$GH_LOG")" 'POST repos/owner/repo/stacks'
 contains "$(cat "$GH_LOG")" 'pull_requests'
 printf 'GitHub creates native stacks after opening dependent pull requests\n'
@@ -118,3 +123,36 @@ if run stack merge --yes >"$work/unpushed.out" 2>&1; then fail 'stack merge acce
 contains "$(cat "$work/unpushed.out")" 'unpushed local commits'
 not_contains "$(cat "$GH_LOG")" 'pr merge'
 printf 'GitHub merge refuses local commits that have not been pushed\n'
+
+# Scenario: the stricter fake refuses a pull request for a head that is not on the remote.
+if gh pr create --head stack/never-pushed --base main --title t --body b >/dev/null 2>&1; then fail 'fake gh accepted an unpushed head'; fi
+printf 'The fake gh refuses pull requests for unpushed heads\n'
+
+# Scenario: a diverged remote stops stack pr with a sync hint and never forces.
+git clone -q "$work/remote.git" "$work/other"
+git -C "$work/other" config user.email other@example.com
+git -C "$work/other" config user.name Other
+git -C "$work/other" checkout -q stack/child
+printf 'remote only\n' >"$work/other/remote-only.txt"
+git -C "$work/other" add remote-only.txt
+git -C "$work/other" commit -qm 'remote only'
+git -C "$work/other" push -q origin stack/child
+remote_tip="$(git --git-dir="$work/remote.git" rev-parse stack/child)"
+: >"$GH_LOG"
+if run stack pr >"$work/diverged.out" 2>&1; then fail 'stack pr succeeded against a diverged remote'; fi
+contains "$(cat "$work/diverged.out")" 'stack sync'
+not_contains "$(cat "$GH_LOG")" 'pr create'
+[ "$remote_tip" = "$(git --git-dir="$work/remote.git" rev-parse stack/child)" ] || fail 'stack pr rewrote the remote branch'
+printf 'GitHub stack pr stops on a diverged remote and points at stack sync\n'
+
+# Scenario: stack show prints a readable table by default and JSON only with --json.
+export GH_LIST_MODE=open
+human="$(run stack show)"
+contains "$human" 'BRANCH'
+contains "$human" 'stack/base'
+contains "$human" '#13'
+case "$human" in '{'*) fail 'stack show printed JSON by default' ;; esac
+json="$(run stack show --json)"
+case "$json" in '{'*) ;; *) fail 'stack show --json did not print JSON' ;; esac
+contains "$json" '"branches"'
+printf 'GitHub stack show is a table by default and JSON behind --json\n'

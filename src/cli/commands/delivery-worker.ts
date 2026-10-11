@@ -87,10 +87,11 @@ async function sendTyped(
   expectedClaudeStatus?: Readonly<{ pid: number; statusUpdatedAt: number }>,
   adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
   ghost?: GhostTracker,
+  fail: (reason: string) => void = () => undefined,
 ): Promise<boolean> {
   const agent = String(meta.agent ?? "");
   const submit = submitKey(agent);
-  if (submit.kind !== "ok") return false;
+  if (submit.kind !== "ok") { fail(submit.error); return false; }
   const preflight = async (): Promise<Result<void>> => {
     const screen = await readDeliveryScreen(meta, process);
     if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
@@ -111,16 +112,21 @@ async function sendTyped(
   };
   if (meta.runtime === "tmux") {
     const sent = await sendTmuxPair(root, String(meta.tmuxPane ?? ""), text, submit.value, {}, process, false, preflight);
+    if (sent.kind !== "ok") fail(sent.error);
     return sent.kind === "ok";
   }
   const host = String(meta.childHost ?? "");
   const provider = getHost(host);
-  if (provider === undefined) return false;
+  if (provider === undefined) { fail(`unknown host ${host}`); return false; }
   const screen = await preflight();
-  if (screen.kind !== "ok") return false;
+  if (screen.kind !== "ok") { fail(`preflight: ${screen.error}`); return false; }
   const call = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: String(meta.terminalId ?? ""), text, enter: true });
-  if (call.kind !== "ok") return false;
-  return (await runHostSend(host, process, call.value)).kind === "ok";
+  if (call.kind !== "ok") { fail(`${host} send command: ${call.error}`); return false; }
+  const sent = await runHostSend(host, process, call.value);
+  if (sent.kind === "ok") return true;
+  const detail = (sent.kind === "failed" ? sent.stdout ?? "" : "").trim().slice(0, 300);
+  fail(`${host} send: ${sent.error}${detail === "" ? "" : ` | ${detail}`}`);
+  return false;
 }
 
 async function clearOwnComposer(root: string, meta: Meta, process: ProcessAdapter): Promise<boolean> {
@@ -184,6 +190,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let transport = "failed";
   let outcome = "failed";
   let lastDecision: string | undefined;
+  let sendError: string | undefined;
   let screenDownSince: number | undefined;
   let screenError = "";
   const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
@@ -247,7 +254,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         proofReason = status?.reason;
         statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
         statusUpdatedAtRead = status?.statusUpdatedAt;
-      }, ghost),
+      }, ghost, (reason) => { sendError = reason; }),
+      sendError: () => sendError,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
       attempt: async (details) => {
@@ -261,7 +269,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           composer: details.composer,
           decision: details.decision,
           ...(proofReason === undefined ? {} : { proofReason }),
-          ...(details.decision === "send" && ghost?.assumed() === true ? { reason: "ghost-assumed-static" } : {}),
+          ...(details.reason !== undefined ? { reason: details.reason } : details.decision === "send" && ghost?.assumed() === true ? { reason: "ghost-assumed-static" } : {}),
         };
         await decisionLog.record(entry);
       },
@@ -274,7 +282,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
   const unavailable = outcome === "unavailable";
-  const reason = unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : `deferred delivery ${outcome}`;
+  const reason = unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
   setDeliveryTransport(database.value, dispatch, sequence, transport, unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
     ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })

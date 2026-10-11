@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-10-11T12:00:00.000Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "task_complete",
+    "error": {
+      "codex_error_info": {
+        "message": "You’ve hit your usage limit. Upgrade to Pro ([URL]), visit [URL] to purchase more credits or try again at 1:43 PM."
+      }
+    }
+  }
+}

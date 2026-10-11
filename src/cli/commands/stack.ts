@@ -25,6 +25,23 @@ function output(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function table(headers: string[], rows: string[][]): string {
+  const widths = headers.map((header, i) => Math.max(header.length, ...rows.map((row) => row[i]!.length)));
+  const line = (cells: string[]) => cells.map((cell, i) => cell.padEnd(widths[i]!)).join("  ").trimEnd();
+  return `${[line(headers), ...rows.map(line)].join("\n")}\n`;
+}
+
+function githubChecks(rollup: unknown[] | undefined): string {
+  if (rollup === undefined || rollup.length === 0) return "-";
+  const states = rollup.map((item) => {
+    const check = item as { conclusion?: string; status?: string; state?: string };
+    return (check.conclusion || check.state || check.status || "").toUpperCase();
+  });
+  if (states.some((state) => ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"].includes(state))) return "failing";
+  if (states.every((state) => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state))) return "passing";
+  return "pending";
+}
+
 async function repoFromCwd(process: ProcessAdapter, cwd: string): Promise<Result<string>> {
   const result = await git(process, cwd, ["rev-parse", "--show-toplevel"]);
   if (result.kind !== "ok") return failed("not inside a git worktree");
@@ -85,16 +102,18 @@ function orderedBranches(rows: Worktree[], base: string): Worktree[] {
   return result;
 }
 
-function parseOptions(args: readonly string[]): Result<{ action: string; values: string[]; yes: boolean; draft: boolean; repo?: string; provider?: Provider }> {
+function parseOptions(args: readonly string[]): Result<{ action: string; values: string[]; yes: boolean; draft: boolean; json: boolean; repo?: string; provider?: Provider }> {
   const values: string[] = [];
   let yes = false;
   let draft = false;
+  let json = false;
   let repo: string | undefined;
   let provider: Provider | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--yes") yes = true;
     else if (arg === "--draft") draft = true;
+    else if (arg === "--json") json = true;
     else if (arg === "--repo" || arg === "--provider") {
       const value = args[++i];
       if (!value) return failed(`${arg} requires a value`, 2);
@@ -103,7 +122,7 @@ function parseOptions(args: readonly string[]): Result<{ action: string; values:
       else return failed("--provider must be github or gitlab", 2);
     } else values.push(arg);
   }
-  return ok({ action: values.shift() ?? "show", values, yes, draft, ...(repo ? { repo } : {}), ...(provider ? { provider } : {}) });
+  return ok({ action: values.shift() ?? "show", values, yes, draft, json, ...(repo ? { repo } : {}), ...(provider ? { provider } : {}) });
 }
 
 async function dataFor(process: ProcessAdapter, environment: Environment, repoOption?: string): Promise<Result<StackData>> {
@@ -164,7 +183,7 @@ async function gitLabDependenciesAvailable(process: ProcessAdapter, data: StackD
   return result.kind === "ok";
 }
 
-async function gitLabShow(process: ProcessAdapter, data: StackData): Promise<Result<string>> {
+async function gitLabShow(process: ProcessAdapter, data: StackData, json: boolean): Promise<Result<string>> {
   const list = await listGitLabMRs(process, data.repo);
   if (list.kind !== "ok") return list;
   const project = await gitLabProject(process, data);
@@ -178,11 +197,19 @@ async function gitLabShow(process: ProcessAdapter, data: StackData): Promise<Res
   const dependenciesAvailable = firstMR === undefined || firstMR === null
     ? false
     : await gitLabDependenciesAvailable(process, data, firstMR);
-  return ok(output({ provider: "gitlab", defaultBranch: data.defaultBranch, mergeTrains: project?.merge_trains_enabled ?? "unknown",
-    mergeRequestDependencies: dependenciesAvailable ? "available" : "unavailable on this project or account", branches: entries }));
+  const mergeTrains = project?.merge_trains_enabled ?? "unknown";
+  const dependencies = dependenciesAvailable ? "available" : "unavailable on this project or account";
+  if (json) return ok(output({ provider: "gitlab", defaultBranch: data.defaultBranch, mergeTrains, mergeRequestDependencies: dependencies, branches: entries }));
+  const rows = await Promise.all(entries.map(async (entry) => {
+    const mr = entry.mergeRequest;
+    const behind = await git(process, data.repo, ["rev-list", "--count", `${entry.branch}..${entry.parent ?? data.defaultBranch}`]);
+    return [String(entry.index), entry.branch, entry.parent ?? data.defaultBranch, mr === null ? "-" : `!${mr.iid} ${mr.state}`,
+      mr?.head_pipeline?.status ?? "-", mr?.detailed_merge_status ?? "-", behind.kind === "ok" ? behind.value.stdout.trim() : "?"];
+  }));
+  return ok(`gitlab · default branch ${data.defaultBranch} · merge trains ${mergeTrains}\nMerge request dependencies: ${dependencies}\n\n${table(["#", "BRANCH", "PARENT", "MR", "CI", "REVIEW", "BEHIND"], rows)}`);
 }
 
-async function gitLabPR(process: ProcessAdapter, data: StackData, draft: boolean): Promise<Result<string>> {
+async function gitLabPR(process: ProcessAdapter, data: StackData, draft: boolean, json: boolean): Promise<Result<string>> {
   const listed = await listGitLabMRs(process, data.repo);
   if (listed.kind !== "ok") return listed;
   const merged: GitLabMR[] = [];
@@ -216,7 +243,9 @@ async function gitLabPR(process: ProcessAdapter, data: StackData, draft: boolean
       if (result.kind !== "ok") return failed(`could not record MR dependency ${parent.iid} -> ${child.iid}: ${result.error}`);
     }
   }
-  return ok(output({ provider: "gitlab", mergeRequestDependencies: dependencies, mergeRequests: merged }));
+  if (json) return ok(output({ provider: "gitlab", mergeRequestDependencies: dependencies, mergeRequests: merged }));
+  const rows = merged.map((mr) => [`!${mr.iid}`, mr.source_branch, mr.target_branch, mr.web_url ?? "-"]);
+  return ok(`${table(["MR", "BRANCH", "TARGET", "URL"], rows)}Dependencies recorded: ${dependencies ? "yes" : "no"}\n`);
 }
 
 async function nativeStacks(process: ProcessAdapter, repo: string, slug: string): Promise<{ available: boolean; stacks: GitHubStack[]; error?: string }> {
@@ -273,12 +302,12 @@ async function createNativeStack(process: ProcessAdapter, data: StackData, pulls
   return result.kind === "ok" ? ok(null) : failed(`GitHub could not create the native pull request stack: ${result.error}`);
 }
 
-async function show(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, override?: Provider): Promise<Result<string>> {
+async function show(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, json: boolean, override?: Provider): Promise<Result<string>> {
   const data = await dataFor(process, environment, repoOption);
   if (data.kind !== "ok") return data;
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
-  if (provider.value === "gitlab") return gitLabShow(process, data.value);
+  if (provider.value === "gitlab") return gitLabShow(process, data.value, json);
   const capability = await nativeStacks(process, data.value.repo, data.value.slug);
   if (capability.error !== undefined) return failed(capability.error);
   const pulls = await listPulls(process, data.value.repo);
@@ -296,16 +325,36 @@ async function show(process: ProcessAdapter, environment: Environment, repoOptio
   }
   const extensions = await gh(process, data.value.repo, ["extension", "list"]);
   const ghStackInstalled = extensions.kind === "ok" && /github\/gh-stack/.test(extensions.value.stdout);
-  return ok(output({ provider: provider.value, nativeStacks: capability.available, ghStackInstalled, defaultBranch: data.value.defaultBranch, branches: entries }));
+  if (json) return ok(output({ provider: provider.value, nativeStacks: capability.available, ghStackInstalled, defaultBranch: data.value.defaultBranch, branches: entries }));
+  const rows = entries.map((entry) => {
+    const pull = entry.pullRequest;
+    return [String(entry.index), entry.branch, entry.parent ?? data.value.defaultBranch, pull === null ? "-" : `#${pull.number} ${(pull.state ?? "").toLowerCase()}`.trim(),
+      githubChecks(pull?.statusCheckRollup), pull?.reviewDecision ? pull.reviewDecision.toLowerCase().replace(/_/g, " ") : "-", entry.behindParent === undefined ? "?" : String(entry.behindParent)];
+  });
+  return ok(`github · native stacks ${capability.available ? "available" : "unavailable"} · default branch ${data.value.defaultBranch}\n\n${table(["#", "BRANCH", "PARENT", "PR", "CI", "REVIEW", "BEHIND"], rows)}`);
 }
 
-async function pr(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, draft: boolean, override?: Provider): Promise<Result<string>> {
+async function pushBranches(process: ProcessAdapter, data: StackData): Promise<Result<null>> {
+  for (const branch of data.branches) {
+    const pushed = await git(process, branch.path, ["push", "-u", "origin", `${branch.branch}:${branch.branch}`]);
+    if (pushed.kind === "ok") continue;
+    if (/rejected|non-fast-forward|fetch first/i.test(pushed.error)) {
+      return failed(`origin/${branch.branch} has diverged from the local branch; run megabrain stack sync --yes to rebase and push`);
+    }
+    return failed(`could not push ${branch.branch}: ${pushed.error}`);
+  }
+  return ok(null);
+}
+
+async function pr(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, draft: boolean, json: boolean, override?: Provider): Promise<Result<string>> {
   const data = await dataFor(process, environment, repoOption);
   if (data.kind !== "ok") return data;
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
-  if (provider.value === "gitlab") return gitLabPR(process, data.value, draft);
+  const pushed = await pushBranches(process, data.value);
+  if (pushed.kind !== "ok") return pushed;
+  if (provider.value === "gitlab") return gitLabPR(process, data.value, draft, json);
   const capability = await nativeStacks(process, data.value.repo, data.value.slug);
   if (capability.error !== undefined) return failed(capability.error);
   const pulls = await listPulls(process, data.value.repo);
@@ -316,7 +365,9 @@ async function pr(process: ProcessAdapter, environment: Environment, repoOption:
     const stacked = await createNativeStack(process, data.value, created.value, capability.stacks);
     if (stacked.kind !== "ok") return stacked;
   }
-  return ok(output({ provider: provider.value, nativeStacks: capability.available, pullRequests: created.value }));
+  if (json) return ok(output({ provider: provider.value, nativeStacks: capability.available, pullRequests: created.value }));
+  const rows = created.value.map((pull) => [`#${pull.number}`, pull.headRefName, pull.baseRefName, pull.url ?? "-"]);
+  return ok(`${table(["PR", "BRANCH", "BASE", "URL"], rows)}Native stack: ${capability.available ? "yes" : "no"}\n`);
 }
 
 async function plan(process: ProcessAdapter, data: StackData, action: string, yes: boolean): Promise<Result<string>> {
@@ -495,7 +546,7 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
 export async function executeStack(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseOptions(args);
   if (parsed.kind !== "ok") return parsed;
-  const { action, values, yes, draft, repo: repoOption, provider } = parsed.value;
+  const { action, values, yes, draft, json, repo: repoOption, provider } = parsed.value;
   if (action === "create") {
     const branch = values[0];
     let parent: string | undefined;
@@ -514,8 +565,8 @@ export async function executeStack(args: readonly string[], environment: Environ
     } finally { opened.value.close(); }
     return created;
   }
-  if (action === "show") return show(process, environment, repoOption, provider);
-  if (action === "pr") return pr(process, environment, repoOption, draft, provider);
+  if (action === "show") return show(process, environment, repoOption, json, provider);
+  if (action === "pr") return pr(process, environment, repoOption, draft, json, provider);
   if (action === "sync") return sync(process, environment, repoOption, yes, provider);
   if (action === "merge") return merge(process, environment, repoOption, yes, provider);
   return failed(`unknown stack action: ${action}`, 2);

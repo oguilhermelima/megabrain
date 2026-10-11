@@ -23,6 +23,7 @@ import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 import { receiptTimeoutMs, transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
+import { startSupervisorWorker } from "./supervise.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -1035,6 +1036,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
+      await startSupervisorWorker(root, environment, process);
       const output = { status: "spawned", reason: null, dispatchId: id, terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
