@@ -9,7 +9,7 @@ import { claimDelivery, createDelivery, getDispatch, listDeliveries, listDispatc
 import type { DeliveryRecord } from "../../db/queries/deliveries.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
-export type CheckOptions = Readonly<{ acknowledge?: boolean }>;
+export type CheckOptions = Readonly<{ acknowledge?: boolean; excludedTransports?: readonly string[] }>;
 
 function checkMessages(root: string, dispatch: string): CheckMessage[] {
   const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -130,7 +130,7 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
     const messages = checkMessages(root, dispatch);
     const deliveries = checkDeliveries(root, dispatch);
     await migrateDeliveries(root, dispatch, messages, deliveries);
-    const selected = selectDelivery("child", full, checkDeliveries(root, dispatch), messages, resolvedConsumer, generation);
+    const selected = selectDelivery("child", full, checkDeliveries(root, dispatch), messages, resolvedConsumer, generation, options.excludedTransports);
     if (selected.kind === "selected") {
       if (selected.delivery.consumer === null) {
         const claim = claimDelivery(database.value, selected.delivery.id, resolvedConsumer, generation);
