@@ -239,20 +239,18 @@ async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: nu
 
 const READINESS_FRAME_MAX_LINES = 60;
 
+function recordFrame(root: string, id: string, type: string, text: string): void {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return;
+  appendDatabaseMessage(database.value, id, { from: "megabrain", type, text, createdAt: new Date().toISOString(), sessionId: "" });
+}
+
 // The frame readiness rejected is the only evidence of why a spawn that retries fine failed once,
 // so it is kept in the dispatch's own messages rather than lost with the pane.
 function recordRejectedReadinessFrame(root: string, id: string, agent: string, timeoutMs: number, frame: string): void {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind !== "ok") return;
   const shown = frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd();
   const status = classifyLiveness(agent, frame).status;
-  appendDatabaseMessage(database.value, id, {
-    from: "megabrain",
-    type: "readiness-frame",
-    text: `readiness never saw a stable idle ${agent} frame within ${timeoutMs}ms (last classified: ${status}); last frame:\n${shown}`,
-    createdAt: new Date().toISOString(),
-    sessionId: "",
-  });
+  recordFrame(root, id, "readiness-frame", `readiness never saw a stable idle ${agent} frame within ${timeoutMs}ms (last classified: ${status}); last frame:\n${shown}`);
 }
 
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
@@ -964,7 +962,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         // composer, where Codex's Tab queues instead of submitting). Every agent's composer
         // submits an idle prompt on Enter. The text goes in as one bracketed paste that is proven
         // to be in the composer before Enter, never as keystrokes.
-        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process }, () => awaitReceipt(root, id, environment));
+        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => awaitReceipt(root, id, environment));
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");

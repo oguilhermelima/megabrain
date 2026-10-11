@@ -25,6 +25,9 @@ type PromptTarget = Readonly<{
   readonly prompt: string;
   readonly environment: SpawnPromptEnvironment;
   readonly process: ProcessAdapter;
+  // Told the last composer frame whenever the prompt did not reach it whole, so the evidence
+  // outlives the pane that a failed spawn may remove.
+  readonly rejectedFrame?: (frame: string) => void;
 }>;
 
 function milliseconds(raw: string | undefined, fallback: number): number {
@@ -49,10 +52,15 @@ async function readScreen(target: PromptTarget): Promise<string | undefined> {
 
 async function composerShowsPrompt(target: PromptTarget): Promise<boolean> {
   const deadline = Date.now() + milliseconds(target.environment.MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS, DEFAULT_VERIFY_TIMEOUT_MS);
+  let last: string | undefined;
   while (true) {
     const screen = await readScreen(target);
+    last = screen ?? last;
     if (screen !== undefined && composerHoldsText(target.agent, screen, target.prompt)) return true;
-    if (Date.now() >= deadline) return false;
+    if (Date.now() >= deadline) {
+      if (last !== undefined) target.rejectedFrame?.(last);
+      return false;
+    }
     await sleep(POLL_MS);
   }
 }
