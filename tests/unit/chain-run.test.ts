@@ -8,6 +8,7 @@ import { failed, ok, type Result } from "../../src/core/result.js";
 import { continueRefusedChain, executeChainRun, type ChainRunDependencies } from "../../src/cli/commands/chain-run.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { createDispatch, getDispatch, listMessages } from "../../src/adapters/state-db.js";
+import { composerTmux } from "./composer-tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 
@@ -369,9 +370,7 @@ describe("executeChainRun: in-process spawn hand-off", () => {
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
-      capturePane: async () => ok("› Ask Codex to do anything"),
+      ...composerTmux(),
     });
     try {
       await withRoot("in-process", async (root) => {
@@ -481,9 +480,7 @@ describe("continueRefusedChain", () => {
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async () => ok(undefined),
-      sendKey: async () => ok(undefined),
-      capturePane: async () => ok("› Ask Codex to do anything"),
+      ...composerTmux(),
     });
     try {
       // Both steps are codex: agy has no tmux liveness classifier at all (classifyLiveness

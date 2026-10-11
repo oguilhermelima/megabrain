@@ -1,0 +1,30 @@
+
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Haiku 5.5 with low effort · Claude Max
+ ▝▝   ▝▝   ~/Workspaces/Worktrees/fix-spawn-prompt-receipt
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                     tmux detected · scroll with PgUp/PgDn · or add 'set -g mouse on' to ~/.tmux.conf for wheel scroll
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ [Pasted text #1]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 1M (Low) │ 0/1M ctx
+  paste again to expand
