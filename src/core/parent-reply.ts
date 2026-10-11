@@ -9,6 +9,15 @@ export type ParentReplyArguments = Readonly<{
   readonly supersede: boolean;
 }>;
 
+export type ParentChangeArguments = Readonly<{
+  readonly dispatchId: string;
+  readonly text: string;
+  readonly json: boolean;
+  readonly supersede: true;
+  readonly attempts: number;
+  readonly idleTimeout: number;
+}>;
+
 export type SupersedeSummary = Readonly<{
   readonly queued: number;
   readonly delivered: number;
@@ -32,19 +41,25 @@ export function parseParentReplyArgs(args: readonly string[]): Result<ParentRepl
   return ok({ dispatchId, text, json, supersede });
 }
 
-export function parseParentChangeArgs(args: readonly string[]): Result<ParentReplyArguments> {
+export function parseParentChangeArgs(args: readonly string[]): Result<ParentChangeArguments> {
   const dispatchId = args[0] ?? "";
   if (dispatchId === "") return failed(usageText("orchestrate-change"), 2);
   let text = "";
   let json = false;
+  let attempts = 3;
+  let idleTimeout = 10;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--text") text = args[++index] ?? "";
+    else if (arg === "--attempts") attempts = Number(args[++index]);
+    else if (arg === "--idle-timeout") idleTimeout = Number(args[++index]);
     else if (arg === "--json") json = true;
     else return failed(`unknown orchestrate change option: ${arg}`, 2);
   }
   if (text === "") return failed("--text is required", 2);
-  return ok({ dispatchId, text, json, supersede: true });
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 3) return failed("--attempts must be between 1 and 3", 2);
+  if (!Number.isInteger(idleTimeout) || idleTimeout < 0) return failed("--idle-timeout must be a non-negative number of seconds", 2);
+  return ok({ dispatchId, text, json, supersede: true, attempts, idleTimeout });
 }
 
 // Mirrors the shell's megabrain_dispatch_reply_state_allowed exactly: a reply is accepted only

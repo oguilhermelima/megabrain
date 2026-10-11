@@ -11,7 +11,7 @@ export type TmuxProvider = Readonly<{
   readonly sessionExists: (session: string, process: ProcessAdapter) => Promise<Result<boolean>>;
   readonly panesForSession: (session: string, process: ProcessAdapter) => Promise<Result<readonly string[]>>;
   readonly panePid: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
-  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter) => Promise<Result<string>>;
+  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean) => Promise<Result<string>>;
   readonly sendText: (pane: string, text: string, process: ProcessAdapter) => Promise<Result<void>>;
   readonly sendKey: (pane: string, key: string, process: ProcessAdapter) => Promise<Result<void>>;
   readonly killPane: (pane: string, process: ProcessAdapter) => Promise<Result<void>>;
@@ -70,8 +70,8 @@ const provider: TmuxProvider = {
     const pid = result.value.stdout.trim();
     return pid.length > 0 ? ok(pid) : unavailable(`PID for pane ${pane}`);
   },
-  capturePane: async (pane, lines, process) => {
-    const result = await process.run("tmux", ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
+  capturePane: async (pane, lines, process, screenOnly = false) => {
+    const result = await process.run("tmux", screenOnly ? ["capture-pane", "-p", "-t", pane] : ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
     return result.kind === "ok" ? ok(result.value.stdout) : unavailable(`capture of pane ${pane}`);
   },
   sendText: async (pane, text, process) => {
@@ -249,15 +249,12 @@ async function acquireLock(path: string, environment: TmuxSendEnvironment): Prom
   }
 }
 
-// clearStrayInput mirrors the shell's megabrain_tmux_send_agent "command" branch (last standing
-// at lib/module-tmux-runtime.sh, commit 9d24366^): a raw C-u immediately before the text, sent
-// only when typing the initial launch command line into a freshly created/split pane, which can
-// still hold startup noise or a stray keystroke from the shell that just started there. The
-// shell's own reasoning for never doing this anywhere else: "C-u in an agent composer is not a
-// line kill" — every other caller here types into an already-running agent's composer (the
-// prompt payload, a reply, a nudge), where an unreviewed control key is a live risk (an Escape
-// interrupts a working Codex turn) rather than a harmless line-kill. Callers must opt in
-// explicitly per call site; there is no default that could silently reach the wrong one.
+// clearStrayInput is safe only at a call site that has proved it is addressing a line composer:
+// spawn clears the initial shell command, and orchestrate change waits for stable idle, clears,
+// verifies the composer, then sends under this same lock. Real Codex and Claude probes confirmed
+// C-u clears their idle composer without submitting the retained draft. Other callers that type
+// into an active agent composer must leave this off; an explicit opt-in prevents a control key
+// from reaching a working turn or a terminal that interprets it differently.
 export async function sendTmuxPair(
   root: string,
   pane: string,
@@ -266,6 +263,7 @@ export async function sendTmuxPair(
   environment: TmuxSendEnvironment,
   process: ProcessAdapter,
   clearStrayInput = false,
+  afterClear?: () => Promise<Result<void>>,
 ): Promise<Result<void>> {
   const lock = lockPath(root, pane);
   try {
@@ -279,6 +277,10 @@ export async function sendTmuxPair(
     if (clearStrayInput) {
       const cleared = await getTmux().sendKey(pane, "C-u", process);
       if (cleared.kind !== "ok") return cleared;
+    }
+    if (afterClear !== undefined) {
+      const verified = await afterClear();
+      if (verified.kind !== "ok") return verified;
     }
     const sentText = await getTmux().sendText(pane, text, process);
     if (sentText.kind !== "ok") return sentText;
