@@ -469,9 +469,14 @@ Manage a dependent stack of worktrees and its review requests with `stack`:
 megabrain stack create feat/rate-limit-api --on feat/rate-limit
 megabrain stack show
 megabrain stack pr --draft
+megabrain stack show --json
 megabrain stack sync --yes
 megabrain stack merge --yes
 ```
+
+`stack show` and `stack pr` print a readable table; add `--json` for machine-readable output. `stack pr`
+first runs a plain `git push -u origin <branch>` for each stack branch (never forced); if the remote
+has diverged it stops and asks you to run `stack sync --yes`.
 
 `stack create` creates a registered worktree from the parent branch and records the parent in the
 worktree registry. Commands use the current repository; pass `--repo <path>` when running from
