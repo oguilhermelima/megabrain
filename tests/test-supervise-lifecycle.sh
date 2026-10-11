@@ -32,6 +32,7 @@ trap cleanup EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 "$tmux_bin" -L "$socket" new-session -d -s supervise-test 'sleep 300'
+"$tmux_bin" -L "$socket" set-option -g remain-on-exit on
 pane="$("$tmux_bin" -L "$socket" display-message -p -t supervise-test '#{pane_id}')"
 agent_pid="$("$tmux_bin" -L "$socket" display-message -p -t "$pane" '#{pane_pid}')"
 session_id="$("$tmux_bin" -L "$socket" display-message -p -t supervise-test '#{session_id}')"
