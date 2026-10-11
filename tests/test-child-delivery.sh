@@ -70,19 +70,24 @@ run_hook() {
 
 codex_pane="$(tmux -L "$server" new-session -d -s test -P -F '#{pane_id}' "PATH='$PATH' '$work/fakebin/codex' agent")"
 codex_session_id="$(tmux -L "$server" display-message -p -t "$codex_pane" '#{session_id}')"
-write_meta child-codex codex "$codex_pane" "$codex_session_id" 42 thread-codex
+codex_pane_pid="$(tmux -L "$server" display-message -p -t "$codex_pane" '#{pane_pid}')"
+write_meta child-codex codex "$codex_pane" "$codex_session_id" "$codex_pane_pid" thread-codex
 state_db_import "$root/.build/megabrain" "$state" true "$work/legacy"
 codex_reply='full Codex reply body'
 "$real_bun" -e '
   import { createProcessAdapter } from "./src/adapters/proc.ts";
   import { executeOrchestrateReply } from "./src/cli/commands/orchestrate-reply.ts";
+  import { readFileSync } from "node:fs";
   import { ok, failed } from "./src/core/result.ts";
   const [root, body] = process.argv.slice(1);
   const real = createProcessAdapter();
   const adapter = {
     async run(command, args) {
-      if (command === "ps" && args.includes("-p")) return ok({ stdout: "codex CODEX_THREAD_ID=thread-codex", stderr: "", exitCode: 0 });
-      if (command === "ps" && args.includes("-ax")) return ok({ stdout: "4242 /usr/local/bin/codex CODEX_THREAD_ID=thread-codex", stderr: "", exitCode: 0 });
+      if (command === "lsof") {
+        const stdout = readFileSync(`${process.cwd()}/tests/fixtures/codex-delivery/live-rollout.lsof-fn`, "utf8")
+          .replace("01a12a8a-ee5c-7d51-bd86-3e135704fe17", "thread-codex");
+        return ok({ stdout, stderr: "", exitCode: 0 });
+      }
       return real.run(command, args);
     },
     async startDetached() { return failed("unexpected deferred worker"); },
