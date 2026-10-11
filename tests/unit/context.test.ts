@@ -6,7 +6,7 @@ function environment(values: Partial<ContextEnvironment> = {}): ContextEnvironme
 }
 
 function probes(values: Partial<ContextProbes> = {}): ContextProbes {
-  return { orcaWorktree: false, ...values };
+  return values;
 }
 
 describe("resolveContext", () => {
@@ -41,15 +41,6 @@ describe("resolveContext", () => {
     });
   });
 
-  test("resolves an Orca worktree probe when no terminal marker exists", () => {
-    expect(resolveContext(environment(), probes({ orcaWorktree: true }))).toEqual({
-      host: "orca",
-      workspaceId: null,
-      terminalId: null,
-      agentId: null,
-    });
-  });
-
   test("returns local when no host can be determined", () => {
     expect(resolveContext(environment({ workspaceId: "workspace", agentId: "agent" }), probes())).toEqual({
       host: "local",
@@ -65,7 +56,7 @@ describe("resolveContext", () => {
       orcaTerminalHandle: "orca-terminal",
       tmux: "1",
       tmuxPane: "%4",
-    }), probes({ tmuxSessionName: "work", orcaWorktree: true }))).toEqual({
+    }), probes({ tmuxSessionName: "work" }))).toEqual({
       host: "superset",
       workspaceId: null,
       terminalId: "superset-terminal",

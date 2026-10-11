@@ -8,6 +8,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../core/terminal-lifecycle.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
+import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
 import { closeTmuxTerminal, createTmuxTerminal, splitTmuxTerminalId } from "./terminal-tmux.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -364,11 +365,12 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
   let port: number | null = null;
   let waitPort: string | undefined;
   let timeout = 30;
+  let terminal: string | undefined;
   if (rest.includes("-h") || rest.includes("--help")) return ok(help(operation ?? ""));
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === "--json") json = true;
-    else if (["--command", "--title", "--worktree", "--port", "--wait-port", "--timeout"].includes(arg)) {
+    else if (["--command", "--title", "--worktree", "--port", "--wait-port", "--timeout", "--terminal"].includes(arg)) {
       const value = rest[++index];
       if (value === undefined) return failed(`${arg} requires a value`, 2);
       if (arg === "--command") command = value;
@@ -376,6 +378,11 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
       else if (arg === "--worktree") worktreePath = value;
       else if (arg === "--wait-port") waitPort = value;
       else if (arg === "--timeout") timeout = Number(value);
+      else if (arg === "--terminal") {
+        const checked = checkTerminalFlag(value);
+        if (checked.kind !== "ok") return checked;
+        terminal = value;
+      }
       else if (!/^[0-9]+$/.test(value) || Number(value) < 1 || Number(value) > 65535) return failed("terminal create port must be between 1 and 65535", 2);
       if (arg === "--port") port = Number(value);
     } else if (!arg.startsWith("-") && selector === undefined) selector = arg;
@@ -411,9 +418,11 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
       const tmuxRecord: TerminalLifecycleRecord = { terminalId: opened.value.terminalId, host: "tmux", workspaceId: null, worktree: path.value, title, command: resolvedCommand, createdAt: new Date().toISOString(), pid: opened.value.pid, rootPid: opened.value.pid, port: port ?? null };
       const savedTmux = save(env, tmuxRecord);
       if (savedTmux.kind !== "ok") return savedTmux;
+      const callerInTmux = [env.TMUX, env.TMUX_PANE].every((value) => value !== undefined && value !== "");
+      const viewer = await openViewer({ session: opened.value.session, flag: terminal, automatic: !callerInTmux, env, process });
       return ok(json
-        ? output({ host: "tmux", worktree: path.value, title, terminalId: tmuxRecord.terminalId, pid: tmuxRecord.pid, rootPid: tmuxRecord.rootPid, port: tmuxRecord.port, attach: opened.value.attach }, true)
-        : `terminal: ${tmuxRecord.terminalId}\nattach: ${opened.value.attach}\n`);
+        ? output({ host: "tmux", worktree: path.value, title, terminalId: tmuxRecord.terminalId, pid: tmuxRecord.pid, rootPid: tmuxRecord.rootPid, port: tmuxRecord.port, attach: opened.value.attach, ...(viewer === undefined ? {} : { viewer }) }, true)
+        : `terminal: ${tmuxRecord.terminalId}\nattach: ${opened.value.attach}\n${viewer === undefined ? "" : viewerLine(viewer)}`);
     }
     const created = await createHost(process, currentHost, workspace ?? null, path.value, title, resolvedCommand);
     if (created.kind !== "ok") return created;

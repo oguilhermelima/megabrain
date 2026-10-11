@@ -24,6 +24,7 @@ import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 import { transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
 import { startSupervisorWorker } from "./supervise.js";
+import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -75,6 +76,7 @@ type SpawnOptions = Readonly<{
   readonly prompt: string;
   readonly label: string | null;
   readonly tmux: boolean | null;
+  readonly terminal?: string;
   readonly browser: boolean;
   readonly agentArgs: readonly string[];
   readonly json: boolean;
@@ -107,6 +109,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let prompt: string | undefined;
   let label: string | null = null;
   let tmux: boolean | null = null;
+  let terminal: string | undefined;
   let browser = false;
   let json = false;
   let ceilingFields: ContextPolicy = {};
@@ -127,6 +130,13 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       const parsed = parseBoolean(value);
       if (parsed === undefined) return failed("--tmux requires true or false", 2);
       tmux = parsed;
+      index += 1;
+    } else if (arg === "--terminal") {
+      const value = args[index + 1];
+      if (value === undefined || value === "") return failed("--terminal requires a non-empty value", 2);
+      const checked = checkTerminalFlag(value);
+      if (checked.kind !== "ok") return checked;
+      terminal = value;
       index += 1;
     } else if (["--worktree", "--repo", "--branch", "--base", "--name", "--agent", "--model", "--effort", "--prompt", "--label", "--agent-arg", "--context-ceiling", "--compact-at", "--max-iterations"].includes(arg)) {
       const value = args[index + 1];
@@ -165,7 +175,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
     const valid = validateContextPolicy(contextPolicy);
     if (valid.kind !== "ok") return valid;
   }
-  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, browser, agentArgs, json, contextPolicy });
+  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy });
 }
 
 function dispatchId(environment: SpawnEnvironment): string {
@@ -874,11 +884,9 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     // resolves host "orca" here too (C, resolveCaller shares callerEnvironment with every other
     // verb), so this branch already launches such a caller through the orca provider below with
     // no further change. Verified before relying on that: `orca terminal create` takes only
-    // --worktree/--title/--command/--focus (`orca terminal create --help`), and the same CLI's
-    // `orca worktree current` probe — used for the exact same host recognition in `megabrain
-    // context` — already succeeds when run from a structured session (measured, issue #55). The
-    // orca CLI is not scoped to the caller's own terminal; nothing here needed a parent terminal
-    // identity to begin with.
+    // --worktree/--title/--command/--focus (`orca terminal create --help`). The orca CLI is not
+    // scoped to the caller's own terminal; nothing here needed a parent terminal identity to
+    // begin with.
     const host = getHost(parentContext.host);
     if (host === undefined) return failed(`cannot launch agent from unknown orchestration host: ${parentContext.host}`);
     const created = host.create({ workspaceId: worktree.workspaceId ?? parentWorkspace, worktreePath: worktree.path, title: `${options.agent} ${worktree.path}` });
@@ -1007,10 +1015,12 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     }
     if (plan.nextStep === null) {
       await startSupervisorWorker(root, environment, process);
-      const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }) };
+      // Last, so a spawn that failed above never leaves a window attached to a session it killed.
+      const viewer = session === null ? undefined : await openViewer({ session, flag: parsed.value.terminal, automatic: parentContext.host === "local" && !callerInTmux && sessionCreatedBySpawn, env: environment, process });
+      const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }), ...(viewer === undefined ? {} : { viewer }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
-      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${parentContext.host === "local" ? "delivery: hook-and-watch\n" : ""}${attempts}${warning}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
+      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${parentContext.host === "local" ? "delivery: hook-and-watch\n" : ""}${attempts}${warning}${viewer === undefined ? "" : viewerLine(viewer)}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
     }
     step = plan.nextStep;
   }

@@ -339,6 +339,17 @@ opening a window. Detection reads `TERM_PROGRAM` (`Apple_Terminal`, `iTerm.app`,
 `VTE_VERSION`, and `WT_SESSION`. Arguments go to every opener as an argv array; only the two
 AppleScript openers build a shell string, and each word is single-quoted and escaped first.
 
+`orchestrate spawn` and `terminal create` take the same `--terminal <name>|auto|none` and open a
+viewer by themselves in one case: the caller runs outside Orca, Superset and tmux, and the command
+has just created the tmux session. Inside tmux the child keeps its split and no extra window opens;
+under Orca or Superset the host behaves as before. In both, naming a terminal explicitly with
+`--terminal` opens a viewer as well. The result carries `viewer`, with `terminal`, `opened`,
+`attachCommand` and `error`, and the text output a `viewer:` line. A viewer that cannot open never
+fails the command: the child is already running, so the error and `tmux attach -t <session>` are
+reported. `orchestrate close` and `terminal close` kill the tmux pane or session as before; a viewer
+window attached to it then shows the session ended, and megabrain never scripts closing windows in
+your terminal app.
+
 | Name | Opens a window with |
 |---|---|
 | `terminal-app` | `osascript` `do script` (verified on a real Mac) |

@@ -217,9 +217,17 @@ describe("resolveCallerIdentity", () => {
     expect(identity).toEqual({ id: "", host: "orca", terminalId: null, tmuxSession: null, tmuxPane: null });
   });
 
-  test("the orca worktree probe alone (no env marker) resolves host orca with no id", () => {
-    const identity = resolveCallerIdentity({}, { orcaWorktree: true });
-    expect(identity).toEqual({ id: "", host: "orca", terminalId: null, tmuxSession: null, tmuxPane: null });
+  test("a plain terminal in a folder Orca knows is local, however the folder is known", async () => {
+    const orcaKnowsTheFolder = fakeProcess((command, args) => command === "orca" && args[0] === "worktree"
+      ? ok({ stdout: JSON.stringify({ ok: true, result: { worktree: { path: "/work/tree", git: { path: "/work/tree" } } } }), stderr: "", exitCode: 0 })
+      : failed("unexpected call"));
+    for (const environment of [{}, { CLAUDE_CODE_SESSION_ID: "test-uuid" }]) {
+      const contextOutput = await executeContext(["--json"], environment, orcaKnowsTheFolder);
+      const contextJson = contextOutput.kind === "ok" ? JSON.parse(contextOutput.value) : undefined;
+      expect(contextJson.host).toBe("local");
+      expect((await resolveCaller(environment, fakeProcess())).host).toBe("local");
+    }
+    expect(orcaKnowsTheFolder.calls.some((call) => call.command === "orca")).toBe(false);
   });
 
   test("a structured session combined with an agent session id gives both a stable id and host orca", () => {
@@ -288,7 +296,7 @@ describe("ownsDispatch", () => {
 describe("context and spawn agree for the same environment", () => {
   test("resolveContext and resolveCaller (used by spawn and every verb) resolve a structured session identically", async () => {
     const environment: CallerEnvironment = { orcaStructuredSession: "1", claudeCodeSessionId: "test-uuid" };
-    const contextResult = resolveContext(environment, { orcaWorktree: false });
+    const contextResult = resolveContext(environment, {});
     const spawnCaller = resolveCallerIdentity(environment);
     expect(contextResult.host).toBe(spawnCaller.host);
     expect(contextResult.terminalId).toBe(spawnCaller.terminalId);
@@ -296,8 +304,7 @@ describe("context and spawn agree for the same environment", () => {
 
   test("megabrain context and orchestrate spawn agree end to end on host for a structured session", async () => {
     const rawEnvironment: Record<string, string> = { ORCA_STRUCTURED_SESSION: "1", CLAUDE_CODE_SESSION_ID: "test-uuid" };
-    // context's probe (`orca worktree current`) must not itself decide the answer here — make it
-    // fail so agreement is driven purely by ORCA_STRUCTURED_SESSION, the same source spawn reads.
+    // agreement is driven purely by ORCA_STRUCTURED_SESSION, the same source spawn reads.
     const contextProcess = fakeProcess(() => failed("orca: not found"));
     const contextOutput = await executeContext(["--json"], rawEnvironment, contextProcess);
     expect(contextOutput.kind).toBe("ok");
