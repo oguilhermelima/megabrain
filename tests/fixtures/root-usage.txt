@@ -18,6 +18,8 @@ Commands:
   stack create|show|pr|sync|merge ... Manage dependent branches and pull or merge requests
   terminal create ...                  Open a terminal in the current orchestrator
   terminal list [--worktree <path>]    List terminals created by megabrain
+  terminal open --session <name> ...   Open a native terminal window attached to a tmux session
+  terminal default [<name>|--clear]    Show or set the default native terminal
   terminal restart <selector> ...      Restart a terminal created by megabrain
   terminal close <selector> ...        Close a terminal created by megabrain
   orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
