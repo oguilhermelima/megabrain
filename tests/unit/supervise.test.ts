@@ -23,6 +23,14 @@ describe("supervision classification", () => {
     expect(classifyRecordedError("codex", fixture("codex-unknown-error.json"), { now })).toMatchObject({ cause: "unknown" });
   });
 
+  test("requires an event timestamp unless the error remains on an idle agent screen", () => {
+    const error = fixture("claude-server-error.json");
+    const withoutTimestamp = { ...error };
+    delete withoutTimestamp.timestamp;
+    expect(classifyRecordedError("claude", withoutTimestamp, { now })).toMatchObject({ cause: "unknown" });
+    expect(classifyRecordedError("claude", error, { now: Date.parse("2026-10-11T12:00:30.000Z"), idlePrompt: true })).toMatchObject({ cause: "server-error", errorCode: "529" });
+  });
+
   test("recommends the next action and names provider errors", () => {
     expect(recommendationFor({ cause: "usage-limit", resetAt: "1:43 PM" })).toContain("1:43 PM");
     expect(recommendationFor({ cause: "rate-limited", errorCode: "429" })).toContain("429");
