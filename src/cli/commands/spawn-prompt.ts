@@ -2,7 +2,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { composerHoldsText } from "../../core/composer-proof.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import type { SpawnStepOutcome } from "../../core/spawn-plan.js";
+import type { SpawnFailure, SpawnStepOutcome, UnreceivedReason } from "../../core/spawn-plan.js";
 import { getTmux, withTmuxPaneLock, type TmuxSendEnvironment } from "../../hosts/tmux.js";
 
 const POLL_MS = 100;
@@ -57,6 +57,14 @@ async function composerShowsPrompt(target: PromptTarget): Promise<boolean> {
   }
 }
 
+// Whether the pane is running a turn right now. A pane that cannot be read proves nothing.
+export async function paneShowsTurn(target: Pick<PromptTarget, "pane" | "agent" | "process">): Promise<boolean> {
+  const captured = await getTmux().capturePane(target.pane, 200, target.process, true);
+  if (captured.kind !== "ok") return false;
+  const status = classifyLiveness(target.agent, captured.value).status;
+  return status === "working" || status === "pending-check";
+}
+
 // An empty composer is the one the agent's classifier calls idle: its placeholder and nothing typed.
 export async function clearComposer(target: Pick<PromptTarget, "pane" | "agent" | "process">): Promise<Result<void>> {
   for (let attempt = 0; attempt < CLEAR_ATTEMPTS; attempt += 1) {
@@ -96,13 +104,21 @@ async function turnStartedWithin(target: PromptTarget): Promise<boolean> {
   }
 }
 
+// A composer left inside an unterminated bracketed paste takes every Enter as a newline. Sending
+// the paste end marker closes it, and the next Enter submits.
+const PASTE_END_MARKER = "\u001b[201~";
+
 async function submitPrompt(target: PromptTarget): Promise<Result<boolean>> {
   for (let press = 0; press < 2; press += 1) {
     const sent = await getTmux().sendKey(target.pane, "Enter", target.process);
     if (sent.kind !== "ok") return sent;
     if (await turnStartedWithin(target)) return ok(true);
   }
-  return ok(false);
+  const closed = await getTmux().sendText(target.pane, PASTE_END_MARKER, target.process);
+  if (closed.kind !== "ok") return closed;
+  const sent = await getTmux().sendKey(target.pane, "Enter", target.process);
+  if (sent.kind !== "ok") return sent;
+  return ok(await turnStartedWithin(target));
 }
 
 // Pastes the prompt, proves the composer holds all of it before submitting (one clear and repaste
@@ -119,10 +135,29 @@ function transportFailure(target: PromptTarget, detail: string): PromptTransport
   return { kind: "prompt-transport", status: "failed", failure: { call: `tmux paste-buffer --target ${target.pane}`, detail } };
 }
 
-// Delivers the first prompt to a tmux pane and waits for the child's receipt. A receipt that does
-// not come leaves the dispatch awaiting it.
+function unreceived(reason: UnreceivedReason, detail: string): PromptTransportOutcome {
+  const failure: SpawnFailure = { call: "prompt receipt", detail };
+  return { kind: "prompt-transport", status: "unreceived", reason, failure };
+}
+
+// Delivers the first prompt to a tmux pane and settles its receipt. No receipt within the timeout:
+// a turn that never started means the prompt was probably lost, so it is sent once more; a turn
+// that did start means the child saw it, so it is never resent. Either way a dispatch that still
+// has no receipt is failed rather than left awaiting one. The pane is always kept.
 export async function transportTmuxPrompt(target: PromptTarget, awaitReceipt: () => Promise<boolean>): Promise<PromptTransportOutcome> {
-  const delivered = await deliverPrompt(target);
-  if (delivered.kind !== "ok") return transportFailure(target, delivered.error);
-  return { kind: "prompt-transport", status: await awaitReceipt() ? "delivered" : "awaiting-receipt" };
+  const first = await deliverPrompt(target);
+  if (first.kind !== "ok") return transportFailure(target, first.error);
+  if (await awaitReceipt()) return { kind: "prompt-transport", status: "delivered" };
+  if (receiptTimeoutMs(target.environment) === 0) return { kind: "prompt-transport", status: "awaiting-receipt" };
+  const waited = `${receiptTimeoutMs(target.environment) / 1000}s`;
+  const kept = `pane ${target.pane} is kept for inspection`;
+  if (first.value || await paneShowsTurn(target)) return unreceived("no-receipt-after-turn", `the child started a turn but sent no megabrain received within ${waited}; not resent; ${kept}`);
+
+  const cleared = await clearComposer(target);
+  if (cleared.kind !== "ok") return transportFailure(target, cleared.error);
+  const second = await deliverPrompt(target);
+  if (second.kind !== "ok") return transportFailure(target, second.error);
+  if (await awaitReceipt()) return { kind: "prompt-transport", status: "delivered" };
+  if (second.value || await paneShowsTurn(target)) return unreceived("no-receipt-after-turn", `the child started a turn after the prompt was sent again but sent no megabrain received within ${waited}; ${kept}`);
+  return unreceived("prompt-not-received", `no turn started and no megabrain received within ${waited} after sending the prompt twice; ${kept}`);
 }
