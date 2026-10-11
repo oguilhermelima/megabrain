@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
@@ -82,7 +83,7 @@ async function sendTyped(
   environment: WorkerEnvironment,
   process: ProcessAdapter,
   expectedClaudeStatus?: Readonly<{ pid: number; statusUpdatedAt: number }>,
-  adoptStatus?: (status: ClaudeStatus | undefined) => Promise<void>,
+  adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
 ): Promise<boolean> {
   const agent = String(meta.agent ?? "");
   const submit = submitKey(agent);
@@ -93,7 +94,8 @@ async function sendTyped(
     const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
     const composer = deliveryComposer(agent, screen.value);
     const status = await claudeStatus(meta, environment);
-    await adoptStatus?.(status);
+    const observed = status?.pid !== undefined && status.status !== "unknown" ? status.status : screenStatus;
+    await adoptStatus?.(status, status?.pid === undefined ? "screen" : "claude-session", observed);
     if (screenStatus !== "idle" || composer !== "") return failed("target is no longer idle with an empty composer");
     if (status?.pid !== undefined && status.status !== "idle") return failed("Claude session is no longer idle");
     if (status?.pid !== undefined && status.statusUpdatedAt === undefined) return failed("Claude session status has no freshness timestamp");
@@ -169,6 +171,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const text = typeof payload.fullMessage === "string" ? payload.fullMessage : "";
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
   let checkedClaudeStatus: { pid: number; statusUpdatedAt: number } | undefined;
+  let proofSource = "screen";
+  let statusRead: "idle" | "busy" | "unknown" = "unknown";
+  let statusUpdatedAtRead: number | undefined;
+  let proofReason: string | undefined;
   let transport = "failed";
   let outcome = "failed";
   const adoptClaudePid = (status: ClaudeStatus | undefined): void => {
@@ -189,13 +195,21 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         const screen = await readDeliveryScreen(meta, process);
         if (screen.kind !== "ok") {
           checkedClaudeStatus = undefined;
+          proofSource = "screen-unavailable";
+          statusRead = "unknown";
+          statusUpdatedAtRead = undefined;
+          proofReason = "terminal screen unavailable";
           return "unknown";
         }
         const status = await claudeStatus(meta, environment);
         adoptClaudePid(status);
         const screenStatus = deliveryStatus(classifyLiveness(String(meta.agent ?? ""), screen.value).status);
         const sessionProven = status?.pid !== undefined;
+        proofSource = sessionProven ? "claude-session" : "screen";
+        proofReason = status?.reason;
         const observed = sessionProven && status.status !== "unknown" ? status.status : screenStatus;
+        statusRead = observed;
+        statusUpdatedAtRead = status?.statusUpdatedAt;
         checkedClaudeStatus = status?.status === "idle" && status.pid !== undefined && status.statusUpdatedAt !== undefined
           ? { pid: status.pid, statusUpdatedAt: status.statusUpdatedAt }
           : undefined;
@@ -206,8 +220,29 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
       },
       clear: async () => clearOwnComposer(root, meta, process),
-      send: async () => sendTyped(root, meta, text, environment, process, checkedClaudeStatus, async (status) => adoptClaudePid(status)),
+      send: async () => sendTyped(root, meta, text, environment, process, checkedClaudeStatus, async (status, proof, fallbackStatus) => {
+        adoptClaudePid(status);
+        const sessionProven = status?.pid !== undefined;
+        proofSource = proof;
+        proofReason = status?.reason;
+        statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
+        statusUpdatedAtRead = status?.statusUpdatedAt;
+      }),
       isRead: async () => readWasPulled(root, dispatch, sequence),
+      attempt: async (details) => {
+        const entry = {
+          timestamp: new Date().toISOString(),
+          dispatchId: dispatch,
+          outboxId,
+          proofSource,
+          status: statusRead,
+          statusUpdatedAt: statusUpdatedAtRead ?? null,
+          composer: details.composer,
+          decision: details.decision,
+          ...(proofReason === undefined ? {} : { proofReason }),
+        };
+        await appendFile(resolve(root, "delivery-decisions.jsonl"), `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
+      },
       record: async (result) => { outcome = result; },
       });
     } catch {
