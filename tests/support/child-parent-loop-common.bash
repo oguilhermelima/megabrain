@@ -126,13 +126,9 @@ set_state_dir() {
   # idle-composer marker classifyLiveness's codex matcher looks for (agents/codex.ts: /^\s*›
   # Ask Codex to do anything\s*$/m) before waitForTmuxReadiness's idle-detection will ever
   # consider the pane ready to receive the prompt, and again after each line it "answers".
-  cat >"$state_dir/bin/codex" <<'CODEXEOF'
+  cat >"$state_dir/bin/codex" <<CODEXEOF
 #!/usr/bin/env bash
-printf '\xe2\x80\xba Ask Codex to do anything\n'
-while IFS= read -r line; do
-  printf 'agent-response:%s\n' "$line"
-  printf '\xe2\x80\xba Ask Codex to do anything\n'
-done
+MB_PASTE_ECHO=1 exec node "$root/tests/fixtures/paste-agent.mjs"
 CODEXEOF
   chmod +x "$state_dir/bin/codex"
   printf '%s\n' \
@@ -246,7 +242,7 @@ run_flow() {
   local push_check push_delivery push_ack push_receipt push_receipt_id
   local done_delivery done_delivery_id close_output
   MEGABRAIN_TEST_RUNTIME="$runtime"
-  export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=1
+  export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=0
   set_state_dir "$(mktemp -d "/tmp/mblp-$runtime.XXXXXX")"
   export MEGABRAIN_TEST_DISPATCH_ID=""
   if [ "$runtime" = tmux ]; then

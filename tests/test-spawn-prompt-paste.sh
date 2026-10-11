@@ -55,10 +55,14 @@ WRAP
 chmod +x "$fake_bin/tmux"
 cat > "$fake_bin/codex" <<WRAP
 #!/usr/bin/env bash
-exec node "$root/tests/fixtures/paste-agent.mjs"
+exec node "$root/tests/fixtures/paste-agent.mjs" 2>>"$tmp/agent.err"
 WRAP
 chmod +x "$fake_bin/codex"
 export PATH="$fake_bin:$PATH"
+# The pane's shell rebuilds PATH from its own startup files, so the stand-in must be on it there too.
+printf 'export PATH=%q:$PATH\n' "$fake_bin" > "$HOME/.bashrc"
+printf '. "$HOME/.bashrc"\n' > "$HOME/.bash_profile"
+tmux_cmd() { tmux -f /dev/null -L "$socket" "$@"; }
 export MB_PASTE_LOG="$log" MB_PASTE_RECEIVE=1 MB_MEGABRAIN="$root/.build/megabrain"
 export MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS=15 MEGABRAIN_AGENT_READY_TIMEOUT_MS=15000
 unset TMUX TMUX_PANE MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID MEGABRAIN_DISPATCH_ID
@@ -75,7 +79,14 @@ run_case() {
   : > "$log"
   local output
   output="$(env "$@" MEGABRAIN_SPAWN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" orchestrate spawn --worktree "$worktree" --agent codex --prompt "$brief" --tmux true --json 2>"$tmp/$name.err")" \
-    || { cat "$tmp/$name.err" >&2; printf '%s\n' "$output" >&2; fail "$name: spawn failed"; }
+    || {
+      cat "$tmp/$name.err" >&2
+      [ ! -f "$tmp/agent.err" ] || cat "$tmp/agent.err" >&2
+      "$root/.build/megabrain" db show "$dispatch" --json 2>&1 | jq -r '.. | objects | select(.type? == "readiness-frame") | .text' >&2 || true
+      printf '%s\n' "$output" >&2
+      while read -r pane_id; do printf -- '--- pane %s\n' "$pane_id" >&2; tmux_cmd capture-pane -p -t "$pane_id" >&2 || true; done < <(tmux_cmd list-panes -a -F '#{pane_id}')
+      fail "$name: spawn failed"
+    }
   jq -e --arg id "$dispatch" '.dispatchId == $id and .status == "spawned"' <<<"$output" >/dev/null || fail "$name: unexpected spawn JSON: $output"
   printf '%s\n' "$output"
 }

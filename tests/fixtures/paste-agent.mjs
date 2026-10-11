@@ -4,7 +4,8 @@
 // shows a long paste collapsed to a placeholder, and can swallow the start of its first paste
 // (MB_PASTE_SWALLOW=<n>: the first n pastes keep only their last 400 bytes) or stay inside a paste
 // that never ends (MB_PASTE_OPEN=<n>: Enter is a newline until ESC [ 201 ~ arrives). Each submission
-// is appended to MB_PASTE_LOG, and MB_PASTE_RECEIVE=1 answers it with megabrain received.
+// is appended to MB_PASTE_LOG, MB_PASTE_RECEIVE=1 answers it with megabrain received, and
+// MB_PASTE_ECHO=1 prints the last line it got and goes back to an idle composer.
 
 import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -26,14 +27,33 @@ function render() {
   }
   if (draft === "") process.stdout.write("› Ask Codex to do anything\n");
   else if (draft.length > 1000) process.stdout.write(`› [Pasted Content ${[...draft].length} chars]\n`);
-  else process.stdout.write(`${draft.split("\n").map((row, index) => (index === 0 ? `› ${row}` : `  ${row}`)).join("\n")}\n`);
+  else inline();
+}
+
+// Like Codex: text that does not fit the pane scrolls, and the first line carries an up arrow.
+function inline() {
+  const columns = process.stdout.columns ?? 80;
+  const rows = process.stdout.rows ?? 24;
+  const width = Math.max(10, columns - 4);
+  const wrapped = draft.split("\n").flatMap((row) => (row === "" ? [""] : row.match(new RegExp(`.{1,${width}}`, "g")) ?? [""]));
+  const room = Math.max(1, rows - 3);
+  const shown = wrapped.length > room ? wrapped.slice(-room) : wrapped;
+  const lines = shown.map((row, index) => (index === 0 ? `› ${row}` : `  ${row}`));
+  if (wrapped.length > room) lines[0] = `${lines[0].padEnd(columns - 2)}↑`;
+  process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 function submit() {
   appendFileSync(process.env.MB_PASTE_LOG ?? "/dev/null", `SUBMISSION ${draft.length}\n${draft}\nEND SUBMISSION\n`);
+  const lastLine = draft.trimEnd().split("\n").at(-1) ?? "";
   draft = "";
-  working = true;
-  render();
+  if (process.env.MB_PASTE_ECHO === "1") {
+    // Answer like a quick agent: say what arrived, then show an idle composer again.
+    process.stdout.write(`\u001b[2J\u001b[Hagent-response:${lastLine}\n› Ask Codex to do anything\n`);
+  } else {
+    working = true;
+    render();
+  }
   if (process.env.MB_PASTE_RECEIVE === "1") execFileSync(process.env.MB_MEGABRAIN ?? "megabrain", ["received"], { stdio: "ignore" });
 }
 
