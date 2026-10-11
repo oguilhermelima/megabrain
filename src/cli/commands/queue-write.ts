@@ -8,7 +8,7 @@ import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type 
 import { getTmux } from "../../hosts/tmux.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
-import { deliverCodexQueue, findCodexProcessId } from "../../core/codex-delivery.js";
+import { deliverCodexQueue, findCodexProcess } from "../../core/codex-delivery.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
@@ -223,11 +223,17 @@ export async function waiterIsActive(root: string, dispatch: string): Promise<bo
 // "N dispatches finished" line) instead of the fixed "mail: megabrain orchestrate watch" one below.
 export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, fullMessage = pointer): Promise<NotificationResult> {
   if (typeof meta.parentAgentThreadId === "string") {
-    const pid = await findCodexProcessId(meta.parentAgentThreadId, processAdapter);
-    if (pid !== undefined) {
-      const queued = await deliverCodexQueue(meta.parentAgentThreadId, pid, fullMessage, processAdapter);
+    const found = await findCodexProcess(meta.parentAgentThreadId, {
+      runtime: typeof meta.parentTmuxPane === "string" ? "tmux" : "host",
+      host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId,
+      workspaceId: meta.parentWorkspaceId, tmuxPane: meta.parentTmuxPane, tmuxSessionId: meta.parentTmuxSessionId,
+    }, processAdapter);
+    if ("pid" in found) {
+      const queued = await deliverCodexQueue(meta.parentAgentThreadId, found.pid, fullMessage, processAdapter);
       if (queued.kind === "queued") return { outcome: "delivered", reason: "parent-notified", transport: "queue" };
+      return { outcome: "deferred", reason: `${queued.reason}; parent requires idle-gated delivery`, transport: "deferred" };
     }
+    return { outcome: "deferred", reason: `${found.reason}; parent requires idle-gated delivery`, transport: "deferred" };
   }
   void root; void environment;
   return { outcome: "deferred", reason: `parent requires idle-gated delivery: ${pointer}`, transport: "deferred" };
@@ -247,16 +253,15 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, en
 export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}, fullMessage = `[megabrain] reply available; run megabrain check`) : Promise<NotificationResult> {
   void root; void dispatch; void environment;
   if (typeof meta.agentThreadId === "string") {
-    const recordedPid = typeof meta.agentPid === "number" ? meta.agentPid : undefined;
-    if (recordedPid !== undefined) {
-      const queued = await deliverCodexQueue(meta.agentThreadId, recordedPid, fullMessage, processAdapter);
+    const found = await findCodexProcess(meta.agentThreadId, meta, processAdapter);
+    if ("pid" in found) {
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind === "ok") mutateDispatch(database.value, dispatch, (current) => ({ ...current, agentPid: found.pid, updatedAt: new Date().toISOString() }));
+      const queued = await deliverCodexQueue(meta.agentThreadId, found.pid, fullMessage, processAdapter);
       if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
+      return { outcome: "deferred", reason: `${queued.reason}; child requires idle-gated delivery`, transport: "deferred" };
     }
-    const livePid = await findCodexProcessId(meta.agentThreadId, processAdapter);
-    if (livePid !== undefined && livePid !== recordedPid) {
-      const queued = await deliverCodexQueue(meta.agentThreadId, livePid, fullMessage, processAdapter);
-      if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
-    }
+    return { outcome: "deferred", reason: `${found.reason}; child requires idle-gated delivery`, transport: "deferred" };
   }
   return { outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" };
 }
@@ -322,7 +327,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
           finishNotification(database.value, outboxId, suppressed ? "suppressed" : "failed", { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
         }
       }
-      if (notification.transport !== undefined) setDeliveryTransport(database.value, dispatch, appended.value.seq, notification.transport);
+      if (notification.transport !== undefined) setDeliveryTransport(database.value, dispatch, appended.value.seq, notification.transport, notification.reason);
     } catch {
       // Queue writes are durable even when the best-effort pointer transport fails.
     }
@@ -336,7 +341,9 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
   const agentThreadId = type === "received" && typeof environment.CODEX_THREAD_ID === "string" ? environment.CODEX_THREAD_ID : undefined;
   const current = getDispatch(database.value, dispatch);
   const agent = current.kind === "ok" ? current.value?.agent : undefined;
-  let agentPid = agentThreadId === undefined ? undefined : await findCodexProcessId(agentThreadId, processAdapter);
+  const scope = current.kind === "ok" && current.value !== undefined ? current.value : {};
+  const codexProcess = agentThreadId === undefined ? undefined : await findCodexProcess(agentThreadId, scope, processAdapter);
+  let agentPid = codexProcess !== undefined && "pid" in codexProcess ? codexProcess.pid : undefined;
   if (agentPid === undefined && type === "received" && agent === "claude" && tmuxPane !== undefined) {
     const panePid = await getTmux().panePid(tmuxPane, processAdapter);
     if (panePid.kind === "ok" && /^\d+$/.test(panePid.value.trim())) agentPid = Number(panePid.value.trim());
@@ -355,6 +362,7 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
       state: nextState, processState: nextProcess, updatedAt: new Date().toISOString(),
       ...(agentThreadId === undefined ? {} : { agentThreadId }),
       ...(agentPid === undefined ? {} : { agentPid }),
+      ...(type === "received" && agentPid === undefined && agentThreadId !== undefined ? { agentPid: null } : {}),
       ...(type === "received" ? { promptReceipt: "received", promptState: "confirmed" } : {}),
     };
   });

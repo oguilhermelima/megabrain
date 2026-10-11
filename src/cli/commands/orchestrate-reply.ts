@@ -140,7 +140,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   });
   if (append.kind !== "ok") return append;
   const summary: SupersedeSummary = append.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, parsed.value.text).catch(() => ({ outcome: "failed", reason: "notification failed", transport: "failed" as const }));
+  const notification = await notifyChild(root, parent.value, parsed.value.dispatchId, processAdapter, environment, parsed.value.text).catch((error: unknown) => ({ outcome: "failed", reason: error instanceof Error ? `notification failed: ${error.message}` : "notification failed", transport: "failed" as const }));
   let transport = notification.transport ?? "failed";
   if (transport === "queue") {
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
@@ -156,7 +156,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
     if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "failed", notification.reason);
   }
-  setDeliveryTransport(opened.value, parsed.value.dispatchId, append.value.seq, transport);
+  setDeliveryTransport(opened.value, parsed.value.dispatchId, append.value.seq, transport, notification.reason);
   if (state !== "done") {
     const updated = mutateDispatch(opened.value, parsed.value.dispatchId, (current) => ({ ...current, state: "running", updatedAt: new Date().toISOString() }));
     if (updated.kind !== "ok") return updated;

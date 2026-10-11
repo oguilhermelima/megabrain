@@ -8,6 +8,7 @@ import { hasCallerIdentity, isAgentSessionId } from "../../core/context.js";
 import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { findCodexProcess } from "../../core/codex-delivery.js";
 
 type AdoptionLiveness = "alive" | "not-alive" | "unknown";
 type Meta = Record<string, unknown>;
@@ -55,23 +56,18 @@ async function claudeOwnerLiveness(sessionId: string, environment: QueueEnvironm
   return matched ? "not-alive" : "not-alive";
 }
 
-async function codexOwnerLiveness(sessionId: string, processAdapter: ProcessAdapter): Promise<AdoptionLiveness> {
-  const processes = await processAdapter.run("ps", ["-eww", "-ax", "-o", "command="]);
-  if (processes.kind !== "ok") return "unknown";
-  const expected = sessionId.slice("codex:".length);
-  for (const line of processes.value.stdout.split("\n")) {
-    for (const token of line.split(/\s+/)) {
-      if (token === `CODEX_THREAD_ID=${expected}`) return "alive";
-    }
-  }
-  // `ps` can expose the current process arguments without exposing a sibling process's
-  // environment. An absent match therefore does not prove the Codex session has ended.
-  return "unknown";
+async function codexOwnerLiveness(sessionId: string, meta: Meta, processAdapter: ProcessAdapter): Promise<AdoptionLiveness> {
+  const result = await findCodexProcess(sessionId.slice("codex:".length), {
+    runtime: typeof meta.parentTmuxPane === "string" ? "tmux" : "host",
+    host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId,
+    workspaceId: meta.parentWorkspaceId, tmuxPane: meta.parentTmuxPane, tmuxSessionId: meta.parentTmuxSessionId,
+  }, processAdapter);
+  return "pid" in result ? "alive" : "unknown";
 }
 
-async function ownerLiveness(sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<AdoptionLiveness> {
+async function ownerLiveness(sessionId: string, meta: Meta, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<AdoptionLiveness> {
   if (sessionId.startsWith("claude:")) return claudeOwnerLiveness(sessionId, environment, processAdapter);
-  if (sessionId.startsWith("codex:")) return codexOwnerLiveness(sessionId, processAdapter);
+  if (sessionId.startsWith("codex:")) return codexOwnerLiveness(sessionId, meta, processAdapter);
   return "unknown";
 }
 
@@ -122,7 +118,7 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
 
     const knownAgentOwner = isAgentSessionId(previousOwner);
     if (knownAgentOwner && !parsed.value.force) {
-      const liveness = await ownerLiveness(previousOwner, environment, processAdapter);
+      const liveness = await ownerLiveness(previousOwner, meta, environment, processAdapter);
       if (liveness === "alive") return failed(`dispatch ${parsed.value.dispatchId} has a live owner ${previousOwner}; use --force to take it over`);
       if (liveness === "unknown") return failed(`dispatch ${parsed.value.dispatchId} owner liveness is unknown for ${previousOwner}; refusing adoption without --force`);
     }
