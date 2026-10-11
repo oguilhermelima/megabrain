@@ -156,6 +156,24 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test.each([
+    ["without --label uses the branch", [], "feat/example"],
+    ["with --label uses the explicit label", ["--label", "operator name"], "operator name"],
+  ] as const)("names the chat %s", async (_scenario, labelArgs, expectedChatName) => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-chat-name-`);
+    const dispatchId = "dispatch-chat-name";
+    try {
+      const result = await executeSpawn([
+        "--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true", ...labelArgs,
+      ], environment(root, dispatchId), processFor([]), options(worktree("existing")));
+
+      expect(result.kind).toBe("ok");
+      expect(readMeta(root, dispatchId)).toMatchObject({ chatName: expectedChatName });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("accepts the primary repo and branch form and dispatches", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-primary-`);
     const dispatchId = "dispatch-primary";
