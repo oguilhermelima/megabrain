@@ -156,6 +156,43 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("persists context policies and the original prompt for a bounded loop", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-context-policy-`);
+    const dispatchId = "dispatch-context-policy";
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) });
+    try {
+      const result = await executeSpawn([
+        "--worktree", "/work/tree", "--agent", "codex", "--prompt", "finish the task",
+        "--context-ceiling", "90", "--compact-at", "80", "--loop", "--max-iterations", "4", "--tmux", "true",
+      ], environment(root, dispatchId), processFor([]), options(worktree("existing")));
+
+      expect(result.kind).toBe("ok");
+      expect(readMeta(root, dispatchId)).toMatchObject({
+        contextPolicy: { contextCeiling: 90, compactAt: 80, loop: true, maxIterations: 4 },
+        contextPolicyState: { ceilingLatched: false, compactLatched: false, loopIterations: 0, actions: [] },
+        contextLoopPrompt: "finish the task",
+      });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects an unbounded loop before creating its worktree or terminal", async () => {
+    const result = await executeSpawn([
+      "--worktree", "/work/tree", "--agent", "codex", "--prompt", "finish the task", "--loop",
+    ], {}, processFor([]), options(worktree("existing")));
+    expect(result).toMatchObject({ kind: "failed", error: "--loop requires --max-iterations or --context-ceiling" });
+  });
+
+  test("rejects automatic compaction when the agent has no measured compact command", async () => {
+    const result = await executeSpawn([
+      "--worktree", "/work/tree", "--agent", "agy", "--prompt", "finish the task", "--compact-at", "80",
+    ], {}, processFor([]), options(worktree("existing")));
+    expect(result).toMatchObject({ kind: "failed", error: "agy has no measured context compact command" });
+  });
+
   test("persists the parent Claude session id and matching ancestor pid", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-parent-claude-`);
     const sessionId = "parent-session-fixture";
