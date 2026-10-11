@@ -12,8 +12,14 @@ describe("parent reply arguments", () => {
   });
 
   test("parses change and rejects absent dispatch", () => {
-    expect(parseParentChangeArgs(["dispatch", "--text", "replacement", "--json"])).toEqual({ kind: "ok", value: { dispatchId: "dispatch", text: "replacement", json: true, supersede: true } });
+    expect(parseParentChangeArgs(["dispatch", "--text", "replacement", "--json"])).toEqual({ kind: "ok", value: { dispatchId: "dispatch", text: "replacement", json: true, supersede: true, attempts: 3, idleTimeout: 10 } });
     expect(parseParentChangeArgs([]).kind).toBe("failed");
+  });
+
+  test("parses bounded interrupt retries and idle timeout", () => {
+    expect(parseParentChangeArgs(["dispatch", "--text", "replacement", "--attempts", "2", "--idle-timeout", "4"])).toEqual({ kind: "ok", value: { dispatchId: "dispatch", text: "replacement", json: false, supersede: true, attempts: 2, idleTimeout: 4 } });
+    expect(parseParentChangeArgs(["dispatch", "--text", "replacement", "--attempts", "4"])).toMatchObject({ kind: "failed", error: "--attempts must be between 1 and 3" });
+    expect(parseParentChangeArgs(["dispatch", "--text", "replacement", "--idle-timeout", "-1"])).toMatchObject({ kind: "failed", error: "--idle-timeout must be a non-negative number of seconds" });
   });
 });
 

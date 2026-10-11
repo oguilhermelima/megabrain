@@ -173,6 +173,7 @@ describe("host providers", () => {
     expect(orca?.read({ workspaceId: null, terminalId: "terminal" })).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "read", "--terminal", "terminal", "--json"] } });
     expect(orca?.close({ workspaceId: null, terminalId: "terminal" })).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "close", "--terminal", "terminal", "--json"] } });
     expect(orca?.send({ workspaceId: null, terminalId: "terminal", text: "hello" })).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "send", "--terminal", "terminal", "--text", "hello", "--enter", "--json"] } });
+    expect(orca?.send({ workspaceId: null, terminalId: "terminal", text: "\u0015", enter: false })).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "send", "--terminal", "terminal", "--text", "\u0015", "--json"] } });
     expect(orca?.send({ workspaceId: null, terminalId: "terminal", interrupt: true })).toEqual({ kind: "ok", value: { command: "orca", args: ["terminal", "send", "--terminal", "terminal", "--interrupt", "--json"] } });
     expect(superset?.create({ workspaceId: "workspace", worktreePath: "/work/tree", title: "DEV tree", command: "bun dev" })).toEqual({ kind: "ok", value: { command: "superset", args: ["terminals", "create", "--workspace", "workspace", "--command", "bun dev", "--json"] } });
     expect(superset?.list({ workspaceId: "workspace" })).toEqual({ kind: "ok", value: { command: "superset", args: ["terminals", "list", "--workspace", "workspace", "--json"] } });
