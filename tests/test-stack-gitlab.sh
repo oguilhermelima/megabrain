@@ -66,6 +66,7 @@ export REMOTE_GIT_DIR="$work/remote.git"
 export GIT_SSH_COMMAND="$work/bin/git-ssh"
 
 setup_fixture() {
+  cd "$root"
   rm -rf "$work/repo" "$work/remote.git" "$work/shared" "$work/state" "$work/glab.log"
   mkdir -p "$work/shared" "$work/state"
   printf '%s\n' "$work/shared" >"$work/state/worktree-root"
@@ -159,7 +160,11 @@ create_empty_stack
 run stack pr --provider gitlab >/dev/null
 export GLAB_LIST_MODE=open GLAB_TRAINS=yes GLAB_MERGED=yes
 : >"$GLAB_LOG"
-run stack merge --yes --provider gitlab >/dev/null
-contains "$(cat "$GLAB_LOG")" 'mr merge 1 --auto-merge --yes'
-contains "$(cat "$GLAB_LOG")" 'mr merge 2 --auto-merge --yes'
+output="$(run stack merge --yes --provider gitlab)"
+contains "$(cat "$GLAB_LOG")" 'api --method POST projects/42/merge_trains/merge_requests/1'
+contains "$(cat "$GLAB_LOG")" 'api --method POST projects/42/merge_trains/merge_requests/2'
+contains "$(cat "$GLAB_LOG")" 'mr view 1 --output json'
+contains "$(cat "$GLAB_LOG")" 'mr view 2 --output json'
+not_contains "$(cat "$GLAB_LOG")" 'mr merge'
+contains "$output" 'completed'
 printf 'GitLab merge queues every layer and waits for the merged state\n'
