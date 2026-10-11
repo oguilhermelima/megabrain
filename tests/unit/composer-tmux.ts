@@ -14,6 +14,9 @@ export type ComposerPaneOptions = Readonly<{
   tailBytes?: number;
   // The first N Enter presses with text in the composer do nothing.
   ignoreEnters?: number;
+  // The first N pastes leave the composer inside an unterminated bracketed paste, where Enter is
+  // taken as a newline and does nothing until the end marker (ESC [ 2 0 1 ~) arrives.
+  leavePasteOpen?: number;
   // What the pane shows once the prompt is submitted: a running turn, or an idle composer again.
   afterSubmit?: "working" | "idle";
   // Called with the submitted prompt, the way a child would answer with megabrain received.
@@ -68,6 +71,8 @@ export function composerPane(options: ComposerPaneOptions): ComposerPane {
   let working = false;
   let swallow = options.swallowPastes ?? 0;
   let ignoreEnters = options.ignoreEnters ?? 0;
+  let leaveOpen = options.leavePasteOpen ?? 0;
+  let pasteOpen = false;
   const claude = options.agent === "claude";
 
   function render(): string {
@@ -84,8 +89,17 @@ export function composerPane(options: ComposerPaneOptions): ComposerPane {
       events.push("launch");
       return ok(undefined);
     }
+    if (text === "\u001b[201~") {
+      pasteOpen = false;
+      events.push("end-marker");
+      return ok(undefined);
+    }
     pastes.push(text);
     events.push(how);
+    if (leaveOpen > 0) {
+      leaveOpen -= 1;
+      pasteOpen = true;
+    }
     if (options.onPaste?.(text) === "swallow") return ok(undefined);
     if (swallow > 0) {
       swallow -= 1;
@@ -111,7 +125,9 @@ export function composerPane(options: ComposerPaneOptions): ComposerPane {
         if (key === "C-u") {
           draft = "";
         } else if (key === "Enter" && draft !== "") {
-          if (ignoreEnters > 0) {
+          if (pasteOpen) {
+            // Enter inside an open paste is a newline, not a submission.
+          } else if (ignoreEnters > 0) {
             ignoreEnters -= 1;
           } else {
             submissions.push(draft);
