@@ -12,6 +12,8 @@ export const claude: Agent = {
   id: "claude",
   matchesDescriptor: (descriptor) => descriptor === "claude" || /^claude-code_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
+  contextSource: "claude-transcript",
+  compactCommand: "/compact",
   commandLine: ({ model, effort, agentArgs }) => {
     const parts = ["claude", "--dangerously-skip-permissions"];
     if (model !== null) parts.push("--model", doubleQuote(model));

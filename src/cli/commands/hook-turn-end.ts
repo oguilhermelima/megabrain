@@ -2,15 +2,22 @@ import { readFile } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { ok, type Result } from "../../core/result.js";
-import { getTmux } from "../../hosts/tmux.js";
-import { terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
+import { failed, ok, type Result } from "../../core/result.js";
+import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
+import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
 import { getDispatch, listDeliveries, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
+import { randomUUID } from "node:crypto";
+import { waitForStableIdle } from "../../core/liveness.js";
+import { readContextMeter } from "../../core/context-meter.js";
+import { decideLoopTurn, evaluateContextThreshold, hasCeilingThreshold, hasCompactThreshold, type ContextPolicy, type ContextThresholdState } from "../../core/context-policy.js";
+import { contextWindowOf, loadModelRegistry } from "../../core/model.js";
+import { getAgent } from "../../agents/index.js";
+import { getHost, runHostSend } from "../../hosts/index.js";
 
 export type HookEnvironment = QueueEnvironment;
 type JsonRecord = Record<string, unknown>;
@@ -89,6 +96,192 @@ async function stalledIsDue(root: string, dispatchId: string, meta: RecordValue,
   if (status === "missing") return true;
   if (await hasRecentChildActivity(root, dispatchId)) return false;
   return true;
+}
+
+// Screen text is used only to see whether the agent is idle after /compact; context itself comes from agent files.
+async function readContextFrame(meta: RecordValue, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (meta.runtime === "tmux") {
+    const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
+    if (pane === "") return failed("context screen is unavailable: dispatch pane is missing");
+    const status = await terminalStatus(meta, processAdapter);
+    if (status !== "proven") return failed(`context screen is unavailable: terminal identity is ${status}`);
+    return getTmux().capturePane(pane, 200, processAdapter);
+  }
+  const provider = getHost(typeof meta.childHost === "string" ? meta.childHost : "");
+  const terminalId = typeof meta.terminalId === "string" ? meta.terminalId : "";
+  if (provider === undefined || terminalId === "") return failed("context screen is unavailable: host terminal identity is missing");
+  const call = provider.read({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId });
+  if (call.kind !== "ok") return failed(call.kind === "failed" ? call.error : call.reason);
+  const result = await processAdapter.run(call.value.command, call.value.args);
+  if (result.kind !== "ok") return failed(result.kind === "failed" ? result.error : result.reason);
+  try { return ok(hostReadText(JSON.parse(result.value.stdout))); }
+  catch { return failed("context screen is unavailable: host terminal returned invalid read-back data"); }
+}
+
+async function sendContextInput(root: string, meta: RecordValue, text: string, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  const identity = await terminalStatus(meta, processAdapter);
+  if (identity !== "proven") return failed(`context action could not be sent: terminal identity is ${identity}`);
+  if (meta.runtime === "tmux") {
+    const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
+    if (pane === "") return failed("context action could not be sent: dispatch pane is missing");
+    return sendTmuxPair(root, pane, text, "Enter", environment, processAdapter);
+  }
+  const hostId = typeof meta.childHost === "string" ? meta.childHost : "";
+  const provider = getHost(hostId);
+  if (provider === undefined) return failed(`context action could not be sent: host is unavailable: ${hostId || "unknown"}`);
+  const call = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: typeof meta.terminalId === "string" ? meta.terminalId : "", text });
+  if (call.kind !== "ok") return failed(call.kind === "failed" ? call.error : call.reason);
+  const result = await runHostSend(hostId, processAdapter, call.value);
+  return result.kind === "ok" ? ok(undefined) : failed(result.kind === "failed" ? result.error : result.reason);
+}
+
+function policyValue(value: unknown): ContextPolicy {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  return {
+    ...(typeof source.contextCeiling === "number" ? { contextCeiling: source.contextCeiling } : {}),
+    ...(typeof source.contextCeilingTokens === "number" ? { contextCeilingTokens: source.contextCeilingTokens } : {}),
+    ...(typeof source.compactAt === "number" ? { compactAt: source.compactAt } : {}),
+    ...(typeof source.compactAtTokens === "number" ? { compactAtTokens: source.compactAtTokens } : {}),
+    ...(typeof source.loop === "boolean" ? { loop: source.loop } : {}),
+    ...(typeof source.maxIterations === "number" ? { maxIterations: source.maxIterations } : {}),
+  };
+}
+
+function policyStateValue(value: unknown): RecordValue {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as RecordValue : {};
+}
+
+async function finishContextAction(root: string, dispatchId: string, eventId: string, outcome: string): Promise<void> {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return;
+  mutateDispatch(database.value, dispatchId, (current) => {
+    const previous = policyStateValue(current.contextPolicyState);
+    const actions = Array.isArray(previous.actions) ? previous.actions as RecordValue[] : [];
+    const nextActions = actions.map((action) => action.id === eventId ? { ...action, outcome } : action);
+    return { ...current, contextPolicyState: { ...previous, actions: nextActions }, updatedAt: new Date().toISOString() };
+  });
+}
+
+type ContextPolicyEffect = Readonly<{ response: string | null; handled: boolean }>;
+
+async function applyContextPolicy(
+  root: string,
+  dispatchId: string,
+  meta: RecordValue,
+  environment: HookEnvironment,
+  processAdapter: ProcessAdapter,
+): Promise<ContextPolicyEffect> {
+  const policy = policyValue(meta.contextPolicy);
+  if (!hasCeilingThreshold(policy) && !hasCompactThreshold(policy) && policy.loop !== true) return { response: null, handled: false };
+  const agentId = typeof meta.agent === "string" ? meta.agent : "";
+  const home = environment.HOME ?? "";
+  const registry = typeof meta.model === "string" && meta.model !== "" ? loadModelRegistry({ ...environment, MEGABRAIN_STATE_DIR: root }) : undefined;
+  const contextWindow = registry?.kind === "loaded" ? contextWindowOf(registry.registry, agentId, String(meta.model)) : undefined;
+  const meter = home === "" ? { status: "unknown" as const } : await readContextMeter({
+    agent: agentId,
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(typeof meta.agentThreadId === "string" ? { agentThreadId: meta.agentThreadId } : {}),
+    ...(typeof meta.agentSessionId === "string" ? { agentSessionId: meta.agentSessionId } : {}),
+  }, home);
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return { response: null, handled: false };
+  const messages = listMessages(database.value, dispatchId);
+  const done = messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "done");
+  if (done) return { response: null, handled: false };
+
+  let event: RecordValue | undefined;
+  let eventId = "";
+  let plannedPolicy = policy;
+  let action: "stop" | "compact" | "continue" | "none" = "none";
+  let stopReason = "";
+  const updated = mutateDispatch(database.value, dispatchId, (current) => {
+    plannedPolicy = policyValue(current.contextPolicy);
+    if (!hasCeilingThreshold(plannedPolicy) && !hasCompactThreshold(plannedPolicy) && plannedPolicy.loop !== true) return noDispatchChange;
+    const previous = policyStateValue(current.contextPolicyState);
+    const thresholdState: ContextThresholdState = {
+      ceilingLatched: previous.ceilingLatched === true,
+      compactLatched: previous.compactLatched === true,
+    };
+    const threshold = evaluateContextThreshold(plannedPolicy, thresholdState, meter);
+    const previousIterations = typeof previous.loopIterations === "number" && Number.isSafeInteger(previous.loopIterations) ? previous.loopIterations : 0;
+    const nextIterations = plannedPolicy.loop === true ? previousIterations + 1 : previousIterations;
+    const loopDecision = plannedPolicy.loop === true ? decideLoopTurn(false, nextIterations, plannedPolicy.maxIterations) : { action: "done" as const, completedIterations: previousIterations };
+    const ceilingStop = threshold.action === "stop";
+    const budgetStop = !ceilingStop && plannedPolicy.loop === true && loopDecision.action === "stop";
+    const unknownBudgetStop = !ceilingStop && !budgetStop && plannedPolicy.loop === true && plannedPolicy.maxIterations === undefined && meter.status === "unknown";
+    if (ceilingStop) { action = "stop"; stopReason = "context ceiling reached"; }
+    else if (budgetStop) { action = "stop"; stopReason = "loop iteration budget reached"; }
+    else if (unknownBudgetStop) { action = "stop"; stopReason = "context meter unavailable for the loop budget"; }
+    else if (threshold.action === "compact") action = "compact";
+    else if (plannedPolicy.loop === true) action = "continue";
+    if (action === "none" && threshold.state.ceilingLatched === thresholdState.ceilingLatched && threshold.state.compactLatched === thresholdState.compactLatched) return noDispatchChange;
+
+    const actions = Array.isArray(previous.actions) ? previous.actions as RecordValue[] : [];
+    const patch: RecordValue = {
+      ceilingLatched: threshold.state.ceilingLatched,
+      compactLatched: threshold.state.compactLatched,
+      loopIterations: nextIterations,
+      actions,
+    };
+    if (action !== "none") {
+      eventId = randomUUID();
+      event = {
+        id: eventId,
+        action,
+        reason: action === "stop" ? stopReason : action === "compact" ? "context threshold reached" : "loop prompt re-injected",
+        percentUsed: meter.status === "known" ? meter.percentUsed ?? null : null,
+        usedTokens: meter.status === "known" ? meter.usedTokens : null,
+        sourceFrame: meter.status === "known" ? meter.sourceFrame.slice(0, 500) : null,
+        reading: meter.status,
+        outcome: "pending",
+        createdAt: new Date().toISOString(),
+      };
+      patch.actions = [...actions, event];
+    }
+    const processState = typeof current.processState === "string" ? current.processState : "";
+    const stopTransition = action === "stop" ? checkDispatchTransition("process", processState, "stopped") : undefined;
+    const dispatchState = typeof current.state === "string" ? current.state : "";
+    const waitTransition = action === "stop" ? checkDispatchTransition("dispatch", dispatchState, "waiting_for_reply") : undefined;
+    return {
+      ...current,
+      ...(stopTransition?.kind === "ok" ? { processState: "stopped" } : {}),
+      ...(waitTransition?.kind === "ok" ? { state: "waiting_for_reply", stage: stopReason === "context ceiling reached" ? "context-ceiling" : "context-policy-stop", reason: stopReason } : {}),
+      contextPolicyState: patch,
+      ...(action === "stop" ? { contextPolicyStopReason: stopReason, contextPolicyStoppedAt: new Date().toISOString() } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  if (updated.kind !== "ok" || action === "none" || event === undefined) return { response: null, handled: false };
+
+  const continuation = typeof updated.value.contextPolicyPrompt === "string" ? updated.value.contextPolicyPrompt : typeof updated.value.contextLoopPrompt === "string" ? updated.value.contextLoopPrompt : "";
+  if (action === "stop") {
+    await finishContextAction(root, dispatchId, eventId, "completed");
+    return { response: `{"decision":"block","reason":"${stopReason}"}`, handled: true };
+  }
+
+  if (action === "compact") {
+    const compact = getAgent(agentId)?.compactCommand;
+    if (compact === undefined) {
+      await finishContextAction(root, dispatchId, eventId, "failed: compact command unavailable");
+      return { response: null, handled: true };
+    }
+    const sent = await sendContextInput(root, meta, compact, environment, processAdapter);
+    if (sent.kind !== "ok") {
+      await finishContextAction(root, dispatchId, eventId, `failed: ${sent.error}`);
+      return { response: null, handled: true };
+    }
+    const waited = await waitForStableIdle(agentId, 60000, () => readContextFrame(meta, processAdapter), `context compaction did not finish within 60000ms`);
+    if (waited.kind !== "ok") {
+      await finishContextAction(root, dispatchId, eventId, `failed: ${waited.error}`);
+      return { response: null, handled: true };
+    }
+  }
+
+  const prompt = continuation === "" ? "Continue the dispatch task from your current progress and report done when it is complete." : `Continue the dispatch task from your current progress. Original prompt:\n\n${continuation}`;
+  const continued = await sendContextInput(root, meta, prompt, environment, processAdapter);
+  await finishContextAction(root, dispatchId, eventId, continued.kind === "ok" ? "completed" : `failed: ${continued.error}`);
+  return { response: null, handled: true };
 }
 
 // megabrain_dispatch_limit_refusal_read: only tmux dispatches can be checked (host runtimes have
@@ -308,6 +501,10 @@ export async function executeHookTurnEnd(
     if (state === "waiting_for_reply" || state === "done" || state === "closed" || state === "orphaned") {
       return finish(defaultText);
     }
+
+    const contextEffect = await applyContextPolicy(root, dispatchId, meta as RecordValue, environment, processAdapter);
+    if (contextEffect.response !== null) return finish(contextEffect.response);
+    if (contextEffect.handled) return finish(defaultText);
 
     const due = await stalledIsDue(root, dispatchId, meta as RecordValue, processAdapter);
     if (!due) return finish(defaultText);
