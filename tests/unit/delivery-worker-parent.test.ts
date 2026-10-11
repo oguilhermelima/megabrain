@@ -52,7 +52,9 @@ async function setupWorker(home: string, session: Record<string, unknown>, metaO
   };
   const created = createDispatch(db.value, { dispatchId, state: "running", ...metadata });
   if (created.kind !== "ok") throw new Error(created.error);
+  const now = new Date().toISOString();
   const appended = appendMessage(db.value, dispatchId, { from: "child", type: "done", text: "finished" }, {
+    delivery: { id: "parent-delivery-test", recipient: "parent", messageSeqs: [], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null },
     outbox: {
       id: "parent-pointer-test",
       targetKind: "parent-pointer",
