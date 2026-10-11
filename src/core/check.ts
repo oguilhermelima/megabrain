@@ -49,7 +49,8 @@ function matchesMailbox(mailbox: "parent" | "child", full: boolean, delivery: Ch
       if (full ? (typeof classification === "string" || classification.kind !== "unknown") : classification === "actionable") return true;
     }
     if (mailbox === "child" && message.from === "parent") {
-      if (full ? ["reply", "withdrawal", "received", "ack", "ask", "done", "stalled", "interrupt", "interrupt-result"].includes(message.type) : ["reply", "withdrawal"].includes(message.type)) return true;
+      const transported = delivery.transport === "typed" || delivery.transport === "queue";
+      if (message.type === "reply" && !transported) return true;
     }
   }
   return false;

@@ -178,7 +178,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       result = "failed";
     }
     outcome = result;
-    transport = result === "delivered" ? "typed" : result === "failed" ? "failed" : "deferred";
+    transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "failed" ? "failed" : "deferred";
   }
   setDeliveryTransport(database.value, dispatch, sequence, transport);
   const finished = claimed.value.targetKind === "parent-pointer"

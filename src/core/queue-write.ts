@@ -30,7 +30,7 @@ export function classifyQueueMail(from: string, type: string, hasPriorDone: bool
 }
 
 export function recipientForQueueMessage(from: string, type: string, hasPriorDone: boolean): QueueRecipient {
-  if (from === "parent" && ["reply", "withdrawal", "interrupt", "interrupt-result"].includes(type)) return "child";
+  if (from === "parent") return type === "reply" ? "child" : undefined;
   const classification = classifyQueueMail(from, type, hasPriorDone);
   return classification === undefined ? undefined : "parent";
 }

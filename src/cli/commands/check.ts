@@ -72,7 +72,9 @@ export async function migrateDeliveries(root: string, dispatch: string, messages
     if (deliveries.some((delivery) => delivery.messageSeqs.includes(message.seq))) continue;
     const priorDone = messages.some((candidate) => candidate.from === "child" && candidate.type === "done" && candidate.seq < message.seq);
     const classification = classifyMail(message.from, message.type, priorDone);
-    const recipient = message.from === "parent" && message.type === "reply" ? "child" : classification === "actionable" || classification === "protocol" ? "parent" : undefined;
+    const recipient = message.from === "parent"
+      ? message.type === "reply" ? "child" : undefined
+      : classification === "actionable" || classification === "protocol" ? "parent" : undefined;
     if (recipient === undefined) continue;
     const now = new Date().toISOString();
     const created = createDelivery(database.value, {

@@ -192,7 +192,7 @@ export async function executeOrchestrateChange(args: readonly string[], environm
     const outboxId = `change-delivery-${randomUUID()}`;
     const queued = enqueueOutbox(database.value.db, {
       id: outboxId, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", target: deliveryTarget(meta),
-      payload: { meta, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: deliveryText, pointer: "mail: megabrain check" },
+      payload: { meta, dispatchId: parsed.value.dispatchId, targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: deliveryText, pointer: "mail: megabrain check", pointerOnly: summary.oversized },
     });
     if (queued.kind !== "ok") return queued;
     const scheduled = await startDeliveryWorker(root, parsed.value.dispatchId, outboxId, { ...meta, targetKind: "child-delivery" }, processAdapter);
@@ -310,7 +310,7 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   const composerRecorded = await recordChangeEvent(root, parsed.value.dispatchId, "composer-clear", deliveryResult === "delivered" ? "empty composer verified; no foreign text cleared" : "composer was not proven empty; existing text preserved", session, environment, processAdapter);
   if (composerRecorded.kind !== "ok") return composerRecorded;
   summary.delivered = deliveryResult === "delivered";
-  if (summary.delivered) setDeliveryTransport(database.value, parsed.value.dispatchId, appended.value.seq, "typed");
+  if (summary.delivered && !summary.oversized) setDeliveryTransport(database.value, parsed.value.dispatchId, appended.value.seq, "typed");
   if (deliveryResult === "cancelled") {
     const recorded = await recordChangeEvent(root, parsed.value.dispatchId, "delivery-result", "direction was read before typing; no terminal message sent", session, environment, processAdapter);
     if (recorded.kind !== "ok") return recorded;

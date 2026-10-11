@@ -87,8 +87,10 @@ export function appendParentReply(handle: DatabaseHandle, dispatchId: string, me
       insertMessage(db, dispatchId, assigned);
       const row = queryMessages(db, dispatchId).at(-1);
       if (row === undefined) throw new Error("parent reply insert was not visible");
-      const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
-      insertDelivery(db, { id: deliveryId, dispatchId, recipient: "child", messageSeqs: [row.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
+      if (value.type === "reply") {
+        const deliveryId = `delivery-${now.replace(/[-:.TZ]/g, "")}-${process.pid}-${randomUUID().slice(0, 8)}`;
+        insertDelivery(db, { id: deliveryId, dispatchId, recipient: "child", messageSeqs: [row.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null });
+      }
       return row;
     };
 
