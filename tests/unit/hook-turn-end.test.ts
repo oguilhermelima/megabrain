@@ -46,6 +46,15 @@ async function writeMeta(root: string, dispatchId: string, meta: Record<string, 
   if (created.kind !== "ok") throw new Error(created.error);
 }
 
+async function writeClaudeUsage(root: string, sessionId: string, usedTokens: number): Promise<void> {
+  const project = join(root, ".claude", "projects", "probe");
+  await mkdir(project, { recursive: true });
+  await writeFile(join(project, `${sessionId}.jsonl`), `${JSON.stringify({
+    type: "assistant",
+    message: { model: "claude-sonnet-5-5", usage: { input_tokens: usedTokens } },
+  })}\n`);
+}
+
 async function readMeta(root: string, dispatchId: string): Promise<Record<string, unknown>> {
   const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
@@ -580,6 +589,63 @@ describe("executeHookTurnEnd: never fails or blocks the agent", () => {
   test("still resolves ok() when the environment names a state directory that does not exist", async () => {
     const result = await executeHookTurnEnd([], environment("/nowhere/at/all/does-not-exist", { SUPERSET_TERMINAL_ID: "coord-term" }), fakeProcess(), noStdin);
     expect(result).toEqual({ kind: "ok", value: "{}\n" });
+  });
+});
+
+describe("executeHookTurnEnd: context policy notices", () => {
+  test("writes one parent-bound notice and returns non-error Stop feedback when the ceiling stops the child", async () => {
+    await withRoot("policy-stop-notice", async (root) => {
+      const sessionId = "policy-stop-session";
+      await writeMeta(root, "policy-stop", {
+        ...childBase, workspaceId: "workspace-child", state: "running", processState: "running",
+        agent: "claude", chatName: "context-probe-2", model: "claude-sonnet-5-5", agentSessionId: sessionId,
+        contextPolicy: { contextCeilingTokens: 80_000 },
+      });
+      await writeClaudeUsage(root, sessionId, 103_852);
+
+      const result = await executeHookTurnEnd([], childEnv(root), fakeProcess(), noStdin);
+
+      expect(result).toEqual({ kind: "ok", value: `${JSON.stringify({
+        hookSpecificOutput: { hookEventName: "Stop", additionalContext: "Context ceiling reached; stop working and await the coordinator." },
+      })}\n` });
+      const messages = readMessages(root, "policy-stop").filter((message) => message.type === "policy");
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        from: "child", type: "policy", sessionId: "child-term",
+        text: "Stopped — Context ceiling reached at 103,852 tokens (limit 80,000).",
+      });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const deliveries = listDeliveries(database.value, "policy-stop");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.filter((delivery) => delivery.recipient === "parent")).toHaveLength(1);
+    });
+  });
+
+  test.each([
+    { name: "compact", policy: { compactAtTokens: 80_000 }, usedTokens: 85_000, expected: "Compaction requested" },
+    { name: "loop", policy: { loop: true, maxIterations: 3 }, usedTokens: 85_000, expected: "Loop iteration 1 re-injected" },
+  ])("writes a parent-bound notice for the $name action", async ({ name, policy, usedTokens, expected }) => {
+    await withRoot(`policy-${name}-notice`, async (root) => {
+      const sessionId = `policy-${name}-session`;
+      await writeMeta(root, `policy-${name}`, {
+        ...childBase, workspaceId: "workspace-child", state: "running", processState: "running",
+        agent: "claude", chatName: `context-${name}`, model: "claude-sonnet-5-5", agentSessionId: sessionId,
+        contextPolicy: policy,
+      });
+      await writeClaudeUsage(root, sessionId, usedTokens);
+
+      await executeHookTurnEnd([], childEnv(root), fakeProcess(), noStdin);
+
+      const messages = readMessages(root, `policy-${name}`).filter((message) => message.type === "policy");
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.text).toContain(expected);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const deliveries = listDeliveries(database.value, `policy-${name}`);
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.some((delivery) => delivery.recipient === "parent")).toBe(true);
+    });
   });
 });
 

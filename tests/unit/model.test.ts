@@ -128,6 +128,8 @@ describe("context window", () => {
     if (shipped === undefined) throw new Error("shipped registry does not parse");
     expect(contextWindowOf(shipped, "claude", "claude-opus-5-5")).toBe(1000000);
     expect(contextWindowOf(shipped, "claude", "claude-sonnet-5")).toBe(1000000);
+    expect(contextWindowOf(shipped, "claude", "claude-sonnet-5-5")).toBe(1000000);
+    expect(contextWindowOf(shipped, "claude", "claude-haiku-4-5-20251001")).toBe(200000);
     expect(contextWindowOf(shipped, "claude", "claude-opus-4-1-20250805")).toBeUndefined();
   });
 });
