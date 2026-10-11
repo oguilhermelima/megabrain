@@ -165,6 +165,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
         chain: null,
       });
       const process = fakeProcess((command, args) => {
+        if (command === "tmux" && args[0] === "list-panes" && args[1] === "-a") return ok({ stdout: "%9|$1\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args[0] === "capture-pane") {
           return ok({ stdout: "You've hit your usage limit for this model.\nSwitch to another model now, or wait.\n", stderr: "", exitCode: 0 });
         }

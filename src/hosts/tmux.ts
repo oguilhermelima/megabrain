@@ -6,16 +6,17 @@ export type TmuxSendEnvironment = Readonly<Record<string, string | undefined>>;
 
 export type TmuxProvider = Readonly<{
   readonly id: string;
+  readonly paneExists?: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<boolean>>;
   readonly sessionForPane: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
   readonly paneCurrentPath?: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
   readonly sessionExists: (session: string, process: ProcessAdapter) => Promise<Result<boolean>>;
   readonly panesForSession: (session: string, process: ProcessAdapter) => Promise<Result<readonly string[]>>;
-  readonly panePid: (pane: string, process: ProcessAdapter) => Promise<Result<string>>;
-  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean) => Promise<Result<string>>;
-  readonly sendText: (pane: string, text: string, process: ProcessAdapter) => Promise<Result<void>>;
-  readonly sendKey: (pane: string, key: string, process: ProcessAdapter) => Promise<Result<void>>;
-  readonly killPane: (pane: string, process: ProcessAdapter) => Promise<Result<void>>;
-  readonly killSession: (session: string, process: ProcessAdapter) => Promise<Result<void>>;
+  readonly panePid: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<string>>;
+  readonly capturePane: (pane: string, lines: number, process: ProcessAdapter, screenOnly?: boolean, expectedSessionId?: string) => Promise<Result<string>>;
+  readonly sendText: (pane: string, text: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
+  readonly sendKey: (pane: string, key: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
+  readonly killPane: (pane: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
+  readonly killSession: (session: string, process: ProcessAdapter, expectedSessionId?: string) => Promise<Result<void>>;
   readonly listSessions: (process: ProcessAdapter, format?: string) => Promise<Result<readonly string[]>>;
   readonly globalOption: (option: string, process: ProcessAdapter) => Promise<Result<string>>;
   readonly sessionOption: (session: string, option: string, process: ProcessAdapter) => Promise<Result<string>>;
@@ -25,6 +26,19 @@ export type TmuxProvider = Readonly<{
 
 function unavailable(query: string): Result<never> {
   return unknown(`tmux ${query} could not be determined`);
+}
+
+async function verifyPane(pane: string, process: ProcessAdapter, expectedSessionId?: string): Promise<Result<boolean>> {
+  const result = await process.run("tmux", ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"]);
+  if (result.kind !== "ok") return unavailable(`exact identity of pane ${pane}`);
+  return ok(result.value.stdout.split("\n").some((line) => {
+    const [listedPane, sessionId] = line.split("|");
+    return listedPane === pane && (expectedSessionId === undefined || sessionId === expectedSessionId);
+  }));
+}
+
+export async function verifyTmuxPane(pane: string, process: ProcessAdapter, expectedSessionId?: string): Promise<Result<boolean>> {
+  return (await getTmux().paneExists?.(pane, process, expectedSessionId)) ?? verifyPane(pane, process, expectedSessionId);
 }
 
 async function runAction(args: readonly string[], process: ProcessAdapter): Promise<Result<void>> {
@@ -39,6 +53,7 @@ async function query(args: readonly string[], description: string, process: Proc
 
 const provider: TmuxProvider = {
   id: "tmux",
+  paneExists: verifyPane,
   sessionForPane: async (pane, process) => {
     const result = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{session_name}"]);
     if (result.kind !== "ok") return unavailable(`session for pane ${pane}`);
@@ -64,26 +79,43 @@ const provider: TmuxProvider = {
     if (result.kind !== "ok") return unavailable(`panes for session ${session}`);
     return ok(result.value.stdout.split("\n").filter((pane) => pane.length > 0));
   },
-  panePid: async (pane, process) => {
+  panePid: async (pane, process, expectedSessionId) => {
+    const exists = await verifyPane(pane, process, expectedSessionId);
+    if (exists.kind !== "ok") return exists;
+    if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to read its PID`);
     const result = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{pane_pid}"]);
     if (result.kind !== "ok") return unavailable(`PID for pane ${pane}`);
     const pid = result.value.stdout.trim();
     return pid.length > 0 ? ok(pid) : unavailable(`PID for pane ${pane}`);
   },
-  capturePane: async (pane, lines, process, screenOnly = false) => {
+  capturePane: async (pane, lines, process, screenOnly = false, expectedSessionId) => {
+    const exists = await verifyPane(pane, process, expectedSessionId);
+    if (exists.kind !== "ok") return exists;
+    if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to capture it`);
     const result = await process.run("tmux", screenOnly ? ["capture-pane", "-p", "-t", pane] : ["capture-pane", "-p", "-t", pane, "-S", `-${lines}`]);
     return result.kind === "ok" ? ok(result.value.stdout) : unavailable(`capture of pane ${pane}`);
   },
-  sendText: async (pane, text, process) => {
+  sendText: async (pane, text, process, expectedSessionId) => {
+    const exists = await verifyPane(pane, process, expectedSessionId);
+    if (exists.kind !== "ok") return failed(`could not verify tmux pane ${pane} before typing`);
+    if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to type`);
     const result = await process.run("tmux", ["send-keys", "-t", pane, "-l", text]);
     return result.kind === "ok" ? ok(undefined) : failed(result.error);
   },
-  sendKey: async (pane, key, process) => {
+  sendKey: async (pane, key, process, expectedSessionId) => {
+    const exists = await verifyPane(pane, process, expectedSessionId);
+    if (exists.kind !== "ok") return failed(`could not verify tmux pane ${pane} before sending a key`);
+    if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to send a key`);
     const result = await process.run("tmux", ["send-keys", "-t", pane, key]);
     return result.kind === "ok" ? ok(undefined) : failed(result.error);
   },
-  killPane: async (pane, process) => runAction(["kill-pane", "-t", pane], process),
-  killSession: async (session, process) => runAction(["kill-session", "-t", session], process),
+  killPane: async (pane, process, expectedSessionId) => {
+    const exists = await verifyPane(pane, process, expectedSessionId);
+    if (exists.kind !== "ok") return failed(`could not verify tmux pane ${pane} before killing it`);
+    if (!exists.value) return failed(`tmux pane ${pane} does not exist; refusing to kill it`);
+    return runAction(["kill-pane", "-t", pane], process);
+  },
+  killSession: async (session, process, expectedSessionId) => runAction(["kill-session", "-t", expectedSessionId ?? session], process),
   listSessions: async (process, format) => {
     const result = await query(format === undefined ? ["list-sessions"] : ["list-sessions", "-F", format], "sessions", process);
     return result.kind === "ok" ? ok(result.value.split("\n").filter((session) => session.length > 0)) : result;

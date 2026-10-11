@@ -117,6 +117,7 @@ send_log="$state_root/send.log"
 cat >"$fake_bin/tmux" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
+  list-panes) printf '%s\\n' '%fake|\$1' ;;
   display-message) printf '%s\n' "$session_name" ;;
   send-keys) printf '%s\n' "\$*" >>"$send_log" ;;
   *) exit 0 ;;

@@ -83,7 +83,8 @@ export async function terminalStatus(meta: RecordValue, process: ProcessAdapter)
   const panes = await getTmux().panesForSession(session, process);
   if (panes.kind !== "ok") return "missing";
   if (!panes.value.includes(pane)) return "missing";
-  const pid = await getTmux().panePid(pane, process);
+  const stableSessionId = stringValue(meta.tmuxSessionId);
+  const pid = await getTmux().panePid(pane, process, stableSessionId === "" ? undefined : stableSessionId);
   if (pid.kind !== "ok") return "unknown";
   const tty = await process.run("ps", ["-p", pid.value, "-o", "tty="]);
   if (tty.kind !== "ok" || tty.value.stdout.trim() === "") return "unknown";
