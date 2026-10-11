@@ -4,51 +4,48 @@ import { tmpdir } from "node:os";
 import { failed, ok } from "../../src/core/result.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { appendReceived, cleanupRun, dispatchMessages, existingWorktree, processFor, readMeta, runComposerSpawn, spawnEnvironment } from "./spawn-harness.js";
-import { receiptTimeoutMs } from "../../src/cli/commands/spawn-prompt.js";
 import { composerPane } from "./composer-tmux.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
-const waitsForReceipt = { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0.4" };
+// The variable no longer exists. Setting it proves a leftover export cannot bring a deadline back.
+const staleDeadline = { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0.4" };
 const killedPane = (calls: readonly { readonly command: string; readonly args: readonly string[] }[]): boolean =>
   calls.some((call) => call.command === "tmux" && (call.args[0] === "kill-pane" || call.args[0] === "kill-session"));
 const afterFirstPaste = (events: readonly string[]): readonly string[] => events.slice(events.indexOf("paste"));
 
 describe("spawn prompt receipt (tmux)", () => {
-  test("waits 300 seconds for a receipt by default", () => {
-    expect(receiptTimeoutMs({})).toBe(300_000);
+  test("has no receipt deadline to export", async () => {
+    const module = await import("../../src/cli/commands/spawn-prompt.js") as Record<string, unknown>;
+    expect(module.receiptTimeoutMs).toBeUndefined();
   });
 
-  test("sends the prompt once more when no turn started and no receipt came, then fails keeping the pane", async () => {
+  test("a prompt that never started a turn is not resent, failed or reported: the dispatch keeps waiting", async () => {
     const removed: string[] = [];
     const run = await runComposerSpawn(
       "dispatch-unreceived",
       { agent: "codex", ignoreEnters: 99 },
-      waitsForReceipt,
+      staleDeadline,
       [],
       undefined,
       { resolveWorktree: async () => ok({ ...existingWorktree, ownership: "created" }), removeWorktree: async (path) => { removed.push(path); return ok(undefined); } },
     );
     try {
-      expect(run.result.kind).toBe("failed");
-      if (run.result.kind !== "failed") throw new Error("expected a failure");
-      expect(run.result.error).toContain("prompt-not-received");
-      expect(run.result.error).toContain("kept for inspection");
-      // One resend: the composer is cleared and the whole prompt pasted again; each delivery presses
-      // Enter twice, then closes any open paste and presses Enter a third time.
-      expect(run.pane.pastes).toHaveLength(2);
-      expect(run.pane.pastes[1]).toBe(run.pane.pastes[0]);
-      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:Enter", "key:Enter", "end-marker", "key:Enter", "key:C-u", "paste", "key:Enter", "key:Enter", "end-marker", "key:Enter"]);
-      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "failed", reason: "prompt-not-received", terminalState: "owned", processState: "start-unproven", promptReceipt: "not-received" });
+      expect(run.result.kind).toBe("ok");
+      // One delivery: the paste proof, two Enters and the paste end marker with a last Enter. No clear, no second paste.
+      expect(run.pane.pastes).toHaveLength(1);
+      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:Enter", "key:Enter", "end-marker", "key:Enter"]);
+      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "spawning", terminalState: "owned", promptState: "awaiting-receipt", promptReceipt: "pending" });
+      expect(readMeta(run.root, run.dispatchId).reason ?? null).toBeNull();
       expect(killedPane(run.process.calls)).toBe(false);
       expect(removed).toEqual([]);
-      expect(dispatchMessages(run.root, run.dispatchId).filter((m) => m.from === "child" && m.type === "stalled")).toHaveLength(1);
+      expect(dispatchMessages(run.root, run.dispatchId).filter((m) => m.from === "child")).toEqual([]);
     } finally {
       await cleanupRun(run);
     }
   });
 
   test("never resends once a turn started, records receiptMissing silently and keeps running", async () => {
-    const run = await runComposerSpawn("dispatch-turn-no-receipt", { agent: "claude", afterSubmit: "working" }, waitsForReceipt);
+    const run = await runComposerSpawn("dispatch-turn-no-receipt", { agent: "claude", afterSubmit: "working" }, staleDeadline);
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(1);
@@ -63,27 +60,30 @@ describe("spawn prompt receipt (tmux)", () => {
     }
   });
 
-  test("succeeds when the resend is the one that reaches the child", async () => {
-    const id = "dispatch-resend-received";
-    const run = await runComposerSpawn(id, { agent: "codex", ignoreEnters: 3, onSubmit: (_prompt, root) => appendReceived(root, id) }, waitsForReceipt);
+  test("a receipt that is already there when the paste is submitted marks the prompt confirmed", async () => {
+    const id = "dispatch-received-on-submit";
+    const run = await runComposerSpawn(id, { agent: "codex", onSubmit: (_prompt, root) => appendReceived(root, id) }, staleDeadline);
     try {
       expect(run.result.kind).toBe("ok");
-      expect(run.pane.pastes).toHaveLength(2);
-      expect(run.pane.submissions).toHaveLength(1);
+      expect(run.pane.pastes).toHaveLength(1);
       expect(readMeta(run.root, id)).toMatchObject({ promptReceipt: "received", promptState: "confirmed" });
     } finally {
       await cleanupRun(run);
     }
   });
 
-  test("a receipt timeout of zero keeps meaning do not wait: no resend, no failure", async () => {
-    const run = await runComposerSpawn("dispatch-zero-wait", { agent: "codex", ignoreEnters: 99 }, { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0" });
-    try {
-      expect(run.result.kind).toBe("ok");
-      expect(run.pane.pastes).toHaveLength(1);
-      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "spawning", promptState: "awaiting-receipt", promptReceipt: "pending" });
-    } finally {
-      await cleanupRun(run);
+  test("a stale deadline variable changes nothing: zero or a long wait behave alike", async () => {
+    for (const seconds of ["0", "300"]) {
+      const run = await runComposerSpawn(`dispatch-stale-${seconds}`, { agent: "codex", ignoreEnters: 99 }, { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: seconds });
+      try {
+        const started = Date.now();
+        expect(run.result.kind).toBe("ok");
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(run.pane.pastes).toHaveLength(1);
+        expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "spawning", promptState: "awaiting-receipt", promptReceipt: "pending" });
+      } finally {
+        await cleanupRun(run);
+      }
     }
   });
 });
@@ -91,7 +91,7 @@ describe("spawn prompt receipt (tmux)", () => {
 describe("spawn prompt left inside an open paste", () => {
   test("sends the paste end marker and Enter once more before giving up", async () => {
     const id = "dispatch-open-paste";
-    const run = await runComposerSpawn(id, { agent: "claude", leavePasteOpen: 1, onSubmit: (_prompt, root) => appendReceived(root, id) }, waitsForReceipt);
+    const run = await runComposerSpawn(id, { agent: "claude", leavePasteOpen: 1, onSubmit: (_prompt, root) => appendReceived(root, id) }, staleDeadline);
     try {
       expect(run.result.kind).toBe("ok");
       expect(run.pane.pastes).toHaveLength(1);
@@ -104,7 +104,7 @@ describe("spawn prompt left inside an open paste", () => {
 });
 
 describe("spawn prompt receipt (host terminal)", () => {
-  test("fails with no-receipt-unproven instead of waiting forever, without resending or closing the terminal", async () => {
+  test("spawns without waiting for a receipt: no failure, no resend, terminal kept", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-receipt-`);
     const dispatchId = "dispatch-host-unreceived";
     const process = processFor((command, args) => {
@@ -113,18 +113,15 @@ describe("spawn prompt receipt (host terminal)", () => {
     });
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "host prompt body", "--tmux", "false"], {
-        ...spawnEnvironment(root, dispatchId, waitsForReceipt),
+        ...spawnEnvironment(root, dispatchId, staleDeadline),
         MEGABRAIN_SESSION_HOST: "orca",
       }, process, { resolveWorktree: async () => ok(existingWorktree) });
-      expect(result.kind).toBe("failed");
-      if (result.kind !== "failed") throw new Error("expected a failure");
-      expect(result.error).toContain("no-receipt-unproven");
-      expect(result.error).toContain("kept for inspection");
+      expect(result.kind).toBe("ok");
       const promptSends = process.calls.filter((call) => call.command === "orca" && call.args[1] === "send" && call.args.some((arg) => arg.includes("host prompt body")));
       expect(promptSends).toHaveLength(1);
       expect(process.calls.some((call) => call.command === "orca" && call.args[1] === "close")).toBe(false);
-      expect(readMeta(root, dispatchId)).toMatchObject({ state: "failed", reason: "no-receipt-unproven", terminalState: "owned" });
-      expect(dispatchMessages(root, dispatchId).filter((m) => m.from === "child" && m.type === "stalled")).toHaveLength(1);
+      expect(readMeta(root, dispatchId)).toMatchObject({ state: "spawning", promptState: "awaiting-receipt", promptReceipt: "pending", terminalState: "owned" });
+      expect(dispatchMessages(root, dispatchId).filter((m) => m.from === "child")).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -169,19 +166,19 @@ describe("spawn --json", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("a prompt that was never received fails as JSON naming the dispatch and the kept pane", async () => {
-    const run = await runComposerSpawn("dispatch-json-unreceived", { agent: "codex", ignoreEnters: 99 }, waitsForReceipt, ["--json"]);
+  test("a prompt that was never received still spawns as JSON, awaiting its receipt", async () => {
+    const run = await runComposerSpawn("dispatch-json-unreceived", { agent: "codex", ignoreEnters: 99 }, staleDeadline, ["--json"]);
     try {
-      expect(run.result.kind).toBe("failed");
-      if (run.result.kind !== "failed") throw new Error("expected a failure");
-      expect(parse(run.result.stdout)).toMatchObject({ status: "failed", reason: "prompt-not-received", dispatchId: run.dispatchId, tmuxPane: "%9" });
+      expect(run.result.kind).toBe("ok");
+      if (run.result.kind !== "ok") throw new Error("expected success");
+      expect(parse(run.result.value)).toMatchObject({ status: "spawned", reason: null, dispatchId: run.dispatchId, promptState: "awaiting-receipt" });
     } finally {
       await cleanupRun(run);
     }
   });
 
   test("a turn without a receipt succeeds as JSON with receiptMissing attached", async () => {
-    const run = await runComposerSpawn("dispatch-json-warning", { agent: "claude", afterSubmit: "working" }, waitsForReceipt, ["--json"]);
+    const run = await runComposerSpawn("dispatch-json-warning", { agent: "claude", afterSubmit: "working" }, staleDeadline, ["--json"]);
     try {
       expect(run.result.kind).toBe("ok");
       if (run.result.kind !== "ok") throw new Error("expected success");
@@ -193,7 +190,7 @@ describe("spawn --json", () => {
 
   test("a spawn that succeeds reports status and a null reason beside the dispatch id", async () => {
     const id = "dispatch-json-success";
-    const run = await runComposerSpawn(id, { agent: "codex", onSubmit: (_prompt, root) => appendReceived(root, id) }, waitsForReceipt, ["--json"]);
+    const run = await runComposerSpawn(id, { agent: "codex", onSubmit: (_prompt, root) => appendReceived(root, id) }, staleDeadline, ["--json"]);
     try {
       expect(run.result.kind).toBe("ok");
       if (run.result.kind !== "ok") throw new Error("expected success");
