@@ -5,7 +5,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { insertDelivery, listDeliveries as queryDeliveries, toDelivery, type DeliveryRecord } from "../../db/queries/deliveries.js";
 import { insertMessage, listMessages as queryMessages, toMessage, type MessageRecord } from "../../db/queries/messages.js";
 import { decode, encode, object, type DatabaseAdapter } from "../../db/queries/types.js";
-import { toOutbox, type OutboxRecord } from "../../db/queries/outbox-leases.js";
+import { listLeases as queryLeases, toOutbox, type LeaseRecord as QueryLeaseRecord, type OutboxRecord } from "../../db/queries/outbox-leases.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { read, write } from "./shared.js";
 
@@ -259,6 +259,10 @@ export function listOutbox(handle: DatabaseHandle): Result<OutboxDetails[]> {
   return read(handle, ({ db }) => db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox ORDER BY created_at, id").all().map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
 }
 
+export function listLeases(handle: DatabaseHandle): Result<QueryLeaseRecord[]> {
+  return read(handle, ({ db }) => queryLeases(db));
+}
+
 export function claimOutbox(handle: DatabaseHandle, id: string, holder: string, leaseSeconds: number): Result<OutboxDetails | undefined> {
   if (holder === "") return failed("outbox holder must be non-empty");
   if (!Number.isFinite(leaseSeconds)) return failed("outbox lease seconds must be finite");
@@ -315,7 +319,7 @@ export function acquireLease(handle: DatabaseHandle, key: string, holder: string
   const now = new Date();
   const nowText = now.toISOString();
   const expiresAt = new Date(now.getTime() + seconds * 1000).toISOString();
-  return write(handle, ({ db }) => db.run("INSERT INTO leases (key, holder, expires_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at WHERE leases.expires_at <= ?", [key, holder, expiresAt, nowText]).changes > 0);
+  return write(handle, ({ db }) => db.run("INSERT INTO leases (key, holder, expires_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at WHERE leases.expires_at <= ? OR leases.holder = excluded.holder", [key, holder, expiresAt, nowText]).changes > 0);
 }
 
 export function releaseLease(handle: DatabaseHandle, key: string, holder: string): Result<boolean> {

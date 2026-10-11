@@ -31,6 +31,7 @@ export const USAGE_LINES = {
   "orchestrate-reply": "orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json]",
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
+  "supervise": "supervise [--status|--stop]",
   "orchestrate-close": "orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]",
   "ask": "ask \"question\" | megabrain ask --text \"question\"",
   "done": "done \"summary\" | megabrain done --text \"summary\"",
@@ -156,6 +157,7 @@ Commands:
   orchestrate stop <dispatch-id-or-suffix> ...   Interrupt a working child without closing its pane
   orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
+  supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
