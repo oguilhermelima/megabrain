@@ -94,10 +94,12 @@ ambiguous suffix lists the matching IDs. `db show` accepts the same minimum suff
 searches all dispatches, including archived ones.
 
 A dispatch runs either as a tmux split or as a tab in the orchestrator that owns the session.
-**tmux needs neither Orca nor Superset**: inside tmux a session identifies itself by its own
-session and pane, so the whole loop works on any machine that has tmux, and the child pane is
-removed outright when you close it. The orchestrators are what an IDE-tab dispatch needs, and
-what shared worktrees need. `megabrain context` reports which of the three a session is in. Prompt budgets are 262144 bytes through argv and 12000 bytes
+**Neither Orca nor Superset is required.** From a plain terminal the caller is local, identified by
+its agent session or, with no agent, by its shell's tty; children run in tmux and `spawn` reports
+`deliveryChannel: hook-and-watch`, because a local parent has no terminal to type into: mail waits
+in the queue, the parent's Stop hook surfaces it, and `orchestrate watch` reads it. Inside tmux a
+session identifies itself by its own session and pane, and the child pane is removed outright when
+you close it. The orchestrators are only what an IDE-tab dispatch and shared worktrees need. `megabrain context` reports which of the three a session is in. Prompt budgets are 262144 bytes through argv and 12000 bytes
 through tmux; over the limit is refused before anything is created, never truncated.
 
 ## Supervising what you started
@@ -245,7 +247,7 @@ megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft
 megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json] — recommended when you need to remove a completed worktree after its safety checks pass.
 megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json] — recommended when you need to find registered worktrees and inspect their parent relationships.
 megabrain worktree adopt <path|branch> [--json] — recommended when you need to register an existing worktree missing from one orchestrator.
-megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json] — recommended when you need to open a managed terminal in a worktree or current orchestrator.
+megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json] — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
 megabrain terminal list [--worktree <path>] [--json] — recommended when you need to find managed terminals and check whether they are alive.
 megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json] — recommended when you need to restart a managed terminal after its command or server needs a fresh run.
 megabrain terminal close <selector> [--json] — recommended when you need to close a managed terminal and remove its local record.
