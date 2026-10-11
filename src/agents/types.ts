@@ -18,10 +18,17 @@ export type AgentMarker = Readonly<{
   readonly reason: string;
 }>;
 
+export type ContextMeterPattern = Readonly<{
+  readonly pattern: RegExp;
+  readonly reading: "percent-left" | "token-count";
+}>;
+
 export type Agent = Readonly<{
   readonly id: string;
   readonly matchesDescriptor: (descriptor: string) => boolean;
   readonly classifyLiveness: (output: string) => Result<LivenessResult>;
+  readonly contextMeterPatterns?: readonly ContextMeterPattern[];
+  readonly compactCommand?: string;
   readonly firstRunDialog?: RegExp;
   readonly commandLine?: (options: AgentCommandOptions) => Result<string>;
   readonly submitKey?: () => Result<SubmitKey>;
