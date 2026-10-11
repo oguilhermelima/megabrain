@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { basename } from "node:path";
-import type { ProcessAdapter } from "../../adapters/proc.js";
+import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
@@ -19,6 +19,7 @@ import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
 import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
+import { setTmuxChatPane } from "../../core/chat-pane.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -175,7 +176,7 @@ const clearCallerIdentityEnv = `env ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u
 
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
-  return `[megabrain dispatch: ${label}]\n\nThis is a managed megabrain dispatch. Before starting work, run megabrain received to confirm that you received this prompt. If you need coordinator input, run megabrain ask "your question"; wait with megabrain check until a reply arrives, then run megabrain ack <delivery-id> to confirm it. When the requested work is complete, run megabrain done "short outcome summary". Do not print protocol markers and do not continue past an unanswered question.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
+  return `[megabrain dispatch: ${label}]\n\nRun megabrain received before work. Ask coordinator with megabrain ask "question"; wait with megabrain check and confirm using megabrain ack <delivery-id>. Finish with megabrain done "short outcome summary". Do not print protocol markers or continue past unanswered question. For megabrain done and ask, start with up to four short bullet lines: the outcome, what you verified, and what is pending or the question. Put any details after those bullets.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
 }
 
 // Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the
@@ -510,14 +511,28 @@ async function awaitReceipt(root: string, id: string, environment: SpawnEnvironm
   } while (true);
 }
 
-async function updateMeta(root: string, id: string, update: RecordValue): Promise<Result<void>> {
+async function updateMeta(root: string, id: string, update: RecordValue, process: ProcessAdapter): Promise<Result<void>> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
   const updated = mutateDispatch(database.value, id, (current) => ({ ...current, ...update, updatedAt: new Date().toISOString() }));
+  if (updated.kind === "ok" && updated.value.runtime === "tmux" && typeof updated.value.tmuxPane === "string") {
+    await setTmuxChatPane(updated.value.tmuxPane, String(updated.value.agent ?? "unknown"), String(updated.value.chatName ?? updated.value.branch ?? id), String(updated.value.state ?? "idle"), process);
+  }
   return updated.kind === "ok" ? ok(undefined) : updated;
 }
 
-export async function markRunningIfSpawning(root: string, id: string): Promise<Result<void>> {
+async function coordinatorChatName(environment: SpawnEnvironment, process: ProcessAdapter): Promise<string> {
+  const parentDispatchId = environment.MEGABRAIN_DISPATCH_ID;
+  if (parentDispatchId !== undefined) {
+    const database = stateDatabase(environment);
+    const parent = database.kind === "ok" ? getDispatch(database.value, parentDispatchId) : database;
+    if (parent.kind === "ok" && typeof parent.value?.chatName === "string" && parent.value.chatName !== "") return parent.value.chatName;
+  }
+  const branch = await process.run("git", ["branch", "--show-current"]);
+  return branch.kind === "ok" && branch.value.stdout.trim() !== "" ? branch.value.stdout.trim() : "megabrain/main";
+}
+
+export async function markRunningIfSpawning(root: string, id: string, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<void>> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
   const result = getDispatch(database.value, id);
@@ -529,10 +544,10 @@ export async function markRunningIfSpawning(root: string, id: string): Promise<R
   if (transition.kind === "unknown") return transition;
   if (state !== "spawning") return ok(undefined);
   if (transition.kind === "failed") return transition;
-  return updateMeta(root, id, { state: "running" });
+  return updateMeta(root, id, { state: "running" }, processAdapter);
 }
 
-async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null, parentAgentThreadId?: string, parentAgent?: string): Promise<RecordValue> {
+async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWorktree, parentContext: CallerIdentity, parentWorkspace: string | null, parentTmux: Readonly<{ tmuxSession: string | null; tmuxPane: string | null }>, runtime: SpawnRuntime, terminalId: string, session: string | null, sessionId: string | null, pane: string | null, parentChatName: string, parentAgentThreadId?: string, parentAgent?: string): Promise<RecordValue> {
   const now = new Date().toISOString();
   return {
     dispatchId: id,
@@ -555,6 +570,8 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     terminalId,
     worktreePath: worktree.path,
     branch: worktree.branch,
+    chatName: options.label ?? worktree.branch,
+    parentChatName,
     agent: options.agent,
     agentId: options.agent,
     model: options.model ?? "",
@@ -566,7 +583,7 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
     tmuxSession: session,
     tmuxSessionId: sessionId,
     tmuxPane: pane,
-    label: options.label ?? `${options.agent} ${worktree.path}`,
+    label: options.label ?? worktree.branch,
     chain: null,
     state: "spawning",
     promptDelivered: false,
@@ -646,12 +663,15 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   // an environment variable nothing in this codebase ever sets.
   const selectedRuntime: SpawnRuntime = options.tmux === null ? resolveAutoSpawnRuntime(await tmuxRuntimeInstalled(environment)) : options.tmux ? "tmux" : "host";
   const id = dispatchId(environment);
-  const prompt = finalPrompt(options, id);
+  let prompt = finalPrompt(options, id);
   const initialBudget = validatePromptBudget(prompt, selectedRuntime);
   if (initialBudget.kind !== "ok") return initialBudget;
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
+  prompt = finalPrompt(options, id);
+  const resolvedPromptBudget = validatePromptBudget(prompt, selectedRuntime);
+  if (resolvedPromptBudget.kind !== "ok") return resolvedPromptBudget;
   const callerInTmux = Boolean(environment.TMUX && environment.TMUX_PANE);
   let sameWorktree = false;
   if (callerInTmux) {
@@ -686,7 +706,8 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   if (runtime === "tmux" && parentContext.host === "unknown") {
     return failed("cannot spawn on tmux from an unknown caller host; run inside a managed terminal or set MEGABRAIN_SESSION_HOST so the dispatch has a supervisable owner");
   }
-  const command = agentCommand.value;
+  const chatName = options.label ?? worktree.branch;
+  const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}` : agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
   let terminalId = "";
   let session: string | null = null;
@@ -781,12 +802,17 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   }
 
   const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
-  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, environment.CODEX_THREAD_ID, parentAgent);
+  const parentChatName = await coordinatorChatName(environment, process);
+  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, environment.CODEX_THREAD_ID, parentAgent);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const createdDispatch = createDispatch(database.value, meta);
   if (createdDispatch.kind !== "ok") return createdDispatch;
+  if (runtime === "tmux" && pane !== null) await setTmuxChatPane(pane, options.agent, chatName, "spawning", process);
+  if (runtime === "host" && parentContext.host === "orca") {
+    await process.run("orca", ["terminal", "rename", "--terminal", terminalId, "--title", `${options.agent} · ${chatName}`]);
+  }
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };
   let step: SpawnStep = runtime === "tmux" ? "transcript-start" : "prompt-publication";
   const baseInput = (): Omit<SpawnDecisionInput, "step" | "outcome"> => ({ dispatchId: id, runtime, worktree: worktree.ownership, state });
@@ -865,9 +891,9 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt" });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: "failed", processState: "failed", terminalState: "released", reason: plan.reason, promptState: "failed" });
-    await updateMeta(root, id, metadataUpdate);
+    await updateMeta(root, id, metadataUpdate, process);
     if (step === "prompt-transport" && outcome.kind === "prompt-transport" && outcome.status === "delivered") {
-      const marked = await markRunningIfSpawning(root, id);
+      const marked = await markRunningIfSpawning(root, id, process);
       if (marked.kind !== "ok") return marked;
     }
     if (plan.action === "fail") {

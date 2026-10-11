@@ -149,7 +149,7 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
     if (json) return ok(`${JSON.stringify(result.value.value, null, 2)}\n`);
     if (mode === "dispatch") {
       const value = result.value.value as { meta: Record<string, unknown>; messages: unknown[]; deliveries: unknown[]; nudges: unknown[]; archived: boolean };
-      return ok(`${String(value.meta.dispatchId)}: ${String(value.meta.state)}; ${value.messages.length} messages, ${value.deliveries.length} deliveries, ${value.nudges.length} nudges${value.archived ? "; archived" : ""}\n`);
+      return ok(`${String(value.meta.dispatchId)}: ${String(value.meta.state)}; name ${String(value.meta.chatName ?? "")}; ${value.messages.length} messages, ${value.deliveries.length} deliveries, ${value.nudges.length} nudges${value.archived ? "; archived" : ""}\n`);
     }
     if (mode === "terminal") return ok(`terminal ${id} found\n`);
     if (mode === "tmux-session") return ok(`tmux session ${id} found\n`);
