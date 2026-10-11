@@ -1,3 +1,4 @@
+import nodeProcess from "node:process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import { installSkillSync, skillSyncDoctor } from "../../core/skill.js";
 import { nextBackupPath } from "../../core/tmux.js";
 import { executeTmux } from "./tmux.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { probeOpeners, probeSummary } from "../../core/terminal-openers.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
@@ -23,7 +25,7 @@ import { getInstallState, listDispatches, mutateInstallModule, putInstallModule,
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 type State = Record<string, Record<string, unknown>>;
-const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync"];
+const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
 }
@@ -416,6 +418,13 @@ async function report(module: string, environment: Environment, process: Process
     }
   } else if (module === "skill-sync") {
     ({ status, reason } = skillSyncDoctor(environment));
+  } else if (module === "terminal-openers") {
+    // Native terminals are optional viewers: none installed is still healthy, since
+    // --terminal none prints the tmux attach command instead.
+    const platform = nodeProcess.platform === "darwin" || nodeProcess.platform === "win32" ? nodeProcess.platform : "linux";
+    const probes = await probeOpeners({ platform, home: environment.HOME ?? "", which: (command) => available(process, command), exists: existsSync });
+    status = "ok";
+    reason = `${probeSummary(probes)}; unverified openers have only been tested with a recording fake`;
   }
   return { module, status, reason, ...emptyCounts() };
 }

@@ -16,6 +16,7 @@ import { executeWorktreePrune } from "./commands/worktree-prune.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
 import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
 import { executeTerminalList } from "./commands/terminal-list.js";
+import { executeTerminalDefault, executeTerminalOpen } from "./commands/terminal-open.js";
 import { executeTerminalLifecycle } from "./commands/terminal-lifecycle.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
@@ -160,6 +161,12 @@ export async function route(
   }
   if (command === "terminal" && commandArgs[0] === "list") {
     return executeTerminalList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "terminal" && commandArgs[0] === "open") {
+    return executeTerminalOpen(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "terminal" && commandArgs[0] === "default") {
+    return executeTerminalDefault(commandArgs.slice(1), dependencies.environment);
   }
   if (command === "terminal" && ["create", "restart", "close"].includes(commandArgs[0] ?? "")) {
     return executeTerminalLifecycle(commandArgs, dependencies.environment, dependencies.processAdapter);

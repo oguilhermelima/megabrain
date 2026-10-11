@@ -17,6 +17,8 @@ export const USAGE_LINES = {
   "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json]",
+  "terminal-open": "terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]",
+  "terminal-default": "terminal default [<name>|auto|none|--clear]",
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
   "terminal-close": "terminal close <selector> [--json]",
   "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]",
@@ -145,6 +147,8 @@ Commands:
   stack create|show|pr|sync|merge ... Manage dependent branches and pull or merge requests
   terminal create ...                  Open a terminal in the current orchestrator
   terminal list [--worktree <path>]    List terminals created by megabrain
+  terminal open --session <name> ...   Open a native terminal window attached to a tmux session
+  terminal default [<name>|--clear]    Show or set the default native terminal
   terminal restart <selector> ...      Restart a terminal created by megabrain
   terminal close <selector> ...        Close a terminal created by megabrain
   orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
