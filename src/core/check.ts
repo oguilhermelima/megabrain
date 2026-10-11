@@ -66,6 +66,7 @@ export function selectDelivery(
 ): CheckSelection {
   const candidates = deliveries
     .filter((delivery) => delivery.status === "outstanding" || (full && delivery.status === "superseded"))
+    .filter((delivery) => mailbox !== "child" || delivery.transport !== "checked")
     .filter((delivery) => full || delivery.superseded !== true)
     .filter((delivery) => delivery.consumer === null || delivery.consumer === consumer)
     .filter((delivery) => matchesMailbox(mailbox, full, delivery, messages))
