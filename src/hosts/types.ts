@@ -23,6 +23,7 @@ export type SendText = Readonly<{
   readonly terminalId: string;
   readonly text?: string;
   readonly interrupt?: boolean;
+  readonly enter?: boolean;
 }>;
 
 export type HostProvider = Readonly<{

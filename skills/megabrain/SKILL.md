@@ -71,7 +71,7 @@ megabrain orchestrate watch <dispatch-id> [--timeout <seconds>] [--poll-interval
 megabrain orchestrate ack <dispatch-id> <delivery-id> [--close] [--json]
 megabrain orchestrate reply <dispatch-id> --text <answer> [--supersede] [--json]
 megabrain orchestrate stop <dispatch-id> [--json]
-megabrain orchestrate change <dispatch-id> --text <text> [--json]
+megabrain orchestrate change <dispatch-id> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]
 megabrain orchestrate read <dispatch-id> [--lines <count>] [--json]
 megabrain orchestrate reconcile <dispatch-id> [--all] [--json]
 megabrain orchestrate close <dispatch-id> [--force-release] [--json]
@@ -129,6 +129,13 @@ read` uses the live pane while available and falls back to that transcript after
 the response identifies the source. Closing and pruning stop the stream before releasing the
 dispatch session. `orchestrate reply` rejects a settled dispatch with a non-zero status and asks
 you to open a new dispatch rather than queueing an undeliverable message.
+
+`orchestrate change` supersedes queued directions first, then interrupts a working child until its
+composer is idle and stable (10 seconds per wait, up to three interrupts by default). It clears and
+verifies the composer before submitting the full direction with the agent's submit key.
+`--idle-timeout` changes each idle and confirmation wait, and `--attempts` sets a limit from one to
+three. If the direction exceeds the 12000-byte tmux limit, the child receives a pointer to
+`megabrain check`; the full text remains queued.
 
 ## If you are the child
 

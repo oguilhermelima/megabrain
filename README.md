@@ -266,8 +266,12 @@ instead of queuing a reply that cannot be delivered.
 on the host: tmux proves working liveness and refuses a pending-check frame before sending Escape;
 Orca proves terminal identity and sends `--interrupt`, but cannot observe working liveness or the
 pending-check frame; Superset refuses because `terminals send` has no interrupt capability. A refusal
-names the missing proof or capability. `orchestrate change` supersedes queued directions, records
-withdrawals for delivered directions, and applies the same host-specific interrupt rules.
+names the missing proof or capability. `orchestrate change` first supersedes queued directions,
+then interrupts and waits for a stable idle composer (10 seconds by default, up to three interrupts).
+It clears the composer, verifies it is empty, and submits the full direction using the agent's submit
+key. Use `--idle-timeout <seconds>` and `--attempts <n>` to change those bounds. Directions over
+12000 bytes through tmux stay queued and send a pointer to `megabrain check` instead. The result
+reports whether delivery was confirmed by the child starting work.
 
 ## Where it runs
 

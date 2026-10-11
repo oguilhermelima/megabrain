@@ -16,12 +16,12 @@ import { getHost, runHostSend, type HostCommand, type HostProvider } from "../..
 import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, waitForTmuxSession } from "../../hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
+import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
 import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, acquireLease, releaseLease } from "../../adapters/state-db.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
 const TERMINAL_CREATE_BACKOFF_MS = 250;
-const PROMPT_BUDGET_TMUX_BYTES = 12000;
 const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 type SpawnEnvironment = QueueEnvironment & Readonly<{
@@ -179,10 +179,6 @@ function finalPrompt(options: SpawnOptions, id: string): string {
 
 // Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the
 // pane's paste buffer or the OS argv limit once it is UTF-8 encoded.
-function promptByteLength(prompt: string): number {
-  return new TextEncoder().encode(prompt).length;
-}
-
 function validatePromptBudget(prompt: string, runtime: SpawnRuntime): Result<void> {
   const transport = runtime === "tmux" ? "tmux" : "argv";
   const limit = runtime === "tmux" ? PROMPT_BUDGET_TMUX_BYTES : PROMPT_BUDGET_ARGV_BYTES;
