@@ -22,8 +22,8 @@ Commands:
   orchestrate spawn ...                Create a worktree and start an agent (--browser opts into browser MCP)
   orchestrate list [--all|--orphans|--uncertain] [--archived] [--json]  List managed dispatches
   orchestrate prune ...                Archive or delete old terminal dispatches
-  orchestrate reconcile <dispatch-id>  Reconcile an open dispatch without respawning
-  orchestrate liveness <dispatch-id>     Read execution state from a dispatch terminal
+  orchestrate reconcile <dispatch-id-or-suffix>  Reconcile an open dispatch without respawning
+  orchestrate liveness <dispatch-id-or-suffix>     Read execution state from a dispatch terminal
   orchestrate watch <dispatch-id-or-suffix> ...  Watch a dispatch file channel for child messages
   orchestrate read <dispatch-id-or-suffix> ...   Read a tmux dispatch pane
   orchestrate ack <dispatch-id-or-suffix> ...    Acknowledge a delivery batch
