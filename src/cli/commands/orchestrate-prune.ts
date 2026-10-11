@@ -6,7 +6,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
 import { getHost } from "../../hosts/index.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { hostCloseReason, isHostTerminalAbsent } from "../../core/orchestrate-close.js";
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, listDispatches, listMessages, mutateDispatch, archiveDispatch, deleteDispatch, transcriptPath } from "../../adapters/state-db.js";
@@ -92,6 +92,10 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
     const panes = await getTmux().panesForSession(text(meta.tmuxSession), process);
     if (panes.kind !== "ok") return blocked("terminal identity is unproven");
     if (!panes.value.includes(text(meta.tmuxPane))) return gone;
+    const stableId = text(meta.tmuxSessionId);
+    const proof = await verifyTmuxPane(text(meta.tmuxPane), process, stableId === "" ? undefined : stableId);
+    if (proof.kind !== "ok") return blocked("terminal identity is unproven");
+    if (!proof.value) return gone;
     const sessionName = text(meta.tmuxSession);
     const shared = sessionName === text(meta.parentTmuxSession);
     let callerSession: string | undefined;
@@ -102,8 +106,8 @@ async function releaseBeforePrune(meta: RecordValue, environment: Environment, p
     if (dryRun) return gone;
     const paneIds = panes.value;
     const released = shared || callerSession === sessionName || paneIds.length > 1
-      ? await getTmux().killPane(text(meta.tmuxPane), process)
-      : await getTmux().killSession(sessionName, process);
+      ? await getTmux().killPane(text(meta.tmuxPane), process, stableId || undefined)
+      : await getTmux().killSession(sessionName, process, stableId || undefined);
     return released.kind === "ok" ? gone : blocked("could not release dispatch terminal");
   }
   const listing = hostTerminalArgs(meta);

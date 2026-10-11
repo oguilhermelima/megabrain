@@ -42,6 +42,7 @@ describe("tmux send lifecycle", () => {
     const process: ProcessAdapter = {
       async run(command, args) {
         calls.push({ command, args: [...args] });
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%1|$1\n%2|$1\n%3|$1\n", stderr: "", exitCode: 0 });
         return ok({ stdout: "megabrain-a\nmegabrain-b\n", stderr: "", exitCode: 0 });
       },
       async startDetached() { return failed("not used"); },
@@ -66,9 +67,12 @@ describe("tmux send lifecycle", () => {
     expect((await tmux.sourceFile("/tmp/megabrain.tmux.conf", process)).kind).toBe("ok");
     expect((await tmux.showEnvironment("session-a", "MEGABRAIN_STATE_DIR", process)).kind).toBe("ok");
     expect(calls).toEqual([
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["kill-pane", "-t", "%1"] },
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["kill-pane", "-t", "%2"] },
       { command: "tmux", args: ["kill-session", "-t", "session-a"] },
+      { command: "tmux", args: ["list-panes", "-a", "-F", "#{pane_id}|#{session_id}"] },
       { command: "tmux", args: ["kill-pane", "-t", "%3"] },
       { command: "tmux", args: ["kill-session", "-t", "session-b"] },
       { command: "tmux", args: ["list-sessions", "-F", "#{session_name}"] },

@@ -102,9 +102,16 @@ function records(env: Environment): Result<TerminalLifecycleRecord[]> {
 }
 
 function host(env: Environment): Host {
+  if (env.MEGABRAIN_TERMINAL_HOST === "superset" || env.MEGABRAIN_TERMINAL_HOST === "orca") return env.MEGABRAIN_TERMINAL_HOST;
   if (env.MEGABRAIN_SESSION_HOST === "superset" || env.SUPERSET_TERMINAL_ID !== undefined || env.SUPERSET_WORKSPACE_ID !== undefined) return "superset";
   if (env.MEGABRAIN_SESSION_HOST === "orca" || env.ORCA_TERMINAL_HANDLE !== undefined) return "orca";
   return "unknown";
+}
+
+function terminalParent(env: Environment): { readonly id: string; readonly variable: string } | undefined {
+  if (env.ORCA_TERMINAL_HANDLE !== undefined && env.ORCA_TERMINAL_HANDLE !== "") return { id: env.ORCA_TERMINAL_HANDLE, variable: "ORCA_TERMINAL_HANDLE" };
+  if (env.MEGABRAIN_TERMINAL_PARENT_ID !== undefined && env.MEGABRAIN_TERMINAL_PARENT_ID !== "") return { id: env.MEGABRAIN_TERMINAL_PARENT_ID, variable: "MEGABRAIN_TERMINAL_PARENT_ID" };
+  return undefined;
 }
 
 function hostCommand(recordHost: string, operation: string, record: { readonly workspaceId: string | null; readonly terminalId?: string }): HostCommand | undefined {
@@ -191,9 +198,9 @@ function help(operation: string): string {
 
 function shellQuote(value: string): string { return `'${value.replace(/'/g, "'\\''")}'`; }
 function launchCommand(command: string): { readonly command: string; readonly marker: string } {
-  const token = randomUUID().replace(/-/g, "");
+  const token = randomUUID().replace(/-/g, "").toUpperCase();
   const marker = `MEGABRAIN_TERMINAL_PID_${token}`;
-  return { marker, command: `printf '${marker}=%s\\n' "$$"; exec sh -c ${shellQuote(command)}` };
+  return { marker, command: `${marker}=$$; export ${marker}; exec sh -c ${shellQuote(command)}` };
 }
 
 function runCommands(value: unknown): string | undefined {
@@ -258,6 +265,10 @@ async function killTree(process: ProcessAdapter, pid: string): Promise<string[] 
   return result;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function waitForPort(process: ProcessAdapter, port: string | number, desired: "free" | "listening", timeout: number): Promise<boolean> {
   const started = Date.now();
   while (true) {
@@ -269,25 +280,44 @@ async function waitForPort(process: ProcessAdapter, port: string | number, desir
 }
 
 async function identityFromHost(process: ProcessAdapter, recordHost: Host, workspace: string | null, terminalId: string, marker: string, timeoutMs: number): Promise<number | undefined> {
+  // Some Orca terminals run as background PTYs whose output stream is unavailable to `read`
+  // until the pane is adopted. The launch shell exports a random marker containing its PID, so
+  // the local process table can prove the identity without relying on terminal output.
+  const markerPattern = new RegExp(`(?:^|\\s)${escapeRegExp(marker)}=([0-9]+)(?=\\s|$)`);
   const provider = getHost(recordHost);
   const call = provider?.read({ workspaceId: workspace, terminalId });
-  if (call?.kind !== "ok") return undefined;
-  const attempts = Math.max(1, Math.ceil(timeoutMs / 100));
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const result = await process.run(call.value.command, call.value.args);
-    if (result.kind === "ok") {
-      const match = result.value.stdout.match(new RegExp(`${marker}=([0-9]+)`));
-      if (match?.[1] !== undefined) return Number(match[1]);
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  let hostIdentity: number | undefined;
+  while (true) {
+    const processList = await process.run("ps", ["eww", "-A", "-o", "pid=,command="]);
+    if (processList.kind === "ok") {
+      for (const line of processList.value.stdout.split("\n")) {
+        const match = markerPattern.exec(line);
+        if (match?.[1] !== undefined) return Number(match[1]);
+      }
     }
-    if (attempt + 1 < attempts) await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+
+    // Give the process table another chance before accepting the host's slower identity source.
+    if (hostIdentity !== undefined) return hostIdentity;
+
+    if (call?.kind === "ok") {
+      const result = await process.run(call.value.command, call.value.args);
+      if (result.kind === "ok") {
+        const match = result.value.stdout.match(new RegExp(`${escapeRegExp(marker)}=([0-9]+)`));
+        if (match?.[1] !== undefined) hostIdentity = Number(match[1]);
+      }
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return undefined;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(100, remaining)));
   }
-  return undefined;
 }
 
 async function createHost(process: ProcessAdapter, recordHost: Host, workspace: string | null, worktreePath: string, title: string | null, command: string): Promise<Result<{ readonly value: JsonObject; readonly launch: string; readonly stdout: string }>> {
   const launched = launchCommand(command);
   const call = getHost(recordHost)?.create({ workspaceId: workspace, worktreePath, title, command: launched.command });
-  if (call === undefined || call.kind !== "ok") return failed(recordHost === "superset" ? "no Superset workspace is registered for the target; run megabrain worktree adopt first" : "cannot create terminal from unknown orchestration host");
+  if (call === undefined || call.kind !== "ok") return failed(recordHost === "superset" ? "no Superset workspace is registered for the target; run megabrain worktree adopt first" : "cannot create terminal: missing MEGABRAIN_TERMINAL_HOST, MEGABRAIN_SESSION_HOST, ORCA_TERMINAL_HANDLE, or SUPERSET_TERMINAL_ID");
   const result = await process.run(call.value.command, call.value.args);
   if (result.kind !== "ok") return result;
   const value = parsed(result.value.stdout);
@@ -357,6 +387,19 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     const path = await worktree(process, worktreePath, currentDirectory);
     if (path.kind !== "ok") return path;
     const currentHost = host(env);
+    const parent = terminalParent(env);
+    if (currentHost === "orca" && env.MEGABRAIN_TERMINAL_HOST === "orca" && parent === undefined) {
+      return failed("terminal create requires an Orca parent terminal; missing ORCA_TERMINAL_HANDLE or MEGABRAIN_TERMINAL_PARENT_ID");
+    }
+    if (currentHost === "orca" && parent !== undefined) {
+      const list = getHost("orca")?.list({ workspaceId: null });
+      if (list?.kind !== "ok") return failed("terminal create requires a live Orca terminal; ORCA_TERMINAL_HANDLE could not be verified");
+      const listed = await process.run(list.value.command, list.value.args);
+      const entries = listed.kind === "ok" ? hostEntries(parsed(listed.value.stdout)) : [];
+      if (!entries.some((entry) => hostId(entry) === parent.id)) {
+        return failed(`terminal create requires a live Orca terminal; ${parent.variable}=${parent.id} was not found`);
+      }
+    }
     const workspace = currentHost === "superset" ? await workspaceId(process, path.value) : null;
     if (currentHost === "superset" && workspace === undefined) return failed(`no Superset workspace is registered for ${path.value}; run megabrain worktree adopt ${path.value} first`);
     const resolvedCommand = command ?? await commandFromConfig(path.value);

@@ -6,7 +6,7 @@ import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
@@ -107,26 +107,28 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   await preserveTranscript(environment, parsed.value.dispatchId, meta, process);
   if (runtime === "tmux") {
     const session = text(meta.tmuxSession); const pane = text(meta.tmuxPane); const parentSession = text(meta.parentTmuxSession);
+    const stableId = text(meta.tmuxSessionId);
     const shared = session === parentSession || session === tmuxSession;
     const hasSession = await getTmux().sessionExists(session, process);
     if (shared) {
       outcome = "shared-pane";
       if (hasSession.kind === "ok" && hasSession.value) {
         const panes = await getTmux().panesForSession(session, process);
-        if (panes.kind === "ok" && panes.value.includes(pane) && (await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
+        if (panes.kind === "ok" && panes.value.includes(pane) && (await getTmux().killPane(pane, process, stableId || undefined)).kind !== "ok") return failed("could not close dispatch terminal");
       }
     } else {
       let paneCount = 0;
       let paneExists = false;
       let sessionWasKilled = false;
       if (hasSession.kind === "ok" && hasSession.value) {
+        const proof = await verifyTmuxPane(pane, process, stableId === "" ? undefined : stableId);
+        if (proof.kind !== "ok") return failed(`could not verify tmux pane ${pane} before close`);
+        paneExists = proof.value;
+        if (!paneExists) return failed(`tmux pane ${pane} is no longer available; refusing to close dispatch ${parsed.value.dispatchId}`);
         const panes = await getTmux().panesForSession(session, process);
-        if (panes.kind === "ok") {
-          paneCount = panes.value.length;
-          paneExists = panes.value.includes(pane);
-        }
+        if (panes.kind !== "ok") return failed(`could not verify tmux panes for session ${session} before close`);
+        paneCount = panes.value.length;
       }
-      const stableId = text(meta.tmuxSessionId);
       const stableRecord = stableId === "" ? { kind: "ok" as const, value: undefined } : getTmuxSessionByStableId(database.value, stableId);
       if (stableRecord.kind !== "ok") return failed(stableRecord.error, stableRecord.exitCode);
       const namedRecord = stableRecord.value === undefined ? getTmuxSession(database.value, session) : stableRecord;
@@ -136,10 +138,10 @@ export async function executeOrchestrateClose(args: readonly string[], environme
       const sessionOwned = meta.tmuxSessionOwned === true || sessionRecord?.megabrainOwned === true || sessionRecord?.tmuxSessionOwned === true || session === `megabrain-${parsed.value.dispatchId}` || legacyUnregisteredSession;
       if (paneExists && paneCount > 1) {
         outcome = "exclusive-pane";
-        if ((await getTmux().killPane(pane, process)).kind !== "ok") return failed("could not close dispatch terminal");
+        if ((await getTmux().killPane(pane, process, stableId || undefined)).kind !== "ok") return failed("could not close dispatch terminal");
       } else if (paneExists && sessionOwned) {
         outcome = "exclusive-session";
-        const killed = await getTmux().killSession(session, process);
+        const killed = await getTmux().killSession(session, process, stableId || undefined);
         if (killed.kind !== "ok") return failed(`could not close tmux session ${session}: ${killed.error}`);
         sessionWasKilled = true;
       } else if (paneExists) {

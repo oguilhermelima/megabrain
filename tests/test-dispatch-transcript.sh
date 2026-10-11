@@ -91,6 +91,10 @@ case "${1:-}" in
     grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1
     ;;
   list-panes)
+    if [ "${2:-}" = -a ]; then
+      printf '%s\n' '%99|$1' '%100|$1'
+      exit 0
+    fi
     [ "${MEGABRAIN_FAKE_TMUX_UNPROVEN_SESSION:-}" = "$target" ] && exit 1
     if grep -Fx "$target" "${MEGABRAIN_FAKE_TMUX_SESSIONS:?}" >/dev/null 2>&1; then
       if [ "${MEGABRAIN_FAKE_TMUX_MULTI_PANE_SESSION:-}" = "$target" ]; then
