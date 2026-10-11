@@ -16,6 +16,7 @@ export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
 require_megabrain_test_state
 
 work_dir="$(cd "$work_dir" && pwd -P)"
+node_bin="$(dirname "$(command -v node)")"
 
 cleanup() {
   rm -rf "$work_dir"
@@ -80,10 +81,10 @@ scenario_binary_call_count_is_independent_of_worktree_count() {
   printf '%s\n' "$large_shared" >"$large_state/worktree-root"
   write_recording_wrappers
 
-  env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" \
+  env -i HOME="$work_dir/home" PATH="$work_dir/bin:$node_bin:/usr/bin:/bin" \
     MEGABRAIN_STATE_DIR="$small_state" MEGABRAIN_CALL_LOG="$small_log" \
     "$root/.build/megabrain" worktree list --json >/dev/null
-  env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" \
+  env -i HOME="$work_dir/home" PATH="$work_dir/bin:$node_bin:/usr/bin:/bin" \
     MEGABRAIN_STATE_DIR="$large_state" MEGABRAIN_CALL_LOG="$large_log" \
     "$root/.build/megabrain" worktree list --json >/dev/null
 
@@ -99,7 +100,7 @@ scenario_binary_call_count_is_independent_of_worktree_count() {
 }
 
 run_binary() {
-  env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir" \
+  env -i HOME="$work_dir/home" PATH="$node_bin:/usr/bin:/bin" MEGABRAIN_STATE_DIR="$work_dir" \
     "$root/.build/megabrain" worktree list "$@"
 }
 
