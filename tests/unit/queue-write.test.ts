@@ -353,3 +353,64 @@ describe("queue facade transactions", () => {
     });
   });
 });
+
+describe("a receipt failure never blocks the child's own reports", () => {
+  const idleProcess: ProcessAdapter = {
+    async run(command, args) { return failed(`unexpected process call ${command} ${args.join(" ")}`); },
+    async startDetached() { return failed("not used"); },
+    invocationCount() { return 0; },
+  };
+
+  async function withDispatch(meta: Record<string, unknown>, body: (root: string, read: () => Record<string, unknown>) => Promise<void>): Promise<void> {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-receipt-recovery-`);
+    try {
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      requireOk(createDispatch(database.value, { dispatchId: "receipt-recovery", agent: "claude", ...meta }));
+      await body(root, () => {
+        const record = getDispatch(database.value, "receipt-recovery");
+        if (record.kind !== "ok" || record.value === undefined) throw new Error("dispatch missing");
+        return record.value;
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+  const environment = (root: string) => ({ HOME: root, MEGABRAIN_STATE_DIR: root });
+
+  test.each(["prompt-not-received", "no-receipt-unproven"])("done after %s completes the dispatch and clears the failure", async (reason) => {
+    await withDispatch({ state: "failed", processState: "start-unproven", terminalState: "owned", reason, promptReceipt: "not-received" }, async (root, read) => {
+      expect((await updateMeta(root, "receipt-recovery", "done", environment(root), idleProcess)).kind).toBe("ok");
+      expect(read()).toMatchObject({ state: "done", processState: "succeeded", terminalState: "owned", reason: null, recoveredFrom: reason });
+    });
+  });
+
+  test("ask after a receipt failure waits for the reply instead of being refused", async () => {
+    await withDispatch({ state: "failed", processState: "running", terminalState: "owned", reason: "no-receipt-after-turn" }, async (root, read) => {
+      expect((await updateMeta(root, "receipt-recovery", "ask", environment(root), idleProcess)).kind).toBe("ok");
+      expect(read()).toMatchObject({ state: "waiting_for_reply", reason: null, recoveredFrom: "no-receipt-after-turn" });
+    });
+  });
+
+  test("received after prompt-not-received puts the dispatch back to running", async () => {
+    await withDispatch({ state: "failed", processState: "start-unproven", terminalState: "owned", reason: "prompt-not-received", promptReceipt: "not-received" }, async (root, read) => {
+      expect((await updateMeta(root, "receipt-recovery", "received", environment(root), idleProcess)).kind).toBe("ok");
+      expect(read()).toMatchObject({ state: "running", processState: "running", promptReceipt: "received", promptState: "confirmed", reason: null, recoveredFrom: "prompt-not-received" });
+    });
+  });
+
+  test.each(["received", "ask", "done"] as const)("%s clears receiptMissing on a running dispatch", async (type) => {
+    await withDispatch({ state: "running", processState: "running", terminalState: "owned", receiptMissing: { reason: "no-receipt-after-turn" } }, async (root, read) => {
+      expect((await updateMeta(root, "receipt-recovery", type, environment(root), idleProcess)).kind).toBe("ok");
+      expect(read().receiptMissing).toBeNull();
+    });
+  });
+
+  test("a failure that is not about the receipt still refuses done", async () => {
+    await withDispatch({ state: "failed", processState: "failed", terminalState: "released", reason: "readiness-timeout" }, async (root, read) => {
+      const refused = await updateMeta(root, "receipt-recovery", "done", environment(root), idleProcess);
+      expect(refused).toMatchObject({ kind: "failed", error: "illegal dispatch state transition: failed -> done" });
+      expect(read()).toMatchObject({ state: "failed", reason: "readiness-timeout" });
+    });
+  });
+});
