@@ -248,11 +248,8 @@ describe("tmux identity provider", () => {
     registerTmux(fake);
     try {
       const result = await notifyChild("/tmp/unused", { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "dispatch", processFor());
-      expect(result).toEqual({ outcome: "delivered", reason: "child-notified" });
-      expect(calls).toEqual([
-        { command: "tmux", args: ["send-keys", "-t", "%4", "-l", "[megabrain] reply available; run megabrain check"] },
-        { command: "tmux", args: ["send-keys", "-t", "%4", "Tab"] },
-      ]);
+      expect(result).toEqual({ outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" });
+      expect(calls).toEqual([]);
     } finally {
       registerTmux(original);
     }
@@ -261,7 +258,7 @@ describe("tmux identity provider", () => {
   test("an unknown child agent is not sent text followed by Enter", async () => {
     const process = processFor();
     const result = await notifyChild("/tmp/unused", { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "unregistered-agent" }, "dispatch", process);
-    expect(result.outcome).toBe("failed");
+    expect(result).toMatchObject({ outcome: "deferred", transport: "deferred" });
     expect(process.calls).toEqual([]);
   });
 

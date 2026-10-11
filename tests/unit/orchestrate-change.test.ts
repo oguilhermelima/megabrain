@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { executeOrchestrateChange } from "../../src/cli/commands/orchestrate-reply.js";
-import { createDispatch, getDispatch, listMessages } from "../../src/adapters/state-db.js";
+import { createDispatch, getDispatch, listMessages, listOutbox, listDeliveries } from "../../src/adapters/state-db.js";
 import { getTmux, registerTmux, unregisterTmux } from "../../src/hosts/tmux.js";
 import { getHost, registerHost } from "../../src/hosts/index.js";
 import type { HostProvider } from "../../src/hosts/types.js";
@@ -134,19 +134,37 @@ afterEach(() => {
 });
 
 describe("orchestrate change delivery", () => {
-  test("interrupts once, waits for stable idle, clears composer, then types the formatted direction", async () => {
+  test("interrupts once, waits for stable idle, and types only into the empty composer", async () => {
     const root = await tempStateDir();
-    const harness = installTmux({ initialComposer: `${codexIdle}\n› reply available` });
+    const harness = installTmux();
     try {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
       expect(output).toMatchObject({ attempts: 1, idleReached: true, delivered: true, confirmed: true, supersededQueued: 0, supersededDelivered: 0 });
-      expect(harness.events).toEqual(["key:Escape", "key:C-u", `text:${formatted}`, "key:Tab"]);
+      expect(harness.events).toEqual(["key:Escape", `text:${formatted}`, "key:Tab"]);
       const messages = await readMessages(root);
       expect(messages.map((message) => message.type)).toEqual(["reply", "interrupt", "interrupt-result", "idle-result", "composer-clear", "delivery-result", "delivery-confirmation"]);
       expect((messages[0] as JsonRecord).text).toBe(direction);
+    } finally {
+      harness.restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves a foreign composer draft untouched and keeps the change queued", async () => {
+    const root = await tempStateDir();
+    const harness = installTmux({ initialComposer: `${codexIdle}\n› operator draft` });
+    try {
+      await writeDispatch(root);
+      const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ idleReached: true, delivered: false, reason: expect.stringContaining("delivery deferred") });
+      const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
+      expect(requireOk(listOutbox(db))).toHaveLength(1);
+      expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "deferred" });
+      expect(harness.events).toEqual(["key:Escape"]);
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
@@ -162,7 +180,7 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 2, idleReached: true, delivered: true });
       expect(harness.events.filter((event) => event === "key:Escape")).toHaveLength(2);
-      expect(harness.events.indexOf("key:C-u")).toBeGreaterThan(harness.events.lastIndexOf("key:Escape"));
+      expect(harness.events).not.toContain("key:C-u");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
@@ -175,12 +193,14 @@ describe("orchestrate change delivery", () => {
     try {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "1", "--attempts", "3", "--json"], environment(root), processAdapter());
-      expect(result.kind).toBe("failed");
-      expect(result.kind === "failed" ? result.error : "").toContain("did not stop after 3 interrupts");
-      expect(result.kind === "failed" ? result.error : "").toContain("direction stays queued for megabrain check");
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 3, idleReached: false, delivered: false, reason: expect.stringContaining("delivery deferred") });
       expect(harness.events.filter((event) => event === "key:Escape")).toHaveLength(3);
       expect(harness.events.some((event) => event.startsWith("text:"))).toBe(false);
-      expect((await readMessages(root)).map((message) => message.type)).toEqual(["reply", "interrupt", "interrupt-result", "idle-result", "interrupt", "interrupt-result", "idle-result", "interrupt", "interrupt-result", "idle-result"]);
+      expect((await readMessages(root)).map((message) => message.type)).toEqual(["reply", "interrupt", "interrupt-result", "idle-result", "interrupt", "interrupt-result", "idle-result", "interrupt", "interrupt-result", "idle-result", "delivery-result"]);
+      const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
+      expect(requireOk(listOutbox(db))).toHaveLength(1);
+      expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "deferred" });
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
@@ -215,7 +235,7 @@ describe("orchestrate change delivery", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  test("uses Orca interrupt, screen reads, raw Ctrl-U, and submits full direction", async () => {
+  test("uses Orca interrupt, screen reads, and submits full direction", async () => {
     const root = await tempStateDir();
     const calls: string[] = [];
     const restoreHost = installOrcaHost(calls);
@@ -240,7 +260,7 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       expect(calls.some((call) => call.includes("--interrupt"))).toBe(true);
       expect(calls.some((call) => call.includes("--screen"))).toBe(true);
-      expect(calls.some((call) => call.includes("\u0015"))).toBe(true);
+      expect(calls.some((call) => call.includes("\u0015"))).toBe(false);
       expect(calls.some((call) => call.includes(formatted))).toBe(true);
     } finally {
       restoreHost();

@@ -109,8 +109,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       });
       const result = await executeHookTurnEnd([], parentEnv(root), process, noStdin);
       expect(result).toEqual({ kind: "ok", value: "{}\n" });
-      const send = process.calls.find((call) => call.command === "orca" && call.args.includes("send"));
-      expect(send?.args).toContain("dispatch d1 finished but still owns its terminal; run megabrain orchestrate close d1");
+      expect(process.calls.some((call) => call.command === "orca" && call.args.includes("send"))).toBe(false);
     });
   });
 
@@ -123,9 +122,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       });
       await executeHookTurnEnd([], parentEnv(root), process, noStdin);
-      const sends = process.calls.filter((call) => call.command === "orca" && call.args.includes("send"));
-      expect(sends).toHaveLength(1);
-      expect(sends[0]?.args).toContain("2 finished dispatches still own terminals: d1, d2; run megabrain orchestrate close <id> for each");
+      expect(process.calls.some((call) => call.command === "orca" && call.args.includes("send"))).toBe(false);
     });
   });
 

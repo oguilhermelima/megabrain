@@ -48,7 +48,7 @@ run_message() {
 }
 
 run_case() {
-  local label="$1" verb="$2" expected="$3" text="${4:-}" state dispatch effect deliveries
+  local label="$1" verb="$2" expected="$3" text="${4:-}" state dispatch effect deliveries transport sequence=1
   dispatch="$label"
   state="$work_dir/$dispatch"
   write_fixture "$state" "$dispatch"
@@ -57,6 +57,7 @@ run_case() {
   if [ "$label" = done-repeat ]; then
     : >"$work_dir/effect"
     run_message "$state" "$dispatch" done "finished again"
+    sequence=2
   fi
   effect="$(cat "$work_dir/effect")"
   deliveries="$(MEGABRAIN_STATE_DIR="$state" "$root/.build/megabrain" db show "$dispatch" --json | jq '.deliveries | length')"
@@ -65,12 +66,14 @@ run_case() {
   else
     [ "$deliveries" -eq 1 ] || fail "$label created $deliveries deliveries"
   fi
+  case "$effect" in *send*|*send-keys*) fail "$label typed into an unverified composer: $effect" ;; esac
+  transport="$(MEGABRAIN_STATE_DIR="$state" "$root/.build/megabrain" db show "$dispatch" --json | jq -r --argjson seq "$sequence" '[.deliveries[] | select(.messageSeqs | index($seq) != null) | .transport][0] // "none"')"
   if [ "$expected" = silent ]; then
-    [ -z "$effect" ] || fail "$label invoked notification: $effect"
+    [ "$transport" = none ] || fail "$label unexpectedly created transport $transport"
   else
-    [ -n "$effect" ] || fail "$label did not invoke notification"
+    [ "$transport" = deferred ] || fail "$label transport was $transport, expected deferred"
   fi
-  printf '%s: notification and durable delivery agree\n' "$label"
+  printf '%s: idle-gated notification and durable delivery agree\n' "$label"
 }
 
 run_case received received silent

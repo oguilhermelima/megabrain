@@ -72,13 +72,9 @@ create_meta() {
   MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db import "$state_dir" --replace >/dev/null
 }
 
-# `orchestrate reply` writes the queue message durably before it ever touches the pane
-# (queue-write.ts's appendMessage runs first in executeOrchestrateReply), then attempts a
-# best-effort nudge through the real tmux binary (queue-write.ts's notifyChild ->
-# hosts/tmux.ts's sendTmuxPair: "tmux send-keys -l" followed by the submit key). A process that
-# never reads stdin exercises real pty backpressure on that send: the durable write and the
-# command's own return must not depend on the child ever consuming it. Real tmux only here, no
-# fakes — the whole point is exercising actual pty behaviour.
+# `orchestrate reply` writes the queue message durably before delivery. A process that never reads
+# stdin exercises real pty backpressure; the command must return without typing into a busy pane.
+# This case uses real tmux, while the idle-gated transport cases below use an explicit fake.
 dispatch_id=bounded-reply
 create_meta "$dispatch_id" "$child_pane"
 answer="$(printf '%65536s' '' | tr ' ' x)"
@@ -113,16 +109,8 @@ printf 'busy child: reply returns within the bound and keeps the full queue mess
 
 tmux_cmd kill-pane -t "$child_pane"
 
-# megabrain_tmux_nudge_text_for_pane (width capping with an ellipsis) has no production caller
-# left: notifyChild/sendParentPointer (src/core/queue-write.ts, wired through
-# executeOrchestrateReply in src/cli/commands/orchestrate-reply.ts) send a fixed pointer string
-# ("[megabrain] reply available; run megabrain check") with no pane-width measurement or
-# truncation anywhere in that path. Dropped per rule 3.
-
-# A fake "tmux" placed first on PATH, not a shell function override — a subprocess (the compiled
-# binary) never sees this script's own function table, only real executables on PATH. It records
-# every send-keys call so the reply command's real submit-key choice per agent can be observed
-# from outside.
+# A fake "tmux" placed first on PATH records terminal keystrokes. The pane screen is not a known
+# idle composer, so delivery must remain deferred and issue no send-keys calls.
 fake_bin="$state_root/bin"
 mkdir -p "$fake_bin"
 send_log="$state_root/send.log"
@@ -136,49 +124,27 @@ esac
 EOF
 chmod +x "$fake_bin/tmux"
 
-# The real production reply path (executeOrchestrateReply -> notifyChild) picks the submit key
-# from the dispatch's own agent (src/agents/claude.ts, codex.ts, agy.ts: claude=Enter, codex=Tab,
-# agy=Enter) and reports "typed"/"not-typed" purely from whether that send itself succeeded --
-# there is no busy-pane inspection, no backspace clearing, and no distinct "queued" nudge status
-# anywhere in notifyChild; it sends unconditionally. The old busy-composer / backspace-clearing /
-# per-affordance "queued" assertions tested a shell nudge system with no surviving counterpart;
-# dropped per rule 3. What is still real and worth proving here: which key each agent's dispatch
-# causes to be sent, that an agent id the registry does not know (src/agents/index.ts's
-# submitKey falls back to unavailableKey when getAgent returns undefined) sends no keys at all
-# and still reports "not-typed" without losing the queued message, and that the message stays
-# durable and attributed regardless of nudge outcome.
+# Each agent stays on the deferred path when the screen cannot prove idle state and an empty
+# composer. The full message remains in the durable queue regardless of that transport result.
 scenario_agent_nudge() {
-  local agent="$1" expect_key="$2" expect_nudge="$3"
+  local agent="$1"
   local dispatch_id="nudge-$agent"
   : >"$send_log"
   create_meta "$dispatch_id" '%fake' "$agent"
   local output message
   output="$(PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text "answer for $agent" --json)"
   assert_equal "$(jq -r '.status' <<<"$output")" queued
-  assert_equal "$(jq -r '.nudge' <<<"$output")" "$expect_nudge"
+  assert_equal "$(jq -r '.nudge' <<<"$output")" not-typed
   message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
   assert_equal "$(jq -r '.text' <<<"$message")" "answer for $agent"
   assert_contains "$(jq -r '.sessionId' <<<"$message")" ':'
-  if [ "$expect_key" = none ]; then
-    [ ! -s "$send_log" ] || fail "$agent: expected no send-keys call, got: $(cat "$send_log")"
-  else
-    # The pane receives a fixed pointer, never the reply text itself (queue-write.ts's
-    # notifyChild: "[megabrain] reply available; run megabrain check"); the reply text only ever
-    # lands in the durable queue message asserted above.
-    grep -Fqx 'send-keys -t %fake -l [megabrain] reply available; run megabrain check' "$send_log" || fail "$agent: pointer text was not sent literally: $(cat "$send_log")"
-    grep -Fqx "send-keys -t %fake $expect_key" "$send_log" || fail "$agent: submit key $expect_key was not sent: $(cat "$send_log")"
-  fi
-  printf '%s nudge: submit key %s, reported %s\n' "$agent" "$expect_key" "$expect_nudge"
+  [ ! -s "$send_log" ] || fail "$agent: typed into an unverified composer: $(cat "$send_log")"
+  printf '%s nudge: deferred without typing into an unverified composer\n' "$agent"
 }
 
-scenario_agent_nudge claude Enter typed
-scenario_agent_nudge codex Tab typed
-scenario_agent_nudge agy Enter typed
-scenario_agent_nudge ghost-unregistered-agent none not-typed
-
-# The per-pane lock around a queued text-plus-key pair (so two concurrent nudges to the same pane
-# never interleave into one draft) is exercised directly against the real sendTmuxPair in
-# tests/unit/tmux.test.ts: "keeps each text and submit key pair under one pane lock". Dropped
-# here per rule 2.
+scenario_agent_nudge claude
+scenario_agent_nudge codex
+scenario_agent_nudge agy
+scenario_agent_nudge ghost-unregistered-agent
 
 printf 'ok: bounded reply nudge scenarios\n'

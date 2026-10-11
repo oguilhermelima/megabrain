@@ -66,6 +66,7 @@ run_tmux_queue() {
 }
 
 mkdir -p "$work_dir/bin"
+ln -s "$(command -v node)" "$work_dir/bin/node"
 printf '%s\n' '#!/usr/bin/env bash' 'if [ "${1:-}" = list-panes ]; then printf "session-a\t%%1\n"; fi' >"$work_dir/bin/tmux"
 chmod +x "$work_dir/bin/tmux"
 
@@ -98,9 +99,9 @@ run_verb() {
   write_fixture "$state" "$dispatch"
   set +e
   if [ "$verb" = received ]; then
-    output="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" received 2>&1)"; status=$?
+    output="$(env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" received 2>&1)"; status=$?
   else
-    output="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb" "$text" 2>&1)"; status=$?
+    output="$(env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" "$verb" "$text" 2>&1)"; status=$?
   fi
   set -e
   [ "$status" -eq 0 ] || fail "$label refused: $output"
@@ -109,7 +110,7 @@ run_verb() {
 }
 
 run_notification_transport() {
-  local host="$1" dispatch="$2" command_name metadata state effect extra_env=()
+  local host="$1" dispatch="$2" command_name metadata state effect transport extra_env=()
   state="$work_dir/transport-$dispatch"
   case "$host" in
     orca) command_name=orca; metadata='"parentSessionId":"parent-terminal","parentHost":"orca"' ;;
@@ -120,6 +121,7 @@ run_notification_transport() {
   printf '%s\n' "{\"dispatchId\":\"$dispatch\",\"terminalId\":\"child-terminal\",\"childHost\":\"superset\",$metadata,\"state\":\"running\",\"processState\":\"running\",\"terminalState\":\"owned\"}" >"$state/dispatches/$dispatch/meta.json"
   import_state "$state"
   mkdir -p "$work_dir/notify-bin"
+  ln -sf "$(command -v node)" "$work_dir/notify-bin/node"
   : >"$work_dir/binary-effect"
   if [ "$host" = tmux ]; then
     printf '%s\n' '#!/usr/bin/env bash' 'case "${1:-}" in has-session) exit 0 ;; list-panes) printf "%%parent\\n" ;; display-message) printf "parent-session\\n" ;; send-keys) printf "%s\\n" "$*" >>"$MEGABRAIN_EFFECT_FILE" ;; esac' >"$work_dir/notify-bin/$command_name"
@@ -135,8 +137,10 @@ run_notification_transport() {
   chmod +x "$work_dir/notify-bin/$command_name"
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/binary-effect" "${extra_env[@]}" "$root/.build/megabrain" ask 'notify body' >/dev/null 2>&1
   effect="$(cat "$work_dir/binary-effect")"
-  [ -n "$effect" ] || fail "$host notification effect was not recorded"
-  printf '%s notification command and arguments recorded\n' "$host"
+  case "$effect" in *send*|*send-keys*) fail "$host typed into an unverified composer: $effect" ;; esac
+  transport="$(show_dispatch "$state" "$dispatch" | jq -r '.deliveries[0].transport')"
+  [ "$transport" = deferred ] || fail "$host delivery transport was $transport, expected deferred"
+  printf '%s notification waits for an idle, empty composer\n' "$host"
 }
 
 run_notification_suppression() {
@@ -178,8 +182,8 @@ run_notification_failure() {
   : >"$work_dir/failure-effect"
   env -i HOME="$work_dir/home" PATH="$work_dir/notify-bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_EFFECT_FILE="$work_dir/failure-effect" SUPERSET_TERMINAL_ID=child-terminal "$root/.build/megabrain" ask 'failed body' >/dev/null
   [ "$(show_dispatch "$state" "$dispatch" | jq '.messages | length')" -eq 1 ] || fail 'lost the durable write after notification failure'
-  [ "$(read_nudges "$state" "$dispatch" | jq -r '.[0].outcome')" = failed ] || fail 'did not record notification failure'
-  printf 'notification failure preserves the durable write\n'
+  [ "$(show_dispatch "$state" "$dispatch" | jq -r '.deliveries[0].transport')" = deferred ] || fail 'notification was not deferred for idle-gated delivery'
+  printf 'idle-gated notification preserves the durable write\n'
 }
 
 # Was "run_cross_implementation": one shell-era side wrote through megabrain_dispatch_message_append
@@ -191,8 +195,8 @@ run_verb_round_trip() {
   local label="$1" dispatch="$2" text="$3"
   local state="$work_dir/roundtrip-$dispatch" reader_output
   write_fixture "$state" "$dispatch"
-  env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" ask "$text" >/dev/null
-  reader_output="$(env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" ORCA_TERMINAL_HANDLE=parent-terminal "$root/.build/megabrain" orchestrate watch "$dispatch" --timeout 0 --poll-interval 0 --wait-mode poll --json)"
+  env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" ask "$text" >/dev/null
+  reader_output="$(env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" ORCA_TERMINAL_HANDLE=parent-terminal "$root/.build/megabrain" orchestrate watch "$dispatch" --timeout 0 --poll-interval 0 --wait-mode poll --json)"
   [ "$(printf '%s' "$reader_output" | jq -r '.messages[0].text // empty')" = "$text" ] || fail "$label text differs: expected=$text got=$reader_output"
   printf '%s: ask write is read back by orchestrate watch\n' "$label"
 }
@@ -205,7 +209,7 @@ run_binary_concurrency() {
   mkdir -p "$writer_dir"
   for i in $(seq 1 "$writers"); do
     (
-      if env -i HOME="$work_dir/home" PATH="/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" ask "binary body $i" >/dev/null 2>"$writer_dir/$i.stderr"; then
+      if env -i HOME="$work_dir/home" PATH="$work_dir/bin:/usr/bin:/bin" MEGABRAIN_ROOT="$root" MEGABRAIN_STATE_DIR="$state" SUPERSET_TERMINAL_ID=child-terminal MEGABRAIN_DISPATCH_ID="$dispatch" "$root/.build/megabrain" ask "binary body $i" >/dev/null 2>"$writer_dir/$i.stderr"; then
         : >"$writer_dir/$i.written"
       else
         : >"$writer_dir/$i.refused"

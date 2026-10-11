@@ -19,7 +19,7 @@ function fakeProcess(): ProcessAdapter & { readonly calls: readonly Call[] } {
 }
 
 describe("sendParentPointer", () => {
-  test("targets the parent's terminal handle, not its agent session id", async () => {
+  test("defers parent terminal typing until its idle state has been read", async () => {
     const process = fakeProcess();
     const meta = {
       parentHost: "orca",
@@ -27,22 +27,18 @@ describe("sendParentPointer", () => {
       parentTerminalId: "term_2997abc",
     };
     const result = await sendParentPointer("/root", meta, "mail: megabrain orchestrate watch dispatch-1", {}, process);
-    expect(result.outcome).toBe("delivered");
-    expect(process.calls).toEqual([
-      { command: "orca", args: ["terminal", "send", "--terminal", "term_2997abc", "--text", "mail: megabrain orchestrate watch dispatch-1", "--enter", "--json"] },
-    ]);
+    expect(result).toMatchObject({ outcome: "deferred", transport: "deferred" });
+    expect(process.calls).toEqual([]);
   });
 
-  test("falls back to the parent session id when no terminal handle was recorded", async () => {
+  test("defers legacy parent terminals without typing blindly", async () => {
     const process = fakeProcess();
     const meta = {
       parentHost: "orca",
       parentSessionId: "term_legacy123",
     };
     const result = await sendParentPointer("/root", meta, "mail: megabrain orchestrate watch dispatch-1", {}, process);
-    expect(result.outcome).toBe("delivered");
-    expect(process.calls).toEqual([
-      { command: "orca", args: ["terminal", "send", "--terminal", "term_legacy123", "--text", "mail: megabrain orchestrate watch dispatch-1", "--enter", "--json"] },
-    ]);
+    expect(result).toMatchObject({ outcome: "deferred", transport: "deferred" });
+    expect(process.calls).toEqual([]);
   });
 });

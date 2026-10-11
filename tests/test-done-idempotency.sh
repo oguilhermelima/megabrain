@@ -19,6 +19,7 @@ guard_db_state() {
 guard_db_state
 bin_dir="$state_dir/bin"
 mkdir -p "$bin_dir"
+ln -s "$(command -v node)" "$bin_dir/node"
 cat >"$bin_dir/superset" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -108,9 +109,10 @@ set_dispatch_state different-outcome failed
 export SUPERSET_TERMINAL_ID=child-repeated-done
 run_child_message repeated-done done 'first completion' >/dev/null
 run_child_message repeated-done done 'retried completion' >/dev/null
-assert_equal "$(nudge_count repeated-done)" 1
 assert_equal "$(message_count repeated-done)" 2
 assert_equal "$(delivery_count repeated-done)" 2
+first_transport="$("$root/.build/megabrain" db show repeated-done --json | jq -r '.deliveries[0].transport')"
+case "$first_transport" in deferred|failed) ;; *) fail "first completion transport was $first_transport" ;; esac
 
 export SUPERSET_TERMINAL_ID=parent-terminal
 first_delivery="$("$root/.build/megabrain" orchestrate watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --json)"
@@ -124,7 +126,7 @@ assert_equal "$(jq -r '.messages | length' <<<"$default_after_ack")" 0
 full_delivery="$("$root/.build/megabrain" orchestrate watch repeated-done --timeout 0 --poll-interval 0 --wait-mode poll --full --json)"
 assert_equal "$(jq -r '.messages | length' <<<"$full_delivery")" 1
 assert_equal "$(jq -r '.messages[0].text' <<<"$full_delivery")" 'retried completion'
-printf 'repeated done creates one actionable nudge and durable protocol mail\n'
+printf 'repeated done creates one actionable delivery and durable protocol mail\n'
 
 # A different outcome after failure remains actionable, even though the state
 # transition itself is refused by the settled dispatch contract.
@@ -135,7 +137,6 @@ if run_child_message different-outcome done 'completion after failure' >"$differ
 fi
 different_output="$(cat "$different_output_path")"
 assert_contains "$different_output" 'illegal dispatch state transition: failed -> done'
-assert_equal "$(( $(nudge_count repeated-done) + $(nudge_count different-outcome) ))" 2
 assert_equal "$(message_count different-outcome)" 1
 assert_equal "$(delivery_count different-outcome)" 1
 export SUPERSET_TERMINAL_ID=parent-terminal

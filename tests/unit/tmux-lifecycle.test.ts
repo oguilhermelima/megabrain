@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync } from "node:fs";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { notifyChild } from "../../src/cli/commands/queue-write.js";
@@ -95,7 +94,7 @@ describe("tmux send lifecycle", () => {
     expect(await tmux.showEnvironment("session-a", "MEGABRAIN_STATE_DIR", process)).toEqual({ kind: "unknown", reason: "tmux environment MEGABRAIN_STATE_DIR for session session-a could not be determined", error: "tmux environment MEGABRAIN_STATE_DIR for session session-a could not be determined", exitCode: 1 });
   });
 
-  test("does not serialise sends to different panes", async () => {
+  test("does not type to a pane before its idle state has been read", async () => {
     const root = mkdtempSync("/tmp/megabrain-tmux-panels-");
     const calls: Call[] = [];
     let active = 0;
@@ -114,49 +113,45 @@ describe("tmux send lifecycle", () => {
       },
     });
     try {
-      await Promise.all([
+      const results = await Promise.all([
         notifyChild(root, { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "first", processFor()),
         notifyChild(root, { runtime: "tmux", tmuxSession: "s", tmuxPane: "%5", agent: "codex" }, "second", processFor()),
       ]);
-      expect(maximum).toBe(2);
-    } finally {
-      registerTmux(original);
-    }
-  });
-
-  test("reports a bounded failure when a pane lock cannot be acquired", async () => {
-    const root = mkdtempSync("/tmp/megabrain-tmux-held-");
-    const lock = join(root, "locks", "tmux", `${encodeURIComponent("%4")}.lock`);
-    mkdirSync(lock, { recursive: true });
-    const calls: Call[] = [];
-    const original = getTmux();
-    registerTmux(providerFor(calls));
-    try {
-      const result = await notifyChild(root, { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "dispatch", processFor(), { MEGABRAIN_LOCK_WAIT_SECONDS: "0" });
-      expect(result).toEqual({ outcome: "failed", reason: `mailbox lock is held by another writer: ${lock}` });
+      expect(results.map((result) => result.transport)).toEqual(["deferred", "deferred"]);
+      expect(maximum).toBe(0);
       expect(calls).toEqual([]);
     } finally {
       registerTmux(original);
     }
   });
 
-  test("serialises concurrent sends to one pane", async () => {
+  test("defers without touching a pane whose composer has not been inspected", async () => {
+    const root = mkdtempSync("/tmp/megabrain-tmux-held-");
+    const calls: Call[] = [];
+    const original = getTmux();
+    registerTmux(providerFor(calls));
+    try {
+      const result = await notifyChild(root, { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "dispatch", processFor(), { MEGABRAIN_LOCK_WAIT_SECONDS: "0" });
+      expect(result).toEqual({ outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" });
+      expect(calls).toEqual([]);
+    } finally {
+      registerTmux(original);
+    }
+  });
+
+  test("returns the same pending delivery path for concurrent messages to one pane", async () => {
     const root = mkdtempSync("/tmp/megabrain-tmux-lock-");
     const calls: Call[] = [];
     const original = getTmux();
     registerTmux(providerFor(calls, 1));
     try {
       const meta = { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" };
-      await Promise.all([
+      const results = await Promise.all([
         notifyChild(root, meta, "first", processFor()),
         notifyChild(root, meta, "second", processFor()),
       ]);
-      expect(calls).toEqual([
-        { command: "tmux", args: ["send-keys", "-t", "%4", "-l", "[megabrain] reply available; run megabrain check"] },
-        { command: "tmux", args: ["send-keys", "-t", "%4", "Tab"] },
-        { command: "tmux", args: ["send-keys", "-t", "%4", "-l", "[megabrain] reply available; run megabrain check"] },
-        { command: "tmux", args: ["send-keys", "-t", "%4", "Tab"] },
-      ]);
+      expect(results.map((result) => result.transport)).toEqual(["deferred", "deferred"]);
+      expect(calls).toEqual([]);
     } finally {
       registerTmux(original);
     }
