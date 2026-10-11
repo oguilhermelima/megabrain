@@ -116,8 +116,11 @@ describe("openerInvocation", () => {
   test("AppleScript injection through a session name stays inside the string", () => {
     const hostile = ['tmux', 'attach', '-t', '" & (do shell script "touch /tmp/pwned") & "'];
     const script = openerInvocation("terminal-app", hostile, darwin).args.filter((_, index) => index % 2 === 1).join("\n");
-    expect(script).not.toContain('"touch');
-    expect(script).toContain('\\"touch /tmp/pwned\\"');
+    const line = script.split("\n").find((candidate) => candidate.startsWith("do script ")) ?? "";
+    const body = line.slice("do script ".length);
+    // Only the two delimiting quotes may be unescaped.
+    expect(body.match(/(?<!\\)"/g)?.length).toBe(2);
+    expect(body.startsWith('"') && body.endsWith('"')).toBe(true);
   });
   test("Ghostty uses open -na on macOS and the binary on Linux", () => {
     expect(openerInvocation("ghostty", attach, darwin)).toEqual({ command: "open", args: ["-na", "Ghostty", "--args", "-e", ...attach], detached: false });
