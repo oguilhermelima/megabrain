@@ -168,6 +168,7 @@ type ContextPolicyEffect = Readonly<{ response: string | null; handled: boolean 
 async function applyContextPolicy(
   root: string,
   dispatchId: string,
+  sessionId: string,
   meta: RecordValue,
   environment: HookEnvironment,
   processAdapter: ProcessAdapter,
@@ -256,30 +257,59 @@ async function applyContextPolicy(
 
   const continuation = typeof updated.value.contextPolicyPrompt === "string" ? updated.value.contextPolicyPrompt : typeof updated.value.contextLoopPrompt === "string" ? updated.value.contextLoopPrompt : "";
   if (action === "stop") {
+    const tokens = typeof event.usedTokens === "number" ? new Intl.NumberFormat("en-US").format(event.usedTokens) : undefined;
+    const ceiling = typeof plannedPolicy.contextCeilingTokens === "number"
+      ? new Intl.NumberFormat("en-US").format(plannedPolicy.contextCeilingTokens)
+      : plannedPolicy.contextCeiling === undefined ? undefined : `${plannedPolicy.contextCeiling}%`;
+    const text = stopReason === "context ceiling reached"
+      ? `Stopped — Context ceiling reached${tokens === undefined ? "" : ` at ${tokens} tokens`}${ceiling === undefined ? "." : ` (limit ${ceiling}).`}`
+      : `Stopped — ${stopReason}.`;
+    await appendMessage(root, dispatchId, "child", "policy", text, sessionId, environment, processAdapter);
     await finishContextAction(root, dispatchId, eventId, "completed");
-    return { response: `{"decision":"block","reason":"${stopReason}"}`, handled: true };
+    const agentId = typeof meta.agent === "string" ? meta.agent : "";
+    const guidance = stopReason === "context ceiling reached"
+      ? "Context ceiling reached; stop working and await the coordinator."
+      : `${stopReason}; stop working and await the coordinator.`;
+    const response = agentId === "claude"
+      ? JSON.stringify({ hookSpecificOutput: { hookEventName: "Stop", additionalContext: guidance } })
+      : `{"decision":"block","reason":"${stopReason}"}`;
+    return { response, handled: true };
   }
+
+  const notice = (text: string) => appendMessage(root, dispatchId, "child", "policy", text, sessionId, environment, processAdapter);
 
   if (action === "compact") {
     const compact = getAgent(agentId)?.compactCommand;
     if (compact === undefined) {
+      await notice("Compaction could not run — compact command unavailable.");
       await finishContextAction(root, dispatchId, eventId, "failed: compact command unavailable");
       return { response: null, handled: true };
     }
     const sent = await sendContextInput(root, meta, compact, environment, processAdapter);
     if (sent.kind !== "ok") {
+      await notice(`Compaction could not run — ${sent.error}.`);
       await finishContextAction(root, dispatchId, eventId, `failed: ${sent.error}`);
       return { response: null, handled: true };
     }
     const waited = await waitForStableIdle(agentId, 60000, () => readContextFrame(meta, processAdapter), `context compaction did not finish within 60000ms`);
     if (waited.kind !== "ok") {
+      await notice(`Compaction did not finish — ${waited.error}.`);
       await finishContextAction(root, dispatchId, eventId, `failed: ${waited.error}`);
       return { response: null, handled: true };
     }
+    const tokens = typeof event.usedTokens === "number" ? new Intl.NumberFormat("en-US").format(event.usedTokens) : undefined;
+    await notice(`Compaction completed${tokens === undefined ? "." : ` at ${tokens} tokens.`}`);
   }
 
   const prompt = continuation === "" ? "Continue the dispatch task from your current progress and report done when it is complete." : `Continue the dispatch task from your current progress. Original prompt:\n\n${continuation}`;
   const continued = await sendContextInput(root, meta, prompt, environment, processAdapter);
+  if (plannedPolicy.loop === true) {
+    const iteration = typeof updated.value.contextPolicyState === "object" && updated.value.contextPolicyState !== null
+      ? (updated.value.contextPolicyState as RecordValue).loopIterations : undefined;
+    await notice(continued.kind === "ok"
+      ? `Loop iteration ${typeof iteration === "number" ? iteration : ""} re-injected.`
+      : `Loop iteration could not be re-injected — ${continued.error}.`);
+  }
   await finishContextAction(root, dispatchId, eventId, continued.kind === "ok" ? "completed" : `failed: ${continued.error}`);
   return { response: null, handled: true };
 }
@@ -502,7 +532,7 @@ export async function executeHookTurnEnd(
       return finish(defaultText);
     }
 
-    const contextEffect = await applyContextPolicy(root, dispatchId, meta as RecordValue, environment, processAdapter);
+    const contextEffect = await applyContextPolicy(root, dispatchId, session.id, meta as RecordValue, environment, processAdapter);
     if (contextEffect.response !== null) return finish(contextEffect.response);
     if (contextEffect.handled) return finish(defaultText);
 

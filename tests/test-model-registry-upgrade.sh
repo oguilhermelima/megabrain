@@ -105,7 +105,7 @@ write_old_registry
 upgraded="$("$root/.build/megabrain" model list --json)"
 assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "agy")] | length')" 14
 assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "codex")] | length')" 12
-assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "claude")] | length')" 19
+assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "claude")] | length')" 20
 assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.levels | join(",")')" 'low,medium,high,xhigh,max,ultra'
 assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .reasoning.levels | join(",")')" 'low,medium,high,xhigh,max'
 assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .provenance.kind')" sourced

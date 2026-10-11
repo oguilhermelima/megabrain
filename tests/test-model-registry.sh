@@ -56,7 +56,7 @@ assert_failure_contains() {
 
 list_output="$("$root/.build/megabrain" model list --json)"
 assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 12
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 19
+assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 20
 assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "agy")] | length')" 14
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "agy" and .model == "gemini-3.8-flash-high") | .provenance.kind')" live
 assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex") | .provenance.kind' | head -n 1)" sourced
