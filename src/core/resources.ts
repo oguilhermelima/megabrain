@@ -1,4 +1,6 @@
 import type { ProcessAdapter } from "../adapters/proc.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export type MachineResources = Readonly<{
   totalMemoryBytes: number; availableMemoryBytes: number; pressure: "normal" | "elevated" | "critical" | "unknown";
@@ -82,8 +84,40 @@ export async function readMachineResources(process: ProcessAdapter, platform = p
   return undefined;
 }
 
-export async function readDockerResources(process: ProcessAdapter): Promise<readonly DockerResource[] | undefined> {
-  const result = await process.run("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
+const DOCKER_TIMEOUT_MS = 3000;
+
+function isMissingExecutable(error: string | undefined, command: string): boolean {
+  return error?.includes(`${command}: executable not found`) === true;
+}
+
+async function socketExists(process: ProcessAdapter): Promise<boolean> {
+  const host = globalThis.process.env.DOCKER_HOST;
+  const configuredSocket = host?.startsWith("unix://") ? host.slice("unix://".length) : undefined;
+  const sockets = configuredSocket ? [configuredSocket] : ["/var/run/docker.sock", join(homedir(), ".docker/run/docker.sock")];
+  for (const socket of sockets) {
+    const result = await process.run("test", ["-S", socket], { timeoutMs: 500 });
+    if (result.kind === "ok") return true;
+  }
+  return false;
+}
+
+async function orbStackIsRunning(process: ProcessAdapter): Promise<boolean | undefined> {
+  const orb = await process.run("orb", ["status"], { timeoutMs: DOCKER_TIMEOUT_MS });
+  if (orb.kind === "ok") return /^Running\s*$/m.test(orb.value.stdout);
+  if (!isMissingExecutable(orb.error, "orb")) return false;
+  const orbctl = await process.run("orbctl", ["status"], { timeoutMs: DOCKER_TIMEOUT_MS });
+  if (orbctl.kind === "ok") return /^Running\s*$/m.test(orbctl.value.stdout);
+  if (isMissingExecutable(orbctl.error, "orbctl")) return undefined;
+  return false;
+}
+
+export async function readDockerResources(process: ProcessAdapter, platform = processPlatform()): Promise<readonly DockerResource[] | undefined> {
+  if (platform === "darwin") {
+    const orbStackRunning = await orbStackIsRunning(process);
+    if (orbStackRunning === false) return undefined;
+    if (orbStackRunning === undefined && !(await socketExists(process))) return undefined;
+  } else if (!(await socketExists(process))) return undefined;
+  const result = await process.run("docker", ["stats", "--no-stream", "--format", "{{json .}}"], { timeoutMs: DOCKER_TIMEOUT_MS });
   if (result.kind !== "ok") return undefined;
   const resources: DockerResource[] = [];
   for (const line of result.value.stdout.split(/\r?\n/).filter(Boolean)) {
