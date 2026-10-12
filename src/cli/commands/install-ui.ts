@@ -47,6 +47,7 @@ const MODULE_INFO: Readonly<Record<string, Readonly<{ label: string; hint: strin
   "tmux-runtime": { label: "tmux split panes", hint: "shell wrapper plus child panes beside the parent", group: "Agents" },
   orchestration: { label: "Orchestration", hint: "dispatch and supervise agents in Orca, Superset or tmux", group: "Agents" },
   "orchestration-hooks": { label: "Turn-end hooks", hint: "tell the parent when a child finishes its turn", group: "Agents" },
+  "resource-hooks": { label: "Resource hooks", hint: "route dev servers, docker and migrations into megabrain proc (opt-in)", group: "Agents" },
   worktree: { label: "Shared worktrees", hint: "one worktree folder for Orca and Superset", group: "Agents" },
   "simulator-web": { label: "Web browsers", hint: "Playwright Chromium and Firefox for web testing", group: "Testing" },
   "simulator-native": { label: "iOS simulators", hint: "Appium with the XCUITest driver", group: "Testing" },
