@@ -12,7 +12,7 @@ require_megabrain_test_state
 dispatch_dir="$state_dir/state/dispatches"
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

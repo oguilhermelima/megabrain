@@ -25,8 +25,7 @@ export PATH="$wrapper_dir:$PATH"
 cleanup() {
   "$tmux_bin" -L "$socket" kill-server 2>/dev/null || true
   if [ -n "${agent_pid:-}" ]; then kill "$agent_pid" 2>/dev/null || true; fi
-  stop_megabrain_supervisor
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

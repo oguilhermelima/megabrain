@@ -13,7 +13,7 @@ require_megabrain_test_state
 server="mb-change-$RANDOM-$BASHPID"
 cleanup() {
   tmux -L "$server" kill-server >/dev/null 2>&1 || true
-  rm -rf "$work"
+  remove_test_dir "$work"
 }
 trap cleanup EXIT
 

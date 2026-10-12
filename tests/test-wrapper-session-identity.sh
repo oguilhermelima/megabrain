@@ -11,7 +11,7 @@ require_megabrain_test_state
 export TMUX_TMPDIR="$work/tmux"
 mkdir -p "$TMUX_TMPDIR" "$work/bin"
 real_tmux="$(command -v tmux)"
-trap 'TMUX_TMPDIR="$TMUX_TMPDIR" "$real_tmux" -f /dev/null kill-server >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+trap 'TMUX_TMPDIR="$TMUX_TMPDIR" "$real_tmux" -f /dev/null kill-server >/dev/null 2>&1 || true; remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 

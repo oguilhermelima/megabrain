@@ -18,7 +18,7 @@ ln -s "$(command -v node)" "$node_bin/node"
 cleanup() {
   local rc=$?
   [ -z "${container_fixture:-}" ] || rm -f "$container_fixture"
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return "$rc"
 }
 trap cleanup EXIT

@@ -27,8 +27,7 @@ cleanup_tmux_server() {
 cleanup() {
   local rc=$?
   cleanup_tmux_server "$state_dir"
-  stop_megabrain_supervisor
-  [ -n "$state_dir" ] && rm -rf "$state_dir"
+  [ -z "$state_dir" ] || remove_test_dir "$state_dir"
   return "$rc"
 }
 trap cleanup EXIT
@@ -92,7 +91,7 @@ compiled_reply() {
 # only ever sees PATH executables, never a shell function of the same name.
 set_state_dir() {
   cleanup_tmux_server "$state_dir"
-  [ -n "$state_dir" ] && rm -rf "$state_dir"
+  [ -z "$state_dir" ] || remove_test_dir "$state_dir"
   state_dir="$(cd -P "$1" && pwd -P)"
   export TMUX_TMPDIR="$state_dir"
   export MEGABRAIN_STATE_DIR="$state_dir"

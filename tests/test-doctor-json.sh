@@ -11,7 +11,7 @@ require_megabrain_test_state
 node_dir="$(dirname "$(command -v node)")"
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return 0
 }
 trap cleanup EXIT
@@ -65,7 +65,7 @@ EOF
     *optional*) ;;
     *) fail "tmux-only orchestration doctor did not mark host CLIs optional: $tmux_only_reason" ;;
   esac
-  rm -rf "$tmux_only_state" "$tmux_only_bin"
+  remove_test_dir "$tmux_only_state" "$tmux_only_bin"
   printf 'tmux runtime makes absent orchestration CLIs optional\n'
 else
   printf 'skip: Node entrypoint is missing at %s; run bun run build\n' "$entrypoint"

@@ -16,7 +16,7 @@ if [ ! -x "$root/.build/megabrain" ]; then
 fi
 
 cleanup() {
-  rm -rf "$work_dir"
+  remove_test_dir "$work_dir"
   return 0
 }
 trap cleanup EXIT

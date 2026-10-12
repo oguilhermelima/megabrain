@@ -8,7 +8,7 @@ source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
 require_megabrain_test_state
 
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 export MEGABRAIN_STATE_DIR="$work/state"
 mkdir -p "$MEGABRAIN_STATE_DIR"
 

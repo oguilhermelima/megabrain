@@ -20,7 +20,7 @@ assert_safe_state_dir() {
     case "$state_path/" in "$home_path/.megabrain/"*) printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1 ;; esac
   done
 }
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 fake_bin="$work/bin"
 mkdir -p "$fake_bin"

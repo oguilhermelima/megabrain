@@ -13,7 +13,7 @@ fixture="$work/repo"
 state="$work/state"
 unrelated="$work/unrelated"
 binary_source="${MEGABRAIN_TEST_BINARY:-$root/.build/megabrain}"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 

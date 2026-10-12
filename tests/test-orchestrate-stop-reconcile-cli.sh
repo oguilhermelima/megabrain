@@ -12,7 +12,7 @@ require_megabrain_test_state
 
 export HOME="$work/home"
 mkdir -p "$HOME"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 source "$root/tests/fixtures/entrypoint-routing.sh"
 

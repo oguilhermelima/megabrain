@@ -23,7 +23,7 @@ assert_safe_state_dir() {
     case "$state_path/" in "$home_path/.megabrain/"*) printf 'FAIL: refusing real-home megabrain state directory\n' >&2; exit 1 ;; esac
   done
 }
-trap 'rm -rf "$state_dir"' EXIT
+trap 'remove_test_dir "$state_dir"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 db_import() { export MEGABRAIN_STATE_DIR="$state_dir/state"; assert_safe_state_dir; "$root/.build/megabrain" db import "$state_dir/state" --replace --json >/dev/null; }
 db_show() { MEGABRAIN_STATE_DIR="$state_dir/state" "$root/.build/megabrain" db show "$1" --json; }

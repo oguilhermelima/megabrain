@@ -9,7 +9,7 @@ source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
 require_megabrain_test_state
 
-trap 'rm -rf "$work_dir"' EXIT
+trap 'remove_test_dir "$work_dir"' EXIT
 
 [ -x "$binary" ] || {
   printf 'skip: compiled binary is missing at %s; run bun run build\n' "$binary"

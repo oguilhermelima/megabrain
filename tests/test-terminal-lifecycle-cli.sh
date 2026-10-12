@@ -9,7 +9,7 @@ export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
 require_megabrain_test_state
 
 binary="$root/.build/megabrain"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 [ -x "$binary" ] || { printf 'skip: compiled terminal binary is missing; run bun run build\n'; exit 0; }
 

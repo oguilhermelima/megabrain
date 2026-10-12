@@ -27,7 +27,7 @@ cleanup() {
     kill "$waiter_pid" 2>/dev/null || true
     wait "$waiter_pid" 2>/dev/null || true
   fi
-  rm -rf "$work_dir"
+  remove_test_dir "$work_dir"
   return "$rc"
 }
 trap cleanup EXIT

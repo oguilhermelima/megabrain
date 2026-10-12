@@ -10,7 +10,7 @@ require_megabrain_test_state
 
 
 cleanup() {
-  rm -rf "$sandbox"
+  remove_test_dir "$sandbox"
   return 0
 }
 trap cleanup EXIT

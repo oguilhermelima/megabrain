@@ -19,7 +19,7 @@ dedicated_session="megabrain-notify-dedicated-$$"
 cleanup() {
   local rc=$?
   tmux -L "$socket_name" kill-server >/dev/null 2>&1 || true
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return "$rc"
 }
 trap cleanup EXIT
