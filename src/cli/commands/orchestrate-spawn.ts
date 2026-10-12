@@ -263,8 +263,10 @@ async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: nu
     },
     `tmux pane ${pane} did not become ready within ${timeoutMs}ms`,
     () => {
-      trustAnswered = true;
-      return getTmux().sendKey(pane, getAgent(agentId)?.firstRunDialogKey ?? "Enter", process);
+      return getTmux().sendKey(pane, getAgent(agentId)?.firstRunDialogKey ?? "Enter", process).then((answer) => {
+        if (agentId === "grok" && answer.kind === "ok") trustAnswered = true;
+        return answer;
+      });
     },
   );
   return { result, lastFrame, trustAnswered };
