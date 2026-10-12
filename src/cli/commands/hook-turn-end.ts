@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
+import { classifyQueueMail } from "../../core/queue-write.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
@@ -379,6 +380,8 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
 // reached the terminal, and the pointer path never retries. One line per message, marked
 // hook-notified so the same message never blocks twice.
 function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly<{ failed: readonly string[]; pending: readonly string[] }> {
+  const dispatch = getDispatch(database, dispatchId);
+  if (dispatch.kind !== "ok" || dispatch.value === undefined || dispatch.value.state === "closed") return { failed: [], pending: [] };
   const deliveries = listDeliveries(database, dispatchId);
   const messages = listMessages(database, dispatchId);
   const outbox = listOutbox(database);
@@ -387,20 +390,31 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
   const pending: string[] = [];
   for (const delivery of deliveries.value) {
     if (delivery.recipient !== "parent" || delivery.status !== "outstanding") continue;
+    if (delivery.transport === "hook-notified") continue;
     const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
     const message = messages.value.find((candidate) => sequences.includes(candidate.seq));
+    if (message === undefined) continue;
+    const priorDone = messages.value.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
+    if (classifyQueueMail(message.from, message.type, priorDone) !== "actionable") continue;
     const summary = (message?.text ?? "").split("\n")[0]?.trim() ?? "";
     const line = `${message?.type ?? "mail"} ${summary === "" ? "(no text)" : summary} — megabrain orchestrate watch ${dispatchId}`;
     const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((item) => item.dispatchId === dispatchId && item.targetKind === "parent-pointer") : [];
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
     const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
     if (delivery.transport === "failed") {
-      if (heldOutbox) { pending.push(line); continue; }
+      if (heldOutbox) {
+        pending.push(line);
+        for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+        continue;
+      }
       failed.push(`${dispatchId}: ${line}`);
       for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
       continue;
     }
-    if (delivery.transport === "deferred" || pendingOutbox || heldOutbox) pending.push(line);
+    if (delivery.transport === "deferred" || pendingOutbox || heldOutbox) {
+      pending.push(line);
+      for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+    }
   }
   return { failed, pending };
 }
