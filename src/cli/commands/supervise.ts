@@ -15,6 +15,7 @@ import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
 import { readDeliveryScreen } from "./delivery-screen.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
+import { collectResources } from "./resources.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -331,18 +332,20 @@ export async function executeSupervisorWorker(args: readonly string[], environme
   return ok("supervisor stopped\n");
 }
 
-function formatStatus(root: string, database: Parameters<typeof getDispatch>[0]): string {
+function formatStatus(root: string, database: Parameters<typeof getDispatch>[0], resourceLines: readonly string[] = [], measured: Awaited<ReturnType<typeof collectResources>>["dispatches"] = []): string {
   const lease = listLeases(database);
   const dispatches = listDispatches(database);
   if (lease.kind !== "ok" || dispatches.kind !== "ok") return "Supervisor status is unavailable.\n";
   const active = lease.value.find((item) => item.key === LEASE_KEY);
   const open = dispatches.value.filter((item) => ["spawning", "running", "waiting_for_reply", "orphaned"].includes(String(item.state)));
-  const lines = [`state directory: ${root}`, `watcher: ${active === undefined ? "stopped" : `running (pid ${active.holder.split("-", 1)[0]})`}`];
+  const lines = [...resourceLines, `state directory: ${root}`, `watcher: ${active === undefined ? "stopped" : `running (pid ${active.holder.split("-", 1)[0]})`}`];
   if (open.length === 0) lines.push("dispatches: none open");
+  const measuredById = new Map(measured.map((item) => [item.dispatchId, item]));
   for (const item of open) {
     const meta = item as RecordValue;
     const finding = object(meta.superviseFinding);
-    lines.push(`${String(item.dispatchId)} · last check ${string(meta.superviseLastCheck) ?? "not checked yet"} · finding ${string(finding?.cause) ?? "none"}`);
+    const resource = measuredById.get(String(item.dispatchId));
+    lines.push(`${String(item.dispatchId)} · last check ${string(meta.superviseLastCheck) ?? "not checked yet"} · finding ${string(finding?.cause) ?? "none"} · RSS ${resource?.resources === undefined ? "n/a" : `${(resource.resources.rssBytes / 1024 / 1024).toFixed(0)} MiB`} · CPU ${resource?.resources?.cpuPercent.toFixed(1) ?? "n/a"}%`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -352,7 +355,12 @@ export async function executeSupervise(args: readonly string[], environment: Env
   const root = resolveStateDirectory(environment);
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  if (args.length === 1 && args[0] === "--status") return ok(formatStatus(root, database.value));
+  if (args.length === 1 && args[0] === "--status") {
+    const measured = await collectResources({ MEGABRAIN_STATE_DIR: root }, process, true);
+    const machine = measured.machine;
+    const machineLine = machine === null ? "machine: unavailable" : `machine: ${Math.round(machine.availableMemoryBytes / 1024 / 1024)} MiB available / ${Math.round(machine.totalMemoryBytes / 1024 / 1024)} MiB · pressure ${machine.pressure} · swap ${Math.round(machine.swapUsedBytes / 1024 / 1024)} MiB · load ${machine.loadAverage1.toFixed(2)}/${machine.loadAverage5.toFixed(2)} · ${machine.cpuCount} CPUs`;
+    return ok(formatStatus(root, database.value, [machineLine], measured.dispatches));
+  }
   if (args.length === 1 && args[0] === "--stop") {
     const leases = listLeases(database.value);
     if (leases.kind !== "ok") return failed(leases.error);
