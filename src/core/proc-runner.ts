@@ -199,10 +199,14 @@ async function procLogs(args: readonly string[], env: Readonly<Record<string, st
     return filterProcLogLines(lines, options);
   };
   if (args.includes("--follow")) {
-    let prior = new Set<string>(); let output = "";
+    let prior: string[] = []; let output = "";
     while ((await process.run("tmux", tmuxArgs(env, ["has-session", "-t", found.record.session]))).kind === "ok") {
-      const lines = await collect(); const next = lines.filter((line) => !prior.has(line));
-      if (next.length) { const chunk = `${next.join("\n")}\n`; output += chunk; globalThis.process.stdout.write(chunk); prior = new Set(lines); }
+      const lines = await collect();
+      let overlap = Math.min(prior.length, lines.length);
+      while (overlap > 0 && prior.slice(-overlap).join("\n") !== lines.slice(0, overlap).join("\n")) overlap -= 1;
+      const next = lines.slice(overlap);
+      if (next.length) { const chunk = `${next.join("\n")}\n`; output += chunk; globalThis.process.stdout.write(chunk); }
+      prior = lines;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return ok(output);
