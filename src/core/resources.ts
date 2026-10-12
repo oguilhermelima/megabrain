@@ -13,19 +13,19 @@ const finite = (value: string | undefined): number | undefined => value === unde
 const kb = (value: number): number => value * 1024;
 const mb = (value: number): number => value * 1024 * 1024;
 
-export function parseMacMachineResources(vmStat: string, sysctl: string, memoryPressure: string): MachineResources {
+export function parseMacMachineResources(vmStat: string, sysctl: string, _memoryPressure = ""): MachineResources {
   const pageSize = finite(/page size of ([\d,]+) bytes/i.exec(vmStat)?.[1]?.replaceAll(",", "")) ?? 4096;
   const pages = (name: string): number => finite(new RegExp(`^Pages ${name}:\\s*([\\d,]+)`, "mi").exec(vmStat)?.[1]?.replaceAll(",", "")) ?? 0;
   const sys = (name: string): string | undefined => new RegExp(`^${name}:\\s*(.+)$`, "mi").exec(sysctl)?.[1]?.trim();
   const total = finite(sys("hw.memsize")) ?? 0;
   const load = /vm\.loadavg:\s*\{\s*([\d.]+)\s+([\d.]+)/.exec(sysctl);
   const swap = /used\s*=\s*([\d.]+)M/i.exec(sys("vm.swapusage") ?? "");
-  const freePercent = finite(/System-wide memory free percentage:\s*([\d.]+)%/i.exec(memoryPressure)?.[1]);
+  const pressureLevel = finite(/kern\.memorystatus_vm_pressure_level:\s*(\d+)/i.exec(sysctl)?.[1]);
   // macOS available memory follows psutil: free + inactive pages.
   const freeBytes = (pages("free") + pages("inactive")) * pageSize;
   return {
     totalMemoryBytes: total, availableMemoryBytes: freeBytes,
-    pressure: freePercent === undefined ? "unknown" : freePercent < 10 ? "critical" : freePercent < 20 ? "elevated" : "normal",
+    pressure: pressureLevel === 1 ? "normal" : pressureLevel === 2 ? "elevated" : pressureLevel === 4 ? "critical" : "unknown",
     // sysctl reports swap in MiB; round to the nearest whole byte.
     swapUsedBytes: swap === null ? 0 : Math.round(mb(Number(swap[1]))),
     loadAverage1: Number(load?.[1] ?? 0), loadAverage5: Number(load?.[2] ?? 0),
@@ -68,11 +68,11 @@ function processPlatform(): string { return process.platform; }
 
 export async function readMachineResources(process: ProcessAdapter, platform = processPlatform()): Promise<MachineResources | undefined> {
   if (platform === "darwin") {
-    const [vm, ctl, pressure] = await Promise.all([
-      process.run("vm_stat", []), process.run("sysctl", ["hw.memsize", "vm.swapusage", "vm.loadavg", "hw.ncpu"]), process.run("memory_pressure", []),
+    const [vm, ctl] = await Promise.all([
+      process.run("vm_stat", []), process.run("sysctl", ["hw.memsize", "vm.swapusage", "vm.loadavg", "hw.ncpu", "kern.memorystatus_vm_pressure_level"]),
     ]);
     if (vm.kind !== "ok" || ctl.kind !== "ok") return undefined;
-    return parseMacMachineResources(vm.value.stdout, ctl.value.stdout, pressure.kind === "ok" ? pressure.value.stdout : "");
+    return parseMacMachineResources(vm.value.stdout, ctl.value.stdout);
   }
   if (platform === "linux") {
     const [mem, load, pressure, cpu] = await Promise.all([
