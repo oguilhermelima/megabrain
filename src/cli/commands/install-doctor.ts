@@ -1098,6 +1098,10 @@ async function resourceHooksReport(environment: Environment, processAdapter: Pro
     else if (issue !== undefined) { details.push(issue); healthy = false; }
     else details.push(`${agent}: entry-present`);
   }
+  // Opt-in: with no entry in any agent the module was simply never installed.
+  if (!details.some((detail) => detail.endsWith(": entry-present")) && details.some((detail) => detail.endsWith(": entry-missing"))) {
+    return { status: "missing", reason: "module is not installed (opt-in)" };
+  }
   return { status: healthy ? "ok" : "misconfigured", reason: `${details.join("; ")}; opt-in: routes dev servers, docker and migrations into megabrain proc` };
 }
 
