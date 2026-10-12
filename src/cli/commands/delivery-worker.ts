@@ -12,12 +12,11 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
-import { deliveryComposer, deliveryHasKeystrokeDialog, ghostTracker, readDeliveryScreen, type GhostTracker } from "./delivery-screen.js";
+import { deliveryComposer, deliveryHasKeystrokeDialog, readDeliveryScreen } from "./delivery-screen.js";
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
 const DELIVERY_LEASE_SECONDS = 90;
-const GHOST_STATIC_MS = 30_000;
 const PROOF_UNAVAILABLE_MS = 2 * 60 * 1000;
 const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
   status === "idle" ? "idle" : status === "unknown" ? "unknown" : "busy";
@@ -86,7 +85,6 @@ async function sendTyped(
   environment: WorkerEnvironment,
   process: ProcessAdapter,
   adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
-  ghost?: GhostTracker,
   fail: (reason: string) => void = () => undefined,
 ): Promise<boolean> {
   const agent = String(meta.agent ?? "");
@@ -98,11 +96,10 @@ async function sendTyped(
     const status = await claudeStatus(meta, environment);
     const typed = deliveryComposer(agent, screen.value);
     const dialog = deliveryHasKeystrokeDialog(agent, screen.value);
-    const composer = ghost === undefined ? typed : ghost.observe(typed, status?.statusUpdatedAt);
     const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
     const observed = status?.pid !== undefined && status.status !== "unknown" ? status.status : screenStatus;
     await adoptStatus?.(status, status?.pid === undefined ? "screen" : "claude-session", observed);
-    if (dialog || composer !== "") return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
+    if (dialog || typed !== "") return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
     return ok(undefined);
   };
   if (meta.runtime === "tmux") {
@@ -189,8 +186,6 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let screenError = "";
   const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
   const giveUpAfterMs = Number.isFinite(unavailableMs) && unavailableMs > 0 ? unavailableMs : PROOF_UNAVAILABLE_MS;
-  const staticMs = Number(environment.MEGABRAIN_GHOST_STATIC_MS);
-  const ghost = meta.runtime === "tmux" ? undefined : ghostTracker(Number.isFinite(staticMs) && staticMs > 0 ? staticMs : GHOST_STATIC_MS);
   const decisionLog = createDecisionLog(root);
   const adoptClaudePid = (status: ClaudeStatus | undefined): void => {
     if (status?.pid === undefined || status.pid === Number(meta.agentPid)) return;
@@ -229,14 +224,13 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         const observed = sessionProven && status.status !== "unknown" ? status.status : screenStatus;
         statusRead = observed;
         statusUpdatedAtRead = status?.statusUpdatedAt;
-        if (observed !== "idle") ghost?.reset();
         return observed;
       },
       composer: async () => {
         const screen = await readDeliveryScreen(meta, process);
         const agent = String(meta.agent ?? "");
         const typed = screen.kind === "ok" && !deliveryHasKeystrokeDialog(agent, screen.value) ? deliveryComposer(agent, screen.value) : undefined;
-        return ghost === undefined ? typed : ghost.observe(typed, statusUpdatedAtRead);
+        return typed;
       },
       clear: async () => clearOwnComposer(root, meta, process),
       send: async () => sendTyped(root, meta, text, environment, process, async (status, proof, fallbackStatus) => {
@@ -246,7 +240,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         proofReason = status?.reason;
         statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
         statusUpdatedAtRead = status?.statusUpdatedAt;
-      }, ghost, (reason) => { sendError = reason; }),
+      }, (reason) => { sendError = reason; }),
       sendError: () => sendError,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
@@ -269,7 +263,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           composer: details.composer,
           decision: details.decision,
           ...(proofReason === undefined ? {} : { proofReason }),
-          ...(details.reason !== undefined ? { reason: details.reason } : details.decision === "send" && ghost?.assumed() === true ? { reason: "ghost-assumed-static" } : {}),
+          ...(details.reason === undefined ? {} : { reason: details.reason }),
         };
         await decisionLog.record(entry);
       },
