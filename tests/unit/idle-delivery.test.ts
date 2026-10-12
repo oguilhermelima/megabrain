@@ -41,6 +41,18 @@ describe("idle-gated message delivery", () => {
     expect(h.calls.sends).toBe(1);
   });
 
+  test("renews the worker lease while waiting beyond its original TTL", async () => {
+    const renewals: number[] = [];
+    const h = harness({
+      timeoutMs: 10_000,
+      renew: async () => { renewals.push(Date.now()); },
+      wait: async () => { h.setState("idle"); },
+    });
+    h.setState("busy");
+    expect(await deliverWhenIdle(h.input)).toBe("delivered");
+    expect(renewals.length).toBeGreaterThan(0);
+  });
+
   test("clears only a composer draft that matches its own text", async () => {
     const h = harness({ ownDraft: "our previous nudge" });
     h.setState("idle");

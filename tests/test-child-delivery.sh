@@ -110,6 +110,7 @@ state_db_import "$root/.build/megabrain" "$state" true "$work/legacy"
 claude_reply='full Claude reply body'
 run_reply child-claude "$claude_reply" >/dev/null
 sleep 0.3
+[ ! -s "$work/claude-typed.log" ] || fail 'Claude reply was typed before the child became idle'
 tmux -L "$server" capture-pane -p -t "$claude_pane" | grep -Eq 'Working' || fail 'Claude stand-in was not busy before release'
 tmux -L "$server" send-keys -t "$claude_pane" Escape Escape
 deadline=$((SECONDS + 20))
@@ -131,6 +132,6 @@ assert_contains "$(cat "$work/claude-typed.log" 2>/dev/null || true)" "$claude_r
 hook="$(run_hook "$claude_pane")"
 assert_contains "$hook" '{}'
 assert_equal "$(show_dispatch child-claude | jq -r '.deliveries[] | select(.recipient == "child") | .transport')" typed
-printf 'Claude child waits while busy, receives the full reply when idle, and its hook stays clear after done\n'
+printf 'Claude child receives the full reply only after becoming idle, and its hook stays clear after done\n'
 
 printf 'ok: child delivery through Codex queue and Claude idle typing\n'

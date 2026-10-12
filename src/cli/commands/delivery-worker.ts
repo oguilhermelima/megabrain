@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
@@ -12,11 +12,11 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
-import { deliveryComposer, ghostTracker, readDeliveryScreen, type GhostTracker } from "./delivery-screen.js";
+import { deliveryComposer, deliveryHasKeystrokeDialog, ghostTracker, readDeliveryScreen, type GhostTracker } from "./delivery-screen.js";
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
-const MAX_DELIVERY_MS = 10 * 60 * 1000;
+const DELIVERY_LEASE_SECONDS = 90;
 const GHOST_STATIC_MS = 30_000;
 const PROOF_UNAVAILABLE_MS = 2 * 60 * 1000;
 const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
@@ -50,12 +50,13 @@ export async function startDeliveryWorker(root: string, dispatch: string, outbox
   const target = deliveryTarget(meta);
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
   const leaseKey = `delivery-target:${target}`;
-  const deadline = Date.now() + MAX_DELIVERY_MS;
+  // Keep waiting without a deadline; the live worker renews this short lease while it waits.
+  const deadline = Number.MAX_SAFE_INTEGER;
   const result = await startDeferredDelivery(
     target,
     holder,
     async (key, owner) => {
-      const acquired = acquireLease(database.value, `delivery-target:${key}`, owner, Math.ceil(MAX_DELIVERY_MS / 1000) + 30);
+      const acquired = acquireLease(database.value, `delivery-target:${key}`, owner, DELIVERY_LEASE_SECONDS);
       return acquired.kind === "ok" && acquired.value;
     },
     async (owner) => {
@@ -84,7 +85,6 @@ async function sendTyped(
   text: string,
   environment: WorkerEnvironment,
   process: ProcessAdapter,
-  expectedClaudeStatus?: Readonly<{ pid: number; statusUpdatedAt: number }>,
   adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
   ghost?: GhostTracker,
   fail: (reason: string) => void = () => undefined,
@@ -95,19 +95,14 @@ async function sendTyped(
   const preflight = async (): Promise<Result<void>> => {
     const screen = await readDeliveryScreen(meta, process);
     if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
-    const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
     const status = await claudeStatus(meta, environment);
     const typed = deliveryComposer(agent, screen.value);
+    const dialog = deliveryHasKeystrokeDialog(agent, screen.value);
     const composer = ghost === undefined ? typed : ghost.observe(typed, status?.statusUpdatedAt);
+    const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
     const observed = status?.pid !== undefined && status.status !== "unknown" ? status.status : screenStatus;
     await adoptStatus?.(status, status?.pid === undefined ? "screen" : "claude-session", observed);
-    const ghostIdle = ghost?.assumed() === true && typed !== "" && screenStatus === "unknown" && observed === "idle";
-    if ((screenStatus !== "idle" && !ghostIdle) || composer !== "") return failed("target is no longer idle with an empty composer");
-    if (status?.pid !== undefined && status.status !== "idle") return failed("Claude session is no longer idle");
-    if (status?.pid !== undefined && status.statusUpdatedAt === undefined) return failed("Claude session status has no freshness timestamp");
-    if (expectedClaudeStatus !== undefined) {
-      if (status?.status !== "idle" || status.pid !== expectedClaudeStatus.pid || status.statusUpdatedAt !== expectedClaudeStatus.statusUpdatedAt) return failed("Claude session status changed after the idle check");
-    }
+    if (dialog || composer !== "") return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
     return ok(undefined);
   };
   if (meta.runtime === "tmux") {
@@ -149,7 +144,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   if (!existsSync(resolve(root, "megabrain.db"))) return ok("delivery source state was removed\n");
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const claimed = claimOutbox(database.value, outboxId, holder, Math.ceil(MAX_DELIVERY_MS / 1000) + 30);
+  const claimed = claimOutbox(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
   if (claimed.kind !== "ok" || claimed.value === undefined) {
     if (!nested) releaseLease(database.value, leaseKey, holder);
     return claimed.kind === "ok" ? ok("delivery already claimed\n") : claimed;
@@ -182,7 +177,6 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   }
   const text = typeof payload.fullMessage === "string" ? payload.fullMessage : "";
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
-  let checkedClaudeStatus: { pid: number; statusUpdatedAt: number } | undefined;
   let proofSource = "screen";
   let statusRead: "idle" | "busy" | "unknown" = "unknown";
   let statusUpdatedAtRead: number | undefined;
@@ -209,6 +203,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     try {
       result = await deliverWhenIdle({
       timeoutMs: Math.max(0, deadline - Date.now()),
+      allowBusy: targetKind === "parent-pointer",
       initialDelayMs: 500,
       maxDelayMs: 10_000,
       ownDraft: text,
@@ -220,7 +215,6 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           screenDownSince ??= Date.now();
           screenError = screen.kind === "failed" ? screen.error : screen.reason;
           const sessionProven = status?.pid !== undefined;
-          checkedClaudeStatus = undefined;
           proofSource = sessionProven ? "claude-session" : "screen-unavailable";
           statusRead = sessionProven && status.status !== "unknown" ? status.status : "unknown";
           statusUpdatedAtRead = status?.statusUpdatedAt;
@@ -236,18 +230,16 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         statusRead = observed;
         statusUpdatedAtRead = status?.statusUpdatedAt;
         if (observed !== "idle") ghost?.reset();
-        checkedClaudeStatus = status?.status === "idle" && status.pid !== undefined && status.statusUpdatedAt !== undefined
-          ? { pid: status.pid, statusUpdatedAt: status.statusUpdatedAt }
-          : undefined;
         return observed;
       },
       composer: async () => {
         const screen = await readDeliveryScreen(meta, process);
-        const typed = screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
+        const agent = String(meta.agent ?? "");
+        const typed = screen.kind === "ok" && !deliveryHasKeystrokeDialog(agent, screen.value) ? deliveryComposer(agent, screen.value) : undefined;
         return ghost === undefined ? typed : ghost.observe(typed, statusUpdatedAtRead);
       },
       clear: async () => clearOwnComposer(root, meta, process),
-      send: async () => sendTyped(root, meta, text, environment, process, checkedClaudeStatus, async (status, proof, fallbackStatus) => {
+      send: async () => sendTyped(root, meta, text, environment, process, async (status, proof, fallbackStatus) => {
         adoptClaudePid(status);
         const sessionProven = status?.pid !== undefined;
         proofSource = proof;
@@ -258,6 +250,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       sendError: () => sendError,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
+      renew: async () => {
+        if (!nested) {
+          const lease = acquireLease(database.value, leaseKey, holder, DELIVERY_LEASE_SECONDS);
+          if (lease.kind !== "ok" || !lease.value) throw new Error("delivery target lease was lost");
+        }
+        const outboxLease = renewOutboxLease(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
+        if (outboxLease.kind !== "ok" || !outboxLease.value) throw new Error("outbox lease was lost");
+      },
       attempt: async (details) => {
         lastDecision = details.decision;
         const entry = {

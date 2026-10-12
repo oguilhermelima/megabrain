@@ -39,6 +39,7 @@ export {
   nudgeCursor,
   putWaiter,
   releaseLease,
+  renewOutboxLease,
   transferLease,
   type AppendMessageOptions,
   type DeliveryInput,

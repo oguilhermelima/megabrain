@@ -111,6 +111,112 @@ describe("Claude parent idle delivery", () => {
     }
   });
 
+  test("delivers to a busy Claude parent when the composer is empty", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 41234;
+    session.status = "busy";
+    session.statusUpdatedAt = Number(session.statusUpdatedAt) + 1;
+    await fs.writeFile(path.join(sessions, "41234.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const screenValue = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
+    const empty = JSON.stringify({ ...screenValue, result: { terminal: { ...screenValue.result.terminal, tail: screenValue.result.terminal.tail.map((line) => line.startsWith("❯") ? "❯" : line) } } });
+    const fake = processFor(empty);
+    try {
+      await runWorker(root, ids, fake.process, 2000);
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("holds a human composer draft and delivers after it clears while Claude is busy", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 42345;
+    session.status = "busy";
+    session.statusUpdatedAt = Number(session.statusUpdatedAt) + 1;
+    await fs.writeFile(path.join(sessions, "42345.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const value = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
+    let reads = 0;
+    const fake = processFor("", async () => { reads += 1; });
+    const response = (draft: string) => JSON.stringify({ ...value, result: { terminal: { ...value.result.terminal, tail: value.result.terminal.tail.map((line) => line.startsWith("❯") ? `❯ ${draft}` : line) } } });
+    // Replace only screen responses so the first probe sees a human draft and later probes see an empty composer.
+    const dynamic: ProcessAdapter = {
+      ...fake.process,
+      async run(command, args) {
+        if (command === "orca" && args[0] === "terminal" && args[1] === "read") {
+          reads += 1;
+          return ok<ProcessOutput>({ stdout: response(reads < 3 ? "human text" : ""), stderr: "", exitCode: 0 });
+        }
+        return fake.process.run(command, args);
+      },
+    };
+    try {
+      await runWorker(root, ids, dynamic, 2500);
+      expect(reads).toBeGreaterThanOrEqual(3);
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("holds delivery while a permission dialog is on screen", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 43456;
+    session.status = "busy";
+    await fs.writeFile(path.join(sessions, "43456.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const fixture = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
+    const dialog = JSON.stringify({ ...fixture, result: { terminal: { ...fixture.result.terminal, tail: [...fixture.result.terminal.tail, "Allow this action?", "1. Yes", "2. No"] } } });
+    const fake = processFor(dialog);
+    try {
+      await runWorker(root, ids, fake.process, 100);
+      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("holds delivery when a permission dialog has an empty-looking composer", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 44567;
+    await fs.writeFile(path.join(sessions, "44567.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const fixture = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
+    const dialog = JSON.stringify({ ...fixture, result: { terminal: { ...fixture.result.terminal, tail: [...fixture.result.terminal.tail, "Allow this action?", "1. Yes", "2. No"] } } });
+    const fake = processFor(dialog);
+    try {
+      await runWorker(root, ids, fake.process, 100);
+      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("logs the proof, composer, and decision for each delivery attempt", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -138,7 +244,7 @@ describe("Claude parent idle delivery", () => {
     }
   });
 
-  test("does not type when the Claude session turns busy during the send preflight", async () => {
+  test("types when the Claude session turns busy during the send preflight if the composer stays empty", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const os = await import("node:os");
@@ -159,7 +265,7 @@ describe("Claude parent idle delivery", () => {
     });
     try {
       await runWorker(root, ids, fake.process);
-      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

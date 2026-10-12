@@ -125,3 +125,35 @@ export function deliveryComposer(agent: string, screen: string): string | undefi
   if (agent === "claude" && value.trim().startsWith("Try \"")) return "";
   return value.trimEnd();
 }
+
+// Never submit an agent's confirmation or selection dialog with the delivery key.
+export function deliveryHasKeystrokeDialog(agent: string, screen: string): boolean {
+  const lines = screen.split("\n");
+  const bottom = lines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim() !== "").slice(-15);
+  const text = bottom.map(({ line }) => line).join("\n");
+  const dialog = agent === "claude"
+    ? /Allow this action\?|Do you want to proceed\?|Allow .+? to run/i
+    : agent === "codex"
+      ? /Would you like to run this command\?|Run this command\?/i
+      : agent === "grok"
+        ? /Yes, and don't ask again for anything|No, reject \(type to add feedback\)/i
+        : agent === "agy"
+          ? /Do you trust the contents of this project\?|Antigravity CLI requires permission to read, edit, and execute files here\./i
+          : undefined;
+  if (dialog === undefined) return false;
+  const match = dialog.exec(text);
+  if (match === null || match.index === undefined) return false;
+
+  // Old agent output can contain any words. When a composer is still visible, only treat
+  // a dialog drawn after it as active; dialogs that replace the composer remain detectable.
+  const prompt = agent === "claude" ? /^\s*❯/ : agent === "codex" ? /^\s*›/ : /^\s*[>$]/;
+  let composerLine = -1;
+  if (deliveryComposer(agent, screen) === "") {
+    for (const { line, index } of bottom) if (prompt.test(line)) composerLine = index;
+  }
+  if (composerLine >= 0) {
+    const precedingText = bottom.filter(({ index }) => index <= composerLine).map(({ line }) => line).join("\n");
+    if (dialog.test(precedingText)) return false;
+  }
+  return true;
+}

@@ -11,7 +11,7 @@ import { appendMessage } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { createDispatch, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
+import { appendMessage as appendDatabaseMessage, createDispatch, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -189,6 +189,27 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);
       expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
       expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
+  test("reports pending parent mail as non-error Stop context", async () => {
+    await withRoot("pending-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const appended = appendDatabaseMessage(database.value, "d1", { from: "child", type: "done", text: "finished" }, {
+        delivery: { id: "pending-parent-delivery", recipient: "parent", status: "outstanding" },
+        outbox: { id: "pending-parent-outbox", targetKind: "parent-pointer", target: "orca:coord-term", payload: {} },
+      });
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      setDeliveryTransport(database.value, "d1", appended.value.seq, "deferred", "parent composer is occupied");
+
+      const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      if (result.kind !== "ok") throw new Error(result.error);
+      expect(JSON.parse(result.value)).toEqual({ hookSpecificOutput: {
+        hookEventName: "Stop",
+        additionalContext: "1 unread child message: done finished — megabrain orchestrate watch d1",
+      } });
     });
   });
 
