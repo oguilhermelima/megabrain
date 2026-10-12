@@ -552,9 +552,16 @@ async function openWorktreeTmuxTarget(
     const created = await createTmuxSession(session, worktree.path, undefined, process, false);
     if (created.kind !== "ok") return created;
     const waited = await waitForTmuxSession(session, process);
-    if (waited.kind !== "ok") return waited;
+    if (waited.kind !== "ok") {
+      const killed = await getTmux().killSession(session, process);
+      return killed.kind === "ok" ? waited : failed(`${resultError(waited, "tmux session did not become ready")}; cleanup failed: tmux kill-session --target ${session}: ${resultError(killed, "could not kill tmux session")}`);
+    }
     const panes = await getTmux().panesForSession(session, process);
-    if (panes.kind !== "ok" || panes.value[0] === undefined) return failed(`tmux session ${session} has no pane`);
+    if (panes.kind !== "ok" || panes.value[0] === undefined) {
+      const failure = panes.kind === "ok" ? failed(`tmux session ${session} has no pane`) : panes;
+      const killed = await getTmux().killSession(session, process);
+      return killed.kind === "ok" ? failure : failed(`${resultError(failure, `tmux session ${session} has no pane`)}; cleanup failed: tmux kill-session --target ${session}: ${resultError(killed, "could not kill tmux session")}`);
+    }
 
     const record: RecordValue = {
       tmuxSession: session,
@@ -738,11 +745,22 @@ type SpawnTrace = {
   terminalId?: string;
   pane?: string;
   reason?: string;
+  tmuxSession?: string;
+  sessionCreatedBySpawn?: boolean;
+  sessionCleanupAttempted?: boolean;
 };
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
   const trace: SpawnTrace = {};
-  const result = await runSpawn(args, environment, process, dependencies, trace);
+  let result = await runSpawn(args, environment, process, dependencies, trace);
+  if (result.kind !== "ok" && trace.sessionCreatedBySpawn && !trace.sessionCleanupAttempted && trace.tmuxSession !== undefined) {
+    const cleanup = await getTmux().killSession(trace.tmuxSession, process);
+    trace.sessionCleanupAttempted = true;
+    if (cleanup.kind !== "ok") {
+      const primary = result.kind === "failed" ? result.error : result.reason;
+      result = failed(`${primary}; cleanup failed: tmux kill-session --target ${trace.tmuxSession}: ${resultError(cleanup, "could not kill tmux session")}`, result.kind === "failed" ? result.exitCode : undefined);
+    }
+  }
   // An argument error leaves trace.json unset: the flag is then read straight from the arguments.
   if (result.kind === "ok" || !(trace.json ?? args.includes("--json"))) return result;
   const error = result.kind === "failed" ? result.error : result.reason;
@@ -854,6 +872,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       pane = target.value.pane;
       sessionOwned = target.value.sessionOwned;
       sessionCreatedBySpawn = target.value.sessionCreated;
+      if (sessionCreatedBySpawn) {
+        trace.tmuxSession = session;
+        trace.sessionCreatedBySpawn = true;
+      }
       hostTerminalId = target.value.hostTerminalId;
       hostTerminalHost = target.value.hostTerminalHost;
       tmuxHostWarning = target.value.warning;
@@ -1030,6 +1052,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     if (plan.action === "fail") {
       trace.reason = plan.reason ?? undefined;
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
+      if (runtime === "tmux" && sessionCreatedBySpawn) trace.sessionCleanupAttempted = true;
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
