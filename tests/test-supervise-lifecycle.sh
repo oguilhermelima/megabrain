@@ -25,6 +25,7 @@ export PATH="$wrapper_dir:$PATH"
 cleanup() {
   "$tmux_bin" -L "$socket" kill-server 2>/dev/null || true
   if [ -n "${agent_pid:-}" ]; then kill "$agent_pid" 2>/dev/null || true; fi
+  stop_megabrain_supervisor
   rm -rf "$state_dir"
 }
 trap cleanup EXIT
@@ -50,12 +51,15 @@ export MEGABRAIN_SUPERVISE_INTERVAL_SECONDS=1
 "$binary" supervise >/dev/null
 kill "$agent_pid"
 
-for _ in $(seq 1 30); do
+deadline=$((SECONDS + 120))
+while [ "$SECONDS" -lt "$deadline" ]; do
   message="$("$binary" db show supervise-killed-agent --json)"
   if jq -e '.messages[] | select(.type == "supervise" and (.text | contains("process-exited")))' <<<"$message" >/dev/null; then
     printf 'PASS: dead stand-in agent produced a process-exited notice\n'
     exit 0
   fi
-  sleep 1
+  sleep 0.5
 done
+"$binary" supervise --status >&2 || true
+jq '{state, superviseLastCheck, superviseFinding, messages: [.messages[]? | {type, text}]}' <<<"$message" >&2 || true
 fail 'supervisor did not report the killed stand-in agent'
