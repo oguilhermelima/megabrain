@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { composerHoldsText } from "../../src/core/composer-proof.js";
+import { composerExactlyHoldsText, composerHoldsText } from "../../src/core/composer-proof.js";
 
 // Frames and prompts are captured from the real agents in a private tmux server (Claude Code
 // 2.1.296, Codex 0.162.1), not written by hand: see tests/fixtures/composer.
@@ -75,5 +75,38 @@ describe("composerHoldsText", () => {
   test("rejects a short tail shown without the scroll arrow", () => {
     const frame = fixture("codex-clipped-inline-60x12").replace("↑", " ");
     expect(composerHoldsText("codex", frame, fixture("prompt-900-bytes"))).toBe(false);
+  });
+});
+
+// Antigravity CLI 1.3.3 frames, captured in a private tmux server (account address redacted).
+describe("composerHoldsText for agy", () => {
+  const rows = (count: number): string => Array.from({ length: count }, (_, index) => `row ${index} text`).join("\n");
+
+  test("accepts inline text, wrapped or on several lines", () => {
+    expect(composerHoldsText("agy", fixture("agy-short-inline"), "short single line probe 123")).toBe(true);
+    expect(composerHoldsText("agy", fixture("agy-inline-10-lines"), rows(10))).toBe(true);
+    expect(composerHoldsText("agy", fixture("agy-inline-10-lines"), rows(11))).toBe(false);
+  });
+
+  test("accepts the collapsed multi-line paste only when its line count matches", () => {
+    const prompt = fixture("prompt-agy-40-lines");
+    expect(prompt.endsWith("\n")).toBe(true);
+    expect(composerHoldsText("agy", fixture("agy-pasted-40-lines"), prompt)).toBe(true);
+    expect(composerHoldsText("agy", fixture("agy-pasted-40-lines"), prompt.split("\n").slice(0, 39).join("\n"))).toBe(false);
+  });
+
+  test("accepts the collapsed one-line paste only when its character count matches", () => {
+    expect(composerHoldsText("agy", fixture("agy-pasted-1001-chars"), "z".repeat(1001))).toBe(true);
+    expect(composerHoldsText("agy", fixture("agy-pasted-1001-chars"), "z".repeat(1000))).toBe(false);
+  });
+
+  test("never mistakes an empty composer for a delivered prompt", () => {
+    expect(composerHoldsText("agy", fixture("agy-idle"), "short single line probe 123")).toBe(false);
+  });
+
+  test("proves the whole composer payload, not just a mention on screen", () => {
+    expect(composerExactlyHoldsText("agy", fixture("agy-pasted-40-lines"), fixture("prompt-agy-40-lines"))).toBe(true);
+    expect(composerExactlyHoldsText("agy", fixture("agy-pasted-1001-chars"), "z".repeat(1001))).toBe(true);
+    expect(composerExactlyHoldsText("agy", fixture("agy-short-inline"), "short single line probe")).toBe(false);
   });
 });

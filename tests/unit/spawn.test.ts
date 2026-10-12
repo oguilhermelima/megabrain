@@ -2,6 +2,7 @@ import { guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { defaultResolveWorktree, executeSpawn, markRunningIfSpawning, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
@@ -1341,6 +1342,43 @@ describe("executeSpawn", () => {
       ]);
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
       expect(captureCalls).toBeGreaterThan(1);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an agy child logs to a per-dispatch file the context meter reads", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-agy-log-`);
+    const dispatchId = "dispatch-agy-log";
+    const idleCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-idle.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+    const idle = idleCapture.result.terminal.tail.join("\n");
+    const commands: string[] = [];
+    const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
+        else commands.push(text);
+        return ok(undefined);
+      },
+      sendKey: async () => ok(undefined),
+      capturePane: async () => ok(idle),
+    };
+    registerTmux(withComposer(fake, "codex"));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "agy", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      const logFile = join(root, "agy-logs", `${dispatchId}.log`);
+      expect(commands.join("\n")).toContain(`--log-file '${logFile}'`);
+      expect(readMeta(root, dispatchId)).toMatchObject({ agyLogFile: logFile });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
