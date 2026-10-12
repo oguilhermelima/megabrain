@@ -38,6 +38,13 @@ export const USAGE_LINES = {
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
   "supervise": "supervise [--status|--stop]",
   "resources": "resources [--json|--all] | enable|disable|status",
+  "proc": "proc start|list|status|stop|restart|logs ...",
+  "proc-start": "proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--json] -- <command and arguments>",
+  "proc-list": "proc list [--json]",
+  "proc-status": "proc status <name> [--json] [--force]",
+  "proc-stop": "proc stop <name> [--force]",
+  "proc-restart": "proc restart <name> [--force]",
+  "proc-logs": "proc logs <name> [--tail N] [--since 5m|ISO] [--grep <regex>] [--errors] [--full] [--follow] [--json]",
   "orchestrate-close": "orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]",
   "ask": "ask \"question\" | megabrain ask --text \"question\"",
   "done": "done \"summary\" | megabrain done --text \"summary\"",
@@ -169,6 +176,7 @@ Commands:
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
   resources [--json|--all]               Measure machine and open-dispatch resources
+  proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
   chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
