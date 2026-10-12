@@ -147,13 +147,13 @@ describe("Grok session updates", () => {
     const process: ProcessAdapter = {
       async run(command, args) {
         if (command !== "ps" || args.join(" ") !== "-ax -o pid=,ppid=,command=") return failed("unexpected command");
-        return ok({ stdout: "100 1 zsh\n102 100 /Users/test/.grok/bin/grok\n203 1 /Users/test/.grok/bin/grok\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "100 1 zsh\n102 100 /Users/test/.grok/bin/grok\n203 1 /Users/test/.grok/bin/grok\n300 1 zsh\n", stderr: "", exitCode: 0 });
       },
       async startDetached() { return failed("not used"); },
       invocationCount() { return 1; },
     };
     expect(await resolveGrokSessionId(home, "100", cwd, process)).toBe(sessionId);
-    expect(await resolveGrokSessionId(home, "203", cwd, process)).toBeUndefined();
+    expect(await resolveGrokSessionId(home, "300", cwd, process)).toBeUndefined();
     expect(await resolveGrokSessionId(home, "100", "/other", process)).toBeUndefined();
   });
 
