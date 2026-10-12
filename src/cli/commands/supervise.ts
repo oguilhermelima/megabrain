@@ -231,7 +231,7 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   return blocked.cause === "dialog-waiting" ? blocked : { cause: "unknown" };
 }
 
-async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
+export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
   const openDispatches = listed.value.filter((record) => ["spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
