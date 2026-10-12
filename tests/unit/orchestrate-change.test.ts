@@ -9,10 +9,20 @@ import { createDispatch, getDispatch, listMessages, listOutbox, listDeliveries }
 import { getTmux, registerTmux, unregisterTmux } from "../../src/hosts/tmux.js";
 import { getHost, registerHost } from "../../src/hosts/index.js";
 import type { HostProvider } from "../../src/hosts/types.js";
+import { executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
 
 type JsonRecord = Record<string, unknown>;
 
 const codexIdle = "› Ask Codex to do anything";
+// Real Codex paints the empty-composer placeholder dim (SGR 2); frame measured 2026-10-11 after an interrupt.
+const interruptedCodex = [
+  "\x1b[2m■ Conversation interrupted - use /feedback if something went wrong\x1b[0m",
+  "                                       ⚠ 5h limit: 11% left · resets at 18:49 · /status",
+  "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m",
+  "",
+  "  GPT-6-Luna high · Context 68% left · weekly 59% left · 5h 11% left",
+  "  ? for shortcuts                                              ⚠ 3 warnings · f2 to view",
+].join("\n");
 const codexWorking = "• Working (1s • esc to interrupt)";
 const direction = "Use the existing parser, preserve the current behavior, and update the docs.";
 const formatted = `🔀 codex · megabrain/main new direction\nStop the approach you were on and follow this instead:\n${direction}\n(The same text is available with megabrain check.)`;
@@ -281,6 +291,40 @@ describe("orchestrate change delivery", () => {
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, confirmed: false });
     } finally {
       harness.restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("types the direction after an interrupted Codex frame with a dim placeholder", async () => {
+    const root = await tempStateDir();
+    const harness = installTmux({ initialComposer: interruptedCodex });
+    try {
+      await writeDispatch(root);
+      const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: true, delivered: true });
+      expect(harness.events).toEqual(["key:Escape", `text:${formatted}`, "key:Tab"]);
+    } finally {
+      harness.restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("stop and the idle proof agree: the interrupted frame is idle, a Working frame is busy", async () => {
+    const root = await tempStateDir();
+    let frame = interruptedCodex;
+    const original = getTmux();
+    registerTmux({ ...original, sessionExists: async () => ok(true), panesForSession: async () => ok(["%2"]), panePid: async () => ok("999"), capturePane: async () => ok(frame), sendKey: async () => ok(undefined) });
+    try {
+      await writeDispatch(root);
+      const idle = await executeOrchestrateStop(["change", "--json"], environment(root), processAdapter());
+      expect(idle.kind).toBe("failed");
+      expect(idle.kind === "failed" ? idle.error : "").toContain("empty Codex composer");
+      frame = `${codexWorking}\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m`;
+      const busy = await executeOrchestrateStop(["change", "--json"], environment(root), processAdapter());
+      expect(busy.kind).toBe("ok");
+    } finally {
+      registerTmux(original);
       await rm(root, { recursive: true, force: true });
     }
   });
