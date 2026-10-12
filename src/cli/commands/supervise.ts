@@ -6,7 +6,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { acquireSupervisorLease, agyLogRecord, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
@@ -56,10 +56,30 @@ function readLatestLine<T>(path: string): Promise<T | undefined> {
   })();
 }
 
+// glog lines carry no year: read them as this year unless that lands in the future.
+async function agyRecord(logFile: string | undefined): Promise<unknown> {
+  if (logFile === undefined) return undefined;
+  let file;
+  try {
+    file = await open(logFile, "r");
+    const info = await file.stat();
+    const start = Math.max(0, info.size - 1024 * 1024);
+    const buffer = Buffer.alloc(info.size - start);
+    await file.read(buffer, 0, buffer.length, start);
+    const text = buffer.toString("utf8");
+    const year = new Date().getFullYear();
+    const record = agyLogRecord(text, year);
+    const at = typeof record?.timestamp === "string" ? Date.parse(record.timestamp) : NaN;
+    return Number.isFinite(at) && at > Date.now() + 86_400_000 ? agyLogRecord(text, year - 1) : record;
+  } catch { return undefined; }
+  finally { await file?.close(); }
+}
+
 async function agentRecord(meta: RecordValue, environment: Environment): Promise<unknown> {
   const home = environment.HOME;
   if (home === undefined) return undefined;
   const agent = string(meta.agent);
+  if (agent === "agy") return agyRecord(string(meta.agyLogFile));
   const path = agent === "codex" && string(meta.agentThreadId) !== undefined
     ? await findCodexRollout(home, string(meta.agentThreadId) as string)
     : agent === "claude" && string(meta.agentSessionId) !== undefined

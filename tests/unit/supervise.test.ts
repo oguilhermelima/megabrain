@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { backgroundTasks, classifyRecordedError, classifySupervision, recommendationFor } from "../../src/core/supervise.js";
+import { agyLogRecord, backgroundTasks, classifyRecordedError, classifySupervision, recommendationFor } from "../../src/core/supervise.js";
 
 const now = Date.parse("2026-10-11T12:03:00.000Z");
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(resolve(import.meta.dir, "../fixtures/supervise", name), "utf8")) as Record<string, unknown>;
@@ -91,5 +91,30 @@ describe("background task detection", () => {
     expect(backgroundTasks("✻ Brewed for 9m 47s\n❯ \n⏵⏵ bypass permissions on · ← 3 agents")).toBeUndefined();
     expect(backgroundTasks("the shell script exited; run the monitor later")).toBeUndefined();
     expect(backgroundTasks("")).toBeUndefined();
+  });
+});
+
+// Antigravity CLI writes provider failures to its --log-file as glog lines, which carry no year;
+// the fixtures are real lines from 2026-10-11 with ids redacted.
+describe("agy recorded errors", () => {
+  const log = (name: string): string => readFileSync(new URL(`../fixtures/supervise/${name}`, import.meta.url), "utf8");
+  const after = Date.parse("2026-10-11T14:10:00");
+
+  test("reads the quota refusal as a usage limit with its reset", () => {
+    const record = agyLogRecord(log("agy-usage-limit.log"), 2026);
+    expect(classifyRecordedError("agy", record, { now: after })).toMatchObject({ cause: "usage-limit", resetAt: "in 44m24s" });
+  });
+
+  test("reads a failed request as a network error", () => {
+    expect(classifyRecordedError("agy", agyLogRecord(log("agy-network.log"), 2026), { now: after })).toMatchObject({ cause: "network" });
+  });
+
+  test("a background cache failure is not the agent's error, and a later message means it moved on", () => {
+    expect(agyLogRecord(log("agy-usage-limit.log").split("\n")[0] ?? "", 2026)).toBeUndefined();
+    expect(classifyRecordedError("agy", agyLogRecord(log("agy-recovered.log"), 2026), { now: after })).toMatchObject({ cause: "unknown" });
+  });
+
+  test("dates the line in local time in the given year", () => {
+    expect(agyLogRecord(log("agy-usage-limit.log"), 2026)).toMatchObject({ timestamp: new Date(2026, 9, 11, 14, 6, 4, 65).toISOString() });
   });
 });

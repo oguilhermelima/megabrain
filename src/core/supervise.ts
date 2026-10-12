@@ -107,13 +107,35 @@ function codexText(record: Record<string, unknown>): string | undefined {
 function recordedText(agent: string, value: unknown): string | undefined {
   const record = object(value);
   if (record === undefined) return undefined;
+  if (agent === "agy") return typeof record.agyError === "string" ? record.agyError : undefined;
   return agent === "codex" ? codexText(record) : agent === "claude" ? claudeText(record) : undefined;
+}
+
+// Antigravity has no structured error record of its own; its --log-file (glog: "E1011 14:06:04.065124
+// <tid> errorreport.go:224] agent executor error: ...") is where a failed turn shows. The latest
+// executor error or new user message decides: an error after the last message is unresolved.
+const AGY_LOG_LINE = /^([EWI])(\d{2})(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{1,6})\s+\d+\s+\S+\] (.*)$/;
+
+export function agyLogRecord(text: string, year: number): Record<string, unknown> | undefined {
+  for (const line of text.split(/\r?\n/).reverse()) {
+    const match = AGY_LOG_LINE.exec(line);
+    if (match === null) continue;
+    const message = match[8] ?? "";
+    const executorError = /^agent executor error: (.*)$/.exec(message);
+    if (executorError === null && !/^Forwarding user message to conversation /.test(message)) continue;
+    const [month, day, hour, minute, second] = [match[2], match[3], match[4], match[5], match[6]].map(Number);
+    const millis = Math.floor(Number(`0.${match[7] ?? "0"}`) * 1000);
+    const timestamp = new Date(year, (month ?? 1) - 1, day, hour, minute, second, millis).toISOString();
+    return executorError === null ? { timestamp } : { timestamp, agyError: executorError[1] };
+  }
+  return undefined;
 }
 
 function resetTime(text: string): string | undefined {
   const patterns = [
     /(?:try again|reset(?:s)?)(?: at| after)?\s+(\d{1,2}:\d{2}(?:\s*(?:AM|PM))?)/i,
     /(?:try again|reset(?:s)?)(?: at| after)?\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
+    /resets? (in (?:\d+h)?(?:\d+m)?(?:\d+s)?)\b/i,
     /(?:try again|reset(?:s)?)(?: at| after)?\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[^.,\n]{0,30})/i,
   ];
   for (const pattern of patterns) {
@@ -128,7 +150,9 @@ function classifyErrorText(text: string): SupervisionFinding {
   // messages: usage: "You hit your free usage limit."; rate: "You've hit the rate limit for your
   // plan."; server: "Service unavailable"; network: "Session recovery timed out; the server may
   // have processed the POST"; auth: "Auth error: Auth required".
-  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit|usage limit reached)/i.test(text)) {
+  // Antigravity CLI 1.3.3 logs a spent quota as "RESOURCE_EXHAUSTED (code 429): Individual quota
+  // reached. ... Resets in 44m24s." (tests/fixtures/supervise/agy-usage-limit.log).
+  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit|usage limit reached|individual quota reached)/i.test(text)) {
     return { cause: "usage-limit", resetAt: resetTime(text) ?? "unknown reset time", errorText: "usage limit" };
   }
   const codeMatch = /(?:API Error:\s*|unexpected status\s+|\b)(429|5\d\d|401|403)\b/i.exec(text);
@@ -140,7 +164,7 @@ function classifyErrorText(text: string): SupervisionFinding {
   if ((code !== undefined && Number(code) >= 500) || /overloaded_error|overloaded|internal server error|\bservice unavailable\b|\bserver error\b|something went wrong on our side/i.test(text)) {
     return { cause: "server-error", ...(code === undefined ? {} : { errorCode: code }), errorText: text.slice(0, 200) };
   }
-  if (/(?:request timed out|timed out waiting|session recovery timed out|connection error|stream disconnected|http_connection_failed)/i.test(text)) {
+  if (/(?:request timed out|timed out waiting|session recovery timed out|connection error|stream disconnected|http_connection_failed|request failed: \w+ "[^"]*": (?:read|dial) tcp)/i.test(text)) {
     const errorCode = /timed out/i.test(text) ? "timeout" : /stream disconnected/i.test(text) ? "stream disconnected" : "connection error";
     return { cause: "network", errorCode, errorText: text.slice(0, 200) };
   }
