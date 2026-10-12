@@ -318,6 +318,31 @@ machine's total memory are refused. Cost uses recent RSS history for the agent, 
 2 GiB per-agent fallback when no estimate exists. The container suite limit is reserved for
 container-suite requests and does not affect agent spawns.
 
+### Managed processes
+
+`proc start` runs a command in a managed tmux session and stores timestamped, rotated output
+under the state directory. Arguments after `--` are passed directly to the program; `--shell`
+is the explicit opt-in for shell text. A name is unique within its worktree. Processes can be
+listed, inspected, stopped, and restarted by their owner; `--force` lets another caller take
+over a stop or restart. With `--port`, start refuses a port that already has a listener and
+waits up to 30 seconds for the new process to listen.
+
+```sh
+megabrain proc start --name api --worktree ~/code/api --cwd ~/code/api \
+  --port 3000 --terminal auto -- pnpm dev
+megabrain proc list --json
+megabrain proc status api
+megabrain proc logs api --tail 100
+megabrain proc logs api --since 5m --grep 'error|warning'
+megabrain proc logs api --errors --follow
+megabrain proc restart api
+megabrain proc stop api
+```
+
+Logs rotate at 10 MiB across three files. `--errors` selects common error, exception, fatal,
+panic, and stack-frame lines. A process that outlives its tmux session is treated as exited;
+the process tree is sent TERM and then KILL after a short grace period when stopped.
+
 It judges a child by what the agent recorded, never by silence: a long tool call with no output is not
 a finding. A provider error counts only when it is the last thing the agent recorded, with no newer
 progress for two minutes by the record's own timestamp, or when the agent is back at an idle prompt
