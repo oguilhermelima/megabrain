@@ -12,10 +12,11 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
-import { startDeliveryWorker } from "./delivery-worker.js";
 import { readDeliveryScreen } from "./delivery-screen.js";
+import { startDeliveryWorker } from "./delivery-worker.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 import { collectResources } from "./resources.js";
+import { notifyAdmissionStatus } from "./admission-notify.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -245,10 +246,30 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
-  const openDispatches = listed.value.filter((record) => ["spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
+  const openDispatches = listed.value.filter((record) => ["queued", "spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
   if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: false, findings: 0 };
   let findings = 0;
+  for (const queued of openDispatches.filter((record) => (record.state === "queued" || record.state === "spawning") && record.admissionQueueEntry === true)) {
+    const dispatch = queued.dispatchId;
+    const spawnArgs = Array.isArray(queued.queuedSpawnArgs) ? queued.queuedSpawnArgs.filter((value): value is string => typeof value === "string") : [];
+    const { executeSpawn } = await import("./orchestrate-spawn.js");
+    const started = await executeSpawn(spawnArgs, { ...environment, MEGABRAIN_STATE_DIR: root, MEGABRAIN_SPAWN_DISPATCH_ID: dispatch }, process);
+    const after = getDispatch(database, dispatch);
+    if (started.kind === "ok" && after.kind === "ok" && after.value !== undefined && !["queued", "failed", "closed", "done"].includes(String(after.value.state))) {
+      await notifyAdmissionStatus(root, database, dispatch, after.value as RecordValue, "started", "", process, undefined, now);
+      findings += 1;
+    } else if (after.kind === "ok" && after.value?.state === "queued") {
+      if (started.kind !== "ok") {
+        mutateDispatch(database, dispatch, (current) => current.state === "queued" ? { ...current, state: "failed", reason: started.kind === "failed" ? started.error : started.reason } : { kind: "no_change" });
+        continue;
+      }
+      break;
+    } else if (started.kind !== "ok") {
+      mutateDispatch(database, dispatch, (current) => current.state === "spawning" ? { ...current, state: "failed", processState: "failed", reason: started.kind === "failed" ? started.error : started.reason } : { kind: "no_change" });
+    }
+  }
   for (const item of openDispatches) {
+    if (item.state === "queued" || item.admissionQueueEntry === true) continue;
     const dispatch = string(item.dispatchId);
     if (dispatch === undefined) continue;
     const current = getDispatch(database, dispatch);

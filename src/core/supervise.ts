@@ -60,7 +60,7 @@ export function isLiveProcessState(stat: string): boolean {
 }
 
 export function hasOpenDispatches(states: readonly string[]): boolean {
-  return states.some((state) => state === "spawning" || state === "running" || state === "waiting_for_reply" || state === "orphaned");
+  return states.some((state) => state === "queued" || state === "spawning" || state === "running" || state === "waiting_for_reply" || state === "orphaned");
 }
 
 export function shouldNotifyFinding(previous: PreviousFinding | undefined, finding: SupervisionFinding, _now: number): boolean {

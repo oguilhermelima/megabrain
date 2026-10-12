@@ -307,6 +307,17 @@ supervisor tick, `resources status` reports whether recording is enabled, and `r
 stops recording. Samples older than 24 hours are removed; the history supports typical RSS
 estimates by agent.
 
+Spawn admission is separately opt-in. With no admission policy, spawns keep their existing behavior.
+Set limits with `resources policy set`, for example `megabrain resources policy set --max-agents 2
+--min-available-mib 4096 --max-pressure normal`; later `set` calls preserve limits not named, and
+`none` clears one limit. `resources policy show` displays the current limits and `resources policy
+off` removes the policy. A spawn that does not fit waits in `orchestrate queue`; the supervisor
+starts it in order when the machine can admit it. `orchestrate spawn --admission fail` reports the
+same admission reason without adding a queued dispatch. Requests whose estimated cost exceeds the
+machine's total memory are refused. Cost uses recent RSS history for the agent, or a documented
+2 GiB per-agent fallback when no estimate exists. The container suite limit is reserved for
+container-suite requests and does not affect agent spawns.
+
 ### Managed processes
 
 `proc start` runs a command in a managed tmux session and stores timestamped, rotated output
