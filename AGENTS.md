@@ -40,6 +40,13 @@
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain resources [--json|--all] | enable|disable|status. — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
+- Run megabrain proc start|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.
+- Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.
+- Run megabrain proc list [--json]. — recommended when you need to list managed processes.
+- Run megabrain proc status <name> [--json] [--force]. — recommended when you need to inspect a managed process.
+- Run megabrain proc stop <name> [--force]. — recommended when you need to stop a managed process.
+- Run megabrain proc restart <name> [--force]. — recommended when you need to restart a managed process.
+- Run megabrain proc logs <name> [--tail N] [--since 5m|ISO] [--grep <regex>] [--errors] [--full] [--follow] [--json]. — recommended when you need to read managed process logs.
 - Run megabrain ask "question" | megabrain ask --text "question". — recommended when you need to ask the coordinator for a decision that affects the work.
 - Run megabrain done "summary" | megabrain done --text "summary". — recommended when you need to report the completed work and what was verified to the coordinator.
 - Run megabrain received. Do this before starting work; prompt delivery depends on this receipt.

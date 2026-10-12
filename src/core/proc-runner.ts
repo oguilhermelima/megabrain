@@ -82,7 +82,8 @@ async function owns(record: ProcRecord, environment: Readonly<Record<string, str
 export async function executeProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) {
     const { usageText } = await import("./usage.js");
-    return ok(usageText(args[0] === "start" ? "proc-start" : args[0] === "logs" ? "proc-logs" : "proc"));
+    const helpKey = args[0] === "start" ? "proc-start" : args[0] === "logs" ? "proc-logs" : args[0] === "list" ? "proc-list" : args[0] === "status" ? "proc-status" : args[0] === "stop" ? "proc-stop" : args[0] === "restart" ? "proc-restart" : "proc";
+    return ok(usageText(helpKey));
   }
   const [verb, ...rest] = args;
   if (verb === "start") return startProc(rest, environment, process);

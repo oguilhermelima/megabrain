@@ -44,7 +44,7 @@ export const USAGE_LINES = {
   "proc-status": "proc status <name> [--json] [--force]",
   "proc-stop": "proc stop <name> [--force]",
   "proc-restart": "proc restart <name> [--force]",
-  "proc-logs": "proc logs <name> [--tail N] [--since 5m|ISO] [--grep <regex>] [--errors] [--full] [--follow]",
+  "proc-logs": "proc logs <name> [--tail N] [--since 5m|ISO] [--grep <regex>] [--errors] [--full] [--follow] [--json]",
   "orchestrate-close": "orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]",
   "ask": "ask \"question\" | megabrain ask --text \"question\"",
   "done": "done \"summary\" | megabrain done --text \"summary\"",
