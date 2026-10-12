@@ -7,6 +7,7 @@ import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
+import type { DatabaseHandle } from "../../db/db.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
@@ -17,7 +18,7 @@ import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, verify
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
@@ -400,6 +401,20 @@ async function stableTmuxSessionId(session: string, process: ProcessAdapter): Pr
   const result = await process.run("tmux", ["display-message", "-p", "-t", session, "#{session_id}"]);
   const id = result.kind === "ok" ? result.value.stdout.trim() : "";
   return /^\$\d+$/.test(id) ? id : null;
+}
+
+async function removeStaleStableSession(handle: DatabaseHandle, session: string, stableSessionId: string, process: ProcessAdapter): Promise<Result<void>> {
+  const indexed = getTmuxSessionByStableId(handle, stableSessionId);
+  if (indexed.kind !== "ok") return indexed;
+  const priorSession = stringValue(indexed.value?.tmuxSession);
+  if (priorSession === "" || priorSession === session) return ok(undefined);
+
+  const live = await process.run("tmux", ["display-message", "-p", "-t", priorSession, "#{session_id}"]);
+  if (live.kind === "ok" && live.value.stdout.trim() === stableSessionId) return ok(undefined);
+  if (live.kind !== "ok" && !/can't find session|session not found|no such session/i.test(live.error)) return ok(undefined);
+
+  const removed = deleteTmuxSession(handle, priorSession);
+  return removed.kind === "ok" ? ok(undefined) : removed;
 }
 
 async function existingTmuxSessionForWorktree(root: string, worktreePath: string, process: ProcessAdapter): Promise<TmuxWorktreeSession | undefined> {
@@ -857,6 +872,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     if (registry.kind !== "ok") return failed(registry.error, registry.exitCode);
     const priorSession = getTmuxSession(registry.value, session);
     if (priorSession.kind !== "ok") return failed(priorSession.error, priorSession.exitCode);
+    if (sessionId !== null) {
+      const stale = await removeStaleStableSession(registry.value, session, sessionId, process);
+      if (stale.kind !== "ok") return failed(stale.error, stale.exitCode);
+    }
     const savedSession = putTmuxSession(registry.value, {
       ...(priorSession.value ?? {}),
       tmuxSession: session,
