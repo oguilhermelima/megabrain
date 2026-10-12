@@ -51,7 +51,7 @@ export MEGABRAIN_SUPERVISE_INTERVAL_SECONDS=1
 "$binary" supervise >/dev/null
 kill "$agent_pid"
 
-deadline=$((SECONDS + 120))
+deadline=$((SECONDS + 45))
 while [ "$SECONDS" -lt "$deadline" ]; do
   message="$("$binary" db show supervise-killed-agent --json)"
   if jq -e '.messages[] | select(.type == "supervise" and (.text | contains("process-exited")))' <<<"$message" >/dev/null; then
@@ -61,5 +61,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   sleep 0.5
 done
 "$binary" supervise --status >&2 || true
-jq '{state, superviseLastCheck, superviseFinding, messages: [.messages[]? | {type, text}]}' <<<"$message" >&2 || true
+printf '%s\n' "$message" >&2
+printf 'agent pid %s: %s\n' "$agent_pid" "$(ps -p "$agent_pid" -o stat= 2>&1 || echo gone)" >&2
+"$tmux_bin" -L "$socket" list-panes -a -F '#{pane_id} dead=#{pane_dead} pid=#{pane_pid}' >&2 || true
 fail 'supervisor did not report the killed stand-in agent'
