@@ -37,7 +37,7 @@ This audit compares megabrain's four registered agents: Claude Code, Codex, Grok
 ## Evidence notes
 
 - Read-only installed CLI checks were `claude --help`, `codex --help`, `grok --help`, `agy --help`, and `codex features` help. No agent session was started. The help confirms model and effort flags for all four CLIs; megabrain currently omits Agy's effort flag when building its launch command.
-- For command rewriting, Codex, Grok, and Agy evidence comes from strings and embedded documentation in their installed binaries (versions observed: Codex 0.162.1 and Grok 1.0.50; Agy help did not print a version). Claude's `PreToolUse.updatedInput` is operator-provided and corroborated by installed hook implementation source. These are CLI contracts; megabrain does not currently expose a shared rewrite hook.
+- For command rewriting, Codex, Grok, and Agy evidence comes from strings and embedded documentation in their installed binaries (versions observed: Codex 0.162.1 and Grok 1.0.50; Agy help did not print a version). Claude's `PreToolUse.updatedInput` is operator-provided and corroborated by installed hook implementation source. These are CLI contracts; megabrain uses them in the opt-in `resource-hooks` module (`megabrain hook pre-tool`).
 - Shared behavior is attributed only where the shared path accepts the agent identity or hook. Host providers can impose limits: stop cannot be guaranteed when a host has no interrupt capability (`src/cli/commands/orchestrate-stop-reconcile.ts:142-155`).
 - `install --agents` accepts `claude,codex,agy` or `none` (`src/cli/commands/install-machine.ts:35,62`); this differs from the four-agent orchestration-hook installer.
 
@@ -47,6 +47,6 @@ This audit compares megabrain's four registered agents: Claude Code, Codex, Grok
 2. **Grok and Agy lack native parent-session identity fallbacks.** A coordinator needs a host terminal or tmux identity for parent notices.
 3. **Grok has no chain usage headroom integration; Agy has no structured supervise classification.** Chain gating excludes Grok, and Agy failures are less diagnosable.
 4. **Only Claude and Codex have structured supervisor error readers.** Grok classification depends on visible text and may miss errors absent from the captured pane.
-5. **Megabrain has no shared command-rewrite hook despite all four installed CLIs exposing one.** A resource governor would need agent-specific response formats: Claude/Codex/Grok `updatedInput` versus Agy `overwrite`.
+5. **Closed (2026-10-12):** the opt-in `resource-hooks` module installs one command-rewrite hook for all four CLIs, answering Claude/Codex/Grok with `updatedInput` and Agy with `overwrite`. Only the output shape is verified from each CLI's own documentation and Orca's working Agy hook; no live agent run has exercised it yet.
 
 This is an implementation audit, not a claim that vendor CLIs have identical capabilities. The matrix records megabrain's current integration and labels evidence limits.
