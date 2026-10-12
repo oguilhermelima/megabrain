@@ -76,7 +76,7 @@ async function orcaScreen(composer: (read: number) => string): Promise<(read: nu
   };
 }
 
-async function orcaRun(composer: (read: number) => string, env: Record<string, string>, deadlineMs: number) {
+async function orcaRun(composer: (read: number, pasted: boolean) => string, env: Record<string, string>, deadlineMs: number, host = "orca") {
   const root = await mkdtemp(join(tmpdir(), "delivery-ghost-"));
   const session = JSON.parse(await readFile(sessionShape, "utf8")) as Record<string, unknown>;
   session.pid = 41414;
@@ -84,20 +84,26 @@ async function orcaRun(composer: (read: number) => string, env: Record<string, s
   await writeFile(join(root, ".claude", "sessions", "41414.json"), JSON.stringify(session));
   const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
   if (db.kind !== "ok") throw new Error(db.error);
-  const meta = { agent: "claude", agentPid: 1, agentSessionId: "child", parentAgent: "claude", parentAgentPid: 41414, parentAgentSessionId: session.sessionId, parentHost: "orca", parentTerminalId: "parent-terminal" };
+  const meta = { agent: "claude", agentPid: 1, agentSessionId: "child", parentAgent: "claude", parentAgentPid: 41414, parentAgentSessionId: session.sessionId, parentHost: host, parentWorkspaceId: "workspace", parentTerminalId: "parent-terminal" };
   createDispatch(db.value, { dispatchId: "d-ghost", state: "running", ...meta });
   appendMessage(db.value, "d-ghost", { from: "child", type: "done", text: "finished" }, {
-    outbox: { id: "ob-ghost", targetKind: "parent-pointer", target: "orca:parent-terminal", payload: { dispatchId: "d-ghost", sequence: 1, meta, pointer: "megabrain check", fullMessage: "✅ test finished" } },
+      outbox: { id: "ob-ghost", targetKind: "parent-pointer", target: `${host}:parent-terminal`, payload: { dispatchId: "d-ghost", sequence: 1, meta, pointer: "megabrain check", fullMessage: "✅ test finished" } },
   });
   createDelivery(db.value, { id: "dl-ghost", dispatchId: "d-ghost", messageSeqs: [1], status: "outstanding" });
-  const screens = await orcaScreen(composer);
+  let pasted = false;
+  const screens = await orcaScreen((read) => composer(read, pasted));
   let reads = 0;
   const sends: string[] = [];
   const process: ProcessAdapter = {
     async run(command, args) {
       if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "parent-terminal" }] }), stderr: "", exitCode: 0 });
       if (command === "orca" && args[1] === "read") { reads += 1; return ok<ProcessOutput>({ stdout: screens(reads), stderr: "", exitCode: 0 }); }
-      if (command === "orca" && args[1] === "send") { sends.push(args.join(" ")); return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 }); }
+      if (command === "orca" && args[1] === "send") {
+        sends.push(args.join(" "));
+        const textIndex = args.indexOf("--text");
+        if (textIndex >= 0 && args[textIndex + 1] !== "") pasted = true;
+        return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 });
+      }
       return failed(`unexpected ${command} ${args.join(" ")}`);
     },
     async startDetached() { return failed("not used"); },
@@ -115,15 +121,35 @@ async function orcaRun(composer: (read: number) => string, env: Record<string, s
 }
 
 describe("composer text on Orca, where ghost and typed text look the same", () => {
-  test("a line that stays byte-identical while idle is assumed to be a ghost and delivered", async () => {
-    const run = await orcaRun(() => "write the test file", { MEGABRAIN_GHOST_STATIC_MS: "300" }, 8000);
-    expect(run.sends).toHaveLength(1);
-    expect(run.log.at(-1)).toMatchObject({ decision: "send", reason: "ghost-assumed-static" });
+  test("a human draft that stays unchanged for five minutes is never submitted", async () => {
+    const run = await orcaRun(() => "write the test file", { MEGABRAIN_GHOST_STATIC_MS: "1" }, 1500);
+    expect(run.sends).toHaveLength(0);
+    expect(run.outbox[0]).toMatchObject({ status: "failed", detail: "composer-occupied" });
+    expect(run.deliveries[0]?.status).not.toBe("acknowledged");
   });
 
   test("a line that keeps changing is someone typing and is never overwritten", async () => {
     const run = await orcaRun((read) => `write the test fi${read}`, { MEGABRAIN_GHOST_STATIC_MS: "300" }, 2500);
     expect(run.sends).toHaveLength(0);
+  });
+
+  test("does not submit if a person adds text during the delivery paste", async () => {
+    const run = await orcaRun((_read, pasted) => pasted ? "✅ test finished plus human text" : "", {}, 1500);
+    expect(run.sends.some((send) => send.includes("--enter"))).toBe(false);
+    expect(run.outbox[0]).toMatchObject({ status: "failed", detail: "composer-race" });
+  });
+
+  test("submits only after the composer exactly matches the delivered notice", async () => {
+    const run = await orcaRun((_read, pasted) => pasted ? "✅ test finished" : "", {}, 1500);
+    expect(run.sends.filter((send) => send.includes("--enter"))).toHaveLength(1);
+    expect(run.sends.some((send) => send.includes("--text") && !send.includes("--enter"))).toBe(true);
+  });
+
+  test("holds Superset delivery when submit cannot be verified", async () => {
+    const run = await orcaRun(() => "", {}, 1500, "superset");
+    expect(run.sends).toHaveLength(0);
+    expect(run.outbox[0]).toMatchObject({ status: "suppressed", detail: "superset-unverifiable-composer" });
+    expect(run.deliveries[0]).toMatchObject({ transport: "deferred" });
   });
 
   test("a draft that outlasts the deadline fails as composer-occupied and stays unread", async () => {
