@@ -1,3 +1,4 @@
+import { stableAncestorIdentity } from "../../adapters/ancestor.js";
 import { readdir, realpath } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -79,19 +80,18 @@ export async function resolveCaller(environment: QueueEnvironment, processAdapte
   const tmuxSessionName = needsTmuxProbe ? await tmuxSessionNameFor(fields.tmuxPane as string, processAdapter) : undefined;
   const identity = resolveCallerIdentity(fields, { tmuxSessionName });
   if (identity.id !== "" || identity.host !== "local" || needsTmuxProbe) return identity;
-  return resolveCallerIdentity(fields, { tmuxSessionName, shellIdentity: await shellIdentityFor(processAdapter) });
+  return resolveCallerIdentity(fields, { tmuxSessionName, shellIdentity: await localIdentityFor(processAdapter) });
 }
 
-// A caller with no agent session and no terminal is a person at a plain shell. Its stable identity
-// is the controlling tty of the shell that ran this command: the pid changes with every pipeline
-// or subshell, the tty does not, so `spawn` in one command and `watch` in the next own the same
-// dispatches. No tty (cron, ssh without one) falls back to the shell pid, which still holds for
-// the life of that shell.
-async function shellIdentityFor(processAdapter: ProcessAdapter): Promise<string> {
-  const shellPid = process.ppid;
-  const result = await processAdapter.run("ps", ["-o", "tty=", "-p", String(shellPid)]);
+// A caller with no agent session, no explicit id and no terminal is identified by the nearest
+// stable ancestor process (see adapters/ancestor.ts), then by the controlling tty of its parent
+// shell. With neither it has no identity and the verb refuses.
+async function localIdentityFor(processAdapter: ProcessAdapter): Promise<string> {
+  const ancestor = await stableAncestorIdentity(process.ppid, processAdapter);
+  if (ancestor !== undefined) return ancestor;
+  const result = await processAdapter.run("ps", ["-o", "tty=", "-p", String(process.ppid)]);
   const tty = result.kind === "ok" ? result.value.stdout.trim() : "";
-  return /^[A-Za-z0-9/]+$/.test(tty) && !/^\?+$/.test(tty) ? `shell:${tty.replace(/\//g, "-")}` : `shell:pid${shellPid}`;
+  return /^[A-Za-z0-9/]+$/.test(tty) && !/^\?+$/.test(tty) ? `shell:${tty.replace(/\//g, "-")}` : "";
 }
 
 // The child's own identity, for matching against the dispatch record spawn wrote for it
@@ -163,7 +163,7 @@ function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boo
 
 export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
   const current = await session(environment, processAdapter);
-  if (current === undefined) return failed("this command cannot tell who is running it: no agent session and no shell were found");
+  if (current === undefined) return failed("this command cannot tell who is running it: no agent session and no shell were found; set MEGABRAIN_SESSION_ID to name this caller");
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
   if (database.kind !== "ok") return database;
   const direct = environment.MEGABRAIN_DISPATCH_ID;

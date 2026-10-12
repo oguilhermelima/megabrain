@@ -96,10 +96,10 @@ describe("the resolver gives a caller with no terminal host the host local", () 
     expect(caller).toMatchObject({ id: `shell:${shellTty}`, host: "local" });
   });
 
-  test("resolveCaller falls back to the shell pid when the shell has no tty", async () => {
+  test("resolveCaller names no caller when there is no stable ancestor and no tty", async () => {
     const caller = await resolveCaller({}, fakeProcess((command) => command === "ps" ? ok({ stdout: "??\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 })));
     expect(caller.host).toBe("local");
-    expect(caller.id).toMatch(/^shell:pid[0-9]+$/);
+    expect(caller.id).toBe("");
   });
 
   test("a local caller owns its own local dispatch and nobody else's", () => {
