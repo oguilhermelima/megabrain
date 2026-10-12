@@ -5,9 +5,9 @@ import { dirname, join, resolve } from "node:path";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { failed, ok, type Result } from "./result.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "../cli/commands/terminal-open.js";
-import { resolveCaller } from "../cli/commands/queue-write.js";
+import { awaitProcAdmission, procOwner } from "./proc-queue.js";
 
-export type ProcStart = Readonly<{ name: string; worktree: string; cwd: string; port?: number; env: Record<string, string>; terminal?: string; command: string[]; shell?: string; json: boolean }>;
+export type ProcStart = Readonly<{ name: string; worktree: string; cwd: string; port?: number; env: Record<string, string>; terminal?: string; command: string[]; shell?: string; admission?: "wait" | "fail"; json: boolean }>;
 export type ProcLogOptions = Readonly<{ tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean }>;
 export type ProcRecord = ProcStart & Readonly<{ owner: string; session: string; pid: number; startedAt: string; state: "running" | "exited"; exitCode?: number }>;
 
@@ -32,18 +32,19 @@ export function filterProcLogLines(lines: readonly string[], options: ProcLogOpt
 }
 
 export function parseProcStartArguments(args: readonly string[]): Result<ProcStart> {
-  const parsed: { name?: string; worktree?: string; cwd?: string; port?: number; env: Record<string, string>; terminal?: string; command?: string[]; shell?: string; json: boolean } = { env: {}, json: false };
+  const parsed: { name?: string; worktree?: string; cwd?: string; port?: number; env: Record<string, string>; terminal?: string; command?: string[]; shell?: string; admission?: "wait" | "fail"; json: boolean } = { env: {}, json: false };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] ?? "";
     if (arg === "--") { parsed.command = args.slice(i + 1); break; }
     if (arg === "--json") parsed.json = true;
-    else if (["--name", "--worktree", "--cwd", "--port", "--env", "--terminal", "--shell"].includes(arg)) {
+    else if (["--name", "--worktree", "--cwd", "--port", "--env", "--terminal", "--shell", "--admission"].includes(arg)) {
       const value = args[++i]; if (value === undefined || value === "" || value.startsWith("--")) return failed(`${arg} requires a value`, 2);
       if (arg === "--name") parsed.name = value;
       else if (arg === "--worktree") parsed.worktree = value;
       else if (arg === "--cwd") parsed.cwd = value;
       else if (arg === "--terminal") parsed.terminal = value;
       else if (arg === "--shell") parsed.shell = value;
+      else if (arg === "--admission") { if (value !== "wait" && value !== "fail") return failed("--admission must be wait or fail", 2); parsed.admission = value; }
       else if (arg === "--port") { const n = Number(value); if (!Number.isInteger(n) || n < 1 || n > 65535) return failed("--port must be between 1 and 65535", 2); parsed.port = n; }
       else { const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(value); if (!match?.[1] || match[2] === undefined) return failed("--env requires KEY=VALUE", 2); parsed.env[match[1]] = match[2]; }
     } else return failed(`unknown proc start option: ${arg}`, 2);
@@ -54,7 +55,7 @@ export function parseProcStartArguments(args: readonly string[]): Result<ProcSta
   if (parsed.shell !== undefined && parsed.command?.length) return failed("use either --shell or -- command, not both", 2);
   // An empty worktree means "the caller's"; startProc resolves it the same way lookups do.
   const worktree = parsed.worktree === undefined ? "" : resolve(parsed.worktree);
-  return ok({ name: parsed.name, worktree, cwd: resolve(parsed.cwd ?? parsed.worktree ?? process.cwd()), ...(parsed.port === undefined ? {} : { port: parsed.port }), env: parsed.env, ...(parsed.terminal === undefined ? {} : { terminal: parsed.terminal }), command: parsed.command ?? [], ...(parsed.shell === undefined ? {} : { shell: parsed.shell }), json: parsed.json });
+  return ok({ name: parsed.name, worktree, cwd: resolve(parsed.cwd ?? parsed.worktree ?? process.cwd()), ...(parsed.port === undefined ? {} : { port: parsed.port }), env: parsed.env, ...(parsed.terminal === undefined ? {} : { terminal: parsed.terminal }), command: parsed.command ?? [], ...(parsed.shell === undefined ? {} : { shell: parsed.shell }), ...(parsed.admission === undefined ? {} : { admission: parsed.admission }), json: parsed.json });
 }
 
 // Records are keyed by worktree, so start and every later verb must name it identically: an
@@ -66,12 +67,6 @@ async function callerWorktree(environment: Readonly<Record<string, string | unde
 }
 
 function root(environment: Readonly<Record<string, string | undefined>>): string { return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? homedir(), ".megabrain"), "procs"); }
-// The same caller identity every dispatch verb uses, so a process belongs to the session that
-// started it, not to the transient shell that ran one command.
-async function owner(environment: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter): Promise<string> {
-  const caller = await resolveCaller(environment, processAdapter);
-  return `${caller.host}/${caller.id || caller.terminalId || ""}`;
-}
 function tmuxArgs(environment: Readonly<Record<string, string | undefined>>, args: readonly string[]): string[] { const socket = environment.MEGABRAIN_TMUX_SOCKET; return [...(socket ? ["-S", socket] : []), ...args]; }
 function key(worktree: string): string { return createHash("sha256").update(worktree).digest("hex").slice(0, 16); }
 function recordPath(env: Readonly<Record<string, string | undefined>>, worktree: string, name: string): string { return join(root(env), key(worktree), `${name}.json`); }
@@ -101,7 +96,7 @@ async function portOwner(process: ProcessAdapter, port: number): Promise<string 
   const detail = row === undefined ? undefined : /users:\(\("([^\"]+)",pid=(\d+)/.exec(row);
   return detail?.[2] ? `pid ${detail[2]}${detail[1] ? ` (${detail[1]})` : ""}` : undefined;
 }
-async function owns(record: ProcRecord, environment: Readonly<Record<string, string | undefined>>, force: boolean, processAdapter: ProcessAdapter): Promise<boolean> { return force || record.owner === await owner(environment, processAdapter); }
+async function owns(record: ProcRecord, environment: Readonly<Record<string, string | undefined>>, force: boolean, processAdapter: ProcessAdapter): Promise<boolean> { return force || record.owner === await procOwner(environment, processAdapter); }
 
 export async function executeProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) {
@@ -119,7 +114,10 @@ export async function executeProc(args: readonly string[], environment: Readonly
 
 async function startProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseProcStartArguments(args); if (parsed.kind !== "ok") return parsed;
-  const spec = parsed.value.worktree === "" ? { ...parsed.value, worktree: await callerWorktree(environment, process) } : parsed.value; const path = recordPath(environment, spec.worktree, spec.name); await mkdir(dirname(path), { recursive: true });
+  const spec = parsed.value.worktree === "" ? { ...parsed.value, worktree: await callerWorktree(environment, process) } : parsed.value;
+  const admitted = await awaitProcAdmission({ name: spec.name, worktree: spec.worktree, mode: spec.admission ?? "wait" }, environment, process);
+  if (admitted.kind !== "ok") return admitted;
+  const path = recordPath(environment, spec.worktree, spec.name); await mkdir(dirname(path), { recursive: true });
   const lock = `${path}.lock`; try { await mkdir(lock); } catch { return failed(`proc ${spec.name} is being changed; try again`); }
   try {
     const old = await readRecord(path);
@@ -129,7 +127,7 @@ async function startProc(args: readonly string[], environment: Readonly<Record<s
     }
     if (spec.port !== undefined) { const taken = await portOwner(process, spec.port); if (taken) return failed(`port ${spec.port} is already in use by ${taken}`); }
     const session = sessionName({ worktree: spec.worktree, name: spec.name });
-    let record: ProcRecord = { ...spec, owner: await owner(environment, process), session, pid: 0, startedAt: new Date().toISOString(), state: "running" };
+    let record: ProcRecord = { ...spec, owner: await procOwner(environment, process), session, pid: 0, startedAt: new Date().toISOString(), state: "running" };
     await mkdir(logDir(environment, record), { recursive: true });
     const command = commandFor(record, path);
     const started = await process.run("tmux", tmuxArgs(environment, ["new-session", "-d", "-s", session, "-c", spec.cwd, command]));
