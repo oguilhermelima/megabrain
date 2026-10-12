@@ -92,6 +92,32 @@ describe("SQLite database", () => {
     });
   });
 
+  test("admission queue migration accepts queued dispatches and preserves version 11 rows", async () => {
+    await withStateDirectory(async (directory) => {
+      const current = database(directory);
+      insertDispatch(current.db, { dispatchId: "preserved-running", state: "running", parentSessionId: "parent" });
+      current.db.run("INSERT INTO messages (dispatch_id, seq, \"from\", type, text, created_at, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", ["preserved-running", 1, "child", "received", "still linked", "2026-10-12T00:00:00.000Z", "{}"]);
+      current.db.run("INSERT INTO deliveries (id, dispatch_id, message_seq, message_seqs, status, created_at, updated_at, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["preserved-delivery", "preserved-running", 1, "[1]", "outstanding", "2026-10-12T00:00:00.000Z", "2026-10-12T00:00:00.000Z", '{"recipient":"parent"}']);
+      current.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["preserved-outbox", "preserved-running", "parent-pointer", "parent", "{}", "pending", "2026-10-12T00:00:00.000Z", "2026-10-12T00:00:00.000Z"]);
+      current.close();
+      const raw = rawDatabase(directory);
+      raw.exec("DELETE FROM schema_migrations WHERE version > 11");
+      raw.close();
+
+      const migrated = database(directory);
+      try {
+        expect(getDispatch(migrated.db, "preserved-running")?.state).toBe("running");
+        expect(migrated.db.query<{ dispatch_id: string; text: string }>("SELECT dispatch_id, text FROM messages WHERE dispatch_id = 'preserved-running'").get()).toEqual({ dispatch_id: "preserved-running", text: "still linked" });
+        expect(migrated.db.query<{ dispatch_id: string }>("SELECT dispatch_id FROM deliveries WHERE id = 'preserved-delivery'").get()?.dispatch_id).toBe("preserved-running");
+        expect(migrated.db.query<{ dispatch_id: string }>("SELECT dispatch_id FROM outbox WHERE id = 'preserved-outbox'").get()?.dispatch_id).toBe("preserved-running");
+        expect(migrated.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+        insertDispatch(migrated.db, { dispatchId: "queued-spawn", state: "queued", parentSessionId: "parent", queuedSpawnArgs: ["--agent", "codex"] });
+        expect(getDispatch(migrated.db, "queued-spawn")?.state).toBe("queued");
+        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(12);
+      } finally { migrated.close(); }
+    });
+  });
+
   test("chat-name migration backfills extra.label first and branch second", async () => {
     await withStateDirectory(async (directory) => {
       const current = database(directory);
