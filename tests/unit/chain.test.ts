@@ -169,4 +169,29 @@ describe("chain command", () => {
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
+
+  test("chain limits --enable, --disable and the notice flags write usageLimits", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    const silent: ProcessAdapter = { async run() { return failed("offline"); }, async startDetached() { return failed("not used"); }, invocationCount() { return 0; } };
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory, GROK_HOME: directory };
+    const usage = () => JSON.parse(readFileSync(join(directory, "chains.json"), "utf8")).usageLimits;
+    try {
+      expect((await executeChain(["limits", "--enable", "grok,agy", "--notice-on", "--notice-interval", "600", "--json"], environment, silent)).kind).toBe("ok");
+      expect(usage()).toMatchObject({ liveProviders: ["grok", "agy"], notice: { enabled: true, intervalSeconds: 600 } });
+      expect((await executeChain(["limits", "--disable", "agy", "--notice-off"], environment, silent)).kind).toBe("ok");
+      expect(usage()).toMatchObject({ liveProviders: ["grok"], notice: { enabled: false, intervalSeconds: 600 } });
+      expect((await executeChain(["limits", "--enable", "gemini"], environment, silent))).toMatchObject({ kind: "failed" });
+      expect(usage().liveProviders).toEqual(["grok"]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test("chain limits reports grok rows", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-test-"));
+    const silent: ProcessAdapter = { async run() { return failed("offline"); }, async startDetached() { return failed("not used"); }, invocationCount() { return 0; } };
+    try {
+      const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: directory, HOME: directory, GROK_HOME: directory }, silent);
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") expect(JSON.parse(result.value).filter((row: { provider: string }) => row.provider === "grok").map((row: { window: string }) => row.window)).toEqual(["5h", "weekly"]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
 });

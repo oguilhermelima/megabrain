@@ -221,6 +221,7 @@ megabrain chain add my-chain --parent-agent codex \
   --step '{"agent":"claude","model":"claude-sonnet-5","effort":"high"}'
 megabrain chain list --json      # the steps, in order, with their selectors
 megabrain chain limits --json    # what each provider window says right now
+megabrain chain limits --enable claude,agy,grok   # allow the live readers (codex reads disk)
 megabrain chain repair <name> --step 2 --model <id> --effort high
 megabrain model list             # the registered models and reasoning levels
 ```

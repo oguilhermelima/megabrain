@@ -121,13 +121,13 @@ function untilField(step: Readonly<Record<string, unknown>>): Readonly<{ usedPer
 }
 
 function isLimitAgent(agent: string): agent is LimitAgent {
-  return agent === "codex" || agent === "claude" || agent === "agy";
+  return agent === "codex" || agent === "claude" || agent === "agy" || agent === "grok";
 }
 
-async function readStepLimit(agent: string, window: string, config: ChainConfig, environment: ChainRunEnvironment, processAdapter: ProcessAdapter, root: string): Promise<LimitReading> {
+async function readStepLimit(agent: string, model: string, window: string, config: ChainConfig, environment: ChainRunEnvironment, processAdapter: ProcessAdapter, root: string): Promise<LimitReading> {
   if (window !== "5h" && window !== "weekly") return { status: "unknown", reason: `${agent} ${window} window unknown (unsupported window)` };
   if (!isLimitAgent(agent)) return { status: "unknown", reason: `${agent} ${window} window unknown (unsupported provider)` };
-  return readLimit(agent, window as LimitWindowName, config, environment, processAdapter, root);
+  return readLimit(agent, window as LimitWindowName, config, environment, processAdapter, root, model);
 }
 
 function buildSpawnArgs(options: Readonly<{
@@ -262,7 +262,7 @@ async function walkChainSteps(
     let limitReason = "";
     let untilStatus: "current" | "unknown" | undefined;
     if (until !== undefined) {
-      const reading = await readStepLimit(agent, until.window, config, environment, processAdapter, root);
+      const reading = await readStepLimit(agent, model, until.window, config, environment, processAdapter, root);
       limitReason = reading.reason;
       untilStatus = reading.status;
       if (reading.status === "unknown") {
