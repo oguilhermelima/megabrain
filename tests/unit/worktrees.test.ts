@@ -13,7 +13,7 @@ describe("worktree registry", () => {
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      expect(latestSchemaVersion).toBe(9);
+      expect(latestSchemaVersion).toBe(10);
       expect(opened.value.db.query<{ name: string }>("PRAGMA table_info(worktrees)").all().map(({ name }) => name)).toEqual([
         "path", "repo", "repo_name", "branch", "created_at", "created_by", "purpose", "origin", "finished_at", "parent_branch",
       ]);
@@ -30,6 +30,7 @@ describe("worktree registry", () => {
     if (opened.kind !== "ok") throw new Error(opened.error);
     opened.value.db.run("INSERT INTO worktrees (path, repo, repo_name, branch, created_at, origin) VALUES (?, ?, ?, ?, ?, ?)", ["/trees/old", "/repos/app", "app", "old", "2026-01-01T00:00:00.000Z", "created"]);
     opened.value.db.run("DELETE FROM schema_migrations WHERE version > 8");
+    opened.value.db.run("DROP TABLE resource_samples");
     opened.value.db.exec("DROP INDEX IF EXISTS worktrees_repo_parent_branch; ALTER TABLE worktrees DROP COLUMN parent_branch;");
     opened.value.db.exec("PRAGMA user_version = 8");
     opened.value.close();
@@ -38,7 +39,7 @@ describe("worktree registry", () => {
     if (upgraded.kind !== "ok") throw new Error(upgraded.error);
     try {
       expect(upgraded.value.db.query<{ parent_branch: string | null }>("SELECT parent_branch FROM worktrees WHERE path = ?").get("/trees/old")).toEqual({ parent_branch: null });
-      expect(upgraded.value.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(9);
+      expect(upgraded.value.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(10);
       const backups = await (await import("node:fs/promises")).readdir(join(directory, "backups"));
       expect(backups.length).toBeGreaterThan(0);
     } finally {

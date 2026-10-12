@@ -1,4 +1,5 @@
 export { stateDatabase, transcriptPath } from "./state/shared.js";
+export { estimateTypicalRssByAgent, recordResourceSamples, resourceHistoryEnabled, setResourceHistory, type ResourceSample } from "./state/resources.js";
 export {
   archiveDispatch,
   createDispatch,

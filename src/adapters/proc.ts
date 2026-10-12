@@ -8,7 +8,7 @@ export type ProcessOutput = {
 };
 
 export type ProcessAdapter = {
-  run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<ProcessOutput>>;
+  run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number }): Promise<Result<ProcessOutput>>;
   startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>>;
   invocationCount(): number;
 };
@@ -23,7 +23,7 @@ function missingExecutable(error: unknown): boolean {
 export function createProcessAdapter(): ProcessAdapter {
   let count = 0;
 
-  async function run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<ProcessOutput>> {
+  async function run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number }): Promise<Result<ProcessOutput>> {
     count += 1;
     try {
       const child = spawn(command, [...args], {
@@ -37,10 +37,14 @@ export function createProcessAdapter(): ProcessAdapter {
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => { stdout += chunk; });
       child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+      let timedOut = false;
+      const timeout = options?.timeoutMs === undefined ? undefined : setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, options.timeoutMs);
       const exitCode = await new Promise<number>((resolve, reject) => {
         child.once("error", reject);
         child.once("close", (code) => resolve(code ?? 1));
       });
+      if (timeout !== undefined) clearTimeout(timeout);
+      if (timedOut) return failed(`${command} timed out`);
       if (exitCode !== 0) {
         return failed(stderr.trim() || `${command} exited with status ${exitCode}`, exitCode, stdout);
       }

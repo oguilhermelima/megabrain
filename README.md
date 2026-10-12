@@ -299,6 +299,14 @@ minute (`MEGABRAIN_SUPERVISE_INTERVAL_SECONDS` changes that), and it exits when 
 `megabrain supervise` starts it by hand, `--status` shows the watcher and each dispatch's last check
 and finding, and `--stop` ends it.
 
+`megabrain resources` reports memory pressure, available and total memory, swap, CPU load and
+open dispatch process trees. `--all` includes dispatches owned by other sessions and `--json`
+returns a machine-readable snapshot. Docker usage is included when the daemon is already running.
+Resource history is opt-in: `resources enable` records one sample per open dispatch on each
+supervisor tick, `resources status` reports whether recording is enabled, and `resources disable`
+stops recording. Samples older than 24 hours are removed; the history supports typical RSS
+estimates by agent.
+
 It judges a child by what the agent recorded, never by silence: a long tool call with no output is not
 a finding. A provider error counts only when it is the last thing the agent recorded, with no newer
 progress for two minutes by the record's own timestamp, or when the agent is back at an idle prompt
