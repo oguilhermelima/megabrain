@@ -400,7 +400,7 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
     const line = `${message?.type ?? "mail"} ${summary === "" ? "(no text)" : summary} — megabrain orchestrate watch ${dispatchId}`;
     const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((item) => item.dispatchId === dispatchId && item.targetKind === "parent-pointer") : [];
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
-    const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
+    const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|composer-race|superset-unverifiable-composer|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
     if (delivery.transport === "failed") {
       if (heldOutbox) {
         pending.push(line);
