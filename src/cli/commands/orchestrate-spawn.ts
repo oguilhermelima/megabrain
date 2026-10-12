@@ -233,6 +233,10 @@ function shellQuote(value: string): string {
 // CALLER_IDENTITY_ENV_VARS strips them before the launch line's own MEGABRAIN_* assignments run.
 const clearCallerIdentityEnv = `env ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")}`;
 
+export function agyLogFile(stateRoot: string, dispatchId: string): string {
+  return join(stateRoot, "agy-logs", `${dispatchId}.log`);
+}
+
 function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
   return `[megabrain dispatch: ${label}]\n\nRun megabrain received before work. Ask coordinator with megabrain ask "question"; wait with megabrain check and confirm using megabrain ack <delivery-id>. Finish with megabrain done "short outcome summary". Do not print protocol markers or continue past unanswered question. For megabrain done and ask, start with one plain-language sentence a non-technical person understands: what changed, or what you need. Use no file names, commands, or test counts in that sentence; put technical detail after it.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
@@ -878,7 +882,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const parentWorkspace = parentWorkspaceId(environment);
   const parentTmux = parentTmuxChannel(environment);
   const chatName = options.label ?? worktree.branch;
-  const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}` : agentCommand.value;
+  // Antigravity names its conversation only in its log; a per-dispatch log lets the context meter find it.
+  const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}`
+    : options.agent === "agy" ? `${agentCommand.value} --log-file ${shellQuote(agyLogFile(root, id))}`
+      : agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
 
   // Admission runs after option/worktree validation but before any terminal or agent is created.
@@ -1041,6 +1048,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const parentChatName = await coordinatorChatName(environment, process);
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, environment.CODEX_THREAD_ID, parentAgent, parentAgentSessionId, parentAgentPid);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
+  if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const existingDispatch = getDispatch(database.value, id);

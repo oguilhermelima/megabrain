@@ -13,6 +13,8 @@ export type ContextSubject = Readonly<{
   readonly agentSessionId?: string;
   readonly agentCwd?: string;
   readonly grokHome?: string;
+  /** The --log-file megabrain gave an Antigravity child; it names the conversation the child created. */
+  readonly agyLogFile?: string;
   /** Window of the launch model from the registry; outranks any inference from the transcript. */
   readonly contextWindow?: number;
 }>;
@@ -177,6 +179,26 @@ function grokMeter(tail: string, registryWindow: number | undefined): ContextMet
   return unknown;
 }
 
+// Antigravity logs "Created conversation <id>" for each conversation its session starts, and the
+// conversation's transcript records input and cached tokens on every model response.
+const AGY_CONVERSATION = /\bCreated conversation ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/g;
+
+async function agyConversation(logFile: string): Promise<string | undefined> {
+  let text: string;
+  try { text = await readFile(logFile, "utf8"); } catch { return undefined; }
+  return [...text.matchAll(AGY_CONVERSATION)].at(-1)?.[1];
+}
+
+function agyMeter(tail: string, registryWindow: number | undefined): ContextMeter {
+  for (const entry of records(tail)) {
+    if (entry.input_tokens === undefined) continue;
+    const input = count(entry.input_tokens);
+    const cached = entry.cache_read_tokens === undefined ? 0 : count(entry.cache_read_tokens);
+    return input === undefined || cached === undefined ? unknown : measured("agy transcript usage", input + cached, registryWindow);
+  }
+  return unknown;
+}
+
 /** Context in use, read from the agent's own structured session file. Anything not observed there is unknown. */
 export async function readContextMeter(subject: ContextSubject, home: string): Promise<ContextMeter> {
   if (subject.agent === "codex" && subject.agentThreadId !== undefined && subject.agentThreadId !== "") {
@@ -193,6 +215,12 @@ export async function readContextMeter(subject: ContextSubject, home: string): P
     const session = join(subject.grokHome ?? join(home, ".grok"), "sessions", encodeURIComponent(subject.agentCwd), subject.agentSessionId, "updates.jsonl");
     const tail = await readTail(session);
     return tail === undefined ? unknown : grokMeter(tail, subject.contextWindow);
+  }
+  if (subject.agent === "agy" && subject.agyLogFile !== undefined && subject.agyLogFile !== "") {
+    const conversation = await agyConversation(subject.agyLogFile);
+    if (conversation === undefined) return unknown;
+    const tail = await readTail(join(home, ".gemini", "antigravity-cli", "brain", conversation, ".system_generated", "logs", "transcript_full.jsonl"));
+    return tail === undefined ? unknown : agyMeter(tail, subject.contextWindow);
   }
   return unknown;
 }
