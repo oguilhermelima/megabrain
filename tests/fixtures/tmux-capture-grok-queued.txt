@@ -1,0 +1,23 @@
+
+  main /p/tmp/mb-grok-inspect.WxYjNv                  16K / 256K │ [Dashboard]
+
+
+     ❯ Wait for 25 seconds then reply ACK.                           5:57 AM
+                                                                               █
+                                                                               █
+                                                                               █
+
+   ⠸ Wait for 25 seconds… 14s                             18s ⇣16.8k [↓][stop]
+
+
+
+
+   ▾ Queued 1
+     #1 Queued second request.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰─────────────────────────────────────── Grok 4.7 (high) · always-approve ─╯
+
+  Enter:send now  │  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+b:send to bg
+
