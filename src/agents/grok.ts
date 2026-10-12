@@ -17,6 +17,7 @@ export const grok: Agent = {
   id: "grok",
   matchesDescriptor: (descriptor) => descriptor === "grok" || descriptor === "grok-build" || /^grok_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
+  contextSource: "grok-session",
   firstRunDialog: trustDialog,
   firstRunDialogKey: "y",
   commandLine: ({ model, effort, agentArgs }) => {

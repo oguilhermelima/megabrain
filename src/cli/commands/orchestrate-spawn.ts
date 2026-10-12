@@ -25,6 +25,8 @@ import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateCo
 import { transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
 import { startSupervisorWorker } from "./supervise.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
+import { resolveGrokSessionId } from "../../core/context-meter.js";
+import { join } from "node:path";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -971,6 +973,14 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     } else if (step === "readiness-output-validation") {
       const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process);
       if (waited.trustAnswered) await updateMeta(root, id, { trustAnswered: true }, process);
+      if (options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
+        const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
+        if (panePid.kind === "ok") {
+          const grokHome = environment.GROK_HOME ?? join(environment.HOME ?? "", ".grok");
+          const grokSessionId = await resolveGrokSessionId(environment.HOME ?? "", panePid.value.trim(), worktree.path, process, grokHome);
+          if (grokSessionId !== undefined) await updateMeta(root, id, { grokSessionId }, process);
+        }
+      }
       if (waited.result.kind !== "ok") {
         readinessError = waited.result.error;
         recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);

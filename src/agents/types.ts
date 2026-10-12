@@ -22,7 +22,7 @@ export type Agent = Readonly<{
   readonly id: string;
   readonly matchesDescriptor: (descriptor: string) => boolean;
   readonly classifyLiveness: (output: string) => Result<LivenessResult>;
-  readonly contextSource?: "codex-rollout" | "claude-transcript";
+  readonly contextSource?: "codex-rollout" | "claude-transcript" | "grok-session";
   readonly compactCommand?: string;
   readonly firstRunDialog?: RegExp;
   // Key that answers the first-run dialog; Enter when absent.
