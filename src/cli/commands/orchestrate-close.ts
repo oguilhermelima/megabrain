@@ -124,10 +124,11 @@ export async function executeOrchestrateClose(args: readonly string[], environme
         const proof = await verifyTmuxPane(pane, process, stableId === "" ? undefined : stableId);
         if (proof.kind !== "ok") return failed(`could not verify tmux pane ${pane} before close`);
         paneExists = proof.value;
-        if (!paneExists) return failed(`tmux pane ${pane} is no longer available; refusing to close dispatch ${dispatchId}`);
-        const panes = await getTmux().panesForSession(session, process);
-        if (panes.kind !== "ok") return failed(`could not verify tmux panes for session ${session} before close`);
-        paneCount = panes.value.length;
+        if (paneExists) {
+          const panes = await getTmux().panesForSession(session, process);
+          if (panes.kind !== "ok") return failed(`could not verify tmux panes for session ${session} before close`);
+          paneCount = panes.value.length;
+        }
       }
       const stableRecord = stableId === "" ? { kind: "ok" as const, value: undefined } : getTmuxSessionByStableId(database.value, stableId);
       if (stableRecord.kind !== "ok") return failed(stableRecord.error, stableRecord.exitCode);
