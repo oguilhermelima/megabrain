@@ -20,6 +20,7 @@ export type SupervisionFinding = Readonly<{
   errorCode?: string;
   errorText?: string;
   exitCode?: number;
+  paneId?: string;
   lastLines?: string;
   worktreePath?: string;
   dirtyFiles?: readonly string[];
@@ -31,10 +32,9 @@ export type RecordedErrorOptions = Readonly<{
   lastProgressAt?: number;
 }>;
 
-export type PreviousFinding = Readonly<{ cause: SupervisionCause; notifiedAt: number }>;
+export type PreviousFinding = SupervisionFinding & Readonly<{ notifiedAt: number }>;
 
 const MIN_UNRESOLVED_ERROR_MS = 2 * 60_000;
-const NOTICE_REPEAT_MS = 30 * 60_000;
 
 // Claude transcripts carry no running-state field, so background work is read from the pane: the
 // turn line ("... 1 shell, 1 monitor still running") and the footer ("... · 1 shell, 1 monitor · ← 3 agents").
@@ -63,10 +63,14 @@ export function hasOpenDispatches(states: readonly string[]): boolean {
   return states.some((state) => state === "spawning" || state === "running" || state === "waiting_for_reply" || state === "orphaned");
 }
 
-export function shouldNotifyFinding(previous: PreviousFinding | undefined, finding: SupervisionFinding, now: number): boolean {
+export function shouldNotifyFinding(previous: PreviousFinding | undefined, finding: SupervisionFinding, _now: number): boolean {
   if (finding.cause === "unknown") return false;
   if (previous === undefined || previous.cause !== finding.cause) return true;
-  return now - previous.notifiedAt >= NOTICE_REPEAT_MS;
+  return previous.resetAt !== finding.resetAt
+    || previous.errorCode !== finding.errorCode
+    || previous.errorText !== finding.errorText
+    || previous.exitCode !== finding.exitCode
+    || previous.paneId !== finding.paneId;
 }
 
 export function mayAutoRecover(finding: SupervisionFinding): boolean {

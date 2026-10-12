@@ -1,21 +1,124 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { executeSupervisorWorker } from "../../src/cli/commands/supervise.js";
-import { createDispatch } from "../../src/adapters/state-db.js";
-import { failed } from "../../src/core/result.js";
+import { executeSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
+import { appendMessage, createDispatch, listMessages } from "../../src/adapters/state-db.js";
+import { failed, ok } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { listLeases } from "../../src/adapters/state-db.js";
 import { acquireSupervisorLease, hasOpenDispatches, isLiveProcessState, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
 
+async function paneGoneFixture(dispatchId = "pane-gone") {
+  const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-finding-`);
+  const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+  const opened = openDatabase(environment);
+  if (opened.kind !== "ok") throw new Error(opened.error);
+  const created = createDispatch(opened.value, {
+    dispatchId, state: "running", runtime: "tmux", tmuxSession: "missing", tmuxPane: "%7",
+    worktreePath: "/shared/worktree", agent: "codex", terminalId: "worker", parentSessionId: "parent",
+    parentHost: "unknown", parentTerminalId: "parent-terminal", chatName: dispatchId,
+  });
+  if (created.kind !== "ok") throw new Error(created.error);
+  let dirtyFiles = " M first.ts\n";
+  const process = {
+    async run(command: string, args: readonly string[]) {
+      if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "", stderr: "", exitCode: 0 });
+      if (command === "git") return ok({ stdout: dirtyFiles, stderr: "", exitCode: 0 });
+      return failed(`unexpected process invocation: ${command} ${args.join(" ")}`);
+    },
+    async startDetached() { return ok({ pid: 123 }); },
+    invocationCount() { return 0; },
+  };
+  return {
+    directory, environment, database: opened.value, process,
+    setDirtyFiles(value: string) { dirtyFiles = value; },
+    async close() { opened.value.close(); await rm(directory, { recursive: true, force: true }); },
+  };
+}
+
+async function supervise(fixture: Awaited<ReturnType<typeof paneGoneFixture>>, now: number) {
+  return superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, now);
+}
+
+function superviseMessages(database: Parameters<typeof listMessages>[0], dispatchId: string) {
+  const messages = listMessages(database, dispatchId);
+  if (messages.kind !== "ok") throw new Error(messages.error);
+  return messages.value.filter((message) => message.type === "supervise");
+}
+
 describe("supervisor lifecycle decisions", () => {
-  test("notifies once, again after thirty minutes, or immediately when the cause changes", () => {
-    const finding = { cause: "usage-limit" as const, resetAt: "1:43 PM" };
-    expect(shouldNotifyFinding(undefined, finding, 1_000)).toBe(true);
-    expect(shouldNotifyFinding({ cause: "usage-limit", notifiedAt: 1_000 }, finding, 1_000 + 29 * 60_000)).toBe(false);
-    expect(shouldNotifyFinding({ cause: "usage-limit", notifiedAt: 1_000 }, finding, 1_000 + 30 * 60_000)).toBe(true);
-    expect(shouldNotifyFinding({ cause: "dialog-waiting", notifiedAt: 1_000 }, finding, 1_001)).toBe(true);
+  test("notifies once for stable evidence, then again only when the finding changes or recurs", () => {
+    const paneGone = { cause: "pane-gone" as const, paneId: "%7", worktreePath: "/repo", dirtyFiles: [] };
+    const previousPaneGone = { ...paneGone, notifiedAt: 1_000 };
+    expect(shouldNotifyFinding(undefined, paneGone, 1_000)).toBe(true);
+    expect(shouldNotifyFinding(previousPaneGone, paneGone, 1_000 + 3 * 60 * 60_000)).toBe(false);
+    expect(shouldNotifyFinding({ ...previousPaneGone, cause: "process-exited" }, paneGone, 1_001)).toBe(true);
+    // An unknown finding records that the dispatch recovered; a later stop starts a new notice.
+    expect(shouldNotifyFinding(undefined, paneGone, 1_001)).toBe(true);
+    const usageLimit = { cause: "usage-limit" as const, resetAt: "1:43 PM" };
+    expect(shouldNotifyFinding({ ...usageLimit, notifiedAt: 1_000 }, usageLimit, 1_000 + 3 * 60 * 60_000)).toBe(false);
+    expect(shouldNotifyFinding({ ...usageLimit, notifiedAt: 1_000 }, { ...usageLimit, resetAt: "2:10 PM" }, 1_001)).toBe(true);
     expect(shouldNotifyFinding(undefined, { cause: "unknown" }, 1_000)).toBe(false);
+  });
+
+  test("appends one pane-gone notice across three hours of checks", async () => {
+    const fixture = await paneGoneFixture();
+    try {
+      const start = 1_800_000_000_000;
+      for (let tick = 0; tick <= 6; tick += 1) await supervise(fixture, start + tick * 30 * 60_000);
+      expect(superviseMessages(fixture.database, "pane-gone")).toHaveLength(1);
+    } finally { await fixture.close(); }
+  });
+
+  test("keeps one pane-gone notice across three hours of checks and changing worktree files", async () => {
+    const fixture = await paneGoneFixture();
+    try {
+      const start = 1_800_000_000_000;
+      for (let tick = 0; tick <= 6; tick += 1) {
+        fixture.setDirtyFiles(` M file-${tick}.ts\n`);
+        await supervise(fixture, start + tick * 30 * 60_000);
+      }
+      expect(superviseMessages(fixture.database, "pane-gone")).toHaveLength(1);
+    } finally { await fixture.close(); }
+  });
+
+  test("ignores newer agent activity from another dispatch sharing the worktree", async () => {
+    const fixture = await paneGoneFixture();
+    try {
+      const start = 1_800_000_000_000;
+      await supervise(fixture, start);
+      const other = createDispatch(fixture.database, {
+        dispatchId: "other-worker", state: "running", worktreePath: "/shared/worktree", agent: "codex",
+      });
+      if (other.kind !== "ok") throw new Error(other.error);
+      const received = appendMessage(fixture.database, "other-worker", {
+        from: "child", type: "received", text: "working", createdAt: new Date(start + 60_000).toISOString(),
+      });
+      if (received.kind !== "ok") throw new Error(received.error);
+      for (let tick = 1; tick <= 6; tick += 1) await supervise(fixture, start + tick * 30 * 60_000);
+      expect(superviseMessages(fixture.database, "pane-gone")).toHaveLength(1);
+    } finally { await fixture.close(); }
+  });
+
+  test("notifies again after a newer received message from the same dispatch", async () => {
+    const fixture = await paneGoneFixture();
+    try {
+      const start = 1_800_000_000_000;
+      await supervise(fixture, start);
+      const received = appendMessage(fixture.database, "pane-gone", {
+        from: "child", type: "received", text: "recovered", createdAt: new Date(start + 60_000).toISOString(),
+      });
+      if (received.kind !== "ok") throw new Error(received.error);
+      await supervise(fixture, start + 120_000);
+      expect(superviseMessages(fixture.database, "pane-gone")).toHaveLength(2);
+    } finally { await fixture.close(); }
+  });
+
+  test("compares identity fields independent of object key order and ignores message context", () => {
+    const previous = { cause: "pane-gone" as const, paneId: "%7", notifiedAt: 1_000, worktreePath: "/old", dirtyFiles: ["old.ts"] };
+    const current = { dirtyFiles: ["new.ts"], paneId: "%7", worktreePath: "/new", cause: "pane-gone" as const };
+    expect(shouldNotifyFinding(previous, current, 2_000)).toBe(false);
+    expect(shouldNotifyFinding({ cause: "network", errorText: "timeout", errorCode: "ETIMEDOUT", notifiedAt: 1_000 }, { errorCode: "ETIMEDOUT", cause: "network", errorText: "timeout" }, 2_000)).toBe(false);
   });
 
   test("auto-recovers only an unsubmitted prompt and exits when no dispatch is open", () => {
