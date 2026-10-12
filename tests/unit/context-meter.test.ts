@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readContextMeter } from "../../src/core/context-meter.js";
+import { readContextMeter, resolveGrokSessionId } from "../../src/core/context-meter.js";
+import type { ProcessAdapter } from "../../src/adapters/proc.js";
+import { ok, failed } from "../../src/core/result.js";
 
 let home = "";
 beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "megabrain-context-meter-")); });
@@ -114,6 +116,51 @@ describe("Claude transcript", () => {
     expect(await readContextMeter({ agent: "claude", agentSessionId: session }, home)).toEqual({ status: "unknown" });
     expect(await readContextMeter({ agent: "claude" }, home)).toEqual({ status: "unknown" });
     expect(await readContextMeter({ agent: "claude", agentSessionId: "other-session" }, home)).toEqual({ status: "unknown" });
+  });
+});
+
+describe("Grok session updates", () => {
+  const cwd = "/tmp/work-tree";
+  const sessionId = "01a12f51-a1d5-7092-8591-2f5b3c981710";
+  const updates = `.grok/sessions/${encodeURIComponent(cwd)}/${sessionId}/updates.jsonl`;
+  const completed = (totalTokens: number) => ({
+    method: "_x.ai/session/update",
+    params: { update: { sessionUpdate: "turn_completed", usage: { totalTokens } } },
+  });
+
+  test("reads the latest turn_completed usage for the exact Grok session", async () => {
+    await put(updates, [completed(9000), completed(78240)]);
+    expect(await readContextMeter({ agent: "grok", agentSessionId: sessionId, agentCwd: cwd, contextWindow: 256000 }, home)).toEqual({
+      status: "known",
+      usedTokens: 78240,
+      percentUsed: 30.6,
+      sourceFrame: "grok session usage: 78240/256000 tokens",
+    });
+  });
+
+  test("requires an exact active Grok PID in the pane process tree and matching cwd", async () => {
+    await mkdir(join(home, ".grok"), { recursive: true });
+    await writeFile(join(home, ".grok", "active_sessions.json"), JSON.stringify([
+      { session_id: sessionId, pid: 102, cwd },
+      { session_id: "other", pid: 203, cwd },
+    ]));
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command !== "ps" || args.join(" ") !== "-ax -o pid=,ppid=,command=") return failed("unexpected command");
+        return ok({ stdout: "100 1 zsh\n102 100 /Users/test/.grok/bin/grok\n203 1 /Users/test/.grok/bin/grok\n", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return 1; },
+    };
+    expect(await resolveGrokSessionId(home, "100", cwd, process)).toBe(sessionId);
+    expect(await resolveGrokSessionId(home, "203", cwd, process)).toBeUndefined();
+    expect(await resolveGrokSessionId(home, "100", "/other", process)).toBeUndefined();
+  });
+
+  test("keeps Grok usage unknown without a valid completion or exact session", async () => {
+    await put(updates, [{ method: "_x.ai/session/update", params: { update: { sessionUpdate: "agent_message_chunk", usage: { totalTokens: 9000 } } } }]);
+    expect(await readContextMeter({ agent: "grok", agentSessionId: sessionId, agentCwd: cwd, contextWindow: 256000 }, home)).toEqual({ status: "unknown" });
+    expect(await readContextMeter({ agent: "grok", agentSessionId: "other", agentCwd: cwd, contextWindow: 256000 }, home)).toEqual({ status: "unknown" });
   });
 });
 
