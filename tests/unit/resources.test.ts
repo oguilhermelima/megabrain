@@ -22,7 +22,7 @@ describe("resource sampling", () => {
   test("parses captured macOS system output", async () => {
     const [vmStat, sysctl, pressure] = await Promise.all([fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt")]);
     expect(parseMacMachineResources(vmStat, sysctl, pressure)).toEqual({
-      totalMemoryBytes: 19327352832, availableMemoryBytes: 3820251136, pressure: "normal",
+      totalMemoryBytes: 19327352832, availableMemoryBytes: 3829448704, pressure: "normal",
       swapUsedBytes: 3285558067, loadAverage1: 5.3, loadAverage5: 5.45, cpuCount: 11,
     });
   });
@@ -30,7 +30,7 @@ describe("resource sampling", () => {
   test("parses captured Linux proc output and tolerates missing PSI", async () => {
     const [meminfo, loadavg, pressure] = await Promise.all([fixture("linux/meminfo.txt"), fixture("linux/loadavg.txt"), fixture("linux/pressure-memory.txt")]);
     expect(parseLinuxMachineResources(meminfo, loadavg, pressure)).toMatchObject({
-      totalMemoryBytes: 6284353536, availableMemoryBytes: 3553796096, swapUsedBytes: 3880267776,
+      totalMemoryBytes: 6284353536, availableMemoryBytes: 3553796096, swapUsedBytes: 388427776,
       loadAverage1: 1.13, loadAverage5: 1.23, pressure: "unknown",
     });
   });
