@@ -82,34 +82,6 @@ function withoutGhostText(escaped: string): string {
   }).join("\n");
 }
 
-export type GhostTracker = Readonly<{
-  observe: (text: string | undefined, stamp: number | undefined) => string | undefined;
-  reset: () => void;
-  assumed: () => boolean;
-}>;
-
-// Orca shows no colour, so a ghost suggestion and typed text read the same. A composer line that
-// stays byte-identical for `thresholdMs` of continuous idle under one status stamp is a ghost.
-export function ghostTracker(thresholdMs: number, now: () => number = Date.now): GhostTracker {
-  let seen: { text: string; stamp: number | undefined; since: number } | undefined;
-  let assumed = false;
-  const reset = (): void => { seen = undefined; assumed = false; };
-  return {
-    reset,
-    assumed: () => assumed,
-    observe: (text, stamp) => {
-      if (text === undefined || text === "") { reset(); return text; }
-      if (seen === undefined || seen.text !== text || seen.stamp !== stamp) {
-        seen = { text, stamp, since: now() };
-        assumed = false;
-        return text;
-      }
-      if (now() - seen.since >= thresholdMs) assumed = true;
-      return assumed ? "" : text;
-    },
-  };
-}
-
 export function deliveryComposer(agent: string, screen: string): string | undefined {
   const draftLine = [...screen.split("\n")].reverse().find((line: string) => line.startsWith("MEGABRAIN_COMPOSER_DRAFT:"));
   if (draftLine !== undefined) return draftLine.slice("MEGABRAIN_COMPOSER_DRAFT:".length);

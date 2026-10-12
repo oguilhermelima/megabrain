@@ -12,7 +12,8 @@ function render() {
   process.stdout.write("\u001b[2J\u001b[H");
   const idle = submitted || interrupts >= 2;
   if (agent === "claude") {
-    process.stdout.write(idle ? "❯\n" : "✳ Working · thinking\nesc to interrupt\n❯\n");
+    const prompt = draft === "" ? "❯" : draft.split("\n").map((line, index) => index === 0 ? `❯ ${line}` : `  ${line}`).join("\n");
+    process.stdout.write(idle ? `${prompt}\n` : `✳ Working · thinking\nesc to interrupt\n${prompt}\n`);
     return;
   }
   if (idle) {
@@ -45,6 +46,9 @@ process.stdin.on("data", (bytes) => {
       render();
     } else if (codePoint === 0x7f || codePoint === 0x08) {
       draft = draft.slice(0, -1);
+      render();
+    } else if (agent === "claude" && codePoint === 0x0a) {
+      draft += "\n";
       render();
     } else if (codePoint >= 0x20) {
       draft += character;
