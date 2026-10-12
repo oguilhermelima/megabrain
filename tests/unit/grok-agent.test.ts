@@ -76,4 +76,14 @@ describe("grok agent", () => {
     expect(composerHoldsText("grok", wrapped, `${prompt} And then keep going.`)).toBe(false);
     expect(composerHoldsText("grok", await fixture("idle"), prompt)).toBe(false);
   });
+
+  test("the composer proof accepts the collapsed paste placeholder only when its line count matches", async () => {
+    const collapsed = await fixture("collapsed-paste");
+    const lines = (count: number) => Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n");
+    expect(collapsed).toContain("[Pasted: 7 lines]");
+    expect(composerHoldsText("grok", collapsed, lines(7))).toBe(true);
+    expect(composerHoldsText("grok", collapsed, lines(8))).toBe(false);
+    expect(composerHoldsText("grok", collapsed, `${lines(7)}\n`)).toBe(true);
+    expect(composerHoldsText("grok", collapsed.replace("[Pasted: 7 lines]", "[Pasted: 7 lines] [Pasted: 2 lines]"), lines(7))).toBe(false);
+  });
 });
