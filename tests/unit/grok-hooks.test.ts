@@ -40,7 +40,9 @@ describe("grok orchestration hooks", () => {
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, fakeProcess(others));
     expect(result.kind).toBe("ok");
     const written = JSON.parse(readFileSync(join(home, ".grok", "hooks", "megabrain.json"), "utf8")) as HookFile;
-    expect(written.hooks.Stop[0].hooks[0]).toEqual({ type: "command", command: `MEGABRAIN_HOOK_AGENT=grok '${realpathSync(binary)}' hook turn-end` });
+    const commands = written.hooks.Stop.flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toContain(`MEGABRAIN_HOOK_AGENT=grok '${realpathSync(binary)}' hook turn-end`);
+    for (const command of commands) expect(command).not.toMatch(/\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/);
     expect(existsSync(join(home, ".grok", "config.toml"))).toBe(false);
   });
 
