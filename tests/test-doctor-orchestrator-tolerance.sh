@@ -12,7 +12,7 @@ node_bin="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-tolerance-node.XXXXXX")"
 ln -s "$(command -v node)" "$node_bin/node"
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 
@@ -80,7 +80,7 @@ EOF
 chmod +x "$tmux_bin/tmux"
 
 cleanup_fakes() {
-  rm -rf "$orca_bin" "$superset_bin" "$tmux_bin" "$node_bin"
+  remove_test_dir "$orca_bin" "$superset_bin" "$tmux_bin" "$node_bin"
 }
 trap 'cleanup; cleanup_fakes' EXIT
 

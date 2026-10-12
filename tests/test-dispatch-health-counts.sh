@@ -14,7 +14,7 @@ wrapper_dir="$state_root/bin"
 tmux_call_log="$state_root/tmux-calls.log"
 
 cleanup() {
-  rm -rf "$state_root"
+  remove_test_dir "$state_root"
 }
 trap cleanup EXIT
 

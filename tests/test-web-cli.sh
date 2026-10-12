@@ -14,7 +14,7 @@ playwright_root="$work/playwright"
 node_bin="$work/node-bin"
 mkdir -p "$node_bin"
 ln -s "$(command -v node)" "$node_bin/node"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 

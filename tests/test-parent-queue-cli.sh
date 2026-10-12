@@ -18,7 +18,7 @@ guard_db_state() {
   case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
 }
 guard_db_state
-trap 'rm -rf "$work_dir"' EXIT
+trap 'remove_test_dir "$work_dir"' EXIT
 
 write_fixture() {
   local state="$1" dispatch="$2"

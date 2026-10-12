@@ -27,7 +27,7 @@ tmux_cmd() {
 cleanup() {
   local rc=$?
   command tmux -L "$socket_name" kill-server >/dev/null 2>&1 || true
-  rm -rf "$state_root"
+  remove_test_dir "$state_root"
   return "$rc"
 }
 trap cleanup EXIT

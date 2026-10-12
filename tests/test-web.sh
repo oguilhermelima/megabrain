@@ -201,7 +201,7 @@ export MEGABRAIN_STATE_DIR="$viewport_root/.megabrain-test-state"
 require_megabrain_test_state
 
 cleanup_viewport() {
-  rm -rf "$viewport_root"
+  remove_test_dir "$viewport_root"
 }
 trap cleanup_viewport EXIT
 mkdir -p "$viewport_root/profiles/chromium"

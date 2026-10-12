@@ -11,7 +11,7 @@ export MEGABRAIN_STATE_DIR="$work/state"
 require_megabrain_test_state
 mkdir -p "$work/state" "$work/home" "$work/shared" "$work/bin"
 node_bin="$(dirname "$(command -v node)")"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 repo="$work/repo"

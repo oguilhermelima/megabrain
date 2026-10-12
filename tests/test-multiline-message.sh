@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/support/state-dir-guard.bash"
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-multiline.XXXXXX")"
 state="$work/state"
@@ -15,7 +17,7 @@ export MEGABRAIN_STATE_DIR="$state"
 export MB_MULTILINE_LOG="$work/submissions.log"
 cleanup() {
   tmux -L "$server" kill-server >/dev/null 2>&1 || true
-  rm -rf "$work"
+  remove_test_dir "$work"
 }
 trap cleanup EXIT
 

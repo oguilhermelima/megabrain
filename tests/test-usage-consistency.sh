@@ -11,7 +11,7 @@ require_megabrain_test_state
 binary="$root/.build/megabrain"
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return 0
 }
 trap cleanup EXIT

@@ -16,7 +16,7 @@ empty_pane=""
 
 cleanup() {
   tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

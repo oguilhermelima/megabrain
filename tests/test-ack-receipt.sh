@@ -22,7 +22,7 @@ dispatch_dir="$state_dir/dispatches/$dispatch_id"
 cleanup() {
   local rc=$?
   wait 2>/dev/null || true
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return "$rc"
 }
 trap cleanup EXIT

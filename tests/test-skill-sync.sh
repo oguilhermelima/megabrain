@@ -12,7 +12,7 @@ require_megabrain_test_state
 cleanup() {
   local rc=$?
   chmod -R u+rwX "$work" 2>/dev/null || true
-  rm -rf "$work"
+  remove_test_dir "$work"
   return "$rc"
 }
 trap cleanup EXIT

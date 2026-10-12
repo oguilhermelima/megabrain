@@ -15,7 +15,7 @@ fake_bin="$state_dir/bin"
 
 cleanup() {
   chmod -R u+rwx "$state_dir" 2>/dev/null || true
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/tests/support/state-dir-guard.bash"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-db-cutover.XXXXXX")"
-trap 'rm -rf "$tmp"' EXIT
+trap 'remove_test_dir "$tmp"' EXIT
 binary="$root/.build/megabrain"
 
 fail() { printf 'not ok: %s\n' "$1" >&2; exit 1; }

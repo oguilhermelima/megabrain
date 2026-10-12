@@ -10,7 +10,7 @@ export MEGABRAIN_STATE_DIR="$state_binary/.megabrain-test-state"
 require_megabrain_test_state
 
 fake_dir="$(mktemp -d /tmp/mbclose-bin.XXXXXX)"
-trap 'rm -rf "$state_binary" "$fake_dir"' EXIT
+trap 'remove_test_dir "$state_binary" "$fake_dir"' EXIT
 export HOME="$state_binary/home"
 mkdir -p "$HOME"
 assert_safe_state_dir() {

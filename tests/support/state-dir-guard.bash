@@ -17,21 +17,41 @@ require_megabrain_test_state() {
   esac
 }
 
-# Stop the detached supervise worker a spawn started against the current MEGABRAIN_STATE_DIR and
-# wait until its process is gone, so nothing keeps writing into the directory a test removes next.
-# Call it from the test's cleanup, before rm -rf. Uses $1, MEGABRAIN_BIN, or the repo build.
-stop_megabrain_supervisor() {
-  local binary="${1:-${MEGABRAIN_BIN:-}}" pid status waited=0
-  if [ -z "$binary" ]; then binary="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)/.build/megabrain"; fi
-  [ -x "$binary" ] && [ -n "${MEGABRAIN_STATE_DIR:-}" ] && [ -d "$MEGABRAIN_STATE_DIR" ] || return 0
-  status="$("$binary" supervise --status 2>/dev/null || true)"
-  pid="$(printf '%s\n' "$status" | sed -n 's/^watcher: running (pid \([0-9][0-9]*\)).*/\1/p' | head -n 1)"
-  [ -n "$pid" ] || return 0
-  "$binary" supervise --stop >/dev/null 2>&1 || true
-  while kill -0 "$pid" 2>/dev/null; do
+# Print the pids of detached megabrain workers (supervisor and delivery) whose environment names a
+# path under any argument. Workers carry no state dir in argv, so their environment is the only link: read
+# /proc where it exists, otherwise ps -E.
+megabrain_background_pids() {
+  local root pid environment found
+  for pid in $(ps -axo pid=,command= | awk '/__(supervise|delivery)-worker/ && !/awk/ {print $1}'); do
+    if [ -r "/proc/$pid/environ" ]; then environment="$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null || true)"
+    else environment="$(ps eww -p "$pid" 2>/dev/null || true)"; fi
+    found=""
+    for root in "$@"; do case "$environment" in *"=$root"*) found=1 ;; esac; done
+    [ -z "$found" ] || printf '%s\n' "$pid"
+  done
+}
+
+# The only way a test removes its temp directory: stop every detached megabrain worker bound to it,
+# wait for them to exit (bounded, then KILL), then remove it. Anything left running would keep
+# writing into the directory while rm walks it ("Directory not empty").
+remove_test_dir() {
+  local dir="$1" resolved pids pid waited=0
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  resolved="$(cd "$dir" && pwd -P)"
+  pids="$(megabrain_background_pids "$dir" "$resolved")"
+  # shellcheck disable=SC2086
+  [ -z "$pids" ] || kill -TERM $pids 2>/dev/null || true
+  while [ -n "$pids" ]; do
+    pids="$(for pid in $pids; do if kill -0 "$pid" 2>/dev/null; then printf '%s\n' "$pid"; fi; done)"
+    [ -n "$pids" ] || break
     waited=$((waited + 1))
-    if [ "$waited" -gt 100 ]; then kill -KILL "$pid" 2>/dev/null || true; break; fi
+    if [ "$waited" -gt 100 ]; then
+      # shellcheck disable=SC2086
+      kill -KILL $pids 2>/dev/null || true
+      sleep 0.2
+      break
+    fi
     sleep 0.1
   done
-  return 0
+  rm -rf "$resolved"
 }

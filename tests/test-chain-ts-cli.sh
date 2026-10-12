@@ -7,7 +7,7 @@ export MEGABRAIN_STATE_DIR="$state/.megabrain-test-state"
 require_megabrain_test_state
 
 binary="$root/.build/megabrain"
-trap 'rm -rf "$state"' EXIT
+trap 'remove_test_dir "$state"' EXIT
 export MEGABRAIN_ROOT="$root"
 export HOME="$state/home"
 mkdir -p "$HOME/.codex/sessions"

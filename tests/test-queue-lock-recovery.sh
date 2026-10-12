@@ -11,7 +11,7 @@ require_megabrain_test_state
 holder_pid=""
 cleanup() {
   [ -z "$holder_pid" ] || kill -9 "$holder_pid" 2>/dev/null || true
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

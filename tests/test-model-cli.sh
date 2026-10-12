@@ -10,7 +10,7 @@ require_megabrain_test_state
 
 state="$work/state"
 home="$work/home"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 

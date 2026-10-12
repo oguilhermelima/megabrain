@@ -23,7 +23,7 @@ mkdir -p "$bin_dir"
 host_records_mode=missing
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

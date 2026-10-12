@@ -11,8 +11,7 @@ require_megabrain_test_state
 dispatch_dir="$state_dir/dispatches"
 
 cleanup() {
-  stop_megabrain_supervisor
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

@@ -20,7 +20,7 @@ fi
 printf '%s\n' '[]'
 EOF
 chmod +x "$work/bin/orca"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 repo="$work/repo"
 git init -q --bare "$work/remote.git"

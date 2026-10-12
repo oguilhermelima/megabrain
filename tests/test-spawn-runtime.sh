@@ -23,8 +23,7 @@ assert_safe_state_dir() {
 }
 
 cleanup() {
-  stop_megabrain_supervisor
-  rm -rf "$state_root"
+  remove_test_dir "$state_root"
 }
 trap cleanup EXIT
 

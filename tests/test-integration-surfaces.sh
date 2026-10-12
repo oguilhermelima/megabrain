@@ -12,7 +12,7 @@ require_megabrain_test_state
 
 
 work="$(cd "$work" && pwd -P)"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 # This scenario exercises the zsh wrapper; keep it independent of the shell that runs CI.
 export SHELL=/bin/zsh

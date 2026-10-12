@@ -11,7 +11,7 @@ source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
 require_megabrain_test_state
 
-trap 'rm -rf "$work_dir"' EXIT
+trap 'remove_test_dir "$work_dir"' EXIT
 mkdir -p "$work_dir/bin"
 mkdir -p "$work_dir/state"
 cat >"$work_dir/bin/xcrun" <<'EOF'

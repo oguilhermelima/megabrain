@@ -13,7 +13,7 @@ mkdir -p "$node_bin"
 ln -s "$(command -v node)" "$node_bin/node"
 
 cleanup() {
-  rm -rf "$work_dir"
+  remove_test_dir "$work_dir"
 }
 trap cleanup EXIT
 
