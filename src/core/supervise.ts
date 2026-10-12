@@ -185,6 +185,9 @@ export function classifySupervision(evidence: SupervisionEvidence): SupervisionF
   if (/(?:trust this project|trust this folder|permission required|allow this command|do you want to allow|press enter to continue)/i.test(evidence.frame)) return { cause: "dialog-waiting" };
   if (evidence.promptUnsubmitted) return { cause: "prompt-unsubmitted" };
   const frameFinding = classifyErrorText(evidence.frame);
+  // Codex keeps prior refusal text in pane scrollback. Its current working markers mean that
+  // text is stale; the refusal is actionable only after the agent stops working again.
+  if (frameFinding.cause === "usage-limit" && /Working \(/.test(evidence.frame) && /esc to interrupt/i.test(evidence.frame)) return { cause: "unknown" };
   if (frameFinding.cause !== "unknown") return frameFinding;
   return { cause: "unknown" };
 }
