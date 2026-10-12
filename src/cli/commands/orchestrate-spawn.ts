@@ -7,6 +7,7 @@ import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
+import type { DatabaseHandle } from "../../db/db.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
@@ -17,7 +18,7 @@ import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, verify
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
@@ -410,6 +411,20 @@ async function stableTmuxSessionId(session: string, process: ProcessAdapter): Pr
   return /^\$\d+$/.test(id) ? id : null;
 }
 
+async function removeStaleStableSession(handle: DatabaseHandle, session: string, stableSessionId: string, process: ProcessAdapter): Promise<Result<void>> {
+  const indexed = getTmuxSessionByStableId(handle, stableSessionId);
+  if (indexed.kind !== "ok") return indexed;
+  const priorSession = stringValue(indexed.value?.tmuxSession);
+  if (priorSession === "" || priorSession === session) return ok(undefined);
+
+  const live = await process.run("tmux", ["display-message", "-p", "-t", priorSession, "#{session_id}"]);
+  if (live.kind === "ok" && live.value.stdout.trim() === stableSessionId) return ok(undefined);
+  if (live.kind !== "ok" && !/can't find session|session not found|no such session/i.test(live.error)) return ok(undefined);
+
+  const removed = deleteTmuxSession(handle, priorSession);
+  return removed.kind === "ok" ? ok(undefined) : removed;
+}
+
 async function existingTmuxSessionForWorktree(root: string, worktreePath: string, process: ProcessAdapter): Promise<TmuxWorktreeSession | undefined> {
   const target = await canonicalPath(worktreePath);
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -545,9 +560,16 @@ async function openWorktreeTmuxTarget(
     const created = await createTmuxSession(session, worktree.path, undefined, process, false);
     if (created.kind !== "ok") return created;
     const waited = await waitForTmuxSession(session, process);
-    if (waited.kind !== "ok") return waited;
+    if (waited.kind !== "ok") {
+      const killed = await getTmux().killSession(session, process);
+      return killed.kind === "ok" ? waited : failed(`${resultError(waited, "tmux session did not become ready")}; cleanup failed: tmux kill-session --target ${session}: ${resultError(killed, "could not kill tmux session")}`);
+    }
     const panes = await getTmux().panesForSession(session, process);
-    if (panes.kind !== "ok" || panes.value[0] === undefined) return failed(`tmux session ${session} has no pane`);
+    if (panes.kind !== "ok" || panes.value[0] === undefined) {
+      const failure = panes.kind === "ok" ? failed(`tmux session ${session} has no pane`) : panes;
+      const killed = await getTmux().killSession(session, process);
+      return killed.kind === "ok" ? failure : failed(`${resultError(failure, `tmux session ${session} has no pane`)}; cleanup failed: tmux kill-session --target ${session}: ${resultError(killed, "could not kill tmux session")}`);
+    }
 
     const record: RecordValue = {
       tmuxSession: session,
@@ -731,11 +753,22 @@ type SpawnTrace = {
   terminalId?: string;
   pane?: string;
   reason?: string;
+  tmuxSession?: string;
+  sessionCreatedBySpawn?: boolean;
+  sessionCleanupAttempted?: boolean;
 };
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
   const trace: SpawnTrace = {};
-  const result = await runSpawn(args, environment, process, dependencies, trace);
+  let result = await runSpawn(args, environment, process, dependencies, trace);
+  if (result.kind !== "ok" && trace.sessionCreatedBySpawn && !trace.sessionCleanupAttempted && trace.tmuxSession !== undefined) {
+    const cleanup = await getTmux().killSession(trace.tmuxSession, process);
+    trace.sessionCleanupAttempted = true;
+    if (cleanup.kind !== "ok") {
+      const primary = result.kind === "failed" ? result.error : result.reason;
+      result = failed(`${primary}; cleanup failed: tmux kill-session --target ${trace.tmuxSession}: ${resultError(cleanup, "could not kill tmux session")}`, result.kind === "failed" ? result.exitCode : undefined);
+    }
+  }
   // An argument error leaves trace.json unset: the flag is then read straight from the arguments.
   if (result.kind === "ok" || !(trace.json ?? args.includes("--json"))) return result;
   const error = result.kind === "failed" ? result.error : result.reason;
@@ -847,6 +880,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       pane = target.value.pane;
       sessionOwned = target.value.sessionOwned;
       sessionCreatedBySpawn = target.value.sessionCreated;
+      if (sessionCreatedBySpawn) {
+        trace.tmuxSession = session;
+        trace.sessionCreatedBySpawn = true;
+      }
       hostTerminalId = target.value.hostTerminalId;
       hostTerminalHost = target.value.hostTerminalHost;
       tmuxHostWarning = target.value.warning;
@@ -865,6 +902,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     if (registry.kind !== "ok") return failed(registry.error, registry.exitCode);
     const priorSession = getTmuxSession(registry.value, session);
     if (priorSession.kind !== "ok") return failed(priorSession.error, priorSession.exitCode);
+    if (sessionId !== null) {
+      const stale = await removeStaleStableSession(registry.value, session, sessionId, process);
+      if (stale.kind !== "ok") return failed(stale.error, stale.exitCode);
+    }
     const savedSession = putTmuxSession(registry.value, {
       ...(priorSession.value ?? {}),
       tmuxSession: session,
@@ -1028,6 +1069,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     if (plan.action === "fail") {
       trace.reason = plan.reason ?? undefined;
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
+      if (runtime === "tmux" && sessionCreatedBySpawn) trace.sessionCleanupAttempted = true;
       return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {

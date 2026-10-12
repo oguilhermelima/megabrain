@@ -7,7 +7,7 @@ import { failed, ok, type Result } from "../../src/core/result.js";
 import { defaultResolveWorktree, executeSpawn, markRunningIfSpawning, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
 import { tmuxWorktreeSessionName } from "../../src/core/tmux-placement.js";
 import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
-import { appendMessage, mutateDispatch } from "../../src/adapters/state-db.js";
+import { appendMessage, mutateDispatch, putTmuxSession } from "../../src/adapters/state-db.js";
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
 import { composerProcess, composerTmux, withComposer } from "./composer-tmux.js";
 
@@ -162,6 +162,78 @@ async function creationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeSpawn", () => {
+  test("replaces a stable session id whose tmux session disappeared", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-stale-tmux-id-`);
+    const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const stale = putTmuxSession(opened.value, { tmuxSession: "old-session", workingDirectory: "/old/tree" }, "$1");
+    opened.value.close();
+    if (stale.kind !== "ok") throw new Error(stale.error);
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", ...composerTmux() });
+    const process = processFor([], (command, args) => {
+      if (command === "tmux" && args[0] === "display-message" && args[3] === "old-session") return failed("can't find session: old-session");
+      if (command === "tmux" && args[0] === "display-message" && args.at(-1) === "#{session_id}") return ok({ stdout: "$1\n", stderr: "", exitCode: 0 });
+      return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+    });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, "dispatch-stale-id"), process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") throw new Error(result.error);
+      const reopened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (reopened.kind !== "ok") throw new Error(reopened.error);
+      expect(reopened.value.db.query<{ session_name: string }>("SELECT session_name FROM tmux_sessions WHERE stable_session_id = ?").get("$1")?.session_name).toBe(tmuxWorktreeSessionName("/work/tree"));
+      reopened.value.close();
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a live stable session id continues to conflict", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-live-tmux-id-`);
+    const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const saved = putTmuxSession(opened.value, { tmuxSession: "old-session", workingDirectory: "/old/tree" }, "$1");
+    opened.value.close();
+    if (saved.kind !== "ok") throw new Error(saved.error);
+    const original = getTmux();
+    registerTmux(withComposer({ ...original, id: "tmux" }));
+    const process = processFor([], (command, args) => command === "tmux" && args[0] === "display-message"
+      ? ok({ stdout: "$1\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "%9\n", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, "dispatch-live-id"), process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      expect(result.kind === "failed" ? result.error : "").toContain("UNIQUE constraint failed: tmux_sessions.stable_session_id");
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("kills a newly created tmux session when persistence fails", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-cleanup-`);
+    const opened = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const saved = putTmuxSession(opened.value, { tmuxSession: "old-session", workingDirectory: "/old/tree" }, "$1");
+    opened.value.close();
+    if (saved.kind !== "ok") throw new Error(saved.error);
+    const original = getTmux();
+    registerTmux(withComposer({ ...original, id: "tmux" }));
+    const process = processFor([], (command, args) => command === "tmux" && args[0] === "display-message"
+      ? ok({ stdout: "$1\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "%9\n", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, "dispatch-cleanup-tmux"), process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      expect(process.calls.some(({ command, args }) => command === "tmux" && args[0] === "kill-session" && args.includes(tmuxWorktreeSessionName("/work/tree")))).toBe(true);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("persists context policies and the original prompt for a bounded loop", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-context-policy-`);
     const dispatchId = "dispatch-context-policy";
