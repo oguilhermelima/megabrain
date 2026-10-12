@@ -81,7 +81,6 @@ case "\$mode:\$service" in
   missing:*) exit 1 ;;
   expired:"Claude Code-credentials") printf '{"claudeAiOauth":{"accessToken":"synthetic-claude-token","expiresAt":1}}' ;;
   ok:"Claude Code-credentials") printf '{"claudeAiOauth":{"accessToken":"synthetic-claude-token","expiresAt":9999999999}}' ;;
-  ok:gemini) printf 'go-keyring-base64:%s' "\$(printf '%s' '{"token":"synthetic-agy-token"}' | base64)" ;;
   *) exit 1 ;;
 esac
 EOF
@@ -96,11 +95,18 @@ case "\$mode" in
   non200) printf '{"error":"synthetic"}\nMEGABRAIN_HTTP_STATUS:503' ;;
   garbage) printf 'not-json\nMEGABRAIN_HTTP_STATUS:200' ;;
   claude) printf '{"five_hour":{"utilization":11.0,"resets_at":"%s"},"seven_day":{"utilization":48.0,"resets_at":"%s"}}\nMEGABRAIN_HTTP_STATUS:200' "$future_reset_iso" "$future_reset_iso" ;;
-  agy) printf '{"quota":{"gemini-5h":{"remaining_fraction":0.80,"reset_time":"%s"},"gemini-weekly":{"remaining_fraction":0.70,"reset_time":"%s"},"3p-5h":{"remaining_fraction":0.60,"reset_time":"%s"},"3p-weekly":{"remaining_fraction":0.50,"reset_time":"%s"}}}\nMEGABRAIN_HTTP_STATUS:200' "$future_reset_iso" "$future_reset_iso" "$future_reset_iso" "$future_reset_iso" ;;
   *) exit 22 ;;
 esac
 EOF
 chmod +x "$fixture_bin/curl"
+
+# agy answers `agy -p /usage --output-format json` with the captured Antigravity CLI 1.3.3 output.
+cat >"$fixture_bin/agy" <<EOF
+#!/usr/bin/env bash
+[ "\$*" = "-p /usage --output-format json --print-timeout 20s" ] || exit 2
+cat "$root/tests/fixtures/agy-usage.json"
+EOF
+chmod +x "$fixture_bin/agy"
 
 chain_limits() {
   local state="$1"
@@ -223,19 +229,18 @@ seeded="$(MEGABRAIN_STATE_DIR="$state7" HOME="$state7" "$binary" chain list --js
 assert_equal "$(printf '%s' "$seeded" | jq '.chains | length')" 0
 printf 'empty seed and list: passed\n'
 
-# Scenario: agy's live usage reports normalize the named quota buckets (legacy `quota`
-# plus each `-5h`/`-weekly` suffix) into windows the row can expose.
-# Falsification: the reader would only understand Claude's shape and treat agy's response
-# as unparseable.
+# Scenario: agy's live usage comes from the agy CLI's /usage command, grouped by model family;
+# a row without a model shows the most used bucket and skips a disabled one.
+# Falsification: the reader would still ask the Keychain and report unknown.
 state_agy="$work_dir/state-agy"
 write_live_config "$state_agy" agy
-printf 'agy\n' >"$curl_mode_file"
-printf 'ok\n' >"$security_mode_file"
 result_agy="$(chain_limits "$state_agy")"
-row_agy="$(row "$result_agy" agy 5h)"
+row_agy="$(row "$result_agy" agy weekly)"
 assert_equal "$(printf '%s' "$row_agy" | jq -r '.status')" current
-assert_equal "$(printf '%s' "$row_agy" | jq -r '.usedPercent')" 20
-printf 'agy live limits: named quota buckets normalized\n'
+assert_equal "$(printf '%s' "$row_agy" | jq -r '.usedPercent')" 100
+assert_equal "$(printf '%s' "$row_agy" | jq -r '.bucket')" "Claude and GPT models"
+assert_equal "$(row "$result_agy" agy 5h | jq -r '.bucket')" "Gemini Models"
+printf 'agy live limits: CLI usage groups normalized\n'
 
 # Scenario: every distinct Claude live-fetch failure (missing Keychain item, expired
 # credential, network timeout, non-200 response, unparseable body) reports unknown with a
