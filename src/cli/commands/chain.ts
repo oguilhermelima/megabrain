@@ -167,21 +167,18 @@ const limitWindows = ["5h", "weekly"] as const;
 // swap to the shared reader is a behaviour fix (real per-window independence, real
 // liveProviders gating, the shell's rollout-relevance window and scan cap) without
 // changing `chain limits`' output shape. A window can carry more than one bucket
-// (agy's `buckets` array) and this row shape only has room for one per
-// (provider, window); the first bucket the reader reports (the legacy "default"
-// bucket when present, ahead of any named buckets) is what's shown here. That is a
-// real, pre-existing shape limit of this command surfaced now that agy's live data
-// can actually flow through it, not something decided in this change.
+// (agy groups models by family) and this row shape only has room for one per
+// (provider, window): it shows the bucket the reader answered for, the most used
+// one when no model is given.
 function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitReading): LimitRow {
   if (reading.status === "unknown") {
     return { provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: reading.reason, bucket: null, reading: null };
   }
-  const entry = reading.result.windows.find((candidate) => candidate.name === window);
   const resultReading = reading.result.reading;
   return {
     provider, window, status: "current", usedPercent: reading.usedPercent, resetsAt: reading.resetsAt,
     source: reading.source, fetchedAt: reading.fetchedAt, reason: reading.reason,
-    bucket: entry?.bucket ?? "default",
+    bucket: reading.bucket,
     reading: resultReading ? { kind: resultReading.kind, basis: resultReading.basis } : null,
   };
 }
