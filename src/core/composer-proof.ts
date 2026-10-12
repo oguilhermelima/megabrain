@@ -17,8 +17,12 @@ function newlineCount(text: string): number {
 // placeholder that carries a size: Claude counts the newlines, Codex counts code points. Both were
 // measured against the real agents (tests/fixtures/composer). A tail-only composer, or several
 // placeholders from a paste that was split, never matches.
+// Grok draws its composer in a bordered box, so a wrapped paste is split by "│" and a leading "❯".
+const GROK_BOX = /[│❯]/g;
+
 export function composerHoldsText(agent: string, screen: string, text: string): boolean {
   if (text === "") return false;
+  if (agent === "grok") return withoutWhitespace(screen.replace(GROK_BOX, "")).includes(withoutWhitespace(text.replace(GROK_BOX, "")));
   if (withoutWhitespace(screen).includes(withoutWhitespace(text))) return true;
   if (agent === "claude") {
     const placeholders = [...screen.matchAll(CLAUDE_PLACEHOLDER)];
