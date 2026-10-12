@@ -24,7 +24,7 @@ export function parseChildMessage(type: string, args: readonly string[]): Result
 
 export function classifyQueueMail(from: string, type: string, hasPriorDone: boolean): QueueMailClass {
   if (from === "child" && type === "done" && hasPriorDone) return "protocol";
-  if (["child:ask", "child:done", "child:stalled", "child:policy", "megabrain:usage", "parent:withdrawal"].includes(`${from}:${type}`)) return "actionable";
+  if (["child:ask", "child:done", "child:stalled", "child:policy", "child:supervise", "megabrain:usage", "parent:withdrawal"].includes(`${from}:${type}`)) return "actionable";
   if (["child:received", "child:ack", "child:done-repeat", "parent:interrupt", "parent:interrupt-result"].includes(`${from}:${type}`)) return "protocol";
   return undefined;
 }

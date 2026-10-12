@@ -213,6 +213,49 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
+  test.each(["received", "ack"] as const)("does not report %s protocol mail", async (type) => {
+    await withRoot(`protocol-mail-${type}`, async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const appended = await appendMessage(root, "d1", "child", type, "protocol detail", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      expect(listDeliveries(database.value, "d1")).toMatchObject({ kind: "ok", value: [{ recipient: "parent" }] });
+    });
+  });
+
+  test("does not report mail from a closed dispatch", async () => {
+    await withRoot("closed-pending-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "closed", processState: "closed" });
+      const appended = await appendMessage(root, "d1", "child", "ask", "already closed?", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "deferred");
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
+  test("reports an ask once and marks it as notified", async () => {
+    await withRoot("actionable-mail-once", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const appended = await appendMessage(root, "d1", "child", "ask", "which branch?", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "deferred");
+      const first = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      expect(first).toMatchObject({ kind: "ok" });
+      if (first.kind !== "ok") return;
+      expect(JSON.parse(first.value)).toMatchObject({ hookSpecificOutput: { additionalContext: expect.stringContaining("ask which branch?") } });
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
+    });
+  });
+
   test("blocks for failed parent mail when the parent is recorded by agent session, even at a repeat stop", async () => {
     await withRoot("failed-mail-agent-session", async (root) => {
       // Shape measured from a real Orca-parented dispatch: parentSessionId is the agent session,
