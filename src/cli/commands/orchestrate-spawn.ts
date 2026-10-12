@@ -250,8 +250,9 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
 // it between polls. So readiness only succeeds once idle has held continuously for
 // TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
 // failing outright, since the composer may still settle before the overall deadline.
-async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Readonly<{ result: Result<void>; lastFrame: string }>> {
+async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Readonly<{ result: Result<void>; lastFrame: string; trustAnswered: boolean }>> {
   let lastFrame = "";
+  let trustAnswered = false;
   const result = await waitForStableIdle(
     agentId,
     timeoutMs,
@@ -261,9 +262,12 @@ async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: nu
       return captured;
     },
     `tmux pane ${pane} did not become ready within ${timeoutMs}ms`,
-    () => getTmux().sendKey(pane, "Enter", process),
+    () => {
+      trustAnswered = true;
+      return getTmux().sendKey(pane, getAgent(agentId)?.firstRunDialogKey ?? "Enter", process);
+    },
   );
-  return { result, lastFrame };
+  return { result, lastFrame, trustAnswered };
 }
 
 const READINESS_FRAME_MAX_LINES = 60;
@@ -964,6 +968,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       }
     } else if (step === "readiness-output-validation") {
       const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process);
+      if (waited.trustAnswered) await updateMeta(root, id, { trustAnswered: true }, process);
       if (waited.result.kind !== "ok") {
         readinessError = waited.result.error;
         recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);

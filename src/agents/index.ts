@@ -1,6 +1,7 @@
 import { agy } from "./agy.js";
 import { claude } from "./claude.js";
 import { codex } from "./codex.js";
+import { grok } from "./grok.js";
 import { unknown, type Result } from "../core/result.js";
 import { unavailableKey, type Agent, type AgentCommandOptions, type InterruptKey, type SubmitKey } from "./types.js";
 
@@ -8,6 +9,7 @@ const registry = new Map<string, Agent>([
   [claude.id, claude],
   [codex.id, codex],
   [agy.id, agy],
+  [grok.id, grok],
 ]);
 
 export function registerAgent(agent: Agent): void {
