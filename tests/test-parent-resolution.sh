@@ -10,6 +10,7 @@ require_megabrain_test_state
 
 cleanup() {
   local rc=$?
+  stop_megabrain_supervisor
   rm -rf "$state_dir"
   return "$rc"
 }

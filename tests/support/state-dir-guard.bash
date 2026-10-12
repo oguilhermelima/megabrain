@@ -16,3 +16,22 @@ require_megabrain_test_state() {
       ;;
   esac
 }
+
+# Stop the detached supervise worker a spawn started against the current MEGABRAIN_STATE_DIR and
+# wait until its process is gone, so nothing keeps writing into the directory a test removes next.
+# Call it from the test's cleanup, before rm -rf. Uses $1, MEGABRAIN_BIN, or the repo build.
+stop_megabrain_supervisor() {
+  local binary="${1:-${MEGABRAIN_BIN:-}}" pid status waited=0
+  if [ -z "$binary" ]; then binary="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)/.build/megabrain"; fi
+  [ -x "$binary" ] && [ -n "${MEGABRAIN_STATE_DIR:-}" ] && [ -d "$MEGABRAIN_STATE_DIR" ] || return 0
+  status="$("$binary" supervise --status 2>/dev/null || true)"
+  pid="$(printf '%s\n' "$status" | sed -n 's/^watcher: running (pid \([0-9][0-9]*\)).*/\1/p' | head -n 1)"
+  [ -n "$pid" ] || return 0
+  "$binary" supervise --stop >/dev/null 2>&1 || true
+  while kill -0 "$pid" 2>/dev/null; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 100 ]; then kill -KILL "$pid" 2>/dev/null || true; break; fi
+    sleep 0.1
+  done
+  return 0
+}

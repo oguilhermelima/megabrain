@@ -27,6 +27,7 @@ cleanup_tmux_server() {
 cleanup() {
   local rc=$?
   cleanup_tmux_server "$state_dir"
+  stop_megabrain_supervisor
   [ -n "$state_dir" ] && rm -rf "$state_dir"
   return "$rc"
 }
