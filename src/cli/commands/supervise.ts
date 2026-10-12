@@ -6,7 +6,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
@@ -64,6 +64,14 @@ async function agentRecord(meta: RecordValue, environment: Environment): Promise
       ? await findClaudeTranscript(home, string(meta.agentSessionId) as string)
       : undefined;
   return path === undefined ? undefined : readLatestLine(path);
+}
+
+async function recoveredSince(database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, environment: Environment, notifiedAt: number): Promise<boolean> {
+  const messages = listMessages(database, dispatch);
+  if (messages.kind === "ok" && messages.value.some((message) => message.from === "child" && ["received", "ask", "done"].includes(message.type) && Date.parse(message.createdAt) > notifiedAt)) return true;
+  const event = object(await agentRecord(meta, environment));
+  const timestamp = event?.timestamp ?? event?.created_at;
+  return typeof timestamp === "string" && Date.parse(timestamp) > notifiedAt;
 }
 
 async function promptText(database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<string | undefined> {
@@ -132,10 +140,12 @@ async function changedFiles(meta: RecordValue, process: ProcessAdapter): Promise
   return result.value.stdout.split(/\r?\n/).filter(Boolean).map((line) => line.slice(3).trim()).filter(Boolean);
 }
 
-function previousFinding(meta: RecordValue): { cause: SupervisionFinding["cause"]; notifiedAt: number; autoRecoveryAttemptedAt?: number } | undefined {
+function previousFinding(meta: RecordValue): PreviousFinding | undefined {
   const previous = object(meta.superviseFinding);
   if (previous === undefined || typeof previous.cause !== "string" || typeof previous.notifiedAt !== "number") return undefined;
-  return { cause: previous.cause as SupervisionFinding["cause"], notifiedAt: previous.notifiedAt, ...(typeof previous.autoRecoveryAttemptedAt === "number" ? { autoRecoveryAttemptedAt: previous.autoRecoveryAttemptedAt } : {}) };
+  const evidence = ["resetAt", "errorCode", "errorText", "exitCode", "lastLines", "paneId", "worktreePath", "dirtyFiles"]
+    .flatMap((key) => previous[key] === undefined ? [] : [[key, previous[key]] as const]);
+  return { cause: previous.cause as SupervisionFinding["cause"], ...Object.fromEntries(evidence), notifiedAt: previous.notifiedAt } as PreviousFinding;
 }
 
 function screenErrorCause(frame: string): SupervisionFinding | undefined {
@@ -183,7 +193,7 @@ async function notifyParent(root: string, database: Parameters<typeof getDispatc
   const text = `${findingSentence(finding)}. ${recovery === undefined ? "" : `Automatic recovery: ${recovery}. `}Recommended: ${recommendation}`;
   const fullMessage = formatDispatchMessage({ dispatchId: dispatch, chatName: chat, agent, type: "supervise", text, direction: "parent-bound" });
   const createdAt = new Date(now).toISOString();
-  const idempotencyKey = `${dispatch}:supervise:${finding.cause}:${Math.floor(now / (30 * 60_000))}`;
+  const idempotencyKey = `${dispatch}:supervise:${finding.cause}:${now}`;
   const outboxId = `supervise-${idempotencyKey.replace(/[^A-Za-z0-9._-]/g, "-")}`;
   const appended = appendMessage(database, dispatch, {
     from: "child", type: "supervise", text, sessionId: string(meta.terminalId) ?? "", createdAt,
@@ -199,11 +209,11 @@ async function notifyParent(root: string, database: Parameters<typeof getDispatc
 async function inspectDispatch(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, environment: Environment, process: ProcessAdapter, now: number): Promise<SupervisionFinding> {
   const files = await changedFiles(meta, process);
   const panePresent = await paneExists(meta, process);
-  if (panePresent === false) return { cause: "pane-gone", worktreePath: string(meta.worktreePath), dirtyFiles: files };
+  if (panePresent === false) return { cause: "pane-gone", paneId: string(meta.tmuxPane), worktreePath: string(meta.worktreePath), dirtyFiles: files };
   const alive = await processAlive(meta, process);
   const screen = await readDeliveryScreen(meta, process);
   if (screen.kind !== "ok" && alive !== false) {
-    if (screen.kind === "failed" && /terminal is no longer available|pane .*does not exist/i.test(screen.error)) return { cause: "pane-gone", worktreePath: string(meta.worktreePath), dirtyFiles: files };
+    if (screen.kind === "failed" && /terminal is no longer available|pane .*does not exist/i.test(screen.error)) return { cause: "pane-gone", paneId: string(meta.tmuxPane), worktreePath: string(meta.worktreePath), dirtyFiles: files };
     return { cause: "unknown" };
   }
   const frame = screen.kind === "ok" ? screen.value : "";
@@ -246,7 +256,9 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now);
     const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
-    const previous = previousFinding(meta);
+    const recordedPrevious = previousFinding(meta);
+    const recovered = recordedPrevious !== undefined && await recoveredSince(database, dispatch, meta, environment, recordedPrevious.notifiedAt);
+    const previous = recovered ? undefined : recordedPrevious;
     const shouldNotify = shouldNotifyFinding(previous, finding, now);
     let recovery: string | undefined;
     if (finding.cause === "prompt-unsubmitted") {
