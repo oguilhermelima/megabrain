@@ -341,6 +341,7 @@ export async function sendTmuxPair(
   process: ProcessAdapter,
   clearStrayInput = false,
   afterClear?: () => Promise<Result<void>>,
+  afterText?: () => Promise<Result<void>>,
 ): Promise<Result<void>> {
   const lock = lockPath(root, pane);
   try {
@@ -361,6 +362,10 @@ export async function sendTmuxPair(
     }
     const sentText = await getTmux().sendText(pane, text, process);
     if (sentText.kind !== "ok") return sentText;
+    if (afterText !== undefined) {
+      const verified = await afterText();
+      if (verified.kind !== "ok") return verified;
+    }
     return await getTmux().sendKey(pane, key, process);
   } finally {
     await rm(lock, { recursive: true, force: true });

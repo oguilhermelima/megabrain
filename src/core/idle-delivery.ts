@@ -13,6 +13,7 @@ export type IdleDeliveryInput = Readonly<{
   renew?: () => Promise<void>;
   // Why the last send() returned false; recorded on the send-failed attempt.
   sendError?: () => string | undefined;
+  stopRetry?: () => boolean;
   // Waits between retries of a failed send; the send fails for good once they run out.
   retryDelaysMs?: readonly number[];
   attempt?: (details: IdleDeliveryAttempt) => Promise<void>;
@@ -76,6 +77,7 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
           }
           const reason = input.sendError?.() ?? "send returned no error detail";
           await input.attempt?.({ status, composer, decision: "send-failed", reason });
+          if (input.stopRetry?.() === true) return finish("failed");
           const retryDelay = retryDelays[retries];
           if (retryDelay === undefined || now() >= deadline) return finish("failed");
           retries += 1;

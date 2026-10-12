@@ -51,6 +51,7 @@ describe("queue message decisions", () => {
     ["child", "done", false, "actionable"],
     ["child", "done", true, "protocol"],
     ["child", "received", false, "protocol"],
+    ["child", "ack", false, "protocol"],
     ["parent", "reply", false, undefined],
     ["parent", "withdrawal", false, "actionable"],
     ["parent", "interrupt", false, "protocol"],
@@ -62,7 +63,8 @@ describe("queue message decisions", () => {
     ["child", "unknown", false, undefined],
   ] as const)("classifies %s:%s", (from, type, priorDone, expected) => {
     expect(classifyQueueMail(from, type, priorDone)).toBe(expected);
-    expect(recipientForQueueMessage(from, type, priorDone)).toBe(from === "parent" ? type === "reply" ? "child" : undefined : expected === undefined ? undefined : "parent");
+    const expectedRecipient = from === "parent" ? type === "reply" ? "child" : undefined : expected === undefined ? undefined : "parent";
+    expect(recipientForQueueMessage(from, type, priorDone)).toBe(expectedRecipient);
   });
 
   test("allocates the next sequence from message filenames", () => {

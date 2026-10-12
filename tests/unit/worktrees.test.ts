@@ -30,6 +30,7 @@ describe("worktree registry", () => {
     if (opened.kind !== "ok") throw new Error(opened.error);
     opened.value.db.run("INSERT INTO worktrees (path, repo, repo_name, branch, created_at, origin) VALUES (?, ?, ?, ?, ?, ?)", ["/trees/old", "/repos/app", "app", "old", "2026-01-01T00:00:00.000Z", "created"]);
     opened.value.db.run("DELETE FROM schema_migrations WHERE version > 8");
+    opened.value.db.run("DROP TABLE resource_samples");
     opened.value.db.exec("DROP INDEX IF EXISTS worktrees_repo_parent_branch; ALTER TABLE worktrees DROP COLUMN parent_branch;");
     opened.value.db.exec("PRAGMA user_version = 8");
     opened.value.close();

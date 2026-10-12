@@ -28,7 +28,7 @@ export function orderMessages(messages: readonly CheckMessage[]): CheckMessage[]
 export function classifyMail(from: string, type: string, hasPriorDone: boolean): "actionable" | "protocol" | { readonly kind: "unknown" } {
   const key = `${from}:${type}`;
   if (key === "child:done" && hasPriorDone) return "protocol";
-  if (["child:ask", "child:done", "child:stalled", "child:policy", "megabrain:usage", "parent:withdrawal"].includes(key)) return "actionable";
+  if (["child:ask", "child:done", "child:stalled", "child:policy", "child:supervise", "megabrain:usage", "parent:withdrawal"].includes(key)) return "actionable";
   if (["child:received", "child:ack", "child:done-repeat", "parent:interrupt", "parent:interrupt-result"].includes(key)) return "protocol";
   return { kind: "unknown" };
 }

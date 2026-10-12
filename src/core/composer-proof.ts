@@ -47,3 +47,61 @@ export function composerHoldsText(agent: string, screen: string, text: string): 
   }
   return false;
 }
+
+const COMPOSER_RULE = /^\s*─{8,}\s*$/;
+
+function lastLineIndex(lines: readonly string[], matches: (line: string) => boolean): number {
+  for (let index = lines.length - 1; index >= 0; index -= 1) if (matches(lines[index] ?? "")) return index;
+  return -1;
+}
+
+function composerRegion(agent: string, screen: string): string | undefined {
+  const draft = [...screen.split("\n")].reverse().find((line) => line.startsWith("MEGABRAIN_COMPOSER_DRAFT:"));
+  if (draft !== undefined) return draft.slice("MEGABRAIN_COMPOSER_DRAFT:".length);
+  const lines = screen.split("\n");
+  if (agent === "claude") {
+    const rules = lines.flatMap((line, index) => COMPOSER_RULE.test(line) ? [index] : []);
+    if (rules.length >= 2) return lines.slice((rules.at(-2) ?? 0) + 1, rules.at(-1)).join("\n").replace(/^\s*❯[  ]?/u, "").replace(/^\s{2}/gmu, "").trimEnd();
+  }
+  if (agent === "grok") {
+    const start = lastLineIndex(lines, (line) => /╭─/.test(line));
+    const end = lines.findIndex((line, index) => index > start && /╰─/.test(line));
+    if (start >= 0 && end > start) return lines.slice(start + 1, end).map((line) => line.replace(/^\s*│ ?/u, "").replace(/^\s*❯ ?/u, "").trimEnd()).join("\n").trimEnd();
+  }
+  const prompt = agent === "claude" ? /^\s*❯[  ]?(.*)$/u : agent === "codex" ? /^\s*›[  ]?(.*)$/u : /^\s*[>$] ?(.*)$/u;
+  const start = lastLineIndex(lines, (line) => prompt.test(line));
+  if (start < 0) return undefined;
+  const first = prompt.exec(lines[start] ?? "")?.[1] ?? "";
+  const content = [first];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === "" || !/^\s{2,}\S/u.test(line)) break;
+    content.push(line.trim());
+  }
+  return content.join("\n").trimEnd();
+}
+
+export function composerReadback(agent: string, screen: string): Readonly<{ region?: string; orcaDraft?: string }> {
+  const region = composerRegion(agent, screen);
+  const draftLine = [...screen.split("\n")].reverse().find((line) => line.startsWith("MEGABRAIN_COMPOSER_DRAFT:"));
+  const orcaDraft = draftLine?.slice("MEGABRAIN_COMPOSER_DRAFT:".length);
+  return {
+    ...(region === undefined ? {} : { region }),
+    ...(orcaDraft === undefined ? {} : { orcaDraft }),
+  };
+}
+
+// Proves the complete composer payload. Inline text must match in full; collapsed agent paste
+// placeholders are accepted only when the placeholder is the entire composer payload.
+export function composerExactlyHoldsText(agent: string, screen: string, text: string): boolean {
+  if (text === "") return false;
+  const region = composerRegion(agent, screen);
+  if (region === undefined) return false;
+  if (withoutWhitespace(region) === withoutWhitespace(text)) return true;
+  const placeholder = agent === "claude" ? /^\[Pasted text #\d+(?: \+\d+ lines)?\]$/u
+    : agent === "codex" ? /^\[Pasted Content \d+ chars\]$/u
+      : agent === "grok" ? /^\[Pasted: \d+ lines?\]$/u
+        : undefined;
+  if (placeholder?.test(region.trim()) === true) return composerHoldsText(agent, region, text);
+  if (agent === "codex" && /^\s*›.*↑\s*$/mu.test(region)) return composerHoldsText(agent, region, text);
+  return false;
+}
