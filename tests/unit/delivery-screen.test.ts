@@ -8,8 +8,16 @@ describe("delivery dialog detection", () => {
   });
 
   test("ignores deny and select wording in old output", () => {
-    const screen = ["deny the request, then select an option from the report", "❯"].join("\n");
+    const screen = ["deny the request, then select an option from the report", ...Array.from({ length: 20 }, () => "ordinary output"), "❯"].join("\n");
     expect(deliveryHasKeystrokeDialog("claude", screen)).toBe(false);
+  });
+
+  test("does not mistake the agent's last answer for a dialog above the composer", () => {
+    const screens = [
+      [...Array.from({ length: 20 }, () => "ordinary output"), "approve the change and press enter", "❯"].join("\n"),
+      [...Array.from({ length: 20 }, () => "ordinary output"), "deny the request, then select an option", "❯"].join("\n"),
+    ];
+    for (const screen of screens) expect(deliveryHasKeystrokeDialog("claude", screen)).toBe(false);
   });
 
   test("holds a concrete permission dialog at the bottom of the screen", () => {
