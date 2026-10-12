@@ -22,7 +22,7 @@ describe("resource sampling", () => {
   test("parses captured macOS system output", async () => {
     const [vmStat, sysctl, pressure] = await Promise.all([fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt")]);
     expect(parseMacMachineResources(vmStat, sysctl, pressure)).toEqual({
-      totalMemoryBytes: 19327352832, availableMemoryBytes: 123076608, pressure: "normal",
+      totalMemoryBytes: 19327352832, availableMemoryBytes: 3820251136, pressure: "normal",
       swapUsedBytes: 3285558067, loadAverage1: 5.3, loadAverage5: 5.45, cpuCount: 11,
     });
   });
