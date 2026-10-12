@@ -8,7 +8,7 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDeliveries, listDispatches, listMessages, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { backgroundTasks } from "../../core/supervise.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
@@ -376,20 +376,31 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
 // Parent-bound mail whose deliverer ended failed is invisible unless something says so: no pointer
 // reached the terminal, and the pointer path never retries. One line per message, marked
 // hook-notified so the same message never blocks twice.
-function failedMailLines(database: DatabaseHandle, dispatchId: string): readonly string[] {
+function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly<{ failed: readonly string[]; pending: readonly string[] }> {
   const deliveries = listDeliveries(database, dispatchId);
   const messages = listMessages(database, dispatchId);
-  if (deliveries.kind !== "ok" || messages.kind !== "ok") return [];
-  const lines: string[] = [];
+  const outbox = listOutbox(database);
+  if (deliveries.kind !== "ok" || messages.kind !== "ok") return { failed: [], pending: [] };
+  const failed: string[] = [];
+  const pending: string[] = [];
   for (const delivery of deliveries.value) {
-    if (delivery.recipient !== "parent" || delivery.status !== "outstanding" || delivery.transport !== "failed") continue;
+    if (delivery.recipient !== "parent" || delivery.status !== "outstanding") continue;
     const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
     const message = messages.value.find((candidate) => sequences.includes(candidate.seq));
     const summary = (message?.text ?? "").split("\n")[0]?.trim() ?? "";
-    lines.push(`${dispatchId}: ${message?.type ?? "mail"} ${summary === "" ? "(no text)" : summary} — megabrain orchestrate watch ${dispatchId}`);
-    for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+    const line = `${message?.type ?? "mail"} ${summary === "" ? "(no text)" : summary} — megabrain orchestrate watch ${dispatchId}`;
+    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((item) => item.dispatchId === dispatchId && item.targetKind === "parent-pointer") : [];
+    const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
+    const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
+    if (delivery.transport === "failed") {
+      if (heldOutbox) { pending.push(line); continue; }
+      failed.push(`${dispatchId}: ${line}`);
+      for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+      continue;
+    }
+    if (delivery.transport === "deferred" || pendingOutbox || heldOutbox) pending.push(line);
   }
-  return lines;
+  return { failed, pending };
 }
 
 // Dispatch records name the parent two ways: older ones put the terminal handle in parentSessionId,
@@ -398,20 +409,25 @@ function parentsSession(meta: JsonRecord, session: Readonly<{ id: string; host: 
   return meta.parentHost === session.host && (meta.parentSessionId === session.id || meta.parentTerminalId === session.id);
 }
 
-async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<string | undefined> {
+type ParentNotifyNotice = Readonly<{ text: string; block: boolean }>;
+
+async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<ParentNotifyNotice | undefined> {
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return undefined;
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return undefined;
   const doneIds: string[] = [];
   const failedMail: string[] = [];
+  const pendingMail: string[] = [];
   let doneFirstMeta: JsonRecord | undefined;
 
   for (const meta of listed.value) {
     const dispatchId = meta.dispatchId;
     if (dispatchId === undefined) continue;
     if (parentsSession(meta, session) && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
-      failedMail.push(...failedMailLines(database.value, dispatchId));
+      const mail = parentMailLines(database.value, dispatchId);
+      failedMail.push(...mail.failed);
+      pendingMail.push(...mail.pending);
     }
     const state = typeof meta.state === "string" ? meta.state : "";
     const terminalState = typeof meta.terminalState === "string" ? meta.terminalState : "owned";
@@ -444,7 +460,9 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
     const pointer = pointerForFinishedDispatches(doneIds.length, doneIds.join(", "));
     await sendParentPointer(root, doneFirstMeta, pointer, environment, processAdapter).catch(() => undefined);
   }
-  return failedMail.length === 0 ? undefined : `${failedMail.length} child message${failedMail.length === 1 ? "" : "s"} could not be delivered and still wait unread:\n${failedMail.join("\n")}`;
+  if (failedMail.length > 0) return { block: true, text: `${failedMail.length} child message${failedMail.length === 1 ? "" : "s"} could not be delivered and still wait unread:\n${failedMail.join("\n")}` };
+  if (pendingMail.length > 0) return { block: false, text: `${pendingMail.length} unread child message${pendingMail.length === 1 ? "" : "s"}: ${pendingMail.join("; ")}` };
+  return undefined;
 }
 
 // jq's `.a // .b // empty`: falls through null/false/missing (but not an empty string, which is
@@ -518,7 +536,10 @@ export async function executeHookTurnEnd(
     if ("kind" in child) {
       const notice = await hookParentNotify(root, session, environment, processAdapter);
       if (notice === undefined) return finish(defaultText);
-      return finish(environment.MEGABRAIN_HOOK_AGENT === "cursor" ? '{"continue":true}' : JSON.stringify({ decision: "block", reason: notice }));
+      if (environment.MEGABRAIN_HOOK_AGENT === "cursor") return finish('{"continue":true}');
+      return finish(notice.block
+        ? JSON.stringify({ decision: "block", reason: notice.text })
+        : JSON.stringify({ hookSpecificOutput: { hookEventName: "Stop", additionalContext: notice.text } }));
     }
 
     const dispatchId = child.dispatch;
