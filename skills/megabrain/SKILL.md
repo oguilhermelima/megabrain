@@ -110,6 +110,8 @@ megabrain orchestrate adopt <dispatch-id-or-suffix> [--force] [--json] — recom
 megabrain orchestrate liveness <dispatch-id-or-suffix> [--json] — recommended when you need to check the child terminal execution state without waiting for a message.
 megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json] — recommended when you need to wait for or retrieve a child message delivery that can be replayed until acknowledged.
 megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json] — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
+megabrain orchestrate queue [<dispatch-id-or-suffix>] [--json] — recommended when you need to list queued messages you own.
+megabrain orchestrate queue cancel <item-id> [--json] — recommended when you need to cancel a queued message you own.
 megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json] — recommended when you need to send an answer to a child that has asked a question.
 megabrain orchestrate stop <dispatch-id-or-suffix> [--json] — recommended when you need to interrupt a working child while keeping its pane and dispatch open.
 megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json] — recommended when you need to redirect a child that is working on the wrong thing or replace queued directions.
