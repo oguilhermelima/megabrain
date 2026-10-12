@@ -1,0 +1,39 @@
+
+  main /p/tmp/grokproj.K7mQ                                                                                                 37K / 256K │ [Dashboard]
+
+
+     ❯ Run bash: sleep 30 then say done                                                                                                   10:07 PM   █
+                                                                                                                                                     █
+                                                                                                                                                     █
+     ◆ Thought for 0.1s                                                                                                                              █
+     ◆ Running sleep 30 seconds then echo done                                                                                                       █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+                                                                                                                                                     █
+
+   ⠸ Sleep 30 seconds then echo done… 2.2s                                                                                     6.0s ⇣37.5k [↓][stop]
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                                                              │
+  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Grok 4.5 (low) ─╯
+
+  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+b:send to bg  │  Ctrl+x:shortcuts
+

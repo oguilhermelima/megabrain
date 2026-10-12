@@ -3,7 +3,7 @@ import { ok, unknown, type Result } from "../core/result.js";
 export type Liveness = "working" | "idle" | "blocked" | "pending-check" | "unknown" | "missing";
 export type LivenessResult = Readonly<{ status: Liveness; reason: string | null }>;
 export type SubmitKey = "Enter" | "Tab";
-export type InterruptKey = "Escape";
+export type InterruptKey = "Escape" | "C-c";
 export type AgentCommandOptions = Readonly<{
   readonly model: string | null;
   readonly effort: string | null;
@@ -22,9 +22,11 @@ export type Agent = Readonly<{
   readonly id: string;
   readonly matchesDescriptor: (descriptor: string) => boolean;
   readonly classifyLiveness: (output: string) => Result<LivenessResult>;
-  readonly contextSource?: "codex-rollout" | "claude-transcript";
+  readonly contextSource?: "codex-rollout" | "claude-transcript" | "grok-session";
   readonly compactCommand?: string;
   readonly firstRunDialog?: RegExp;
+  // Key that answers the first-run dialog; Enter when absent.
+  readonly firstRunDialogKey?: string;
   readonly commandLine?: (options: AgentCommandOptions) => Result<string>;
   readonly submitKey?: () => Result<SubmitKey>;
   readonly interruptKey?: () => Result<InterruptKey>;

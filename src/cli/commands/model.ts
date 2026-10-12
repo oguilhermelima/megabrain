@@ -1,5 +1,5 @@
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, saveModelRegistry, validateReasoning } from "../../core/model.js";
+import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, refreshGrokModels, saveModelRegistry, validateReasoning } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 
@@ -57,9 +57,18 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
     if (arg === "-h" || arg === "--help") return ok(usage("model-refresh"));
   }
   if (agent === "codex" || agent === "claude") return errorResult(`${agent} has no live model listing; its registry entries remain manually curated`);
-  if (agent !== "agy") return errorResult(`unknown agent: ${agent}`);
+  if (agent !== "agy" && agent !== "grok") return errorResult(`unknown agent: ${agent}`);
   const loaded = loadModelRegistry(environment);
   if (loaded.kind === "failed") return loaded;
+  if (agent === "grok") {
+    const listed = await processAdapter.run("grok", ["models"]);
+    if (listed.kind !== "ok") return errorResult("could not refresh grok models: grok models failed");
+    const refreshed = refreshGrokModels(listed.value.stdout, loaded.registry.models, new Date().toISOString());
+    if (refreshed.length === 0) return errorResult("could not refresh grok models: grok models returned no model ids");
+    const stored = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "grok"), ...refreshed] });
+    if (stored.kind !== "ok") return errorResult(stored.error, stored.exitCode);
+    return ok(`model registry refreshed: grok (${refreshed.length} models)\n`);
+  }
   const result = await processAdapter.run("agy", ["models"]);
   if (result.kind !== "ok") return errorResult("could not refresh agy models: agy models failed");
   const ids = result.value.stdout.split(/\s+/).map((id) => id.replace(/[^A-Za-z0-9_.-]/g, "")).filter((id) => /^(gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+$/.test(id));

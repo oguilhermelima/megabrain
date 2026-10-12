@@ -1,0 +1,23 @@
+
+  main /p/t/mbgrok.Rgmn/repo                         1.3K / 256K │ [Dashboard]
+
+     ◆ session_start hook (global/superset-notify) failed, ignored: hook not
+     executed: required env var(s) not set: ${SUPERSET_HOME_DIR}
+
+
+
+
+
+
+
+
+   Image in clipboard · ctrl+v to paste
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯ This is a smoke test. Run exactly this shell command: megabrain        │
+  │   received . Then run: megabrain done 'Grok smoke test finished fine' .  │
+  │   Then stop.                                                             │
+  ╰──────────────────────────────────────── Grok 4.7 (low) · always-approve ─╯
+
+  Enter:send  │  Opt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts
+

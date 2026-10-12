@@ -155,7 +155,14 @@ function hookEntryStatus(agent: string, path: string): "present" | "legacy" | "m
   return "missing";
 }
 
+// Grok reads every *.json under <grok home>/hooks, so megabrain owns a file of its own there and
+// never edits config.toml. GROK_HOME relocates the whole directory.
+function grokHooksFile(environment: Environment): string {
+  return join(environment.GROK_HOME ?? join(environment.HOME ?? "", ".grok"), "hooks", "megabrain.json");
+}
+
 function hookConfig(environment: Environment, agent: HookAgent): string {
+  if (agent === "grok") return grokHooksFile(environment);
   const config = agent === "cursor"
     ? join(environment.HOME ?? "", ".cursor")
     : discoverAgentDirectories(environment)[agent]?.config ?? "";
@@ -367,7 +374,7 @@ async function report(module: string, environment: Environment, process: Process
       else { status = "ok"; reason = root; }
     }
   } else if (module === "orchestration-hooks") {
-    const names = ["claude", "codex", "agy", "cursor"];
+    const names = ["claude", "codex", "agy", "cursor", "grok"];
     const details: string[] = [];
     let healthy = true;
     for (const name of names) {
@@ -534,7 +541,7 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 
 // --- orchestration-hooks -----------------------------------------------------------------
 
-const hookAgents = ["claude", "codex", "agy", "cursor"] as const;
+const hookAgents = ["claude", "codex", "agy", "cursor", "grok"] as const;
 type HookAgent = (typeof hookAgents)[number];
 
 async function hookAgentAvailable(agent: HookAgent, processAdapter: ProcessAdapter): Promise<boolean> {
@@ -584,7 +591,7 @@ function hookEntryMatches(entry: unknown): boolean {
 function hookEntryAgent(entry: unknown): HookAgent | undefined {
   if (typeof entry !== "object" || entry === null) return undefined;
   const command = String((entry as Record<string, unknown>).command ?? "");
-  const match = /(?:^|\s)MEGABRAIN_HOOK_AGENT=(claude|codex|agy|cursor)(?:\s|$)/.exec(command);
+  const match = /(?:^|\s)MEGABRAIN_HOOK_AGENT=(claude|codex|agy|cursor|grok)(?:\s|$)/.exec(command);
   return match?.[1] as HookAgent | undefined;
 }
 

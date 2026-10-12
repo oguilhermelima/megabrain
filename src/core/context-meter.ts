@@ -1,5 +1,6 @@
-import { open, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { open, readFile, readdir } from "node:fs/promises";
+import { basename, join } from "node:path";
+import type { ProcessAdapter } from "../adapters/proc.js";
 
 export type ContextMeter = Readonly<
   | { readonly status: "known"; readonly usedTokens: number; readonly percentUsed?: number; readonly sourceFrame: string }
@@ -10,6 +11,8 @@ export type ContextSubject = Readonly<{
   readonly agent: string;
   readonly agentThreadId?: string;
   readonly agentSessionId?: string;
+  readonly agentCwd?: string;
+  readonly grokHome?: string;
   /** Window of the launch model from the registry; outranks any inference from the transcript. */
   readonly contextWindow?: number;
 }>;
@@ -59,6 +62,43 @@ export async function findClaudeTranscript(home: string, sessionId: string): Pro
     if ((await listNames(join(root, project))).includes(`${sessionId}.jsonl`)) return join(root, project, `${sessionId}.jsonl`);
   }
   return undefined;
+}
+
+/** Match Grok's active session registry to a process inside the dispatch pane, never by recency. */
+export async function resolveGrokSessionId(home: string, panePid: string, cwd: string, process: ProcessAdapter, grokHome = join(home, ".grok")): Promise<string | undefined> {
+  if (!/^\d+$/.test(panePid) || cwd === "") return undefined;
+  let active: unknown;
+  try { active = JSON.parse(await readFile(join(grokHome, "active_sessions.json"), "utf8")) as unknown; }
+  catch { return undefined; }
+  if (!Array.isArray(active)) return undefined;
+  const listed = await process.run("ps", ["-ax", "-o", "pid=,ppid=,command="]);
+  if (listed.kind !== "ok") return undefined;
+  const parents = new Map<string, string>();
+  const commands = new Map<string, string>();
+  for (const line of listed.value.stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (match?.[1] !== undefined && match[2] !== undefined && match[3] !== undefined) {
+      parents.set(match[1], match[2]);
+      commands.set(match[1], match[3]);
+    }
+  }
+  const tree = new Set<string>();
+  const pending = [panePid];
+  while (pending.length > 0) {
+    const pid = pending.shift();
+    if (pid === undefined || tree.has(pid)) continue;
+    tree.add(pid);
+    for (const [candidate, parent] of parents) if (parent === pid) pending.push(candidate);
+  }
+  const grokPids = new Set([...tree].filter((pid) => {
+    const executable = commands.get(pid)?.trim().split(/\s+/, 1)[0] ?? "";
+    return basename(executable) === "grok";
+  }));
+  const matches = active.filter((item): item is Record<string, unknown> =>
+    typeof item === "object" && item !== null && !Array.isArray(item)
+    && typeof item.session_id === "string" && item.session_id !== ""
+    && item.cwd === cwd && Number.isSafeInteger(item.pid) && grokPids.has(String(item.pid)));
+  return matches.length === 1 ? String(matches[0]?.session_id) : undefined;
 }
 
 function records(tail: string): Record<string, unknown>[] {
@@ -126,6 +166,17 @@ function claudeMeter(tail: string, registryWindow: number | undefined): ContextM
   return measured("claude transcript usage", latest.used, window);
 }
 
+function grokMeter(tail: string, registryWindow: number | undefined): ContextMeter {
+  for (const entry of records(tail)) {
+    const params = object(entry.params);
+    const update = object(params?.update);
+    if (entry.method !== "_x.ai/session/update" || update?.sessionUpdate !== "turn_completed") continue;
+    const used = count(object(update.usage)?.totalTokens);
+    return used === undefined ? unknown : measured("grok session usage", used, registryWindow);
+  }
+  return unknown;
+}
+
 /** Context in use, read from the agent's own structured session file. Anything not observed there is unknown. */
 export async function readContextMeter(subject: ContextSubject, home: string): Promise<ContextMeter> {
   if (subject.agent === "codex" && subject.agentThreadId !== undefined && subject.agentThreadId !== "") {
@@ -137,6 +188,11 @@ export async function readContextMeter(subject: ContextSubject, home: string): P
     const path = await findClaudeTranscript(home, subject.agentSessionId);
     const tail = path === undefined ? undefined : await readTail(path);
     return tail === undefined ? unknown : claudeMeter(tail, subject.contextWindow);
+  }
+  if (subject.agent === "grok" && subject.agentSessionId !== undefined && subject.agentSessionId !== "" && subject.agentCwd !== undefined && subject.agentCwd !== "") {
+    const session = join(subject.grokHome ?? join(home, ".grok"), "sessions", encodeURIComponent(subject.agentCwd), subject.agentSessionId, "updates.jsonl");
+    const tail = await readTail(session);
+    return tail === undefined ? unknown : grokMeter(tail, subject.contextWindow);
   }
   return unknown;
 }

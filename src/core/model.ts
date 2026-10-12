@@ -77,7 +77,7 @@ export function addModel(
   levels: string,
   obtainedAt: string,
 ): ModelOperationResult {
-  if (!["codex", "claude", "agy"].includes(agent)) return { kind: "invalid", message: `unknown agent: ${agent}` };
+  if (!["codex", "claude", "agy", "grok"].includes(agent)) return { kind: "invalid", message: `unknown agent: ${agent}` };
   if (model.length === 0) return { kind: "invalid", message: "model id cannot be empty" };
   if (levels.length === 0) return { kind: "invalid", message: "reasoning levels cannot be empty" };
   const parsedLevels = levels.split(",");
@@ -111,6 +111,21 @@ export function refreshAgyModels(ids: readonly string[], obtainedAt: string): re
     const level = model.endsWith("-high") ? "high" : model.endsWith("-medium") ? "medium" : model.endsWith("-low") ? "low" : "none";
     return { agent: "agy", model, reasoning: { separateAxis: false, levels: [level] }, provenance: { kind: "live", command: "agy models", obtainedAt } };
   });
+}
+
+// `grok models` lists ids only; the reasoning levels per model live in grok's own models_cache.json.
+// The shipped template carries the measured levels, so a refresh keeps what the registry already
+// knows for an id and falls back to the levels every listed model supports.
+const grokFallbackLevels = ["low", "medium", "high"];
+
+export function refreshGrokModels(listing: string, known: readonly Model[], obtainedAt: string): readonly Model[] {
+  const ids = [...listing.matchAll(/^[ \t]*[*-][ \t]+(grok-[A-Za-z0-9_.-]+)/gm)].map((match) => match[1]!);
+  return [...new Set(ids)].sort().map((model) => ({
+    agent: "grok",
+    model,
+    reasoning: { separateAxis: true, levels: known.find((entry) => entry.agent === "grok" && entry.model === model)?.reasoning.levels ?? grokFallbackLevels },
+    provenance: { kind: "live", command: "grok models", obtainedAt },
+  }));
 }
 
 export type ModelEnvironment = StateEnvironment & Readonly<{

@@ -1267,7 +1267,77 @@ describe("executeSpawn", () => {
         "text:prompt",
         "key:Enter", // submit the prompt after readiness
       ]);
+      expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
       expect(captureCalls).toBeGreaterThan(1);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("tmux readiness records Grok trust only after its y answer succeeds", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-grok-trust-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-grok-trust";
+    const trust = await readFile(new URL("../fixtures/tmux-capture-grok-trust.txt", import.meta.url), "utf8");
+    let captureCalls = 0;
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
+        if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
+      capturePane: async () => {
+        captureCalls += 1;
+        return ok(captureCalls === 1 ? trust : "╭──────╮\n│ ❯    │\n╰──────╯");
+      },
+    };
+    registerTmux(withComposer(fake, "grok"));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "grok", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      expect(events).toContain("key:y");
+      expect(readMeta(root, dispatchId)).toMatchObject({ trustAnswered: true });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("tmux readiness does not record Grok trust when sending y fails", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-grok-trust-failed-`);
+    const events: string[] = [];
+    const dispatchId = "dispatch-tmux-grok-trust-failed";
+    const trust = await readFile(new URL("../fixtures/tmux-capture-grok-trust.txt", import.meta.url), "utf8");
+    const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async () => ok(undefined),
+      sendKey: async (_pane, key) => key === "y" ? failed("tmux send failed") : ok(undefined),
+      capturePane: async () => ok(trust),
+    };
+    registerTmux(withComposer(fake, "grok"));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "grok", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });

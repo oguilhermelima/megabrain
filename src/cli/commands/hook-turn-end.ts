@@ -195,7 +195,9 @@ async function applyContextPolicy(
     agent: agentId,
     ...(contextWindow === undefined ? {} : { contextWindow }),
     ...(typeof meta.agentThreadId === "string" ? { agentThreadId: meta.agentThreadId } : {}),
-    ...(typeof meta.agentSessionId === "string" ? { agentSessionId: meta.agentSessionId } : {}),
+    ...(typeof meta.agentSessionId === "string" ? { agentSessionId: meta.agentSessionId } : typeof meta.grokSessionId === "string" ? { agentSessionId: meta.grokSessionId } : {}),
+    ...(typeof meta.worktreePath === "string" ? { agentCwd: meta.worktreePath } : {}),
+    ...(environment.GROK_HOME === undefined ? {} : { grokHome: environment.GROK_HOME }),
   }, home);
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return { response: null, handled: false };
