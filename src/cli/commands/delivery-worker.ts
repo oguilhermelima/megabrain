@@ -203,7 +203,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     try {
       result = await deliverWhenIdle({
       timeoutMs: Math.max(0, deadline - Date.now()),
-      allowBusy: true,
+      allowBusy: targetKind === "parent-pointer",
       initialDelayMs: 500,
       maxDelayMs: 10_000,
       ownDraft: text,
