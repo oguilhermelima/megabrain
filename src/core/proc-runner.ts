@@ -74,8 +74,17 @@ async function readRecord(path: string): Promise<ProcRecord | undefined> { try {
 async function writeRecord(path: string, record: ProcRecord): Promise<void> { await mkdir(dirname(path), { recursive: true }); await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 }); }
 async function portOwner(process: ProcessAdapter, port: number): Promise<string | undefined> {
   const result = await process.run("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpc"]);
-  if (result.kind !== "ok") return undefined;
-  const pid = /^p(\d+)$/m.exec(result.value.stdout)?.[1]; const cmd = /^c(.+)$/m.exec(result.value.stdout)?.[1]; return pid ? `pid ${pid}${cmd ? ` (${cmd})` : ""}` : undefined;
+  if (result.kind === "ok") {
+    const pid = /^p(\d+)$/m.exec(result.value.stdout)?.[1]; const cmd = /^c(.+)$/m.exec(result.value.stdout)?.[1];
+    if (pid) return `pid ${pid}${cmd ? ` (${cmd})` : ""}`;
+  }
+  // lsof is standard on macOS but is not installed in every Linux image. `ss` is the
+  // native Linux socket table and includes process details when the caller owns the PID.
+  const sockets = await process.run("ss", ["-ltnp"]);
+  if (sockets.kind !== "ok") return undefined;
+  const row = sockets.value.stdout.split(/\r?\n/).find((line) => new RegExp(`:${port}\\s`).test(line));
+  const detail = row === undefined ? undefined : /users:\(\("([^\"]+)",pid=(\d+)/.exec(row);
+  return detail?.[2] ? `pid ${detail[2]}${detail[1] ? ` (${detail[1]})` : ""}` : undefined;
 }
 async function owns(record: ProcRecord, environment: Readonly<Record<string, string | undefined>>, force: boolean): Promise<boolean> { return force || record.owner === owner(environment); }
 
@@ -174,7 +183,9 @@ async function stopRecord(record: ProcRecord, process: ProcessAdapter, env: Read
     }
   }
   const result = await process.run("tmux", tmuxArgs(env, ["kill-session", "-t", record.session]));
-  return result.kind === "ok" ? ok(undefined) : failed(result.error);
+  if (result.kind === "ok") return ok(undefined);
+  const stillExists = await process.run("tmux", tmuxArgs(env, ["has-session", "-t", record.session]));
+  return stillExists.kind !== "ok" ? ok(undefined) : failed(result.error);
 }
 async function procLogs(args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   const name = args[0]; const found = await procPath(args, env); if (!name || !found) return failed(`proc not found: ${name ?? ""}`);
