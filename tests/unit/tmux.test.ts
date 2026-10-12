@@ -311,7 +311,7 @@ describe("tmux identity provider", () => {
     // probe with nothing else set resolves to no identity at all, not a guessed "tmux" host.
     expect(await resolveCaller(environment, process)).toEqual({ id: "", host: "local", terminalId: null, tmuxSession: null, tmuxPane: null });
     expect(await tmuxSessionForEnvironment(environment, process)).toBeUndefined();
-    expect(await childSession(environment, process)).toEqual({ kind: "failed", error: "this command cannot tell who is running it: no agent session and no shell were found", exitCode: 1 });
+    expect(await childSession(environment, process)).toEqual({ kind: "failed", error: "this command cannot tell who is running it: no agent session and no shell were found; set MEGABRAIN_SESSION_ID to name this caller", exitCode: 1 });
     expect(await callerSession(environment, process)).toBe("");
     expect(await childIdentity(environment, process)).toEqual({ childHost: "tmux", tmux: { session: undefined, pane: "%4" } });
     expect(await tmuxCallerSession(environment, process)).toBeUndefined();
