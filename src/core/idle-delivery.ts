@@ -10,6 +10,7 @@ export type IdleDeliveryInput = Readonly<{
   send: () => Promise<boolean>;
   isRead: () => Promise<boolean>;
   giveUp?: () => boolean;
+  renew?: () => Promise<void>;
   // Why the last send() returned false; recorded on the send-failed attempt.
   sendError?: () => string | undefined;
   // Waits between retries of a failed send; the send fails for good once they run out.
@@ -88,6 +89,7 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
     }
     if (now() >= deadline) break;
     if (input.giveUp?.() === true) return finish("unavailable");
+    await input.renew?.();
     await wait(Math.min(delay, deadline - now()));
     delay = Math.min(Math.max(delay * 2, 1), Math.max(1, input.maxDelayMs));
   }

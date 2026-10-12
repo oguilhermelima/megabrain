@@ -278,6 +278,16 @@ export function claimOutbox(handle: DatabaseHandle, id: string, holder: string, 
   });
 }
 
+export function renewOutboxLease(handle: DatabaseHandle, id: string, holder: string, leaseSeconds: number): Result<boolean> {
+  if (holder === "") return failed("outbox holder must be non-empty");
+  if (!Number.isFinite(leaseSeconds)) return failed("outbox lease seconds must be finite");
+  const now = new Date();
+  return write(handle, ({ db }) => db.run(
+    "UPDATE outbox SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ?",
+    [new Date(now.getTime() + leaseSeconds * 1000).toISOString(), now.toISOString(), id, holder],
+  ).changes > 0);
+}
+
 export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null): Result<void> {
   const now = new Date().toISOString();
   const result = write(handle, ({ db }) => {

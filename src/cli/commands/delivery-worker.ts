@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
@@ -16,7 +16,7 @@ import { deliveryComposer, deliveryHasKeystrokeDialog, ghostTracker, readDeliver
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
-const DELIVERY_LEASE_SECONDS = 200_000_000_000;
+const DELIVERY_LEASE_SECONDS = 90;
 const GHOST_STATIC_MS = 30_000;
 const PROOF_UNAVAILABLE_MS = 2 * 60 * 1000;
 const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
@@ -50,7 +50,7 @@ export async function startDeliveryWorker(root: string, dispatch: string, outbox
   const target = deliveryTarget(meta);
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
   const leaseKey = `delivery-target:${target}`;
-  // Parent mail remains leased until the composer is safe to use, however long that takes.
+  // Keep waiting without a deadline; the live worker renews this short lease while it waits.
   const deadline = Number.MAX_SAFE_INTEGER;
   const result = await startDeferredDelivery(
     target,
@@ -250,6 +250,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       sendError: () => sendError,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
+      renew: async () => {
+        if (!nested) {
+          const lease = acquireLease(database.value, leaseKey, holder, DELIVERY_LEASE_SECONDS);
+          if (lease.kind !== "ok" || !lease.value) throw new Error("delivery target lease was lost");
+        }
+        const outboxLease = renewOutboxLease(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
+        if (outboxLease.kind !== "ok" || !outboxLease.value) throw new Error("outbox lease was lost");
+      },
       attempt: async (details) => {
         lastDecision = details.decision;
         const entry = {
