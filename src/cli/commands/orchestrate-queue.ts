@@ -7,10 +7,11 @@ import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveCaller } from "./queue-write.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { usageText } from "../../core/usage.js";
+import { cancelProcQueueEntry, listProcQueue, procOwner } from "../../core/proc-queue.js";
 
 type QueueItem = Readonly<{
   id: string;
-  kind: "message" | "spawn";
+  kind: "message" | "spawn" | "proc";
   dispatch: string;
   type: string;
   createdAt: string;
@@ -102,6 +103,11 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
       else return failed(`unknown orchestrate queue cancel option: ${args[index]}`, 2);
     }
     if (reason.trim() === "") return failed("--reason must not be empty", 2);
+    const procCancel = await cancelProcQueueEntry(environment, itemId, await procOwner(environment, process), reason.trim());
+    if (procCancel !== undefined) {
+      if (procCancel.kind !== "ok") return procCancel;
+      return ok(json ? `${JSON.stringify({ id: itemId, kind: "proc", name: procCancel.value.name, state: "cancelled", reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
+    }
     const caller = await resolveCaller(environment, process);
     const db = stateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
     if (db.kind !== "ok") return db;
@@ -165,5 +171,12 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     dispatchIds = dispatchIds.filter((id) => open.has(id));
   }
   const items = queueItems(db.value, dispatchIds);
-  return items.kind === "ok" ? ok(formatItems(items.value, json)) : items;
+  if (items.kind !== "ok") return items;
+  // Processes waiting for admission belong to the caller, not to a dispatch.
+  const owner = await procOwner(environment, process);
+  const procs: QueueItem[] = dispatch !== "" ? [] : (await listProcQueue(environment)).filter((entry) => entry.owner === owner).map((entry) => ({
+    id: entry.id, kind: "proc", dispatch: "-", type: entry.name, createdAt: entry.createdAt, state: "queued", text: entry.reason,
+  }));
+  const merged = [...items.value, ...procs].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  return ok(formatItems(merged, json));
 }

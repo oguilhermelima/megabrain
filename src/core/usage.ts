@@ -39,7 +39,7 @@ export const USAGE_LINES = {
   "supervise": "supervise [--status|--stop]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
   "proc": "proc start|list|status|stop|restart|logs ...",
-  "proc-start": "proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--json] -- <command and arguments>",
+  "proc-start": "proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--json] -- <command and arguments>",
   "proc-list": "proc list [--json]",
   "proc-status": "proc status <name> [--json] [--force]",
   "proc-stop": "proc stop <name> [--force]",

@@ -327,6 +327,11 @@ listed, inspected, stopped, and restarted by their owner; `--force` lets another
 over a stop or restart. With `--port`, start refuses a port that already has a listener and
 waits up to 30 seconds for the new process to listen.
 
+When a spawn admission policy is set, `proc start` also waits for admission: it prints its queue
+id, appears in `orchestrate queue` as a `proc` item, starts in order once the machine admits it,
+and exits without starting if its owner runs `orchestrate queue cancel <id>`. `--admission fail`
+refuses at once with the reason instead of waiting. With no policy, it starts immediately.
+
 ```sh
 megabrain proc start --name api --worktree ~/code/api --cwd ~/code/api \
   --port 3000 --terminal auto -- pnpm dev

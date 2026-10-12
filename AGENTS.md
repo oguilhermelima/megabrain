@@ -41,7 +41,7 @@
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off. — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 - Run megabrain proc start|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.
-- Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.
+- Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.
 - Run megabrain proc list [--json]. — recommended when you need to list managed processes.
 - Run megabrain proc status <name> [--json] [--force]. — recommended when you need to inspect a managed process.
 - Run megabrain proc stop <name> [--force]. — recommended when you need to stop a managed process.
