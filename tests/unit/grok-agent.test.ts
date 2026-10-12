@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolveParentContext } from "../../src/core/context.js";
 import { classifyLiveness, isFirstRunDialog } from "../../src/core/liveness.js";
+import { composerHoldsText } from "../../src/core/composer-proof.js";
 import { commandLine, getAgent, interruptKey, resolveAgentDescriptor, submitKey } from "../../src/agents/index.js";
 
 const fixture = (name: string) => readFile(new URL(`../fixtures/tmux-capture-grok-${name}.txt`, import.meta.url), "utf8");
@@ -66,5 +67,13 @@ describe("grok agent", () => {
   test("an unrecognised screen is unknown", () => {
     expect(classifyLiveness("grok", "anything")).toEqual({ status: "unknown", reason: null });
     expect(classifyLiveness("grok", "").status).toBe("unknown");
+  });
+
+  test("the composer proof reads a prompt wrapped inside the bordered box, and rejects a partial one", async () => {
+    const prompt = "This is a smoke test. Run exactly this shell command: megabrain received . Then run: megabrain done 'Grok smoke test finished fine' . Then stop.";
+    const wrapped = await fixture("wrapped-paste");
+    expect(composerHoldsText("grok", wrapped, prompt)).toBe(true);
+    expect(composerHoldsText("grok", wrapped, `${prompt} And then keep going.`)).toBe(false);
+    expect(composerHoldsText("grok", await fixture("idle"), prompt)).toBe(false);
   });
 });
