@@ -308,7 +308,7 @@ scenario_chain_content_contracts() {
   printf 'chain list content is produced by the compiled command\n'
 
   output="$(run_from_unrelated_directory "$work/unrelated-chain" MEGABRAIN_STATE_DIR="$state" MEGABRAIN_CODEX_SESSIONS_DIR="$state/codex" "$root/.build/megabrain" chain limits --json)"
-  assert_json "$output" 'length == 6 and all(.[]; .status == "unknown")'
+  assert_json "$output" 'length == 8 and all(.[]; .status == "unknown")'
   printf 'chain limits content is produced by the compiled command\n'
 
   rm -f "$state/chains.json"
