@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase } from "../../adapters/state-db.js";
+import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -288,11 +288,15 @@ export async function startSupervisorWorker(root: string, environment: Environme
 }
 
 export async function executeSupervisorWorker(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
-  const holder = args[0];
-  if (holder === undefined || !/^\d+-[0-9a-f-]+$/i.test(holder)) return failed("supervisor worker requires its lease holder", 2);
+  const starter = args[0];
+  if (starter === undefined || !/^\d+-[0-9a-f-]+$/i.test(starter)) return failed("supervisor worker requires its lease holder", 2);
   const root = resolveStateDirectory(environment);
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  // The starter's lease names the starter's pid, which has exited; --stop needs the worker's own.
+  const holder = `${globalThis.process.pid}-${randomUUID()}`;
+  const transferred = transferLease(database.value, LEASE_KEY, starter, holder);
+  if (transferred.kind !== "ok" || !transferred.value) return ok("supervisor lease was taken by another worker\n");
   const delay = intervalSeconds(environment) * 1000;
   let running = true;
   const stop = (): void => { running = false; };
