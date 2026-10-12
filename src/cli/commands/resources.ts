@@ -18,7 +18,8 @@ export async function collectResources(environment: Environment, process: Proces
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return { machine: machine ?? null, docker: docker ?? null, dispatches: [] };
   const caller = all ? undefined : await callerFromEnvironment(environment, process);
-  const selected = listed.value.filter((item) => OPEN.has(String(item.state)) && (all || (caller !== undefined && ownsDispatch(caller, {
+  const identity = caller === undefined ? undefined : { ...caller, terminalId: caller.terminalId ?? null, tmuxSession: null, tmuxPane: null };
+  const selected = listed.value.filter((item) => OPEN.has(String(item.state)) && (all || (identity !== undefined && ownsDispatch(identity, {
     parentHost: String(item.parentHost ?? ""), parentSessionId: String(item.parentSessionId ?? ""),
   }))));
   const dispatches = await Promise.all(selected.map(async (item): Promise<DispatchResource> => {
