@@ -13,7 +13,7 @@ describe("worktree registry", () => {
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      expect(latestSchemaVersion).toBe(9);
+      expect(latestSchemaVersion).toBe(10);
       expect(opened.value.db.query<{ name: string }>("PRAGMA table_info(worktrees)").all().map(({ name }) => name)).toEqual([
         "path", "repo", "repo_name", "branch", "created_at", "created_by", "purpose", "origin", "finished_at", "parent_branch",
       ]);
@@ -38,7 +38,7 @@ describe("worktree registry", () => {
     if (upgraded.kind !== "ok") throw new Error(upgraded.error);
     try {
       expect(upgraded.value.db.query<{ parent_branch: string | null }>("SELECT parent_branch FROM worktrees WHERE path = ?").get("/trees/old")).toEqual({ parent_branch: null });
-      expect(upgraded.value.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(9);
+      expect(upgraded.value.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(10);
       const backups = await (await import("node:fs/promises")).readdir(join(directory, "backups"));
       expect(backups.length).toBeGreaterThan(0);
     } finally {

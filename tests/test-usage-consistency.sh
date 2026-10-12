@@ -102,6 +102,10 @@ watch_error="$("$binary" orchestrate watch 2>&1 || true)"
 assert_contains "$watch_error" "Usage: megabrain $(expected_usage_line orchestrate-watch)" \
   "orchestrate watch error text drifted from its help text: $watch_error"
 
+queue_cancel_error="$("$binary" orchestrate queue cancel 2>&1 || true)"
+assert_contains "$queue_cancel_error" "Usage: megabrain $(expected_usage_line orchestrate-queue-cancel)" \
+  "orchestrate queue cancel error text drifted from its help text: $queue_cancel_error"
+
 # The skill is what a fresh agent session actually reads, and it is the piece that
 # went stale unnoticed: it documented chain list but never chain run, so sessions
 # picked an agent and model by hand. It may shorten a usage line for readability, but
