@@ -120,19 +120,23 @@ function resetTime(text: string): string | undefined {
 }
 
 function classifyErrorText(text: string): SupervisionFinding {
-  if (/(?:you['’]ve hit your usage limit|usage limit reached|weekly limit.{0,60}(?:try again|reset))/i.test(text)) {
+  // Grok 1.0.50's installed CLI binary (`strings ~/.grok/bin/grok`) contains these rendered
+  // messages: usage: "You hit your free usage limit."; rate: "You've hit the rate limit for your
+  // plan."; server: "Service unavailable"; network: "Session recovery timed out; the server may
+  // have processed the POST"; auth: "Auth error: Auth required".
+  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit|usage limit reached|weekly limit.{0,60}(?:try again|reset))/i.test(text)) {
     return { cause: "usage-limit", resetAt: resetTime(text) ?? "unknown reset time", errorText: "usage limit" };
   }
   const codeMatch = /(?:API Error:\s*|unexpected status\s+|\b)(429|5\d\d|401|403)\b/i.exec(text);
   const code = codeMatch?.[1];
-  if (code === "401" || code === "403" || /(?:authentication required|unauthorized|access token[^.]{0,80}revoked|not logged in)/i.test(text)) {
+  if (code === "401" || code === "403" || /(?:auth error:\s*auth required|authentication response failed|authentication required|unauthorized|access token[^.]{0,80}revoked|not logged in)/i.test(text)) {
     return { cause: "auth-required", ...(code === undefined ? {} : { errorCode: code }), errorText: text.slice(0, 200) };
   }
-  if (code === "429" || /429 Too Many Requests|rate limit exceeded/i.test(text)) return { cause: "rate-limited", errorCode: "429", errorText: text.slice(0, 200) };
-  if ((code !== undefined && Number(code) >= 500) || /overloaded_error|overloaded|internal server error/i.test(text)) {
+  if (code === "429" || /429 Too Many Requests|rate limit exceeded|you['’]ve hit the rate limit for your plan|\brate limited\b/i.test(text)) return { cause: "rate-limited", errorCode: "429", errorText: text.slice(0, 200) };
+  if ((code !== undefined && Number(code) >= 500) || /overloaded_error|overloaded|internal server error|\bservice unavailable\b|\bserver error\b|something went wrong on our side/i.test(text)) {
     return { cause: "server-error", ...(code === undefined ? {} : { errorCode: code }), errorText: text.slice(0, 200) };
   }
-  if (/(?:request timed out|timed out waiting|connection error|stream disconnected|http_connection_failed)/i.test(text)) {
+  if (/(?:request timed out|timed out waiting|session recovery timed out|connection error|stream disconnected|http_connection_failed)/i.test(text)) {
     const errorCode = /timed out/i.test(text) ? "timeout" : /stream disconnected/i.test(text) ? "stream disconnected" : "connection error";
     return { cause: "network", errorCode, errorText: text.slice(0, 200) };
   }
