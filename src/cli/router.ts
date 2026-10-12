@@ -33,6 +33,7 @@ import { executeDatabase } from "./commands/db.js";
 import { executeTmux } from "./commands/tmux.js";
 import { executeChildAck } from "./commands/child-ack.js";
 import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
+import { executeHookPreTool } from "./commands/hook-pre-tool.js";
 import { usageTable, usageText } from "../core/usage.js";
 import { ensureAutomaticCutover } from "../db/cutover.js";
 import { executeDeliveryWorker } from "./commands/delivery-worker.js";
@@ -44,7 +45,7 @@ import { executeProc } from "../core/proc-runner.js";
 export type RouterDependencies = {
   readonly environment: Environment;
   readonly processAdapter: ProcessAdapter;
-  // Only the turn-end hook reads stdin, and only lazily (see executeHookTurnEnd) — a default
+  // Only the hooks read stdin (turn-end lazily, see executeHookTurnEnd; pre-tool always) — a default
   // reader is supplied here rather than at every call site so tests can inject a fake one.
   readonly readStdin?: () => Promise<string>;
 };
@@ -191,6 +192,9 @@ export async function route(
   }
   if (command === "received" || command === "ask" || command === "done") {
     return executeQueueWrite(command, commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "hook" && commandArgs[0] === "pre-tool") {
+    return executeHookPreTool(commandArgs.slice(1), dependencies.environment, dependencies.readStdin ?? readStdinText);
   }
   if (command === "hook" && commandArgs[0] === "turn-end") {
     return executeHookTurnEnd(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter, dependencies.readStdin ?? readStdinText);
