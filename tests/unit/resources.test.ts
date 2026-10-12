@@ -33,18 +33,18 @@ describe("resource sampling", () => {
   test("parses captured macOS system output", async () => {
     const [vmStat, sysctl, pressure] = await Promise.all([fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt")]);
     expect(parseMacMachineResources(vmStat, sysctl, pressure)).toEqual({
-      totalMemoryBytes: 19327352832, availableMemoryBytes: 3829448704, pressure: "normal",
+      totalMemoryBytes: 19327352832, availableMemoryBytes: 3829448704, pressure: "elevated",
       swapUsedBytes: 3285587067, loadAverage1: 5.3, loadAverage5: 5.45, cpuCount: 11,
     });
   });
 
   test("maps captured kernel pressure levels to the published macOS levels", async () => {
-    const [vmStat, sysctl, memoryPressure, kernelPressure] = await Promise.all([
-      fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt"), fixture("macos/memory-pressure-level.txt"),
+    const [vmStat, sysctl, memoryPressure] = await Promise.all([
+      fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt"),
     ]);
     for (const [level, expected] of [[1, "normal"], [2, "elevated"], [4, "critical"]] as const) {
-      const captured = kernelPressure.replace(/kern\.memorystatus_vm_pressure_level:\s*\d+/, `kern.memorystatus_vm_pressure_level: ${level}`);
-      expect(parseMacMachineResources(vmStat, `${sysctl}\n${captured}`, memoryPressure).pressure).toBe(expected);
+      const captured = sysctl.replace(/kern\.memorystatus_vm_pressure_level:\s*\d+/, `kern.memorystatus_vm_pressure_level: ${level}`);
+      expect(parseMacMachineResources(vmStat, captured, memoryPressure).pressure).toBe(expected);
     }
   });
 
@@ -108,7 +108,7 @@ describe("resource sampling", () => {
       expect(result.kind).toBe("ok");
       const payload = JSON.parse(result.kind === "ok" ? result.value : "{}") as Record<string, unknown>;
       expect(Object.keys(payload).sort()).toEqual(["dispatches", "docker", "machine"]);
-      expect(payload.machine).toMatchObject({ totalMemoryBytes: 19327352832, pressure: "normal", cpuCount: 11 });
+      expect(payload.machine).toMatchObject({ totalMemoryBytes: 19327352832, pressure: "elevated", cpuCount: 11 });
       expect(payload.dispatches).toEqual([]);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
