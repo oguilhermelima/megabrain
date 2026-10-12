@@ -5,6 +5,7 @@ import { executeSupervisorWorker } from "../../src/cli/commands/supervise.js";
 import { createDispatch } from "../../src/adapters/state-db.js";
 import { failed } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
+import { listLeases } from "../../src/adapters/state-db.js";
 import { acquireSupervisorLease, hasOpenDispatches, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
 
 describe("supervisor lifecycle decisions", () => {
@@ -57,5 +58,29 @@ describe("supervisor worker", () => {
     await rm(directory, { recursive: true, force: true });
     const outcome = await Promise.race([worker.then(() => "exited"), new Promise<string>((resolve) => setTimeout(() => resolve("still running"), 4000))]);
     expect(outcome).toBe("exited");
+  }, 10000);
+
+  test("records its own process id as the lease holder so --stop reaches it", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-pid-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SUPERVISE_INTERVAL_SECONDS: "1" };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const created = createDispatch(opened.value, { dispatchId: "d1", state: "running" });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const starter = "1-00000000-0000-0000-0000-000000000000";
+    expect(acquireSupervisorLease(opened.value, starter, 30)).toEqual({ kind: "ok", value: true });
+    const process = { async run() { return failed("not used"); }, async startDetached() { return failed("not used"); }, invocationCount() { return 0; } };
+    const worker = executeSupervisorWorker([starter], environment, process);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const leases = listLeases(opened.value);
+      if (leases.kind !== "ok") throw new Error(leases.error);
+      const holder = leases.value.find((lease) => lease.key === "supervise")?.holder ?? "";
+      expect(holder.split("-", 1)[0]).toBe(String(globalThis.process.pid));
+    } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+      await worker;
+    }
   }, 10000);
 });
