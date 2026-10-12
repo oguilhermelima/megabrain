@@ -1,4 +1,5 @@
 import { failed, ok, type Result } from "../../core/result.js";
+import { openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ownsDispatch } from "../../core/context.js";
 import { listDeliveries, listDispatches, listMessages, listOutbox, stateDatabase, cancelQueuedMessage, mutateDispatch } from "../../adapters/state-db.js";
@@ -158,7 +159,9 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
   if (!all) {
     const listed = listDispatches(db.value, { includeArchived: true });
     if (listed.kind !== "ok") return listed;
-    const open = new Set(listed.value.filter((entry) => ["spawning", "running", "waiting_for_reply", "orphaned"].includes(String(entry.state))).map((entry) => entry.dispatchId));
+    // Shared open states (queued spawns included), plus orphaned, which still holds a live child.
+    const openStates: readonly string[] = [...openDispatchStates, "orphaned"];
+    const open = new Set(listed.value.filter((entry) => openStates.includes(String(entry.state))).map((entry) => entry.dispatchId));
     dispatchIds = dispatchIds.filter((id) => open.has(id));
   }
   const items = queueItems(db.value, dispatchIds);
