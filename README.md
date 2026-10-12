@@ -95,8 +95,11 @@ Dispatches, messages, deliveries, terminals, install state, models, and tmux ses
 source of truth. `db show` reads a dispatch or auxiliary record; `db check` checks integrity and
 foreign keys; `db backup` writes a consistent backup under `backups/` and keeps the newest seven.
 
-Caller identity uses `MEGABRAIN_SESSION_ID` first, then the Claude or Codex session id, then the
-nearest stable ancestor process, and finally the controlling terminal. Set `MEGABRAIN_SESSION_ID`
+Caller identity uses `MEGABRAIN_SESSION_ID` first, then the Claude or Codex session id, then a
+Grok or Agy session found from the process tree (`grok:<session>` from Grok's
+`active_sessions.json`, `agy:<conversation>` from the presence lock Agy holds open), then the
+nearest stable ancestor process, and finally the controlling terminal. A Grok or Agy session id
+survives `--resume`/`--conversation`, so the coordinator keeps its dispatches. Set `MEGABRAIN_SESSION_ID`
 when a long-lived local caller has no stable ancestor or TTY, such as a detached service.
 
 On the first non-`db` command, Megabrain imports a legacy JSON state directory when one is present,
@@ -130,9 +133,9 @@ not cancel a Grok turn. The supervisor reads Grok's queued row and recognizes it
 and classifies the error messages present in Grok 1.0.50's CLI.
 
 The context meter reads `turn_completed` usage from the session matched by the Grok PID in the pane
-and `active_sessions.json`; it does not guess from the newest session. Usage-window reads for chains
-(a chain step reads as unknown), the tmux badge and shell wrapper, `install --agents grok` skill
-installation, and a Grok parent session identity remain unsupported. Grok error patterns come from
+and `active_sessions.json`; it does not guess from the newest session. Chain usage windows read the
+weekly credit window the Grok CLI's `/usage` shows, and a Grok coordinator is identified by its
+session. The tmux badge and shell wrapper remain unsupported. Grok error patterns come from
 the installed CLI's message strings; unrecognized errors remain unknown.
 
 ## Chains: choosing who does the work
@@ -553,7 +556,8 @@ IDE gives you cards, tabs and shared worktrees, and tmux gives you cheap panes a
 
 **And neither app is required.** megabrain works from any terminal: Terminal.app, iTerm, Ghostty, the
 VS Code terminal, a plain tmux or an ssh session. A caller under no app is a **local** caller. It is
-identified by its agent session (`claude:<session>` or `codex:<thread>`) and, with no agent, by the
+identified by its agent session (`claude:<session>`, `codex:<thread>`, `grok:<session>` or
+`agy:<conversation>`) and, with no agent, by the
 tty of its shell (`shell:<tty>`, or `shell:pid<pid>` when the shell has no tty). Children always run
 in tmux, and `spawn` reports `deliveryChannel: hook-and-watch`: a local parent has no terminal to
 type into, so child mail waits in the queue, the parent's Stop hook surfaces it once, and
