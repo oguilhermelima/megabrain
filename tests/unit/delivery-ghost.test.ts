@@ -133,16 +133,19 @@ describe("composer text on Orca, where ghost and typed text look the same", () =
     expect(run.sends).toHaveLength(0);
   });
 
-  test("does not submit if a person adds text during the delivery paste", async () => {
+  test("submits in one call even when the post-paste read-back diverges", async () => {
     const run = await orcaRun((_read, pasted) => pasted ? "✅ test finished plus human text" : "", {}, 1500);
-    expect(run.sends.some((send) => send.includes("--enter"))).toBe(false);
-    expect(run.outbox[0]).toMatchObject({ status: "failed", detail: "composer-race" });
+    expect(run.sends).toHaveLength(1);
+    expect(run.sends[0]).toContain("--enter");
+    expect(run.sends[0]).toContain("--text");
+    expect(run.outbox[0]?.status).toBe("sent");
   });
 
-  test("submits only after the composer exactly matches the delivered notice", async () => {
+  test("submits the notice and Enter in one call without a composer read-back gate", async () => {
     const run = await orcaRun((_read, pasted) => pasted ? "✅ test finished" : "", {}, 1500);
-    expect(run.sends.filter((send) => send.includes("--enter"))).toHaveLength(1);
-    expect(run.sends.some((send) => send.includes("--text") && !send.includes("--enter"))).toBe(true);
+    expect(run.sends).toHaveLength(1);
+    expect(run.sends[0]).toContain("--enter");
+    expect(run.sends[0]).toContain("--text");
   });
 
   test("holds Superset delivery when submit cannot be verified", async () => {
