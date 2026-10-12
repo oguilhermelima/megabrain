@@ -6,7 +6,7 @@ import { createDispatch } from "../../src/adapters/state-db.js";
 import { failed } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { listLeases } from "../../src/adapters/state-db.js";
-import { acquireSupervisorLease, hasOpenDispatches, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
+import { acquireSupervisorLease, hasOpenDispatches, isLiveProcessState, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
 
 describe("supervisor lifecycle decisions", () => {
   test("notifies once, again after thirty minutes, or immediately when the cause changes", () => {
@@ -25,6 +25,14 @@ describe("supervisor lifecycle decisions", () => {
     }
     expect(hasOpenDispatches(["spawning", "running", "waiting_for_reply", "orphaned"])).toBe(true);
     expect(hasOpenDispatches(["done", "failed", "closed", "circuit_broken"])).toBe(false);
+  });
+
+  test("a zombie agent is not a live process", () => {
+    expect(isLiveProcessState("")).toBe(false);
+    expect(isLiveProcessState("Zs\n")).toBe(false);
+    expect(isLiveProcessState("Z+")).toBe(false);
+    expect(isLiveProcessState("S\n")).toBe(true);
+    expect(isLiveProcessState("Ss+")).toBe(true);
   });
 
   test("uses one database lease for the state directory and releases it for the next owner", async () => {
