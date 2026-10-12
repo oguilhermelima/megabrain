@@ -64,6 +64,13 @@ describe("agy usage limits", () => {
     });
   });
 
+  test("a reading names the bucket it answered for", async () => {
+    await withDirectory(async (state) => {
+      expect(await readLimit("agy", "weekly", live("agy"), {}, agy(), state)).toMatchObject({ bucket: "Claude and GPT models" });
+      expect(await readLimit("agy", "weekly", live("agy"), {}, agy(), state, "gemini-3.1-pro-high")).toMatchObject({ bucket: "Gemini Models" });
+    });
+  });
+
   test("a disabled bucket is not a reading", async () => {
     await withDirectory(async (state) => {
       const reading = await readLimit("agy", "5h", live("agy"), {}, agy(), state, "claude-sonnet-4-6");
