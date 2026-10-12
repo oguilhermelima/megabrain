@@ -125,3 +125,10 @@ export function deliveryComposer(agent: string, screen: string): string | undefi
   if (agent === "claude" && value.trim().startsWith("Try \"")) return "";
   return value.trimEnd();
 }
+
+// Never submit an agent's confirmation or selection dialog with the delivery key.
+export function deliveryHasKeystrokeDialog(agent: string, screen: string): boolean {
+  if (/\b(?:Allow this action|Allow .*? to run|Do you want to proceed|Select an option|Press Enter to continue)\??/i.test(screen)) return true;
+  if (/\b(?:yes,? allow|deny|approve|reject)\b[\s\S]{0,120}\b(?:enter|return|select)\b/i.test(screen)) return true;
+  return agent === "agy" && /Trust this folder|Do you trust this workspace/i.test(screen);
+}

@@ -3,6 +3,7 @@ export type IdleDeliveryInput = Readonly<{
   initialDelayMs: number;
   maxDelayMs: number;
   ownDraft?: string;
+  allowBusy?: boolean;
   inspect: () => Promise<"idle" | "busy" | "unknown">;
   composer: () => Promise<string | undefined>;
   clear: () => Promise<boolean>;
@@ -46,7 +47,7 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
       return finish("cancelled");
     }
     status = await input.inspect();
-    if (status === "idle") {
+    if (status === "idle" || input.allowBusy === true) {
       let draft = await input.composer();
       composer = draft === undefined ? "unknown" : draft === "" ? "empty" : "draft";
       if (draft === input.ownDraft && draft !== undefined && draft !== "") {
@@ -63,11 +64,11 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
           return finish("cancelled");
         }
         status = await input.inspect();
-        if (status === "idle") {
+        if (status === "idle" || input.allowBusy === true) {
           draft = await input.composer();
           composer = draft === undefined ? "unknown" : draft === "" ? "empty" : "draft";
         }
-        if (status === "idle" && draft === "") {
+        if ((status === "idle" || input.allowBusy === true) && draft === "") {
           if (await input.send()) {
             await input.attempt?.({ status, composer, decision: "send" });
             return finish("delivered");
