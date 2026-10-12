@@ -32,7 +32,7 @@ export function installAgentSkills(
   return installed;
 }
 
-const agents = ["claude", "codex", "agy"] as const;
+const agents = ["claude", "codex", "agy", "grok"] as const;
 const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime"] as const;
 type MachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
@@ -59,7 +59,7 @@ function parseAgents(value: string): readonly MachineAgent[] | ParseFailure {
   const requested = csv(value);
   if (requested.length === 1 && requested[0] === "none") return [];
   if (requested.length === 0 || requested.some((agent) => !(agents as readonly string[]).includes(agent)) || requested.includes("none")) {
-    return { kind: "failed", error: "--agents requires claude,codex,agy or none", exitCode: 2 };
+    return { kind: "failed", error: "--agents requires claude,codex,agy,grok or none", exitCode: 2 };
   }
   return [...new Set(requested)] as MachineAgent[];
 }
@@ -190,6 +190,8 @@ export async function retireLegacyChannels(
 ): Promise<Result<string>> {
   const messages: string[] = [];
   for (const agent of availableAgents) {
+    // Grok never had a megabrain plugin or marketplace; the skill is its first channel.
+    if (agent === "grok") continue;
     const pluginOutput = await listOutput(processAdapter, agent, agent === "agy" ? ["plugin", "list"] : ["plugin", "list"]);
     const marketplaceOutput = agent === "agy" ? "" : await listOutput(processAdapter, agent, ["plugin", "marketplace", "list"]);
     const pluginFound = agent === "agy"

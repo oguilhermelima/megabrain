@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-export type MachineAgent = "claude" | "codex" | "agy";
+export type MachineAgent = "claude" | "codex" | "agy" | "grok";
 export type AgentDirectories = Readonly<{
   readonly config: string;
   readonly globalSkill: string;
@@ -19,6 +19,9 @@ export function discoverAgentDirectories(environment: AgentEnvironment): Machine
   // .gemini/config directory, and skills live under configDir/skills. The binary documentation
   // names no environment override, so this path is derived from HOME.
   const agyConfig = join(home, ".gemini", "config");
+  // Grok documents ~/.grok/skills/<name>/SKILL.md and .grok/skills in a project; GROK_HOME moves
+  // the whole directory, as it does for hooks.
+  const grokConfig = environment.GROK_HOME || join(home, ".grok");
 
   return {
     claude: {
@@ -35,6 +38,11 @@ export function discoverAgentDirectories(environment: AgentEnvironment): Machine
       config: agyConfig,
       globalSkill: join(agyConfig, "skills", "megabrain", "SKILL.md"),
       projectSkill: join(".agents", "skills", "megabrain", "SKILL.md"),
+    },
+    grok: {
+      config: grokConfig,
+      globalSkill: join(grokConfig, "skills", "megabrain", "SKILL.md"),
+      projectSkill: join(".grok", "skills", "megabrain", "SKILL.md"),
     },
   };
 }

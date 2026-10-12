@@ -314,7 +314,7 @@ host already forgot it or process identity was unavailable.
 ```
 megabrain context [--json] — recommended when you need to identify the orchestration host and runtime available in this session.
 megabrain doctor [module-id] [--json] — recommended when you need to check whether a module or the whole installation is healthy.
-megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
+megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
 ```
 
 `doctor --json` is machine readable for every module; operator advice goes to stderr so it stays
@@ -377,8 +377,8 @@ megabrain tv connect <ip> [--port <port>] — recommended when you need to conne
 megabrain tv disconnect [<ip>] — recommended when you need to disconnect an Android TV device from adb.
 megabrain doctor [module-id] [--json] — recommended when you need to check whether a module or the whole installation is healthy.
 megabrain doctor [module-id] [--json] — recommended when you need to check whether a module or the whole installation is healthy.
-megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
-megabrain install [module-id] [--agents claude,codex,agy|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
+megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
+megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
 megabrain web [--device SLUG|--category NAME|--viewport WxH] ... — recommended when you need to see browser viewport and visual-testing operations.
 megabrain web viewport set|show|devices ... — recommended when you need to set viewport dimensions, inspect the current settings, or manage device presets.
 megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG — recommended when you need to list, add, or remove named viewport device presets.

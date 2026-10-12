@@ -41,7 +41,7 @@ export type MachinePrompter = Readonly<{
   outro: (message: string) => void;
 }>;
 
-const AGENT_LABELS: Readonly<Record<MachineAgent, string>> = { claude: "Claude Code", codex: "Codex", agy: "Antigravity (agy)" };
+const AGENT_LABELS: Readonly<Record<MachineAgent, string>> = { claude: "Claude Code", codex: "Codex", agy: "Antigravity (agy)", grok: "Grok" };
 
 const MODULE_INFO: Readonly<Record<string, Readonly<{ label: string; hint: string; group: string }>>> = {
   "tmux-runtime": { label: "tmux split panes", hint: "shell wrapper plus child panes beside the parent", group: "Agents" },
