@@ -7,6 +7,7 @@ import { getTmux, withTmuxPaneLock, type TmuxSendEnvironment } from "../../hosts
 
 const POLL_MS = 100;
 const CLEAR_ATTEMPTS = 5;
+const MAX_CLEAR_PRESSES = 400;
 const DEFAULT_VERIFY_TIMEOUT_MS = 2000;
 const DEFAULT_SUBMIT_TIMEOUT_MS = 3000;
 
@@ -66,10 +67,17 @@ export async function paneShowsTurn(target: Pick<PromptTarget, "pane" | "agent" 
 }
 
 // An empty composer is the one the agent's classifier calls idle: its placeholder and nothing typed.
+// C-u may clear only one line per press (Antigravity empties a line, then joins it to the one above),
+// so presses continue while each one changes the screen and give up only once they stop helping.
 export async function clearComposer(target: Pick<PromptTarget, "pane" | "agent" | "process">): Promise<Result<void>> {
-  for (let attempt = 0; attempt < CLEAR_ATTEMPTS; attempt += 1) {
+  let previous: string | undefined;
+  let stalled = 0;
+  for (let press = 0; press < MAX_CLEAR_PRESSES && stalled < CLEAR_ATTEMPTS; press += 1) {
     const captured = await getTmux().capturePane(target.pane, 200, target.process, true);
     if (captured.kind === "ok" && classifyLiveness(target.agent, captured.value).status === "idle") return ok(undefined);
+    const frame = captured.kind === "ok" ? captured.value : undefined;
+    stalled = frame !== undefined && frame === previous ? stalled + 1 : 0;
+    previous = frame;
     const cleared = await getTmux().sendKey(target.pane, "C-u", target.process);
     if (cleared.kind !== "ok") return cleared;
     await sleep(POLL_MS);

@@ -21,6 +21,9 @@ function newlineCount(text: string): number {
 // A multi-line paste collapses into "[Pasted: N lines]", which counts the lines of the trimmed text.
 const GROK_BOX = /[│❯]/g;
 const GROK_PLACEHOLDER = /\[Pasted: (\d+) lines?\]/g;
+// Antigravity CLI 1.3.3 collapses a multi-line paste into "+N lines", N counting the lines of the
+// trimmed text, and a long single line into "N chars" (tests/fixtures/composer/agy-*).
+const AGY_PLACEHOLDER = /\[Pasted text #\d+ (?:\+(\d+) lines|(\d+) chars)\]/g;
 
 export function composerHoldsText(agent: string, screen: string, text: string): boolean {
   if (text === "") return false;
@@ -31,6 +34,12 @@ export function composerHoldsText(agent: string, screen: string, text: string): 
     return only !== undefined && Number(only[1]) === text.trimEnd().split("\n").length;
   }
   if (withoutWhitespace(screen).includes(withoutWhitespace(text))) return true;
+  if (agent === "agy") {
+    const placeholders = [...screen.matchAll(AGY_PLACEHOLDER)];
+    const only = placeholders.length === 1 ? placeholders[0] : undefined;
+    if (only === undefined) return false;
+    return only[1] !== undefined ? Number(only[1]) === text.trimEnd().split("\n").length : Number(only[2]) === [...text].length;
+  }
   if (agent === "claude") {
     const placeholders = [...screen.matchAll(CLAUDE_PLACEHOLDER)];
     const only = placeholders.length === 1 ? placeholders[0] : undefined;
@@ -100,7 +109,8 @@ export function composerExactlyHoldsText(agent: string, screen: string, text: st
   const placeholder = agent === "claude" ? /^\[Pasted text #\d+(?: \+\d+ lines)?\]$/u
     : agent === "codex" ? /^\[Pasted Content \d+ chars\]$/u
       : agent === "grok" ? /^\[Pasted: \d+ lines?\]$/u
-        : undefined;
+        : agent === "agy" ? /^\[Pasted text #\d+ (?:\+\d+ lines|\d+ chars)\]$/u
+          : undefined;
   if (placeholder?.test(region.trim()) === true) return composerHoldsText(agent, region, text);
   if (agent === "codex" && /^\s*›.*↑\s*$/mu.test(region)) return composerHoldsText(agent, region, text);
   return false;
