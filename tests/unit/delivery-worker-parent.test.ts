@@ -195,6 +195,28 @@ describe("Claude parent idle delivery", () => {
     }
   });
 
+  test("holds delivery when a permission dialog has an empty-looking composer", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 44567;
+    await fs.writeFile(path.join(sessions, "44567.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const fixture = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
+    const dialog = JSON.stringify({ ...fixture, result: { terminal: { ...fixture.result.terminal, tail: [...fixture.result.terminal.tail, "Allow this action?", "1. Yes", "2. No"] } } });
+    const fake = processFor(dialog);
+    try {
+      await runWorker(root, ids, fake.process, 100);
+      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("logs the proof, composer, and decision for each delivery attempt", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
