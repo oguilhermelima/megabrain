@@ -40,8 +40,9 @@
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off. — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
-- Run megabrain proc start|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.
-- Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.
+- Run megabrain proc start|run|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.
+- Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--needs docker] [--slot container-suite] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.
+- Run megabrain proc run --name <n> [--worktree <path>] [--cwd <dir>] [--env K=V] [--shell <string>] [--admission wait|fail] [--needs docker] [--slot container-suite] -- <command and arguments>. — recommended when you need to run a command in the foreground under admission, a container suite slot, or a docker hold.
 - Run megabrain proc list [--json]. — recommended when you need to list managed processes.
 - Run megabrain proc status <name> [--json] [--force]. — recommended when you need to inspect a managed process.
 - Run megabrain proc stop <name> [--force]. — recommended when you need to stop a managed process.
