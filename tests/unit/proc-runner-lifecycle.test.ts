@@ -72,6 +72,23 @@ describe("managed process lifecycle", () => {
     for (const child of [pid, ...children]) expect(await waitFor(async () => !(await alive(child)))).toBe(true);
   }, 20000);
 
+  test("stopping right after start leaves no process behind", async () => {
+    const env = await sandbox();
+    const marker = `sleep ${40000 + (process.pid % 10000)}`;
+    const leftovers = async (): Promise<string> => {
+      const found = await adapter.run("pgrep", ["-f", `^${marker}$`]);
+      return found.kind === "ok" ? found.value.stdout.trim() : "";
+    };
+    for (let round = 0; round < 5; round += 1) {
+      expect((await executeProc(["start", "--name", "quick", "--", ...marker.split(" ")], env, adapter)).kind).toBe("ok");
+      expect((await executeProc(["stop", "quick"], env, adapter)).kind).toBe("ok");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const found = await leftovers();
+    if (found !== "") await adapter.run("kill", found.split(/\s+/));
+    expect(found).toBe("");
+  }, 60000);
+
   test("only the caller that started a process may stop it", async () => {
     const env = await sandbox();
     const start = await executeProc(["start", "--name", "owned", "--", "sleep", "300"], { ...env, CLAUDE_CODE_SESSION_ID: "owner-a" }, adapter);
