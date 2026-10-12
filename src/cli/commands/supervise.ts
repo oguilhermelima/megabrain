@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase, transferLease } from "../../adapters/state-db.js";
+import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -277,6 +277,11 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
         ? { cause: "unknown", lastSeenAt: new Date(now).toISOString() }
         : { ...finding, cause: finding.cause, lastSeenAt: new Date(now).toISOString(), notifiedAt: shouldNotify ? now : previous?.notifiedAt ?? now, ...(recovery === undefined ? {} : { autoRecoveryAttemptedAt: now, autoRecoveryResult: recovery }) },
     }));
+  }
+  const historyEnvironment = { ...environment, MEGABRAIN_STATE_DIR: root };
+  if (await resourceHistoryEnabled(historyEnvironment)) {
+    const snapshot = await collectResources(historyEnvironment, process, true);
+    recordResourceSamples(historyEnvironment, database, snapshot.dispatches.flatMap((item) => item.resources === undefined ? [] : [{ dispatchId: item.dispatchId, agent: item.agent, rssBytes: item.resources.rssBytes, cpuPercent: item.resources.cpuPercent }]), now);
   }
   return { open: true, findings };
 }

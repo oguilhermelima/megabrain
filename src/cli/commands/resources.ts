@@ -1,5 +1,5 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { listDispatches, stateDatabase } from "../../adapters/state-db.js";
+import { listDispatches, resourceHistoryEnabled, setResourceHistory, stateDatabase } from "../../adapters/state-db.js";
 import { readDockerResources, readMachineResources, sampleProcessTree, type DockerResource, type MachineResources, type ProcessResources } from "../../core/resources.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
@@ -46,6 +46,12 @@ export async function executeResources(args: readonly string[], environment: Env
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("resources"));
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  if (args.length === 1 && (args[0] === "enable" || args[0] === "disable")) {
+    const enabled = args[0] === "enable";
+    await setResourceHistory(environment, enabled);
+    return ok(`resource history: ${enabled ? "enabled" : "disabled"}\n`);
+  }
+  if (args.length === 1 && args[0] === "status") return ok(`resource history: ${await resourceHistoryEnabled(environment) ? "enabled" : "disabled"}\n`);
   if (args.every((argument) => argument === "--json" || argument === "--all") && new Set(args).size === args.length) {
     const snapshot = await collectResources(environment, process, args.includes("--all"));
     return ok(args.includes("--json") ? `${JSON.stringify(snapshot, null, 2)}\n` : format(snapshot));
