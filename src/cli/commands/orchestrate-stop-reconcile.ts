@@ -9,6 +9,7 @@ import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } f
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { readDeliveryScreen } from "./delivery-screen.js";
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatch } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
@@ -57,7 +58,7 @@ async function tmuxLiveness(meta: RecordValue, process: ProcessAdapter): Promise
   const identity = await terminalStatus(meta, process);
   if (identity !== "proven") return { status: identity === "missing" ? "missing" : "unknown", reason: identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven", identity };
   const pane = value(meta.tmuxPane);
-  const capture = await getTmux().capturePane(pane, 200, process);
+  const capture = await readDeliveryScreen(meta, process);
   if (capture.kind !== "ok") return { status: "unknown", reason: "terminal output is unavailable", identity };
   const classified = classifyLiveness(value(meta.agent), capture.value);
   return { status: classified.status, reason: classified.reason ?? "", identity };
