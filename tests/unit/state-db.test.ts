@@ -8,6 +8,7 @@ import { latestSchemaVersion } from "../../src/db/db.js";
 import { updateDispatch, type DispatchRow } from "../../src/db/queries/dispatches.js";
 import {
   ackDelivery,
+  acquireLease,
   appendMessage,
   archiveDispatch,
   claimOutbox,
@@ -135,6 +136,14 @@ describe("state database facade", () => {
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))?.status).toBe("sending");
     expect(finishOutbox(db, "outbox-claim", "failed", "retryable").kind).toBe("ok");
     expect(finishOutbox(db, "missing", "sent").kind).toBe("failed");
+  });
+
+  test("an expired delivery target lease can be acquired by a new worker", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "dead-lease", state: "running" }));
+    expect(requireOk(acquireLease(db, "delivery-target:parent", "dead-holder", 60))).toBe(true);
+    db.db.run("UPDATE leases SET expires_at = ? WHERE key = ?", ["2000-01-01T00:00:00.000Z", "delivery-target:parent"]);
+    expect(requireOk(acquireLease(db, "delivery-target:parent", "new-holder", 60))).toBe(true);
   });
 
   test("delivery ack and fence preserve consumer and generation rules", () => {
