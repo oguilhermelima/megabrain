@@ -15,7 +15,7 @@ guard_db_state() {
   case "$MEGABRAIN_STATE_DIR" in "$HOME/.megabrain"|"$HOME/.megabrain/"*) printf 'FAIL: refusing real HOME database\n' >&2; exit 1 ;; esac
 }
 guard_db_state
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 source "$root/tests/fixtures/entrypoint-routing.sh"
 

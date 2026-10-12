@@ -13,7 +13,7 @@ real_tmux="$(command -v tmux)"
 server="mb-pane-$RANDOM-$$"
 cleanup() {
   "$real_tmux" -L "$server" kill-server >/dev/null 2>&1 || true
-  rm -rf "$work"
+  remove_test_dir "$work"
 }
 trap cleanup EXIT
 

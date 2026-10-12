@@ -147,7 +147,7 @@ fake_killed=''
 fake_old_tree_gone=false
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

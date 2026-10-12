@@ -17,7 +17,7 @@ real_bun="$(command -v bun)"
 real_path="$PATH"
 cleanup() {
   tmux -L "$server" kill-server >/dev/null 2>&1 || true
-  rm -rf "$work"
+  remove_test_dir "$work"
 }
 trap cleanup EXIT
 

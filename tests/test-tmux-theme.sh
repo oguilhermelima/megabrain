@@ -25,7 +25,7 @@ socket="mb-tb-${RANDOM}-${RANDOM}-$$"
 server=(tmux -L "$socket" -f "$HOME/.megabrain/tmux/megabrain.tmux.conf")
 cleanup() {
   "${server[@]}" kill-server >/dev/null 2>&1 || true
-  rm -rf "$work"
+  remove_test_dir "$work"
 }
 trap cleanup EXIT
 

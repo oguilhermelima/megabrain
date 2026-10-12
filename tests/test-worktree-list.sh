@@ -24,7 +24,7 @@ node_bin="$(dirname "$(command -v node)")"
 
 cleanup() {
   local rc=$?
-  rm -rf "$state_root"
+  remove_test_dir "$state_root"
   return "$rc"
 }
 trap cleanup EXIT

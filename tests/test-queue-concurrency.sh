@@ -20,7 +20,7 @@ guard_db_state
 
 cleanup() {
   wait 2>/dev/null || true
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return 0
 }
 trap cleanup EXIT

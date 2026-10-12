@@ -7,7 +7,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-stack-gitlab.XXXXXX")"
 source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work/state"
 require_megabrain_test_state
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 contains() { case "$1" in *"$2"*) ;; *) fail "expected '$1' to contain '$2'" ;; esac; }

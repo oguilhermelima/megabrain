@@ -19,7 +19,7 @@ work_dir="$(cd "$work_dir" && pwd -P)"
 node_bin="$(dirname "$(command -v node)")"
 
 cleanup() {
-  rm -rf "$work_dir"
+  remove_test_dir "$work_dir"
 }
 trap cleanup EXIT
 

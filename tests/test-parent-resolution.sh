@@ -10,8 +10,7 @@ require_megabrain_test_state
 
 cleanup() {
   local rc=$?
-  stop_megabrain_supervisor
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
   return "$rc"
 }
 trap cleanup EXIT

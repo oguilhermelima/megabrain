@@ -14,7 +14,7 @@ export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
 require_megabrain_test_state
 
 binary="$root/.build/megabrain"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 export MEGABRAIN_ROOT="$root"
 source "$root/tests/fixtures/entrypoint-routing.sh"
 

@@ -8,7 +8,7 @@ source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
 require_megabrain_test_state
 
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 mkdir -p "$work/home/.megabrain"
 
 if env -u MEGABRAIN_STATE_DIR HOME="$work/home" bash -c 'source "$1/tests/support/state-dir-guard.bash"; require_megabrain_test_state' _ "$root" >"$work/unset.out" 2>&1; then

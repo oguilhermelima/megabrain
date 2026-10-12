@@ -21,8 +21,7 @@ log="$tmp/submissions.log"
 
 cleanup() {
   tmux -L "$socket" kill-server >/dev/null 2>&1 || true
-  stop_megabrain_supervisor
-  rm -rf "$tmp"
+  remove_test_dir "$tmp"
 }
 trap cleanup EXIT
 

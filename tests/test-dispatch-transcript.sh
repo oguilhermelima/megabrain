@@ -28,7 +28,7 @@ live_sessions="$state_dir/live-sessions"
 release_log="$state_dir/release.log"
 
 cleanup() {
-  rm -rf "$state_dir"
+  remove_test_dir "$state_dir"
 }
 trap cleanup EXIT
 

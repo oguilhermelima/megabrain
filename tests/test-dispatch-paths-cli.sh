@@ -12,7 +12,7 @@ export MEGABRAIN_STATE_DIR="$work/.megabrain-test-state"
 require_megabrain_test_state
 
 
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 if [ ! -x "$root/.build/megabrain" ]; then

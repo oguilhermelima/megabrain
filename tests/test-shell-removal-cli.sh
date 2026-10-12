@@ -12,7 +12,7 @@ require_megabrain_test_state
 node_bin="$work/node-bin"
 mkdir -p "$node_bin"
 ln -s "$(command -v node)" "$node_bin/node"
-trap 'rm -rf "$work"' EXIT
+trap 'remove_test_dir "$work"' EXIT
 
 source "$root/tests/fixtures/entrypoint-routing.sh"
 source "$root/tests/support/state-db.bash"

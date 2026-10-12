@@ -11,8 +11,7 @@ require_megabrain_test_state
 
 
 cleanup() {
-  stop_megabrain_supervisor
-  rm -rf "$work_dir"
+  remove_test_dir "$work_dir"
 }
 trap cleanup EXIT
 
