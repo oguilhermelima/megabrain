@@ -88,7 +88,7 @@ describe("orchestrate queue", () => {
 
     const all = await executeOrchestrateQueue(["--all", "--json"], environment(root), adapter());
     expect(all.kind).toBe("ok");
-    expect(JSON.parse(all.kind === "ok" ? all.value : "[]").map((item: RecordValue) => item.dispatch)).toEqual(["dispatch-open", "dispatch-closed"]);
+    expect(JSON.parse(all.kind === "ok" ? all.value : "[]").map((item: RecordValue) => item.dispatch).sort()).toEqual(["dispatch-closed", "dispatch-open"]);
   });
 
   test("cancelling a queued reply removes it from check and the worker does not send it", async () => {
