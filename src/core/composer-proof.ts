@@ -80,6 +80,16 @@ function composerRegion(agent: string, screen: string): string | undefined {
   return content.join("\n").trimEnd();
 }
 
+export function composerReadback(agent: string, screen: string): Readonly<{ region?: string; orcaDraft?: string }> {
+  const region = composerRegion(agent, screen);
+  const draftLine = [...screen.split("\n")].reverse().find((line) => line.startsWith("MEGABRAIN_COMPOSER_DRAFT:"));
+  const orcaDraft = draftLine?.slice("MEGABRAIN_COMPOSER_DRAFT:".length);
+  return {
+    ...(region === undefined ? {} : { region }),
+    ...(orcaDraft === undefined ? {} : { orcaDraft }),
+  };
+}
+
 // Proves the complete composer payload. Inline text must match in full; collapsed agent paste
 // placeholders are accepted only when the placeholder is the entire composer payload.
 export function composerExactlyHoldsText(agent: string, screen: string, text: string): boolean {
