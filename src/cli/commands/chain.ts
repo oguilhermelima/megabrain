@@ -159,7 +159,8 @@ function formatList(config: ChainConfig, asJson: boolean): string {
   return lines.join("\n") + "\n";
 }
 type LimitRow = { provider: string; window: string; status: string; usedPercent: number | null; resetsAt: string | null; source: string; fetchedAt: number | null; reason: string | null; bucket: string | null; reading: { kind: string; basis: string | null } | null };
-const limitAgents = ["codex", "claude", "agy"] as const;
+const limitAgents = ["codex", "claude", "agy", "grok"] as const;
+const liveProviders = ["claude", "agy", "grok"] as const;
 const limitWindows = ["5h", "weekly"] as const;
 // Maps core/chain-limits.ts's LimitReading (the port of megabrain_chain_limit_read)
 // onto the pre-existing LimitRow shape this command has always returned, so the
@@ -204,12 +205,44 @@ async function limits(environment: ChainEnvironment, asJson: boolean, config: Ch
 async function execute(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const [subcommand, ...rest] = args; let asJson = false;
   if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, formatList(valid.value, asJson)) : valid; }
-  if (subcommand === "limits") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("limits")); else return error(`unknown chain limits option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); if (valid.kind !== "ok") return valid; return validatedOutput(valid, await limits(environment, asJson, valid.value, processAdapter)); }
+  if (subcommand === "limits") return limitsCommand(rest, environment, processAdapter);
   if (subcommand === "add") return Promise.resolve(addChain(rest, environment));
   if (subcommand === "edit") return editChain(rest, environment, processAdapter);
   if (subcommand === "delete") return Promise.resolve(deleteChain(rest, environment));
   if (subcommand === "repair") return Promise.resolve(repairChain(rest, environment));
   if (subcommand === "run") return executeChainRun(rest, environment, processAdapter);
   if (subcommand === "-h" || subcommand === "--help" || subcommand === undefined) return ok(usage("chain")); return error(`unknown chain command: ${subcommand}`, 2);
+}
+type LimitSettings = { enable: string[]; disable: string[]; notice?: boolean; interval?: number };
+function parseProviders(value: string | undefined, flag: string): Result<string[]> {
+  if (value === undefined || value === "") return error(`chain limits ${flag} needs a comma-separated provider list`, 2);
+  const providers = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  const bad = providers.find((entry) => !(liveProviders as readonly string[]).includes(entry));
+  return bad === undefined ? ok(providers) : error(`chain limits ${flag}: unknown live provider ${bad}; expected ${liveProviders.join(", ")}`, 2);
+}
+// --enable/--disable choose which providers `chain limits` and `chain run` may ask over the network
+// (or through their CLI); codex is always read from disk and needs no opt-in.
+async function limitsCommand(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  let asJson = false; const settings: LimitSettings = { enable: [], disable: [] };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") asJson = true;
+    else if (arg === "-h" || arg === "--help") return ok(usage("limits"));
+    else if (arg === "--enable" || arg === "--disable") { const parsed = parseProviders(args[index + 1], arg); if (parsed.kind !== "ok") return parsed; settings[arg === "--enable" ? "enable" : "disable"].push(...parsed.value); index += 1; }
+    else if (arg === "--notice-on" || arg === "--notice-off") settings.notice = arg === "--notice-on";
+    else if (arg === "--notice-interval") { const value = Number(args[index + 1]); if (!Number.isInteger(value) || value <= 0) return error("chain limits --notice-interval needs a positive number of seconds", 2); settings.interval = value; index += 1; }
+    else return error(`unknown chain limits option: ${arg}`, 2);
+  }
+  const config = readConfig(environment); if (config.kind !== "ok") return config;
+  let current = config.value;
+  if (settings.enable.length > 0 || settings.disable.length > 0 || settings.notice !== undefined || settings.interval !== undefined) {
+    const usageLimits = current.usageLimits ?? {};
+    const providers = [...(usageLimits.liveProviders ?? []), ...settings.enable].filter((entry, index, all) => all.indexOf(entry) === index && !settings.disable.includes(entry));
+    const notice = { ...(usageLimits.notice ?? {}), ...(settings.notice === undefined ? {} : { enabled: settings.notice }), ...(settings.interval === undefined ? {} : { intervalSeconds: settings.interval }) };
+    current = { ...current, usageLimits: { ...usageLimits, liveProviders: providers, notice } };
+    const written = writeConfig(current, chainPath(environment)); if (written.kind !== "ok") return written;
+  }
+  const valid = validateConfig(current, environment); if (valid.kind !== "ok") return valid;
+  return validatedOutput(valid, await limits(environment, asJson, valid.value, processAdapter));
 }
 export async function executeChain(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> { return execute(args, environment, processAdapter); }

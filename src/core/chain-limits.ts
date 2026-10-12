@@ -12,7 +12,7 @@ import type { ChainConfig } from "./chain.js";
 // continueRefusedChain directly, which reads limits through this module.
 
 export type LimitWindowName = "5h" | "weekly";
-export type LimitAgent = "codex" | "claude" | "agy";
+export type LimitAgent = "codex" | "claude" | "agy" | "grok";
 
 export type LimitEntry = Readonly<{
   readonly name: string;
@@ -21,6 +21,8 @@ export type LimitEntry = Readonly<{
   readonly remainingPercent: number;
   readonly resetsAt: string;
   readonly windowMinutes?: number;
+  // The models a provider says share this bucket (agy: "Gemini Flash, Gemini Pro").
+  readonly models?: string;
 }>;
 
 export type LimitResult = Readonly<{
@@ -175,12 +177,23 @@ function resolveCodexLimit(sessionsDir: string, window: LimitWindowName, now: nu
   return resolveCodexSnapshot(snapshot, window, now, fetchedAt);
 }
 
-function applyLimitResult(result: LimitResult, agent: LimitAgent, window: LimitWindowName, source: "cache" | "live"): LimitReading {
-  const entry = result.windows.find((candidate) => candidate.name === window);
+// A provider with several buckets per window (agy groups models by family) answers for the bucket
+// that names the step's model family; without a model the most used bucket is the safe answer.
+function entryFor(result: LimitResult, window: LimitWindowName, model: string | undefined): LimitEntry | undefined {
+  const entries = result.windows.filter((candidate) => candidate.name === window);
+  const family = model?.toLowerCase().split(/[-_ ]/)[0];
+  const shared = new Set(result.windows.map((entry) => entry.bucket)).size <= 1;
+  const chosen = shared || family === undefined || family === "" ? entries : entries.filter((entry) => `${entry.bucket} ${entry.models ?? ""}`.toLowerCase().includes(family));
+  return chosen.reduce<LimitEntry | undefined>((most, entry) => most === undefined || entry.usedPercent > most.usedPercent ? entry : most, undefined);
+}
+
+function applyLimitResult(result: LimitResult, agent: LimitAgent, window: LimitWindowName, source: "cache" | "live", model?: string): LimitReading {
+  const entry = entryFor(result, window, model);
   if (entry === undefined || typeof entry.usedPercent !== "number" || typeof entry.remainingPercent !== "number" || typeof entry.resetsAt !== "string" || entry.resetsAt.length === 0) {
     return unknownReading(agent, window, "provider response has no usable window");
   }
-  return { status: "current", usedPercent: entry.usedPercent, resetsAt: entry.resetsAt, reason: `${agent} ${window} window at ${percentText(entry.usedPercent)} percent`, source, result, fetchedAt: result.fetchedAt };
+  const bucket = entry.bucket === "default" ? "" : ` (${entry.bucket})`;
+  return { status: "current", usedPercent: entry.usedPercent, resetsAt: entry.resetsAt, reason: `${agent} ${window} window${bucket} at ${percentText(entry.usedPercent)} percent`, source, result, fetchedAt: result.fetchedAt };
 }
 
 function limitTimeout(config: ChainConfig, environment: ChainLimitEnvironment): number {
@@ -199,7 +212,7 @@ function cachePath(stateDir: string, agent: LimitAgent): string {
   return resolve(stateDir, `usage-limits-${agent}.json`);
 }
 
-function readCache(agent: "claude" | "agy", window: LimitWindowName, config: ChainConfig, environment: ChainLimitEnvironment, stateDir: string, now: number): LimitReading | undefined {
+function readCache(agent: Exclude<LimitAgent, "codex">, window: LimitWindowName, config: ChainConfig, environment: ChainLimitEnvironment, stateDir: string, now: number, model: string | undefined): LimitReading | undefined {
   const path = cachePath(stateDir, agent);
   if (!existsSync(path)) return undefined;
   let parsed: unknown;
@@ -207,7 +220,7 @@ function readCache(agent: "claude" | "agy", window: LimitWindowName, config: Cha
   if (!isObject(parsed) || parsed.provider !== agent || typeof parsed.fetchedAt !== "number" || !Array.isArray(parsed.windows)) return undefined;
   const ttl = limitTtl(config, environment);
   if (!(parsed.fetchedAt <= now && now - parsed.fetchedAt < ttl)) return undefined;
-  const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "cache");
+  const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "cache", model);
   return reading.status === "current" ? reading : undefined;
 }
 
@@ -290,85 +303,102 @@ async function fetchClaudeUsage(window: LimitWindowName, processAdapter: Process
   return applyLimitResult(result2, "claude", window, "live");
 }
 
-async function agyCredentials(processAdapter: ProcessAdapter): Promise<{ kind: "ok"; token: string } | { kind: "missing" } | { kind: "unsupported" } | { kind: "no-token" }> {
-  const result = await processAdapter.run("security", ["find-generic-password", "-s", "gemini", "-w"]);
-  if (result.kind !== "ok") return { kind: "missing" };
-  const raw = result.value.stdout.trim();
-  const prefix = "go-keyring-base64:";
-  if (!raw.startsWith(prefix)) return { kind: "unsupported" };
-  let decoded: string;
-  try { decoded = Buffer.from(raw.slice(prefix.length), "base64").toString("utf8"); } catch { return { kind: "unsupported" }; }
-  try {
-    const parsed = JSON.parse(decoded) as JsonRecord;
-    const token = typeof parsed.token === "string" ? parsed.token : "";
-    return token === "" ? { kind: "no-token" } : { kind: "ok", token };
-  } catch { return { kind: "no-token" }; }
-}
-
-function resetAtFor(value: JsonRecord): string | undefined {
-  const candidates: readonly unknown[] = [value.reset_at, value.resets_at, value.reset_time, value.resetTime];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.length > 0) return candidate;
-    if (isObject(candidate) && typeof candidate.seconds === "number") return new Date(candidate.seconds * 1000).toISOString();
-  }
-  return undefined;
-}
-
 function clampPercent(value: number): number {
   return value < 0 ? 0 : value > 100 ? 100 : value;
 }
 
-function quotaEntries(map: JsonRecord, bucket: string): LimitEntry[] {
+const AGY_USAGE_ARGS = ["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"] as const;
+const AGY_SIGNED_OUT = /AGY_ERROR:.*(?:UNAUTHENTICATED|"error_code":\s*401)|not logged in|not signed in|run agy login/i;
+
+// Antigravity CLI 1.3.3 answers /usage as a command (no model turn, num_turns 0) with
+// command.data.groups[].buckets[] — window "5h"|"weekly", remaining_fraction, reset_time — the
+// same source Orca's status bar reads. A disabled bucket (the 5h limit while the weekly one is
+// spent) carries no reset and is not a reading.
+export function agyWindowsFrom(output: string): LimitEntry[] {
   const entries: LimitEntry[] = [];
-  for (const [key, raw] of Object.entries(map)) {
-    if (!isObject(raw) || typeof raw.remaining_fraction !== "number") continue;
-    const resetsAt = resetAtFor(raw);
-    if (resetsAt === undefined || resetsAt === "") continue;
-    const name = key.endsWith("-5h") ? "5h" : key.endsWith("-weekly") ? "weekly" : undefined;
-    if (name === undefined) continue;
-    const fraction = raw.remaining_fraction;
-    entries.push({ name, bucket, usedPercent: clampPercent(100 - fraction * 100), remainingPercent: clampPercent(fraction * 100), resetsAt });
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim().startsWith("{")) continue;
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); } catch { continue; }
+    const data = isObject(parsed) && isObject(parsed.command) && isObject(parsed.command.data) ? parsed.command.data : undefined;
+    const groups = Array.isArray(data?.groups) ? data.groups.filter(isObject) : [];
+    for (const group of groups) {
+      const bucket = typeof group.name === "string" && group.name !== "" ? group.name : "unknown";
+      const models = typeof group.description === "string" ? group.description : undefined;
+      for (const raw of Array.isArray(group.buckets) ? group.buckets.filter(isObject) : []) {
+        const name = raw.window === "5h" || raw.window === "weekly" ? raw.window : undefined;
+        if (name === undefined || raw.disabled === true || typeof raw.remaining_fraction !== "number" || typeof raw.reset_time !== "string" || raw.reset_time === "") continue;
+        const remaining = clampPercent(raw.remaining_fraction * 100);
+        entries.push({ name, bucket, usedPercent: clampPercent(100 - remaining), remainingPercent: remaining, resetsAt: raw.reset_time, windowMinutes: windowMinutesFor(name), ...(models === undefined ? {} : { models }) });
+      }
+    }
+    if (entries.length > 0) break;
   }
   return entries;
 }
 
-function agyWindowsFrom(body: JsonRecord): LimitEntry[] {
-  const legacy = isObject(body.quota) ? quotaEntries(body.quota, "default") : [];
-  const groups = Array.isArray(body.buckets)
-    ? (body.buckets as unknown[]).filter(isObject).flatMap((group) => {
-      const bucketName = (typeof group.displayName === "string" && group.displayName) || (typeof group.name === "string" && group.name) || "unknown";
-      const quota = isObject(group.quota) ? group.quota : group;
-      return quotaEntries(quota, bucketName);
-    })
-    : [];
-  return [...legacy, ...groups];
+async function fetchAgyUsage(window: LimitWindowName, processAdapter: ProcessAdapter, model: string | undefined): Promise<LimitReading> {
+  const result = await processAdapter.run("agy", AGY_USAGE_ARGS, { timeoutMs: 30_000 });
+  const output = result.kind === "ok" ? `${result.value.stdout}\n${result.value.stderr}` : `${result.kind === "failed" ? result.stdout ?? "" : ""}\n${result.error}`;
+  if (AGY_SIGNED_OUT.test(output)) return unknownReading("agy", window, "agy is not signed in; run agy and sign in");
+  if (result.kind !== "ok" && /executable not found|not found in \$PATH/i.test(result.error)) return unknownReading("agy", window, "agy CLI is not installed");
+  const windows = agyWindowsFrom(output);
+  if (windows.length === 0) return unknownReading("agy", window, result.kind === "ok" ? "agy CLI reported no quota" : `agy CLI failed: ${result.error.slice(0, 120)}`);
+  return applyLimitResult({ provider: "agy", fetchedAt: Math.floor(Date.now() / 1000), windows }, "agy", window, "live", model);
 }
 
-async function fetchAgyUsage(window: LimitWindowName, processAdapter: ProcessAdapter, timeoutSeconds: number, environment: ChainLimitEnvironment): Promise<LimitReading> {
-  const credentials = await agyCredentials(processAdapter);
-  if (credentials.kind === "missing") return unknownReading("agy", window, "Keychain item is missing");
-  if (credentials.kind === "unsupported") return unknownReading("agy", window, "Keychain credential wrapper is unsupported");
-  if (credentials.kind === "no-token") return unknownReading("agy", window, "Keychain credential has no token");
-  const url = environment.MEGABRAIN_CHAIN_AGY_USAGE_URL ?? "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+type GrokSession = { readonly token: string; readonly userId: string | undefined; readonly expiresAt: number | undefined };
+
+// Grok keeps its sign-in in <GROK_HOME>/auth.json, keyed by issuer ("https://auth.x.ai" or
+// "https://auth.x.ai::<client>"), each entry holding the bearer `key` and its `expires_at`.
+function grokSession(environment: ChainLimitEnvironment): GrokSession | undefined {
+  const home = environment.GROK_HOME ?? resolve(environment.HOME ?? "", ".grok");
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(resolve(home, "auth.json"), "utf8")); } catch { return undefined; }
+  if (!isObject(parsed)) return undefined;
+  const sessions = Object.entries(parsed)
+    .filter(([issuer, value]) => (issuer === "https://auth.x.ai" || issuer.startsWith("https://auth.x.ai::")) && isObject(value) && typeof value.key === "string" && value.key !== "")
+    .map(([, value]) => {
+      const entry = value as JsonRecord;
+      const expires = typeof entry.expires_at === "string" ? Date.parse(entry.expires_at) : NaN;
+      return { token: entry.key as string, userId: typeof entry.user_id === "string" ? entry.user_id : undefined, expiresAt: Number.isFinite(expires) ? expires : undefined };
+    });
+  return sessions.find((session) => session.expiresAt === undefined || session.expiresAt > Date.now()) ?? sessions[0];
+}
+
+const GROK_EXPIRY_MARGIN_MS = 5 * 60 * 1000;
+
+// The Grok CLI's own /usage reads GET <chat proxy>/billing?format=credits; a weekly period
+// reports creditUsagePercent and ends at currentPeriod.end.
+async function fetchGrokUsage(window: LimitWindowName, processAdapter: ProcessAdapter, timeoutSeconds: number, environment: ChainLimitEnvironment): Promise<LimitReading> {
+  const session = grokSession(environment);
+  if (session === undefined) return unknownReading("grok", window, "not signed in to Grok; run grok login");
+  if (session.expiresAt !== undefined && session.expiresAt - Date.now() <= GROK_EXPIRY_MARGIN_MS) return unknownReading("grok", window, "Grok sign-in expired; run grok once to refresh it");
+  const base = (environment.GROK_CLI_CHAT_PROXY_BASE_URL?.trim().replace(/\/$/, "") || "https://cli-chat-proxy.grok.com/v1");
+  const url = environment.MEGABRAIN_CHAIN_GROK_USAGE_URL ?? `${base}/billing?format=credits`;
   const timeout = String(timeoutSeconds);
-  const result = await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, "-X", "POST", "-H", `Authorization: Bearer ${credentials.token}`, "-H", "Content-Type: application/json", "-d", "{}", "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}", url]);
-  const parsed = parseCurlResult(result);
-  if (parsed.kind === "timeout") return unknownReading("agy", window, "request timed out");
-  if (parsed.kind === "network-failed") return unknownReading("agy", window, "network request failed");
-  if (parsed.kind === "http-error") return unknownReading("agy", window, `provider returned HTTP ${parsed.status}`);
+  const headers = ["-H", `Authorization: Bearer ${session.token}`, "-H", "X-XAI-Token-Auth: xai-grok-cli", "-H", "Accept: application/json", ...(session.userId === undefined ? [] : ["-H", `x-userid: ${session.userId}`])];
+  const parsed = parseCurlResult(await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, ...headers, "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}", url]));
+  if (parsed.kind === "timeout") return unknownReading("grok", window, "request timed out");
+  if (parsed.kind === "network-failed") return unknownReading("grok", window, "network request failed");
+  if (parsed.kind === "http-error") return unknownReading("grok", window, `provider returned HTTP ${parsed.status}`);
   let body: JsonRecord;
-  try { body = JSON.parse(parsed.body) as JsonRecord; } catch { return unknownReading("agy", window, "response body is unparseable or incomplete"); }
-  const windows = agyWindowsFrom(body);
-  if (windows.length === 0) return unknownReading("agy", window, "response body is unparseable or incomplete");
-  const result2: LimitResult = { provider: "agy", fetchedAt: Math.floor(Date.now() / 1000), windows };
-  return applyLimitResult(result2, "agy", window, "live");
+  try { body = JSON.parse(parsed.body) as JsonRecord; } catch { return unknownReading("grok", window, "response body is unparseable or incomplete"); }
+  const config = isObject(body.config) ? body.config : body;
+  const period = isObject(config.currentPeriod) ? config.currentPeriod : undefined;
+  const used = config.creditUsagePercent;
+  const end = typeof period?.end === "string" ? period.end : typeof config.billingPeriodEnd === "string" ? config.billingPeriodEnd : undefined;
+  if (typeof used !== "number" || period?.type !== "USAGE_PERIOD_TYPE_WEEKLY" || end === undefined) return unknownReading("grok", window, "provider reported no weekly credit usage");
+  const usedPercent = clampPercent(used);
+  const windows: LimitEntry[] = [{ name: "weekly", bucket: "default", usedPercent, remainingPercent: 100 - usedPercent, resetsAt: end, windowMinutes: 10080 }];
+  return applyLimitResult({ provider: "grok", fetchedAt: Math.floor(Date.now() / 1000), windows }, "grok", window, "live");
 }
 
 // Ports megabrain_chain_limit_read: codex reads the local rollout scan; claude/agy
 // only make a live request when the agent is in usageLimits.liveProviders, and are
 // otherwise reported unknown without touching the network, matching the shell's
 // opt-in gate exactly.
-export async function readLimit(agent: LimitAgent, window: LimitWindowName, config: ChainConfig, environment: ChainLimitEnvironment, processAdapter: ProcessAdapter, stateDir: string): Promise<LimitReading> {
+export async function readLimit(agent: LimitAgent, window: LimitWindowName, config: ChainConfig, environment: ChainLimitEnvironment, processAdapter: ProcessAdapter, stateDir: string, model?: string): Promise<LimitReading> {
   const now = Math.floor(Date.now() / 1000);
   if (agent === "codex") {
     const sessionsDir = environment.MEGABRAIN_CODEX_SESSIONS_DIR ?? resolve(environment.HOME ?? "", ".codex/sessions");
@@ -376,12 +406,14 @@ export async function readLimit(agent: LimitAgent, window: LimitWindowName, conf
   }
   const liveProviders = config.usageLimits?.liveProviders ?? [];
   if (!liveProviders.includes(agent)) return unknownReading(agent, window, "live provider is not enabled");
-  const cached = readCache(agent, window, config, environment, stateDir, now);
+  const cached = readCache(agent, window, config, environment, stateDir, now, model);
   if (cached !== undefined) return cached;
   const timeoutSeconds = limitTimeout(config, environment);
   const reading = agent === "claude"
     ? await fetchClaudeUsage(window, processAdapter, timeoutSeconds, environment)
-    : await fetchAgyUsage(window, processAdapter, timeoutSeconds, environment);
+    : agent === "grok"
+      ? await fetchGrokUsage(window, processAdapter, timeoutSeconds, environment)
+      : await fetchAgyUsage(window, processAdapter, model);
   if (reading.status === "current") writeCache(agent, reading.result, stateDir);
   return reading;
 }
@@ -400,7 +432,7 @@ export function resetDisplay(resetsAt: string): string {
 // mail queued to a chain-spawned dispatch's parent.
 export async function usageNoticeReport(config: ChainConfig, environment: ChainLimitEnvironment, processAdapter: ProcessAdapter, stateDir: string): Promise<string> {
   let report = "Usage limits:";
-  for (const agent of ["codex", "claude", "agy"] as const) {
+  for (const agent of ["codex", "claude", "agy", "grok"] as const) {
     const reading = await readLimit(agent, "5h", config, environment, processAdapter, stateDir);
     const summary = reading.status === "current"
       ? reading.result.windows.map((entry) => `${entry.bucket} ${entry.name} ${entry.usedPercent}% used, resets ${entry.resetsAt}`).join("; ")
