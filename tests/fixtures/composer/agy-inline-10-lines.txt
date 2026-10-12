@@ -1,0 +1,44 @@
+
+      ▄▀▀▄        Antigravity CLI 1.3.3
+     ▀▀▀▀▀▀       user@example.com (Google AI Pro)
+    ▀▀▀▀▀▀▀▀	  Gemini 3.8 Flash (Medium)
+   ▄▀▀    ▀▀▄     ~/Workspaces/megabrain
+  ▄▀▀      ▀▀▄
+
+
+ ┃ Verbosity now defaults to medium
+ ┃ Verbosity is now medium by default, so tool calls and thoughts roll up into summaries. You can change your preferred verbosity anytime in /config >
+ ┃ Verbosity.
+ ┃ esc to dismiss
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> row 0 text
+  row 1 text
+  row 2 text
+  row 3 text
+  row 4 text
+  row 5 text
+  row 6 text
+  row 7 text
+  row 8 text
+  row 9 text
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Gemini 3.8 Flash (Medium) │ 0 ctx │ 100% left │ 8% left
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
