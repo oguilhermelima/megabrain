@@ -128,7 +128,7 @@ function classifyErrorText(text: string): SupervisionFinding {
   // messages: usage: "You hit your free usage limit."; rate: "You've hit the rate limit for your
   // plan."; server: "Service unavailable"; network: "Session recovery timed out; the server may
   // have processed the POST"; auth: "Auth error: Auth required".
-  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit|usage limit reached|weekly limit.{0,60}(?:try again|reset))/i.test(text)) {
+  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit)/i.test(text)) {
     return { cause: "usage-limit", resetAt: resetTime(text) ?? "unknown reset time", errorText: "usage limit" };
   }
   const codeMatch = /(?:API Error:\s*|unexpected status\s+|\b)(429|5\d\d|401|403)\b/i.exec(text);
