@@ -117,6 +117,7 @@ megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json] �
 megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--json] — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
 megabrain supervise [--status|--stop] — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
+megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.
 ```
 
