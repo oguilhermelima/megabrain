@@ -1,0 +1,52 @@
+# Agent feature parity
+
+This audit compares megabrain's four registered agents: Claude Code, Codex, Grok, and Antigravity CLI (`agy`). It reflects this checkout and installed CLI help observed on 2026-10-12. Vendor behavior may change independently.
+
+**Legend:** `yes` means implemented and evidenced; `partial` means implemented with a material limitation; `no` means no implementation was found. Cells cite evidence. Findings based on absence are labeled **inferred**.
+
+| Feature | Claude | Codex | Grok | Agy |
+|---|---|---|---|---|
+| Spawn command line with model and effort | yes — `src/agents/claude.ts:18-23` | yes — `src/agents/codex.ts:18-32` | yes — `src/agents/grok.ts:23-28` | partial — `src/agents/agy.ts:20-24`; model supported, effort omitted |
+| First-run trust dialog handling | no — `src/agents/claude.ts:12-27`; no matcher | no — `src/agents/codex.ts:12-36`; no matcher | yes — `src/agents/grok.ts:14-22`; answers with `y` | yes — `src/agents/agy.ts:13-20`; exact prompt matcher |
+| Liveness markers: idle and working | yes — `src/agents/claude.ts:4-10` | yes — `src/agents/codex.ts:4-10` | yes — `src/agents/grok.ts:8-12` | yes — `src/agents/agy.ts:8-10` |
+| Liveness marker: blocked | partial — `src/agents/claude.ts:9`; authentication errors only | yes — `src/agents/codex.ts:8-9`; usage and transport errors | partial — `src/agents/grok.ts:9`; permission dialog only | no — `src/agents/agy.ts:8-10`; no blocked marker |
+| Prompt paste proof and composer readback | yes — `src/core/composer-proof.ts:25-38` | yes — `src/core/composer-proof.ts:25,39-47` | yes — `src/core/composer-proof.ts:20-31` | no — `src/core/composer-proof.ts:25-48`; no Agy-specific branch |
+| Submit and interrupt keys | yes — `src/agents/claude.ts:25-26` | yes — `src/agents/codex.ts:34-35` | yes — `src/agents/grok.ts:30-33` | yes — `src/agents/agy.ts:26-28` |
+| Orchestrate change and stop | partial — `src/cli/commands/orchestrate-stop-reconcile.ts:128-160`; host interrupt capability varies | yes — `src/agents/codex.ts:34-35`; shared change/stop uses agent key | yes — `src/agents/grok.ts:30-33`; measured Ctrl+C | yes — `src/agents/agy.ts:26-28`; shared change/stop uses agent key |
+| Child protocol: received, ask, check, done | yes — `src/cli/commands/hook-turn-end.ts:509-545`; shared child commands | yes — same shared protocol | yes — same shared protocol | yes — same shared protocol |
+| Turn-end hook reports child ending without `done` | yes — `src/cli/commands/install-doctor.ts:544-576`; hook installer includes Claude | yes — same installer includes Codex | yes — same installer includes Grok | yes — same installer includes Agy |
+| Parent identity as coordinator | partial — `src/cli/commands/hook-turn-end.ts:47-58`; native session fallback for Claude | partial — same; native session fallback for Codex | partial — same; requires host/tmux identity, no native Grok fallback | partial — same; requires host/tmux identity, no native Agy fallback |
+| Parent Stop hook nets unread mail | yes — `src/cli/commands/hook-turn-end.ts:537-545,555-560`; installed Stop hook runs parent scan | yes — same | yes — same | yes — same |
+| Parent notice delivery into agent composer | partial — `src/cli/commands/hook-turn-end.ts:287-290`; Claude gets native `additionalContext` | partial — same; non-Claude uses block response, not Claude `additionalContext` | partial — same non-Claude response path | partial — same non-Claude response path |
+| Parent input queue | partial — `src/agents/claude.ts:5`; pending-check marker, no megabrain queue | yes — `src/core/codex-delivery.ts` and `src/core/parent-queue.ts`; explicit queue | partial — `src/agents/grok.ts:4-12`; CLI queue display only, no megabrain queue | no — `src/agents/agy.ts:8-10`; no queue marker or queue integration |
+| Supervise error classification | yes — `src/core/supervise.ts:84-96,182-189` | yes — `src/core/supervise.ts:98-110,182-189` | partial — `src/core/supervise.ts:126-147`; visible text only, no structured parser | no — `src/core/supervise.ts:107-110`; no Agy structured error reader |
+| Supervise prompt states: queued and delivered-working | partial — `src/agents/claude.ts:5`; queued marker; delivered-working distinction inferred absent from `src/core/supervise.ts:182-189` | partial — `src/agents/codex.ts:5`; queued marker; delivered-working distinction inferred absent from shared classifier | partial — `src/agents/grok.ts:4-12`; queued display is not a supervisor state; delivered-working distinction inferred absent | partial — `src/agents/agy.ts:8-10`; no queued marker; delivered-working distinction inferred absent |
+| Context meter | yes — `src/core/context-meter.ts:149-167`; transcript usage | yes — `src/core/context-meter.ts:129-141`; rollout usage | yes — `src/core/context-meter.ts:169-177`; session usage | no — **inferred** from `src/agents/agy.ts:15-28`; no Agy context source descriptor |
+| Context compaction policy | yes — `src/agents/claude.ts:16-17`; shared policy `src/core/context-policy.ts:63-89` | yes — `src/agents/codex.ts:16-17`; shared policy | partial — **inferred** from `src/agents/grok.ts:16-33`; no registered compact command | no — **inferred** from `src/agents/agy.ts:15-28`; no meter or compact command |
+| Model registry | yes — `src/core/model.ts:80` | yes — same | yes — same | yes — same |
+| Model refresh | yes — `src/core/model.ts:80-109`; Claude registry and CLI model flag | yes — `src/core/model.ts:80`; Codex registry and CLI model flag | yes — `src/core/model.ts:116-127`; parses `grok models` | yes — `src/core/model.ts:108-114`; parses `agy models` |
+| Chain limits and usage headroom | yes — `src/core/chain-limits.ts:15,367-385`; live provider is opt-in | yes — `src/core/chain-limits.ts:15,371-375`; local rollout scan | no — **inferred** from `src/core/chain-limits.ts:14-15,367-385`; Grok excluded | yes — `src/core/chain-limits.ts:15,367-385`; live provider is opt-in |
+| Orchestration-hook install | yes — `src/cli/commands/install-doctor.ts:544-576` | yes — same | yes — same; Grok hook path at `src/cli/commands/install-doctor.ts:158-166` | yes — same |
+| Skill install via `install --agents` | yes — **partial overall**; `src/cli/commands/install-machine.ts:35,62` allows Claude | yes — **partial overall**; same allows Codex | no — **inferred** from same allowlist; Grok excluded | yes — **partial overall**; same allows Agy |
+| Install doctor | yes — `src/cli/commands/install-doctor.ts:377,544-576` | yes — same | yes — same | yes — same |
+| Tmux badge and wrapper | yes — `src/hosts/tmux.ts`, `src/core/tmux.ts`; agent identity/state labels | yes — same; markers in `src/agents/codex.ts:4-10` | yes — same; identity in `src/agents/grok.ts:16-19` | yes — same; identity in `src/agents/agy.ts:15-17` |
+| Terminal openers | yes — **inferred shared support**; `src/core/terminal-openers.ts` selects independently of agent | yes — **inferred shared support**; same | yes — **inferred shared support**; same | yes — **inferred shared support**; same |
+| Worktree trust prompts | no — **inferred** from `src/agents/claude.ts:12-27`; no matcher | no — **inferred** from `src/agents/codex.ts:12-36`; no matcher | yes — `src/agents/grok.ts:14-22`; directory trust prompt | yes — `src/agents/agy.ts:13-20`; project trust prompt |
+| Future resource governor: hook can rewrite a shell command before execution | yes — Claude `PreToolUse.updatedInput` is operator-provided; installed hook source `/Users/gui/.local/lib/node_modules/@caveman-ai/cli/dist/native-hook-fast.js:11,467-468` corroborates the hook event, and installed `dist/index.js:6422-6427` shows command rewriting | yes — installed Codex 0.162.1 binary `/Users/gui/.codex/packages/standalone/current/bin/codex` contains `hook returned updatedInput without string field command`, confirming `updatedInput.command` is a supported rewrite response | yes — installed Grok 1.0.50 binary `/Users/gui/.grok/bin/grok` embeds Hooks docs: `PreToolUse` says `updatedInput` rewrites tool input | yes — installed Agy binary `/Users/gui/.local/bin/agy` embeds Hooks docs: `PreToolUse` `overwrite` merges changed arguments into the tool call before execution |
+
+## Evidence notes
+
+- Read-only installed CLI checks were `claude --help`, `codex --help`, `grok --help`, `agy --help`, and `codex features` help. No agent session was started. The help confirms model and effort flags for all four CLIs; megabrain currently omits Agy's effort flag when building its launch command.
+- For command rewriting, Codex, Grok, and Agy evidence comes from strings and embedded documentation in their installed binaries (versions observed: Codex 0.162.1 and Grok 1.0.50; Agy help did not print a version). Claude's `PreToolUse.updatedInput` is operator-provided and corroborated by installed hook implementation source. These are CLI contracts; megabrain does not currently expose a shared rewrite hook.
+- Shared behavior is attributed only where the shared path accepts the agent identity or hook. Host providers can impose limits: stop cannot be guaranteed when a host has no interrupt capability (`src/cli/commands/orchestrate-stop-reconcile.ts:142-155`).
+- `install --agents` accepts `claude,codex,agy` or `none` (`src/cli/commands/install-machine.ts:35,62`); this differs from the four-agent orchestration-hook installer.
+
+## Operator-impact gaps
+
+1. **Agy has no paste proof or context meter.** Delivery confirmation and resource-aware stopping are weaker than for Claude, Codex, and Grok.
+2. **Grok and Agy lack native parent-session identity fallbacks.** A coordinator needs a host terminal or tmux identity for parent notices.
+3. **Grok has no chain usage headroom integration; Agy has no structured supervise classification.** Chain gating excludes Grok, and Agy failures are less diagnosable.
+4. **Only Claude and Codex have structured supervisor error readers.** Grok classification depends on visible text and may miss errors absent from the captured pane.
+5. **Megabrain has no shared command-rewrite hook despite all four installed CLIs exposing one.** A resource governor would need agent-specific response formats: Claude/Codex/Grok `updatedInput` versus Agy `overwrite`.
+
+This is an implementation audit, not a claim that vendor CLIs have identical capabilities. The matrix records megabrain's current integration and labels evidence limits.
