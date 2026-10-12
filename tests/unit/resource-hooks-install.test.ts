@@ -84,10 +84,10 @@ describe("resource hooks module", () => {
     expect(existsSync(files.agy)).toBe(false);
   });
 
-  test("doctor reports missing before install and ok after", async () => {
+  test("doctor reports an opt-in module never installed as missing, and ok after install", async () => {
     const { environment } = fixture("doctor");
     const before = await executeDoctor(["resource-hooks"], environment, fakeProcess());
-    expect(before.kind === "ok" ? before.value : before.error).toContain("resource-hooks: misconfigured");
+    expect(before.kind === "ok" ? before.value : before.error).toContain("resource-hooks: missing");
     await executeInstall(["resource-hooks", "--yes"], environment, fakeProcess());
     const after = await executeDoctor(["resource-hooks"], environment, fakeProcess());
     expect(after.kind === "ok" ? after.value : after.error).toContain("resource-hooks: ok");
