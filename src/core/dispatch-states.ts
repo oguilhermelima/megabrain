@@ -1,12 +1,12 @@
 import { failed, ok, unknown, type Result } from "./result.js";
 
-export const dispatchStates = ["spawning", "running", "waiting_for_reply", "done", "failed", "orphaned", "closed", "circuit_broken"] as const;
+export const dispatchStates = ["queued", "spawning", "running", "waiting_for_reply", "done", "failed", "orphaned", "closed", "circuit_broken"] as const;
 export const processStates = ["starting", "start-unproven", "running", "succeeded", "failed", "stopping", "stopped", "stop-unproven", "abandoned", "exited"] as const;
 export const terminalStates = ["owned", "retained", "missing", "released"] as const;
 
 // The dispatch states a coordinator still expects progress from, used to decide which dispatches
 // the turn-end hook's parent-notify scan should look at at all.
-export const openDispatchStates = ["spawning", "running", "waiting_for_reply"] as const;
+export const openDispatchStates = ["queued", "spawning", "running", "waiting_for_reply"] as const;
 
 export type DispatchAxis = "dispatch" | "process" | "terminal";
 export type DispatchStateValue = typeof dispatchStates[number];
@@ -15,6 +15,7 @@ export type TerminalStateValue = typeof terminalStates[number];
 
 const transitionTable: Readonly<Record<DispatchAxis, Readonly<Record<string, readonly string[]>>>> = {
   dispatch: {
+    queued: ["queued", "spawning", "failed", "closed"],
     spawning: ["spawning", "running", "failed", "closed"],
     running: ["running", "waiting_for_reply", "done", "failed", "orphaned", "closed"],
     waiting_for_reply: ["waiting_for_reply", "running", "done", "failed", "orphaned", "closed"],

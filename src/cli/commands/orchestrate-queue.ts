@@ -1,7 +1,7 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ownsDispatch } from "../../core/context.js";
-import { listDeliveries, listDispatches, listMessages, listOutbox, stateDatabase, cancelQueuedMessage } from "../../adapters/state-db.js";
+import { listDeliveries, listDispatches, listMessages, listOutbox, stateDatabase, cancelQueuedMessage, mutateDispatch } from "../../adapters/state-db.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveCaller } from "./queue-write.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
@@ -9,7 +9,7 @@ import { usageText } from "../../core/usage.js";
 
 type QueueItem = Readonly<{
   id: string;
-  kind: "message";
+  kind: "message" | "spawn";
   dispatch: string;
   type: string;
   createdAt: string;
@@ -33,9 +33,17 @@ function itemState(outboxState: string | undefined, deliveryState: string): stri
 function queueItems(database: Parameters<typeof listDispatches>[0], dispatchIds: readonly string[]): Result<QueueItem[]> {
   const outboxResult = listOutbox(database);
   if (outboxResult.kind !== "ok") return outboxResult;
+  const dispatchResult = listDispatches(database);
+  if (dispatchResult.kind !== "ok") return dispatchResult;
+  const dispatchRecords = new Map(dispatchResult.value.map((record) => [record.dispatchId, record]));
   const outbox = outboxResult.value;
   const items: QueueItem[] = [];
   for (const dispatchId of dispatchIds) {
+    const record = dispatchRecords.get(dispatchId);
+    if (record?.state === "queued") items.push({
+      id: dispatchId, kind: "spawn", dispatch: dispatchId, type: "spawn", createdAt: String(record.queuedAt ?? record.createdAt ?? ""),
+      state: "queued", text: firstLine(record.admissionReason),
+    });
     const messagesResult = listMessages(database, dispatchId);
     if (messagesResult.kind !== "ok") return messagesResult;
     const deliveriesResult = listDeliveries(database, dispatchId);
@@ -98,6 +106,17 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     if (db.kind !== "ok") return db;
     const all = listDispatches(db.value, { includeArchived: true });
     if (all.kind !== "ok") return all;
+    const queuedSpawn = all.value.find((entry) => entry.dispatchId === itemId && entry.state === "queued");
+    if (queuedSpawn !== undefined) {
+      const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId, caller);
+      if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
+      const cancelled = mutateDispatch(db.value, owner.value, (current) => current.state === "queued"
+        ? { ...current, state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString() }
+        : { kind: "no_change" });
+      if (cancelled.kind !== "ok") return cancelled;
+      if (cancelled.value.state !== "closed" || cancelled.value.queuedCancelledAt === undefined) return failed(`queued spawn ${itemId} started before cancellation`);
+      return ok(json ? `${JSON.stringify({ id: itemId, dispatch: owner.value, kind: "spawn", state: "cancelled", reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
+    }
     const requested = all.value.flatMap((entry) => {
       const deliveries = listDeliveries(db.value, entry.dispatchId);
       const outbox = listOutbox(db.value);

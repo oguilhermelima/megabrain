@@ -25,9 +25,13 @@ import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 import { transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
 import { startSupervisorWorker } from "./supervise.js";
+import { notifyAdmissionStatus } from "./admission-notify.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
 import { resolveGrokSessionId } from "../../core/context-meter.js";
 import { join } from "node:path";
+import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.js";
+import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
+import { readMachineResources } from "../../core/resources.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -84,6 +88,7 @@ type SpawnOptions = Readonly<{
   readonly agentArgs: readonly string[];
   readonly json: boolean;
   readonly contextPolicy?: ContextPolicy;
+  readonly admission: "wait" | "fail";
 }>;
 
 type RecordValue = Record<string, unknown>;
@@ -119,6 +124,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let compactFields: ContextPolicy = {};
   let loop: boolean | undefined;
   let maxIterations: number | undefined;
+  let admission: "wait" | "fail" = "wait";
   const agentArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -126,6 +132,12 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
     else if (arg === "--browser") browser = true;
     else if (arg === "--loop") loop = true;
     else if (arg === "--no-loop") loop = false;
+    else if (arg === "--admission") {
+      const value = args[index + 1];
+      if (value !== "wait" && value !== "fail") return failed("--admission requires wait or fail", 2);
+      admission = value;
+      index += 1;
+    }
     else if (unsupportedOptions.includes(arg as typeof unsupportedOptions[number])) return failed(`unsupported orchestrate spawn option: ${arg}`, 2);
     else if (arg === "--tmux") {
       const value = args[index + 1];
@@ -164,7 +176,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       else agentArgs.push(value);
       index += 1;
     } else if (arg === "-h" || arg === "--help") {
-      return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json });
+      return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json, admission });
     } else return failed(`unknown orchestrate spawn option: ${arg}`, 2);
   }
   if (worktree === undefined && (repo === undefined || branch === undefined)) {
@@ -178,7 +190,7 @@ function parseArgs(args: readonly string[]): Result<SpawnOptions> {
     const valid = validateContextPolicy(contextPolicy);
     if (valid.kind !== "ok") return valid;
   }
-  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy });
+  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy, admission });
 }
 
 function dispatchId(environment: SpawnEnvironment): string {
@@ -760,7 +772,27 @@ type SpawnTrace = {
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
   const trace: SpawnTrace = {};
-  let result = await runSpawn(args, environment, process, dependencies, trace);
+  if (args.includes("-h") || args.includes("--help")) {
+    return runSpawn(args, environment, process, dependencies, trace);
+  }
+  const policy = environment.MEGABRAIN_STATE_DIR === undefined && environment.HOME === undefined
+    ? undefined : await readAdmissionPolicy(environment);
+  const database = policy === undefined ? undefined : stateDatabase(environment);
+  if (database?.kind === "failed") return failed(database.error, database.exitCode);
+  const holder = `admission-${globalThis.process.pid}-${randomUUID()}`;
+  let leased = false;
+  if (database?.kind === "ok") {
+    for (let attempt = 0; attempt < 300 && !leased; attempt += 1) {
+      const acquired = acquireLease(database.value, "resource-admission", holder, 300);
+      if (acquired.kind !== "ok") return acquired;
+      leased = acquired.value;
+      if (!leased) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!leased) return failed("resource admission is busy; retry the spawn", 1);
+  }
+  let result: Result<string>;
+  try { result = await runSpawn(args, environment, process, dependencies, trace); }
+  finally { if (leased && database?.kind === "ok") releaseLease(database.value, "resource-admission", holder); }
   if (result.kind !== "ok" && trace.sessionCreatedBySpawn && !trace.sessionCleanupAttempted && trace.tmuxSession !== undefined) {
     const cleanup = await getTmux().killSession(trace.tmuxSession, process);
     trace.sessionCleanupAttempted = true;
@@ -848,6 +880,61 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const chatName = options.label ?? worktree.branch;
   const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}` : agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
+
+  // Admission runs after option/worktree validation but before any terminal or agent is created.
+  // The fixed fallback is deliberately conservative and applies when resource history is off or
+  // has not yet collected a sample for this agent.
+  const policy = await readAdmissionPolicy(environment);
+  if (policy !== undefined) {
+    const admissionDatabase = stateDatabase(environment);
+    if (admissionDatabase.kind !== "ok") return failed(admissionDatabase.error, admissionDatabase.exitCode);
+    const estimates = estimateTypicalRssByAgent(admissionDatabase.value);
+    const machine = await readMachineResources(process);
+    const listed = listDispatches(admissionDatabase.value);
+    if (listed.kind !== "ok") return listed;
+    const active = listed.value.filter((item) => item.dispatchId !== id && ["spawning", "running", "waiting_for_reply", "orphaned"].includes(String(item.state)));
+    const admission = decideAdmission({ kind: "spawn", agent: options.agent, estimatedCostBytes: estimates[options.agent] ?? DEFAULT_AGENT_COST_BYTES }, policy, {
+      machine, runningAgents: active.length, runningContainerSuites: 0,
+    });
+    const prior = getDispatch(admissionDatabase.value, id);
+    if (prior.kind !== "ok") return prior;
+    if (admission.status === "refused") { trace.reason = "admission-refused"; return failed(admission.reason, 1); }
+    if (admission.status === "queued") {
+      if (options.admission === "fail") { trace.reason = "admission-refused"; return failed(`spawn refused: ${admission.reason}`, 1); }
+      if (prior.value?.admissionQueueEntry === true && ["queued", "spawning"].includes(String(prior.value.state))) {
+        const updated = mutateDispatch(admissionDatabase.value, id, (current) => ["queued", "spawning"].includes(String(current.state))
+          ? { ...current, state: "queued", admissionReason: admission.reason }
+          : { kind: "no_change" });
+        if (updated.kind !== "ok" || updated.value.state !== "queued") return failed(`queued spawn ${id} was cancelled before it could start`);
+      } else {
+        const parentChatName = await coordinatorChatName(environment, process);
+        const queuedMeta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, "", null, null, null, parentChatName, environment.CODEX_THREAD_ID, environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude" : resolveAgentDescriptor(environment.AI_AGENT ?? ""), environment.CLAUDE_CODE_SESSION_ID);
+        Object.assign(queuedMeta, {
+          state: "queued", processState: "starting", terminalState: "missing", admissionReason: admission.reason,
+          queuedSpawnArgs: [...args], queuedAt: new Date().toISOString(), admissionQueueEntry: true,
+        });
+        const saved = createDispatch(admissionDatabase.value, queuedMeta);
+        if (saved.kind !== "ok") return saved;
+      }
+      const currentQueue = listDispatches(admissionDatabase.value);
+      if (currentQueue.kind !== "ok") return currentQueue;
+      const queue = currentQueue.value.filter((item) => item.state === "queued").sort((left, right) => String(left.queuedAt ?? left.createdAt).localeCompare(String(right.queuedAt ?? right.createdAt)) || left.dispatchId.localeCompare(right.dispatchId));
+      const position = Math.max(1, queue.findIndex((item) => item.dispatchId === id) + 1);
+      const queuedRecord = getDispatch(admissionDatabase.value, id);
+      if (queuedRecord.kind === "ok" && queuedRecord.value !== undefined) await notifyAdmissionStatus(root, admissionDatabase.value, id, queuedRecord.value as RecordValue, "queued", admission.reason, process, position);
+      await startSupervisorWorker(root, environment, process);
+      const output = { status: "queued", reason: admission.reason, dispatchId: id, position };
+      return ok(options.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstatus: queued\nposition: ${position}\nreason: ${admission.reason}\n`);
+    }
+    if (prior.value?.admissionQueueEntry === true) {
+      if (prior.value.state === "queued") {
+        const claimed = mutateDispatch(admissionDatabase.value, id, (current) => current.state === "queued" && current.admissionQueueEntry === true
+          ? { ...current, state: "spawning", admissionClaimedAt: new Date().toISOString() }
+          : { kind: "no_change" });
+        if (claimed.kind !== "ok" || claimed.value.state !== "spawning" || claimed.value.admissionQueueEntry !== true) return failed(`queued spawn ${id} was cancelled before it could start`);
+      } else if (prior.value.state !== "spawning") return failed(`queued spawn ${id} was cancelled before it could start`);
+    }
+  }
   let terminalId = "";
   let session: string | null = null;
   let sessionId: string | null = null;
@@ -956,8 +1043,15 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const createdDispatch = createDispatch(database.value, meta);
-  if (createdDispatch.kind !== "ok") return createdDispatch;
+  const existingDispatch = getDispatch(database.value, id);
+  if (existingDispatch.kind !== "ok") return existingDispatch;
+  if (existingDispatch.value?.admissionQueueEntry === true && ["queued", "spawning"].includes(String(existingDispatch.value.state))) {
+    const updated = mutateDispatch(database.value, id, (current) => ({ ...current, ...meta, dispatchId: id, admissionQueueEntry: false }));
+    if (updated.kind !== "ok") return updated;
+  } else {
+    const createdDispatch = createDispatch(database.value, meta);
+    if (createdDispatch.kind !== "ok") return createdDispatch;
+  }
   trace.dispatchId = id;
   trace.terminalId = terminalId;
   if (pane !== null) trace.pane = pane;

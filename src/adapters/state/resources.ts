@@ -1,4 +1,5 @@
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { DatabaseHandle } from "../../db/db.js";
@@ -7,7 +8,37 @@ import { resolveStateDirectory, type StateEnvironment } from "../../core/state.j
 
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 const settingPath = (environment: StateEnvironment): string => resolve(resolveStateDirectory(environment), "resource-history-enabled");
+const policyPath = (environment: StateEnvironment): string => resolve(resolveStateDirectory(environment), "resource-admission-policy.json");
 export type ResourceSample = Readonly<{ dispatchId: string; agent: string; rssBytes: number; cpuPercent: number }>;
+
+export type StoredAdmissionPolicy = Readonly<{
+  maxAgents?: number;
+  minAvailableMiB?: number;
+  maxPressure?: "normal" | "elevated";
+  maxContainerSuites?: number;
+}>;
+
+export async function readAdmissionPolicy(environment: StateEnvironment): Promise<StoredAdmissionPolicy | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(policyPath(environment), "utf8")) as Record<string, unknown>;
+    const policy: Record<string, number | string> = {};
+    for (const key of ["maxAgents", "minAvailableMiB", "maxContainerSuites"] as const) {
+      const value = parsed[key];
+      if (Number.isSafeInteger(value) && (value as number) >= 0) policy[key] = value as number;
+    }
+    if (parsed.maxPressure === "normal" || parsed.maxPressure === "elevated") policy.maxPressure = parsed.maxPressure;
+    return policy as StoredAdmissionPolicy;
+  } catch { return undefined; }
+}
+
+export async function writeAdmissionPolicy(environment: StateEnvironment, policy: StoredAdmissionPolicy | undefined): Promise<void> {
+  const path = policyPath(environment);
+  if (policy === undefined) { await rm(path, { force: true }); return; }
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(policy, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, path);
+}
 
 export async function resourceHistoryEnabled(environment: StateEnvironment): Promise<boolean> {
   try { await access(settingPath(environment)); return true; } catch { return false; }

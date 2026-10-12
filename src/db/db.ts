@@ -12,6 +12,7 @@ import worktreesMigration from "./schema/008-worktrees.sql" with { type: "text" 
 import stackParentMigration from "./schema/009-stack-parent.sql" with { type: "text" };
 import resourceSamplesMigration from "./schema/010-resource-samples.sql" with { type: "text" };
 import queueCancellationMigration from "./schema/011-queue-cancellation.sql" with { type: "text" };
+import admissionQueueMigration from "./schema/012-admission-queue.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -20,7 +21,7 @@ const BUSY_TIMEOUT_MILLISECONDS = 5_000;
 const DEFAULT_BUSY_SECONDS = 30;
 const APPLICATION_ID = 0x4d424431; // ASCII "MBD1", reserved for the megabrain database.
 
-type Migration = Readonly<{ version: number; sql: string }>;
+type Migration = Readonly<{ version: number; sql: string; foreignKeysOff?: boolean }>;
 type SqlValue = string | number | bigint | null | Uint8Array;
 export type RunResult = Readonly<{ changes: number; lastInsertRowid: number | bigint }>;
 export type DatabaseAdapter = Readonly<{
@@ -124,6 +125,7 @@ const migrations: readonly Migration[] = [
   { version: 9, sql: stackParentMigration },
   { version: 10, sql: resourceSamplesMigration },
   { version: 11, sql: queueCancellationMigration },
+  { version: 12, sql: admissionQueueMigration, foreignKeysOff: true },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 
@@ -260,6 +262,10 @@ function migrate(db: DatabaseAdapter, path: string): void {
         if (backup.kind !== "ok") throw new Error(backup.error);
       }
     }
+    const appliedBefore = new Set(migrationTable === null ? [] : db.query<{ version: number }>("SELECT version FROM schema_migrations").all().map((row) => row.version));
+    const pending = migrations.filter((migration) => !appliedBefore.has(migration.version));
+    const foreignKeysOff = pending.some((migration) => migration.foreignKeysOff === true);
+    if (foreignKeysOff) db.exec("PRAGMA foreign_keys = OFF");
     db.run("BEGIN IMMEDIATE");
     try {
       db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -269,10 +275,16 @@ function migrate(db: DatabaseAdapter, path: string): void {
         db.exec(migration.sql);
         db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date().toISOString()]);
       }
+      if (foreignKeysOff) {
+        const violations = db.query<{ table: string; rowid: number; parent: string; fkid: number }>("PRAGMA foreign_key_check").all();
+        if (violations.length > 0) throw new Error(`foreign_key_check found ${violations.length} violation(s)`);
+      }
       db.exec(`PRAGMA user_version = ${latestSchemaVersion}`);
       db.run("COMMIT");
+      if (foreignKeysOff) db.exec("PRAGMA foreign_keys = ON");
     } catch (cause: unknown) {
       try { db.run("ROLLBACK"); } catch { /* preserve the migration failure */ }
+      if (foreignKeysOff) { try { db.exec("PRAGMA foreign_keys = ON"); } catch { /* preserve the migration failure */ } }
       throw cause;
     }
   } catch (cause: unknown) {
