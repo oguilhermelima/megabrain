@@ -120,14 +120,16 @@ shipped registry carries the reasoning levels from grok's own model cache (`grok
 `xhigh`).
 
 When a spawn meets Grok's "Do you trust the contents of this directory?" dialog it answers `y`, only
-for the worktree being spawned into, and records `trustAnswered` on the dispatch; it never edits
-`trusted_folders.toml`. A stopped child is interrupted with Ctrl+C, because Escape does not cancel a
-Grok turn.
+for the worktree being spawned into, and records `trustAnswered` only after that send succeeds; it
+never edits `trusted_folders.toml`. A stopped child is interrupted with Ctrl+C, because Escape does
+not cancel a Grok turn. The supervisor reads Grok's queued row and recognizes its waiting spinner,
+and classifies the error messages present in Grok 1.0.50's CLI.
 
-Not covered for Grok: a context meter, usage-window reads for chains (a chain step reads as
-unknown), the tmux badge and shell wrapper, `install --agents grok` skill installation, and a
-Grok parent session identity. The usage-limit and error frames were not captured, so Grok reports
-only idle, working, a permission dialog (blocked) and the trust dialog; anything else is unknown.
+The context meter reads `turn_completed` usage from the session matched by the Grok PID in the pane
+and `active_sessions.json`; it does not guess from the newest session. Usage-window reads for chains
+(a chain step reads as unknown), the tmux badge and shell wrapper, `install --agents grok` skill
+installation, and a Grok parent session identity remain unsupported. Grok error patterns come from
+the installed CLI's message strings; unrecognized errors remain unknown.
 
 ## Chains: choosing who does the work
 
