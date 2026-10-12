@@ -178,6 +178,12 @@ export function isAgentSessionId(value: string): boolean {
   return /^(?:claude|codex):.+$/.test(value);
 }
 
+// A local owner that names a process rather than a session: a stable ancestor, or the older
+// transient-shell pid. Its liveness can be checked, so a dead one can be adopted without --force.
+export function isLocalProcessOwner(value: string): boolean {
+  return /^(?:proc:\d+:.+|shell:pid\d+)$/.test(value);
+}
+
 // Ownership: the caller's stable id matches the recorded owner, or — for a record written before
 // agent-session ids existed, whose owner is a terminal handle — the caller's current terminal
 // handle matches. Host must agree either way.
