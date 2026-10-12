@@ -14,6 +14,7 @@ stop_calls_file="$state_dir/stop.calls"
 terminal_status_fixture=proven
 
 cleanup() {
+  stop_megabrain_supervisor
   rm -rf "$state_dir"
 }
 trap cleanup EXIT

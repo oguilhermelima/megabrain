@@ -322,6 +322,11 @@ export function acquireLease(handle: DatabaseHandle, key: string, holder: string
   return write(handle, ({ db }) => db.run("INSERT INTO leases (key, holder, expires_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at WHERE leases.expires_at <= ? OR leases.holder = excluded.holder", [key, holder, expiresAt, nowText]).changes > 0);
 }
 
+export function transferLease(handle: DatabaseHandle, key: string, from: string, to: string): Result<boolean> {
+  if (to === "") return failed("lease holder must be non-empty");
+  return write(handle, ({ db }) => db.run("UPDATE leases SET holder = ? WHERE key = ? AND holder = ?", [to, key, from]).changes > 0);
+}
+
 export function releaseLease(handle: DatabaseHandle, key: string, holder: string): Result<boolean> {
   return write(handle, ({ db }) => db.run("DELETE FROM leases WHERE key = ? AND holder = ?", [key, holder]).changes > 0);
 }

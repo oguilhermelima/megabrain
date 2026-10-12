@@ -25,6 +25,7 @@ dispatch_orca="dispatch-orca-parent"
 cleanup() {
   tmux -L "$socket_name" kill-session -t "$session_name" >/dev/null 2>&1 || true
   tmux -L "$socket_name" kill-session -t "$other_session" >/dev/null 2>&1 || true
+  stop_megabrain_supervisor
   rm -rf "$state_dir"
 }
 trap cleanup EXIT

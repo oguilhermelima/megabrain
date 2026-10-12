@@ -13,6 +13,7 @@ require_megabrain_test_state
 
 
 cleanup() {
+  stop_megabrain_supervisor
   rm -rf "$state_root"
 }
 trap cleanup EXIT

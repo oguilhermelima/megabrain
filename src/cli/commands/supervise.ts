@@ -3,10 +3,10 @@ import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase } from "../../adapters/state-db.js";
+import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
@@ -110,7 +110,7 @@ async function processAlive(meta: RecordValue, process: ProcessAdapter): Promise
   const pid = Number(meta.agentPid);
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   const result = await process.run("ps", ["-p", String(pid), "-o", "stat="]);
-  if (result.kind === "ok") return result.value.stdout.trim() !== "";
+  if (result.kind === "ok") return isLiveProcessState(result.value.stdout);
   // ps exits 1 with no output when the pid is gone.
   if (result.kind === "failed" && result.exitCode === 1 && (result.stdout ?? "").trim() === "") return false;
   return undefined;
@@ -288,11 +288,15 @@ export async function startSupervisorWorker(root: string, environment: Environme
 }
 
 export async function executeSupervisorWorker(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
-  const holder = args[0];
-  if (holder === undefined || !/^\d+-[0-9a-f-]+$/i.test(holder)) return failed("supervisor worker requires its lease holder", 2);
+  const starter = args[0];
+  if (starter === undefined || !/^\d+-[0-9a-f-]+$/i.test(starter)) return failed("supervisor worker requires its lease holder", 2);
   const root = resolveStateDirectory(environment);
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  // The starter's lease names the starter's pid, which has exited; --stop needs the worker's own.
+  const holder = `${globalThis.process.pid}-${randomUUID()}`;
+  const transferred = transferLease(database.value, LEASE_KEY, starter, holder);
+  if (transferred.kind !== "ok" || !transferred.value) return ok("supervisor lease was taken by another worker\n");
   const delay = intervalSeconds(environment) * 1000;
   let running = true;
   const stop = (): void => { running = false; };
