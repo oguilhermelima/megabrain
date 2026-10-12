@@ -1,3 +1,4 @@
+import { agentSessionLiveness } from "../../adapters/agent-session.js";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -70,6 +71,7 @@ async function ownerLiveness(sessionId: string, meta: Meta, environment: QueueEn
   if (sessionId.startsWith("claude:")) return claudeOwnerLiveness(sessionId, environment, processAdapter);
   if (sessionId.startsWith("codex:")) return codexOwnerLiveness(sessionId, meta, processAdapter);
   if (isLocalProcessOwner(sessionId)) return localOwnerLiveness(sessionId, processAdapter);
+  if (sessionId.startsWith("grok:") || sessionId.startsWith("agy:")) return agentSessionLiveness(sessionId, environment, processAdapter);
   return "unknown";
 }
 

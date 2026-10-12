@@ -34,13 +34,24 @@ export async function startTimeOf(pid: number, processAdapter: ProcessAdapter): 
   return text === "" ? undefined : text;
 }
 
-export async function stableAncestorIdentity(startPid: number, processAdapter: ProcessAdapter): Promise<string | undefined> {
+export type StableAncestor = Readonly<{ pid: number; lstart: string; command: string }>;
+
+export async function stableAncestor(startPid: number, processAdapter: ProcessAdapter): Promise<StableAncestor | undefined> {
   let pid = startPid;
   for (let depth = 0; depth < maxDepth && pid > 1; depth += 1) {
     const row = await processRow(pid, processAdapter);
     if (row === undefined) return undefined;
-    if (!isTransient(row.command)) return `proc:${pid}:${row.lstart}`;
+    if (!isTransient(row.command)) return { pid, lstart: row.lstart, command: row.command };
     pid = row.ppid;
   }
   return undefined;
+}
+
+export function ancestorIdentity(ancestor: StableAncestor): string {
+  return `proc:${ancestor.pid}:${ancestor.lstart}`;
+}
+
+export async function stableAncestorIdentity(startPid: number, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const ancestor = await stableAncestor(startPid, processAdapter);
+  return ancestor === undefined ? undefined : ancestorIdentity(ancestor);
 }

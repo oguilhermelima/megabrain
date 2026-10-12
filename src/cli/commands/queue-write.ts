@@ -1,4 +1,5 @@
-import { stableAncestorIdentity } from "../../adapters/ancestor.js";
+import { ancestorIdentity, stableAncestor } from "../../adapters/ancestor.js";
+import { agentSessionOf } from "../../adapters/agent-session.js";
 import { readdir, realpath } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -78,17 +79,20 @@ export async function resolveCaller(environment: QueueEnvironment, processAdapte
     && fields.tmux !== undefined && fields.tmux.length > 0
     && fields.tmuxPane !== undefined && fields.tmuxPane.length > 0;
   const tmuxSessionName = needsTmuxProbe ? await tmuxSessionNameFor(fields.tmuxPane as string, processAdapter) : undefined;
-  const identity = resolveCallerIdentity(fields, { tmuxSessionName });
+  // Grok and Agy name their session only through the process that runs the command, so the
+  // process tree is walked whenever no explicit or Claude/Codex id already answers.
+  const named = [fields.megabrainSessionId, fields.claudeCodeSessionId, fields.codexThreadId].some((value) => value !== undefined && value !== "");
+  const ancestor = named ? undefined : await stableAncestor(process.ppid, processAdapter);
+  const agentSessionId = ancestor === undefined ? undefined : await agentSessionOf(ancestor, environment, processAdapter);
+  const identity = resolveCallerIdentity(fields, { tmuxSessionName, agentSessionId });
   if (identity.id !== "" || identity.host !== "local" || needsTmuxProbe) return identity;
-  return resolveCallerIdentity(fields, { tmuxSessionName, shellIdentity: await localIdentityFor(processAdapter) });
+  return resolveCallerIdentity(fields, { tmuxSessionName, shellIdentity: ancestor === undefined ? await ttyIdentity(processAdapter) : ancestorIdentity(ancestor) });
 }
 
 // A caller with no agent session, no explicit id and no terminal is identified by the nearest
 // stable ancestor process (see adapters/ancestor.ts), then by the controlling tty of its parent
 // shell. With neither it has no identity and the verb refuses.
-async function localIdentityFor(processAdapter: ProcessAdapter): Promise<string> {
-  const ancestor = await stableAncestorIdentity(process.ppid, processAdapter);
-  if (ancestor !== undefined) return ancestor;
+async function ttyIdentity(processAdapter: ProcessAdapter): Promise<string> {
   const result = await processAdapter.run("ps", ["-o", "tty=", "-p", String(process.ppid)]);
   const tty = result.kind === "ok" ? result.value.stdout.trim() : "";
   return /^[A-Za-z0-9/]+$/.test(tty) && !/^\?+$/.test(tty) ? `shell:${tty.replace(/\//g, "-")}` : "";
