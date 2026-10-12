@@ -95,6 +95,10 @@ Dispatches, messages, deliveries, terminals, install state, models, and tmux ses
 source of truth. `db show` reads a dispatch or auxiliary record; `db check` checks integrity and
 foreign keys; `db backup` writes a consistent backup under `backups/` and keeps the newest seven.
 
+Caller identity uses `MEGABRAIN_SESSION_ID` first, then the Claude or Codex session id, then the
+nearest stable ancestor process, and finally the controlling terminal. Set `MEGABRAIN_SESSION_ID`
+when a long-lived local caller has no stable ancestor or TTY, such as a detached service.
+
 On the first non-`db` command, Megabrain imports a legacy JSON state directory when one is present,
 checks parity, moves each dispatch transcript to
 `~/.megabrain/transcripts/<dispatch-id>.txt`, and seals the remaining legacy tree under
