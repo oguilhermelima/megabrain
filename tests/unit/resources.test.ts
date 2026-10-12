@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { parseLinuxMachineResources, parseMacMachineResources, parseProcessTable, sampleProcessTree, readDockerResources } from "../../src/core/resources.js";
+import { executeResources } from "../../src/cli/commands/resources.js";
 
 const fixture = (name: string) => readFile(join(import.meta.dir, "../fixtures/resources", name), "utf8");
 
@@ -46,4 +49,20 @@ describe("resource sampling", () => {
     const docker = await readDockerResources(process);
     expect(docker).toBeUndefined();
   });
+  test("resources --json returns a stable machine, Docker, and dispatch shape", async () => {
+    const root = await mkdtemp(join(tmpdir(), "megabrain-resources-"));
+    const vm = await fixture("macos/vm-stat.txt");
+    const ctl = await fixture("macos/sysctl.txt");
+    const pressure = await fixture("macos/memory-pressure.txt");
+    const process = processFor((command) => command === "vm_stat" ? vm : command === "sysctl" ? ctl : command === "memory_pressure" ? pressure : undefined);
+    try {
+      const result = await executeResources(["--json", "--all"], { MEGABRAIN_STATE_DIR: root }, process);
+      expect(result.kind).toBe("ok");
+      const payload = JSON.parse(result.kind === "ok" ? result.value : "{}") as Record<string, unknown>;
+      expect(Object.keys(payload).sort()).toEqual(["dispatches", "docker", "machine"]);
+      expect(payload.machine).toMatchObject({ totalMemoryBytes: 19327352832, pressure: "normal", cpuCount: 11 });
+      expect(payload.dispatches).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
 });
