@@ -16,7 +16,7 @@ import { deliveryComposer, deliveryHasKeystrokeDialog, ghostTracker, readDeliver
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
-const DELIVERY_LEASE_SECONDS = 2_000_000_000_000;
+const DELIVERY_LEASE_SECONDS = 200_000_000_000;
 const GHOST_STATIC_MS = 30_000;
 const PROOF_UNAVAILABLE_MS = 2 * 60 * 1000;
 const deliveryStatus = (status: ReturnType<typeof classifyLiveness>["status"]): "idle" | "busy" | "unknown" =>
