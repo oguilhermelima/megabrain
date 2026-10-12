@@ -135,6 +135,59 @@ export function listDeliveries(handle: DatabaseHandle, dispatchId: string): Resu
   return read(handle, ({ db }) => queryDeliveries(db, dispatchId));
 }
 
+export function cancelQueuedMessage(handle: DatabaseHandle, dispatchId: string, itemId: string, reason: string, actor: string): Result<void> {
+  const result = write(handle, ({ db }) => {
+    const deliveries = queryDeliveries(db, dispatchId);
+    const messages = queryMessages(db, dispatchId);
+    const outboxRows = db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>(
+      "SELECT * FROM outbox WHERE dispatch_id = ?",
+    ).all(dispatchId).map(toOutbox);
+    let delivery = deliveries.find((item) => item.id === itemId);
+    let outbox = outboxRows.find((item) => item.id === itemId);
+    if (delivery === undefined && outbox === undefined) return { kind: "refused" as const, message: `queued item ${itemId} not found` };
+
+    if (delivery === undefined && outbox !== undefined) {
+      const payload = object(outbox.payload);
+      const sequence = typeof payload.sequence === "number" ? payload.sequence : undefined;
+      if (sequence !== undefined) delivery = deliveries.find((item) => Array.isArray(item.messageSeqs) && item.messageSeqs.includes(sequence));
+    }
+    if (delivery !== undefined) {
+      if (delivery.status === "acknowledged") return { kind: "refused" as const, message: `queued item ${itemId} was already read` };
+      if (delivery.status !== "outstanding" && delivery.status !== "superseded") return { kind: "refused" as const, message: `queued item ${itemId} cannot be cancelled from state ${delivery.status}` };
+      const sequence = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.find((value): value is number => typeof value === "number") : undefined;
+      const message = messages.find((item) => item.seq === sequence);
+      if (message === undefined || message.from !== "parent" || message.type !== "reply") return { kind: "refused" as const, message: `queued item ${itemId} is not a parent message` };
+      if (outbox === undefined) {
+        outbox = outboxRows.find((item) => {
+          const payload = object(item.payload);
+          return item.targetKind === "child-delivery" && payload.sequence === sequence;
+        });
+      }
+      if (outbox?.status === "sending") return { kind: "refused" as const, message: `queued item ${itemId} is currently being delivered` };
+      const now = new Date().toISOString();
+      const updated = db.run("UPDATE deliveries SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, delivery.id]);
+      if (updated.changes !== 1) return { kind: "refused" as const, message: `queued item ${itemId} changed while it was being cancelled` };
+      if (outbox !== undefined && ["pending", "failed", "suppressed"].includes(outbox.status)) {
+        db.run("UPDATE outbox SET status = 'cancelled', lease_until = NULL, lease_holder = NULL, updated_at = ?, detail = ? WHERE id = ? AND status IN ('pending', 'failed', 'suppressed')", [now, reason, outbox.id]);
+      }
+      const seq = nextMessageSequence(db, dispatchId);
+      insertMessage(db, dispatchId, { seq, from: "parent", type: "cancel", text: reason, sessionId: actor, createdAt: now, cancelledItemId: itemId });
+      return { kind: "cancelled" as const };
+    }
+
+    if (outbox === undefined || !["pending", "failed", "suppressed"].includes(outbox.status)) {
+      return { kind: "refused" as const, message: `queued item ${itemId} cannot be cancelled from state ${outbox?.status ?? "unknown"}` };
+    }
+    const now = new Date().toISOString();
+    db.run("UPDATE outbox SET status = 'cancelled', lease_until = NULL, lease_holder = NULL, updated_at = ?, detail = ? WHERE id = ?", [now, reason, outbox.id]);
+    const seq = nextMessageSequence(db, dispatchId);
+    insertMessage(db, dispatchId, { seq, from: "parent", type: "cancel", text: reason, sessionId: actor, createdAt: now, cancelledItemId: itemId });
+    return { kind: "cancelled" as const };
+  });
+  if (result.kind !== "ok") return result;
+  return result.value.kind === "cancelled" ? ok(undefined) : failed(result.value.message);
+}
+
 export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string, sequence: number, transport: string, reason?: string): Result<void> {
   return write(handle, ({ db }) => {
     const row = db.query<{ id: string; extra: string }>("SELECT id, extra FROM deliveries WHERE dispatch_id = ? AND message_seq = ?").get(dispatchId, sequence);

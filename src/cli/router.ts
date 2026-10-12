@@ -19,6 +19,7 @@ import { executeTerminalList } from "./commands/terminal-list.js";
 import { executeTerminalDefault, executeTerminalOpen } from "./commands/terminal-open.js";
 import { executeTerminalLifecycle } from "./commands/terminal-lifecycle.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
+import { executeOrchestrateQueue } from "./commands/orchestrate-queue.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
@@ -122,6 +123,9 @@ export async function route(
   }
   if (command === "orchestrate" && commandArgs[0] === "watch") {
     return executeOrchestrateWatch(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "queue") {
+    return executeOrchestrateQueue(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "read") {
     return executeOrchestrateRead(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
