@@ -5,13 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { failed, ok, type Result } from "./result.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "../cli/commands/terminal-open.js";
+import { resolveCaller } from "../cli/commands/queue-write.js";
 
 export type ProcStart = Readonly<{ name: string; worktree: string; cwd: string; port?: number; env: Record<string, string>; terminal?: string; command: string[]; shell?: string; json: boolean }>;
 export type ProcLogOptions = Readonly<{ tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean }>;
 export type ProcRecord = ProcStart & Readonly<{ owner: string; session: string; pid: number; startedAt: string; state: "running" | "exited"; exitCode?: number }>;
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
-const ERROR_LINE = /\b(error|exception|fatal|panic)\b|\bat\s+[^ ]+\s*\(|\bexit(?:ed)?\s+(?:with\s+)?(?:code|status)\s+[^\s]+/i;
+const ERROR_LINE = /\b(error|exception|fatal|panic)\b|\bat\s+[^ ]+\s*\(|\bexit(?:ed)?\s+(?:with\s+)?(?:code|status)\s+(?!0\b)[^\s]+/i;
 const MAX_LOG = 10 * 1024 * 1024;
 const LOG_FILES = 3;
 
@@ -51,12 +52,26 @@ export function parseProcStartArguments(args: readonly string[]): Result<ProcSta
   if (parsed.terminal !== undefined) { const terminal = checkTerminalFlag(parsed.terminal); if (terminal.kind !== "ok") return terminal; }
   if (!parsed.command?.length && parsed.shell === undefined) return failed("proc start requires -- <command and arguments>", 2);
   if (parsed.shell !== undefined && parsed.command?.length) return failed("use either --shell or -- command, not both", 2);
-  const worktree = resolve(parsed.worktree ?? process.cwd());
-  return ok({ name: parsed.name, worktree, cwd: resolve(parsed.cwd ?? worktree), ...(parsed.port === undefined ? {} : { port: parsed.port }), env: parsed.env, ...(parsed.terminal === undefined ? {} : { terminal: parsed.terminal }), command: parsed.command ?? [], ...(parsed.shell === undefined ? {} : { shell: parsed.shell }), json: parsed.json });
+  // An empty worktree means "the caller's"; startProc resolves it the same way lookups do.
+  const worktree = parsed.worktree === undefined ? "" : resolve(parsed.worktree);
+  return ok({ name: parsed.name, worktree, cwd: resolve(parsed.cwd ?? parsed.worktree ?? process.cwd()), ...(parsed.port === undefined ? {} : { port: parsed.port }), env: parsed.env, ...(parsed.terminal === undefined ? {} : { terminal: parsed.terminal }), command: parsed.command ?? [], ...(parsed.shell === undefined ? {} : { shell: parsed.shell }), json: parsed.json });
+}
+
+// Records are keyed by worktree, so start and every later verb must name it identically: an
+// explicit --worktree, else MEGABRAIN_WORKTREE, else the git top level of the current directory.
+async function callerWorktree(environment: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter): Promise<string> {
+  if (environment.MEGABRAIN_WORKTREE !== undefined && environment.MEGABRAIN_WORKTREE !== "") return resolve(environment.MEGABRAIN_WORKTREE);
+  const top = await processAdapter.run("git", ["rev-parse", "--show-toplevel"]);
+  return resolve(top.kind === "ok" && top.value.stdout.trim() !== "" ? top.value.stdout.trim() : process.cwd());
 }
 
 function root(environment: Readonly<Record<string, string | undefined>>): string { return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? homedir(), ".megabrain"), "procs"); }
-function owner(environment: Readonly<Record<string, string | undefined>>): string { return environment.MEGABRAIN_SESSION_ID ?? environment.MEGABRAIN_TERMINAL_ID ?? environment.MEGABRAIN_DISPATCH_ID ?? `pid:${process.ppid}`; }
+// The same caller identity every dispatch verb uses, so a process belongs to the session that
+// started it, not to the transient shell that ran one command.
+async function owner(environment: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter): Promise<string> {
+  const caller = await resolveCaller(environment, processAdapter);
+  return `${caller.host}/${caller.id || caller.terminalId || ""}`;
+}
 function tmuxArgs(environment: Readonly<Record<string, string | undefined>>, args: readonly string[]): string[] { const socket = environment.MEGABRAIN_TMUX_SOCKET; return [...(socket ? ["-S", socket] : []), ...args]; }
 function key(worktree: string): string { return createHash("sha256").update(worktree).digest("hex").slice(0, 16); }
 function recordPath(env: Readonly<Record<string, string | undefined>>, worktree: string, name: string): string { return join(root(env), key(worktree), `${name}.json`); }
@@ -86,7 +101,7 @@ async function portOwner(process: ProcessAdapter, port: number): Promise<string 
   const detail = row === undefined ? undefined : /users:\(\("([^\"]+)",pid=(\d+)/.exec(row);
   return detail?.[2] ? `pid ${detail[2]}${detail[1] ? ` (${detail[1]})` : ""}` : undefined;
 }
-async function owns(record: ProcRecord, environment: Readonly<Record<string, string | undefined>>, force: boolean): Promise<boolean> { return force || record.owner === owner(environment); }
+async function owns(record: ProcRecord, environment: Readonly<Record<string, string | undefined>>, force: boolean, processAdapter: ProcessAdapter): Promise<boolean> { return force || record.owner === await owner(environment, processAdapter); }
 
 export async function executeProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) {
@@ -104,7 +119,7 @@ export async function executeProc(args: readonly string[], environment: Readonly
 
 async function startProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseProcStartArguments(args); if (parsed.kind !== "ok") return parsed;
-  const spec = parsed.value; const path = recordPath(environment, spec.worktree, spec.name); await mkdir(dirname(path), { recursive: true });
+  const spec = parsed.value.worktree === "" ? { ...parsed.value, worktree: await callerWorktree(environment, process) } : parsed.value; const path = recordPath(environment, spec.worktree, spec.name); await mkdir(dirname(path), { recursive: true });
   const lock = `${path}.lock`; try { await mkdir(lock); } catch { return failed(`proc ${spec.name} is being changed; try again`); }
   try {
     const old = await readRecord(path);
@@ -114,7 +129,7 @@ async function startProc(args: readonly string[], environment: Readonly<Record<s
     }
     if (spec.port !== undefined) { const taken = await portOwner(process, spec.port); if (taken) return failed(`port ${spec.port} is already in use by ${taken}`); }
     const session = sessionName({ worktree: spec.worktree, name: spec.name });
-    let record: ProcRecord = { ...spec, owner: owner(environment), session, pid: 0, startedAt: new Date().toISOString(), state: "running" };
+    let record: ProcRecord = { ...spec, owner: await owner(environment, process), session, pid: 0, startedAt: new Date().toISOString(), state: "running" };
     await mkdir(logDir(environment, record), { recursive: true });
     const command = commandFor(record, path);
     const started = await process.run("tmux", tmuxArgs(environment, ["new-session", "-d", "-s", session, "-c", spec.cwd, command]));
@@ -136,9 +151,9 @@ async function startedOutput(spec: ProcStart, record: ProcRecord, environment: R
   return ok(spec.json ? `${JSON.stringify({ ...record, viewer: viewer ?? null }, null, 2)}\n` : `started ${spec.name} (pid ${record.pid}${spec.port ? `, port ${spec.port}` : ""})\n${viewer ? viewerLine(viewer) : ""}`);
 }
 
-async function procPath(args: readonly string[], env: Readonly<Record<string, string | undefined>>): Promise<{ path: string; record: ProcRecord } | undefined> {
+async function procPath(args: readonly string[], env: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter): Promise<{ path: string; record: ProcRecord } | undefined> {
   const name = args[0]; if (!name || !NAME.test(name)) return undefined;
-  let worktree = resolve(env.MEGABRAIN_WORKTREE ?? process.cwd());
+  let worktree = await callerWorktree(env, processAdapter);
   const index = args.indexOf("--worktree"); if (index >= 0 && args[index + 1]) worktree = resolve(args[index + 1]!);
   const path = recordPath(env, worktree, name); const record = await readRecord(path); return record ? { path, record } : undefined;
 }
@@ -149,9 +164,9 @@ async function procList(args: readonly string[], env: Readonly<Record<string, st
   return ok(json ? `${JSON.stringify(rows, null, 2)}\n` : `${rows.map((r) => `${r.name}\t${r.state}\t${r.pid}\t${r.worktree}`).join("\n")}${rows.length ? "\n" : ""}`);
 }
 async function procAction(verb: string, args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
-  const force = args.includes("--force"), json = args.includes("--json"); const found = await procPath(args.filter((x) => !x.startsWith("--")), env); if (!found) return failed(`proc not found: ${args[0] ?? ""}`);
+  const force = args.includes("--force"), json = args.includes("--json"); const found = await procPath(args.filter((x) => !x.startsWith("--")), env, process); if (!found) return failed(`proc not found: ${args[0] ?? ""}`);
   const { path } = found; let record = found.record;
-  if (!(await owns(record, env, force))) return failed(`proc ${record.name} is owned by another caller; use --force`);
+  if (!(await owns(record, env, force, process))) return failed(`proc ${record.name} is owned by another caller; use --force`);
   if (verb === "status") {
     const live = await process.run("tmux", tmuxArgs(env, ["has-session", "-t", record.session])); if (live.kind !== "ok") record = { ...record, state: "exited" };
     const resources = record.pid > 1 ? await process.run("ps", ["-p", String(record.pid), "-o", "rss=,%cpu="]) : undefined;
@@ -188,7 +203,7 @@ async function stopRecord(record: ProcRecord, process: ProcessAdapter, env: Read
   return stillExists.kind !== "ok" ? ok(undefined) : failed(result.error);
 }
 async function procLogs(args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
-  const name = args[0]; const found = await procPath(args, env); if (!name || !found) return failed(`proc not found: ${name ?? ""}`);
+  const name = args[0]; const found = await procPath(args, env, process); if (!name || !found) return failed(`proc not found: ${name ?? ""}`);
   const options: { tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean } = {}; let json = false;
   for (let i = 1; i < args.length; i += 1) { const arg = args[i] ?? ""; if (arg === "--errors" || arg === "--full" || arg === "--follow" || arg === "--json") { if (arg === "--errors") options.errors = true; if (arg === "--full") options.full = true; if (arg === "--json") json = true; } else if (["--tail", "--since", "--grep"].includes(arg)) { const value = args[++i]; if (!value) return failed(`${arg} requires a value`, 2); if (arg === "--tail") { const n = Number(value); if (!Number.isInteger(n) || n < 0) return failed("--tail must be a non-negative integer", 2); options.tail = n; } else if (arg === "--since") options.since = value; else options.grep = value; } else return failed(`unknown proc logs option: ${arg}`, 2); }
   if (options.since !== undefined && sinceMillis(options.since) === undefined) return failed("--since must be a duration such as 5m or an ISO date", 2);
@@ -199,17 +214,18 @@ async function procLogs(args: readonly string[], env: Readonly<Record<string, st
     return filterProcLogLines(lines, options);
   };
   if (args.includes("--follow")) {
-    let prior: string[] = []; let output = "";
+    let prior: string[] = [];
     while ((await process.run("tmux", tmuxArgs(env, ["has-session", "-t", found.record.session]))).kind === "ok") {
       const lines = await collect();
       let overlap = Math.min(prior.length, lines.length);
       while (overlap > 0 && prior.slice(-overlap).join("\n") !== lines.slice(0, overlap).join("\n")) overlap -= 1;
       const next = lines.slice(overlap);
-      if (next.length) { const chunk = `${next.join("\n")}\n`; output += chunk; globalThis.process.stdout.write(chunk); }
+      // Streamed as it arrives; the result is empty so the router does not print it twice.
+      if (next.length) globalThis.process.stdout.write(`${next.join("\n")}\n`);
       prior = lines;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return ok(output);
+    return ok("");
   }
   const lines = await collect(); return ok(json ? `${JSON.stringify({ name, lines }, null, 2)}\n` : `${lines.join("\n")}${lines.length ? "\n" : ""}`);
 }
