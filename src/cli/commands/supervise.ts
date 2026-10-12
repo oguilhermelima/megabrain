@@ -6,7 +6,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, releaseLease, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { acquireSupervisorLease, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
@@ -110,7 +110,7 @@ async function processAlive(meta: RecordValue, process: ProcessAdapter): Promise
   const pid = Number(meta.agentPid);
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   const result = await process.run("ps", ["-p", String(pid), "-o", "stat="]);
-  if (result.kind === "ok") return result.value.stdout.trim() !== "";
+  if (result.kind === "ok") return isLiveProcessState(result.value.stdout);
   // ps exits 1 with no output when the pid is gone.
   if (result.kind === "failed" && result.exitCode === 1 && (result.stdout ?? "").trim() === "") return false;
   return undefined;

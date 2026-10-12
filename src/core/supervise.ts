@@ -53,6 +53,12 @@ export function acquireSupervisorLease(database: DatabaseHandle, holder: string,
   return acquireLease(database, "supervise", holder, seconds);
 }
 
+// A zombie has exited and only waits for its parent to reap it.
+export function isLiveProcessState(stat: string): boolean {
+  const trimmed = stat.trim();
+  return trimmed !== "" && !trimmed.startsWith("Z");
+}
+
 export function hasOpenDispatches(states: readonly string[]): boolean {
   return states.some((state) => state === "spawning" || state === "running" || state === "waiting_for_reply" || state === "orphaned");
 }
