@@ -177,8 +177,8 @@ async function stopRecord(record: ProcRecord, process: ProcessAdapter, env: Read
 }
 async function procLogs(args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   const name = args[0]; const found = await procPath(args, env); if (!name || !found) return failed(`proc not found: ${name ?? ""}`);
-  const options: { tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean } = {};
-  for (let i = 1; i < args.length; i += 1) { const arg = args[i] ?? ""; if (arg === "--errors" || arg === "--full" || arg === "--follow") { if (arg === "--errors") options.errors = true; if (arg === "--full") options.full = true; } else if (["--tail", "--since", "--grep"].includes(arg)) { const value = args[++i]; if (!value) return failed(`${arg} requires a value`, 2); if (arg === "--tail") { const n = Number(value); if (!Number.isInteger(n) || n < 0) return failed("--tail must be a non-negative integer", 2); options.tail = n; } else if (arg === "--since") options.since = value; else options.grep = value; } else return failed(`unknown proc logs option: ${arg}`, 2); }
+  const options: { tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean } = {}; let json = false;
+  for (let i = 1; i < args.length; i += 1) { const arg = args[i] ?? ""; if (arg === "--errors" || arg === "--full" || arg === "--follow" || arg === "--json") { if (arg === "--errors") options.errors = true; if (arg === "--full") options.full = true; if (arg === "--json") json = true; } else if (["--tail", "--since", "--grep"].includes(arg)) { const value = args[++i]; if (!value) return failed(`${arg} requires a value`, 2); if (arg === "--tail") { const n = Number(value); if (!Number.isInteger(n) || n < 0) return failed("--tail must be a non-negative integer", 2); options.tail = n; } else if (arg === "--since") options.since = value; else options.grep = value; } else return failed(`unknown proc logs option: ${arg}`, 2); }
   if (options.since !== undefined && sinceMillis(options.since) === undefined) return failed("--since must be a duration such as 5m or an ISO date", 2);
   if (options.grep !== undefined) { try { new RegExp(options.grep); } catch { return failed("--grep requires a valid regular expression", 2); } }
   const dir = logDir(env, found.record); const collect = async (): Promise<string[]> => {
@@ -195,5 +195,5 @@ async function procLogs(args: readonly string[], env: Readonly<Record<string, st
     }
     return ok(output);
   }
-  const lines = await collect(); return ok(`${lines.join("\n")}${lines.length ? "\n" : ""}`);
+  const lines = await collect(); return ok(json ? `${JSON.stringify({ name, lines }, null, 2)}\n` : `${lines.join("\n")}${lines.length ? "\n" : ""}`);
 }
