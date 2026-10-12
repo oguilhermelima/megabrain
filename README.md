@@ -332,6 +332,23 @@ id, appears in `orchestrate queue` as a `proc` item, starts in order once the ma
 and exits without starting if its owner runs `orchestrate queue cancel <id>`. `--admission fail`
 refuses at once with the reason instead of waiting. With no policy, it starts immediately.
 
+`proc run` takes the same options as `start` except `--port` and `--terminal`, and runs the
+command in the foreground: its output goes straight to the caller and megabrain exits with the
+command's exit code. Use it for one-shot work such as migrations or a test suite.
+
+`--needs docker` holds docker for as long as the process lives. When docker is down and OrbStack
+is installed, megabrain starts it; once no megabrain process holds docker for two minutes
+(`MEGABRAIN_DOCKER_IDLE_SECONDS`), a background reaper stops it again. Docker that was already
+running when megabrain looked is never stopped, and no holder can stop it under another.
+
+`--slot container-suite` marks a container test suite. With `max-container-suites` in the
+admission policy, a suite beyond the limit waits in the queue (or is refused with
+`--admission fail`); without a policy, suites are not limited.
+
+```sh
+megabrain proc run --name suite --slot container-suite --needs docker -- bash tests/container/run.sh
+```
+
 ```sh
 megabrain proc start --name api --worktree ~/code/api --cwd ~/code/api \
   --port 3000 --terminal auto -- pnpm dev

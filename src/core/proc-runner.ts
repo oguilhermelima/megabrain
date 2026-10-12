@@ -5,9 +5,11 @@ import { dirname, join, resolve } from "node:path";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { failed, ok, type Result } from "./result.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "../cli/commands/terminal-open.js";
-import { awaitProcAdmission, procOwner } from "./proc-queue.js";
+import { awaitProcAdmission, PROC_SLOTS, procOwner, type ProcSlot } from "./proc-queue.js";
+import { holdDocker, reassignHold, releaseHold } from "./proc-holds.js";
+import { spawn } from "node:child_process";
 
-export type ProcStart = Readonly<{ name: string; worktree: string; cwd: string; port?: number; env: Record<string, string>; terminal?: string; command: string[]; shell?: string; admission?: "wait" | "fail"; json: boolean }>;
+export type ProcStart = Readonly<{ name: string; worktree: string; cwd: string; port?: number; env: Record<string, string>; terminal?: string; command: string[]; shell?: string; admission?: "wait" | "fail"; needs?: "docker"; slot?: ProcSlot; json: boolean }>;
 export type ProcLogOptions = Readonly<{ tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean }>;
 export type ProcRecord = ProcStart & Readonly<{ owner: string; session: string; pid: number; startedAt: string; state: "running" | "exited"; exitCode?: number }>;
 
@@ -32,18 +34,20 @@ export function filterProcLogLines(lines: readonly string[], options: ProcLogOpt
 }
 
 export function parseProcStartArguments(args: readonly string[]): Result<ProcStart> {
-  const parsed: { name?: string; worktree?: string; cwd?: string; port?: number; env: Record<string, string>; terminal?: string; command?: string[]; shell?: string; admission?: "wait" | "fail"; json: boolean } = { env: {}, json: false };
+  const parsed: { name?: string; worktree?: string; cwd?: string; port?: number; env: Record<string, string>; terminal?: string; command?: string[]; shell?: string; admission?: "wait" | "fail"; needs?: "docker"; slot?: ProcSlot; json: boolean } = { env: {}, json: false };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] ?? "";
     if (arg === "--") { parsed.command = args.slice(i + 1); break; }
     if (arg === "--json") parsed.json = true;
-    else if (["--name", "--worktree", "--cwd", "--port", "--env", "--terminal", "--shell", "--admission"].includes(arg)) {
+    else if (["--name", "--worktree", "--cwd", "--port", "--env", "--terminal", "--shell", "--admission", "--needs", "--slot"].includes(arg)) {
       const value = args[++i]; if (value === undefined || value === "" || value.startsWith("--")) return failed(`${arg} requires a value`, 2);
       if (arg === "--name") parsed.name = value;
       else if (arg === "--worktree") parsed.worktree = value;
       else if (arg === "--cwd") parsed.cwd = value;
       else if (arg === "--terminal") parsed.terminal = value;
       else if (arg === "--shell") parsed.shell = value;
+      else if (arg === "--needs") { if (value !== "docker") return failed("--needs accepts docker", 2); parsed.needs = value; }
+      else if (arg === "--slot") { const slot = PROC_SLOTS.find((item) => item === value); if (slot === undefined) return failed(`--slot accepts ${PROC_SLOTS.join(", ")}`, 2); parsed.slot = slot; }
       else if (arg === "--admission") { if (value !== "wait" && value !== "fail") return failed("--admission must be wait or fail", 2); parsed.admission = value; }
       else if (arg === "--port") { const n = Number(value); if (!Number.isInteger(n) || n < 1 || n > 65535) return failed("--port must be between 1 and 65535", 2); parsed.port = n; }
       else { const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(value); if (!match?.[1] || match[2] === undefined) return failed("--env requires KEY=VALUE", 2); parsed.env[match[1]] = match[2]; }
@@ -55,7 +59,7 @@ export function parseProcStartArguments(args: readonly string[]): Result<ProcSta
   if (parsed.shell !== undefined && parsed.command?.length) return failed("use either --shell or -- command, not both", 2);
   // An empty worktree means "the caller's"; startProc resolves it the same way lookups do.
   const worktree = parsed.worktree === undefined ? "" : resolve(parsed.worktree);
-  return ok({ name: parsed.name, worktree, cwd: resolve(parsed.cwd ?? parsed.worktree ?? process.cwd()), ...(parsed.port === undefined ? {} : { port: parsed.port }), env: parsed.env, ...(parsed.terminal === undefined ? {} : { terminal: parsed.terminal }), command: parsed.command ?? [], ...(parsed.shell === undefined ? {} : { shell: parsed.shell }), ...(parsed.admission === undefined ? {} : { admission: parsed.admission }), json: parsed.json });
+  return ok({ name: parsed.name, worktree, cwd: resolve(parsed.cwd ?? parsed.worktree ?? process.cwd()), ...(parsed.port === undefined ? {} : { port: parsed.port }), env: parsed.env, ...(parsed.terminal === undefined ? {} : { terminal: parsed.terminal }), command: parsed.command ?? [], ...(parsed.shell === undefined ? {} : { shell: parsed.shell }), ...(parsed.admission === undefined ? {} : { admission: parsed.admission }), ...(parsed.needs === undefined ? {} : { needs: parsed.needs }), ...(parsed.slot === undefined ? {} : { slot: parsed.slot }), json: parsed.json });
 }
 
 // Records are keyed by worktree, so start and every later verb must name it identically: an
@@ -101,24 +105,27 @@ async function owns(record: ProcRecord, environment: Readonly<Record<string, str
 export async function executeProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) {
     const { usageText } = await import("./usage.js");
-    const helpKey = args[0] === "start" ? "proc-start" : args[0] === "logs" ? "proc-logs" : args[0] === "list" ? "proc-list" : args[0] === "status" ? "proc-status" : args[0] === "stop" ? "proc-stop" : args[0] === "restart" ? "proc-restart" : "proc";
+    const helpKey = args[0] === "start" ? "proc-start" : args[0] === "run" ? "proc-run" : args[0] === "logs" ? "proc-logs" : args[0] === "list" ? "proc-list" : args[0] === "status" ? "proc-status" : args[0] === "stop" ? "proc-stop" : args[0] === "restart" ? "proc-restart" : "proc";
     return ok(usageText(helpKey));
   }
   const [verb, ...rest] = args;
   if (verb === "start") return startProc(rest, environment, process);
+  if (verb === "run") return runProc(rest, environment, process);
   if (verb === "logs") return procLogs(rest, environment, process);
   if (verb === "list") return procList(rest, environment, process);
   if (["status", "stop", "restart"].includes(verb ?? "")) return procAction(verb!, rest, environment, process);
-  return failed("proc requires start|list|status|stop|restart|logs", 2);
+  return failed("proc requires start|run|list|status|stop|restart|logs", 2);
 }
 
 async function startProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseProcStartArguments(args); if (parsed.kind !== "ok") return parsed;
   const spec = parsed.value.worktree === "" ? { ...parsed.value, worktree: await callerWorktree(environment, process) } : parsed.value;
-  const admitted = await awaitProcAdmission({ name: spec.name, worktree: spec.worktree, mode: spec.admission ?? "wait" }, environment, process);
-  if (admitted.kind !== "ok") return admitted;
+  const holds = await takeHolds(spec, environment, process);
+  if (holds.kind !== "ok") return holds;
+  // Holds are taken by this short-lived command; once the process runs they move to it.
+  let holder = 0;
   const path = recordPath(environment, spec.worktree, spec.name); await mkdir(dirname(path), { recursive: true });
-  const lock = `${path}.lock`; try { await mkdir(lock); } catch { return failed(`proc ${spec.name} is being changed; try again`); }
+  const lock = `${path}.lock`; try { await mkdir(lock); } catch { await releaseHolds(holds.value, environment); return failed(`proc ${spec.name} is being changed; try again`); }
   try {
     const old = await readRecord(path);
     if (old?.state === "running") {
@@ -135,13 +142,69 @@ async function startProc(args: readonly string[], environment: Readonly<Record<s
     const pane = await process.run("tmux", tmuxArgs(environment, ["display-message", "-p", "-t", `${session}:0.0`, "#{pane_pid}"]));
     record = { ...record, pid: pane.kind === "ok" ? Number(pane.value.stdout.trim()) : 0 };
     await writeRecord(path, record);
+    if (record.pid > 1) { holder = record.pid; for (const hold of holds.value) await reassignHold(environment, hold.resource, hold.id, record.pid); }
     if (spec.port !== undefined) {
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) { if (await portOwner(process, spec.port)) return startedOutput(spec, record, environment, process); await new Promise((resolve) => setTimeout(resolve, 100)); }
       await stopRecord(record, process, environment); return failed(`proc ${spec.name} did not listen on port ${spec.port} within 30s`);
     }
     return startedOutput(spec, record, environment, process);
-  } finally { const { rm } = await import("node:fs/promises"); await rm(lock, { recursive: true, force: true }); }
+  } finally {
+    const { rm } = await import("node:fs/promises"); await rm(lock, { recursive: true, force: true });
+    if (holder === 0) await releaseHolds(holds.value, environment);
+  }
+}
+
+type TakenHold = Readonly<{ resource: string; id: string }>;
+
+// Admission (and its slot) first, then docker, all held by this command until released or moved.
+async function takeHolds(spec: ProcStart, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<TakenHold[]>> {
+  const admitted = await awaitProcAdmission({ name: spec.name, worktree: spec.worktree, mode: spec.admission ?? "wait", ...(spec.slot === undefined ? {} : { slot: spec.slot }) }, environment, process);
+  if (admitted.kind !== "ok") return admitted;
+  const holds: TakenHold[] = admitted.value === undefined || spec.slot === undefined ? [] : [{ resource: `slot-${spec.slot}`, id: admitted.value }];
+  if (spec.needs === "docker") {
+    const docker = await holdDocker(environment, process, globalThis.process.pid);
+    if (docker.kind !== "ok") { await releaseHolds(holds, environment); return docker; }
+    holds.push({ resource: "docker", id: docker.value });
+  }
+  return ok(holds);
+}
+
+async function releaseHolds(holds: readonly TakenHold[], environment: Readonly<Record<string, string | undefined>>): Promise<void> {
+  for (const hold of holds) await releaseHold(environment, hold.resource, hold.id);
+}
+
+// Runs a command in the foreground: output goes straight to the caller, the result carries its
+// exit code, and admission, slots and docker work as for start.
+async function runProc(args: readonly string[], environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
+  const parsed = parseProcStartArguments(args); if (parsed.kind !== "ok") return parsed;
+  if (parsed.value.port !== undefined || parsed.value.terminal !== undefined || parsed.value.json) return failed("proc run does not take --port, --terminal or --json", 2);
+  const spec = parsed.value.worktree === "" ? { ...parsed.value, worktree: await callerWorktree(environment, process) } : parsed.value;
+  const holds = await takeHolds(spec, environment, process);
+  if (holds.kind !== "ok") return holds;
+  try {
+    const [command, ...commandArgs] = spec.shell === undefined ? spec.command : ["/bin/sh", "-lc", spec.shell];
+    if (command === undefined) return failed("proc run requires -- <command and arguments>", 2);
+    const childEnvironment: Record<string, string> = {};
+    for (const [key, value] of Object.entries(environment)) if (value !== undefined) childEnvironment[key] = value;
+    const child = spawn(command, commandArgs, { cwd: spec.cwd, env: { ...childEnvironment, ...spec.env }, stdio: "inherit" });
+    const forward = (signal: NodeJS.Signals) => () => { child.kill(signal); };
+    const handlers = (["SIGINT", "SIGTERM", "SIGHUP"] as const).map((signal) => [signal, forward(signal)] as const);
+    for (const [signal, handler] of handlers) globalThis.process.on(signal, handler);
+    try {
+      const code = await new Promise<number>((resolveCode, reject) => {
+        child.once("error", reject);
+        child.once("close", (exitCode, signal) => resolveCode(exitCode ?? (signal === null ? 1 : 128)));
+      });
+      return ok("", code);
+    } catch (error) {
+      return failed(`${command}: ${error instanceof Error ? error.message : String(error)}`, 127);
+    } finally {
+      for (const [signal, handler] of handlers) globalThis.process.off(signal, handler);
+    }
+  } finally {
+    await releaseHolds(holds.value, environment);
+  }
 }
 
 async function startedOutput(spec: ProcStart, record: ProcRecord, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
@@ -174,7 +237,7 @@ async function procAction(verb: string, args: readonly string[], env: Readonly<R
   }
   if (verb === "stop") { await stopRecord(record, process, env); return ok(`stopped ${record.name}\n`); }
   const stopped = await stopRecord(record, process, env); if (stopped.kind !== "ok") return stopped;
-  const startArgs = ["--name", record.name, "--worktree", record.worktree, "--cwd", record.cwd, ...(record.port ? ["--port", String(record.port)] : []), ...Object.entries(record.env).flatMap(([k, v]) => ["--env", `${k}=${v}`]), ...(record.terminal ? ["--terminal", record.terminal] : []), ...(record.shell ? ["--shell", record.shell] : []), "--", ...record.command];
+  const startArgs = ["--name", record.name, "--worktree", record.worktree, "--cwd", record.cwd, ...(record.port ? ["--port", String(record.port)] : []), ...Object.entries(record.env).flatMap(([k, v]) => ["--env", `${k}=${v}`]), ...(record.terminal ? ["--terminal", record.terminal] : []), ...(record.shell ? ["--shell", record.shell] : []), ...(record.needs ? ["--needs", record.needs] : []), ...(record.slot ? ["--slot", record.slot] : []), "--", ...record.command];
   return startProc(startArgs, env, process);
 }
 async function stopRecord(record: ProcRecord, process: ProcessAdapter, env: Readonly<Record<string, string | undefined>>): Promise<Result<void>> {

@@ -5,6 +5,7 @@ import type { ProcessAdapter } from "../adapters/proc.js";
 import { readAdmissionPolicy } from "../adapters/state/resources.js";
 import { resolveCaller } from "../cli/commands/queue-write.js";
 import { decideAdmission } from "./admission.js";
+import { acquireHold, liveHolds } from "./proc-holds.js";
 import { readMachineResources } from "./resources.js";
 import { failed, ok, type Result } from "./result.js";
 import { resolveStateDirectory } from "./state.js";
@@ -79,20 +80,26 @@ export async function cancelProcQueueEntry(environment: Environment, id: string,
   return ok(entry);
 }
 
+export const PROC_SLOTS = ["container-suite"] as const;
+export type ProcSlot = (typeof PROC_SLOTS)[number];
+
 // Blocks until the admission policy admits the process. Without a policy it returns at once,
 // so nothing changes for anyone who has not opted in. Only the head of the queue is judged, so
-// processes start in the order they asked.
+// processes start in the order they asked. A process that takes a slot gets the slot's hold,
+// held by this command, before it leaves the queue; the result is that hold's id.
 export async function awaitProcAdmission(
-  request: Readonly<{ name: string; worktree: string; mode: "wait" | "fail" }>,
+  request: Readonly<{ name: string; worktree: string; mode: "wait" | "fail"; slot?: ProcSlot }>,
   environment: Environment,
   processAdapter: ProcessAdapter,
-): Promise<Result<void>> {
+): Promise<Result<string | undefined>> {
+  const admit = async (): Promise<Result<string | undefined>> =>
+    ok(request.slot === undefined ? undefined : await acquireHold(environment, `slot-${request.slot}`, process.pid));
   let entry: ProcQueueEntry | undefined;
   let announced = false;
   try {
     for (;;) {
       const policy = await readAdmissionPolicy(environment);
-      if (policy === undefined) return ok(undefined);
+      if (policy === undefined) return admit();
       if (entry !== undefined) {
         const current = await readEntry(environment, entry.id);
         if (current?.cancelledReason !== undefined) return failed(`proc ${request.name} cancelled while queued: ${current.cancelledReason}`);
@@ -101,10 +108,11 @@ export async function awaitProcAdmission(
       const ahead = entry === undefined ? queue.length : queue.findIndex((item) => item.id === entry?.id);
       let reason: string;
       if (ahead === 0) {
-        const decision = decideAdmission({ kind: "process", agent: "proc", estimatedCostBytes: 0 }, policy, {
-          machine: await readMachineResources(processAdapter), runningAgents: 0, runningContainerSuites: 0,
+        const decision = decideAdmission({ kind: request.slot ?? "process", agent: "proc", estimatedCostBytes: 0 }, policy, {
+          machine: await readMachineResources(processAdapter), runningAgents: 0,
+          runningContainerSuites: await liveHolds(environment, "slot-container-suite"),
         });
-        if (decision.status === "admitted") return ok(undefined);
+        if (decision.status === "admitted") return admit();
         if (decision.status === "refused") return failed(`proc ${request.name} refused: ${decision.reason}`);
         reason = decision.reason;
       } else {
