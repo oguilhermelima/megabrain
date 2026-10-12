@@ -169,3 +169,53 @@ test("agy and unknown agents have no structured source and stay unknown", async 
   expect(await readContextMeter({ agent: "agy", agentSessionId: session, agentThreadId: thread }, home)).toEqual({ status: "unknown" });
   expect(await readContextMeter({ agent: "other", agentSessionId: session }, home)).toEqual({ status: "unknown" });
 });
+
+// Shapes from Antigravity CLI 1.3.3: its --log-file names the conversation it creates, and the
+// conversation's transcript_full.jsonl records token counts on each model response.
+describe("Antigravity conversation", () => {
+  const conversation = "f65ead73-be3a-4ff6-a3a0-1ebbce9549bc";
+  const later = "0b8c1f2e-1111-4a2b-9c3d-222233334444";
+  const transcriptOf = (id: string) => `.gemini/antigravity-cli/brain/${id}/.system_generated/logs/transcript_full.jsonl`;
+  const response = (input: number, cached: number) => ({ step_index: 9, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-10-12T09:57:47Z", input_tokens: input, cache_read_tokens: cached, output_tokens: 463, content: "done" });
+  const log = async (lines: readonly string[]): Promise<string> => {
+    const path = join(home, "agy.log");
+    await writeFile(path, `${lines.join("\n")}\n`);
+    return path;
+  };
+
+  test("reads the latest model response of the conversation its log created", async () => {
+    await put(transcriptOf(conversation), [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "task" },
+      response(1000, 20000),
+      response(2510, 101889),
+      { step_index: 10, source: "SYSTEM", type: "CHECKPOINT", status: "DONE" },
+    ]);
+    const agyLogFile = await log([
+      "I1012 13:46:52.167050     462 manager.go:1410] Slash commands unchanged, skipping update",
+      `I1012 13:47:54.576791     948 server.go:1278] Created conversation ${conversation}`,
+      `I1012 13:47:54.579546     948 conversation_manager.go:969] Streaming conversation ${conversation}`,
+    ]);
+    expect(await readContextMeter({ agent: "agy", agyLogFile, contextWindow: 1000000 }, home)).toEqual({
+      status: "known", usedTokens: 104399, percentUsed: 10.4, sourceFrame: "agy transcript usage: 104399/1000000 tokens",
+    });
+  });
+
+  test("follows the newest conversation the session created", async () => {
+    await put(transcriptOf(conversation), [response(2510, 101889)]);
+    await put(transcriptOf(later), [response(300, 4700)]);
+    const agyLogFile = await log([
+      `I1012 13:47:54.576791     948 server.go:1278] Created conversation ${conversation}`,
+      `I1012 14:02:11.000001     948 server.go:1278] Created conversation ${later}`,
+    ]);
+    expect(await readContextMeter({ agent: "agy", agyLogFile }, home)).toEqual({
+      status: "known", usedTokens: 5000, sourceFrame: "agy transcript usage: 5000 tokens, window unknown",
+    });
+  });
+
+  test("is unknown without a log, a created conversation or a model response", async () => {
+    expect(await readContextMeter({ agent: "agy", agyLogFile: join(home, "missing.log") }, home)).toEqual({ status: "unknown" });
+    expect(await readContextMeter({ agent: "agy", agyLogFile: await log(["I1012 nothing yet"]) }, home)).toEqual({ status: "unknown" });
+    await put(transcriptOf(conversation), [{ step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "task" }]);
+    expect(await readContextMeter({ agent: "agy", agyLogFile: await log([`I1012 server.go:1278] Created conversation ${conversation}`]) }, home)).toEqual({ status: "unknown" });
+  });
+});
