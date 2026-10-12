@@ -140,7 +140,7 @@ function structuredClaudeEnvironment(root: string, extra: Record<string, string>
   };
 }
 
-const identityRefusal = "this command cannot tell who is running it: no agent session and no shell were found";
+const identityRefusal = "this command cannot tell who is running it: no agent session and no shell were found; set MEGABRAIN_SESSION_ID to name this caller";
 
 function isOwnershipRefusal(result: Result<string>): boolean {
   return result.kind === "failed" && (result.error.includes(identityRefusal) || result.error.includes("is owned by"));
@@ -440,10 +440,11 @@ describe("a different session is refused", () => {
   test("a plain-shell caller is refused as a different owner, never as an unknown one", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
-    const process = orcaHostProcess("child-term-1");
+    // With no agent or terminal handle, use the tty when the process tree has no stable ancestor.
+    const process = fakeProcess((command, args) => command === "ps" && args.includes("tty=") ? ok({ stdout: "ttys042\n", stderr: "", exitCode: 0 }) : ok({ stdout: "{}", stderr: "", exitCode: 0 }));
     const result = await executeOrchestrateClose(["dispatch-1", "--json"], { MEGABRAIN_STATE_DIR: root }, process);
     expect(result.kind).toBe("failed");
-    expect(result.kind === "failed" ? result.error : "").toContain("is owned by orca/claude:test-uuid, not local/");
+    expect(result.kind === "failed" ? result.error : "").toContain("is owned by orca/claude:test-uuid, not local/shell:ttys042");
   });
 });
 

@@ -6,6 +6,7 @@ import {
   parseModelRegistry,
   formatModelList,
   refreshAgyModels,
+  refreshGrokModels,
   upgradeRegistry,
   validateReasoning,
   type ModelRegistry,
@@ -89,6 +90,31 @@ describe("registry operations", () => {
       { agent: "agy", model: "gemini-a-low", reasoning: { separateAxis: false, levels: ["low"] }, provenance: { kind: "live", command: "agy models", obtainedAt: "now" } },
       { agent: "agy", model: "gemini-z-high", reasoning: { separateAxis: false, levels: ["high"] }, provenance: { kind: "live", command: "agy models", obtainedAt: "now" } },
     ]);
+  });
+
+  test("refreshes grok ids from the grok models listing and keeps known levels", () => {
+    const listing = "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.5\n";
+    const known = [{ agent: "grok", model: "grok-4.5", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live" } }];
+    expect(refreshGrokModels(listing, known, "now")).toEqual([
+      { agent: "grok", model: "grok-4.5", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
+      { agent: "grok", model: "grok-4.7", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
+      { agent: "grok", model: "grok-4.7-build-fast", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
+    ]);
+    expect(refreshGrokModels("not logged in", [], "now")).toEqual([]);
+  });
+
+  test("grok models can be added by hand and need a separate reasoning level", () => {
+    const added = addModel(registry, "grok", "grok-5", "low,high", "now");
+    expect(added.kind).toBe("ok");
+  });
+
+  test("the shipped registry template carries the grok models with their measured levels", () => {
+    const template = parseModelRegistry(readFileSync(new URL("../../.megabrain/models.json", import.meta.url), "utf8"));
+    const grok = (template?.models ?? []).filter((entry) => entry.agent === "grok");
+    expect(grok.map((entry) => entry.model).sort()).toEqual(["grok-4.5", "grok-4.6", "grok-4.7", "grok-4.7-build-fast"]);
+    expect(grok.find((entry) => entry.model === "grok-4.7")?.reasoning.levels).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(grok.find((entry) => entry.model === "grok-4.5")?.reasoning.levels).toEqual(["low", "medium", "high"]);
+    expect(grok.every((entry) => entry.reasoning.separateAxis)).toBe(true);
   });
 
   test("formats the human-readable registry table", () => {

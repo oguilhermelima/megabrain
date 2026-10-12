@@ -4,6 +4,7 @@ import { classifyPromptState, promptFinding, type PromptState } from "../../src/
 import { mayAutoRecover, recommendationFor, shouldNotifyFinding } from "../../src/core/supervise.js";
 
 const frame = (name: string): string => readFileSync(new URL(`../fixtures/prompt-state/${name}.txt`, import.meta.url), "utf8");
+const grokFrame = (name: string): string => readFileSync(new URL(`../fixtures/tmux-capture-grok-${name}.txt`, import.meta.url), "utf8");
 
 const claudeShell = "Run this shell command and report its output: sleep 60; echo done";
 const claudeForeground = "Use the Bash tool in the foreground to run exactly: python3 -c 'import time; time.sleep(50); print(\"finished\")'  and then report the output.";
@@ -47,6 +48,19 @@ describe("prompt state from the pane", () => {
   test("an empty or unreadable frame proves nothing", () => {
     expect(classifyPromptState({ agent: "claude", frame: "", prompt: claudeShell, received: false }).state).toBe("unknown");
     expect(classifyPromptState({ agent: "other", frame: "$ ", prompt: claudeShell, received: false }).state).toBe("unknown");
+  });
+
+  test("Grok's queued row means the matching prompt is queued", () => {
+    const captured = grokFrame("queued");
+    expect(captured).toContain("▾ Queued 1");
+    expect(classifyPromptState({ agent: "grok", frame: captured, prompt: "Queued second request.", received: false }).state).toBe("queued");
+    expect(classifyPromptState({ agent: "grok", frame: captured, prompt: "Wait for 25 seconds then reply ACK.", received: false }).state).toBe("delivered-working");
+  });
+
+  test("Grok's Waiting for response spinner means delivered-working", () => {
+    const captured = grokFrame("waiting-response");
+    expect(captured).toContain("Waiting for response");
+    expect(classifyPromptState({ agent: "grok", frame: captured, prompt: "Write a 250 word explanation of why context tracking needs exact session identity.", received: false }).state).toBe("delivered-working");
   });
 });
 

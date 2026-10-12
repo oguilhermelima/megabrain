@@ -2,12 +2,12 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity } from "../../core/identity.js";
 import { resolveCallerIdentity } from "../../core/context.js";
+import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { selectDelivery, type CheckDelivery } from "../../core/check.js";
 import { loadDeliveries, loadMessages, migrateDeliveries, report } from "./check.js";
 import { ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
-import { callerEnvironment, resolveCaller } from "./queue-write.js";
+import { resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
-import { type ProcessAdapter } from "../../adapters/proc.js";
 import { ackDelivery, claimDelivery, deleteWaiter, fenceDelivery, getDispatch, isDispatchArchived, listDeliveries, nudgeCursor, putWaiter, stateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
 import { usageText } from "../../core/usage.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
@@ -68,10 +68,10 @@ async function waitForNudge(root: string, dispatch: string, cursor: number, mill
   }
 }
 
-export async function executeOrchestrateWatch(args: readonly string[], environment: ParentQueueEnvironment): Promise<Result<string>> {
+export async function executeOrchestrateWatch(args: readonly string[], environment: ParentQueueEnvironment, process: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-watch"));
   const parsed = parseWatchArgs(args, environment.MEGABRAIN_CONSUMER_GENERATION ?? "1"); if (parsed.kind !== "ok") return parsed;
-  const caller = resolveCallerIdentity(callerEnvironment(environment));
+  const caller = await resolveCaller(environment, process);
   const root = resolveStateDirectory(environment);
   const parent = await requireParent(root, parsed.value.dispatch, caller); if (parent.kind !== "ok") return parent;
   const dispatchId = parent.value.dispatchId;

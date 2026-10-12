@@ -121,7 +121,7 @@ export async function route(
     return executeOrchestratePolicy(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "watch") {
-    return executeOrchestrateWatch(commandArgs.slice(1), dependencies.environment);
+    return executeOrchestrateWatch(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "read") {
     return executeOrchestrateRead(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

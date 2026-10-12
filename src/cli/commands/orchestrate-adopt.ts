@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { readFile, readdir } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { hasCallerIdentity, isAgentSessionId } from "../../core/context.js";
+import { isAgentSessionId, isLocalProcessOwner } from "../../core/context.js";
 import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, acquireLease, releaseLease } from "../../adapters/state-db.js";
@@ -69,7 +69,22 @@ async function codexOwnerLiveness(sessionId: string, meta: Meta, processAdapter:
 async function ownerLiveness(sessionId: string, meta: Meta, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<AdoptionLiveness> {
   if (sessionId.startsWith("claude:")) return claudeOwnerLiveness(sessionId, environment, processAdapter);
   if (sessionId.startsWith("codex:")) return codexOwnerLiveness(sessionId, meta, processAdapter);
+  if (isLocalProcessOwner(sessionId)) return localOwnerLiveness(sessionId, processAdapter);
   return "unknown";
+}
+
+// A local owner is a process: proc:<pid>:<start> is alive only while that pid still has that start
+// time, and shell:pid<N> only while the pid exists. A tty identity names no process, so unknown.
+async function localOwnerLiveness(owner: string, processAdapter: ProcessAdapter): Promise<AdoptionLiveness> {
+  const proc = /^proc:(\d+):(.+)$/.exec(owner);
+  const pid = proc !== null ? Number(proc[1]) : Number(/^shell:pid(\d+)$/.exec(owner)?.[1]);
+  if (!Number.isSafeInteger(pid)) return "unknown";
+  const result = await processAdapter.run("ps", ["-o", "lstart=", "-p", String(pid)]);
+  if (result.kind === "unknown") return "unknown";
+  if (result.kind === "failed" && result.error !== "ps exited with status 1") return "unknown";
+  const start = result.kind === "ok" ? result.value.stdout.trim() : "";
+  if (start === "") return "not-alive";
+  return proc !== null && start !== proc[2] ? "not-alive" : "alive";
 }
 
 function output(dispatchId: string, adopted: boolean, owner: string, json: boolean): string {
@@ -83,7 +98,7 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
   const parsed = parseArgs(args);
   if (parsed.kind !== "ok") return parsed;
   const current = await resolveCaller(environment, processAdapter);
-  if (!hasCallerIdentity(current) || !isAgentSessionId(current.id)) return failed("orchestrate adopt requires an agent session identity (claude:<id> or codex:<id>)");
+  if (current.id === "" || (!isAgentSessionId(current.id) && current.host !== "local")) return failed("orchestrate adopt requires a session identity: an agent session, or set MEGABRAIN_SESSION_ID to name this caller");
 
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
@@ -124,7 +139,7 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
     const ownerHost = typeof meta.parentHost === "string" ? meta.parentHost : "";
     if (previousOwner === current.id && ownerHost === current.host) return ok(output(dispatchId, false, current.id, parsed.value.json));
 
-    const knownAgentOwner = isAgentSessionId(previousOwner);
+    const knownAgentOwner = isAgentSessionId(previousOwner) || isLocalProcessOwner(previousOwner);
     if (knownAgentOwner && !parsed.value.force) {
       const liveness = await ownerLiveness(previousOwner, meta, environment, processAdapter);
       if (liveness === "alive") return failed(`dispatch ${dispatchId} has a live owner ${previousOwner}; use --force to take it over`);

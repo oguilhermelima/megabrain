@@ -1339,6 +1339,132 @@
         "fetchedAt": "2026-09-07"
       },
       "status": "deprecated"
+    },
+    {
+      "agent": "grok",
+      "model": "grok-4.7",
+      "reasoning": {
+        "separateAxis": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "provenance": {
+          "kind": "verified",
+          "source": "installed CLI",
+          "command": "grok models; ~/.grok/models_cache.json",
+          "obtainedAt": "2026-10-12",
+          "verified": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "live",
+        "command": "grok models",
+        "obtainedAt": "2026-10-12"
+      },
+      "contextWindow": 256000,
+      "status": "active"
+    },
+    {
+      "agent": "grok",
+      "model": "grok-4.7-build-fast",
+      "reasoning": {
+        "separateAxis": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "provenance": {
+          "kind": "verified",
+          "source": "installed CLI",
+          "command": "grok models; ~/.grok/models_cache.json",
+          "obtainedAt": "2026-10-12",
+          "verified": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "live",
+        "command": "grok models",
+        "obtainedAt": "2026-10-12"
+      },
+      "contextWindow": 256000,
+      "status": "active"
+    },
+    {
+      "agent": "grok",
+      "model": "grok-4.6",
+      "reasoning": {
+        "separateAxis": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "provenance": {
+          "kind": "verified",
+          "source": "installed CLI",
+          "command": "grok models; ~/.grok/models_cache.json",
+          "obtainedAt": "2026-10-12",
+          "verified": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "live",
+        "command": "grok models",
+        "obtainedAt": "2026-10-12"
+      },
+      "contextWindow": 256000,
+      "status": "active"
+    },
+    {
+      "agent": "grok",
+      "model": "grok-4.5",
+      "reasoning": {
+        "separateAxis": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "provenance": {
+          "kind": "verified",
+          "source": "installed CLI",
+          "command": "grok models; ~/.grok/models_cache.json",
+          "obtainedAt": "2026-10-12",
+          "verified": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "live",
+        "command": "grok models",
+        "obtainedAt": "2026-10-12"
+      },
+      "contextWindow": 256000,
+      "status": "active"
     }
   ]
 }

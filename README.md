@@ -95,6 +95,10 @@ Dispatches, messages, deliveries, terminals, install state, models, and tmux ses
 source of truth. `db show` reads a dispatch or auxiliary record; `db check` checks integrity and
 foreign keys; `db backup` writes a consistent backup under `backups/` and keeps the newest seven.
 
+Caller identity uses `MEGABRAIN_SESSION_ID` first, then the Claude or Codex session id, then the
+nearest stable ancestor process, and finally the controlling terminal. Set `MEGABRAIN_SESSION_ID`
+when a long-lived local caller has no stable ancestor or TTY, such as a detached service.
+
 On the first non-`db` command, Megabrain imports a legacy JSON state directory when one is present,
 checks parity, moves each dispatch transcript to
 `~/.megabrain/transcripts/<dispatch-id>.txt`, and seals the remaining legacy tree under
@@ -108,6 +112,28 @@ marker already exists. If rollback is needed, restore the sealed legacy tree to 
 and run the previous binary. Changes made after cutover exist only in SQLite and are lost by that
 rollback; restore a database backup instead when those changes must be retained. Direct-parent
 ownership is required for `reply` and `close`.
+
+### Grok
+
+`--agent grok` starts xAI's `grok` CLI (measured against 1.0.50) as `grok --always-approve -m <model>
+--reasoning-effort <level>`. The child's turn-end hook is a file megabrain owns,
+`~/.grok/hooks/megabrain.json` (or `$GROK_HOME/hooks/megabrain.json`), written by `megabrain install
+orchestration-hooks` and removed by `--revert`; `config.toml` is never edited. Grok runs a user-level
+hook without the folder being trusted. `megabrain model refresh grok` reads `grok models`; the
+shipped registry carries the reasoning levels from grok's own model cache (`grok-4.5` has no
+`xhigh`).
+
+When a spawn meets Grok's "Do you trust the contents of this directory?" dialog it answers `y`, only
+for the worktree being spawned into, and records `trustAnswered` only after that send succeeds; it
+never edits `trusted_folders.toml`. A stopped child is interrupted with Ctrl+C, because Escape does
+not cancel a Grok turn. The supervisor reads Grok's queued row and recognizes its waiting spinner,
+and classifies the error messages present in Grok 1.0.50's CLI.
+
+The context meter reads `turn_completed` usage from the session matched by the Grok PID in the pane
+and `active_sessions.json`; it does not guess from the newest session. Usage-window reads for chains
+(a chain step reads as unknown), the tmux badge and shell wrapper, `install --agents grok` skill
+installation, and a Grok parent session identity remain unsupported. Grok error patterns come from
+the installed CLI's message strings; unrecognized errors remain unknown.
 
 ## Chains: choosing who does the work
 

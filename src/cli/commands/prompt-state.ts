@@ -64,15 +64,24 @@ function codexQueuedAbove(frame: string, prompt: string): boolean {
   return false;
 }
 
+function grokQueued(frame: string, prompt: string): boolean {
+  const lines = frame.split("\n");
+  const queued = lines.findIndex((line) => /^\s*▾ Queued \d+\s*$/.test(line));
+  if (queued < 0) return false;
+  const items = lines.slice(queued + 1).filter((line) => /^\s*#\d+\s/.test(line));
+  return shows(items.join("\n"), prompt);
+}
+
 function queued(agent: string, frame: string, prompt: string): boolean {
   if (agent === "claude") return CLAUDE_QUEUED.test(frame);
+  if (agent === "grok") return grokQueued(frame, prompt);
   return agent === "codex" && codexQueuedAbove(frame, prompt);
 }
 
 export function classifyPromptState(input: PromptStateInput): Readonly<{ state: PromptState }> {
   const { agent, frame, prompt, received } = input;
   if (received) return { state: "received" };
-  if (agent !== "claude" && agent !== "codex") return { state: "unknown" };
+  if (agent !== "claude" && agent !== "codex" && agent !== "grok") return { state: "unknown" };
   const liveness = classifyLiveness(agent, frame).status;
   const busy = liveness === "working" || liveness === "pending-check" || SPINNER_TITLE.test(input.title ?? "");
   if (!busy && composerHoldsPrompt(agent, frame, prompt)) return { state: "unsubmitted" };

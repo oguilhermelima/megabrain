@@ -31,7 +31,7 @@ function parseArgs(args: readonly string[], environment: QueueEnvironment): Resu
 
 export async function session(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<ChildSession>> {
   const caller = await resolveCaller(environment, processAdapter);
-  if (!hasCallerIdentity(caller)) return failed("this command cannot tell who is running it: no agent session and no shell were found");
+  if (!hasCallerIdentity(caller)) return failed("this command cannot tell who is running it: no agent session and no shell were found; set MEGABRAIN_SESSION_ID to name this caller");
   return ok({ host: caller.host, id: caller.terminalId ?? caller.id,
     ...(caller.tmuxSession !== null ? { tmuxSession: caller.tmuxSession } : {}),
     ...(caller.tmuxPane !== null ? { tmuxPane: caller.tmuxPane } : {}),

@@ -1,0 +1,22 @@
+
+  main /p/t/mbgrok.yckU/repo           ⠦ MCP (3/4) │ 1.3K / 256K │ [Dashboard]
+
+     ◆ session_start hook (global/orca-status) failed, ignored: hook not
+     executed: required env var(s) not set: ${ORCA_PANE_KEY}
+           ╭───────────────────────────────────────────────────────╮
+     ◆ sess│[megabrain dispatch: grok /tmp/mbgrok.yckU/repo]       │hook not
+     execut│                                                       │
+           │Run megabrain received before work. Ask coordinator wi…│
+           │⋮ (1 more lines)                                       │
+           │Dispatch identity: dispatch-20261012011355575-94538-04…│
+           │                                                       │
+           │This is a smoke test. Run exactly this shell command: …│
+           ╰─ paste again or double-click to expand ───────────────╯
+
+   Image in clipboard · ctrl+v to paste
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯ [Pasted: 7 lines]                                                      │
+  ╰──────────────────────────────────────── Grok 4.7 (low) · always-approve ─╯
+
+  Enter:send  │  Opt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts
