@@ -319,7 +319,7 @@ simulator setup, and install `simulator-web` for browser testing. Install `orche
 reports a child whose turn ended without `ask` or `done`. The installed hook command invokes the
 compiled binary directly — `MEGABRAIN_HOOK_AGENT=<agent> <absolute real path to the binary> hook
 turn-end`, per agent config (Claude's `Stop` hook, Codex/agy `hooks.json`, Cursor's
-`afterAgentResponse`) — there is no wrapper script. `doctor` recognises a legacy entry left by an
+`afterAgentResponse`, Grok's `~/.grok/hooks/megabrain.json`) — there is no wrapper script. `doctor` recognises a legacy entry left by an
 older install (pointing at the now-deleted `hooks/megabrain-turn-end.sh`) and reports it as
 needing migration; `megabrain install orchestration-hooks` replaces it in place.
 

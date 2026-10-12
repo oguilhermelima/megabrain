@@ -109,6 +109,26 @@ and run the previous binary. Changes made after cutover exist only in SQLite and
 rollback; restore a database backup instead when those changes must be retained. Direct-parent
 ownership is required for `reply` and `close`.
 
+### Grok
+
+`--agent grok` starts xAI's `grok` CLI (measured against 1.0.50) as `grok --always-approve -m <model>
+--reasoning-effort <level>`. The child's turn-end hook is a file megabrain owns,
+`~/.grok/hooks/megabrain.json` (or `$GROK_HOME/hooks/megabrain.json`), written by `megabrain install
+orchestration-hooks` and removed by `--revert`; `config.toml` is never edited. Grok runs a user-level
+hook without the folder being trusted. `megabrain model refresh grok` reads `grok models`; the
+shipped registry carries the reasoning levels from grok's own model cache (`grok-4.5` has no
+`xhigh`).
+
+When a spawn meets Grok's "Do you trust the contents of this directory?" dialog it answers `y`, only
+for the worktree being spawned into, and records `trustAnswered` on the dispatch; it never edits
+`trusted_folders.toml`. A stopped child is interrupted with Ctrl+C, because Escape does not cancel a
+Grok turn.
+
+Not covered for Grok: a context meter, usage-window reads for chains (a chain step reads as
+unknown), the tmux badge and shell wrapper, `install --agents grok` skill installation, and a
+Grok parent session identity. The usage-limit and error frames were not captured, so Grok reports
+only idle, working, a permission dialog (blocked) and the trust dialog; anything else is unknown.
+
 ## Chains: choosing who does the work
 
 A chain is an ordered list of steps. Each step names an agent, a model and an effort, and
