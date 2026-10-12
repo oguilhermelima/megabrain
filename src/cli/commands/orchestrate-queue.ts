@@ -134,8 +134,10 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
 
   let dispatch = "";
   let json = false;
+  let all = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
+    else if (arg === "--all") all = true;
     else if (arg.startsWith("-")) return failed(`unknown orchestrate queue option: ${arg}`, 2);
     else if (dispatch === "") dispatch = arg;
     else return failed(`unexpected argument: ${arg}`, 2);
@@ -152,6 +154,12 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     const listed = listDispatches(db.value, { includeArchived: true });
     if (listed.kind !== "ok") return listed;
     dispatchIds = listed.value.filter((entry) => ownsDispatch(caller, { parentHost: String(entry.parentHost ?? ""), parentSessionId: String(entry.parentSessionId ?? "") })).map((entry) => entry.dispatchId);
+  }
+  if (!all) {
+    const listed = listDispatches(db.value, { includeArchived: true });
+    if (listed.kind !== "ok") return listed;
+    const open = new Set(listed.value.filter((entry) => ["spawning", "running", "waiting_for_reply", "orphaned"].includes(String(entry.state))).map((entry) => entry.dispatchId));
+    dispatchIds = dispatchIds.filter((id) => open.has(id));
   }
   const items = queueItems(db.value, dispatchIds);
   return items.kind === "ok" ? ok(formatItems(items.value, json)) : items;

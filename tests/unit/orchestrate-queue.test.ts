@@ -34,10 +34,10 @@ function adapter(): ProcessAdapter {
   };
 }
 
-function dispatch(root: string, id: string, owner: string): void {
+function dispatch(root: string, id: string, owner: string, state = "running"): void {
   const db = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
   requireOk(createDispatch(db, {
-    dispatchId: id, state: "running", parentHost: "orca", parentSessionId: owner,
+    dispatchId: id, state, parentHost: "orca", parentSessionId: owner,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   }));
 }
@@ -73,6 +73,22 @@ describe("orchestrate queue", () => {
     const items = JSON.parse(result.kind === "ok" ? result.value : "[]") as RecordValue[];
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ dispatch: "dispatch-owned", type: "reply", text: "owned reply" });
+  });
+
+  test("hides replies from closed dispatches unless --all is requested", async () => {
+    const root = await state();
+    dispatch(root, "dispatch-open", "parent-one");
+    dispatch(root, "dispatch-closed", "parent-one", "closed");
+    reply(root, "dispatch-open", "current reply", "outbox-open");
+    reply(root, "dispatch-closed", "historical reply", "outbox-closed");
+
+    const current = await executeOrchestrateQueue(["--json"], environment(root), adapter());
+    expect(current.kind).toBe("ok");
+    expect(JSON.parse(current.kind === "ok" ? current.value : "[]").map((item: RecordValue) => item.dispatch)).toEqual(["dispatch-open"]);
+
+    const all = await executeOrchestrateQueue(["--all", "--json"], environment(root), adapter());
+    expect(all.kind).toBe("ok");
+    expect(JSON.parse(all.kind === "ok" ? all.value : "[]").map((item: RecordValue) => item.dispatch).sort()).toEqual(["dispatch-closed", "dispatch-open"]);
   });
 
   test("cancelling a queued reply removes it from check and the worker does not send it", async () => {

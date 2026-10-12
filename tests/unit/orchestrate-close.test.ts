@@ -109,6 +109,41 @@ describe("orchestrate close: stale host terminal", () => {
   });
 });
 
+describe("orchestrate close: missing tmux pane", () => {
+  test("closes and releases a dispatch when its pane is no longer listed", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-missing-pane-`);
+    const calls: string[] = [];
+    try {
+      await mkdir(join(root, "dispatches", "missing-pane"), { recursive: true });
+      await writeFile(join(root, "dispatches", "missing-pane", "meta.json"), JSON.stringify({
+        dispatchId: "missing-pane", parentSessionId: "coord-orca-term", parentHost: "orca",
+        childHost: "tmux", terminalId: "tmux:gone-session:%4", runtime: "tmux",
+        tmuxSession: "gone-session", tmuxPane: "%4", parentTmuxSession: null,
+        tmuxSessionOwned: false, state: "running", processState: "running", terminalState: "owned",
+      }));
+      await importFixture(root);
+      const process = {
+        async run(command: string, args: readonly string[]) {
+          calls.push(`${command} ${args.join(" ")}`);
+          if (command === "tmux" && args[0] === "has-session") return ok({ stdout: "", stderr: "", exitCode: 0 });
+          if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "", stderr: "", exitCode: 0 });
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return calls.length; },
+      } satisfies ProcessAdapter;
+
+      const result = await executeOrchestrateClose(["missing-pane", "--force-release"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+
+      expect(result.kind).toBe("ok");
+      expect(dispatch(root, "missing-pane")).toMatchObject({ state: "closed", terminalState: "released", processState: "stopped" });
+      expect(calls.some((call) => call.includes("kill-pane") || call.includes("kill-session"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // executeSpawn's tmux branch never calls host.create() for any tmux dispatch (shared-pane or
 // exclusive) — there is never a host-terminal component to close. Before the tmux child-identity
 // fix, a tmux dispatch's childHost/terminalId equalled the spawning caller's own identity, so

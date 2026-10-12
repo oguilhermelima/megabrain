@@ -25,6 +25,28 @@ describe("supervision classification", () => {
     expect(classifyRecordedError("codex", fixture("codex-auth-required.json"), { now })).toMatchObject({ cause: "auth-required" });
   });
 
+  test("does not mistake Codex quota warnings or stale warnings for a usage refusal", () => {
+    for (const warning of [
+      "⚠ 5h limit: 48% left · resets at 10:06",
+      "⚠ weekly limit: 24% left · resets at 10:06",
+    ]) {
+      expect(classifySupervision({ frame: `${warning}\nWorking…\n5h 97% left`, paneExists: true, processAlive: true, promptUnsubmitted: false }).cause).toBe("unknown");
+    }
+    expect(classifySupervision({
+      frame: "You've hit your usage limit for this model. Switch to another model now.",
+      paneExists: true, processAlive: true, promptUnsubmitted: false,
+    }).cause).toBe("usage-limit");
+    // Claude's own limit notice, captured from a real transcript (system, informational).
+    expect(classifySupervision({
+      frame: "Usage limit reached · continuing automatically at 1pm · esc or type to cancel",
+      paneExists: true, processAlive: true, promptUnsubmitted: false,
+    }).cause).toBe("usage-limit");
+    expect(classifySupervision({
+      frame: "You've hit your usage limit for this model.\nSwitch to another model now.\n\nWorking (12s)\nesc to interrupt",
+      paneExists: true, processAlive: true, promptUnsubmitted: false,
+    }).cause).toBe("unknown");
+  });
+
   test("ignores errors that recovered or have newer progress and reports only a final two-minute error", () => {
     const error = fixture("codex-server-error.json");
     expect(classifyRecordedError("codex", error, { now: Date.parse("2026-10-11T12:00:30.000Z") })).toMatchObject({ cause: "unknown" });

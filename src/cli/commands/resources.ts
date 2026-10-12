@@ -4,6 +4,7 @@ import { readDockerResources, readMachineResources, sampleProcessTree, type Dock
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 import { callerFromEnvironment } from "./orchestrate-list.js";
+import { ownsDispatch } from "../../core/context.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type DispatchResource = Readonly<{ dispatchId: string; agent: string; state: string; pid?: number; resources?: ProcessResources }>;
@@ -17,7 +18,10 @@ export async function collectResources(environment: Environment, process: Proces
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return { machine: machine ?? null, docker: docker ?? null, dispatches: [] };
   const caller = all ? undefined : await callerFromEnvironment(environment, process);
-  const selected = listed.value.filter((item) => OPEN.has(String(item.state)) && (all || item.ownerSessionId === caller?.id || item.ownerSessionId === caller?.terminalId));
+  const identity = caller === undefined ? undefined : { ...caller, terminalId: caller.terminalId ?? null, tmuxSession: null, tmuxPane: null };
+  const selected = listed.value.filter((item) => OPEN.has(String(item.state)) && (all || (identity !== undefined && ownsDispatch(identity, {
+    parentHost: String(item.parentHost ?? ""), parentSessionId: String(item.parentSessionId ?? ""),
+  }))));
   const dispatches = await Promise.all(selected.map(async (item): Promise<DispatchResource> => {
     const pane = typeof item.tmuxPane === "string" && item.tmuxPane !== "";
     let pid = typeof item.agentPid === "number" ? item.agentPid : Number(item.agentPid);

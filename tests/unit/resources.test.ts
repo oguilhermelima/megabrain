@@ -7,6 +7,7 @@ import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { parseLinuxMachineResources, parseMacMachineResources, parseProcessTable, sampleProcessTree, readDockerResources } from "../../src/core/resources.js";
 import { executeResources } from "../../src/cli/commands/resources.js";
+import { createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
 
 const fixture = (name: string) => readFile(join(import.meta.dir, "../fixtures/resources", name), "utf8");
 
@@ -110,6 +111,26 @@ describe("resource sampling", () => {
       expect(Object.keys(payload).sort()).toEqual(["dispatches", "docker", "machine"]);
       expect(payload.machine).toMatchObject({ totalMemoryBytes: 19327352832, pressure: "elevated", cpuCount: 11 });
       expect(payload.dispatches).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("resources defaults to dispatches owned by the resolved caller", async () => {
+    const root = await mkdtemp(join(tmpdir(), "megabrain-resources-owner-"));
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") throw new Error(database.error);
+    for (const [dispatchId, parentSessionId] of [["owned", "parent-one"], ["foreign", "parent-two"]]) {
+      const created = createDispatch(database.value, {
+        dispatchId, state: "running", parentHost: "orca", parentSessionId,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+      if (created.kind !== "ok") throw new Error(created.error);
+    }
+    const process = processFor((command) => command === "vm_stat" ? "" : command === "sysctl" ? "" : command === "memory_pressure" ? "" : undefined);
+    try {
+      const result = await executeResources(["--json"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "parent-one" }, process);
+      expect(result.kind).toBe("ok");
+      const payload = JSON.parse(result.kind === "ok" ? result.value : "{}") as { dispatches: { dispatchId: string }[] };
+      expect(payload.dispatches.map((item) => item.dispatchId)).toEqual(["owned"]);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

@@ -52,6 +52,12 @@ for operation in "orchestrate reply $dispatch --text should-not-type --json" "or
     orchestrate\ reply\ *)
       [ "$status" -eq 0 ] || fail "reply should remain queued when its pane is absent: $message"
       [ "$(jq -r '.nudge' "$output")" = not-typed ] || fail "reply reported a nudge to the absent pane: $message"
+      queue="$(env MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=parent-terminal ORCA_TERMINAL_HANDLE=parent-terminal \
+        "$root/.build/megabrain" orchestrate queue --json)"
+      jq -e '.[] | select(.text == "should-not-type")' >/dev/null <<<"$queue" || fail "reply was not queued before close"
+      ;;
+    orchestrate\ close\ *)
+      [ "$status" -eq 0 ] || fail "close should release the dispatch when its pane is absent: $message"
       ;;
     *)
       [ "$status" -ne 0 ] || fail "unexpected success for $operation with missing pane $vanished"
@@ -60,6 +66,12 @@ for operation in "orchestrate reply $dispatch --text should-not-type --json" "or
   esac
 done
 
+queue="$(env MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=parent-terminal ORCA_TERMINAL_HANDLE=parent-terminal \
+  "$root/.build/megabrain" orchestrate queue --all --json)"
+jq -e '.[] | select(.text == "should-not-type")' >/dev/null <<<"$queue" || fail "reply was not kept queued after close"
+dispatches="$(env MEGABRAIN_SESSION_HOST=orca MEGABRAIN_SESSION_ID=parent-terminal ORCA_TERMINAL_HANDLE=parent-terminal \
+  "$root/.build/megabrain" orchestrate list --all --json)"
+jq -e --arg id "$dispatch" '.[] | select(.dispatchId == $id and .state == "closed")' >/dev/null <<<"$dispatches" || fail "dispatch was not marked closed"
 [ -s "$work/survivor-input" ] && fail "a stale pane target typed into surviving pane $survivor"
 [ "$("$real_tmux" -L "$server" list-panes -a -F '#{pane_id}' | grep -Fxc "$survivor")" -eq 1 ] || fail "surviving pane $survivor was removed"
 printf '3 passed, 0 failed, 0 skipped\n'

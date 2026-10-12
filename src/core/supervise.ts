@@ -128,7 +128,7 @@ function classifyErrorText(text: string): SupervisionFinding {
   // messages: usage: "You hit your free usage limit."; rate: "You've hit the rate limit for your
   // plan."; server: "Service unavailable"; network: "Session recovery timed out; the server may
   // have processed the POST"; auth: "Auth error: Auth required".
-  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit|usage limit reached|weekly limit.{0,60}(?:try again|reset))/i.test(text)) {
+  if (/(?:you['’]ve hit your usage limit|you hit your (?:free )?usage limit|usage limit reached)/i.test(text)) {
     return { cause: "usage-limit", resetAt: resetTime(text) ?? "unknown reset time", errorText: "usage limit" };
   }
   const codeMatch = /(?:API Error:\s*|unexpected status\s+|\b)(429|5\d\d|401|403)\b/i.exec(text);
@@ -185,6 +185,9 @@ export function classifySupervision(evidence: SupervisionEvidence): SupervisionF
   if (/(?:trust this project|trust this folder|permission required|allow this command|do you want to allow|press enter to continue)/i.test(evidence.frame)) return { cause: "dialog-waiting" };
   if (evidence.promptUnsubmitted) return { cause: "prompt-unsubmitted" };
   const frameFinding = classifyErrorText(evidence.frame);
+  // Codex keeps prior refusal text in pane scrollback. Its current working markers mean that
+  // text is stale; the refusal is actionable only after the agent stops working again.
+  if (frameFinding.cause === "usage-limit" && /Working \(/.test(evidence.frame) && /esc to interrupt/i.test(evidence.frame)) return { cause: "unknown" };
   if (frameFinding.cause !== "unknown") return frameFinding;
   return { cause: "unknown" };
 }
