@@ -1,12 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { backgroundTasks, classifyRecordedError, recommendationFor } from "../../src/core/supervise.js";
+import { backgroundTasks, classifyRecordedError, classifySupervision, recommendationFor } from "../../src/core/supervise.js";
 
 const now = Date.parse("2026-10-11T12:03:00.000Z");
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(resolve(import.meta.dir, "../fixtures/supervise", name), "utf8")) as Record<string, unknown>;
 
 describe("supervision classification", () => {
+  test("classifies Grok CLI error text from captured source strings", () => {
+    const grok = (name: string) => readFileSync(resolve(import.meta.dir, `../fixtures/supervise/${name}.txt`), "utf8");
+    const finding = (name: string) => classifySupervision({ frame: grok(name), paneExists: true, processAlive: true, promptUnsubmitted: false });
+    expect(finding("grok-usage-limit").cause).toBe("usage-limit");
+    expect(finding("grok-rate-limited")).toMatchObject({ cause: "rate-limited", errorCode: "429" });
+    expect(finding("grok-server-error").cause).toBe("server-error");
+    expect(finding("grok-network").cause).toBe("network");
+    expect(finding("grok-auth-required").cause).toBe("auth-required");
+  });
+
   test("classifies provider errors from the agents' structured records", () => {
     expect(classifyRecordedError("codex", fixture("codex-usage-limit.json"), { now })).toMatchObject({ cause: "usage-limit", resetAt: "1:43 PM" });
     expect(classifyRecordedError("claude", fixture("claude-rate-limited.json"), { now, idlePrompt: true })).toMatchObject({ cause: "rate-limited", errorCode: "429" });
