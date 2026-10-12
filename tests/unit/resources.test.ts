@@ -21,6 +21,14 @@ function processFor(behavior: (command: string, args: readonly string[]) => stri
   };
 }
 
+function resultFor(behavior: (command: string, args: readonly string[], options?: unknown) => Promise<Result<ProcessOutput>>): ProcessAdapter {
+  return {
+    run: behavior,
+    startDetached: async () => ({ kind: "failed", error: "unused" }),
+    invocationCount: () => 0,
+  };
+}
+
 describe("resource sampling", () => {
   test("parses captured macOS system output", async () => {
     const [vmStat, sysctl, pressure] = await Promise.all([fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt")]);
@@ -28,6 +36,46 @@ describe("resource sampling", () => {
       totalMemoryBytes: 19327352832, availableMemoryBytes: 3829448704, pressure: "normal",
       swapUsedBytes: 3285587067, loadAverage1: 5.3, loadAverage5: 5.45, cpuCount: 11,
     });
+  });
+
+  test("maps captured kernel pressure levels to the published macOS levels", async () => {
+    const [vmStat, sysctl, memoryPressure, kernelPressure] = await Promise.all([
+      fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt"), fixture("macos/memory-pressure-level.txt"),
+    ]);
+    for (const [level, expected] of [[1, "normal"], [2, "elevated"], [4, "critical"]] as const) {
+      const captured = kernelPressure.replace(/kern\.memorystatus_vm_pressure_level:\s*\d+/, `kern.memorystatus_vm_pressure_level: ${level}`);
+      expect(parseMacMachineResources(vmStat, `${sysctl}\n${captured}`, memoryPressure).pressure).toBe(expected);
+    }
+  });
+
+  test("does not contact Docker while OrbStack is stopped", async () => {
+    const calls: string[] = [];
+    const process = resultFor(async (command, args) => {
+      calls.push(`${command} ${args.join(" ")}`);
+      return command === "orb" ? { kind: "failed", error: "stopped", exitCode: 1 } : ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    await expect(readDockerResources(process, "darwin")).resolves.toBeUndefined();
+    expect(calls).toEqual(["orb status"]);
+  });
+
+  test("samples Docker with a short timeout when OrbStack is running", async () => {
+    const calls: { command: string; args: readonly string[]; options?: unknown }[] = [];
+    const process = resultFor(async (command, args, options) => {
+      calls.push({ command, args, options });
+      return command === "orb" ? ok({ stdout: "Running\n", stderr: "", exitCode: 0 }) : ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    await expect(readDockerResources(process, "darwin")).resolves.toEqual([]);
+    const docker = calls.find(({ command }) => command === "docker");
+    expect(docker?.args).toEqual(["stats", "--no-stream", "--format", "{{json .}}"]);
+    expect((docker?.options as { timeoutMs?: number } | undefined)?.timeoutMs).toBeGreaterThan(0);
+    expect((docker?.options as { timeoutMs?: number } | undefined)?.timeoutMs).toBeLessThanOrEqual(3000);
+  });
+
+  test("omits Docker resources when a bounded Docker probe times out", async () => {
+    const process = resultFor(async (command) => command === "orb"
+      ? ok({ stdout: "Running\n", stderr: "", exitCode: 0 })
+      : { kind: "failed", error: "docker timed out" });
+    await expect(readDockerResources(process, "darwin")).resolves.toBeUndefined();
   });
 
   test("parses captured Linux proc output and tolerates missing PSI", async () => {
