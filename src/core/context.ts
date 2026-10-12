@@ -55,6 +55,9 @@ export type CallerProbes = {
   // The calling shell's identity ("shell:<tty>"), for a caller that carries neither an agent
   // session id nor a terminal handle.
   readonly shellIdentity?: string;
+  // An agent session found from the process tree ("grok:<id>", "agy:<id>") for agents that export
+  // no session id to the commands they run.
+  readonly agentSessionId?: string;
 };
 
 // The resolved identity of whoever is running the current megabrain command: a stable id for
@@ -137,7 +140,7 @@ function callerTerminal(
 // The one caller-identity resolver: used by `megabrain context`, `orchestrate spawn`'s caller
 // resolution, and every parent/child verb that has to know who is running it. Precedence:
 // MEGABRAIN_SESSION_ID is an explicit override and always wins; then the agent's own session id
-// (Claude, then Codex); then a terminal handle (superset, then orca, then a probed tmux pane);
+// (Claude, then Codex, then a Grok or Agy session found from the process tree); then a terminal handle (superset, then orca, then a probed tmux pane);
 // then, host only, a structured Orca session (ORCA_STRUCTURED_SESSION=1) with no stable id. A caller under none of those hosts is "local": no terminal
 // exists to type into, and its id is its agent session or, failing that, the shell probe. The terminal handle is
 // returned separately from id so callers that need it (ownership, notification routing) do not
@@ -158,7 +161,9 @@ export function resolveCallerIdentity(environment: CallerEnvironment, probes: Ca
       ? `claude:${environment.claudeCodeSessionId}`
       : present(environment.codexThreadId)
         ? `codex:${environment.codexThreadId}`
-        : terminal?.terminalId ?? (host === "local" ? probes.shellIdentity ?? "" : "");
+        : present(probes.agentSessionId)
+          ? probes.agentSessionId
+          : terminal?.terminalId ?? (host === "local" ? probes.shellIdentity ?? "" : "");
   return {
     id,
     host,
@@ -175,7 +180,7 @@ export function hasCallerIdentity(caller: CallerIdentity): boolean {
 }
 
 export function isAgentSessionId(value: string): boolean {
-  return /^(?:claude|codex):.+$/.test(value);
+  return /^(?:claude|codex|grok|agy):.+$/.test(value);
 }
 
 // A local owner that names a process rather than a session: a stable ancestor, or the older
