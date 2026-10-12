@@ -36,6 +36,11 @@ describe("supervision classification", () => {
       frame: "You've hit your usage limit for this model. Switch to another model now.",
       paneExists: true, processAlive: true, promptUnsubmitted: false,
     }).cause).toBe("usage-limit");
+    // Claude's own limit notice, captured from a real transcript (system, informational).
+    expect(classifySupervision({
+      frame: "Usage limit reached · continuing automatically at 1pm · esc or type to cancel",
+      paneExists: true, processAlive: true, promptUnsubmitted: false,
+    }).cause).toBe("usage-limit");
     expect(classifySupervision({
       frame: "You've hit your usage limit for this model.\nSwitch to another model now.\n\nWorking (12s)\nesc to interrupt",
       paneExists: true, processAlive: true, promptUnsubmitted: false,
