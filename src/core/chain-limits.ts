@@ -33,7 +33,7 @@ export type LimitResult = Readonly<{
 }>;
 
 export type LimitReading =
-  | Readonly<{ readonly status: "current"; readonly usedPercent: number; readonly resetsAt: string; readonly reason: string; readonly source: "disk" | "cache" | "live"; readonly result: LimitResult; readonly fetchedAt: number }>
+  | Readonly<{ readonly status: "current"; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "disk" | "cache" | "live"; readonly result: LimitResult; readonly fetchedAt: number }>
   | Readonly<{ readonly status: "unknown"; readonly reason: string }>;
 
 export type ChainLimitEnvironment = Readonly<Record<string, string | undefined>>;
@@ -102,7 +102,7 @@ function resolveCodexSnapshot(snapshot: JsonRecord, window: LimitWindowName, now
     return unknownReading("codex", window, `recorded window has already reset at ${resetsAt} and carries no information about the current window`);
   }
   const result = buildCodexResult(snapshot, fetchedAt);
-  return { status: "current", usedPercent: value.used_percent, resetsAt: String(resetsAt), reason: `codex ${actualWindow} window at ${percentText(value.used_percent)} percent`, source: "disk", result, fetchedAt };
+  return { status: "current", usedPercent: value.used_percent, resetsAt: String(resetsAt), bucket: "default", reason: `codex ${actualWindow} window at ${percentText(value.used_percent)} percent`, source: "disk", result, fetchedAt };
 }
 
 const CODEX_MAX_AGE_SECONDS: Readonly<Record<LimitWindowName, number>> = { "5h": 18000, weekly: 604800 };
@@ -193,7 +193,7 @@ function applyLimitResult(result: LimitResult, agent: LimitAgent, window: LimitW
     return unknownReading(agent, window, "provider response has no usable window");
   }
   const bucket = entry.bucket === "default" ? "" : ` (${entry.bucket})`;
-  return { status: "current", usedPercent: entry.usedPercent, resetsAt: entry.resetsAt, reason: `${agent} ${window} window${bucket} at ${percentText(entry.usedPercent)} percent`, source, result, fetchedAt: result.fetchedAt };
+  return { status: "current", usedPercent: entry.usedPercent, resetsAt: entry.resetsAt, bucket: entry.bucket, reason: `${agent} ${window} window${bucket} at ${percentText(entry.usedPercent)} percent`, source, result, fetchedAt: result.fetchedAt };
 }
 
 function limitTimeout(config: ChainConfig, environment: ChainLimitEnvironment): number {
