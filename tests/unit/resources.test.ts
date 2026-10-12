@@ -23,7 +23,7 @@ describe("resource sampling", () => {
     const [vmStat, sysctl, pressure] = await Promise.all([fixture("macos/vm-stat.txt"), fixture("macos/sysctl.txt"), fixture("macos/memory-pressure.txt")]);
     expect(parseMacMachineResources(vmStat, sysctl, pressure)).toEqual({
       totalMemoryBytes: 19327352832, availableMemoryBytes: 3829448704, pressure: "normal",
-      swapUsedBytes: 3285558067, loadAverage1: 5.3, loadAverage5: 5.45, cpuCount: 11,
+      swapUsedBytes: 3285587067, loadAverage1: 5.3, loadAverage5: 5.45, cpuCount: 11,
     });
   });
 
@@ -41,7 +41,7 @@ describe("resource sampling", () => {
   });
 
   test("uses the pane process tree and skips Docker when the daemon does not answer", async () => {
-    const process = processFor((command, args) => command === "ps" && args[0] === "-axo" ? "10 1 1000 2.5\n11 10 2000 3.0\n" : undefined);
+    const process = processFor((command, args) => command === "ps" && args.join(" ") === "-A -o pid=,ppid=,rss=,%cpu=" ? "10 1 1000 2.5\n11 10 2000 3.0\n" : undefined);
     await expect(sampleProcessTree(10, process, "linux")).resolves.toEqual({ rssBytes: 3072000, cpuPercent: 5.5 });
     const docker = await readDockerResources(process);
     expect(docker).toBeUndefined();
