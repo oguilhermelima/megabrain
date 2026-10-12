@@ -30,6 +30,8 @@
 - Run megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--json]. — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 - Run megabrain orchestrate liveness <dispatch-id-or-suffix> [--json]. — recommended when you need to check the child terminal execution state without waiting for a message.
 - Run megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]. — recommended when you need to wait for or retrieve a child message delivery that can be replayed until acknowledged.
+- Run megabrain orchestrate queue [<dispatch-id-or-suffix>] [--json]. — recommended when you need to list your queued messages.
+- Run megabrain orchestrate queue cancel <item-id> [--reason <text>] [--json]. — recommended when you need to cancel one of your queued messages.
 - Run megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json]. — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
 - Run megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]. — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
 - Run megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--json]. — recommended when you need to send an answer to a child that has asked a question.

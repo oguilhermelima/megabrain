@@ -18,6 +18,7 @@ export {
 } from "./state/dispatches.js";
 export {
   ackDelivery,
+  cancelQueuedMessage,
   acquireLease,
   appendMessage,
   appendParentReply,

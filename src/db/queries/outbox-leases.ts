@@ -2,7 +2,7 @@ import { decode, encode, type DatabaseAdapter } from "./types.js";
 
 export type OutboxRecord = Readonly<{
   id: string; dispatchId: string | null; targetKind: string; target: string; payload: unknown;
-  status: "pending" | "sending" | "sent" | "failed" | "suppressed"; attempts: number;
+  status: "pending" | "sending" | "sent" | "failed" | "suppressed" | "cancelled"; attempts: number;
   leaseUntil: string | null; transport: string | null; createdAt: string; updatedAt: string;
 }>;
 
