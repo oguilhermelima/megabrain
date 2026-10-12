@@ -349,6 +349,17 @@ admission policy, a suite beyond the limit waits in the queue (or is refused wit
 megabrain proc run --name suite --slot container-suite --needs docker -- bash tests/container/run.sh
 ```
 
+Agents can be routed into these verbs without being told to. `megabrain install resource-hooks`
+(opt-in, never part of the default install) adds a pre-tool hook to Claude, Codex, Grok and Agy:
+a dev server such as `pnpm dev` becomes `megabrain proc start --name dev --shell 'pnpm dev'`,
+`docker compose up` and other container-starting docker verbs become `proc run --needs docker`,
+and Prisma or Drizzle migrations become `proc run`. The original command is kept byte for byte.
+Claude, Codex and Grok receive the rewrite as `updatedInput` with no permission decision of
+megabrain's own; Agy receives `overwrite` with `decision: ask`. `orb start|stop` typed by hand is refused
+with the command to use instead. `megabrain install resource-hooks --revert` removes only
+megabrain's entries. Another rewriting hook on the same command (rtk, for example) may race with
+this one; the agents do not define which rewrite wins.
+
 ```sh
 megabrain proc start --name api --worktree ~/code/api --cwd ~/code/api \
   --port 3000 --terminal auto -- pnpm dev

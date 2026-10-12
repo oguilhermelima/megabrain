@@ -327,6 +327,13 @@ turn-end`, per agent config (Claude's `Stop` hook, Codex/agy `hooks.json`, Curso
 older install (pointing at the now-deleted `hooks/megabrain-turn-end.sh`) and reports it as
 needing migration; `megabrain install orchestration-hooks` replaces it in place.
 
+`resource-hooks` is opt-in and never selected by default. It installs a pre-tool hook
+(`MEGABRAIN_HOOK_AGENT=<agent> <binary> hook pre-tool`) into Claude, Codex, Grok
+(`~/.grok/hooks/megabrain-resources.json`) and Agy that rewrites dev servers into
+`megabrain proc start`, container work into `megabrain proc run --needs docker` and migrations into
+`megabrain proc run`, keeping the original command byte for byte in `--shell`. A hand-typed
+`orb start|stop` is refused with what to run instead. `--revert` removes only megabrain's entries.
+
 The installable module ids include `tv-adb` and `skill-sync`. During normal command invocations,
 `skill-sync` compares the shipped skill with each registered agent copy and repairs drift; `--help`
 and `doctor` skip that runtime repair. A per-target stamp makes unchanged copies nearly free.

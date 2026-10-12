@@ -25,7 +25,7 @@ import { getInstallState, listDispatches, mutateInstallModule, putInstallModule,
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 type State = Record<string, Record<string, unknown>>;
-const modules = ["orchestration", "orchestration-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
+const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
 }
@@ -105,7 +105,7 @@ function hookPathIssue(agent: string, command: string): string | undefined {
   const words = shellWords(command);
   if (words === undefined) return undefined;
   const args = words.filter((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
-  if (args.at(-2) !== "hook" || args.at(-1) !== "turn-end") return undefined;
+  if (args.at(-2) !== "hook" || (args.at(-1) !== "turn-end" && args.at(-1) !== "pre-tool")) return undefined;
   if (args.length >= 4 && /^node(?:\.exe)?$/i.test(basename(args[0] ?? ""))) {
     const interpreter = args[0] ?? "";
     const entrypoint = args[1] ?? "";
@@ -401,6 +401,8 @@ async function report(module: string, environment: Environment, process: Process
     }
     status = healthy ? "ok" : "misconfigured";
     reason = `${details.join("; ")}; Codex caveat: Codex shows a \"Hooks need review\" prompt on its next launch.`;
+  } else if (module === "resource-hooks") {
+    ({ status, reason } = await resourceHooksReport(environment, process));
   } else if (module === "tmux-runtime") {
     if (!await available(process, "tmux")) reason = "tmux is not on PATH";
     else {
@@ -560,6 +562,7 @@ export function hookEntrypointCommand(
   environment: Environment,
   agent: HookAgent,
   runtime: HookRuntime = { execPath: process.execPath, node: process.versions.bun === undefined },
+  hook: "turn-end" | "pre-tool" = "turn-end",
 ): string | undefined {
   const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const entrypoint = resolve(root, ".build/megabrain");
@@ -569,11 +572,11 @@ export function hookEntrypointCommand(
     } catch {
       return undefined;
     }
-    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} ${shellQuote(entrypoint)} hook turn-end`;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(resolve(runtime.execPath))} ${shellQuote(entrypoint)} hook ${hook}`;
   }
   try {
     if ((statSync(entrypoint).mode & 0o111) === 0) return undefined;
-    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(realpathSync(entrypoint))} hook turn-end`;
+    return `MEGABRAIN_HOOK_AGENT=${agent} ${shellQuote(realpathSync(entrypoint))} hook ${hook}`;
   } catch {
     return undefined;
   }
@@ -980,6 +983,124 @@ async function revertOrchestrationHooks(environment: Environment): Promise<Resul
   return ok("orchestration-hooks reverted\n");
 }
 
+// --- resource-hooks ------------------------------------------------------------------------
+// Opt-in: a pre-tool hook in every agent that routes resource commands into megabrain proc
+// (see hook-pre-tool.ts). Entries are found by their command, so install repairs in place and
+// revert removes exactly megabrain's entries, leaving every other hook alone.
+
+const resourceHookAgents = ["claude", "codex", "grok", "agy"] as const;
+type ResourceHookAgent = (typeof resourceHookAgents)[number];
+const AGY_RESOURCE_HOOK = "megabrain-resources";
+
+// Grok reads every file in its hooks directory, so this module owns a file of its own there.
+function resourceHookConfig(environment: Environment, agent: ResourceHookAgent): string {
+  if (agent === "grok") return join(environment.GROK_HOME ?? join(environment.HOME ?? "", ".grok"), "hooks", "megabrain-resources.json");
+  return hookConfig(environment, agent);
+}
+
+function isResourceEntry(entry: unknown, agent: ResourceHookAgent): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const command = String((entry as Record<string, unknown>).command ?? "");
+  return command.startsWith(`MEGABRAIN_HOOK_AGENT=${agent} `) && command.endsWith(" hook pre-tool");
+}
+
+function readJsonObject(path: string): Record<string, unknown> | undefined {
+  const raw = fileText(path);
+  if (raw === undefined) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch { return undefined; }
+}
+
+function resourceGroups(existing: Record<string, unknown>): unknown[] {
+  const hooks = existing.hooks;
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return [];
+  const list = (hooks as Record<string, unknown>).PreToolUse;
+  return Array.isArray(list) ? list : [];
+}
+
+function withoutResourceEntries(existing: Record<string, unknown>, agent: ResourceHookAgent): Record<string, unknown> {
+  if (agent === "agy") { const { [AGY_RESOURCE_HOOK]: _removed, ...rest } = existing; return rest; }
+  const groups: unknown[] = [];
+  for (const group of resourceGroups(existing)) {
+    const record = typeof group === "object" && group !== null ? group as Record<string, unknown> : {};
+    const nested = Array.isArray(record.hooks) ? record.hooks as unknown[] : [];
+    if (!nested.some((entry) => isResourceEntry(entry, agent))) { groups.push(group); continue; }
+    const kept = nested.filter((entry) => !isResourceEntry(entry, agent));
+    if (kept.length > 0) groups.push({ ...record, hooks: kept });
+  }
+  const hooks = typeof existing.hooks === "object" && existing.hooks !== null && !Array.isArray(existing.hooks) ? existing.hooks as Record<string, unknown> : {};
+  return { ...existing, hooks: { ...hooks, PreToolUse: groups } };
+}
+
+function withResourceEntry(existing: Record<string, unknown>, agent: ResourceHookAgent, command: string): Record<string, unknown> {
+  const base = withoutResourceEntries(existing, agent);
+  if (agent === "agy") return { ...base, [AGY_RESOURCE_HOOK]: { PreToolUse: [{ matcher: "run_command", hooks: [{ type: "command", command, timeout: 10 }] }] } };
+  const hooks = base.hooks as Record<string, unknown>;
+  // Claude names its shell tool Bash; Codex and Grok get every call and the hook ignores the rest.
+  const group = { ...(agent === "claude" ? { matcher: "Bash" } : {}), hooks: [{ type: "command", command }] };
+  return { ...base, hooks: { ...hooks, PreToolUse: [...resourceGroups(base), group] } };
+}
+
+function resourceEntryCommands(existing: Record<string, unknown>, agent: ResourceHookAgent): string[] {
+  const groups = agent === "agy" ? (() => {
+    const named = existing[AGY_RESOURCE_HOOK];
+    const list = typeof named === "object" && named !== null ? (named as Record<string, unknown>).PreToolUse : undefined;
+    return Array.isArray(list) ? list : [];
+  })() : resourceGroups(existing);
+  return groups.flatMap((group) => {
+    const nested = typeof group === "object" && group !== null ? (group as Record<string, unknown>).hooks : undefined;
+    return Array.isArray(nested) ? nested.filter((entry) => isResourceEntry(entry, agent)).map((entry) => String((entry as Record<string, unknown>).command)) : [];
+  });
+}
+
+async function installResourceHooks(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
+  for (const agent of resourceHookAgents) {
+    if (!(await available(processAdapter, agent))) continue;
+    const command = hookEntrypointCommand(environment, agent, undefined, "pre-tool");
+    if (command === undefined) return failed(`hook entrypoint is not executable for ${agent}`);
+    const path = resourceHookConfig(environment, agent);
+    const existing = readJsonObject(path);
+    if (existing === undefined) return failed(`${agent} config is not valid JSON: ${path}`);
+    if (existsSync(path) && resourceEntryCommands(existing, agent).length === 0) {
+      const backup = await backupExistingFile(path, processAdapter);
+      if (backup.kind !== "ok") return backup;
+    }
+    try { await writeJsonAtomic(path, withResourceEntry(existing, agent, command)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
+  }
+  return ok(undefined);
+}
+
+async function revertResourceHooks(environment: Environment): Promise<Result<string>> {
+  for (const agent of resourceHookAgents) {
+    const path = resourceHookConfig(environment, agent);
+    if (!existsSync(path)) continue;
+    if (agent === "grok") { unlinkSync(path); continue; }
+    const existing = readJsonObject(path);
+    if (existing === undefined) return failed(`${agent} config is not valid JSON: ${path}`);
+    if (resourceEntryCommands(existing, agent).length === 0) continue;
+    try { await writeJsonAtomic(path, withoutResourceEntries(existing, agent)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
+  }
+  writeInstalledState(environment, "resource-hooks", false, "reverted");
+  return ok("resource-hooks reverted\n");
+}
+
+async function resourceHooksReport(environment: Environment, processAdapter: ProcessAdapter): Promise<{ status: string; reason: string }> {
+  const details: string[] = [];
+  let healthy = true;
+  for (const agent of resourceHookAgents) {
+    if (!(await available(processAdapter, agent))) { details.push(`${agent}: not-installed`); continue; }
+    const existing = readJsonObject(resourceHookConfig(environment, agent));
+    const commands = existing === undefined ? [] : resourceEntryCommands(existing, agent);
+    const issue = commands.map((command) => hookPathIssue(agent, command)).find((value) => value !== undefined);
+    if (commands.length === 0) { details.push(`${agent}: entry-missing`); healthy = false; }
+    else if (issue !== undefined) { details.push(issue); healthy = false; }
+    else details.push(`${agent}: entry-present`);
+  }
+  return { status: healthy ? "ok" : "misconfigured", reason: `${details.join("; ")}; opt-in: routes dev servers, docker and migrations into megabrain proc` };
+}
+
 // --- simulator-native / simulator-tv -------------------------------------------------------
 
 async function installSimulatorNative(processAdapter: ProcessAdapter): Promise<Result<void>> {
@@ -1111,6 +1232,7 @@ async function runInstallStep(module: string, environment: Environment, processA
     case "orchestration": return ok(undefined);
     case "worktree": return ok(undefined);
     case "orchestration-hooks": return installOrchestrationHooks(environment, processAdapter);
+    case "resource-hooks": return installResourceHooks(environment, processAdapter);
     case "simulator-web": return installSimulatorWeb(environment, processAdapter, options.browser);
     case "simulator-native": return installSimulatorNative(processAdapter);
     case "simulator-tv": return installSimulatorNative(processAdapter);
@@ -1229,6 +1351,7 @@ export async function executeInstall(args: readonly string[], environment: Envir
   }
   if (!modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   if (revert) {
+    if (module === "resource-hooks") return revertResourceHooks(environment);
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
     return revertOrchestrationHooks(environment);
   }
