@@ -6,6 +6,8 @@ import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatc
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
+import { composerExactlyHoldsText } from "../../core/composer-proof.js";
+import { formatOneLine } from "../../core/chat-message-format.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -102,8 +104,15 @@ async function sendTyped(
     if (dialog || typed !== "") return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
     return ok(undefined);
   };
+  const verifyTypedComposer = async (): Promise<Result<void>> => {
+    const screen = await readDeliveryScreen(meta, process);
+    if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
+    if (deliveryHasKeystrokeDialog(agent, screen.value)) return failed("target is showing a keystroke dialog");
+    const expected = meta.runtime === "tmux" ? text : host === "orca" ? formatOneLine(text) : text;
+    return composerExactlyHoldsText(agent, screen.value, expected) ? ok(undefined) : failed("composer-race");
+  };
   if (meta.runtime === "tmux") {
-    const sent = await sendTmuxPair(root, String(meta.tmuxPane ?? ""), text, submit.value, {}, process, false, preflight);
+    const sent = await sendTmuxPair(root, String(meta.tmuxPane ?? ""), text, submit.value, {}, process, false, preflight, verifyTypedComposer);
     if (sent.kind !== "ok") fail(sent.error);
     return sent.kind === "ok";
   }
@@ -112,10 +121,20 @@ async function sendTyped(
   if (provider === undefined) { fail(`unknown host ${host}`); return false; }
   const screen = await preflight();
   if (screen.kind !== "ok") { fail(`preflight: ${screen.error}`); return false; }
-  const call = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: String(meta.terminalId ?? ""), text, enter: true });
+  const target = { workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: String(meta.terminalId ?? "") };
+  const call = provider.send({ ...target, text: host === "orca" ? formatOneLine(text) : text, enter: false });
   if (call.kind !== "ok") { fail(`${host} send command: ${call.error}`); return false; }
   const sent = await runHostSend(host, process, call.value);
-  if (sent.kind === "ok") return true;
+  if (sent.kind === "ok") {
+    const proof = await verifyTypedComposer();
+    if (proof.kind !== "ok") { fail(proof.kind === "failed" ? proof.error : proof.reason); return false; }
+    const enter = provider.send({ ...target, text: "", enter: true });
+    if (enter.kind !== "ok") { fail(`${host} submit command: ${enter.kind === "failed" ? enter.error : enter.reason}`); return false; }
+    const submitted = await runHostSend(host, process, enter.value);
+    if (submitted.kind === "ok") return true;
+    fail(`${host} submit: ${submitted.kind === "failed" ? submitted.error : submitted.reason}`);
+    return false;
+  }
   const detail = (sent.kind === "failed" ? sent.stdout ?? "" : "").trim().slice(0, 300);
   fail(`${host} send: ${sent.error}${detail === "" ? "" : ` | ${detail}`}`);
   return false;
@@ -182,6 +201,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let outcome = "failed";
   let lastDecision: string | undefined;
   let sendError: string | undefined;
+  let composerRace = false;
   let screenDownSince: number | undefined;
   let screenError = "";
   const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
@@ -193,7 +213,11 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     mutateDispatch(database.value, dispatch, () => ({ [field]: status.pid }));
     meta = { ...meta, agentPid: status.pid };
   };
-  if (text !== "" && dispatch !== "" && sequence > 0) {
+  const unsupportedHost = meta.runtime === "host" && meta.childHost === "superset";
+  if (unsupportedHost) {
+    outcome = "failed";
+    transport = "deferred";
+  } else if (text !== "" && dispatch !== "" && sequence > 0) {
     let result: Awaited<ReturnType<typeof deliverWhenIdle>>;
     try {
       result = await deliverWhenIdle({
@@ -240,8 +264,9 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         proofReason = status?.reason;
         statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
         statusUpdatedAtRead = status?.statusUpdatedAt;
-      }, (reason) => { sendError = reason; }),
+      }, (reason) => { sendError = reason; composerRace = reason === "composer-race"; }),
       sendError: () => sendError,
+      stopRetry: () => composerRace,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
       renew: async () => {
@@ -276,7 +301,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
   const unavailable = outcome === "unavailable";
-  const reason = unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
+  const reason = unsupportedHost ? "superset-unverifiable-composer" : composerRace ? "composer-race" : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
   setDeliveryTransport(database.value, dispatch, sequence, transport, unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
     ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
