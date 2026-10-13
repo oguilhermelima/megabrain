@@ -10,6 +10,7 @@ import { classifyLiveness } from "../../core/liveness.js";
 import { composerReadback } from "../../core/composer-proof.js";
 import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
 import { formatOneLine } from "../../core/chat-message-format.js";
+import { deliverThroughGrokLeader, GROK_LEADER_CHANNEL } from "../../core/grok-leader-delivery.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -241,6 +242,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   // no idle wait. Typing stays as the fallback whenever the socket is unavailable, marked broken,
   // or drops it.
   let peer: PeerDeliveryOutcome | Readonly<{ kind: "aborted" }> | undefined;
+  let peerChannel = CLAUDE_PEER_CHANNEL;
   const home = environment.HOME;
   const senderMode = home === undefined ? undefined : await peerSenderMode(targetKind, persistedMeta, home);
   if ((targetKind === "parent-pointer" || senderMode !== undefined) && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
@@ -262,16 +264,22 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.
       peer = { kind: "aborted" };
     }
-    // A fallback is logged on the typing attempts that follow, as peerFallback.
-    if (peer.kind === "delivered" || peer.kind === "read") {
-      await decisionLog.record({
-        dispatchId: dispatch,
-        outboxId,
-        channel: CLAUDE_PEER_CHANNEL,
-        decision: peer.kind === "delivered" ? "peer-delivered" : "cancelled",
-        ...(peer.kind === "delivered" ? { msgId: peer.msgId } : {}),
-      });
-    }
+    peerChannel = CLAUDE_PEER_CHANNEL;
+  }
+  // A Grok child started with its own leader takes a reply straight into its session queue.
+  if (targetKind === "child-delivery" && meta.agent === "grok" && typeof meta.grokLeaderSocket === "string" && typeof meta.grokSessionId === "string" && text !== "" && dispatch !== "" && sequence > 0) {
+    peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
+    peerChannel = GROK_LEADER_CHANNEL;
+  }
+  // A fallback is logged on the typing attempts that follow, as peerFallback.
+  if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "read")) {
+    await decisionLog.record({
+      dispatchId: dispatch,
+      outboxId,
+      channel: peerChannel,
+      decision: peer.kind === "delivered" ? "peer-delivered" : "cancelled",
+      ...(peer.kind === "delivered" ? { msgId: peer.msgId } : {}),
+    });
   }
   const peerFallback = peer?.kind === "fallback" ? peer.reason : undefined;
   const unsupportedHost = meta.runtime === "host" && meta.childHost === "superset";
