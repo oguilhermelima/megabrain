@@ -4,10 +4,11 @@ import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, listDeliveries, listDeliveryChannels, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { resolveClaudePeer, sendClaudePeer } from "../../src/agents/claude-peer.js";
+import { claudePeerContent, resolveClaudePeer, sendClaudePeer } from "../../src/agents/claude-peer.js";
 import { executeDatabase } from "../../src/cli/commands/db.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { channelVerdict, nextRetryAt } from "../../src/core/delivery-channel.js";
+import { senderPermissionClass } from "../../src/core/claude-peer-delivery.js";
 import { failed, ok } from "../../src/core/result.js";
 
 const fixture = (name: string) => readFile(new URL(`../fixtures/${name}`, import.meta.url), "utf8");
@@ -172,6 +173,15 @@ describe("claude peer socket", () => {
     expect(content.match(/<\/cross-session-message>/g)?.length).toBe(1);
   });
 
+  test("a sender running without prompts attests the bypass class in the envelope", () => {
+    expect(claudePeerContent("hi", "bypass")).toBe('<cross-session-message from-name="megabrain" from-mode="bypass">\nhi\n</cross-session-message>');
+  });
+
+  test("every agent megabrain launches without prompts is in the bypass class, read from its real launch line", () => {
+    for (const agent of ["claude", "codex", "agy", "grok"]) expect(senderPermissionClass(agent)).toBe("bypass");
+    expect(senderPermissionClass("unknown-agent")).toBeUndefined();
+  });
+
   test("a missing socket fails the send", async () => {
     const current = await scene();
     const target = await resolveClaudePeer(current.root, 41414, String(current.session.sessionId));
@@ -225,6 +235,29 @@ describe("parent notice to a Claude parent", () => {
     expect(run.outbox[0]?.status).toBe("sent");
     expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
     expect(run.channel).toMatchObject({ status: "working", agentVersion: "2.1.296", failures: 0 });
+  });
+
+  test("a notice from a child launched without prompts attests bypass, so a bypass parent accepts it", async () => {
+    const current = await scene();
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    await runWorker(current);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="bypass">');
+  });
+
+  test("a message the parent holds for review is typed at once and does not mark the channel broken", async () => {
+    const current = await scene();
+    const hold = async (frames: Frame[]) => {
+      const message = frames.find((frame) => frame.type === "user");
+      if (message === undefined) return;
+      const line = "Held peer message — from an unidentified session [verified pid 1] (peer claims name: megabrain); preview: «✅ codex · lane finished» — not delivered to Claude (1 held).";
+      await appendFile(current.transcript, `${JSON.stringify({ type: "system", subtype: "informational", content: line })}\n`);
+    };
+    await startInbox(String(current.session.messagingSocketPath), hold);
+    const started = Date.now();
+    const run = await runWorker(current, { MEGABRAIN_PEER_IDLE_DROP_MS: "4000" });
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(run.sends).toHaveLength(1);
+    expect(run.channel).toBeUndefined();
   });
 
   test("waits while the parent is busy instead of calling the message dropped", async () => {
