@@ -290,6 +290,17 @@ describe("parent notice to a Claude parent", () => {
     expect(run.channel).toMatchObject({ status: "broken", agentVersion: "2.1.296" });
   });
 
+  test("a lost lease while waiting on the socket ends the worker without typing", async () => {
+    const current = await scene("busy");
+    const db = stateDatabase({ HOME: current.root, MEGABRAIN_STATE_DIR: current.root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const steal = () => { db.value.db.run("UPDATE outbox SET lease_holder = 'another-worker'"); };
+    await startInbox(String(current.session.messagingSocketPath), steal);
+    const run = await runWorker(current);
+    expect(run.sends).toHaveLength(0);
+    expect(run.channel).toBeUndefined();
+  });
+
   test("a parent session that cannot be found says nothing about the channel", async () => {
     const current = await scene();
     await rm(join(current.root, ".claude", "sessions", "41414.json"));
