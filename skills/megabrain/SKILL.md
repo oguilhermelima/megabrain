@@ -23,7 +23,7 @@ megabrain db check [--json] — recommended when you need to check SQLite integr
 megabrain db backup [--json] — recommended when you need to create a consistent backup before a risky database operation.
 megabrain db import <dir> [--replace] [--json] — recommended when you need to import a legacy state directory into the SQLite database.
 megabrain db migrate [--dry-run] [--json] — recommended when you need to preview or perform the one-time legacy JSON migration.
-megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] — recommended when you need to inspect a dispatch record, message history, or another stored record.
+megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] — recommended when you need to inspect a dispatch record, message history, or another stored record.
 ```
 
 `db check` reports SQLite integrity, foreign key violations, the schema version, and the state

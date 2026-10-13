@@ -71,3 +71,4 @@ export {
   type InstallState,
   type ModelRegistry,
 } from "./state/machine.js";
+export { getDeliveryChannel, listDeliveryChannels, recordChannelResult, type ChannelResult, type DeliveryChannelRecord } from "./state/channels.js";

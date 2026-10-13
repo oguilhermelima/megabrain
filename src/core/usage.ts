@@ -5,7 +5,7 @@ export const USAGE_LINES = {
   "db-backup": "db backup [--json]",
   "db-import": "db import <dir> [--replace] [--json]",
   "db-migrate": "db migrate [--dry-run] [--json]",
-  "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]",
+  "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json]",
   "context": "context [--json]",
   "worktree": "worktree create|pr|finish|list|adopt|prune ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
@@ -148,7 +148,7 @@ Commands:
   db backup [--json]                   Create and rotate a SQLite backup
   db import <dir> [--replace] [--json] Import JSON state into SQLite
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
-  db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json] Show stored records
+  db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
