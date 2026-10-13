@@ -885,8 +885,10 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const chatName = options.label ?? worktree.branch;
   // Antigravity names its conversation only in its log; a per-dispatch log lets the context meter find it.
   // A Grok child runs its own leader so a reply can enter its session queue without typing.
-  const leaderSocket = options.agent === "grok" ? grokLeaderSocket(root, id) : undefined;
-  if (leaderSocket !== undefined) await mkdir(dirname(leaderSocket), { recursive: true, mode: 0o700 });
+  // Without a directory to bind in, the child starts without a leader and replies are typed.
+  const candidateSocket = options.agent === "grok" ? grokLeaderSocket(root, id) : undefined;
+  const leaderSocket = candidateSocket === undefined ? undefined
+    : await mkdir(dirname(candidateSocket), { recursive: true, mode: 0o700 }).then(() => candidateSocket, () => undefined);
   const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}`
     : options.agent === "agy" ? `${agentCommand.value} --log-file ${shellQuote(agyLogFile(root, id))}`
       : leaderSocket !== undefined ? `${agentCommand.value} --leader --leader-socket ${shellQuote(leaderSocket)}`
