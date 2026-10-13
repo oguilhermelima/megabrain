@@ -47,6 +47,41 @@ describe("orchestrate close", () => {
   });
 });
 
+describe("orchestrate close: Grok leader", () => {
+  test("stops the child's own Grok leader, which outlives its pane", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-close-grok-leader-`);
+    try {
+      const directory = join(root, "dispatches", "grokd");
+      await mkdir(directory, { recursive: true });
+      await mkdir(join(root, "grok"), { recursive: true });
+      const socket = join(root, "grok", "abc.sock");
+      await writeFile(join(root, "grok", "abc.lock"), "76904");
+      await writeFile(join(directory, "meta.json"), JSON.stringify({
+        dispatchId: "grokd", parentSessionId: "coord-orca-term", parentHost: "orca", agent: "grok", grokLeaderSocket: socket,
+        childHost: "orca", terminalId: "grok-terminal", workspaceId: "workspace",
+        runtime: "host", state: "done", processState: "running", terminalState: "owned",
+      }));
+      await importFixture(root);
+      const calls: string[] = [];
+      const process = {
+        async run(command: string, args: readonly string[]) {
+          calls.push(`${command} ${args.join(" ")}`);
+          if (command === "ps") return ok({ stdout: "/Users/someone/.grok/bin/grok agent leader --no-exit-on-disconnect\n", stderr: "", exitCode: 0 });
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        },
+        async startDetached() { return failed("not used"); },
+        invocationCount() { return 0; },
+      } satisfies ProcessAdapter;
+      const result = await executeOrchestrateClose(["grokd"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" }, process);
+      expect(result.kind).toBe("ok");
+      expect(calls).toContain("kill 76904");
+      expect(dispatch(root, "grokd").state).toBe("closed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("orchestrate close: stale host terminal", () => {
   test("releases and closes a dispatch when Orca reports the terminal is gone", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-close-stale-host-`);

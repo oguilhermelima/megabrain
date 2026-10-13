@@ -1,3 +1,4 @@
+import { grokLeaderSocket } from "../../src/agents/grok-leader.js";
 import { guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -1379,6 +1380,43 @@ describe("executeSpawn", () => {
       const logFile = join(root, "agy-logs", `${dispatchId}.log`);
       expect(commands.join("\n")).toContain(`--log-file '${logFile}'`);
       expect(readMeta(root, dispatchId)).toMatchObject({ agyLogFile: logFile });
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a Grok child runs with its own leader so replies can reach its session queue", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-grok-leader-`);
+    const dispatchId = "dispatch-grok-leader";
+    const idle = await readFile(new URL("../fixtures/tmux-capture-grok-idle.txt", import.meta.url), "utf8");
+    const commands: string[] = [];
+    const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
+        else commands.push(text);
+        return ok(undefined);
+      },
+      sendKey: async () => ok(undefined),
+      capturePane: async () => ok(idle),
+    };
+    registerTmux(withComposer(fake, "grok"));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "grok", "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      const socket = grokLeaderSocket(root, dispatchId);
+      expect(socket).toBeDefined();
+      expect(commands.join("\n")).toContain(`--leader --leader-socket '${socket}'`);
+      expect(readMeta(root, dispatchId)).toMatchObject({ grokLeaderSocket: socket });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
