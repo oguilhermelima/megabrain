@@ -137,7 +137,8 @@ starts a detached retry for up to ten minutes; it stops when `check` pulls the d
 is the truth, and `db show` records whether delivery used `queue`, `socket`, `typed`, `deferred`, or `failed`;
 `db show --delivery-channels` shows whether the Claude socket currently works. A `reply` to a
 Claude child uses the child's socket too when the parent runs in bypass, so it arrives mid-turn
-instead of waiting for the child to go idle.
+instead of waiting for the child to go idle. A `reply` to a Grok child goes into its session queue
+through the child's own Grok leader.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
 When your own turn ends, megabrain checks the dispatches you own and blocks once, one line per
