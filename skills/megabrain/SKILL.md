@@ -135,7 +135,9 @@ broken, the notice is typed into the parent's terminal at
 once, busy or not and over any composer text; only an open dialog holds it, and a held notice
 starts a detached retry for up to ten minutes; it stops when `check` pulls the delivery or it is acknowledged. The queue
 is the truth, and `db show` records whether delivery used `queue`, `socket`, `typed`, `deferred`, or `failed`;
-`db show --delivery-channels` shows whether the Claude socket currently works.
+`db show --delivery-channels` shows whether the Claude socket currently works. A `reply` to a
+Claude child uses the child's socket too when the parent runs in bypass, so it arrives mid-turn
+instead of waiting for the child to go idle.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
 When your own turn ends, megabrain checks the dispatches you own and blocks once, one line per

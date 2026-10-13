@@ -79,6 +79,30 @@ export async function resolveClaudePeer(home: string, pid: number, sessionId: st
 // so it is only made for a sender that really runs without prompts.
 export type PeerPermissionClass = "bypass" | "prompting";
 
+const MODE_TAIL_BYTES = 1024 * 1024;
+
+// The class of a Claude session megabrain did not launch, from the permissionMode its transcript
+// recorded last (every user entry carries one). Undefined when no mode can be read, so nothing is
+// attested on a guess; only bypassPermissions counts as bypass.
+export async function claudeSessionPermissionClass(home: string, sessionId: string): Promise<PeerPermissionClass | undefined> {
+  const transcript = await findTranscript(home, sessionId);
+  if (transcript === undefined) return undefined;
+  const handle = await open(transcript, "r").catch(() => undefined);
+  if (handle === undefined) return undefined;
+  try {
+    const size = (await handle.stat()).size;
+    const length = Math.min(size, MODE_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    const modes = [...buffer.toString("utf8").matchAll(/"permissionMode":"([A-Za-z]+)"/g)];
+    const last = modes.at(-1)?.[1];
+    if (last === undefined) return undefined;
+    return last === "bypassPermissions" ? "bypass" : "prompting";
+  } finally {
+    await handle.close();
+  }
+}
+
 export function claudePeerContent(body: string, mode?: PeerPermissionClass): string {
   const safe = body.replaceAll(`</${ENVELOPE}>`, `</${ENVELOPE} >`);
   return `<${ENVELOPE} from-name="megabrain"${mode === undefined ? "" : ` from-mode="${mode}"`}>\n${safe}\n</${ENVELOPE}>`;

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { claudeSessionPermissionClass, type PeerPermissionClass } from "../../agents/claude-peer.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
@@ -69,6 +70,17 @@ export async function startDeliveryWorker(root: string, dispatch: string, outbox
     async (_key, owner) => { releaseLease(database.value, leaseKey, owner); },
   );
   return result;
+}
+
+// The permission class attested for the sender. A parent notice comes from a child megabrain
+// launched, so its class is read from that launch line. A reply comes from the parent, whose class
+// is the mode its own transcript last recorded; it is attested only when it matches the child's,
+// since a mismatch is held for review and a reply should then be typed instead.
+async function peerSenderMode(targetKind: string, meta: Meta, home: string): Promise<PeerPermissionClass | undefined> {
+  if (targetKind === "parent-pointer") return typeof meta.agent === "string" ? senderPermissionClass(meta.agent) : undefined;
+  if (targetKind !== "child-delivery" || meta.parentAgent !== "claude" || typeof meta.parentAgentSessionId !== "string") return undefined;
+  const parent = await claudeSessionPermissionClass(home, meta.parentAgentSessionId);
+  return parent !== undefined && parent === senderPermissionClass("claude") ? parent : undefined;
 }
 
 async function readWasPulled(root: string, dispatch: string, sequence: number): Promise<boolean> {
@@ -225,13 +237,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     const outboxLease = renewOutboxLease(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
     if (outboxLease.kind !== "ok" || !outboxLease.value) throw new Error("outbox lease was lost");
   };
-  // A Claude parent takes the notice through its peer socket: no composer, no draft to wait on.
-  // Typing stays as the fallback whenever the socket is unavailable, marked broken, or drops it.
+  // A Claude target takes the message through its peer socket: no composer, no draft to wait on,
+  // no idle wait. Typing stays as the fallback whenever the socket is unavailable, marked broken,
+  // or drops it.
   let peer: PeerDeliveryOutcome | Readonly<{ kind: "aborted" }> | undefined;
   const home = environment.HOME;
-  if (targetKind === "parent-pointer" && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
+  const senderMode = home === undefined ? undefined : await peerSenderMode(targetKind, persistedMeta, home);
+  if ((targetKind === "parent-pointer" || senderMode !== undefined) && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
     const idleDrop = Number(environment.MEGABRAIN_PEER_IDLE_DROP_MS);
-    const senderMode = typeof persistedMeta.agent === "string" ? senderPermissionClass(persistedMeta.agent) : undefined;
     try {
       peer = await deliverThroughClaudePeer({
         database: database.value,

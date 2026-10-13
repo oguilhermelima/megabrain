@@ -509,7 +509,10 @@ Three properties do the work:
   and the hold does not mark the channel broken. Otherwise a notice to
   the parent is typed into its terminal at
   once, busy or not and whatever the composer shows (Orca cannot tell Claude's grey next-prompt
-  suggestion from typed text); only an open dialog holds it. Messages to a child wait until the
+  suggestion from typed text); only an open dialog holds it. A reply to a Claude child takes the
+  child's socket the same way, reaching it mid-turn; there the sender is the parent, so the class
+  attested is the `permissionMode` the parent's own transcript last recorded, and the socket is
+  used only when that class matches the child's. Other messages to a child wait until the
   child is idle and its composer is empty. A held message stays queued for a detached deliverer,
   which retries for up to ten minutes and stops when `check` pulls the delivery or it is
   acknowledged.
