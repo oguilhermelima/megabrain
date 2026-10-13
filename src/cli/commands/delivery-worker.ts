@@ -7,6 +7,7 @@ import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { composerReadback } from "../../core/composer-proof.js";
+import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
 import { formatOneLine } from "../../core/chat-message-format.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -216,8 +217,59 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     mutateDispatch(database.value, dispatch, () => ({ [field]: status.pid }));
     meta = { ...meta, agentPid: status.pid };
   };
+  const renewLeases = async (): Promise<void> => {
+    if (!nested) {
+      const lease = acquireLease(database.value, leaseKey, holder, DELIVERY_LEASE_SECONDS);
+      if (lease.kind !== "ok" || !lease.value) throw new Error("delivery target lease was lost");
+    }
+    const outboxLease = renewOutboxLease(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
+    if (outboxLease.kind !== "ok" || !outboxLease.value) throw new Error("outbox lease was lost");
+  };
+  // A Claude parent takes the notice through its peer socket: no composer, no draft to wait on.
+  // Typing stays as the fallback whenever the socket is unavailable, marked broken, or drops it.
+  let peer: PeerDeliveryOutcome | Readonly<{ kind: "aborted" }> | undefined;
+  const home = environment.HOME;
+  if (targetKind === "parent-pointer" && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
+    const idleDrop = Number(environment.MEGABRAIN_PEER_IDLE_DROP_MS);
+    try {
+      peer = await deliverThroughClaudePeer({
+        database: database.value,
+        home,
+        pid: Number(meta.agentPid),
+        sessionId: meta.agentSessionId,
+        text,
+        deadline,
+        ...(Number.isFinite(idleDrop) && idleDrop > 0 ? { idleDropMs: idleDrop } : {}),
+        isRead: async () => readWasPulled(root, dispatch, sequence),
+        renew: renewLeases,
+      });
+    } catch {
+      // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.
+      peer = { kind: "aborted" };
+    }
+    // A fallback is logged on the typing attempts that follow, as peerFallback.
+    if (peer.kind === "delivered" || peer.kind === "read") {
+      await decisionLog.record({
+        dispatchId: dispatch,
+        outboxId,
+        channel: CLAUDE_PEER_CHANNEL,
+        decision: peer.kind === "delivered" ? "peer-delivered" : "cancelled",
+        ...(peer.kind === "delivered" ? { msgId: peer.msgId } : {}),
+      });
+    }
+  }
+  const peerFallback = peer?.kind === "fallback" ? peer.reason : undefined;
   const unsupportedHost = meta.runtime === "host" && meta.childHost === "superset";
-  if (unsupportedHost) {
+  if (peer?.kind === "delivered") {
+    outcome = "delivered";
+    transport = "socket";
+  } else if (peer?.kind === "read") {
+    outcome = "cancelled";
+    transport = "checked";
+  } else if (peer?.kind === "aborted") {
+    outcome = "failed";
+    transport = "failed";
+  } else if (unsupportedHost) {
     outcome = "failed";
     transport = "deferred";
   } else if (text !== "" && dispatch !== "" && sequence > 0) {
@@ -272,14 +324,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       sendError: () => sendError,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
-      renew: async () => {
-        if (!nested) {
-          const lease = acquireLease(database.value, leaseKey, holder, DELIVERY_LEASE_SECONDS);
-          if (lease.kind !== "ok" || !lease.value) throw new Error("delivery target lease was lost");
-        }
-        const outboxLease = renewOutboxLease(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
-        if (outboxLease.kind !== "ok" || !outboxLease.value) throw new Error("outbox lease was lost");
-      },
+      renew: renewLeases,
       attempt: async (details) => {
         lastDecision = details.decision;
         const entry = {
@@ -292,6 +337,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           decision: details.decision,
           ...(proofReason === undefined ? {} : { proofReason }),
           ...(details.reason === undefined ? {} : { reason: details.reason }),
+          ...(peerFallback === undefined ? {} : { peerFallback }),
           ...(details.decision === "send" && composerReadbackAfterSubmit !== undefined ? { composerReadback: composerReadbackAfterSubmit } : {}),
         };
         await decisionLog.record(entry);

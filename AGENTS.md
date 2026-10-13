@@ -7,7 +7,7 @@
 - Run megabrain db backup [--json]. — recommended when you need to create a consistent backup before a risky database operation.
 - Run megabrain db import <dir> [--replace] [--json]. — recommended when you need to import a legacy state directory into the SQLite database.
 - Run megabrain db migrate [--dry-run] [--json]. — recommended when you need to preview or perform the one-time legacy JSON migration.
-- Run megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--tmux-session <name> [--json]. — recommended when you need to inspect a dispatch record, message history, or another stored record.
+- Run megabrain db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json]. — recommended when you need to inspect a dispatch record, message history, or another stored record.
 - Run megabrain context [--json]. — recommended when you need to identify the orchestration host and runtime available in this session.
 - Run megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]. — recommended when you need to create and register a shared worktree for a task.
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]. — recommended when you need to open a pull request for a worktree branch.

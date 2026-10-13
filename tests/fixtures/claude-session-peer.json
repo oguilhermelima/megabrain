@@ -1,0 +1,20 @@
+{
+  "pid": 41414,
+  "sessionId": "5f0c2a8e-1b7d-4c3e-9a61-2d8f4e7b9c10",
+  "cwd": "/Users/example/Workspaces/project",
+  "startedAt": 1792065000000,
+  "procStart": "Mon Oct 13 13:09:00 2026",
+  "pidDomain": "darwin",
+  "version": "2.1.296",
+  "peerProtocol": 1,
+  "peerFeatures": ["notify_idle", "reply_across_default_dirs", "artifact_yield"],
+  "kind": "interactive",
+  "entrypoint": "cli",
+  "messagingSocketPath": "/tmp/cc-socks/41414.sock",
+  "name": "project-1a",
+  "nameSince": 1792065000000,
+  "nameSource": "auto",
+  "status": "idle",
+  "statusUpdatedAt": 1792065001000,
+  "updatedAt": 1792065001000
+}

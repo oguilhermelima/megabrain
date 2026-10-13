@@ -13,6 +13,7 @@ import stackParentMigration from "./schema/009-stack-parent.sql" with { type: "t
 import resourceSamplesMigration from "./schema/010-resource-samples.sql" with { type: "text" };
 import queueCancellationMigration from "./schema/011-queue-cancellation.sql" with { type: "text" };
 import admissionQueueMigration from "./schema/012-admission-queue.sql" with { type: "text" };
+import deliveryChannelsMigration from "./schema/013-delivery-channels.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -126,6 +127,7 @@ const migrations: readonly Migration[] = [
   { version: 10, sql: resourceSamplesMigration },
   { version: 11, sql: queueCancellationMigration },
   { version: 12, sql: admissionQueueMigration, foreignKeysOff: true },
+  { version: 13, sql: deliveryChannelsMigration },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 

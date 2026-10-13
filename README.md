@@ -500,14 +500,22 @@ Three properties do the work:
 
 - **A delivery replays until it is acknowledged.** Reading one and not acting on it loses nothing.
 - **Messages use the agent's native path when available.** A live Codex thread receives the full
-  message through `codex queue`. Otherwise a notice to the parent is typed into its terminal at
+  message through `codex queue`. A live Claude parent receives it through Claude's peer-message
+  socket (`~/.claude/sessions/<pid>.json`), queued for its next turn without touching the composer;
+  delivery counts only once the message id reaches the session transcript. Otherwise a notice to
+  the parent is typed into its terminal at
   once, busy or not and whatever the composer shows (Orca cannot tell Claude's grey next-prompt
   suggestion from typed text); only an open dialog holds it. Messages to a child wait until the
   child is idle and its composer is empty. A held message stays queued for a detached deliverer,
   which retries for up to ten minutes and stops when `check` pulls the delivery or it is
   acknowledged.
 - **Delivery transport is recorded.** `db show` reports whether each message used `queue`,
-  `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
+  `socket`, `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
+- **A channel that stops working is set aside, not retried blindly.** When the Claude socket
+  refuses a connection, is missing, or an idle session does not consume the message within 20
+  seconds, the notice is typed instead and the `delivery_channels` table marks the socket broken.
+  It is tried again after 5 minutes, doubling per failure up to 6 hours, and at once when the
+  Claude version changes. `db show --delivery-channels` shows the current verdict.
 - **Your own turn end is a second chance.** When you finish speaking, megabrain blocks once with
   one line per child message whose delivery ended failed (its first line and the `watch` command),
   then marks it so the same message never blocks twice. A deliverer that cannot read the parent's

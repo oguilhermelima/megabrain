@@ -9,6 +9,7 @@ import { listDeliveries } from "../../db/queries/deliveries.js";
 import { getInstallState, getTerminal, getTmuxSession, listInstallState, listModels } from "../../db/queries/aux-state.js";
 import { dryRunLegacyMigration, markExplicitImport, migrateLegacyState } from "../../db/cutover.js";
 import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
+import { queryDeliveryChannels } from "../../adapters/state/channels.js";
 
 function parseJson(args: readonly string[]): Result<boolean> {
   let json = false;
@@ -112,13 +113,14 @@ function countRecords(counts: Readonly<Record<string, number>>): number {
 
 function showState(args: readonly string[], environment: StateEnvironment): Result<string> {
   let id: string | undefined;
-  let mode: "dispatch" | "terminal" | "install" | "models" | "tmux-session" = "dispatch";
+  let mode: "dispatch" | "terminal" | "install" | "models" | "tmux-session" | "channels" = "dispatch";
   let json = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
     else if (arg === "--terminal") mode = "terminal";
     else if (arg === "--install-state") mode = "install";
     else if (arg === "--models") mode = "models";
+    else if (arg === "--delivery-channels") mode = "channels";
     else if (arg === "--tmux-session") mode = "tmux-session";
     else if (arg.startsWith("-") || id !== undefined) return failed(`unexpected argument: ${arg}\n${usageText("db-show").trimEnd()}`, 2);
     else id = arg;
@@ -130,6 +132,7 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
     const result = readSnapshot(opened.value, (db) => {
       if (mode === "install") return { kind: "found" as const, value: listInstallState(db) };
       if (mode === "models") return { kind: "found" as const, value: listModels(db) };
+      if (mode === "channels") return { kind: "found" as const, value: queryDeliveryChannels(db) };
       if (mode === "terminal") {
         const value = getTerminal(db, id as string);
         return value === undefined ? { kind: "missing" as const } : { kind: "found" as const, value };
@@ -160,6 +163,10 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
     }
     if (mode === "terminal") return ok(`terminal ${id} found\n`);
     if (mode === "tmux-session") return ok(`tmux session ${id} found\n`);
+    if (mode === "channels") {
+      const channels = result.value.value as ReturnType<typeof queryDeliveryChannels>;
+      return ok(channels.length === 0 ? "delivery channels: none recorded\n" : channels.map((channel) => `${channel.agent} ${channel.channel}: ${channel.status}${channel.agentVersion === null ? "" : ` (${channel.agentVersion})`}${channel.status === "broken" ? `; retry after ${String(channel.retryAfter)}; ${String(channel.lastError)}` : ""}\n`).join(""));
+    }
     return ok(mode === "models" ? `models: ${(result.value.value as { models: unknown[] }).models.length} records\n` : `install state: ${Object.keys(result.value.value as Record<string, unknown>).length} modules\n`);
   } finally {
     opened.value.close();
@@ -167,5 +174,5 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
 }
 
 function validShowRequest(mode: string, id: string | undefined): boolean {
-  return (mode === "install" || mode === "models") ? id === undefined : id !== undefined;
+  return (mode === "install" || mode === "models" || mode === "channels") ? id === undefined : id !== undefined;
 }
