@@ -21,7 +21,7 @@ afterEach(async () => {
   while (cleanup.length > 0) await cleanup.pop()?.();
 });
 
-type Proof = "queued" | "running" | "error" | "silent";
+type Proof = "queued" | "running" | "error" | "silent" | "other";
 type Leader = { connections: number; received: Array<Record<string, unknown>> };
 
 function write(socket: Socket, value: unknown): void {
@@ -57,6 +57,7 @@ async function startLeader(path: string, proof: Proof = "queued"): Promise<Leade
           const base = frames.queueChangedQueued.params;
           if (proof === "queued") acp(socket, { jsonrpc: "2.0", method: "_x.ai/queue/changed", params: { ...base, sessionId: params.sessionId, entries: [...(base.entries as unknown[]), { id: promptId, version: 0, kind: "prompt", text: "x", position: 2 }] } });
           else if (proof === "running") acp(socket, { jsonrpc: "2.0", method: "_x.ai/queue/changed", params: { sessionId: params.sessionId, entries: [], runningPromptId: promptId, runningKind: "prompt" } });
+          else if (proof === "other") acp(socket, { jsonrpc: "2.0", method: "_x.ai/queue/changed", params: base });
           else if (proof === "error") acp(socket, { jsonrpc: "2.0", id: payload.id, error: { code: -32602, message: "session not found" } });
         }
       }
@@ -124,6 +125,12 @@ describe("prompt through the leader", () => {
     const sent = await sendGrokLeaderPrompt(join(root, "l.sock"), SESSION, "x", 400);
     expect(sent.kind).toBe("failed");
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("a queue change that does not name this prompt proves nothing", async () => {
+    const root = await tempRoot();
+    await startLeader(join(root, "l.sock"), "other");
+    expect((await sendGrokLeaderPrompt(join(root, "l.sock"), SESSION, "x", 400)).kind).toBe("failed");
   });
 
   test("a missing socket fails without a version", async () => {
