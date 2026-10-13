@@ -202,8 +202,10 @@ async function runReply(root: string, socket: string | undefined) {
   const outbox = listOutbox(db.value);
   const deliveries = listDeliveries(db.value, "d-grok");
   const channel = getDeliveryChannel(db.value, "grok", "leader-socket");
+  const log = (await readFile(join(root, "delivery-decisions.jsonl"), "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
   return {
     sends,
+    log,
     outbox: outbox.kind === "ok" ? outbox.value : [],
     deliveries: deliveries.kind === "ok" ? deliveries.value : [],
     channel: channel.kind === "ok" ? channel.value : undefined,
@@ -222,11 +224,13 @@ describe("reply to a Grok child", () => {
     expect(run.channel).toMatchObject({ status: "working", agentVersion: "1.0.52", failures: 0 });
   });
 
-  test("a leader that is gone falls back to typing and marks the channel broken", async () => {
+  // The typed path cannot read Grok's boxed composer, so these assert the hand-off to it through
+  // the decision log rather than through a keystroke.
+  test("a leader that is gone falls back to the typed path and marks the channel broken", async () => {
     const root = await tempRoot();
     const run = await runReply(root, join(root, "l.sock"));
-    expect(run.sends).toHaveLength(1);
-    expect(run.deliveries[0]).toMatchObject({ transport: "typed" });
+    expect(run.deliveries[0]?.transport).not.toBe("socket");
+    expect(String(run.log.at(-1)?.peerFallback)).toContain("ENOENT");
     expect(run.channel).toMatchObject({ status: "broken", failures: 1 });
   });
 
@@ -238,13 +242,15 @@ describe("reply to a Grok child", () => {
     recordChannelResult(db.value, { agent: "grok", channel: "leader-socket", agentVersion: "1.0.52", ok: false, error: "refused", now: Date.now() });
     const run = await runReply(root, join(root, "l.sock"));
     expect(leader.connections).toBe(0);
-    expect(run.sends).toHaveLength(1);
+    expect(String(run.log.at(-1)?.peerFallback)).toContain("marked broken");
   });
 
   test("a Grok child started without a leader keeps the typed path and says nothing about the channel", async () => {
     const root = await tempRoot();
     const run = await runReply(root, undefined);
-    expect(run.sends).toHaveLength(1);
+    expect(run.deliveries[0]?.transport).not.toBe("socket");
+    expect(run.log.length).toBeGreaterThan(0);
+    expect(run.log.some((entry) => "peerFallback" in entry)).toBe(false);
     expect(run.channel).toBeUndefined();
   });
 });

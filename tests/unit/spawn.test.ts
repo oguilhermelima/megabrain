@@ -1387,7 +1387,8 @@ describe("executeSpawn", () => {
   });
 
   test("a Grok child runs with its own leader so replies can reach its session queue", async () => {
-    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-grok-leader-`);
+    // The leader socket must fit a Unix socket path; the macOS temp directory alone is ~50 bytes.
+    const root = await mkdtemp("/tmp/mbsgl-");
     const dispatchId = "dispatch-grok-leader";
     const idle = await readFile(new URL("../fixtures/tmux-capture-grok-idle.txt", import.meta.url), "utf8");
     const commands: string[] = [];
