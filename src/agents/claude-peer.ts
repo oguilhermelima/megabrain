@@ -74,15 +74,20 @@ export async function resolveClaudePeer(home: string, pid: number, sessionId: st
   return { kind: "ok", value: { pid: session.pid, sessionId, socketPath, version, transcript, ...(token === undefined ? {} : { token }) } };
 }
 
-export function claudePeerContent(body: string): string {
+// Claude's permission-mode parity: a session that bypasses prompts holds a peer message for review
+// unless the sender attests the same class with from-mode. The attestation is the sender's claim,
+// so it is only made for a sender that really runs without prompts.
+export type PeerPermissionClass = "bypass" | "prompting";
+
+export function claudePeerContent(body: string, mode?: PeerPermissionClass): string {
   const safe = body.replaceAll(`</${ENVELOPE}>`, `</${ENVELOPE} >`);
-  return `<${ENVELOPE} from-name="megabrain">\n${safe}\n</${ENVELOPE}>`;
+  return `<${ENVELOPE} from-name="megabrain"${mode === undefined ? "" : ` from-mode="${mode}"`}>\n${safe}\n</${ENVELOPE}>`;
 }
 
 // Resolves with the msg_id once the frame is written and the socket closed without error.
-export function sendClaudePeer(target: ClaudePeerTarget, body: string, timeoutMs = SEND_TIMEOUT_MS): Promise<Result<string>> {
+export function sendClaudePeer(target: ClaudePeerTarget, body: string, mode?: PeerPermissionClass, timeoutMs = SEND_TIMEOUT_MS): Promise<Result<string>> {
   const msgId = randomUUID();
-  const message = { msgV: 1, msg_id: msgId, type: "user", message: { role: "user", content: claudePeerContent(body) }, priority: "next" };
+  const message = { msgV: 1, msg_id: msgId, type: "user", message: { role: "user", content: claudePeerContent(body, mode) }, priority: "next" };
   const auth = target.token === undefined ? "" : `${JSON.stringify({ type: "auth", token: target.token })}\n`;
   const frame = `${auth}${JSON.stringify(message)}\n`;
   return new Promise((settle) => {
@@ -105,17 +110,28 @@ export async function transcriptSize(path: string): Promise<number> {
   return stat(path).then((info) => info.size, () => 0);
 }
 
-// Scans the transcript from `from` for the msg_id and returns where the next scan starts.
-export async function scanTranscript(path: string, from: number, msgId: string): Promise<Readonly<{ found: boolean; next: number }>> {
+export type TranscriptScan = Readonly<{ seen: "consumed" | "held" | undefined; next: number }>;
+
+// Scans whole transcript lines written since `from`. A consumed peer message carries its msg_id;
+// a held one leaves a "Held peer message" notice naming the sender, with no msg_id. Only one
+// megabrain message is in flight per target, so a megabrain hold after `from` is this message.
+export async function scanTranscript(path: string, from: number, msgId: string): Promise<TranscriptScan> {
   const handle = await open(path, "r").catch(() => undefined);
-  if (handle === undefined) return { found: false, next: from };
+  if (handle === undefined) return { seen: undefined, next: from };
   try {
     const size = (await handle.stat()).size;
     const start = Math.max(0, Math.min(from, size));
-    if (size <= start) return { found: false, next: start };
+    if (size <= start) return { seen: undefined, next: start };
     const buffer = Buffer.alloc(size - start);
     await handle.read(buffer, 0, buffer.length, start);
-    return { found: buffer.includes(msgId), next: Math.max(start, size - msgId.length) };
+    const complete = buffer.lastIndexOf(0x0a);
+    if (complete < 0) return { seen: undefined, next: start };
+    let seen: TranscriptScan["seen"];
+    for (const line of buffer.subarray(0, complete).toString("utf8").split("\n")) {
+      if (line.includes(msgId)) { seen = "consumed"; break; }
+      if (line.includes("Held peer message") && line.includes("peer claims name: megabrain")) seen = "held";
+    }
+    return { seen, next: start + complete + 1 };
   } finally {
     await handle.close();
   }
