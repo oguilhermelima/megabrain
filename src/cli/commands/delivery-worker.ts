@@ -89,6 +89,7 @@ async function sendTyped(
   adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
   fail: (reason: string) => void = () => undefined,
   recordReadback: (readback: Readonly<{ region?: string; orcaDraft?: string }>) => void = () => undefined,
+  ignoreDraft = false,
 ): Promise<boolean> {
   const agent = String(meta.agent ?? "");
   const host = String(meta.childHost ?? "");
@@ -104,7 +105,7 @@ async function sendTyped(
     const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
     const observed = status?.pid !== undefined && status.status !== "unknown" ? status.status : screenStatus;
     await adoptStatus?.(status, status?.pid === undefined ? "screen" : "claude-session", observed);
-    if (dialog || typed !== "") return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
+    if (dialog || (typed !== "" && !ignoreDraft)) return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
     return ok(undefined);
   };
   if (meta.runtime === "tmux") {
@@ -225,6 +226,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       result = await deliverWhenIdle({
       timeoutMs: Math.max(0, deadline - Date.now()),
       allowBusy: targetKind === "parent-pointer",
+      ignoreDraft: targetKind === "parent-pointer",
       initialDelayMs: 500,
       maxDelayMs: 10_000,
       ownDraft: text,
@@ -266,7 +268,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         proofReason = status?.reason;
         statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
         statusUpdatedAtRead = status?.statusUpdatedAt;
-      }, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }),
+      }, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }, targetKind === "parent-pointer"),
       sendError: () => sendError,
       isRead: async () => readWasPulled(root, dispatch, sequence),
       giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,

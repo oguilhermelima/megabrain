@@ -4,6 +4,10 @@ export type IdleDeliveryInput = Readonly<{
   maxDelayMs: number;
   ownDraft?: string;
   allowBusy?: boolean;
+  // Send over foreign composer text instead of waiting for it to clear. Parent notices use it:
+  // Orca cannot tell Claude's grey next-prompt suggestion from typed text, so waiting for an
+  // empty composer held notices until the user next typed. An unreadable composer still holds.
+  ignoreDraft?: boolean;
   inspect: () => Promise<"idle" | "busy" | "unknown">;
   composer: () => Promise<string | undefined>;
   clear: () => Promise<boolean>;
@@ -60,7 +64,7 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
         draft = await input.composer();
         composer = draft === undefined ? "unknown" : draft === "" ? "empty" : "draft";
       }
-      if (draft === "") {
+      if (draft === "" || (input.ignoreDraft === true && draft !== undefined)) {
         if (await input.isRead()) {
           await input.attempt?.({ status, composer, decision: "cancelled" });
           return finish("cancelled");
@@ -70,7 +74,7 @@ export async function deliverWhenIdle(input: IdleDeliveryInput): Promise<IdleDel
           draft = await input.composer();
           composer = draft === undefined ? "unknown" : draft === "" ? "empty" : "draft";
         }
-        if ((status === "idle" || input.allowBusy === true) && draft === "") {
+        if ((status === "idle" || input.allowBusy === true) && (draft === "" || (input.ignoreDraft === true && draft !== undefined))) {
           if (await input.send()) {
             await input.attempt?.({ status, composer, decision: "send" });
             return finish("delivered");
