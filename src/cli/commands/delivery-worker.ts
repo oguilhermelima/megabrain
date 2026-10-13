@@ -227,7 +227,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   };
   // A Claude parent takes the notice through its peer socket: no composer, no draft to wait on.
   // Typing stays as the fallback whenever the socket is unavailable, marked broken, or drops it.
-  let peer: PeerDeliveryOutcome | undefined;
+  let peer: PeerDeliveryOutcome | Readonly<{ kind: "aborted" }> | undefined;
   const home = environment.HOME;
   if (targetKind === "parent-pointer" && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
     const idleDrop = Number(environment.MEGABRAIN_PEER_IDLE_DROP_MS);
@@ -243,11 +243,12 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         isRead: async () => readWasPulled(root, dispatch, sequence),
         renew: renewLeases,
       });
-    } catch (cause: unknown) {
-      peer = { kind: "fallback", reason: cause instanceof Error ? cause.message : String(cause) };
+    } catch {
+      // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.
+      peer = { kind: "aborted" };
     }
     // A fallback is logged on the typing attempts that follow, as peerFallback.
-    if (peer.kind !== "fallback") {
+    if (peer.kind === "delivered" || peer.kind === "read") {
       await decisionLog.record({
         dispatchId: dispatch,
         outboxId,
@@ -265,6 +266,9 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   } else if (peer?.kind === "read") {
     outcome = "cancelled";
     transport = "checked";
+  } else if (peer?.kind === "aborted") {
+    outcome = "failed";
+    transport = "failed";
   } else if (unsupportedHost) {
     outcome = "failed";
     transport = "deferred";
