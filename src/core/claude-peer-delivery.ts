@@ -1,5 +1,6 @@
 import { getDeliveryChannel, recordChannelResult } from "../adapters/state-db.js";
-import { resolveClaudePeer, scanTranscript, sendClaudePeer, transcriptSize } from "../agents/claude-peer.js";
+import { resolveClaudePeer, scanTranscript, sendClaudePeer, transcriptSize, type PeerPermissionClass } from "../agents/claude-peer.js";
+import { commandLine } from "../agents/index.js";
 import { resolveClaudeSession } from "../agents/claude-session.js";
 import type { DatabaseHandle } from "../db/db.js";
 import { channelVerdict } from "./delivery-channel.js";
@@ -7,6 +8,18 @@ import { channelVerdict } from "./delivery-channel.js";
 export const CLAUDE_PEER_CHANNEL = "peer-socket";
 const DEFAULT_IDLE_DROP_MS = 20_000;
 const POLL_MS = 500;
+
+// Flags with which each agent's launch line turns off its own approval prompts.
+const NO_PROMPT_FLAGS = ["--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox", "--always-approve"];
+
+// The permission class megabrain may attest for a notice from a child of this agent: read from the
+// launch line megabrain itself builds, so it stops claiming bypass the day that flag goes away.
+export function senderPermissionClass(agent: string): PeerPermissionClass | undefined {
+  const line = commandLine(agent, { model: null, effort: null, browser: false, agentArgs: [] });
+  if (line.kind !== "ok") return undefined;
+  const words = line.value.split(/\s+/);
+  return NO_PROMPT_FLAGS.some((flag) => words.includes(flag)) ? "bypass" : "prompting";
+}
 
 export type PeerDeliveryOutcome =
   | Readonly<{ kind: "delivered"; msgId: string }>
@@ -19,6 +32,8 @@ export type PeerDeliveryInput = Readonly<{
   pid: number;
   sessionId: string;
   text: string;
+  // The class of the agent the notice comes from; omitted when it cannot be stated honestly.
+  senderMode?: PeerPermissionClass;
   deadline: number;
   // How long the session may sit idle without consuming the message before it counts as dropped.
   // An idle Claude starts a turn on a peer message within a second; a busy one takes it when the
@@ -51,17 +66,19 @@ export async function deliverThroughClaudePeer(input: PeerDeliveryInput): Promis
   }
 
   let scanned = await transcriptSize(target.transcript);
-  const sent = await sendClaudePeer(target, input.text);
+  const sent = await sendClaudePeer(target, input.text, input.senderMode);
   if (sent.kind !== "ok") return broken(target.version, sent.error);
   const msgId = sent.value;
   let idleSince: number | undefined;
   while (true) {
     const scan = await scanTranscript(target.transcript, scanned, msgId);
     scanned = scan.next;
-    if (scan.found) {
+    if (scan.seen === "consumed") {
       recordChannelResult(input.database, { agent: "claude", channel: CLAUDE_PEER_CHANNEL, agentVersion: target.version, ok: true, now: now() });
       return { kind: "delivered", msgId };
     }
+    // A hold is this session's crossSessionInbound policy at work, not a broken channel.
+    if (scan.seen === "held") return { kind: "fallback", reason: `Claude held peer message ${msgId} for review (crossSessionInbound policy)` };
     if (await input.isRead()) return { kind: "read" };
     const session = await resolveClaudeSession(input.home, target.pid, target.sessionId);
     if (session === undefined) return { kind: "fallback", reason: "Claude session ended before it consumed the peer message" };

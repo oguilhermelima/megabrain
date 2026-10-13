@@ -7,7 +7,7 @@ import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { composerReadback } from "../../core/composer-proof.js";
-import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
+import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
 import { formatOneLine } from "../../core/chat-message-format.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -231,6 +231,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const home = environment.HOME;
   if (targetKind === "parent-pointer" && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
     const idleDrop = Number(environment.MEGABRAIN_PEER_IDLE_DROP_MS);
+    const senderMode = typeof persistedMeta.agent === "string" ? senderPermissionClass(persistedMeta.agent) : undefined;
     try {
       peer = await deliverThroughClaudePeer({
         database: database.value,
@@ -239,6 +240,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         sessionId: meta.agentSessionId,
         text,
         deadline,
+        ...(senderMode === undefined ? {} : { senderMode }),
         ...(Number.isFinite(idleDrop) && idleDrop > 0 ? { idleDropMs: idleDrop } : {}),
         isRead: async () => readWasPulled(root, dispatch, sequence),
         renew: renewLeases,

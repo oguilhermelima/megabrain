@@ -502,7 +502,11 @@ Three properties do the work:
 - **Messages use the agent's native path when available.** A live Codex thread receives the full
   message through `codex queue`. A live Claude parent receives it through Claude's peer-message
   socket (`~/.claude/sessions/<pid>.json`), queued for its next turn without touching the composer;
-  delivery counts only once the message id reaches the session transcript. Otherwise a notice to
+  delivery counts only once the message id reaches the session transcript. A Claude session that
+  bypasses permission prompts holds peer messages unless the sender attests the same class, so a
+  notice from a child megabrain launched without prompts carries `from-mode="bypass"`, read from
+  that agent's real launch line. A message the session still holds for review is typed instead,
+  and the hold does not mark the channel broken. Otherwise a notice to
   the parent is typed into its terminal at
   once, busy or not and whatever the composer shows (Orca cannot tell Claude's grey next-prompt
   suggestion from typed text); only an open dialog holds it. Messages to a child wait until the
