@@ -129,9 +129,9 @@ do not act. Ack it once you have acted; acking twice is safe and reports `duplic
 When no delivery is available, watch and check report status `empty`; a timeout is not implied.
 
 **Do not assume you will be told.** When a child runs `ask` or `done`, a live Codex parent receives
-the full message through `codex queue`. Other messages use the parent's terminal only after the
-agent is idle and the composer is empty. A busy terminal or foreign draft starts a detached retry
-for up to ten minutes; it stops when `check` pulls the delivery or it is acknowledged. The queue
+the full message through `codex queue`. Otherwise the notice is typed into the parent's terminal at
+once, busy or not and over any composer text; only an open dialog holds it, and a held notice
+starts a detached retry for up to ten minutes; it stops when `check` pulls the delivery or it is acknowledged. The queue
 is the truth, and `db show` records whether delivery used `queue`, `typed`, `deferred`, or `failed`.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 

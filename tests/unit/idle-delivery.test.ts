@@ -29,6 +29,22 @@ describe("idle-gated message delivery", () => {
     expect(h.calls.sends).toBe(1);
   });
 
+  test("with ignoreDraft, foreign composer text does not hold the send and is not cleared", async () => {
+    const h = harness({ ignoreDraft: true });
+    h.setState("idle");
+    h.setComposer("a grey suggestion");
+    const result = await deliverWhenIdle(h.input);
+    expect(result).toBe("delivered");
+    expect(h.calls).toMatchObject({ sends: 1, clears: 0 });
+  });
+
+  test("with ignoreDraft, an unreadable composer still holds the send", async () => {
+    const h = harness({ ignoreDraft: true, composer: async () => undefined });
+    h.setState("idle");
+    expect(await deliverWhenIdle(h.input)).toBe("failed");
+    expect(h.calls.sends).toBe(0);
+  });
+
   test("waits on foreign composer text without clearing it", async () => {
     const h = harness();
     h.setState("idle");

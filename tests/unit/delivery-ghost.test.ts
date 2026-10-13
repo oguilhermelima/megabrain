@@ -121,16 +121,19 @@ async function orcaRun(composer: (read: number, pasted: boolean) => string, env:
 }
 
 describe("composer text on Orca, where ghost and typed text look the same", () => {
-  test("a human draft that stays unchanged for five minutes is never submitted", async () => {
-    const run = await orcaRun(() => "write the test file", { MEGABRAIN_GHOST_STATIC_MS: "1" }, 1500);
-    expect(run.sends).toHaveLength(0);
-    expect(run.outbox[0]).toMatchObject({ status: "failed", detail: "composer-occupied" });
-    expect(run.deliveries[0]?.status).not.toBe("acknowledged");
+  // Orca reports Claude's grey next-prompt suggestion as composer text, so a parent notice that
+  // waited for an empty composer waited until the user next typed (18 minutes on 2026-10-13).
+  // Composer text no longer holds a parent notice; only an open dialog does.
+  test("composer text does not hold a parent notice", async () => {
+    const run = await orcaRun(() => "sim, agenda a cada 15 min e pode seguir as 3 fases", {}, 1500);
+    expect(run.sends).toHaveLength(1);
+    expect(run.sends[0]).toContain("--enter");
+    expect(run.outbox[0]?.status).toBe("sent");
   });
 
-  test("a line that keeps changing is someone typing and is never overwritten", async () => {
-    const run = await orcaRun((read) => `write the test fi${read}`, { MEGABRAIN_GHOST_STATIC_MS: "300" }, 2500);
-    expect(run.sends).toHaveLength(0);
+  test("a line that keeps changing does not hold a parent notice either", async () => {
+    const run = await orcaRun((read) => `write the test fi${read}`, {}, 1500);
+    expect(run.sends).toHaveLength(1);
   });
 
   test("submits in one call even when the post-paste read-back diverges", async () => {
@@ -155,11 +158,4 @@ describe("composer text on Orca, where ghost and typed text look the same", () =
     expect(run.deliveries[0]).toMatchObject({ transport: "deferred" });
   });
 
-  test("a draft that outlasts the deadline fails as composer-occupied and stays unread", async () => {
-    const run = await orcaRun(() => "write the test file", { MEGABRAIN_GHOST_STATIC_MS: "60000" }, 1500);
-    expect(run.sends).toHaveLength(0);
-    expect(run.outbox[0]).toMatchObject({ status: "failed", detail: "composer-occupied" });
-    expect(run.deliveries[0]).toMatchObject({ transport: "failed" });
-    expect(run.deliveries[0]?.status).not.toBe("acknowledged");
-  });
 });

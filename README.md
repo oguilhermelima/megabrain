@@ -500,10 +500,12 @@ Three properties do the work:
 
 - **A delivery replays until it is acknowledged.** Reading one and not acting on it loses nothing.
 - **Messages use the agent's native path when available.** A live Codex thread receives the full
-  message through `codex queue`. Claude, agy and Codex without a proven live thread use the
-  terminal only after it is idle and its composer is empty. A busy terminal or foreign draft leaves
-  the message queued for a detached deliverer, which retries for up to ten minutes and stops when
-  `check` pulls the delivery or it is acknowledged.
+  message through `codex queue`. Otherwise a notice to the parent is typed into its terminal at
+  once, busy or not and whatever the composer shows (Orca cannot tell Claude's grey next-prompt
+  suggestion from typed text); only an open dialog holds it. Messages to a child wait until the
+  child is idle and its composer is empty. A held message stays queued for a detached deliverer,
+  which retries for up to ten minutes and stops when `check` pulls the delivery or it is
+  acknowledged.
 - **Delivery transport is recorded.** `db show` reports whether each message used `queue`,
   `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
 - **Your own turn end is a second chance.** When you finish speaking, megabrain blocks once with
