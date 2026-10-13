@@ -129,10 +129,13 @@ do not act. Ack it once you have acted; acking twice is safe and reports `duplic
 When no delivery is available, watch and check report status `empty`; a timeout is not implied.
 
 **Do not assume you will be told.** When a child runs `ask` or `done`, a live Codex parent receives
-the full message through `codex queue`. Otherwise the notice is typed into the parent's terminal at
+the full message through `codex queue`, and a live Claude parent receives it through Claude's
+peer-message socket, which never touches the composer. Otherwise, or when the socket is marked
+broken, the notice is typed into the parent's terminal at
 once, busy or not and over any composer text; only an open dialog holds it, and a held notice
 starts a detached retry for up to ten minutes; it stops when `check` pulls the delivery or it is acknowledged. The queue
-is the truth, and `db show` records whether delivery used `queue`, `typed`, `deferred`, or `failed`.
+is the truth, and `db show` records whether delivery used `queue`, `socket`, `typed`, `deferred`, or `failed`;
+`db show --delivery-channels` shows whether the Claude socket currently works.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
 When your own turn ends, megabrain checks the dispatches you own and blocks once, one line per
