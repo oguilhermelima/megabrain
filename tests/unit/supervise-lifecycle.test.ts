@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { executeSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
 import { appendMessage, createDispatch, listMessages } from "../../src/adapters/state-db.js";
@@ -194,4 +194,62 @@ describe("supervisor worker", () => {
       await worker;
     }
   }, 10000);
+});
+
+// Spawn owns the first prompt until its transport step settles: an agent launched with the brief on its
+// command line can show an idle, empty composer for seconds before submitting it (Codex while its MCP
+// servers start), and the paste fallback waits through that. Judging the prompt then calls it lost.
+describe("supervisor and a prompt still in transport", () => {
+  async function idleFixture(dispatchId: string, record: Record<string, unknown>) {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-transport-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const created = createDispatch(opened.value, {
+      dispatchId, runtime: "tmux", tmuxSession: "s", tmuxPane: "%9", worktreePath: "/shared/worktree", agent: "codex",
+      terminalId: "worker", parentSessionId: "parent", parentHost: "unknown", parentTerminalId: "parent-terminal", chatName: dispatchId,
+      ...record,
+    });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const prompt = appendMessage(opened.value, dispatchId, { from: "parent", type: "prompt", text: "[megabrain dispatch: codex /shared/worktree]\n\nDispatch identity: " + dispatchId + "\n\nRun the whole migration and report the counts.", sessionId: "parent" });
+    if (prompt.kind !== "ok") throw new Error(prompt.error);
+    const frame = await readFile(new URL("../fixtures/tmux-capture-codex-argv-pending.txt", import.meta.url), "utf8");
+    const process = {
+      async run(command: string, args: readonly string[]) {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: frame, stderr: "", exitCode: 0 });
+        // The pane's shell carries the dispatch identity, which is how the supervisor proves the pane.
+        if (command === "tmux" && args.includes("#{pane_pid}")) return ok({ stdout: "4242\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args.includes("tty=")) return ok({ stdout: "ttys009\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "eww") return ok({ stdout: `4242 1 -zsh MEGABRAIN_DISPATCH_ID=${dispatchId}\n`, stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return ok({ pid: 123 }); },
+      invocationCount() { return 0; },
+    };
+    return {
+      directory, environment, database: opened.value, process,
+      async close() { opened.value.close(); await rm(directory, { recursive: true, force: true }); },
+    };
+  }
+
+  test("a settled dispatch idle at an empty composer without its prompt is reported lost", async () => {
+    const fixture = await idleFixture("settled-idle", { state: "running", promptTransport: "transported" });
+    try {
+      await superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, Date.now());
+      expect(superviseMessages(fixture.database, "settled-idle").map((message) => message.text.split(".")[0])).toEqual(["prompt-lost"]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a spawning dispatch whose prompt is still in transport is not judged", async () => {
+    const fixture = await idleFixture("spawning-idle", { state: "spawning", promptTransport: "pending" });
+    try {
+      await superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, Date.now());
+      expect(superviseMessages(fixture.database, "spawning-idle")).toEqual([]);
+    } finally {
+      await fixture.close();
+    }
+  });
 });
