@@ -1076,7 +1076,9 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     terminalCreateAttempts = createdTerminal.value.attempts;
   }
 
-  const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
+  // Neither agy nor Grok sets AI_AGENT in its tool shells; each sets its own marker (measured).
+  const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude"
+    : environment.ANTIGRAVITY_AGENT === "1" ? "agy" : environment.GROK_AGENT === "1" ? "grok" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
   const parentAgentSessionId = parentAgent === "claude" ? environment.CLAUDE_CODE_SESSION_ID : undefined;
   const parentAgentPid = parentAgentSessionId !== undefined && environment.HOME !== undefined
     ? await findClaudeSessionPid(parentAgentSessionId, environment.HOME, process)
