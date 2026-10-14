@@ -1,4 +1,5 @@
 import { grokLeaderSocket } from "../../src/agents/grok-leader.js";
+import { agyLanguageServerFile } from "../../src/agents/agy-ls.js";
 import { guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -2035,5 +2036,56 @@ describe("initial brief through the agent's argv", () => {
     expect(run.pastes[0]?.startsWith("[megabrain dispatch:")).toBe(true);
     expect(run.meta).toMatchObject({ promptChannel: "paste" });
     expect(run.remaining).toEqual([]);
+  });
+});
+
+// A parent agy or Grok session runs `megabrain orchestrate spawn` in one of its own tool shells, so
+// spawn is where megabrain learns how to reach that parent without typing into it.
+describe("parent channels recorded at spawn", () => {
+  async function spawnFrom(extra: Record<string, string>) {
+    const root = await mkdtemp("/tmp/mbpc-");
+    const dispatchId = "dispatch-parent-channel";
+    const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    registerTmux(withComposer({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) }, "codex"));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], { ...environment(root, dispatchId), ...extra }, process, options(worktree("existing")));
+      const file = agyLanguageServerFile(root, `${dispatchId}.parent`);
+      const endpoint = await readFile(file, "utf8").catch(() => undefined);
+      const mode = endpoint === undefined ? undefined : (await stat(file)).mode & 0o777;
+      return { result, meta: readMeta(root, dispatchId), endpoint, mode };
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  const token = "11111111-2222-3333-4444-555555555555";
+
+  test("an agy parent's language server is kept in a 0600 file, never in the dispatch record", async () => {
+    const run = await spawnFrom({ AI_AGENT: "agy_1-3-5_agent", ANTIGRAVITY_LS_ADDRESS: "127.0.0.1:61234", ANTIGRAVITY_CSRF_TOKEN: token, ANTIGRAVITY_CONVERSATION_ID: "conversation-1", ANTIGRAVITY_LS_VERSION: "1.3.5" });
+    expect(run.result.kind).toBe("ok");
+    expect(run.meta).toMatchObject({ parentAgent: "agy" });
+    expect(JSON.parse(run.endpoint ?? "{}")).toEqual({ address: "127.0.0.1:61234", csrfToken: token, conversationId: "conversation-1", version: "1.3.5" });
+    expect(run.mode).toBe(0o600);
+    expect(JSON.stringify(run.meta)).not.toContain(token);
+  });
+
+  test("a parent that is not agy leaves no language server file", async () => {
+    const run = await spawnFrom({ AI_AGENT: "grok_1-0-52_agent", ANTIGRAVITY_LS_ADDRESS: "127.0.0.1:61234", ANTIGRAVITY_CSRF_TOKEN: token, ANTIGRAVITY_CONVERSATION_ID: "conversation-1" });
+    expect(run.endpoint).toBeUndefined();
+  });
+
+  test("a Grok parent under a leader records its socket and session", async () => {
+    const run = await spawnFrom({ AI_AGENT: "grok_1-0-52_agent", GROK_LEADER_SOCKET: "/Users/someone/.grok/leader.sock", GROK_SESSION_ID: "01a1aaaa-62ab-7ad2-839a-fc733715d740" });
+    expect(run.meta).toMatchObject({ parentAgent: "grok", parentGrokLeaderSocket: "/Users/someone/.grok/leader.sock", parentGrokSessionId: "01a1aaaa-62ab-7ad2-839a-fc733715d740" });
+  });
+
+  test("a Grok parent without a leader records none", async () => {
+    const run = await spawnFrom({ AI_AGENT: "grok_1-0-52_agent", GROK_SESSION_ID: "01a1aaaa-62ab-7ad2-839a-fc733715d740" });
+    expect(run.meta.parentGrokLeaderSocket).toBeUndefined();
+    expect(run.meta.parentGrokSessionId).toBeUndefined();
   });
 });

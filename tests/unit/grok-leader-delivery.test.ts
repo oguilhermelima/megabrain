@@ -261,3 +261,56 @@ describe("reply to a Grok child", () => {
     expect(run.channel).toBeUndefined();
   });
 });
+
+// A Grok session runs under a leader only when started with --leader (or use_leader); its tool
+// shells then carry GROK_LEADER_SOCKET and GROK_SESSION_ID (measured on 1.0.52), so spawn records
+// them and a child's mail enters the parent's session queue. Without a leader a Grok session has no
+// socket at all (measured with lsof), so its mail is typed.
+const PARENT_SESSION = "01a1aaaa-62ab-7ad2-839a-fc733715d740";
+
+async function runParentNotice(root: string, record: Record<string, unknown>) {
+  await mkdir(root, { recursive: true });
+  const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+  if (db.kind !== "ok") throw new Error(db.error);
+  const meta = { agentPid: 1, runtime: "host", childHost: "orca", workspaceId: "workspace", terminalId: "child-terminal", parentHost: "orca", parentTerminalId: "parent-terminal", parentSessionId: "parent-terminal", ...record };
+  createDispatch(db.value, { dispatchId: "d-grok", state: "running", ...meta });
+  appendMessage(db.value, "d-grok", { from: "child", type: "done", text: "finished the migration" }, {
+    outbox: { id: "ob-parent", targetKind: "parent-pointer", target: "parent-terminal", payload: { dispatchId: "d-grok", sequence: 1, meta, targetKind: "parent-pointer", pointer: "mail: megabrain orchestrate watch d-grok", fullMessage: "✅ done: finished the migration" } },
+  });
+  createDelivery(db.value, { id: "dl-parent", dispatchId: "d-grok", messageSeqs: [1], status: "outstanding" });
+  const screen = { id: "x", ok: true, result: { terminal: { handle: "parent-terminal", status: "running", tail: idleTail } } };
+  const sends: string[] = [];
+  const process: ProcessAdapter = {
+    async run(command, args) {
+      if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "parent-terminal" }, { handle: "child-terminal" }] }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "read") return ok<ProcessOutput>({ stdout: JSON.stringify(screen), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "send") { sends.push(args.join(" ")); return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 }); }
+      return failed(`unexpected ${command} ${args.join(" ")}`);
+    },
+    async startDetached() { return failed("not used"); },
+    invocationCount() { return 0; },
+  };
+  await executeDeliveryWorker(["ob-parent", "holder", "delivery-target:orca:parent-terminal", String(Date.now() + 4000)], { HOME: root, MEGABRAIN_STATE_DIR: root }, process);
+  const outbox = listOutbox(db.value);
+  return { sends, outbox: outbox.kind === "ok" ? outbox.value : [] };
+}
+
+describe("child mail to a Grok parent", () => {
+  test("enters the parent's session queue through the parent's leader and is never typed", async () => {
+    const root = await tempRoot();
+    const leader = await startLeader(join(root, "p.sock"));
+    const run = await runParentNotice(root, { agent: "codex", parentAgent: "grok", parentGrokLeaderSocket: join(root, "p.sock"), parentGrokSessionId: PARENT_SESSION });
+    const prompt = leader.received.find((message) => message.method === "session/prompt") as { params?: { sessionId?: string; prompt?: Array<{ text?: string }> } } | undefined;
+    expect(prompt?.params?.sessionId).toBe(PARENT_SESSION);
+    expect(prompt?.params?.prompt?.[0]?.text).toBe("✅ done: finished the migration");
+    expect(run.sends).toHaveLength(0);
+    expect(run.outbox[0]?.status).toBe("sent");
+  });
+
+  test("never goes to a Grok child's own leader", async () => {
+    const root = await tempRoot();
+    const leader = await startLeader(join(root, "c.sock"));
+    await runParentNotice(root, { agent: "grok", grokLeaderSocket: join(root, "c.sock"), grokSessionId: SESSION, parentAgent: "claude" });
+    expect(leader.connections).toBe(0);
+  });
+});
