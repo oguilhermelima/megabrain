@@ -249,7 +249,10 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   // Running shells or monitors mean the agent is working in the background, not stuck.
   if (backgroundTasks(frame) !== undefined) return { cause: "unknown" };
   const agent = string(meta.agent) ?? "";
-  const promptState = await judgePrompt(database, dispatch, meta, frame, process);
+  // Spawn owns the first prompt until its transport step settles: an agent launched with the brief on
+  // its command line may idle at an empty composer for seconds before submitting it.
+  const inTransport = meta.state === "spawning" && meta.promptTransport === "pending";
+  const promptState = inTransport ? "unknown" : await judgePrompt(database, dispatch, meta, frame, process);
   const promptProblem = promptFinding(promptState);
   if (promptProblem.cause !== "unknown") return promptProblem;
   const idle = classifyLiveness(agent, frame).status === "idle";
