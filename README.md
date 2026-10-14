@@ -515,7 +515,8 @@ Three properties do the work:
   used only when that class matches the child's. A Grok child runs with its own leader
   (`grok --leader --leader-socket <state>/grok/<hash>.sock`), so a reply enters its session queue
   as a user turn, proven when the leader lists the prompt id; `orchestrate close` stops that
-  leader, which otherwise outlives the pane. Other messages to a child wait until the
+  leader, which otherwise outlives the pane, and the supervisor and every close also stop any
+  leader no unclosed dispatch owns. Other messages to a child wait until the
   child is idle and its composer is empty. A held message stays queued for a detached deliverer,
   which retries for up to ten minutes and stops when `check` pulls the delivery or it is
   acknowledged.
