@@ -1,4 +1,4 @@
-import { recordAgyLanguageServer } from "../../agents/agy-ls.js";
+import { agyParentKey, readAgyLanguageServer, recordAgyLanguageServer } from "../../agents/agy-ls.js";
 import { ancestorIdentity, stableAncestor } from "../../adapters/ancestor.js";
 import { agentSessionOf } from "../../adapters/agent-session.js";
 import { readdir, realpath } from "node:fs/promises";
@@ -243,6 +243,15 @@ export async function waiterIsActive(root: string, dispatch: string): Promise<bo
 // path, and the turn-end hook's own parent-notify scan layers them on again for its own dispatches.
 // Exported so the hook can reuse this exact delivery mechanism for its own pointer text (a batched
 // "N dispatches finished" line) instead of the fixed "mail: megabrain orchestrate watch" one below.
+// A channel into the parent that needs no terminal: Claude's peer-message socket, the leader a Grok
+// parent runs under, or an agy parent's language server.
+async function parentHasDirectChannel(root: string, dispatch: string, meta: JsonRecord): Promise<boolean> {
+  if (meta.parentAgent === "claude") return typeof meta.parentAgentSessionId === "string";
+  if (meta.parentAgent === "grok") return typeof meta.parentGrokLeaderSocket === "string" && typeof meta.parentGrokSessionId === "string";
+  if (meta.parentAgent === "agy") return (await readAgyLanguageServer(root, agyParentKey(dispatch))) !== undefined;
+  return false;
+}
+
 export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, fullMessage = pointer): Promise<NotificationResult> {
   if (typeof meta.parentAgentThreadId === "string") {
     const found = await findCodexProcess(meta.parentAgentThreadId, {
@@ -332,7 +341,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
     try {
       const payload = { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: appended.value.seq, pointer, fullMessage: formatDispatchMessage({ dispatchId: dispatch, chatName: String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), agent: String(metaRecord.agent ?? "unknown"), type, text, direction: "parent-bound" }) };
       let notification: NotificationResult;
-      if (metaRecord.parentHost === "local" && typeof metaRecord.parentAgentThreadId !== "string") notification = { outcome: "queued", reason: "local parent has no terminal to type into; the Stop hook and orchestrate watch surface it", transport: "failed" };
+      if (metaRecord.parentHost === "local" && typeof metaRecord.parentAgentThreadId !== "string" && !(await parentHasDirectChannel(root, dispatch, metaRecord))) notification = { outcome: "queued", reason: "local parent has no terminal to type into; the Stop hook and orchestrate watch surface it", transport: "failed" };
       else if (!(await parentContextMatches(root, metaRecord, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch", transport: "failed" };
       else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter", transport: "failed" };
       else notification = await sendParentPointer(root, metaRecord, pointer, environment, processAdapter, payload.fullMessage);

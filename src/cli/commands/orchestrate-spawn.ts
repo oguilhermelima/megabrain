@@ -22,6 +22,7 @@ import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTm
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
+import { agyParentKey, recordAgyLanguageServer } from "../../agents/agy-ls.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 import { argvBriefStarted, awaitArgvPrompt, transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
@@ -1075,7 +1076,9 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     terminalCreateAttempts = createdTerminal.value.attempts;
   }
 
-  const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
+  // Neither agy nor Grok sets AI_AGENT in its tool shells; each sets its own marker (measured).
+  const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude"
+    : environment.ANTIGRAVITY_AGENT === "1" ? "agy" : environment.GROK_AGENT === "1" ? "grok" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
   const parentAgentSessionId = parentAgent === "claude" ? environment.CLAUDE_CODE_SESSION_ID : undefined;
   const parentAgentPid = parentAgentSessionId !== undefined && environment.HOME !== undefined
     ? await findClaudeSessionPid(parentAgentSessionId, environment.HOME, process)
@@ -1085,6 +1088,13 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
   if (leaderSocket !== undefined) Object.assign(meta, { grokLeaderSocket: leaderSocket });
+  // A parent agy or Grok runs this spawn in one of its own tool shells, the one place its inbound
+  // channel is known: agy's language server (a secret, so a 0600 file), or the leader a Grok session
+  // runs under. A Grok session without a leader has no socket at all, and its mail is typed.
+  if (parentAgent === "agy") await recordAgyLanguageServer(root, agyParentKey(id), environment).catch(() => undefined);
+  if (parentAgent === "grok" && environment.GROK_LEADER_SOCKET && environment.GROK_SESSION_ID) {
+    Object.assign(meta, { parentGrokLeaderSocket: environment.GROK_LEADER_SOCKET, parentGrokSessionId: environment.GROK_SESSION_ID });
+  }
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const existingDispatch = getDispatch(database.value, id);

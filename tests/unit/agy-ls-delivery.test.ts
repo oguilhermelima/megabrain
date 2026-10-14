@@ -225,3 +225,116 @@ describe("reply to an agy child", () => {
     expect(run.deliveries[0]?.transport).not.toBe("socket");
   });
 });
+
+// An agy session that spawns a child runs `megabrain orchestrate spawn` in one of its own tool
+// shells, so the same endpoint is known for the parent; the child's mail then enters the parent's
+// conversation instead of being typed into its composer.
+async function runParentNotice(root: string, record: Record<string, unknown>, endpoints: Readonly<{ parent?: string; child?: string }>) {
+  const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+  if (db.kind !== "ok") throw new Error(db.error);
+  const meta = { agentPid: 1, runtime: "host", childHost: "orca", workspaceId: "workspace", terminalId: "child-terminal", parentHost: "orca", parentTerminalId: "parent-terminal", parentSessionId: "parent-terminal", ...record };
+  createDispatch(db.value, { dispatchId: "d-agy", state: "running", ...meta });
+  if (endpoints.parent !== undefined) await endpointFile(root, "d-agy.parent", endpoints.parent);
+  if (endpoints.child !== undefined) await endpointFile(root, "d-agy", endpoints.child);
+  appendMessage(db.value, "d-agy", { from: "child", type: "done", text: "finished the migration" }, {
+    outbox: { id: "ob-parent", targetKind: "parent-pointer", target: "parent-terminal", payload: { dispatchId: "d-agy", sequence: 1, meta, targetKind: "parent-pointer", pointer: "mail: megabrain orchestrate watch d-agy", fullMessage: "✅ done: finished the migration" } },
+  });
+  createDelivery(db.value, { id: "dl-parent", dispatchId: "d-agy", messageSeqs: [1], status: "outstanding" });
+  const sends: string[] = [];
+  const process: ProcessAdapter = {
+    async run(command, args) {
+      if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "parent-terminal" }, { handle: "child-terminal" }] }), stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "read") return ok<ProcessOutput>({ stdout: idleTail, stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "send") { sends.push(args.join(" ")); return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 }); }
+      return failed(`unexpected ${command} ${args.join(" ")}`);
+    },
+    async startDetached() { return failed("not used"); },
+    invocationCount() { return 0; },
+  };
+  await executeDeliveryWorker(["ob-parent", "holder", "delivery-target:orca:parent-terminal", String(Date.now() + 3000)], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_AGY_POLL_MS: "50" }, process);
+  const outbox = listOutbox(db.value);
+  return { sends, outbox: outbox.kind === "ok" ? outbox.value : [] };
+}
+
+describe("child mail to an agy parent", () => {
+  test("is queued into the parent's conversation and never typed", async () => {
+    const root = await tempRoot();
+    const server = await startLanguageServer();
+    const run = await runParentNotice(root, { agent: "codex", parentAgent: "agy" }, { parent: server.address });
+    expect(server.sent).toHaveLength(1);
+    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: "✅ done: finished the migration" }], cascadeConfig: USER_CONFIG });
+    expect(run.sends).toHaveLength(0);
+    expect(run.outbox[0]?.status).toBe("sent");
+  });
+
+  test("never goes to an agy child's own conversation", async () => {
+    const root = await tempRoot();
+    const server = await startLanguageServer();
+    await runParentNotice(root, { agent: "agy", parentAgent: "claude" }, { child: server.address });
+    expect(server.calls).toHaveLength(0);
+  });
+
+  test("closing the dispatch deletes the parent's recorded token too", async () => {
+    const root = await tempRoot();
+    const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    createDispatch(db.value, { dispatchId: "d-agy", agent: "codex", parentAgent: "agy", state: "done", runtime: "host", childHost: "orca", terminalId: "t", workspaceId: "w", terminalState: "owned", parentHost: "orca", parentSessionId: "coord" });
+    await endpointFile(root, "d-agy.parent", "127.0.0.1:1");
+    const result = await executeOrchestrateClose(["d-agy"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord" }, processAdapter);
+    expect(result.kind).toBe("ok");
+    expect(existsSync(agyLanguageServerFile(root, "d-agy.parent"))).toBe(false);
+  });
+});
+
+// A parent outside Orca, Superset and tmux has no terminal to type into, so its mail used to stop at
+// the Stop hook and watch. A parent with a channel that needs no terminal is still reached through it.
+describe("child mail to a local parent", () => {
+  async function doneFromChild(root: string, parent: Record<string, unknown>) {
+    const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    createDispatch(db.value, { dispatchId: "d-loc", agent: "codex", state: "running", processState: "running", runtime: "host", childHost: "local", terminalId: "codex-child", parentHost: "local", parentSessionId: "shell:ttys001", ...parent });
+    const detached: string[] = [];
+    const process: ProcessAdapter = {
+      async run() { return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 }); },
+      async startDetached(command, args) { detached.push([command, ...args].join(" ")); return ok({ pid: 4242 }); },
+      invocationCount() { return 0; },
+    };
+    const result = await executeQueueWrite("done", ["finished the migration"], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "d-loc", MEGABRAIN_SESSION_ID: "codex-child" }, process);
+    expect(result.kind).toBe("ok");
+    const outbox = listOutbox(db.value);
+    return { detached, outbox: outbox.kind === "ok" ? outbox.value : [] };
+  }
+
+  test("an agy parent with a recorded endpoint is handed to the delivery worker", async () => {
+    const root = await tempRoot();
+    await endpointFile(root, "d-loc.parent", "127.0.0.1:1");
+    const run = await doneFromChild(root, { parentAgent: "agy" });
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(true);
+    expect(String(run.outbox[0]?.detail ?? "")).not.toContain("no terminal");
+  });
+
+  test("a Grok parent under a leader is handed to the delivery worker", async () => {
+    const root = await tempRoot();
+    const run = await doneFromChild(root, { parentAgent: "grok", parentGrokLeaderSocket: "/tmp/leader.sock", parentGrokSessionId: "s" });
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(true);
+  });
+
+  test("a parent with no channel still waits for the Stop hook and watch", async () => {
+    const root = await tempRoot();
+    const run = await doneFromChild(root, { parentAgent: "agy" });
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(false);
+    expect(run.outbox[0]).toMatchObject({ status: "failed" });
+    expect(String(run.outbox[0]?.detail ?? "")).toContain("no terminal");
+  });
+
+  test("a local parent whose channel falls back is not waited on, since nothing can be typed", async () => {
+    const root = await tempRoot();
+    const server = await startLanguageServer("unauthorized");
+    const started = Date.now();
+    const run = await runParentNotice(root, { agent: "codex", parentAgent: "agy", parentHost: "local", parentTerminalId: null, parentSessionId: "shell:ttys001" }, { parent: server.address });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(run.sends).toHaveLength(0);
+    expect(run.outbox[0]).toMatchObject({ status: "failed" });
+    expect(String(run.outbox[0]?.detail ?? "")).toContain("no terminal");
+  });
+});

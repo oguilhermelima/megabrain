@@ -28,6 +28,16 @@ export const CALLER_IDENTITY_ENV_VARS = [
   "ORCA_AGENT_SESSION_SPAWN_TOKEN",
   "ORCA_TERMINAL_HANDLE",
   "SUPERSET_TERMINAL_ID",
+  // A parent agy or Grok's own identity, and the channels into it: a Grok child started without its
+  // own leader would otherwise join the parent's, and the agy token would reach every child process.
+  "ANTIGRAVITY_AGENT",
+  "ANTIGRAVITY_LS_ADDRESS",
+  "ANTIGRAVITY_CSRF_TOKEN",
+  "ANTIGRAVITY_CONVERSATION_ID",
+  "ANTIGRAVITY_LS_VERSION",
+  "GROK_AGENT",
+  "GROK_SESSION_ID",
+  "GROK_LEADER_SOCKET",
 ] as const;
 
 // The caller-identity environment: every field a "who is running this command" decision can draw
