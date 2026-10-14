@@ -107,7 +107,7 @@ export function deliveryHasKeystrokeDialog(agent: string, screen: string): boole
   const bottom = lines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim() !== "").slice(-15);
   const text = bottom.map(({ line }) => line).join("\n");
   const dialog = agent === "claude"
-    ? /Allow this action\?|Do you want to proceed\?|Allow .+? to run/i
+    ? /Allow this action\?|Do you want to proceed\?|Allow .+? to run|Deliver this message to Claude/i
     : agent === "codex"
       ? /Would you like to run this command\?|Run this command\?/i
       : agent === "grok"
