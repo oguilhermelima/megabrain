@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { modelRegistryPaths } from "../../src/core/model.js";
 import { reconcileSkills } from "../../src/core/skill.js";
@@ -153,5 +153,60 @@ describe("shipped asset paths", () => {
       }, processAdapter);
       expect(invokedScript).toBe(join(originalCwd, "scripts/playwright-web.mjs"));
     } finally { process.chdir(originalCwd); }
+  });
+});
+
+describe("compiled binary package root", () => {
+  const bundledModule = "file:///$bunfs/root/megabrain";
+
+  function stagedLayout(binary: string, assets: string): { root: string; executable: string; assets: string } {
+    const root = realpathSync(mkdtempSync("/tmp/megabrain-compiled-root-"));
+    const executable = join(root, binary);
+    mkdirSync(dirname(executable), { recursive: true });
+    writeFileSync(executable, "binary");
+    mkdirSync(join(root, assets), { recursive: true });
+    writeFileSync(join(root, assets, "package.json"), JSON.stringify({ name: "megabrain" }));
+    return { root, executable, assets: join(root, assets) };
+  }
+
+  test("finds the assets in share/megabrain beside a bin directory", () => {
+    const layout = stagedLayout("bin/megabrain", "share/megabrain");
+    expect(packageRootModule?.resolvePackageRoot(bundledModule, undefined, layout.executable)).toBe(layout.assets);
+  });
+
+  test("finds the assets in Resources/megabrain inside a macOS app bundle", () => {
+    const layout = stagedLayout("Megabrain.app/Contents/MacOS/megabrain", "Megabrain.app/Contents/Resources/megabrain");
+    expect(packageRootModule?.resolvePackageRoot(bundledModule, undefined, layout.executable)).toBe(layout.assets);
+  });
+
+  test("follows a symlink on PATH to the real executable", () => {
+    const layout = stagedLayout("bin/megabrain", "share/megabrain");
+    const pathDirectory = mkdtempSync("/tmp/megabrain-compiled-path-");
+    const link = join(pathDirectory, "megabrain");
+    symlinkSync(layout.executable, link);
+    expect(packageRootModule?.resolvePackageRoot(bundledModule, undefined, link)).toBe(layout.assets);
+  });
+
+  test("prefers the package that contains the module over the executable", () => {
+    const checkout = realpathSync(mkdtempSync("/tmp/megabrain-compiled-checkout-"));
+    writeFileSync(join(checkout, "package.json"), JSON.stringify({ name: "megabrain" }));
+    const layout = stagedLayout("bin/megabrain", "share/megabrain");
+    const module = new URL(`file://${join(checkout, "src/core/package-root.ts")}`).href;
+    expect(packageRootModule?.resolvePackageRoot(module, undefined, layout.executable)).toBe(checkout);
+  });
+
+  test("ignores an asset directory whose package is not megabrain", () => {
+    const layout = stagedLayout("bin/megabrain", "share/megabrain");
+    writeFileSync(join(layout.assets, "package.json"), JSON.stringify({ name: "other" }));
+    expect(() => packageRootModule?.resolvePackageRoot(bundledModule, undefined, layout.executable))
+      .toThrow(/share\/megabrain/);
+  });
+
+  test("names the executable locations it tried when nothing matches", () => {
+    const executable = join(realpathSync(mkdtempSync("/tmp/megabrain-compiled-missing-")), "bin/megabrain");
+    mkdirSync(dirname(executable), { recursive: true });
+    writeFileSync(executable, "binary");
+    expect(() => packageRootModule?.resolvePackageRoot(bundledModule, undefined, executable))
+      .toThrow(/share\/megabrain.*Resources\/megabrain/);
   });
 });
