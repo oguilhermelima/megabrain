@@ -9,6 +9,7 @@ import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { agyLanguageServerFile } from "../../src/agents/agy-ls.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { executeQueueWrite } from "../../src/cli/commands/queue-write.js";
+import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { failed, ok } from "../../src/core/result.js";
 
 // Antigravity CLI 1.3.4 runs its language server in process and hands each tool shell
@@ -106,6 +107,19 @@ describe("endpoint capture", () => {
     createDispatch(db.value, { dispatchId: "d-codex", agent: "codex", state: "running", processState: "running", runtime: "host", childHost: "local", terminalId: "codex-child" });
     await executeQueueWrite("received", [], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "d-codex", MEGABRAIN_SESSION_ID: "codex-child", ANTIGRAVITY_LS_ADDRESS: "localhost:1", ANTIGRAVITY_CSRF_TOKEN: TOKEN, ANTIGRAVITY_CONVERSATION_ID: CONVERSATION }, processAdapter);
     expect(existsSync(agyLanguageServerFile(root, "d-codex"))).toBe(false);
+  });
+});
+
+describe("endpoint lifetime", () => {
+  test("closing an agy dispatch deletes its recorded token", async () => {
+    const root = await tempRoot();
+    const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    createDispatch(db.value, { dispatchId: "d-agy", agent: "agy", state: "done", runtime: "host", childHost: "orca", terminalId: "t", workspaceId: "w", terminalState: "owned", parentHost: "orca", parentSessionId: "coord" });
+    await endpointFile(root, "d-agy", "127.0.0.1:1");
+    const result = await executeOrchestrateClose(["d-agy"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord" }, processAdapter);
+    expect(result.kind).toBe("ok");
+    expect(existsSync(agyLanguageServerFile(root, "d-agy"))).toBe(false);
   });
 });
 
