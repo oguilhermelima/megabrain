@@ -285,3 +285,56 @@ describe("child mail to an agy parent", () => {
     expect(existsSync(agyLanguageServerFile(root, "d-agy.parent"))).toBe(false);
   });
 });
+
+// A parent outside Orca, Superset and tmux has no terminal to type into, so its mail used to stop at
+// the Stop hook and watch. A parent with a channel that needs no terminal is still reached through it.
+describe("child mail to a local parent", () => {
+  async function doneFromChild(root: string, parent: Record<string, unknown>) {
+    const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    createDispatch(db.value, { dispatchId: "d-loc", agent: "codex", state: "running", processState: "running", runtime: "host", childHost: "local", terminalId: "codex-child", parentHost: "local", parentSessionId: "shell:ttys001", ...parent });
+    const detached: string[] = [];
+    const process: ProcessAdapter = {
+      async run() { return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 }); },
+      async startDetached(command, args) { detached.push([command, ...args].join(" ")); return ok({ pid: 4242 }); },
+      invocationCount() { return 0; },
+    };
+    const result = await executeQueueWrite("done", ["finished the migration"], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "d-loc", MEGABRAIN_SESSION_ID: "codex-child" }, process);
+    expect(result.kind).toBe("ok");
+    const outbox = listOutbox(db.value);
+    return { detached, outbox: outbox.kind === "ok" ? outbox.value : [] };
+  }
+
+  test("an agy parent with a recorded endpoint is handed to the delivery worker", async () => {
+    const root = await tempRoot();
+    await endpointFile(root, "d-loc.parent", "127.0.0.1:1");
+    const run = await doneFromChild(root, { parentAgent: "agy" });
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(true);
+    expect(String(run.outbox[0]?.detail ?? "")).not.toContain("no terminal");
+  });
+
+  test("a Grok parent under a leader is handed to the delivery worker", async () => {
+    const root = await tempRoot();
+    const run = await doneFromChild(root, { parentAgent: "grok", parentGrokLeaderSocket: "/tmp/leader.sock", parentGrokSessionId: "s" });
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(true);
+  });
+
+  test("a parent with no channel still waits for the Stop hook and watch", async () => {
+    const root = await tempRoot();
+    const run = await doneFromChild(root, { parentAgent: "agy" });
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(false);
+    expect(run.outbox[0]).toMatchObject({ status: "failed" });
+    expect(String(run.outbox[0]?.detail ?? "")).toContain("no terminal");
+  });
+
+  test("a local parent whose channel falls back is not waited on, since nothing can be typed", async () => {
+    const root = await tempRoot();
+    const server = await startLanguageServer("unauthorized");
+    const started = Date.now();
+    const run = await runParentNotice(root, { agent: "codex", parentAgent: "agy", parentHost: "local", parentTerminalId: null, parentSessionId: "shell:ttys001" }, { parent: server.address });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(run.sends).toHaveLength(0);
+    expect(run.outbox[0]).toMatchObject({ status: "failed" });
+    expect(String(run.outbox[0]?.detail ?? "")).toContain("no terminal");
+  });
+});
