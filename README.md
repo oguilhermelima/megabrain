@@ -512,7 +512,10 @@ Three properties do the work:
   suggestion from typed text); only an open dialog holds it. A reply to a Claude child takes the
   child's socket the same way, reaching it mid-turn; there the sender is the parent, so the class
   attested is the `permissionMode` the parent's own transcript last recorded, and the socket is
-  used only when that class matches the child's. Other messages to a child wait until the
+  used only when that class matches the child's. A Grok child runs with its own leader
+  (`grok --leader --leader-socket <state>/grok/<hash>.sock`), so a reply enters its session queue
+  as a user turn, proven when the leader lists the prompt id; `orchestrate close` stops that
+  leader, which otherwise outlives the pane. Other messages to a child wait until the
   child is idle and its composer is empty. A held message stays queued for a detached deliverer,
   which retries for up to ten minutes and stops when `check` pulls the delivery or it is
   acknowledged.
@@ -520,7 +523,7 @@ Three properties do the work:
   `socket`, `typed`, `deferred`, or `failed`; the durable queue remains the source of truth.
 - **A channel that stops working is set aside, not retried blindly.** When the Claude socket
   refuses a connection, is missing, or an idle session does not consume the message within 20
-  seconds, the notice is typed instead and the `delivery_channels` table marks the socket broken.
+  seconds, the notice is typed instead and the `delivery_channels` table marks the socket broken (the Grok leader is tracked the same way, as `grok leader-socket`).
   It is tried again after 5 minutes, doubling per failure up to 6 hours, and at once when the
   Claude version changes. `db show --delivery-channels` shows the current verdict.
 - **Your own turn end is a second chance.** When you finish speaking, megabrain blocks once with

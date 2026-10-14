@@ -10,6 +10,7 @@ import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
+import { stopGrokLeader } from "../../agents/grok-leader.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -169,6 +170,8 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     if (hostClose.kind !== "ok") return failed(`could not close dispatch ${dispatchId}: ${hostClose.error}`);
     if (hostClose.value === "absent") outcome = "absent";
   }
+  // A Grok child's own leader outlives its pane; nothing else would ever stop it.
+  if (text(meta.grokLeaderSocket) !== "") await stopGrokLeader(text(meta.grokLeaderSocket), process);
   const now = new Date().toISOString();
   const processState = text(meta.processState);
   const next: RecordValue = {

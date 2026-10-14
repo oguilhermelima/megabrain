@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import { basename } from "node:path";
+import { mkdir, realpath } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
@@ -21,6 +21,7 @@ import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-bu
 import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
+import { grokLeaderSocket } from "../../agents/grok-leader.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 import { transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
@@ -883,9 +884,15 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const parentTmux = parentTmuxChannel(environment);
   const chatName = options.label ?? worktree.branch;
   // Antigravity names its conversation only in its log; a per-dispatch log lets the context meter find it.
+  // A Grok child runs its own leader so a reply can enter its session queue without typing.
+  // Without a directory to bind in, the child starts without a leader and replies are typed.
+  const candidateSocket = options.agent === "grok" ? grokLeaderSocket(root, id) : undefined;
+  const leaderSocket = candidateSocket === undefined ? undefined
+    : await mkdir(dirname(candidateSocket), { recursive: true, mode: 0o700 }).then(() => candidateSocket, () => undefined);
   const command = options.agent === "claude" ? `${agentCommand.value} --name ${shellQuote(chatName)}`
     : options.agent === "agy" ? `${agentCommand.value} --log-file ${shellQuote(agyLogFile(root, id))}`
-      : agentCommand.value;
+      : leaderSocket !== undefined ? `${agentCommand.value} --leader --leader-socket ${shellQuote(leaderSocket)}`
+        : agentCommand.value;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
 
   // Admission runs after option/worktree validation but before any terminal or agent is created.
@@ -1049,6 +1056,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, environment.CODEX_THREAD_ID, parentAgent, parentAgentSessionId, parentAgentPid);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
+  if (leaderSocket !== undefined) Object.assign(meta, { grokLeaderSocket: leaderSocket });
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const existingDispatch = getDispatch(database.value, id);
