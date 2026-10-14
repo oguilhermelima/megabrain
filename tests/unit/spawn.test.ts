@@ -725,7 +725,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_STRUCTURED_SESSION: "1", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
+        const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ORCA_STRUCTURED_SESSION: "1", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
         const meta = readMeta(root, dispatchId);
@@ -746,7 +746,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
+        const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
         const meta = readMeta(root, dispatchId);
@@ -776,7 +776,7 @@ describe("executeSpawn", () => {
       registerTmux({ ...original, ...composerTmux() });
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], {
-          MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-attach-failure",
+          MEGABRAIN_STATE_DIR: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ORCA_TERMINAL_HANDLE: "coord-orca-term", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-attach-failure",
         }, process, options(worktree("existing")));
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error(result.error);
@@ -803,7 +803,7 @@ describe("executeSpawn", () => {
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
-        const environment = { MEGABRAIN_STATE_DIR: root, TMUX: "caller-tmux-server", TMUX_PANE: "%0", AI_AGENT: "codex", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
+        const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", TMUX: "caller-tmux-server", TMUX_PANE: "%0", AI_AGENT: "codex", MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId };
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], environment, process, options(worktree("existing")));
         expect(result).toMatchObject({ kind: "ok" });
         const meta = readMeta(root, dispatchId);
@@ -1841,7 +1841,7 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
           : ok({ stdout: "", stderr: "", exitCode: 0 }));
       await executeSpawn(
         ["--repo", "/repo", "--branch", "feat/auto-tmux", "--agent", "codex", "--prompt", "spawn"],
-        { MEGABRAIN_STATE_DIR: state, ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-tmux" },
+        { MEGABRAIN_STATE_DIR: state, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ORCA_TERMINAL_HANDLE: "parent-terminal", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-auto-tmux" },
         process,
         { resolveWorktree: async () => ok(worktree("created")) },
       );

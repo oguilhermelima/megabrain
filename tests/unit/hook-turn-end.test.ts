@@ -36,7 +36,8 @@ async function withRoot<T>(prefix: string, body: (root: string) => Promise<T>): 
 }
 
 function environment(root: string, extra: Record<string, string | undefined> = {}): HookEnvironment {
-  return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, ...extra };
+  // No fake here starts an agent, so a spawned brief can only arrive through the paste fallback.
+  return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ...extra };
 }
 
 async function writeMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
