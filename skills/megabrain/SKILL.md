@@ -138,7 +138,8 @@ is the truth, and `db show` records whether delivery used `queue`, `socket`, `ty
 `db show --delivery-channels` shows whether the Claude socket currently works. A `reply` to a
 Claude child uses the child's socket too when the parent runs in bypass, so it arrives mid-turn
 instead of waiting for the child to go idle. A `reply` to a Grok child goes into its session queue
-through the child's own Grok leader.
+through the child's own Grok leader, and one to an agy child goes into its conversation through
+agy's language server.
 If you are waiting on a worker, use `watch` rather than relying on a terminal notice.
 
 When your own turn ends, megabrain checks the dispatches you own and blocks once, one line per

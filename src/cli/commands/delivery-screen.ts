@@ -1,5 +1,6 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { classifyLiveness } from "../../core/liveness.js";
+import { composerReadback } from "../../core/composer-proof.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
@@ -85,6 +86,8 @@ function withoutGhostText(escaped: string): string {
 export function deliveryComposer(agent: string, screen: string): string | undefined {
   const draftLine = [...screen.split("\n")].reverse().find((line: string) => line.startsWith("MEGABRAIN_COMPOSER_DRAFT:"));
   if (draftLine !== undefined) return draftLine.slice("MEGABRAIN_COMPOSER_DRAFT:".length);
+  // Grok draws its composer inside a bordered box ("│ ❯ … │"), which no prompt line below matches.
+  if (agent === "grok") return composerReadback(agent, screen).region;
   const prompt = agent === "claude" ? /^\s*❯[  ]?(.*)$/ : agent === "codex" ? /^\s*›[  ]?(.*)$/ : /^\s*[>$] ?(.*)$/;
   const lines = screen.split("\n");
   const rules = lines.flatMap((line, index) => (RULE.test(line) ? [index] : []));
@@ -104,7 +107,7 @@ export function deliveryHasKeystrokeDialog(agent: string, screen: string): boole
   const bottom = lines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim() !== "").slice(-15);
   const text = bottom.map(({ line }) => line).join("\n");
   const dialog = agent === "claude"
-    ? /Allow this action\?|Do you want to proceed\?|Allow .+? to run/i
+    ? /Allow this action\?|Do you want to proceed\?|Allow .+? to run|Deliver this message to Claude/i
     : agent === "codex"
       ? /Would you like to run this command\?|Run this command\?/i
       : agent === "grok"
@@ -118,7 +121,7 @@ export function deliveryHasKeystrokeDialog(agent: string, screen: string): boole
 
   // Old agent output can contain any words. When a composer is still visible, only treat
   // a dialog drawn after it as active; dialogs that replace the composer remain detectable.
-  const prompt = agent === "claude" ? /^\s*❯/ : agent === "codex" ? /^\s*›/ : /^\s*[>$]/;
+  const prompt = agent === "claude" ? /^\s*❯/ : agent === "codex" ? /^\s*›/ : agent === "grok" ? /^\s*│ ❯/ : /^\s*[>$]/;
   let composerLine = -1;
   if (deliveryComposer(agent, screen) === "") {
     for (const { line, index } of bottom) if (prompt.test(line)) composerLine = index;

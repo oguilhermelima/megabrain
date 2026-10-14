@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
+import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
@@ -266,6 +267,7 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
+  await sweepGrokLeaders(root, ownedGrokLeaders(listed.value), process);
   const openDispatches = listed.value.filter((record) => ["queued", "spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
   if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: false, findings: 0 };
   let findings = 0;

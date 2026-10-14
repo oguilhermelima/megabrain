@@ -75,7 +75,7 @@ function composerRegion(agent: string, screen: string): string | undefined {
   if (agent === "grok") {
     const start = lastLineIndex(lines, (line) => /╭─/.test(line));
     const end = lines.findIndex((line, index) => index > start && /╰─/.test(line));
-    if (start >= 0 && end > start) return lines.slice(start + 1, end).map((line) => line.replace(/^\s*│ ?/u, "").replace(/^\s*❯ ?/u, "").trimEnd()).join("\n").trimEnd();
+    if (start >= 0 && end > start) return lines.slice(start + 1, end).map((line) => line.replace(/^\s*│ ?/u, "").replace(/^\s*❯ ?/u, "").replace(/\s*│\s*$/u, "").trimEnd()).join("\n").trim();
   }
   const prompt = agent === "claude" ? /^\s*❯[  ]?(.*)$/u : agent === "codex" ? /^\s*›[  ]?(.*)$/u : /^\s*[>$] ?(.*)$/u;
   const start = lastLineIndex(lines, (line) => prompt.test(line));
