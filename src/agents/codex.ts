@@ -15,6 +15,7 @@ export const codex: Agent = {
   classifyLiveness: (output) => classifyMarkers(markers, output),
   contextSource: "codex-rollout",
   compactCommand: "/compact",
+  initialPromptFlag: "--",
   commandLine: ({ model, effort, browser, agentArgs }) => {
     const parts = ["codex", "--dangerously-bypass-hook-trust", "--dangerously-bypass-approvals-and-sandbox"];
     // Codex's own startup update check can pop an "Update available!" modal (default option

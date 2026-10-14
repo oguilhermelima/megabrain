@@ -35,6 +35,8 @@ export async function waitForStableIdle(
   read: () => Promise<Result<string>>,
   timeoutError: string,
   answerFirstRunDialog?: () => Promise<Result<void>>,
+  // A frame this accepts ends the wait at once: the agent already took a prompt from its argv.
+  turnStarted?: (frame: string) => boolean,
 ): Promise<Result<void>> {
   const started = Date.now();
   let stableSince: number | null = null;
@@ -47,6 +49,7 @@ export async function waitForStableIdle(
       const answered = await answerFirstRunDialog();
       if (answered.kind !== "ok") return answered;
     }
+    if (captured.kind === "ok" && !dialog && turnStarted?.(captured.value) === true) return ok(undefined);
     const idle = captured.kind === "ok" && !dialog && classifyLiveness(agentId, captured.value).status === "idle";
     if (idle) {
       if (stableSince === null) stableSince = Date.now();

@@ -17,6 +17,7 @@ export const agy: Agent = {
   matchesDescriptor: (descriptor) => descriptor === "agy" || /^agy_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
   firstRunDialog: trustDialog,
+  initialPromptFlag: "-i",
   commandLine: ({ model, agentArgs }) => {
     const parts = ["agy", "--dangerously-skip-permissions"];
     if (model !== null) parts.push("--model", doubleQuote(model));

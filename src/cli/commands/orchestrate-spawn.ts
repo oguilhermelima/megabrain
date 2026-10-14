@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { getAgent } from "../../agents/index.js";
@@ -24,7 +24,7 @@ import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
-import { transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
+import { argvBriefStarted, awaitArgvPrompt, transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
 import { startSupervisorWorker } from "./supervise.js";
 import { notifyAdmissionStatus } from "./admission-notify.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
@@ -41,9 +41,10 @@ const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 const SPAWN_ENVIRONMENT_HELP = `
 Environment:
+  MEGABRAIN_PROMPT_ARGV_GRACE_MS      Milliseconds to wait for an agent to submit the brief on its command line before pasting it (default 30000).
   MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS  Milliseconds to wait for the pasted prompt to show whole in the composer (default 2000).
   MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS  Milliseconds to wait for a turn to start after each Enter (default 3000).
-    Spawn has no receipt deadline. Once the prompt is pasted and submitted it returns, and a missing
+    Spawn has no receipt deadline. Once the agent has taken the prompt it returns, and a missing
     megabrain received is only recorded; the supervisor judges the prompt from the terminal.
 `;
 
@@ -58,6 +59,7 @@ type SpawnEnvironment = QueueEnvironment & Readonly<{
   readonly MEGABRAIN_AGENT_READY_TIMEOUT_MS?: string;
   readonly MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS?: string;
   readonly MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS?: string;
+  readonly MEGABRAIN_PROMPT_ARGV_GRACE_MS?: string;
 }>;
 
 export type SpawnWorktree = Readonly<{
@@ -253,6 +255,18 @@ function validatePromptBudget(prompt: string, runtime: SpawnRuntime): Result<voi
   return ok(undefined);
 }
 
+async function writePromptFile(root: string, id: string, prompt: string): Promise<string | undefined> {
+  const directory = join(root, "prompts");
+  const file = join(directory, `${id}.txt`);
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(file, prompt, { mode: 0o600 });
+    return file;
+  } catch {
+    return undefined;
+  }
+}
+
 function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
   const raw = environment.MEGABRAIN_AGENT_READY_TIMEOUT_MS;
   if (raw !== undefined && /^\d+$/.test(raw)) {
@@ -270,7 +284,7 @@ function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
 // it between polls. So readiness only succeeds once idle has held continuously for
 // TMUX_READINESS_STABLE_MS — any non-idle observation resets the stability window rather than
 // failing outright, since the composer may still settle before the overall deadline.
-async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter): Promise<Readonly<{ result: Result<void>; lastFrame: string; trustAnswered: boolean }>> {
+async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter, argvBrief: boolean): Promise<Readonly<{ result: Result<void>; lastFrame: string; trustAnswered: boolean }>> {
   let lastFrame = "";
   let trustAnswered = false;
   const result = await waitForStableIdle(
@@ -288,6 +302,8 @@ async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: nu
         return answer;
       });
     },
+    // An agent launched with its brief may be working on it before its composer ever idles.
+    argvBrief ? (frame) => argvBriefStarted(agentId, frame) : undefined,
   );
   return { result, lastFrame, trustAnswered };
 }
@@ -773,6 +789,7 @@ type SpawnTrace = {
   tmuxSession?: string;
   sessionCreatedBySpawn?: boolean;
   sessionCleanupAttempted?: boolean;
+  promptFile?: string;
 };
 
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
@@ -797,7 +814,11 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   }
   let result: Result<string>;
   try { result = await runSpawn(args, environment, process, dependencies, trace); }
-  finally { if (leased && database?.kind === "ok") releaseLease(database.value, "resource-admission", holder); }
+  finally {
+    if (leased && database?.kind === "ok") releaseLease(database.value, "resource-admission", holder);
+    // The pane's shell read the brief when it launched the agent, and a failed spawn never will.
+    if (trace.promptFile !== undefined) await rm(trace.promptFile, { force: true });
+  }
   if (result.kind !== "ok" && trace.sessionCreatedBySpawn && !trace.sessionCleanupAttempted && trace.tmuxSession !== undefined) {
     const cleanup = await getTmux().killSession(trace.tmuxSession, process);
     trace.sessionCleanupAttempted = true;
@@ -893,6 +914,13 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     : options.agent === "agy" ? `${agentCommand.value} --log-file ${shellQuote(agyLogFile(root, id))}`
       : leaderSocket !== undefined ? `${agentCommand.value} --leader --leader-socket ${shellQuote(leaderSocket)}`
         : agentCommand.value;
+  // An agent that takes an initial prompt on its command line gets the brief there, read from a
+  // 0600 file by the pane's shell, so it never has to be typed into a composer. `--` keeps a
+  // variadic option in --agent-arg from swallowing it.
+  const promptFlag = runtime === "tmux" ? agent.initialPromptFlag : undefined;
+  const promptFile = promptFlag === undefined ? undefined : await writePromptFile(root, id, prompt);
+  if (promptFile !== undefined) trace.promptFile = promptFile;
+  const launch = promptFile === undefined ? command : `${command} ${promptFlag} "$(cat ${shellQuote(promptFile)})"`;
   const readinessTimeoutMs = agentReadyTimeoutMs(environment);
 
   // Admission runs after option/worktree validation but before any terminal or agent is created.
@@ -1081,6 +1109,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
     await process.run("orca", ["terminal", "rename", "--terminal", terminalId, "--title", `${options.agent} · ${chatName}`]);
   }
   let receiptMissing: string | null = null;
+  let promptChannel: "argv" | "paste" | undefined;
   let state: SpawnState = { dispatch: "spawning", process: "starting", terminal: "owned" };
   let step: SpawnStep = runtime === "tmux" ? "transcript-start" : "prompt-publication";
   const baseInput = (): Omit<SpawnDecisionInput, "step" | "outcome"> => ({ dispatchId: id, runtime, worktree: worktree.ownership, state });
@@ -1110,7 +1139,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         // megabrain_tmux_send_agent (see the WHY comment on sendTmuxPair).
         const terminalHost = parentContext.host === "orca" || parentContext.host === "superset" ? `MEGABRAIN_TERMINAL_HOST=${shellQuote(parentContext.host)} ` : "";
         const terminalParent = parentContext.host === "orca" && parentContext.terminalId !== null ? `MEGABRAIN_TERMINAL_PARENT_ID=${shellQuote(parentContext.terminalId)} ` : "";
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} ${terminalHost}${terminalParent}MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${command}`, "Enter", environment, process, true);
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} ${terminalHost}${terminalParent}MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${launch}`, "Enter", environment, process, true);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const currentDispatch = getDispatch(database.value, id);
@@ -1122,7 +1151,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
     } else if (step === "readiness-output-validation") {
-      const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process);
+      const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined);
       if (waited.trustAnswered) await updateMeta(root, id, { trustAnswered: true }, process);
       if (options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
         const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
@@ -1144,7 +1173,11 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         // composer, where Codex's Tab queues instead of submitting). Every agent's composer
         // submits an idle prompt on Enter. The text goes in as one bracketed paste that is proven
         // to be in the composer before Enter, never as keystrokes.
-        outcome = await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => hasReceipt(root, id));
+        // The brief from argv needs only proof that the agent took it; the paste is the fallback
+        // for an agent that never does.
+        const fromArgv = promptFile === undefined ? undefined : await awaitArgvPrompt({ pane: pane ?? "", agent: options.agent, environment, process }, () => hasReceipt(root, id));
+        promptChannel = fromArgv === undefined ? "paste" : "argv";
+        outcome = fromArgv ?? await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => hasReceipt(root, id));
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
@@ -1167,7 +1200,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
       Object.assign(metadataUpdate, { state: state.dispatch, processState: state.process, terminalState: state.terminal });
     }
     if (step === "prompt-publication" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptPublication: "published", promptState: "awaiting-transport" });
-    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "turn-without-receipt" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt", ...(outcome.receiptMissing === undefined ? {} : { processState: "running", receiptMissing: { reason: outcome.receiptMissing, at: new Date().toISOString() } }) });
+    if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { ...(promptChannel === undefined ? {} : { promptChannel }), promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "turn-without-receipt" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt", ...(outcome.receiptMissing === undefined ? {} : { processState: "running", receiptMissing: { reason: outcome.receiptMissing, at: new Date().toISOString() } }) });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: plan.state.dispatch, processState: plan.state.process, terminalState: plan.state.terminal, reason: plan.reason, promptState: "failed" });
     if (outcome.kind === "prompt-transport" && outcome.receiptMissing !== undefined) receiptMissing = outcome.receiptMissing;

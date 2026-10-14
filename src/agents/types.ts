@@ -28,6 +28,8 @@ export type Agent = Readonly<{
   // Key that answers the first-run dialog; Enter when absent.
   readonly firstRunDialogKey?: string;
   readonly commandLine?: (options: AgentCommandOptions) => Result<string>;
+  // What precedes the initial interactive prompt on the command line, when the agent takes one.
+  readonly initialPromptFlag?: string;
   readonly submitKey?: () => Result<SubmitKey>;
   readonly interruptKey?: () => Result<InterruptKey>;
 }>;
