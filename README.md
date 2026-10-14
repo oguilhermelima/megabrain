@@ -77,6 +77,12 @@ bun run build
 npm link
 ```
 
+`scripts/build-binary.sh --out <dir> [--target bun-linux-x64]` compiles a standalone executable that
+needs no Node, at `<dir>/bin/megabrain`, and stages the files it reads at runtime in
+`<dir>/share/megabrain`. A compiled binary looks for those files beside its real path (through any
+symlink): `../share/megabrain`, or `../Resources/megabrain` inside a macOS app bundle.
+`MEGABRAIN_ROOT` overrides both. The web simulator still runs its Playwright script on Node.
+
 ```sh
 megabrain doctor          # what is installed and what is missing
 megabrain db check        # check SQLite integrity and foreign keys
