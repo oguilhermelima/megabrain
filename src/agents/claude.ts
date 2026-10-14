@@ -1,5 +1,5 @@
 import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
-import { ok } from "../core/result.js";
+import { failed, ok } from "../core/result.js";
 
 const markers: readonly AgentMarker[] = [
   { status: "pending-check", first: /Messages to be submitted after next tool call/, second: /press esc to interrupt and send immediately/, reason: "terminal is waiting to submit queued messages" },
@@ -17,6 +17,10 @@ export const claude: Agent = {
   compactCommand: "/compact",
   initialPromptFlag: "--",
   commandLine: ({ model, effort, agentArgs }) => {
+    // Every Claude child runs in bypass; peer delivery depends on it, so no flag may change the mode.
+    if (agentArgs.some((arg) => arg === "--permission-mode" || arg.startsWith("--permission-mode="))) {
+      return failed("a Claude child always runs with --dangerously-skip-permissions; --permission-mode cannot be passed through --agent-arg", 2);
+    }
     const parts = ["claude", "--dangerously-skip-permissions"];
     if (model !== null) parts.push("--model", doubleQuote(model));
     if (effort !== null) parts.push("--effort", doubleQuote(effort));

@@ -74,9 +74,9 @@ export async function resolveClaudePeer(home: string, pid: number, sessionId: st
   return { kind: "ok", value: { pid: session.pid, sessionId, socketPath, version, transcript, ...(token === undefined ? {} : { token }) } };
 }
 
-// Claude's permission-mode parity: a session that bypasses prompts holds a peer message for review
-// unless the sender attests the same class with from-mode. The attestation is the sender's claim,
-// so it is only made for a sender that really runs without prompts.
+// Claude's permission-mode parity: a session holds a peer message for review when from-mode names a
+// class other than its own, or when none is named and it bypasses prompts. The attestation is the
+// sender's claim, so megabrain only names a class it has read for the real sender.
 export type PeerPermissionClass = "bypass" | "prompting";
 
 const MODE_TAIL_BYTES = 1024 * 1024;

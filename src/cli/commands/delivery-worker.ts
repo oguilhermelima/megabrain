@@ -3,12 +3,12 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
-import { claudeSessionPermissionClass, type PeerPermissionClass } from "../../agents/claude-peer.js";
+import { claudeSessionPermissionClass } from "../../agents/claude-peer.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { composerReadback } from "../../core/composer-proof.js";
-import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
+import { choosePeerChannel, CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, type PeerChannelChoice, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
 import { formatOneLine } from "../../core/chat-message-format.js";
 import { deliverThroughGrokLeader, GROK_LEADER_CHANNEL } from "../../core/grok-leader-delivery.js";
 import { AGY_LS_CHANNEL, deliverThroughAgyLanguageServer } from "../../core/agy-ls-delivery.js";
@@ -75,15 +75,21 @@ export async function startDeliveryWorker(root: string, dispatch: string, outbox
   return result;
 }
 
-// The permission class attested for the sender. A parent notice comes from a child megabrain
-// launched, so its class is read from that launch line. A reply comes from the parent, whose class
-// is the mode its own transcript last recorded; it is attested only when it matches the child's,
-// since a mismatch is held for review and a reply should then be typed instead.
-async function peerSenderMode(targetKind: string, meta: Meta, home: string): Promise<PeerPermissionClass | undefined> {
-  if (targetKind === "parent-pointer") return typeof meta.agent === "string" ? senderPermissionClass(meta.agent) : undefined;
-  if (targetKind !== "child-delivery" || meta.parentAgent !== "claude" || typeof meta.parentAgentSessionId !== "string") return undefined;
-  const parent = await claudeSessionPermissionClass(home, meta.parentAgentSessionId);
-  return parent !== undefined && parent === senderPermissionClass("claude") ? parent : undefined;
+// The channel to a Claude target, chosen from both permission classes before anything is sent. A
+// Claude session's class is the mode its transcript last recorded, so a child or parent that left
+// bypass is seen as it is; a child megabrain launched falls back to its launch line, and any other
+// agent's class is unknown, never guessed.
+async function peerChannelChoice(targetKind: string, meta: Meta, home: string): Promise<PeerChannelChoice | undefined> {
+  const sessionClass = async (agent: unknown, sessionId: unknown) =>
+    agent === "claude" && typeof sessionId === "string" ? claudeSessionPermissionClass(home, sessionId) : undefined;
+  const launchClass = (agent: unknown) => typeof agent === "string" ? senderPermissionClass(agent) : undefined;
+  if (targetKind === "parent-pointer") {
+    const sender = await sessionClass(meta.agent, meta.agentSessionId) ?? launchClass(meta.agent);
+    return choosePeerChannel(sender, await sessionClass(meta.parentAgent ?? meta.agent, meta.parentAgentSessionId));
+  }
+  if (targetKind !== "child-delivery") return undefined;
+  const receiver = await sessionClass(meta.agent, meta.agentSessionId) ?? launchClass(meta.agent);
+  return choosePeerChannel(await sessionClass(meta.parentAgent, meta.parentAgentSessionId), receiver);
 }
 
 async function readWasPulled(root: string, dispatch: string, sequence: number): Promise<boolean> {
@@ -248,8 +254,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let peer: PeerDeliveryOutcome | Readonly<{ kind: "aborted" }> | undefined;
   let peerChannel = CLAUDE_PEER_CHANNEL;
   const home = environment.HOME;
-  const senderMode = home === undefined ? undefined : await peerSenderMode(targetKind, persistedMeta, home);
-  if ((targetKind === "parent-pointer" || senderMode !== undefined) && meta.agent === "claude" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
+  const choice = home === undefined || meta.agent !== "claude" ? undefined : await peerChannelChoice(targetKind, persistedMeta, home);
+  if (choice?.kind === "type") peer = { kind: "fallback", reason: choice.reason };
+  if (choice?.kind === "socket" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
+    const senderMode = choice.senderMode;
     const idleDrop = Number(environment.MEGABRAIN_PEER_IDLE_DROP_MS);
     try {
       peer = await deliverThroughClaudePeer({

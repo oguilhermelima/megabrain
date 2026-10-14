@@ -21,6 +21,20 @@ export function senderPermissionClass(agent: string): PeerPermissionClass | unde
   return NO_PROMPT_FLAGS.some((flag) => words.includes(flag)) ? "bypass" : "prompting";
 }
 
+// Claude holds a peer message when the attested class differs from its own, or when none is
+// attested and it bypasses prompts. Both classes are read before sending, so the channel is chosen
+// up front: a class is attested only when it is the sender's real one, and a receiver that would
+// hold every honest envelope is typed to instead.
+export type PeerChannelChoice =
+  | Readonly<{ kind: "socket"; senderMode?: PeerPermissionClass }>
+  | Readonly<{ kind: "type"; reason: string }>;
+
+export function choosePeerChannel(sender: PeerPermissionClass | undefined, receiver: PeerPermissionClass | undefined): PeerChannelChoice {
+  if (sender !== undefined && (receiver === undefined || receiver === sender)) return { kind: "socket", senderMode: sender };
+  if (receiver === "prompting") return { kind: "socket" };
+  return { kind: "type", reason: `the receiver bypasses prompts and the sender's permission class is ${sender ?? "unknown"}, so Claude would hold the message` };
+}
+
 export type PeerDeliveryOutcome =
   | Readonly<{ kind: "delivered"; msgId: string }>
   | Readonly<{ kind: "read" }>

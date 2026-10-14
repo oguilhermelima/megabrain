@@ -46,7 +46,7 @@ type Scene = { root: string; session: Record<string, unknown>; transcript: strin
 const userEntry = (mode: string) => JSON.stringify({ type: "user", permissionMode: mode, message: { role: "user", content: "go" } });
 
 // The child is a live Claude session with a peer socket; the parent only needs its transcript.
-async function scene(status: "idle" | "busy", parentModes: readonly string[] | undefined): Promise<Scene> {
+async function scene(status: "idle" | "busy", parentModes: readonly string[] | undefined, childMode?: string): Promise<Scene> {
   const root = await mkdtemp("/tmp/mbpeerchild-");
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const session = JSON.parse(await fixture("claude-session-peer.json")) as Record<string, unknown>;
@@ -59,7 +59,7 @@ async function scene(status: "idle" | "busy", parentModes: readonly string[] | u
   const project = join(root, ".claude", "projects", "-Users-example-Workspaces-project");
   await mkdir(project, { recursive: true });
   const transcript = join(project, `${String(session.sessionId)}.jsonl`);
-  await writeFile(transcript, `${JSON.stringify({ type: "user", message: { role: "user", content: "brief" } })}\n`);
+  await writeFile(transcript, `${childMode === undefined ? JSON.stringify({ type: "user", message: { role: "user", content: "brief" } }) : userEntry(childMode)}\n`);
   const parentTranscript = join(project, `${PARENT_SESSION}.jsonl`);
   if (parentModes !== undefined) await writeFile(parentTranscript, parentModes.map((mode) => mode === "" ? JSON.stringify({ type: "assistant" }) : userEntry(mode)).join("\n") + "\n");
   return { root, session, transcript, parentTranscript };
@@ -174,6 +174,42 @@ describe("reply to a Claude child", () => {
     const run = await runReply(current, "codex");
     expect(inbox.connections).toBe(0);
     expect(run.sends).toHaveLength(1);
+  });
+
+  test("a child still in bypass, read from its own transcript, takes a bypass parent's reply through the socket", async () => {
+    const current = await scene("idle", ["bypassPermissions"], "bypassPermissions");
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runReply(current);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="bypass">');
+    expect(run.sends).toHaveLength(0);
+  });
+
+  test("a child that left bypass takes a reply from a parent that also prompts, attesting prompting", async () => {
+    const current = await scene("idle", ["default"], "acceptEdits");
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runReply(current);
+    expect(inbox.connections).toBe(1);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="prompting">');
+    expect(run.sends).toHaveLength(0);
+    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
+  });
+
+  test("a child that left bypass takes a bypass parent's reply through the socket with no class attested", async () => {
+    const current = await scene("idle", ["bypassPermissions"], "default");
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runReply(current);
+    expect(inbox.connections).toBe(1);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain">\n');
+    expect(run.sends).toHaveLength(0);
+  });
+
+  test("a child that prompts takes a reply from a parent that is not Claude with no class attested", async () => {
+    const current = await scene("idle", undefined, "default");
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runReply(current, "codex");
+    expect(inbox.connections).toBe(1);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain">\n');
+    expect(run.sends).toHaveLength(0);
   });
 
   test("a child that drops the message falls back to typing and marks the channel broken", async () => {
