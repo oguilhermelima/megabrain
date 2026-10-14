@@ -19,6 +19,11 @@ export function agyLanguageServerFile(stateRoot: string, dispatchId: string): st
   return join(stateRoot, "agy", `${dispatchId}.json`);
 }
 
+// A parent agy's endpoint is kept per dispatch too, beside the child's, under its own key.
+export function agyParentKey(dispatchId: string): string {
+  return `${dispatchId}.parent`;
+}
+
 export async function recordAgyLanguageServer(stateRoot: string, dispatchId: string, environment: Readonly<Record<string, string | undefined>>): Promise<void> {
   const address = environment.ANTIGRAVITY_LS_ADDRESS;
   const csrfToken = environment.ANTIGRAVITY_CSRF_TOKEN;

@@ -10,7 +10,8 @@ const DEFAULT_POLL_MS = 1_000;
 export type AgyDeliveryInput = Readonly<{
   database: DatabaseHandle;
   stateRoot: string;
-  dispatchId: string;
+  // The dispatch id for a child, agyParentKey(dispatch id) for a parent.
+  endpointKey: string;
   text: string;
   deadline: number;
   pollMs?: number;
@@ -19,10 +20,10 @@ export type AgyDeliveryInput = Readonly<{
   now?: () => number;
 }>;
 
-// Undefined when this child never reported an endpoint, so the caller keeps its typed path.
+// Undefined when this agy never reported an endpoint, so the caller keeps its typed path.
 export async function deliverThroughAgyLanguageServer(input: AgyDeliveryInput): Promise<PeerDeliveryOutcome | undefined> {
   const now = input.now ?? Date.now;
-  const endpoint = await readAgyLanguageServer(input.stateRoot, input.dispatchId);
+  const endpoint = await readAgyLanguageServer(input.stateRoot, input.endpointKey);
   if (endpoint === undefined) return undefined;
   const state = getDeliveryChannel(input.database, "agy", AGY_LS_CHANNEL);
   if (state.kind === "ok" && channelVerdict(state.value, endpoint.version, now()) === "skip") {

@@ -12,6 +12,7 @@ import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, t
 import { formatOneLine } from "../../core/chat-message-format.js";
 import { deliverThroughGrokLeader, GROK_LEADER_CHANNEL } from "../../core/grok-leader-delivery.js";
 import { AGY_LS_CHANNEL, deliverThroughAgyLanguageServer } from "../../core/agy-ls-delivery.js";
+import { agyParentKey } from "../../agents/agy-ls.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -203,6 +204,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       agent: persistedMeta.parentAgent ?? persistedMeta.agent,
       agentPid: persistedMeta.parentAgentPid,
       agentSessionId: persistedMeta.parentAgentSessionId,
+      grokLeaderSocket: persistedMeta.parentGrokLeaderSocket,
+      grokSessionId: persistedMeta.parentGrokSessionId,
     }
     : persistedMeta;
   if (targetKind === "parent-pointer" && meta.runtime === "tmux" && typeof meta.tmuxSession !== "string") {
@@ -267,19 +270,22 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     }
     peerChannel = CLAUDE_PEER_CHANNEL;
   }
-  // A Grok child started with its own leader takes a reply straight into its session queue.
-  if (targetKind === "child-delivery" && meta.agent === "grok" && typeof meta.grokLeaderSocket === "string" && typeof meta.grokSessionId === "string" && text !== "" && dispatch !== "" && sequence > 0) {
+  // A Grok child started with its own leader, or a Grok parent running under one, takes the message
+  // straight into its session queue.
+  const direct = targetKind === "child-delivery" || targetKind === "parent-pointer";
+  if (direct && meta.agent === "grok" && typeof meta.grokLeaderSocket === "string" && typeof meta.grokSessionId === "string" && text !== "" && dispatch !== "" && sequence > 0) {
     peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
     peerChannel = GROK_LEADER_CHANNEL;
   }
-  // An agy child that reported its language server takes the reply into its conversation queue.
-  if (peer === undefined && targetKind === "child-delivery" && meta.agent === "agy" && text !== "" && dispatch !== "" && sequence > 0) {
+  // An agy child that reported its language server, or an agy parent that spawned from one of its
+  // tool shells, takes the message into its conversation queue.
+  if (peer === undefined && direct && meta.agent === "agy" && text !== "" && dispatch !== "" && sequence > 0) {
     const pollMs = Number(environment.MEGABRAIN_AGY_POLL_MS);
     try {
       const agy = await deliverThroughAgyLanguageServer({
         database: database.value,
         stateRoot: root,
-        dispatchId: dispatch,
+        endpointKey: targetKind === "parent-pointer" ? agyParentKey(dispatch) : dispatch,
         text,
         deadline,
         ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),

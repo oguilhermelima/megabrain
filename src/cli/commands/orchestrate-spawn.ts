@@ -22,6 +22,7 @@ import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTm
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
+import { agyParentKey, recordAgyLanguageServer } from "../../agents/agy-ls.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
 import { argvBriefStarted, awaitArgvPrompt, transportTmuxPrompt, type PromptTransportOutcome } from "./spawn-prompt.js";
@@ -1085,6 +1086,13 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
   if (leaderSocket !== undefined) Object.assign(meta, { grokLeaderSocket: leaderSocket });
+  // A parent agy or Grok runs this spawn in one of its own tool shells, the one place its inbound
+  // channel is known: agy's language server (a secret, so a 0600 file), or the leader a Grok session
+  // runs under. A Grok session without a leader has no socket at all, and its mail is typed.
+  if (parentAgent === "agy") await recordAgyLanguageServer(root, agyParentKey(id), environment).catch(() => undefined);
+  if (parentAgent === "grok" && environment.GROK_LEADER_SOCKET && environment.GROK_SESSION_ID) {
+    Object.assign(meta, { parentGrokLeaderSocket: environment.GROK_LEADER_SOCKET, parentGrokSessionId: environment.GROK_SESSION_ID });
+  }
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const existingDispatch = getDispatch(database.value, id);
