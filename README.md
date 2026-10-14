@@ -516,7 +516,11 @@ Three properties do the work:
   (`grok --leader --leader-socket <state>/grok/<hash>.sock`), so a reply enters its session queue
   as a user turn, proven when the leader lists the prompt id; `orchestrate close` stops that
   leader, which otherwise outlives the pane, and the supervisor and every close also stop any
-  leader no unclosed dispatch owns. Other messages to a child wait until the
+  leader no unclosed dispatch owns. An agy child reports its language server (address, CSRF
+  token, conversation) through the environment of the shell its own `megabrain` calls run in;
+  megabrain keeps that in a 0600 file, never in the dispatch record, and queues a reply into the
+  conversation with `SendUserCascadeMessage`, reusing the cascade config the CLI last sent. It
+  counts once the reply shows up in the conversation; `orchestrate close` deletes the token. Other messages to a child wait until the
   child is idle and its composer is empty. A held message stays queued for a detached deliverer,
   which retries for up to ten minutes and stops when `check` pulls the delivery or it is
   acknowledged.
