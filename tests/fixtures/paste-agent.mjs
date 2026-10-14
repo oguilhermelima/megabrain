@@ -5,7 +5,9 @@
 // (MB_PASTE_SWALLOW=<n>: the first n pastes keep only their last 400 bytes) or stay inside a paste
 // that never ends (MB_PASTE_OPEN=<n>: Enter is a newline until ESC [ 201 ~ arrives). Each submission
 // is appended to MB_PASTE_LOG, MB_PASTE_RECEIVE=1 answers it with megabrain received, and
-// MB_PASTE_ECHO=1 prints the last line it got and goes back to an idle composer.
+// MB_PASTE_ECHO=1 prints the last line it got and goes back to an idle composer. Like the real
+// agents, a prompt after -- on its command line is submitted at start and its first line stays on
+// screen as the turn it began; MB_PASTE_ARGV=ignore drops it, as an agent that never submits it.
 
 import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -17,10 +19,12 @@ let swallow = Number(process.env.MB_PASTE_SWALLOW ?? "0");
 let openPastes = Number(process.env.MB_PASTE_OPEN ?? "0");
 let working = false;
 let holdOpen = false;
+let history = "";
 const decoder = new TextDecoder("utf-8");
 
 function render() {
   process.stdout.write("\u001b[2J\u001b[H");
+  if (history !== "") process.stdout.write(`› ${history}\n\n`);
   if (working) {
     process.stdout.write("• Working (1s • esc to interrupt)\nesc to interrupt\n› \n");
     return;
@@ -49,7 +53,7 @@ function submit() {
   draft = "";
   if (process.env.MB_PASTE_ECHO === "1") {
     // Answer like a quick agent: say what arrived, then show an idle composer again.
-    process.stdout.write(`\u001b[2J\u001b[Hagent-response:${lastLine}\n› Ask Codex to do anything\n`);
+    process.stdout.write(`\u001b[2J\u001b[H${history === "" ? "" : `› ${history}\n\n`}agent-response:${lastLine}\n› Ask Codex to do anything\n`);
   } else {
     working = true;
     render();
@@ -61,6 +65,14 @@ process.stdout.write("\u001b[?2004h\u001b[?25l");
 process.stdin.setRawMode(true);
 process.stdin.resume();
 render();
+
+const separator = process.argv.indexOf("--");
+const initialPrompt = separator < 0 ? undefined : process.argv[separator + 1];
+if (initialPrompt !== undefined && initialPrompt !== "" && process.env.MB_PASTE_ARGV !== "ignore") {
+  history = initialPrompt.split("\n")[0] ?? "";
+  draft = initialPrompt;
+  submit();
+}
 
 process.stdin.on("data", (chunk) => {
   pending += decoder.decode(chunk, { stream: true });

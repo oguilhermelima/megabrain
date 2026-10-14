@@ -50,7 +50,7 @@ exit "$status"
 WRAP
 cat > "$fake_bin/codex" <<WRAP
 #!/usr/bin/env bash
-exec node "$root/tests/fixtures/paste-agent.mjs" 2>>"$tmp/agent.err"
+exec node "$root/tests/fixtures/paste-agent.mjs" "\$@" 2>>"$tmp/agent.err"
 WRAP
 chmod +x "$fake_bin/tmux" "$fake_bin/codex"
 export PATH="$fake_bin:$PATH"

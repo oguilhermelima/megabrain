@@ -128,7 +128,7 @@ set_state_dir() {
   # consider the pane ready to receive the prompt, and again after each line it "answers".
   cat >"$state_dir/bin/codex" <<CODEXEOF
 #!/usr/bin/env bash
-MB_PASTE_ECHO=1 exec node "$root/tests/fixtures/paste-agent.mjs"
+MB_PASTE_ECHO=1 exec node "$root/tests/fixtures/paste-agent.mjs" "\$@"
 CODEXEOF
   chmod +x "$state_dir/bin/codex"
   printf '%s\n' \
