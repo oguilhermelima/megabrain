@@ -45,6 +45,8 @@ export function spawnEnvironment(root: string, dispatchId: string, extra: Record
     MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
     MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300",
     MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300",
+    // No fake here starts an agent, so the brief can only arrive through the paste fallback.
+    MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0",
     ...extra,
   };
 }

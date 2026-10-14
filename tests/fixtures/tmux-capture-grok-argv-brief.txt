@@ -1,0 +1,39 @@
+
+  /tmp/argv-probe                                              ⠼ MCP (2/4) │ 1.3K / 256K │ [Dashboard]
+
+
+     ❯ [megabrain dispatch: claude feat/example]                                                             7:26 AM
+
+       Run megabrain received before work. …
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ⠼ Waiting for response… 0.7s                                                                     1.6s ⇣1.32k [stop]
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                                │
+  ╰───────────────────────────────────────────────────────────────────────────── Grok 4.7 (medium) · always-approve ─╯
+
+  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts
+

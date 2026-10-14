@@ -1,0 +1,39 @@
+
+  >_ OpenAI Codex (v0.162.1)
+     /tmp/argv-probe
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› [megabrain dispatch: claude feat/example]
+
+  Run megabrain received before work.
+
+  Dispatch identity: dispatch-fixture
+
+  This is a capture test. Do not run any tool or command. Reply with exactly FIXTURE-OK and nothing else.
+
+
+
+
+
+
+
+
+
+
+
+• Starting MCP servers (3/4): playwright (0s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-6-Luna medium · Context 100% left · weekly 46% left · 5h 0% left
+  ? for shortcuts                                                                             ⚠ 2 warnings · f2 to view

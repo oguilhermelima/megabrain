@@ -1,7 +1,7 @@
 import { grokLeaderSocket } from "../../src/agents/grok-leader.js";
 import { guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
@@ -60,6 +60,9 @@ function environment(root: string, dispatchId: string): Record<string, string> {
     MEGABRAIN_SPAWN_DISPATCH_ID: dispatchId,
     MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300",
     MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300",
+    // These fakes never start an agent, so nothing ever submits the brief from argv; the paste
+    // fallback is what they exercise, without waiting out the grace a real agent gets.
+    MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0",
   };
 }
 
@@ -1909,5 +1912,128 @@ describe("executeSpawn: auto runtime resolution with no --tmux flag", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+// Every agent megabrain launches takes an initial interactive prompt on its command line, so the
+// brief rides in argv from a 0600 file instead of being pasted into a composer (measured
+// 2026-10-14 against Claude 2.1.299, Codex 0.162.1, Grok 1.0.52 and Antigravity 1.3.5 with a
+// 9 KB brief). The paste stays as the fallback for an agent that never submits it.
+describe("initial brief through the agent's argv", () => {
+  const fixture = async (name: string): Promise<string> => readFile(new URL(`../fixtures/tmux-capture-${name}.txt`, import.meta.url), "utf8");
+  const idleFor = async (agent: string): Promise<string> => agent === "grok" ? fixture("grok-idle") : agent === "agy"
+    ? (JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-idle.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } }).result.terminal.tail.join("\n")
+    : idleOutputFor(agent);
+  const promptFile = /"\$\(cat '([^']+)'\)"/;
+
+  type Launch = Readonly<{ command: string; file: string; contents: string; mode: number }>;
+
+  // A pane whose agent shows `before` until the launch line is sent, then the frames in `after`
+  // one capture at a time (the last one repeats). Pastes and the launch line are recorded.
+  async function argvSpawn(agent: string, after: readonly string[], extra: Record<string, string> = {}, onLaunch?: (root: string, id: string) => void) {
+    const root = await mkdtemp("/tmp/mbargv-");
+    const dispatchId = `dispatch-argv-${agent}`;
+    const before = await idleFor(agent);
+    const launches: Launch[] = [];
+    const pastes: string[] = [];
+    let launched = false;
+    let frame = 0;
+    const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const original = getTmux();
+    const fake: TmuxProvider = {
+      ...original,
+      id: "tmux",
+      sendText: async (_pane, text) => {
+        const match = promptFile.exec(text);
+        if (match?.[1] !== undefined) {
+          const file = match[1];
+          launches.push({ command: text, file, contents: await readFile(file, "utf8"), mode: (await stat(file)).mode & 0o777 });
+          launched = true;
+          onLaunch?.(root, dispatchId);
+        }
+        return ok(undefined);
+      },
+      sendKey: async () => ok(undefined),
+      capturePane: async () => {
+        if (!launched) return ok(before);
+        const shown = after[Math.min(frame, after.length - 1)] ?? before;
+        frame += 1;
+        return ok(shown);
+      },
+    };
+    const provider = withComposer(fake, agent === "claude" ? "claude" : "codex");
+    const paste = provider.pasteText;
+    registerTmux({ ...provider, pasteText: async (pane: string, text: string, ...rest: unknown[]) => { pastes.push(text); return paste(pane, text, ...rest); } });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], {
+        ...environment(root, dispatchId),
+        MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
+        MEGABRAIN_PROMPT_ARGV_GRACE_MS: "3000",
+        ...extra,
+      }, process, options(worktree("existing")));
+      const remaining = await readdir(join(root, "prompts")).catch(() => []);
+      return { result, launches, pastes, meta: readMeta(root, dispatchId), remaining, root, dispatchId };
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  for (const [agent, flag, brief] of [["claude", "--", "claude-argv-brief"], ["codex", "--", "codex-argv-brief"], ["grok", "--", "grok-argv-brief"], ["agy", "-i", "agy-argv-brief"]] as const) {
+    test(`${agent} receives the whole brief from a 0600 file on its command line and nothing is pasted`, async () => {
+      const shown = await fixture(brief);
+      const run = await argvSpawn(agent, [shown]);
+      expect(run.result.kind).toBe("ok");
+      expect(run.launches).toHaveLength(1);
+      const launch = run.launches[0];
+      if (launch === undefined) throw new Error("no launch line");
+      expect(launch.file).toBe(join(run.root, "prompts", `${run.dispatchId}.txt`));
+      expect(launch.command.endsWith(` ${flag} "$(cat '${launch.file}')"`)).toBe(true);
+      expect(launch.mode).toBe(0o600);
+      expect(launch.contents.startsWith("[megabrain dispatch:")).toBe(true);
+      expect(launch.contents).toContain(`Dispatch identity: ${run.dispatchId}`);
+      expect(launch.contents.endsWith("do it")).toBe(true);
+      expect(run.pastes).toEqual([]);
+      expect(run.meta).toMatchObject({ promptChannel: "argv", promptTransport: "transported" });
+      // The shell read the file when it launched the agent; it must not outlive the spawn.
+      expect(run.remaining).toEqual([]);
+    });
+  }
+
+  test("a Codex composer still starting up is not taken for a lost brief", async () => {
+    // Codex shows an idle composer for about four seconds while its MCP servers start, and only
+    // then submits the argv prompt (measured). Readiness alone would call that idle.
+    const pending = await fixture("codex-argv-pending");
+    const brief = await fixture("codex-argv-brief");
+    const run = await argvSpawn("codex", [...Array.from({ length: 15 }, () => pending), brief]);
+    expect(run.result.kind).toBe("ok");
+    expect(run.pastes).toEqual([]);
+    expect(run.meta).toMatchObject({ promptChannel: "argv" });
+  });
+
+  test("a running turn proves the brief arrived before its header is on screen", async () => {
+    // Antigravity starts working a moment before it echoes the brief (measured).
+    const run = await argvSpawn("agy", [await fixture("agy-argv-working")]);
+    expect(run.result.kind).toBe("ok");
+    expect(run.pastes).toEqual([]);
+    expect(run.meta).toMatchObject({ promptChannel: "argv" });
+  });
+
+  test("a receipt proves the brief arrived even when the pane never shows it", async () => {
+    const run = await argvSpawn("codex", [codexIdleOutput], {}, (root, id) => appendReceived(root, id));
+    expect(run.result.kind).toBe("ok");
+    expect(run.pastes).toEqual([]);
+    expect(run.meta).toMatchObject({ promptChannel: "argv", promptReceipt: "received", promptState: "confirmed" });
+  });
+
+  test("an agent that never submits the argv brief within the grace gets it pasted once", async () => {
+    const run = await argvSpawn("codex", [codexIdleOutput], { MEGABRAIN_PROMPT_ARGV_GRACE_MS: "400" });
+    expect(run.result.kind).toBe("ok");
+    expect(run.pastes).toHaveLength(1);
+    expect(run.pastes[0]?.startsWith("[megabrain dispatch:")).toBe(true);
+    expect(run.meta).toMatchObject({ promptChannel: "paste" });
+    expect(run.remaining).toEqual([]);
   });
 });

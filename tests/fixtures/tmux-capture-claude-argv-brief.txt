@@ -1,0 +1,39 @@
+
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   /tmp/argv-probe
+
+⚠ Your login expires in 1 day · run /login to renew
+
+❯ [megabrain dispatch: claude feat/example]
+
+  Run megabrain received before work.
+
+  Dispatch identity: dispatch-fixture
+
+  This is a capture test. Do not run any tool or command. Reply with exactly FIXTURE-OK and nothing else.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+✶ Propagating… (running UserPromptSubmit hooks… 5/6 · 2s)
+                                                                                                    ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 1M (Medium) │ 0/1M ctx
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents
