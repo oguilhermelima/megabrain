@@ -310,6 +310,9 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   }
   const peerFallback = peer?.kind === "fallback" ? peer.reason : undefined;
   const unsupportedHost = meta.runtime === "host" && meta.childHost === "superset";
+  // A local parent has no terminal: past its direct channel there is nothing to type into, and the
+  // Stop hook and orchestrate watch surface the mail instead.
+  const localParent = targetKind === "parent-pointer" && meta.runtime === "host" && meta.childHost === "local";
   if (peer?.kind === "delivered") {
     outcome = "delivered";
     transport = "socket";
@@ -322,6 +325,9 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   } else if (unsupportedHost) {
     outcome = "failed";
     transport = "deferred";
+  } else if (localParent) {
+    outcome = "failed";
+    transport = "failed";
   } else if (text !== "" && dispatch !== "" && sequence > 0) {
     let result: Awaited<ReturnType<typeof deliverWhenIdle>>;
     try {
@@ -401,7 +407,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
   }
   const unavailable = outcome === "unavailable";
-  const reason = unsupportedHost ? "superset-unverifiable-composer" : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
+  const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "read" && peer?.kind !== "aborted";
+  const reason = unsupportedHost ? "superset-unverifiable-composer" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
   setDeliveryTransport(database.value, dispatch, sequence, transport, unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
     ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
