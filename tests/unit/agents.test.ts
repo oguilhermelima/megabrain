@@ -33,6 +33,18 @@ describe("agent registry", () => {
     });
   });
 
+  test("a Claude child always launches in bypass: no --agent-arg may change its permission mode", () => {
+    for (const agentArgs of [["--permission-mode", "plan"], ["--permission-mode=default"], ["--permission-mode", "bypassPermissions"]]) {
+      const line = commandLine("claude", { model: null, effort: null, browser: false, agentArgs });
+      expect(line.kind).toBe("failed");
+      expect(line.kind === "ok" ? "" : line.error).toContain("--permission-mode");
+    }
+    expect(commandLine("claude", { model: null, effort: null, browser: false, agentArgs: ["--add-dir", "/tmp/x"] })).toEqual({
+      kind: "ok",
+      value: "claude --dangerously-skip-permissions --add-dir /tmp/x",
+    });
+  });
+
   test("browser configuration and agent arguments remain appended", () => {
     expect(commandLine("codex", { model: null, effort: null, browser: false, agentArgs: ["--extra-flag", "value"] })).toEqual({
       kind: "ok",

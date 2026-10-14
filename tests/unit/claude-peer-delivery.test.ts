@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, listDeliveries, listDeliveryChannels, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { claudePeerContent, resolveClaudePeer, sendClaudePeer } from "../../src/agents/claude-peer.js";
 import { executeDatabase } from "../../src/cli/commands/db.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { channelVerdict, nextRetryAt } from "../../src/core/delivery-channel.js";
-import { senderPermissionClass } from "../../src/core/claude-peer-delivery.js";
+import { choosePeerChannel, senderPermissionClass } from "../../src/core/claude-peer-delivery.js";
 import { failed, ok } from "../../src/core/result.js";
 
 const fixture = (name: string) => readFile(new URL(`../fixtures/${name}`, import.meta.url), "utf8");
@@ -122,6 +122,8 @@ async function scene(status: "idle" | "busy" = "idle", options: { protocol?: num
   return { root, session, transcript, token: (JSON.parse(key) as { peerToken: string }).peerToken };
 }
 
+const modeEntry = (mode: string) => JSON.stringify({ type: "user", permissionMode: mode, message: { role: "user", content: "go" } });
+
 // Claude writes a consumed peer message to the transcript with origin.msg_id.
 const consume = (current: Scene) => async (frames: Frame[]) => {
   const message = frames.find((frame) => frame.type === "user");
@@ -182,6 +184,31 @@ describe("claude peer socket", () => {
     expect(senderPermissionClass("unknown-agent")).toBeUndefined();
   });
 
+  // Claude holds a peer message when the attested class differs from its own, or when none is
+  // attested and it bypasses prompts. Both classes are known before sending, so the channel is
+  // chosen up front instead of sending, waiting on a hold and typing afterwards.
+  test("matching classes go through the socket attesting that class", () => {
+    expect(choosePeerChannel("bypass", "bypass")).toEqual({ kind: "socket", senderMode: "bypass" });
+    expect(choosePeerChannel("prompting", "prompting")).toEqual({ kind: "socket", senderMode: "prompting" });
+  });
+
+  test("a receiver that prompts takes the message with no class attested, which it does not hold", () => {
+    expect(choosePeerChannel("bypass", "prompting")).toEqual({ kind: "socket" });
+    expect(choosePeerChannel(undefined, "prompting")).toEqual({ kind: "socket" });
+  });
+
+  test("a receiver that bypasses prompts is typed to when the sender's class differs or is unknown", () => {
+    const prompting = choosePeerChannel("prompting", "bypass");
+    expect(prompting.kind).toBe("type");
+    expect(prompting.kind === "type" ? prompting.reason : "").toContain("permission class");
+    expect(choosePeerChannel(undefined, "bypass").kind).toBe("type");
+    expect(choosePeerChannel(undefined, undefined).kind).toBe("type");
+  });
+
+  test("a receiver whose class cannot be read gets the sender's own class", () => {
+    expect(choosePeerChannel("bypass", undefined)).toEqual({ kind: "socket", senderMode: "bypass" });
+  });
+
   test("a missing socket fails the send", async () => {
     const current = await scene();
     const target = await resolveClaudePeer(current.root, 41414, String(current.session.sessionId));
@@ -190,10 +217,10 @@ describe("claude peer socket", () => {
   });
 });
 
-async function runWorker(current: Scene, env: Record<string, string> = {}) {
+async function runWorker(current: Scene, env: Record<string, string> = {}, child: Record<string, unknown> = {}) {
   const db = stateDatabase({ HOME: current.root, MEGABRAIN_STATE_DIR: current.root });
   if (db.kind !== "ok") throw new Error(db.error);
-  const meta = { agent: "codex", agentPid: 1, parentAgent: "claude", parentAgentPid: 41414, parentAgentSessionId: current.session.sessionId, parentHost: "orca", parentWorkspaceId: "workspace", parentTerminalId: "parent-terminal" };
+  const meta = { agent: "codex", agentPid: 1, parentAgent: "claude", parentAgentPid: 41414, parentAgentSessionId: current.session.sessionId, parentHost: "orca", parentWorkspaceId: "workspace", parentTerminalId: "parent-terminal", ...child };
   createDispatch(db.value, { dispatchId: "d-peer", state: "running", ...meta });
   appendMessage(db.value, "d-peer", { from: "child", type: "done", text: "finished" }, {
     outbox: { id: "ob-peer", targetKind: "parent-pointer", target: "orca:parent-terminal", payload: { dispatchId: "d-peer", sequence: 1, meta, pointer: "megabrain check", fullMessage: "✅ codex · lane finished" } },
@@ -242,6 +269,38 @@ describe("parent notice to a Claude parent", () => {
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
     await runWorker(current);
     expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="bypass">');
+  });
+
+  test("a parent outside bypass takes a bypass child's notice through the socket with no class attested", async () => {
+    const current = await scene();
+    await appendFile(current.transcript, `${modeEntry("default")}\n`);
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runWorker(current);
+    expect(inbox.connections).toBe(1);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain">\n');
+    expect(run.sends).toHaveLength(0);
+    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
+  });
+
+  test("a Claude child that left bypass is typed to a bypass parent without trying the socket", async () => {
+    const current = await scene();
+    await appendFile(current.transcript, `${modeEntry("bypassPermissions")}\n`);
+    await writeFile(join(dirname(current.transcript), "child-session-0001.jsonl"), `${modeEntry("acceptEdits")}\n`);
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runWorker(current, {}, { agent: "claude", agentSessionId: "child-session-0001" });
+    expect(inbox.connections).toBe(0);
+    expect(run.sends).toHaveLength(1);
+    expect(run.channel).toBeUndefined();
+  });
+
+  test("a Claude child still in bypass attests bypass to a bypass parent", async () => {
+    const current = await scene();
+    await appendFile(current.transcript, `${modeEntry("bypassPermissions")}\n`);
+    await writeFile(join(dirname(current.transcript), "child-session-0001.jsonl"), `${modeEntry("bypassPermissions")}\n`);
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runWorker(current, {}, { agent: "claude", agentSessionId: "child-session-0001" });
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="bypass">');
+    expect(run.sends).toHaveLength(0);
   });
 
   test("a message the parent holds for review is typed at once and does not mark the channel broken", async () => {
