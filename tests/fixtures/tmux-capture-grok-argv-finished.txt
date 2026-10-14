@@ -1,0 +1,39 @@
+
+  /tmp/argv-probe                                                             38K / 256K │ [Dashboard]
+
+
+     ❯ [megabrain dispatch: claude feat/example]                                                             7:26 AM
+
+       Run megabrain received before work. …
+
+
+     ◆ Thought for 0.3s
+
+     FIXTURE-OK                                                                                              7:26 AM
+
+     Worked for 7.8s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                                │
+  ╰───────────────────────────────────────────────────────────────────────────── Grok 4.7 (medium) · always-approve ─╯
+
+  Shift+Tab:mode  │  Ctrl+x:shortcuts
+

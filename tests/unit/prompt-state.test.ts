@@ -64,6 +64,22 @@ describe("prompt state from the pane", () => {
   });
 });
 
+// Grok shows a long user prompt as its first two lines and an ellipsis (measured on 1.0.52), so a
+// finished turn never shows the prompt's tail. Its first line is the dispatch header, which a fresh
+// pane shows only once that brief was submitted.
+describe("a brief Grok shows collapsed", () => {
+  const brief = "[megabrain dispatch: claude feat/example]\n\nRun megabrain received before work.\n\nDispatch identity: dispatch-fixture\n\nThis is a capture test. Do not run any tool or command. Reply with exactly FIXTURE-OK and nothing else.";
+
+  test("a finished turn under the brief's header is delivered", () => {
+    expect(classifyPromptState({ agent: "grok", frame: grokFrame("argv-finished"), prompt: brief, received: false }).state).toBe("delivered");
+  });
+
+  test("another dispatch's header proves nothing", () => {
+    const other = brief.replace("[megabrain dispatch: claude feat/example]", "[megabrain dispatch: codex feat/other]");
+    expect(classifyPromptState({ agent: "grok", frame: grokFrame("argv-finished"), prompt: other, received: false }).state).toBe("lost");
+  });
+});
+
 describe("prompt findings", () => {
   test("queued and delivered-working are never findings, however long they last", () => {
     for (const state of ["queued", "delivered-working", "delivered", "received", "unknown"] as const) {
