@@ -12,6 +12,7 @@ import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSess
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { ownedGrokLeaders, stopGrokLeader, sweepGrokLeaders } from "../../agents/grok-leader.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { forgetAgyLanguageServer } from "../../agents/agy-ls.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -185,6 +186,8 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   };
   const updated = mutateDispatch(database.value, dispatchId, () => next);
   if (updated.kind !== "ok") return updated;
+  // The agy language server token dies with that agy; keeping it would only leave a secret behind.
+  await forgetAgyLanguageServer(resolveStateDirectory(environment), dispatchId);
   const remaining = listDispatches(database.value);
   if (remaining.kind === "ok") await sweepGrokLeaders(resolveStateDirectory(environment), ownedGrokLeaders(remaining.value), process);
   return ok(closeOutput(dispatchId, parsed.value.json, runtime, host, outcome));

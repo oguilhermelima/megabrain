@@ -1,3 +1,4 @@
+import { recordAgyLanguageServer } from "../../agents/agy-ls.js";
 import { ancestorIdentity, stableAncestor } from "../../adapters/ancestor.js";
 import { agentSessionOf } from "../../adapters/agent-session.js";
 import { readdir, realpath } from "node:fs/promises";
@@ -373,6 +374,9 @@ export async function updateMeta(root: string, dispatch: string, type: string, e
     const panePid = await getTmux().panePid(tmuxPane, processAdapter);
     if (panePid.kind === "ok" && /^\d+$/.test(panePid.value.trim())) agentPid = Number(panePid.value.trim());
   }
+  // Every megabrain verb an agy child runs comes from a tool shell that names its language server;
+  // the latest one is kept so a restarted agy is reachable again on its next report.
+  if (agent === "agy") await recordAgyLanguageServer(root, dispatch, environment).catch(() => undefined);
   let refused: Result<void> | undefined;
   const updated = mutateDispatch(database.value, dispatch, (current) => {
     // A dispatch whose only problem is a receipt failure is still a live child: whatever it reports

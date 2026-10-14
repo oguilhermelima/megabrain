@@ -11,6 +11,7 @@ import { composerReadback } from "../../core/composer-proof.js";
 import { CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
 import { formatOneLine } from "../../core/chat-message-format.js";
 import { deliverThroughGrokLeader, GROK_LEADER_CHANNEL } from "../../core/grok-leader-delivery.js";
+import { AGY_LS_CHANNEL, deliverThroughAgyLanguageServer } from "../../core/agy-ls-delivery.js";
 import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -270,6 +271,26 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   if (targetKind === "child-delivery" && meta.agent === "grok" && typeof meta.grokLeaderSocket === "string" && typeof meta.grokSessionId === "string" && text !== "" && dispatch !== "" && sequence > 0) {
     peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
     peerChannel = GROK_LEADER_CHANNEL;
+  }
+  // An agy child that reported its language server takes the reply into its conversation queue.
+  if (peer === undefined && targetKind === "child-delivery" && meta.agent === "agy" && text !== "" && dispatch !== "" && sequence > 0) {
+    const pollMs = Number(environment.MEGABRAIN_AGY_POLL_MS);
+    try {
+      const agy = await deliverThroughAgyLanguageServer({
+        database: database.value,
+        stateRoot: root,
+        dispatchId: dispatch,
+        text,
+        deadline,
+        ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),
+        isRead: async () => readWasPulled(root, dispatch, sequence),
+        renew: renewLeases,
+      });
+      if (agy !== undefined) { peer = agy; peerChannel = AGY_LS_CHANNEL; }
+    } catch {
+      // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.
+      peer = { kind: "aborted" };
+    }
   }
   // A fallback is logged on the typing attempts that follow, as peerFallback.
   if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "read")) {
