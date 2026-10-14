@@ -194,13 +194,13 @@ describe("reply to a Claude child", () => {
     expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
   });
 
-  test("a child that left bypass is typed to from a bypass parent without trying the socket", async () => {
+  test("a child that left bypass takes a bypass parent's reply through the socket with no class attested", async () => {
     const current = await scene("idle", ["bypassPermissions"], "default");
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
     const run = await runReply(current);
-    expect(inbox.connections).toBe(0);
-    expect(run.sends).toHaveLength(1);
-    expect(run.channel).toBeUndefined();
+    expect(inbox.connections).toBe(1);
+    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain">\n');
+    expect(run.sends).toHaveLength(0);
   });
 
   test("a child that prompts takes a reply from a parent that is not Claude with no class attested", async () => {
