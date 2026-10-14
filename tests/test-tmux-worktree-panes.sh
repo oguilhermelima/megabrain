@@ -78,7 +78,7 @@ EOF
 chmod +x "$fake_bin/tmux"
 cat > "$fake_bin/codex" <<EOF
 #!/usr/bin/env bash
-exec node "$root/tests/fixtures/paste-agent.mjs"
+exec node "$root/tests/fixtures/paste-agent.mjs" "\$@"
 EOF
 chmod +x "$fake_bin/codex"
 export MEGABRAIN_STATE_DIR="$state"

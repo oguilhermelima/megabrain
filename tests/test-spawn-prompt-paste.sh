@@ -55,7 +55,7 @@ WRAP
 chmod +x "$fake_bin/tmux"
 cat > "$fake_bin/codex" <<WRAP
 #!/usr/bin/env bash
-exec node "$root/tests/fixtures/paste-agent.mjs" 2>>"$tmp/agent.err"
+exec node "$root/tests/fixtures/paste-agent.mjs" "\$@" 2>>"$tmp/agent.err"
 WRAP
 chmod +x "$fake_bin/codex"
 export PATH="$fake_bin:$PATH"
@@ -65,6 +65,9 @@ printf '. "$HOME/.bashrc"\n' > "$HOME/.bash_profile"
 tmux_cmd() { tmux -f /dev/null -L "$socket" "$@"; }
 export MB_PASTE_LOG="$log" MB_PASTE_RECEIVE=1 MB_MEGABRAIN="$root/.build/megabrain"
 export MEGABRAIN_AGENT_READY_TIMEOUT_MS=15000
+# This contract is about the paste: the stand-in drops the brief from its command line, and spawn
+# falls back to pasting it without waiting out the grace a real agent gets.
+export MB_PASTE_ARGV=ignore MEGABRAIN_PROMPT_ARGV_GRACE_MS=0
 unset TMUX TMUX_PANE MEGABRAIN_SESSION_HOST MEGABRAIN_SESSION_ID MEGABRAIN_DISPATCH_ID
 
 tmux_cmd new-session -d -s parent -c "$tmp" -x 160 -y 50 bash

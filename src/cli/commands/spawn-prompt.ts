@@ -10,12 +10,19 @@ const CLEAR_ATTEMPTS = 5;
 const MAX_CLEAR_PRESSES = 400;
 const DEFAULT_VERIFY_TIMEOUT_MS = 2000;
 const DEFAULT_SUBMIT_TIMEOUT_MS = 3000;
+// Codex shows an idle composer for about four seconds while its MCP servers start before it
+// submits an argv prompt (measured 2026-10-14), so an idle pane is no proof the brief was dropped.
+const DEFAULT_ARGV_GRACE_MS = 30_000;
+// The first line of every brief (see finalPrompt); a fresh pane shows it only once the agent
+// has submitted the brief as a turn.
+const BRIEF_HEADER = "[megabrain dispatch:";
 
 export type PromptTransportOutcome = Extract<SpawnStepOutcome, { readonly kind: "prompt-transport" }>;
 
 export type SpawnPromptEnvironment = TmuxSendEnvironment & Readonly<{
   readonly MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS?: string;
   readonly MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS?: string;
+  readonly MEGABRAIN_PROMPT_ARGV_GRACE_MS?: string;
 }>;
 
 type PromptTarget = Readonly<{
@@ -160,4 +167,25 @@ export async function transportTmuxPrompt(target: PromptTarget, receiptSeen: () 
   if (receiptSeen()) return { kind: "prompt-transport", status: "delivered" };
   if (first.value || await paneShowsTurn(target)) return turnWithoutReceipt();
   return { kind: "prompt-transport", status: "awaiting-receipt" };
+}
+
+// Whether a pane shows that its agent took the brief from argv: the brief echoed as a turn, or a
+// turn running, which nothing but that brief starts in a freshly launched agent.
+export function argvBriefStarted(agent: string, frame: string): boolean {
+  if (frame.includes(BRIEF_HEADER)) return true;
+  const status = classifyLiveness(agent, frame).status;
+  return status === "working" || status === "pending-check";
+}
+
+// Waits for proof that the agent submitted the brief it was launched with. Undefined means the
+// grace passed with no receipt, no echoed brief and no turn: the caller pastes it instead.
+export async function awaitArgvPrompt(target: Pick<PromptTarget, "pane" | "agent" | "environment" | "process">, receiptSeen: () => boolean): Promise<PromptTransportOutcome | undefined> {
+  const deadline = Date.now() + milliseconds(target.environment.MEGABRAIN_PROMPT_ARGV_GRACE_MS, DEFAULT_ARGV_GRACE_MS);
+  while (true) {
+    if (receiptSeen()) return { kind: "prompt-transport", status: "delivered" };
+    const captured = await getTmux().capturePane(target.pane, 200, target.process, true);
+    if (captured.kind === "ok" && argvBriefStarted(target.agent, captured.value)) return receiptSeen() ? { kind: "prompt-transport", status: "delivered" } : turnWithoutReceipt();
+    if (Date.now() >= deadline) return undefined;
+    await sleep(POLL_MS);
+  }
 }

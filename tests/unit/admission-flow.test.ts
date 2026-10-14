@@ -32,7 +32,7 @@ async function queuedSpawn(dispatchId: string, policy: { maxAgents?: number; max
   }, { resolveWorktree: async () => ok({ ...existingWorktree, path: repo, branch: "feat/admission-flow" }) });
   return { root, repo, run, freeMachine: () => { machineFreed = true; }, environment: {
     MEGABRAIN_STATE_DIR: root, MEGABRAIN_SESSION_ID: "parent-terminal", MEGABRAIN_SESSION_HOST: "tmux",
-    MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300", MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300",
+    MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS: "300", MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS: "300", MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0",
   } };
 }
 

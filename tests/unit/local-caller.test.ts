@@ -119,7 +119,7 @@ describe("orchestrate spawn from a plain terminal", () => {
     try {
       const result = await executeSpawn(
         ["--worktree", worktree, "--agent", "codex", "--prompt", "keep going", "--tmux", "true", "--json"],
-        { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-local-1", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0", ...environment },
+        { MEGABRAIN_STATE_DIR: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", MEGABRAIN_SPAWN_DISPATCH_ID: "dispatch-local-1", MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0", ...environment },
         process,
       );
       return { result, root };

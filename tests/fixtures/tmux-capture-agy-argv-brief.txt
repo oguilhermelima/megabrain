@@ -1,0 +1,39 @@
+
+      ▄▀▀▄        Antigravity CLI 1.3.5
+     ▀▀▀▀▀▀       user@example.com (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Medium)
+   ▄▀▀    ▀▀▄     ~/Workspaces/megabrain
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> [megabrain dispatch: claude feat/example]
+
+  Run megabrain received before work.
+
+  Dispatch identity: dispatch-fixture
+
+  This is a capture test. Do not run any tool or command. Reply with exactly FIXTURE-OK and nothing else.
+⣾  Generating...
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Gemini 3.8 Flash (Medium) │ 0 ctx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

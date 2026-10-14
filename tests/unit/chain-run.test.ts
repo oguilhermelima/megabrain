@@ -39,7 +39,8 @@ function environment(root: string, extra: Record<string, string | undefined> = {
   // MEGABRAIN_ROOT points at a directory with no .megabrain/models.json, so
   // validateConfig treats the registry as absent and skips model validation —
   // these tests exercise chain selection and step-walking, not the model registry.
-  return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, ...extra };
+  // No fake here starts an agent, so a spawned brief can only arrive through the paste fallback.
+  return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ...extra };
 }
 
 function readDispatch(root: string, id: string): Record<string, unknown> {

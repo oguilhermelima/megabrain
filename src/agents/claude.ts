@@ -15,6 +15,7 @@ export const claude: Agent = {
   classifyLiveness: (output) => classifyMarkers(markers, output),
   contextSource: "claude-transcript",
   compactCommand: "/compact",
+  initialPromptFlag: "--",
   commandLine: ({ model, effort, agentArgs }) => {
     const parts = ["claude", "--dangerously-skip-permissions"];
     if (model !== null) parts.push("--model", doubleQuote(model));

@@ -34,9 +34,16 @@ function tailOf(prompt: string): string {
   return squash(prompt).slice(-80);
 }
 
+// Grok shows a long user prompt as its first two lines and an ellipsis, so a brief is also known by
+// its dispatch header, which names the dispatch and is on screen only once that brief was submitted.
+const BRIEF_HEADER = /^\[megabrain dispatch: [^\n]+\]$/;
+
 function shows(text: string, prompt: string): boolean {
   const tail = tailOf(prompt);
-  return tail.length >= Math.min(MIN_TAIL, squash(prompt).length) && tail !== "" && squash(text).includes(tail);
+  const seen = squash(text);
+  if (tail.length >= Math.min(MIN_TAIL, squash(prompt).length) && tail !== "" && seen.includes(tail)) return true;
+  const header = prompt.split("\n")[0] ?? "";
+  return BRIEF_HEADER.test(header) && seen.includes(squash(header));
 }
 
 function composerHoldsPrompt(agent: string, frame: string, prompt: string): boolean {

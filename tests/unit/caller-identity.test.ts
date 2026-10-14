@@ -690,7 +690,7 @@ describe("megabrain done from the parent that spawned a tmux dispatch is not att
     });
     try {
       const worktreeDir = await mkdtemp(`${tmpdir()}/megabrain-done-no-self-worktree-`);
-      const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "coord-orca-term" };
+      const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ORCA_TERMINAL_HANDLE: "coord-orca-term" };
       const process = fakeProcess((command, args) => {
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%41\n", stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });

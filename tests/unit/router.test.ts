@@ -98,9 +98,10 @@ describe("CLI router", () => {
       kind: "ok",
       value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n"
         + "\nEnvironment:\n"
+        + "  MEGABRAIN_PROMPT_ARGV_GRACE_MS      Milliseconds to wait for an agent to submit the brief on its command line before pasting it (default 30000).\n"
         + "  MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS  Milliseconds to wait for the pasted prompt to show whole in the composer (default 2000).\n"
         + "  MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS  Milliseconds to wait for a turn to start after each Enter (default 3000).\n"
-        + "    Spawn has no receipt deadline. Once the prompt is pasted and submitted it returns, and a missing\n"
+        + "    Spawn has no receipt deadline. Once the agent has taken the prompt it returns, and a missing\n"
         + "    megabrain received is only recorded; the supervisor judges the prompt from the terminal.\n",
     });
   });

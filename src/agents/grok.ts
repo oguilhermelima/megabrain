@@ -20,6 +20,7 @@ export const grok: Agent = {
   contextSource: "grok-session",
   firstRunDialog: trustDialog,
   firstRunDialogKey: "y",
+  initialPromptFlag: "--",
   commandLine: ({ model, effort, agentArgs }) => {
     const parts = ["grok", "--always-approve"];
     if (model !== null) parts.push("-m", doubleQuote(model));
