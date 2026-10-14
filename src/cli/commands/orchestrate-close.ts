@@ -10,7 +10,8 @@ import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
 import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
-import { stopGrokLeader } from "../../agents/grok-leader.js";
+import { ownedGrokLeaders, stopGrokLeader, sweepGrokLeaders } from "../../agents/grok-leader.js";
+import { resolveStateDirectory } from "../../core/state.js";
 
 type RecordValue = Record<string, unknown>;
 const text = (value: unknown): string => typeof value === "string" ? value : "";
@@ -184,5 +185,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   };
   const updated = mutateDispatch(database.value, dispatchId, () => next);
   if (updated.kind !== "ok") return updated;
+  const remaining = listDispatches(database.value);
+  if (remaining.kind === "ok") await sweepGrokLeaders(resolveStateDirectory(environment), ownedGrokLeaders(remaining.value), process);
   return ok(closeOutput(dispatchId, parsed.value.json, runtime, host, outcome));
 }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../adapters/proc.js";
@@ -117,6 +117,24 @@ export async function stopGrokLeader(socketPath: string, process: ProcessAdapter
   const pid = (await readFile(lock, "utf8").catch(() => "")).trim();
   if (!/^\d+$/.test(pid)) return;
   const command = await process.run("ps", ["-o", "command=", "-p", pid]);
-  if (command.kind !== "ok" || !/\bgrok\b.*\bagent leader\b/.test(command.value.stdout)) return;
-  await process.run("kill", [pid]);
+  if (command.kind === "ok" && /\bgrok\b.*\bagent leader\b/.test(command.value.stdout)) await process.run("kill", [pid]);
+  // Whether it was killed now or died earlier, nothing listens there any more.
+  await rm(lock, { force: true });
+  await rm(socketPath, { force: true });
+}
+
+// The leaders still owned: those recorded by a dispatch that has not been closed.
+export function ownedGrokLeaders(dispatches: readonly Readonly<Record<string, unknown>>[]): Set<string> {
+  return new Set(dispatches.flatMap((record) => record.state !== "closed" && typeof record.grokLeaderSocket === "string" ? [record.grokLeaderSocket] : []));
+}
+
+// A leader whose dispatch was archived, pruned or lost without a close would run forever, so the
+// supervisor and every close stop each leader under <state>/grok that no unclosed dispatch owns.
+export async function sweepGrokLeaders(stateRoot: string, owned: ReadonlySet<string>, process: ProcessAdapter): Promise<void> {
+  const directory = join(stateRoot, "grok");
+  const names = await readdir(directory).catch(() => [] as string[]);
+  for (const name of names.filter((entry) => entry.endsWith(".lock"))) {
+    const socket = join(directory, name.replace(/\.lock$/, ".sock"));
+    if (!owned.has(socket)) await stopGrokLeader(socket, process);
+  }
 }
