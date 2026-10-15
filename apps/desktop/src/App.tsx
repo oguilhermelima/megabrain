@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/api'
 import { Spinner } from '@/components/ui'
-import { Home } from '@/home/Home'
+import { Advanced } from '@/advanced/Advanced'
 import { Onboarding } from '@/onboarding/Onboarding'
 
 // Setup opens on its own until megabrain has been installed once on this machine; the CLI's install
@@ -23,5 +23,5 @@ export function App() {
       </div>
     )
   if (screen === 'setup') return <Onboarding onFinish={() => setScreen('home')} />
-  return <Home onSetup={() => setScreen('setup')} />
+  return <Advanced onSetup={() => setScreen('setup')} />
 }
