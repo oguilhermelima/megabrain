@@ -34,6 +34,7 @@ import { join } from "node:path";
 import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.js";
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
 import { readMachineResources } from "../../core/resources.js";
+import { registerMegabrainRepository } from "../../core/project-registry.js";
 
 const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -873,6 +874,8 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
+  const registeredRepository = await registerMegabrainRepository(worktree.path, environment, process);
+  if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) return registeredRepository;
   prompt = finalPrompt(options, id);
   const resolvedPromptBudget = validatePromptBudget(prompt, selectedRuntime);
   if (resolvedPromptBudget.kind !== "ok") return resolvedPromptBudget;

@@ -113,7 +113,7 @@ describe("SQLite database", () => {
         expect(migrated.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
         insertDispatch(migrated.db, { dispatchId: "queued-spawn", state: "queued", parentSessionId: "parent", queuedSpawnArgs: ["--agent", "codex"] });
         expect(getDispatch(migrated.db, "queued-spawn")?.state).toBe("queued");
-        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(13);
+        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(15);
       } finally { migrated.close(); }
     });
   });

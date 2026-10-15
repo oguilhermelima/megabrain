@@ -31,6 +31,7 @@ import { resolveCaller } from "./queue-write.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { openDatabase, withWrite } from "../../db/db.js";
 import { insertWorktree, finishWorktree } from "../../db/queries/worktrees.js";
+import { registerMegabrainRepository } from "../../core/project-registry.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 async function run(
@@ -982,6 +983,10 @@ export async function executeWorktreeCreate(
     }));
     if (stored.kind !== "ok") return failed(`worktree created at ${path}, but registry write failed: ${stored.error}`);
   } finally { registry.value.close(); }
+  const registeredRepository = await registerMegabrainRepository(repo.value, environment, process);
+  if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) {
+    return failed(`worktree created at ${path}, but project registry write failed: ${registeredRepository.error}`);
+  }
   return ok(output(result, value.json));
 }
 export async function executeWorktreeFinish(

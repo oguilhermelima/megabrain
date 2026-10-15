@@ -25,9 +25,27 @@ outlives the terminal it was typed in.
   its own pane, and closing a child removes that pane outright.
 - 🌱 **Worktrees both orchestrators can see.** One `git worktree add` registered on both sides, so
   a card and a checkout never disagree.
+- 🗂️ **A project list that follows your work.** megabrain keeps its own repository registry and
+  shows each checkout, worktree, pull request, and recent agent session together.
 - 🔁 **Recoverable by design.** Deliveries replay until acknowledged, a stalled child is reported
   at its own turn end, and `reconcile` settles a dispatch against reality.
 - 🧹 **Nothing accumulates.** `prune` archives finished dispatches and refuses to touch a live one.
+
+## Projects and repositories
+
+The project registry is stored in megabrain's SQLite state. It adds a repository when megabrain
+works in it, backfills repositories from megabrain's own dispatch and worktree history on first
+use, or imports one when you ask. It does not read repository lists from Orca.
+
+```sh
+megabrain repo add ~/code/api
+megabrain repo clone owner/project --into ~/code
+megabrain repo github --json
+megabrain projects --json
+```
+
+`projects` lists the main checkout first, followed by its Git worktrees, pull requests, and agent
+sessions. Removing a registry entry leaves the checkout and its files in place.
 
 ## Install
 

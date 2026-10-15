@@ -45,6 +45,8 @@ import { executeStatus } from "./commands/status.js";
 import { executeResources } from "./commands/resources.js";
 import { executeSettings } from "./commands/settings.js";
 import { executeProc } from "../core/proc-runner.js";
+import { executeRepository } from "./commands/repository.js";
+import { executeProjects } from "./commands/projects.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -113,7 +115,7 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "settings"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "settings"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -147,6 +149,8 @@ async function routeCommand(
   if (command === "resources") return executeResources(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "settings") return executeSettings(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "proc") return executeProc(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "repo") return executeRepository(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "projects") return executeProjects(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "model") {
     return executeModel(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
