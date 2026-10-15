@@ -274,8 +274,8 @@ megabrain orchestrate adopt <id> [--force] --json # take ownership of a dispatch
 megabrain orchestrate reply <dispatch-id-or-suffix> --text "..."   # answer a question
 megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--close] # mark it consumed and optionally release the terminal
 megabrain orchestrate read <dispatch-id-or-suffix> # what the agent actually did
-megabrain orchestrate transcript <dispatch-id-or-suffix> --json # ordered chat, thinking and tool events
-megabrain orchestrate transcript --session claude:<session-id> --json # read a parent session directly
+megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] --json # ordered chat, thinking and tool events
+megabrain orchestrate transcript --session claude:<session-id> [--since <cursor>] [--limit <n>] --json # read a parent session directly
 megabrain orchestrate reconcile <id>            # settle its state against reality
 megabrain orchestrate close <dispatch-id-or-suffix> # take the pane back
 ```
@@ -578,9 +578,11 @@ its output says which source it used. Closing or pruning stops that recording be
 dispatch session.
 
 `orchestrate transcript` reads the agent's structured Claude, Codex or Grok session log and returns
-ordered user, assistant, thinking and tool events. Pass its opaque `cursor` back with `--since` to
-read only appended events. If a dispatch session log is missing or unreadable, it returns the
-terminal scrollback as one system event. Antigravity currently uses that terminal fallback.
+ordered user, assistant, thinking and tool events. It returns the newest 300 events by default;
+`--limit` accepts 1 to 2000. When older events are omitted, JSON includes `truncated: true`. Pass
+the opaque `cursor` back with `--since` to read appended events, still bounded by the same limit.
+If a dispatch session log is missing or unreadable, it returns the terminal scrollback as one system
+event. Antigravity currently uses that terminal fallback.
 
 `orchestrate reply` refuses a dispatch already in a settled state such as `done`, `failed`,
 `closed`, `circuit_broken`, or `timeout`. It exits non-zero and tells you to open a new dispatch,
