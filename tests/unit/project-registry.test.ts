@@ -3,8 +3,9 @@ import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { route } from "../../src/cli/router.js";
-import { createProcessAdapter } from "../../src/adapters/proc.js";
+import { createProcessAdapter, type ProcessAdapter } from "../../src/adapters/proc.js";
 import { registerMegabrainRepository } from "../../src/core/project-registry.js";
+import { ok } from "../../src/core/result.js";
 import { guardedOpenDatabase } from "./state-db-guard.js";
 
 let root = "";
@@ -239,5 +240,40 @@ describe("project registry", () => {
     await cli("repo", "add", path);
     const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Claude");
+  });
+
+  test("project pull requests stay fresh for 60 seconds and keep the last good result after refresh failure", async () => {
+    const path = await repository("pull-request-cache");
+    await cli("repo", "add", path);
+    const process = createProcessAdapter();
+    let ghCalls = 0;
+    let failGh = false;
+    const adapter: ProcessAdapter = {
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "pr" && args[1] === "list") {
+          ghCalls += 1;
+          if (failGh) return { kind: "failed", error: "GitHub unavailable" };
+          return ok({ stdout: JSON.stringify([{ headRefName: "main", number: 42, state: "OPEN", url: "https://example.test/42" }]), stderr: "", exitCode: 0 });
+        }
+        return process.run(command, args, options);
+      },
+      startDetached: process.startDetached,
+      invocationCount: process.invocationCount,
+    };
+    const list = async () => route(["projects", "--json"], { environment: env, processAdapter: adapter });
+    const first = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
+    expect(first?.worktrees[0]?.pullRequest?.number).toBe(42);
+    const second = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
+    expect(second?.worktrees[0]?.pullRequest?.number).toBe(42);
+    expect(ghCalls).toBe(1);
+
+    const opened = guardedOpenDatabase(env);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    try { opened.value.db.run("UPDATE repository_pull_requests SET fetched_at = ? WHERE repository_path = ?", [Date.now() - 60_001, path]); }
+    finally { opened.value.close(); }
+    failGh = true;
+    const stale = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
+    expect(stale?.worktrees[0]?.pullRequest?.number).toBe(42);
+    expect(ghCalls).toBe(2);
   });
 });
