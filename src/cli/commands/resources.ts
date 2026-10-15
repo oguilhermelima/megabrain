@@ -11,8 +11,10 @@ type DispatchResource = Readonly<{ dispatchId: string; agent: string; state: str
 type ResourceSnapshot = Readonly<{ machine: MachineResources | null; docker: readonly DockerResource[] | null; dispatches: readonly DispatchResource[] }>;
 const OPEN = new Set(["queued", "spawning", "running", "waiting_for_reply", "orphaned"]);
 
-export async function collectResources(environment: Environment, process: ProcessAdapter, all = false): Promise<ResourceSnapshot> {
-  const [machine, docker] = await Promise.all([readMachineResources(process), readDockerResources(process)]);
+// docker stats takes seconds even with few containers, so callers that do not show containers
+// pass withDocker = false and get null for it.
+export async function collectResources(environment: Environment, process: ProcessAdapter, all = false, withDocker = true): Promise<ResourceSnapshot> {
+  const [machine, docker] = await Promise.all([readMachineResources(process), withDocker ? readDockerResources(process) : Promise.resolve(undefined)]);
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return { machine: machine ?? null, docker: docker ?? null, dispatches: [] };
   const listed = listDispatches(database.value);
