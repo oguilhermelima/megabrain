@@ -40,6 +40,18 @@ Older worktrees without a registry entry appear as discovered with unknown age.
 Repo names provided during create and inferred during adopt are available to resolve later
 `--repo` selectors when Orca is unavailable or its lookup fails.
 
+The project registry lives in megabrain's SQLite state. It learns repositories from megabrain's
+own dispatch and worktree history, or from a person's explicit import. Do not use Orca's repository
+list as a source. `projects` shows each registered repository, its main checkout, worktrees, pull
+requests, and recent agent sessions.
+
+megabrain repo list [--json] — recommended when you need to list registered repositories.
+megabrain repo add <path> [--json] — recommended when you need to import a local Git checkout.
+megabrain repo clone <url> --into <dir> [--json] — recommended when you need to clone and register a repository.
+megabrain repo remove <name|path> [--json] — recommended when you need to remove a registry entry without deleting its files.
+megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
+megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
+
 ```
 megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json] — recommended when you need to review or remove old worktrees safely.
 ```

@@ -14,6 +14,13 @@ export const USAGE_LINES = {
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
   "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
+  "repo": "repo list|add|clone|remove|github ...",
+  "repo-list": "repo list [--json]",
+  "repo-add": "repo add <path> [--json]",
+  "repo-clone": "repo clone <url> --into <dir> [--json]",
+  "repo-remove": "repo remove <name|path> [--json]",
+  "repo-github": "repo github [--owner <login>] [--json]",
+  "projects": "projects [--json]",
   "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json]",
@@ -152,6 +159,8 @@ Commands:
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
+  repo list|add|clone|remove|github ... Manage the local project registry
+  projects [--json]                     List projects, worktrees, and agent sessions
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
   worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata

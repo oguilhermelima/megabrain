@@ -10,6 +10,8 @@ Commands:
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
+  repo list|add|clone|remove|github ... Manage the local project registry
+  projects [--json]                     List projects, worktrees, and agent sessions
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
   worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata
