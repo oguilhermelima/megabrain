@@ -276,4 +276,28 @@ describe("project registry", () => {
     expect(stale?.worktrees[0]?.pullRequest?.number).toBe(42);
     expect(ghCalls).toBe(2);
   });
+
+  test("project pull request failures without a good value are cached for 60 seconds", async () => {
+    const path = await repository("pull-request-failure-cache");
+    await cli("repo", "add", path);
+    const process = createProcessAdapter();
+    let ghCalls = 0;
+    const adapter: ProcessAdapter = {
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "pr" && args[1] === "list") {
+          ghCalls += 1;
+          return { kind: "failed", error: "GitHub unavailable" };
+        }
+        return process.run(command, args, options);
+      },
+      startDetached: process.startDetached,
+      invocationCount: process.invocationCount,
+    };
+    const list = async () => route(["projects", "--json"], { environment: env, processAdapter: adapter });
+    const first = json<Array<{ worktrees: Array<{ pullRequest: null }> }>>(await list())[0];
+    expect(first?.worktrees[0]?.pullRequest).toBeNull();
+    const second = json<Array<{ worktrees: Array<{ pullRequest: null }> }>>(await list())[0];
+    expect(second?.worktrees[0]?.pullRequest).toBeNull();
+    expect(ghCalls).toBe(1);
+  });
 });
