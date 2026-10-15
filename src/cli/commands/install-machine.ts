@@ -8,7 +8,8 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { discoverAgentDirectories, type AgentEnvironment, type MachineAgent, type MachineAgentDirectories } from "../../core/agent-directories.js";
 import { executeTmux } from "./tmux.js";
-import { agentLabel, createClackPrompter, moduleLabel, SetupCancelled, type AgentChoice, type MachinePrompter, type ModuleChoice, type SkillMode } from "./install-ui.js";
+import { agentLabel, createClackPrompter, moduleInfo, moduleLabel, SetupCancelled, type AgentChoice, type MachinePrompter, type ModuleChoice, type SkillMode } from "./install-ui.js";
+import { createJsonPrompter } from "./install-json.js";
 
 export { discoverAgentDirectories } from "../../core/agent-directories.js";
 
@@ -347,6 +348,105 @@ function writeMachineState(environment: AgentEnvironment & Readonly<{ MEGABRAIN_
   return saved.kind === "ok" ? ok(undefined) : saved;
 }
 
+type MachineContext = Readonly<{
+  defaults: DefaultModuleSelection;
+  availableAgents: readonly MachineAgent[];
+  directories: MachineAgentDirectories;
+  state: Record<string, unknown>;
+  tmuxInstalled: boolean;
+  /** What this machine chose on its last install, so a re-run starts there rather than from detection. */
+  last: Readonly<{ agents?: readonly MachineAgent[]; skill?: SkillMode; tmux?: "yes" | "no"; requested?: readonly string[]; configured?: readonly string[] }>;
+}>;
+
+async function machineContext(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, processAdapter: ProcessAdapter): Promise<MachineContext | undefined> {
+  const defaults = await resolveDefaultModuleSelection(environment, processAdapter);
+  const availableAgents = await detectAgents(processAdapter);
+  const directories = discoverAgentDirectories(environment);
+  const state = readMachineState(environment);
+  if (state === undefined) return undefined;
+  const tmuxState = state["tmux-runtime"];
+  const tmuxInstalled = typeof tmuxState === "object" && tmuxState !== null && !Array.isArray(tmuxState) && (tmuxState as Record<string, unknown>).installed === true;
+  const recorded = typeof state.machineInstall === "object" && state.machineInstall !== null && !Array.isArray(state.machineInstall)
+    ? state.machineInstall as Record<string, unknown>
+    : undefined;
+  const strings = (value: unknown): string[] | undefined => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : undefined;
+  return {
+    defaults,
+    availableAgents,
+    directories,
+    state,
+    tmuxInstalled,
+    last: {
+      agents: strings(recorded?.agents)?.filter((agent): agent is MachineAgent => (agents as readonly string[]).includes(agent)),
+      skill: recorded?.skill === "none" || recorded?.skill === "global" || recorded?.skill === "project" ? recorded.skill : undefined,
+      tmux: recorded?.tmux === "yes" || recorded?.tmux === "no" ? recorded.tmux : undefined,
+      requested: strings(recorded?.requestedModules),
+      configured: strings(recorded?.modules),
+    },
+  };
+}
+
+function agentChoices(context: MachineContext): AgentChoice[] {
+  return agents.map((agent) => ({
+    agent,
+    installed: context.availableAgents.includes(agent),
+    configDir: context.directories[agent] === undefined ? undefined : dirname(dirname(dirname(context.directories[agent].globalSkill))),
+  }));
+}
+
+function defaultTmux(context: MachineContext): boolean {
+  return context.tmuxInstalled || !Object.hasOwn(context.state, "machineInstall");
+}
+
+function moduleChoices(context: MachineContext, tmux: "yes" | "no"): ModuleChoice[] {
+  const { defaults } = context;
+  return modules.filter((module) => module !== "tmux-runtime").map((module): ModuleChoice => {
+    // Orchestration needs somewhere to open children; the tmux answer can provide it.
+    const unavailableReason = module === "orchestration"
+      ? (defaults.orcaAvailable || defaults.supersetAvailable || tmux === "yes" ? undefined : "needs Orca, Superset or tmux")
+      : defaults.unavailable[module];
+    return {
+      module,
+      selectedByDefault: unavailableReason === undefined && (context.last.requested ?? defaults.modules).includes(module),
+      skippedReason: unavailableReason,
+      unavailable: unavailableReason !== undefined,
+    };
+  });
+}
+
+// What an install would offer on this machine, for a program to present: the same detection,
+// choices and defaults as the terminal flow, without asking or changing anything.
+async function machineInstallPlan(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  const context = await machineContext(environment, processAdapter);
+  if (context === undefined) return failed("could not read valid megabrain install state");
+  const { defaults, last } = context;
+  const tmux = defaults.tmuxAvailable && defaultTmux(context) ? "yes" : "no";
+  const choices = moduleChoices(context, tmux);
+  const defaultAgents = last.agents ?? context.availableAgents;
+  const plan = {
+    version: packageJson.version,
+    hosts: { orca: defaults.orcaAvailable, superset: defaults.supersetAvailable, tmux: defaults.tmuxAvailable },
+    agents: agentChoices(context).map((choice) => ({ agent: choice.agent, label: agentLabel(choice.agent), installed: choice.installed, configDir: choice.configDir ?? null })),
+    modules: choices.map((choice) => ({
+      module: choice.module,
+      ...moduleInfo(choice.module),
+      selectedByDefault: choice.selectedByDefault,
+      unavailable: choice.unavailable === true,
+      reason: choice.skippedReason ?? null,
+    })),
+    defaults: {
+      agents: defaultAgents,
+      skill: defaultAgents.length === 0 ? "none" : last.skill ?? "global",
+      tmux,
+      modules: choices.filter((choice) => choice.selectedByDefault).map((choice) => choice.module),
+    },
+    previous: last.agents === undefined && last.configured === undefined
+      ? null
+      : { agents: last.agents ?? [], skill: last.skill ?? "none", tmux: last.tmux ?? "no", modules: last.configured ?? [] },
+  };
+  return ok(`${JSON.stringify(plan, null, 2)}\n`);
+}
+
 export async function runMachineInstall(
   args: readonly string[],
   environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>,
@@ -355,17 +455,35 @@ export async function runMachineInstall(
   interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY),
   revertTmuxRuntime: () => Promise<Result<string>> = () => executeTmux(["wrapper", "--revert"], environment, processAdapter),
   createPrompter: () => MachinePrompter = createClackPrompter,
+  write: (text: string) => void = (text) => { process.stdout.write(text); },
 ): Promise<Result<string>> {
-  const parsed = parseMachineInstallArgs(args);
+  const plan = args.includes("--plan");
+  const json = args.includes("--json");
+  if (plan && !json) return failed("install --plan requires --json", 2);
+  const parsed = parseMachineInstallArgs(args.filter((arg) => arg !== "--plan" && arg !== "--json"));
   if ("kind" in parsed) return parsed;
+  if (plan) {
+    if (parsed.provided || parsed.yes) return failed("install --plan takes no selection flags", 2);
+    return machineInstallPlan(environment, processAdapter);
+  }
   if (!interactive && !parsed.yes && !parsed.provided) {
     return failed("install setup requires a terminal, --yes, or explicit --agents, --skill, or --modules flags");
   }
   // The rich terminal flow only runs when a person is answering; --yes and scripted flags keep the
-  // plain line output below, which tests and automation read.
-  const ui = interactive && !parsed.yes ? createPrompter() : undefined;
+  // plain line output below, which tests and automation read. --json streams events instead.
+  const jsonUi = json ? createJsonPrompter(write, parsed.yes) : undefined;
+  const ui = jsonUi ?? (interactive && !parsed.yes ? createPrompter() : undefined);
   try {
-    return await installMachine(parsed, environment, processAdapter, installModule, revertTmuxRuntime, ui);
+    const result = await installMachine(parsed, environment, processAdapter, installModule, revertTmuxRuntime, ui);
+    if (jsonUi !== undefined) {
+      const recorded = readMachineState(environment)?.machineInstall;
+      const configured = typeof recorded === "object" && recorded !== null && Array.isArray((recorded as Record<string, unknown>).modules)
+        ? ((recorded as Record<string, unknown>).modules as unknown[]).filter((module): module is string => typeof module === "string")
+        : [];
+      const success = result.kind === "ok" && (result.exitCode ?? 0) === 0;
+      jsonUi.finish(success, configured, result.kind === "ok" ? "" : result.error.trim());
+    }
+    return result;
   } catch (error: unknown) {
     // The prompt already told the person it was cancelled; only the exit status is left to report.
     if (error instanceof SetupCancelled) return ok("", 130);
@@ -381,53 +499,25 @@ async function installMachine(
   revertTmuxRuntime: () => Promise<Result<string>>,
   ui: MachinePrompter | undefined,
 ): Promise<Result<string>> {
-  const defaults = await resolveDefaultModuleSelection(environment, processAdapter);
-  const availableAgents = await detectAgents(processAdapter);
-  const directories = discoverAgentDirectories(environment);
-  const state = readMachineState(environment);
-  if (state === undefined) return failed("could not read valid megabrain install state");
-  const tmuxState = state["tmux-runtime"];
-  const tmuxInstalled = typeof tmuxState === "object" && tmuxState !== null && !Array.isArray(tmuxState) && (tmuxState as Record<string, unknown>).installed === true;
+  const context = await machineContext(environment, processAdapter);
+  if (context === undefined) return failed("could not read valid megabrain install state");
+  const { defaults, availableAgents, directories, state, tmuxInstalled, last } = context;
 
   if (ui !== undefined) {
-    const choices: AgentChoice[] = agents.map((agent) => ({
-      agent,
-      installed: availableAgents.includes(agent),
-      configDir: directories[agent] === undefined ? undefined : dirname(dirname(dirname(directories[agent].globalSkill))),
-    }));
-    ui.intro(packageJson.version, choices, { orca: defaults.orcaAvailable, superset: defaults.supersetAvailable, tmux: defaults.tmuxAvailable });
+    ui.intro(packageJson.version, agentChoices(context), { orca: defaults.orcaAvailable, superset: defaults.supersetAvailable, tmux: defaults.tmuxAvailable });
   }
 
   const detected = parsed.agents ?? availableAgents;
-  // A re-run starts from what this machine chose last time rather than from the detected defaults.
-  const last = typeof state.machineInstall === "object" && state.machineInstall !== null && !Array.isArray(state.machineInstall)
-    ? state.machineInstall as Record<string, unknown>
-    : undefined;
-  const lastAgents = Array.isArray(last?.agents) ? (last.agents as unknown[]).filter((agent): agent is MachineAgent => typeof agent === "string" && (agents as readonly string[]).includes(agent)) : undefined;
-  const lastSkill = last?.skill === "none" || last?.skill === "global" || last?.skill === "project" ? last.skill : undefined;
-  const lastModules = Array.isArray(last?.requestedModules) ? (last.requestedModules as unknown[]).filter((module): module is string => typeof module === "string") : undefined;
   const selectedAgents: readonly MachineAgent[] = parsed.agents ?? (ui === undefined
     ? detected
-    : await ui.agents(agents.map((agent) => ({ agent, installed: availableAgents.includes(agent), configDir: directories[agent] === undefined ? undefined : dirname(dirname(dirname(directories[agent].globalSkill))) })), lastAgents ?? availableAgents));
-  const skill: SkillMode = parsed.skill ?? (ui !== undefined && selectedAgents.length > 0 ? await ui.skill(lastSkill ?? "global") : ui !== undefined ? "none" : "global");
+    : await ui.agents(agentChoices(context), last.agents ?? availableAgents));
+  const skill: SkillMode = parsed.skill ?? (ui !== undefined && selectedAgents.length > 0 ? await ui.skill(last.skill ?? "global") : ui !== undefined ? "none" : "global");
   const tmux: "yes" | "no" = parsed.tmux ?? (!defaults.tmuxAvailable
     ? "no"
-    : ui !== undefined ? await ui.tmux(tmuxInstalled || !Object.hasOwn(state, "machineInstall")) : parsed.yes ? "yes" : "no");
-  const selectable = modules.filter((module) => module !== "tmux-runtime");
+    : ui !== undefined ? await ui.tmux(defaultTmux(context)) : parsed.yes ? "yes" : "no");
   let modulesToInstall = [...(parsed.modules ?? (ui === undefined
     ? defaults.modules
-    : await ui.modules(selectable.map((module): ModuleChoice => {
-      // Orchestration needs somewhere to open children; the tmux answer above can provide it.
-      const unavailableReason = module === "orchestration"
-        ? (defaults.orcaAvailable || defaults.supersetAvailable || tmux === "yes" ? undefined : "needs Orca, Superset or tmux")
-        : defaults.unavailable[module];
-      return {
-        module,
-        selectedByDefault: unavailableReason === undefined && (lastModules ?? defaults.modules).includes(module),
-        skippedReason: unavailableReason,
-        unavailable: unavailableReason !== undefined,
-      };
-    }))))];
+    : await ui.modules(moduleChoices(context, tmux))))];
   if (tmux === "yes" && !modulesToInstall.includes("tmux-runtime")) modulesToInstall.unshift("tmux-runtime");
   if (tmux === "no") modulesToInstall = modulesToInstall.filter((module) => module !== "tmux-runtime");
   const defaultSkips = [
@@ -503,7 +593,7 @@ async function installMachine(
     if (saved.kind !== "ok") return saved;
     const failures: string[] = [];
     for (const module of pendingModules) {
-      const step = ui?.step(`Setting up ${moduleLabel(module)}`);
+      const step = ui?.step(`Setting up ${moduleLabel(module)}`, module);
       try {
         const result = await installModule(module);
         if (result.kind !== "ok") {

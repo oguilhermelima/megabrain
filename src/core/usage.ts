@@ -1,5 +1,5 @@
 export const USAGE_LINES = {
-  "install": "install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert]",
+  "install": "install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] [--plan] [--json]",
   "doctor": "doctor [module-id] [--json]",
   "db-check": "db check [--json]",
   "db-backup": "db backup [--json]",

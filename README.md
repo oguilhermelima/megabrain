@@ -69,6 +69,14 @@ wrapper; `--yes` performs that revert.
 Modules omitted because a prerequisite is missing are reported with the reason. Explicitly naming a
 module with `--modules` always attempts it unless `--tmux no` excludes `tmux-runtime`.
 
+For a program driving the install: `megabrain install --plan --json` prints what this machine has
+(hosts, agents, each module with its label, hint, group and why it is unavailable), the defaults the
+terminal would offer and the previous choice, and changes nothing. `megabrain install --json` with
+`--yes` or explicit flags runs the install and writes one JSON event per line (`intro`, `step` with
+`state` start/done/fail and the `module` when it is one, `info`, `warn`, `confirm`) ending in one
+`result` with `ok`, `configured` and `failed`. A removal is confirmed only by `--yes`. One module
+reports a single object: `megabrain install <module> [--revert] --json`.
+
 ## Development
 
 ```sh

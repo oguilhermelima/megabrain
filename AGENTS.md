@@ -1,7 +1,7 @@
 # megabrain recipes
 
 - Read shared worktree, orchestration, simulator, and browser instructions at https://github.com/oguilhermelima/megabrain/blob/main/AGENTS.md.
-- Run megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert]. — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
+- Run megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] [--plan] [--json]. — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
 - Run megabrain doctor [module-id] [--json]. — recommended when you need to check whether a module or the whole installation is healthy.
 - Run megabrain db check [--json]. — recommended when you need to check SQLite integrity, foreign keys, schema version, and database path.
 - Run megabrain db backup [--json]. — recommended when you need to create a consistent backup before a risky database operation.
