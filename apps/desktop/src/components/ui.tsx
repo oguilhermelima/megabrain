@@ -20,7 +20,7 @@ const toneDot: Record<Tone, string> = {
 
 export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border border-ink-700 bg-ink-850 px-2 py-0.5 text-[11px] font-medium ${toneText[tone]}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-1 text-[12px] font-semibold ${toneText[tone]}`}>
       <span className={`size-1.5 rounded-full ${toneDot[tone]}`} />
       {children}
     </span>
@@ -30,17 +30,17 @@ export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost' }
 
 const variants = {
-  primary: 'bg-accent text-ink-950 hover:bg-[#93adff] disabled:bg-ink-700 disabled:text-ink-400',
-  secondary: 'border border-ink-600 bg-ink-800 text-ink-100 hover:bg-ink-700 disabled:text-ink-500',
+  primary: 'bg-accent text-accent-ink hover:bg-[#a3aeff] disabled:bg-ink-700 disabled:text-ink-400',
+  secondary: 'border border-white/15 bg-white/[0.07] text-ink-100 hover:bg-white/[0.12] disabled:text-ink-500',
   danger: 'border border-bad/40 bg-bad/10 text-bad hover:bg-bad/20 disabled:opacity-50',
-  ghost: 'text-ink-300 hover:bg-ink-800 hover:text-ink-100 disabled:text-ink-600',
+  ghost: 'text-ink-300 hover:bg-white/[0.07] hover:text-ink-100 disabled:text-ink-600',
 }
 
 export function Button({ variant = 'secondary', className = '', ...props }: ButtonProps) {
   return (
     <button
       type="button"
-      className={`inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${variants[variant]} ${className}`}
+      className={`inline-flex h-10 items-center justify-center gap-2 rounded-full px-5 text-[14px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed ${variants[variant]} ${className}`}
       {...props}
     />
   )
@@ -48,14 +48,14 @@ export function Button({ variant = 'secondary', className = '', ...props }: Butt
 
 export function Card({ title, aside, children, className = '' }: { title?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-lg border border-ink-700 bg-ink-900 ${className}`}>
+    <section className={`rounded-[24px] border border-white/[0.08] bg-ink-900 ${className}`}>
       {title !== undefined && (
-        <header className="flex items-center justify-between border-b border-ink-700 px-4 py-2.5">
-          <h3 className="text-[12px] font-semibold tracking-wide text-ink-300 uppercase">{title}</h3>
+        <header className="flex items-center justify-between px-5 pt-4 pb-1">
+          <h3 className="text-[12px] font-semibold tracking-[0.06em] text-ink-400 uppercase">{title}</h3>
           {aside}
         </header>
       )}
-      <div className="p-4">{children}</div>
+      <div className="p-5 pt-3">{children}</div>
     </section>
   )
 }
@@ -65,20 +65,20 @@ export function Spinner() {
 }
 
 export function Mono({ children }: { children: ReactNode }) {
-  return <code className="rounded bg-ink-850 px-1.5 py-0.5 font-mono text-[12px] break-all text-ink-100 select-text">{children}</code>
+  return <code className="rounded-lg bg-white/[0.06] px-2 py-0.5 font-mono text-[12.5px] break-all text-ink-100 select-text">{children}</code>
 }
 
 export function ErrorNote({ error }: { error: unknown }) {
   const message = error instanceof Error ? error.message : String(error)
-  return <p className="rounded-md border border-bad/30 bg-bad/10 px-3 py-2 text-[12px] text-bad select-text">{message}</p>
+  return <p className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-[13px] text-bad select-text">{message}</p>
 }
 
 export function Check({ checked, disabled, onChange, children }: { checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
   return (
-    <label className={`flex items-start gap-3 rounded-md px-2 py-2 ${disabled ? 'opacity-50' : 'cursor-pointer hover:bg-ink-850'}`}>
+    <label className={`flex items-start gap-3 rounded-2xl px-3 py-2.5 ${disabled ? 'opacity-50' : 'cursor-pointer hover:bg-ink-850'}`}>
       <input
         type="checkbox"
-        className="mt-0.5 size-4 accent-[#7c9cff]"
+        className="mt-0.5 size-[18px] accent-[#8e9cff]"
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
@@ -90,15 +90,15 @@ export function Check({ checked, disabled, onChange, children }: { checked: bool
 
 export function Segmented<T extends string>({ value, options, onChange, disabled }: { value: T; options: { value: T; label: string }[]; onChange: (value: T) => void; disabled?: boolean }) {
   return (
-    <div className="inline-flex rounded-md border border-ink-700 bg-ink-850 p-0.5">
+    <div className="inline-flex rounded-full border border-white/10 bg-white/[0.05] p-1">
       {options.map((option) => (
         <button
           key={option.value}
           type="button"
           disabled={disabled}
           onClick={() => onChange(option.value)}
-          className={`h-7 rounded px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed ${
-            option.value === value ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-200'
+          className={`h-8 rounded-full px-4 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed ${
+            option.value === value ? 'bg-white/[0.14] text-ink-100' : 'text-ink-400 hover:text-ink-200'
           }`}
         >
           {option.label}
