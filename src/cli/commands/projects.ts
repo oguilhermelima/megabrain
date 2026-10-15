@@ -6,7 +6,8 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase, withWrite } from "../../db/db.js";
 import { listDispatches } from "../../db/queries/dispatches.js";
-import { listRepositories, registerRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { getRepositoryPullRequests, listRepositories, registerRepository, saveRepositoryPullRequests, type RepositoryRecord } from "../../db/queries/repositories.js";
+import type { DatabaseAdapter } from "../../db/db.js";
 import { listWorktrees } from "../../db/queries/worktrees.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
 
@@ -20,6 +21,7 @@ type RawSession = Readonly<{ agent: ProjectSession["agent"]; id: string; cwd: st
 
 const HISTORY_MARKER = "project-registry-backfilled";
 const DAY = 86_400_000;
+const PULL_REQUEST_CACHE_TTL = 60_000;
 
 function processIsAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -355,24 +357,45 @@ function pullRequestMap(value: unknown): Map<string, { number: number; state: st
   }));
 }
 
-async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter): Promise<Project> {
+function cachedPullRequestMap(value: string | undefined): Map<string, { number: number; state: string; url: string }> | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? pullRequestMap(parsed) : undefined;
+  } catch { return undefined; }
+}
+
+async function repositoryPullRequests(repository: RepositoryRecord, database: DatabaseAdapter, processAdapter: ProcessAdapter): Promise<Map<string, { number: number; state: string; url: string }>> {
+  const cached = getRepositoryPullRequests(database, repository.path);
+  const stale = cachedPullRequestMap(cached?.value);
+  const now = Date.now();
+  if (stale !== undefined && cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < PULL_REQUEST_CACHE_TTL) return stale;
+  const refreshed = await processAdapter.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"], { cwd: repository.path, timeoutMs: 2_000 });
+  if (refreshed.kind === "ok") {
+    try {
+      const parsed: unknown = JSON.parse(refreshed.value.stdout);
+      if (Array.isArray(parsed)) {
+        saveRepositoryPullRequests(database, repository.path, JSON.stringify(parsed), now);
+        return pullRequestMap(parsed);
+      }
+    } catch { /* Keep the last known good result on malformed output. */ }
+  }
+  return stale ?? new Map();
+}
+
+async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter): Promise<Project> {
   const checkout = await repositoryCheckout(repository.path, processAdapter);
   if (checkout.kind !== "ok") return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
-  const [worktreesResult, parentsResult, pullResult] = await Promise.all([
+  const [worktreesResult, parentsResult, pulls] = await Promise.all([
     processAdapter.run("git", ["-C", repository.path, "worktree", "list", "--porcelain"]),
     processAdapter.run("git", ["-C", repository.path, "config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]),
-    processAdapter.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"], { cwd: repository.path, timeoutMs: 2_000 }),
+    repositoryPullRequests(repository, database, processAdapter),
   ]);
   if (worktreesResult.kind !== "ok") return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
   const parents = new Map<string, string>();
   if (parentsResult.kind === "ok") for (const line of parentsResult.value.stdout.split("\n")) {
     const match = /^branch\.(.*)\.megabrain-parent\s+(.+)$/.exec(line);
     if (match?.[1] !== undefined && match[2] !== undefined) parents.set(match[1], match[2]);
-  }
-  let pulls = new Map<string, { number: number; state: string; url: string }>();
-  if (pullResult.kind === "ok") {
-    try { pulls = pullRequestMap(JSON.parse(pullResult.value.stdout) as unknown); }
-    catch { pulls = new Map(); }
   }
   const worktrees = parseWorktrees(worktreesResult.value.stdout, repository.path, parents).map((worktree) => ({
     ...worktree,
@@ -410,12 +433,12 @@ export async function executeProjects(args: readonly string[], environment: Envi
   if (backfilled.kind !== "ok") return backfilled;
   const opened = openDatabase(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-  let repositories: RepositoryRecord[];
-  let dispatches: Dispatch[];
-  try { repositories = listRepositories(opened.value.db); dispatches = listDispatches(opened.value.db, { includeArchived: true }); }
-  finally { opened.value.close(); }
-  const home = environment.HOME ?? process.env.HOME ?? "";
-  const found = await sessionsForMachine(home, processAdapter);
-  const projects = await Promise.all(repositories.map((repository) => repositoryProject(repository, found, dispatches, processAdapter)));
-  return ok(`${JSON.stringify(projects, null, 2)}\n`);
+  try {
+    const repositories = listRepositories(opened.value.db);
+    const dispatches = listDispatches(opened.value.db, { includeArchived: true });
+    const home = environment.HOME ?? process.env.HOME ?? "";
+    const found = await sessionsForMachine(home, processAdapter);
+    const projects = await Promise.all(repositories.map((repository) => repositoryProject(repository, found, dispatches, processAdapter, opened.value.db)));
+    return ok(`${JSON.stringify(projects, null, 2)}\n`);
+  } finally { opened.value.close(); }
 }

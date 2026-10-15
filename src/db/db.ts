@@ -15,6 +15,7 @@ import queueCancellationMigration from "./schema/011-queue-cancellation.sql" wit
 import admissionQueueMigration from "./schema/012-admission-queue.sql" with { type: "text" };
 import deliveryChannelsMigration from "./schema/013-delivery-channels.sql" with { type: "text" };
 import repositoriesMigration from "./schema/014-repositories.sql" with { type: "text" };
+import repositoryPullRequestsMigration from "./schema/015-repository-pull-requests.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -130,6 +131,7 @@ const migrations: readonly Migration[] = [
   { version: 12, sql: admissionQueueMigration, foreignKeysOff: true },
   { version: 13, sql: deliveryChannelsMigration },
   { version: 14, sql: repositoriesMigration },
+  { version: 15, sql: repositoryPullRequestsMigration },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 
