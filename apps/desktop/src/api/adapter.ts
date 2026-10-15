@@ -1,4 +1,4 @@
-import type { ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -43,6 +43,16 @@ export interface DesktopApi {
   setPillExpanded(expanded: boolean): Promise<void>
   onPillExpanded(listener: (expanded: boolean) => void): () => void
   openMain(): Promise<void>
+  /** Every registered project, its worktrees and the agent sessions in them. */
+  projects(): Promise<Project[]>
+  /** Import a local git repository folder into the registry. */
+  importFolder(path: string): Promise<Repository>
+  /** Clone a repository and register it; `into` is the parent folder. */
+  importClone(url: string, into: string): Promise<Repository>
+  /** Repositories on GitHub the person can clone. */
+  githubRepositories(): Promise<GithubRepository[]>
+  /** Ask the person for a folder with the native picker; null when cancelled. */
+  pickFolder(): Promise<string | null>
   /** A chat's conversation; pass the last cursor to get only newer events. */
   transcript(target: { dispatchId: string } | { sessionId: string }, since?: string): Promise<Transcript>
   /** Read-only code browsing inside a worktree or repository megabrain lists. */
