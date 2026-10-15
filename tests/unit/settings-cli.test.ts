@@ -113,6 +113,6 @@ describe("chain save", () => {
     expect(refused.kind).toBe("failed");
     if (refused.kind === "failed") expect(refused.error).toContain("unknown model");
     expect((await run([...args, "--allow-unknown-model"], env)).kind).toBe("ok");
-    expect((await settings(env)).chains).toEqual([{ name: "custom", when: {}, steps: [{ agent: "codex", model: "unregistered" }] }]);
+    expect((await settings(env)).chains).toEqual([{ name: "custom", when: {}, steps: [{ agent: "codex", model: "unregistered", unvalidated: true }] }]);
   });
 });
