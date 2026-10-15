@@ -141,7 +141,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
           </button>
         </div>
-        <Sidebar status={status} repositories={grouped.repositories} repositoryPaths={repositoryPaths} ended={grouped.ended} selected={selected} onSelect={open} onCode={setCode} />
+        <Sidebar status={status} repositories={grouped.repositories} repositoryPaths={repositoryPaths} worktrees={worktrees} ended={grouped.ended} selected={selected} onSelect={open} onCode={setCode} />
         <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-500">
           <span className="flex items-center gap-2">
             <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
