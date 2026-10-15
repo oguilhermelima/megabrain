@@ -14,6 +14,7 @@ import resourceSamplesMigration from "./schema/010-resource-samples.sql" with { 
 import queueCancellationMigration from "./schema/011-queue-cancellation.sql" with { type: "text" };
 import admissionQueueMigration from "./schema/012-admission-queue.sql" with { type: "text" };
 import deliveryChannelsMigration from "./schema/013-delivery-channels.sql" with { type: "text" };
+import repositoriesMigration from "./schema/014-repositories.sql" with { type: "text" };
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
@@ -128,6 +129,7 @@ const migrations: readonly Migration[] = [
   { version: 11, sql: queueCancellationMigration },
   { version: 12, sql: admissionQueueMigration, foreignKeysOff: true },
   { version: 13, sql: deliveryChannelsMigration },
+  { version: 14, sql: repositoriesMigration },
 ];
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 
@@ -146,7 +148,7 @@ export type DatabaseIntegrityReport = Readonly<{
 }>;
 
 type NotThenable<T> = T extends PromiseLike<unknown> ? never : T;
-type Synchronous<T> = (db: DatabaseAdapter) => NotThenable<T>;
+export type Synchronous<T> = (db: DatabaseAdapter) => NotThenable<T>;
 const activeTransactions = new WeakSet<DatabaseHandle>();
 
 function errorMessage(cause: unknown): string {
