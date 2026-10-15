@@ -91,6 +91,7 @@ run_help ack --help
 run_help chain list --help
 run_help chain limits --help
 run_help chain add --help
+run_help chain save --help
 run_help chain edit --help
 run_help chain delete --help
 run_help chain repair --help
@@ -98,6 +99,7 @@ run_help chain run --help
 run_help model list --help
 run_help model add --help
 run_help model refresh --help
+run_help settings --help
 run_help native appium --help
 run_help native appium start --help
 run_help native appium stop --help
