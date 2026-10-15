@@ -30,6 +30,7 @@ export const USAGE_LINES = {
   "orchestrate-liveness": "orchestrate liveness <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-watch": "orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
   "orchestrate-read": "orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--operator] [--json]",
+  "orchestrate-transcript": "orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--json]",
   "orchestrate-ack": "orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--operator] [--json]",
   "orchestrate-queue": "orchestrate queue [<dispatch-id-or-suffix>] [--all] [--operator] [--json]",
   "orchestrate-queue-cancel": "orchestrate queue cancel <item-id> [--reason <text>] [--operator] [--json]",
@@ -171,6 +172,7 @@ Commands:
   orchestrate watch <dispatch-id-or-suffix> ...  Watch a dispatch file channel for child messages
   orchestrate queue [<dispatch-id-or-suffix>] ... List queued messages (--all includes closed dispatches)
   orchestrate read <dispatch-id-or-suffix> ...   Read a tmux dispatch pane
+  orchestrate transcript ...              Read ordered agent conversation events
   orchestrate ack <dispatch-id-or-suffix> ...    Acknowledge a delivery batch
   orchestrate reply <dispatch-id-or-suffix> ...  Queue and safely deliver a reply (--supersede replaces old replies)
   orchestrate stop <dispatch-id-or-suffix> ...   Interrupt a working child without closing its pane

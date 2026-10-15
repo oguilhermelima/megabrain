@@ -1,12 +1,12 @@
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { formatSessionTranscript, isTranscriptCursor, readTranscriptEvents, terminalTranscript, type SessionTranscript, type TranscriptAgent } from "../../core/session-transcript.js";
+import { usageText } from "../../core/usage.js";
 import { executeOrchestrateRead, parentMeta } from "./orchestrate-read-liveness.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
 const transcriptAgents = new Set<TranscriptAgent>(["claude", "codex", "grok", "agy"]);
-const transcriptUsage = "Usage: megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--operator] [--json]\n       megabrain orchestrate transcript --session <agent:id> [--since <cursor>] [--json]\n";
 const stringValue = (value: unknown): string => typeof value === "string" ? value : "";
 const objectValue = (value: unknown): RecordValue | undefined => typeof value === "object" && value !== null && !Array.isArray(value) ? value as RecordValue : undefined;
 
@@ -48,7 +48,7 @@ function transcriptOptions(args: readonly string[]): Result<Readonly<{ id?: stri
     else if (id === undefined) id = argument;
     else return failed("orchestrate transcript accepts one dispatch id", 2);
   }
-  if ((id === undefined) === (session === undefined)) return failed(transcriptUsage, 2);
+  if ((id === undefined) === (session === undefined)) return failed(usageText("orchestrate-transcript"), 2);
   return ok({ ...(id === undefined ? {} : { id }), ...(session === undefined ? {} : { session }), ...(since === undefined ? {} : { since }), json });
 }
 
@@ -66,10 +66,10 @@ async function terminalFallback(dispatchId: string, agent: string, sessionId: st
 }
 
 export async function executeOrchestrateTranscript(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {
-  if (args[0] === "-h" || args[0] === "--help") return ok(transcriptUsage);
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-transcript"));
   const options = transcriptOptions(args);
   if (options.kind !== "ok") return options;
-  if (options.value.id === "--help") return ok(transcriptUsage);
+  if (options.value.id === "--help") return ok(usageText("orchestrate-transcript"));
   if (options.value.since !== undefined && !isTranscriptCursor(options.value.since)) return failed("--since must be a cursor returned by orchestrate transcript", 2);
   const home = environment.HOME ?? "";
   if (options.value.session !== undefined) {
@@ -81,7 +81,7 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
     return ok(formatSessionTranscript(transcript, options.value.json));
   }
   const dispatchId = options.value.id;
-  if (dispatchId === undefined) return failed(transcriptUsage, 2);
+  if (dispatchId === undefined) return failed(usageText("orchestrate-transcript"), 2);
   const resolved = await parentMeta(dispatchId, environment, process, true);
   if (resolved.kind !== "ok") return resolved;
   const { meta, dispatchId: resolvedId } = resolved.value;
