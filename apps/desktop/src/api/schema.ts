@@ -240,7 +240,20 @@ export const transcriptEventSchema = z.looseObject({
   kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system']),
   text: z.string(),
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
+  // Set when the event is a message relayed between chats: a parent's brief or reply inside the
+  // child's log ("parent"), or a child's notice or question inside the parent's log ("child").
+  origin: z
+    .looseObject({ kind: z.enum(['parent', 'child']), label: z.string(), dispatchId: z.string().nullable(), sessionId: z.string().nullable() })
+    .optional(),
 })
+
+// `megabrain send --session <agent:id> --text <text> --operator --json`: a message to any agent
+// session, including ones megabrain did not start.
+export const sendResultSchema = z.looseObject({ delivered: z.boolean(), channel: z.string(), detail: z.string().optional() })
+
+// `megabrain code open <root> --json`: a local VS Code (openvscode-server) for one worktree or
+// repository, started on demand and reused; `code stop <root>` ends it.
+export const codeServerSchema = z.looseObject({ root: z.string(), url: z.string(), port: z.number(), pid: z.number() })
 
 export const transcriptSchema = z.looseObject({
   dispatchId: z.string().nullable(),
@@ -293,6 +306,8 @@ export type Project = z.infer<typeof projectsSchema>[number]
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
+export type SendResult = z.infer<typeof sendResultSchema>
+export type CodeServer = z.infer<typeof codeServerSchema>
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
 export type CodeEntry = z.infer<typeof codeEntrySchema>
 export type CodeFile = z.infer<typeof codeFileSchema>

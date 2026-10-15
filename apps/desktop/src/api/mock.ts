@@ -64,6 +64,9 @@ export function createMockApi(): DesktopApi {
     },
     openMain: async () => {},
     transcript: async (target) => ({ ...mockTranscript, dispatchId: 'dispatchId' in target ? target.dispatchId : null, sessionId: 'sessionId' in target ? target.sessionId : mockTranscript.sessionId }),
+    sendToSession: async () => ({ delivered: true, channel: 'claude-peer' }),
+    openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
+    stopCodeServer: async () => {},
     settings: async () => settings,
     setPolicy: async (policy) => {
       settings = { ...settings, resources: { ...settings.resources, policy: policy === null ? null : { maxAgents: policy.maxAgents ?? null, minAvailableMib: policy.minAvailableMib ?? null, maxPressure: policy.maxPressure ?? null, maxContainerSuites: policy.maxContainerSuites ?? null } } }
