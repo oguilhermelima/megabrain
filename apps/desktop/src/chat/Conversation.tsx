@@ -2,33 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
 import { ErrorNote, Spinner } from '@/components/ui'
-import { buildConversationItems, formatText, mergeEvents, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
-
-function FormattedText({ text, className = '' }: { text: string; className?: string }) {
-  return (
-    <p className={`whitespace-pre-wrap ${className}`}>
-      {formatText(text).map((segment, index) =>
-        segment.type === 'code' ? (
-          <pre key={index} className="my-1.5 overflow-x-auto rounded-xl bg-white/[0.06] px-3 py-2 font-mono text-[12.5px] text-ink-100">
-            {segment.value}
-          </pre>
-        ) : segment.type === 'inline-code' ? (
-          <code key={index} className="rounded-md bg-white/[0.08] px-1 py-0.5 font-mono text-[13px] text-ink-100">
-            {segment.value}
-          </code>
-        ) : (
-          <span key={index}>{segment.value}</span>
-        ),
-      )}
-    </p>
-  )
-}
+import { buildConversationItems, mergeEvents, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { MarkdownText } from '@/chat/markdown'
 
 function UserMessage({ event }: { event: TranscriptEvent }) {
   return (
     <li className="flex justify-end">
-      <div className="max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-[14px] text-ink-100">
-        <FormattedText text={event.text} />
+      <div className="max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100">
+        <MarkdownText text={event.text} />
       </div>
     </li>
   )
@@ -36,8 +17,8 @@ function UserMessage({ event }: { event: TranscriptEvent }) {
 
 function AssistantMessage({ event }: { event: TranscriptEvent }) {
   return (
-    <li className="max-w-[80%] text-[14px] text-ink-200">
-      <FormattedText text={event.text} />
+    <li className="max-w-[80%] text-ink-200">
+      <MarkdownText text={event.text} />
     </li>
   )
 }

@@ -41,6 +41,18 @@ export function mergeEvents(known: TranscriptEvent[], incoming: TranscriptEvent[
   return merged
 }
 
+/** The first line of a relayed message, used as its collapsed-card preview. */
+export function relayedPreview(text: string): string {
+  return text.split('\n')[0] ?? ''
+}
+
+/** Where a relayed message's → button should navigate: dispatchId first, else sessionId, else nowhere. */
+export function relayedTarget(origin: NonNullable<TranscriptEvent['origin']>): { dispatchId: string } | { sessionId: string } | null {
+  if (origin.dispatchId !== null) return { dispatchId: origin.dispatchId }
+  if (origin.sessionId !== null) return { sessionId: origin.sessionId }
+  return null
+}
+
 export type TextSegment = { type: 'text' | 'code' | 'inline-code'; value: string }
 
 /** Splits text on ``` fences first, then inline `code` within the remaining plain runs. */
