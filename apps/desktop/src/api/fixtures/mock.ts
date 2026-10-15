@@ -1,4 +1,4 @@
-import type { GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -350,3 +350,31 @@ export const mockGithubRepositories: GithubRepository[] = [
 ]
 
 export const mockImported = (path: string, remote: string | null): Repository => ({ name: path.split('/').at(-1) ?? path, path, remote, source: 'import', addedAt: ago(0) })
+
+export const mockSettings: Settings = {
+  supervisor: { running: true, pid: 21194 },
+  resources: { historyEnabled: false, policy: null },
+  limits: {
+    enabledProviders: ['codex', 'claude'],
+    notice: { enabled: true, intervalSeconds: 1800 },
+    readings: [
+      { provider: 'claude', window: '5h', status: 'current', usedPercent: 4, resetsAt: '1792090800', fetchedAt: 1792064494, reason: 'claude 5h window at 4 percent' },
+      { provider: 'claude', window: 'weekly', status: 'current', usedPercent: 88, resetsAt: '1792087200', fetchedAt: 1792064494, reason: 'claude weekly window at 88 percent' },
+      { provider: 'codex', window: '5h', status: 'current', usedPercent: 17, resetsAt: '1792082310', fetchedAt: 1792064494, reason: 'codex 5h window at 17.0 percent' },
+      { provider: 'codex', window: 'weekly', status: 'current', usedPercent: 66, resetsAt: '1792489191', fetchedAt: 1792064494, reason: 'codex weekly window at 66.0 percent' },
+      { provider: 'grok', window: '5h', status: 'unknown', usedPercent: null, resetsAt: null, fetchedAt: null, reason: 'grok 5h window unknown (live provider is not enabled)' },
+      { provider: 'grok', window: 'weekly', status: 'unknown', usedPercent: null, resetsAt: null, fetchedAt: null, reason: 'grok weekly window unknown (live provider is not enabled)' },
+    ],
+  },
+  chains: [
+    { name: 'claude', when: { parentAgent: 'claude' }, steps: [{ agent: 'codex', model: 'gpt-6-luna', effort: 'medium', until: { usedPercent: 95, window: '5h' } }, { agent: 'claude', model: 'claude-sonnet-5', effort: 'medium' }] },
+    { name: 'codex', when: { parentAgent: 'codex' }, steps: [{ agent: 'claude', model: 'claude-sonnet-5', effort: 'high' }, { agent: 'agy', model: 'gemini-3.1-pro-high' }] },
+  ],
+  models: [
+    { agent: 'codex', model: 'gpt-6-luna', reasoning: { levels: ['low', 'medium', 'high', 'xhigh'] } },
+    { agent: 'claude', model: 'claude-sonnet-5', reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'claude', model: 'claude-opus-5', reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'agy', model: 'gemini-3.1-pro-high', reasoning: { levels: ['high'] } },
+  ],
+  terminal: { default: null, detected: 'terminal', available: ['terminal', 'iterm', 'ghostty'] },
+}

@@ -111,6 +111,56 @@ export const statusSchema = z.looseObject({
   deliveryChannels: z.array(z.looseObject({ agent: z.string(), channel: z.string(), status: z.string() })),
 })
 
+// `megabrain settings --json`: everything the Settings window shows, in one read. Writes go through
+// the existing verbs (resources policy set|off, resources enable|disable, supervise, chain limits
+// --notice-on|--notice-off|--notice-interval|--enable|--disable, chain save|delete, model refresh,
+// terminal default) and the window re-reads settings afterwards.
+export const chainStepSchema = z.looseObject({
+  agent: z.string(),
+  model: z.string(),
+  effort: z.string().optional(),
+  until: z.looseObject({ usedPercent: z.number(), window: z.string() }).optional(),
+})
+export const chainSchema = z.looseObject({
+  name: z.string(),
+  when: z.record(z.string(), z.unknown()),
+  steps: z.array(chainStepSchema),
+})
+export const usageReadingSchema = z.looseObject({
+  provider: z.string(),
+  window: z.string(),
+  status: z.string(),
+  usedPercent: z.number().nullable(),
+  /** Unix seconds as a string, as chain limits reports it. */
+  resetsAt: z.string().nullable(),
+  fetchedAt: z.number().nullable(),
+  reason: z.string(),
+})
+export const settingsSchema = z.looseObject({
+  supervisor: z.looseObject({ running: z.boolean(), pid: z.number().nullable() }),
+  resources: z.looseObject({
+    historyEnabled: z.boolean(),
+    /** null when no admission policy is set. */
+    policy: z
+      .looseObject({
+        maxAgents: z.number().nullable(),
+        minAvailableMib: z.number().nullable(),
+        maxPressure: z.enum(['normal', 'elevated']).nullable(),
+        maxContainerSuites: z.number().nullable(),
+      })
+      .nullable(),
+  }),
+  limits: z.looseObject({
+    /** Providers whose live usage reading is enabled. */
+    enabledProviders: z.array(z.string()),
+    notice: z.looseObject({ enabled: z.boolean(), intervalSeconds: z.number() }),
+    readings: z.array(usageReadingSchema),
+  }),
+  chains: z.array(chainSchema),
+  models: z.array(z.looseObject({ agent: z.string(), model: z.string(), reasoning: z.looseObject({ levels: z.array(z.string()) }) })),
+  terminal: z.looseObject({ default: z.string().nullable(), detected: z.string().nullable(), available: z.array(z.string()) }),
+})
+
 // megabrain's own project registry. A project enters it in two ways only: megabrain worked in it
 // (spawn or worktree create registers the repository; the first run backfills from history), or the
 // person imported it (a local folder or a GitHub clone).
@@ -228,6 +278,16 @@ export type Status = z.infer<typeof statusSchema>
 export type Dispatch = Status['dispatches'][number]
 export type Worktree = z.infer<typeof worktreeListSchema>[number]
 export type Repository = z.infer<typeof repositorySchema>
+export type Settings = z.infer<typeof settingsSchema>
+export type Chain = z.infer<typeof chainSchema>
+export type ChainStep = z.infer<typeof chainStepSchema>
+export type UsageReading = z.infer<typeof usageReadingSchema>
+export interface AdmissionPolicy {
+  maxAgents?: number
+  minAvailableMib?: number
+  maxPressure?: 'normal' | 'elevated'
+  maxContainerSuites?: number
+}
 export type GithubRepository = z.infer<typeof githubRepositorySchema>
 export type Project = z.infer<typeof projectsSchema>[number]
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>

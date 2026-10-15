@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mockGithubRepositories, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { githubRepositorySchema, projectsSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { mockSettings, mockGithubRepositories, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { settingsSchema, githubRepositorySchema, projectsSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
 const json = (name: string): unknown => JSON.parse(readFileSync(join(captured, name), 'utf8'))
@@ -45,6 +45,9 @@ describe('the mock serves payloads the schemas accept', () => {
     expect(doctorReportSchema.safeParse(mockDoctor).error).toBeUndefined()
     expect(worktreeListSchema.safeParse(mockWorktrees).error).toBeUndefined()
     expect(chatReadSchema.safeParse(mockChatRead).error).toBeUndefined()
+  })
+  test('settings', () => {
+    expect(settingsSchema.safeParse(mockSettings).error).toBeUndefined()
   })
   test('projects', () => {
     expect(projectsSchema.safeParse(mockProjects).error).toBeUndefined()
