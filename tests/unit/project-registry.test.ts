@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { route } from "../../src/cli/router.js";
@@ -13,7 +13,7 @@ let state = "";
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "megabrain-project-registry-"));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "megabrain-project-registry-")));
   home = join(root, "home");
   state = join(root, "state");
   mkdirSync(home);
