@@ -175,6 +175,43 @@ describe("executeWorktreeList", () => {
     ]);
   });
 
+  // The desktop app groups chats by repository; a worktree's folder name does not say which one.
+  test("names the repository each worktree belongs to", async () => {
+    const fixture = await createFixture();
+    const result = await listForRepo(fixture, gitWorktrees(fixture.repo, fixture.linked));
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const records = JSON.parse(result.value) as Array<{ path: string; repository?: { name: string; path: string } }>;
+    expect(records.map((record) => record.repository)).toEqual([
+      { name: "repo", path: fixture.repo },
+      { name: "repo", path: fixture.repo },
+    ]);
+  });
+
+  test("names the repository in the shared-root scan too", async () => {
+    const fixture = await createFixture();
+    const repoUnderRoot = join(fixture.shared, "canto");
+    const inside = join(repoUnderRoot, "inside");
+    await mkdir(join(repoUnderRoot, ".git"), { recursive: true });
+    await mkdir(inside);
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (path === repoUnderRoot && gitArgs[0] === "worktree") return output(gitWorktrees(repoUnderRoot, inside));
+      if (path === repoUnderRoot && gitArgs[0] === "config") return failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state }, process);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const records = JSON.parse(result.value) as Array<{ repository?: { name: string; path: string } }>;
+    expect(records.map((record) => record.repository)).toEqual([
+      { name: "canto", path: repoUnderRoot },
+      { name: "canto", path: repoUnderRoot },
+    ]);
+  });
+
   test("refuses a repository Git cannot resolve and names the selector", async () => {
     const fixture = await createFixture();
     const result = await listForRepo(fixture, "", "missing-repo");
