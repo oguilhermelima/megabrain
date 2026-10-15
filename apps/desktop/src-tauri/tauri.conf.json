@@ -14,22 +14,63 @@
       {
         "label": "main",
         "title": "megabrain",
-        "width": 1120,
-        "height": 740,
-        "minWidth": 880,
-        "minHeight": 560
+        "width": 1180,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 580,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "windowEffects": {
+          "effects": [
+            "sidebar"
+          ],
+          "state": "active"
+        }
+      },
+      {
+        "label": "pill",
+        "title": "megabrain pill",
+        "width": 380,
+        "height": 38,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "x": 0,
+        "y": 0
       }
     ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "appimage", "deb"],
+    "targets": [
+      "app",
+      "dmg",
+      "appimage",
+      "deb"
+    ],
     "category": "DeveloperTool",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
-    "externalBin": ["binaries/megabrain-cli"],
-    "resources": { "binaries/share/megabrain/": "megabrain/" }
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/megabrain-cli"
+    ],
+    "resources": {
+      "binaries/share/megabrain/": "megabrain/"
+    }
   }
 }

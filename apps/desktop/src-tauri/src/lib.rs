@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod path_link;
+mod pill;
 mod tray;
 
 use serde::Serialize;
@@ -99,6 +100,22 @@ fn link_cli(cli: State<'_, Cli>, replace: bool) -> Result<path_link::LinkState, 
 }
 
 #[tauri::command]
+fn set_pill_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    pill::set_expanded(&app, expanded).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn pill_geometry() -> pill::Geometry {
+    pill::geometry()
+}
+
+#[tauri::command]
+fn open_main(app: tauri::AppHandle) {
+    let _ = pill::set_expanded(&app, false);
+    show_main(&app);
+}
+
+#[tauri::command]
 fn set_tray_summary(app: tauri::AppHandle, findings: usize, lines: Vec<String>) -> Result<(), String> {
     tray::update(&app, findings, &lines).map_err(|error| error.to_string())
 }
@@ -125,16 +142,44 @@ pub fn run() {
             let path = cli::merge_path(cli::login_path().as_deref(), &current);
             app.manage(Cli { executable, root, path });
             tray::create(app.handle())?;
+            pill::setup(app.handle())?;
             Ok(())
         })
-        // Closing the window keeps megabrain in the tray; Quit in the tray menu ends it.
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        // ⌥Space opens and closes the assistant from anywhere. Another app may own it already; the
+        // pill and the tray still work without it.
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcut("Alt+Space")
+                .unwrap_or_else(|_| tauri_plugin_global_shortcut::Builder::new())
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let _ = pill::toggle(app);
+                    }
+                })
+                .build(),
+        )
+        .on_window_event(|window, event| match event {
+            // Closing the main window keeps megabrain in the pill and the tray; Quit ends it.
+            WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // Like Spotlight, the assistant folds back into the pill when you click elsewhere.
+            WindowEvent::Focused(false) if window.label() == pill::LABEL && pill::is_expanded() => {
+                let _ = pill::set_expanded(window.app_handle(), false);
+            }
+            _ => {}
         })
-        .invoke_handler(tauri::generate_handler![run_cli, stream_cli, path_link_state, link_cli, set_tray_summary])
+        .invoke_handler(tauri::generate_handler![
+            run_cli,
+            stream_cli,
+            path_link_state,
+            link_cli,
+            set_tray_summary,
+            set_pill_expanded,
+            pill_geometry,
+            open_main
+        ])
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");
     app.run(|handle, event| {
