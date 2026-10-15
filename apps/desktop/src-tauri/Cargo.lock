@@ -1814,6 +1814,7 @@ dependencies = [
 name = "megabrain-desktop"
 version = "0.2.4"
 dependencies = [
+ "base64 0.22.1",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -1823,6 +1824,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
+ "uuid",
 ]
 
 [[package]]

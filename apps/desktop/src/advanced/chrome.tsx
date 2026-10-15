@@ -1,18 +1,39 @@
 import type { ReactNode } from 'react'
 
-// The window chrome that used to be a top bar: it lives at the top of the sidebar now, with the
-// macOS traffic lights kept clear on its left.
+// The window chrome that used to be a top bar, now two rows at the top of the sidebar. Row 1 is the
+// band of the macOS traffic lights; row 2, under it, holds the logo, the wordmark and the view switch.
+// tauri.conf.json sets trafficLightPosition { x: 18, y: 19 }, and its y is not the lights' top edge:
+// in a real window the lights' centres measured about 22pt from the window top (centre = y + 3).
+// Row 1 is 44px tall so its centre line is 22px, the lights' own; the collapse button sits on it at
+// the right. x 18 puts the three 12pt lights at about 18-70pt with 8pt between them, and the 72px
+// inset leaves that same 8pt before the expand button's icon when the sidebar is hidden. These are
+// measured, not documented by macOS: confirm them in the real window after any change, and change
+// these numbers together.
 
 export type Mode = 'sidebar' | 'columns'
 
+/** The traffic lights' band: everything in it is vertically centred on the lights. */
+export const lightsRow = 'h-[44px]'
+
 /** Room for the macOS traffic lights, which the Overlay title bar draws over the web view. */
-export const trafficLightsInset = 'pl-[84px]'
+export const trafficLightsInset = 'pl-[72px]'
 
 export function SidebarToggleIcon() {
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
       <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
       <path d="M6 2.5v11" />
+    </svg>
+  )
+}
+
+export function ListIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <path d="M5.5 4h8M5.5 8h8M5.5 12h8" />
+      <circle cx="2.6" cy="4" r="0.6" fill="currentColor" />
+      <circle cx="2.6" cy="8" r="0.6" fill="currentColor" />
+      <circle cx="2.6" cy="12" r="0.6" fill="currentColor" />
     </svg>
   )
 }
@@ -29,8 +50,8 @@ export function ColumnsIcon() {
 export function SettingsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4" />
+      <path d="M12.76 6.84L14.33 7.04L14.33 8.96L12.76 9.16L12.19 10.54L13.15 11.8L11.8 13.15L10.54 12.19L9.16 12.76L8.96 14.33L7.04 14.33L6.84 12.76L5.46 12.19L4.2 13.15L2.85 11.8L3.81 10.54L3.24 9.16L1.67 8.96L1.67 7.04L3.24 6.84L3.81 5.46L2.85 4.2L4.2 2.85L5.46 3.81L6.84 3.24L7.04 1.67L8.96 1.67L9.16 3.24L10.54 3.81L11.8 2.85L13.15 4.2L12.19 5.46Z" />
+      <circle cx="8" cy="8" r="2.1" />
     </svg>
   )
 }
@@ -43,7 +64,7 @@ export function PlusIcon() {
   )
 }
 
-export function IconButton({ label, title, onClick, pressed, children }: { label: string; title?: string; onClick: () => void; pressed?: boolean; children: ReactNode }) {
+export function IconButton({ label, title, onClick, pressed, compact, children }: { label: string; title?: string; onClick: () => void; pressed?: boolean; compact?: boolean; children: ReactNode }) {
   return (
     <button
       type="button"
@@ -51,7 +72,7 @@ export function IconButton({ label, title, onClick, pressed, children }: { label
       aria-label={label}
       aria-pressed={pressed}
       title={title ?? label}
-      className={`flex size-8 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
+      className={`flex ${compact === true ? 'size-7' : 'size-8'} shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
         pressed === true ? 'bg-white/[0.14] text-ink-100' : 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
       }`}
     >
@@ -63,46 +84,42 @@ export function IconButton({ label, title, onClick, pressed, children }: { label
 function ViewSwitch({ mode, onChange }: { mode: Mode; onChange: (mode: Mode) => void }) {
   return (
     <div className="flex gap-0.5 rounded-full border border-white/10 bg-white/[0.05] p-0.5" role="group" aria-label="View">
-      <IconButton label="Sidebar view" pressed={mode === 'sidebar'} onClick={() => onChange('sidebar')}>
-        <SidebarToggleIcon />
+      <IconButton label="Sidebar view" compact pressed={mode === 'sidebar'} onClick={() => onChange('sidebar')}>
+        <ListIcon />
       </IconButton>
-      <IconButton label="Columns view" pressed={mode === 'columns'} onClick={() => onChange('columns')}>
+      <IconButton label="Columns view" compact pressed={mode === 'columns'} onClick={() => onChange('columns')}>
         <ColumnsIcon />
       </IconButton>
     </div>
   )
 }
 
-/** Top of the sidebar: a drag strip beside the traffic lights, then the logo and the window's controls. */
-export function SidebarHeader({ mode, onMode, onHome, onCollapse, onSettings }: { mode: Mode; onMode: (mode: Mode) => void; onHome: () => void; onCollapse: () => void; onSettings: () => void }) {
+/** Top of the sidebar: the lights' row with the button that hides the sidebar, then the logo and the two views. */
+export function SidebarHeader({ mode, onMode, onHome, onCollapse }: { mode: Mode; onMode: (mode: Mode) => void; onHome: () => void; onCollapse: () => void }) {
   return (
     <div className="shrink-0">
-      <div data-tauri-drag-region className={`flex h-[46px] items-center justify-end pr-3 ${trafficLightsInset}`}>
-        <IconButton label="Hide sidebar" title="Hide sidebar (⌘B)" onClick={onCollapse}>
+      <div data-tauri-drag-region className={`flex ${lightsRow} items-center justify-end pr-2.5`}>
+        <IconButton label="Hide sidebar" title="Hide sidebar (⌘B)" compact onClick={onCollapse}>
           <SidebarToggleIcon />
         </IconButton>
       </div>
-      <div data-tauri-drag-region className="flex items-center justify-between gap-2 pr-3 pb-3 pl-4">
-        <button type="button" onClick={onHome} title="Overview" className="flex min-w-0 items-center gap-2.5 rounded-full py-1 pr-2 pl-1 hover:bg-white/[0.06]">
-          <span className="orb size-5 shrink-0" />
-          <span className="truncate text-[16px] font-semibold tracking-[-0.01em] text-ink-100">megabrain</span>
+      <div data-tauri-drag-region className="flex items-center gap-2 px-2.5 pb-2">
+        <button type="button" onClick={onHome} title="Overview" className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-2 pl-1 hover:bg-white/[0.06]">
+          <span className="orb size-4 shrink-0" />
+          <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">megabrain</span>
         </button>
-        <span className="flex items-center gap-1">
-          <ViewSwitch mode={mode} onChange={onMode} />
-          <IconButton label="Settings" title="Settings (⌘,)" onClick={onSettings}>
-            <SettingsIcon />
-          </IconButton>
-        </span>
+        <span data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        <ViewSwitch mode={mode} onChange={onMode} />
       </div>
     </div>
   )
 }
 
-/** Shown in place of the sidebar when it is hidden: a drag strip with one button to bring it back. */
+/** Shown in place of the sidebar when it is hidden: the lights' row with one button to bring it back. */
 export function CollapsedChrome({ onExpand }: { onExpand: () => void }) {
   return (
-    <div data-tauri-drag-region className={`flex h-[46px] shrink-0 items-center ${trafficLightsInset}`}>
-      <IconButton label="Show sidebar" title="Show sidebar (⌘B)" onClick={onExpand}>
+    <div data-tauri-drag-region className={`flex ${lightsRow} shrink-0 items-center ${trafficLightsInset}`}>
+      <IconButton label="Show sidebar" title="Show sidebar (⌘B)" compact onClick={onExpand}>
         <SidebarToggleIcon />
       </IconButton>
     </div>

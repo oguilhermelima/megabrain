@@ -9,20 +9,26 @@ export const USAGE_LINES = {
   "context": "context [--json]",
   // The caller must opt into operator authority on the command itself.
   "send": "send --session <agent:id> --text <text> --operator [--json]",
-  "worktree": "worktree create|pr|finish|list|adopt|prune ...",
+  "worktree": "worktree create|pr|finish|list|adopt|prune|hide|unhide ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
   "worktree-finish": "worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
   "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
-  "repo": "repo list|add|clone|remove|github ...",
+  "repo": "repo list|add|clone|remove|hide|unhide|github ...",
   "repo-list": "repo list [--json]",
   "repo-add": "repo add <path> [--json]",
   "repo-clone": "repo clone <url> --into <dir> [--json]",
   "repo-remove": "repo remove <name|path> [--json]",
   "repo-github": "repo github [--owner <login>] [--json]",
   "projects": "projects [--json]",
+  "github": "github prs|issues|pr|issue ...",
+  "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--json]",
+  "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--json]",
+  "github-pr": "github pr <repo name|path> <number> [--json]",
+  "github-issue": "github issue <repo name|path> <number> [--json]",
+  "code": "code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]",
   "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json]",
@@ -166,6 +172,8 @@ Commands:
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|github ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
+  github prs|issues|pr|issue ...        Read a repository's GitHub pull requests and issues
+  code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open VS Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
   worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata

@@ -1,0 +1,96 @@
+[
+  {
+    "assignees": [],
+    "author": {
+      "id": "ID_redacted",
+      "is_bot": false,
+      "login": "fake-triager",
+      "name": "Fake Triager"
+    },
+    "comments": [
+      {
+        "id": "ID_redacted",
+        "author": {
+          "login": "fake-maintainer"
+        },
+        "authorAssociation": "NONE",
+        "body": "Confirmed by code inspection: in `Symbol()` (https://github.com/operator/sample/blob/819f972eff771d5ec433c8d03c369cc43f1eab49/pkg/cmd/run/shared/shared.go#L600-L614), both `Failure` and `Cancelled` conclusions fall into the shared `default` branch, which returns the red failure icon (`cs.FailureIconWithColor`). This means `gh run list` currently has no visual way to tell a cancelled run apart from a faile",
+        "createdAt": "2026-10-15T14:03:24Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/operator/sample/issues/14704#issuecomment-6193960893",
+        "viewerDidAuthor": false
+      }
+    ],
+    "createdAt": "2026-10-15T13:58:54Z",
+    "labels": [
+      {
+        "id": "ID_redacted",
+        "name": "needs-triage",
+        "description": "needs to be reviewed",
+        "color": "D6393F"
+      }
+    ],
+    "milestone": null,
+    "number": 14704,
+    "state": "OPEN",
+    "title": "`gh run list` show cancelled jobs icon",
+    "updatedAt": "2026-10-15T14:03:24Z",
+    "url": "https://github.com/operator/sample/issues/14704"
+  },
+  {
+    "assignees": [
+      {
+        "id": "ID_redacted",
+        "is_bot": false,
+        "login": "fake-triager",
+        "name": "Fake Triager"
+      }
+    ],
+    "author": {
+      "id": "ID_redacted",
+      "is_bot": false,
+      "login": "fake-contributor",
+      "name": "Fake Contributor"
+    },
+    "comments": [
+      {
+        "id": "ID_redacted",
+        "author": {
+          "login": "fake-maintainer"
+        },
+        "authorAssociation": "NONE",
+        "body": "Thanks for the detailed report and code trace. I verified the source at commit `819f972eff771d5ec433c8d03c369cc43f1eab49`: [`createRun`](https://github.com/operator/sample/blob/819f972eff771d5ec433c8d03c369cc43f1eab49/pkg/cmd/issue/create/create.go#L467-L482) calls `api.IssueCreate` first, then calls [`deferredUpdateIssueOptions`](https://github.com/operator/sample/blob/819f972eff771d5ec433c8d03c369cc43f1eab49/pk",
+        "createdAt": "2026-10-15T13:36:33Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/operator/sample/issues/14703#issuecomment-6193392481",
+        "viewerDidAuthor": false
+      }
+    ],
+    "createdAt": "2026-10-15T13:31:49Z",
+    "labels": [
+      {
+        "id": "ID_redacted",
+        "name": "needs-triage",
+        "description": "needs to be reviewed",
+        "color": "D6393F"
+      }
+    ],
+    "milestone": {
+      "number": 3,
+      "title": "v2.102.0",
+      "description": "",
+      "dueOn": null
+    },
+    "number": 14703,
+    "state": "CLOSED",
+    "title": "`gh issue create --type` creates the issue, then exits 1 with `type \"X\" not found` without printing its URL (causes duplicates on retry)",
+    "updatedAt": "2026-10-15T13:36:33Z",
+    "url": "https://github.com/operator/sample/issues/14703"
+  }
+]

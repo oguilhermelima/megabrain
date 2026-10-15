@@ -1,0 +1,244 @@
+[
+  {
+    "additions": 32,
+    "assignees": [],
+    "author": {
+      "id": "ID_redacted",
+      "is_bot": false,
+      "login": "fake-maintainer",
+      "name": "Fake Maintainer"
+    },
+    "baseRefName": "trunk",
+    "comments": [
+      {
+        "id": "ID_redacted",
+        "author": {
+          "login": "fake-contributor"
+        },
+        "authorAssociation": "CONTRIBUTOR",
+        "body": "Thanks for your pull request! Unfortunately, it doesn't meet the requirements for review:\n\n\n- No linked `help wanted` issue found in PR description\n\n**Please update your PR to address the above.** This PR will be automatically closed in **4 days** if these requirements are not met.\n\n<details>\n<summary>Full contribution requirements</summary>\n\n1. Include a detailed description of what this PR does\n",
+        "createdAt": "2026-10-15T10:31:46Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/operator/sample/pull/14700#issuecomment-6190011911",
+        "viewerDidAuthor": false
+      }
+    ],
+    "createdAt": "2026-10-15T10:31:30Z",
+    "deletions": 0,
+    "headRefName": "docs/gh-skill-gh-api-field-passing",
+    "isDraft": false,
+    "labels": [
+      {
+        "id": "ID_redacted",
+        "name": "external",
+        "description": "pull request originating outside of the CLI core team",
+        "color": "2700AF"
+      },
+      {
+        "id": "ID_redacted",
+        "name": "unmet-requirements",
+        "description": "",
+        "color": "ee2329"
+      }
+    ],
+    "number": 14700,
+    "reviewDecision": "REVIEW_REQUIRED",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T10:31:46Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374858264",
+        "name": "label-external / label_issues",
+        "startedAt": "2026-10-15T10:31:39Z",
+        "status": "COMPLETED",
+        "workflowName": "PR Triaging"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T10:31:36Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374859618",
+        "name": "close-from-default-branch / close-from-default-branch",
+        "startedAt": "2026-10-15T10:31:36Z",
+        "status": "COMPLETED",
+        "workflowName": "PR Triaging"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T10:31:48Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374858826",
+        "name": "check-requirements / check-requirements",
+        "startedAt": "2026-10-15T10:31:39Z",
+        "status": "COMPLETED",
+        "workflowName": "PR Triaging"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T10:31:36Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374860122",
+        "name": "check-requirements / close-unmet-requirements",
+        "startedAt": "2026-10-15T10:31:36Z",
+        "status": "COMPLETED",
+        "workflowName": "PR Triaging"
+      }
+    ],
+    "title": "docs(gh-skill): document gh api field passing pitfalls",
+    "updatedAt": "2026-10-15T10:37:22Z",
+    "url": "https://github.com/operator/sample/pull/14700"
+  },
+  {
+    "additions": 32,
+    "assignees": [],
+    "author": {
+      "id": "ID_redacted",
+      "is_bot": false,
+      "login": "fake-maintainer",
+      "name": "Fake Maintainer"
+    },
+    "baseRefName": "trunk",
+    "comments": [],
+    "createdAt": "2026-10-15T10:31:30Z",
+    "deletions": 0,
+    "headRefName": "docs/gh-skill-gh-api-field-passing",
+    "isDraft": false,
+    "labels": [],
+    "number": 14699,
+    "reviewDecision": "CHANGES_REQUESTED",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374858264",
+        "name": "label-external / label_issues",
+        "startedAt": "2026-10-15T10:31:39Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "PR Triaging"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "ci/legacy",
+        "state": "PENDING",
+        "startedAt": "2026-10-15T10:31:39Z",
+        "targetUrl": "https://ci.example.test/build/1"
+      }
+    ],
+    "title": "Add pending checks sample",
+    "updatedAt": "2026-10-15T10:37:22Z",
+    "url": "https://github.com/operator/sample/pull/14699"
+  },
+  {
+    "additions": 3,
+    "assignees": [],
+    "author": {
+      "is_bot": true,
+      "login": "app/dependabot"
+    },
+    "baseRefName": "trunk",
+    "comments": [],
+    "createdAt": "2026-10-15T14:06:04Z",
+    "deletions": 3,
+    "headRefName": "dependabot/github_actions/goreleaser/goreleaser-action-7.3.0",
+    "isDraft": false,
+    "labels": [
+      {
+        "id": "ID_redacted",
+        "name": "dependencies",
+        "description": "Pull requests that update a dependency file",
+        "color": "0366d6"
+      },
+      {
+        "id": "ID_redacted",
+        "name": "github_actions",
+        "description": "Pull requests that update GitHub Actions code",
+        "color": "000000"
+      }
+    ],
+    "number": 14707,
+    "reviewDecision": "APPROVED",
+    "state": "MERGED",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T14:06:14Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38748413670/job/116468141005",
+        "name": "label-external",
+        "startedAt": "2026-10-15T14:06:23Z",
+        "status": "COMPLETED",
+        "workflowName": "PR Triaging"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T14:06:17Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38748421703/job/116468160631",
+        "name": "label-external",
+        "startedAt": "2026-10-15T14:06:26Z",
+        "status": "COMPLETED",
+        "workflowName": "PR Triaging"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T14:09:17Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/operator/sample/actions/runs/38748411030/job/116468039275",
+        "name": "CodeQL-Build (go, manual, ./.github/codeql/codeql-config.yml)",
+        "startedAt": "2026-10-15T14:06:15Z",
+        "status": "COMPLETED",
+        "workflowName": "Code Scanning"
+      }
+    ],
+    "title": "chore(deps): bump goreleaser/goreleaser-action from 7.2.3 to 7.3.0",
+    "updatedAt": "2026-10-15T14:30:47Z",
+    "url": "https://github.com/operator/sample/pull/14707"
+  },
+  {
+    "additions": 1,
+    "assignees": [],
+    "author": {
+      "id": "ID_redacted",
+      "is_bot": false,
+      "login": "fake-reviewer",
+      "name": "Fake Reviewer"
+    },
+    "baseRefName": "chore/stack-probe-a",
+    "comments": [
+      {
+        "id": "ID_redacted",
+        "author": {
+          "login": "fake-reviewer"
+        },
+        "authorAssociation": "OWNER",
+        "body": "Probe of megabrain stack against the native stacks API; closed without merging.",
+        "createdAt": "2026-10-11T22:00:48Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/operator/sample/pull/84#issuecomment-6114290517",
+        "viewerDidAuthor": true
+      }
+    ],
+    "createdAt": "2026-10-11T22:00:23Z",
+    "deletions": 0,
+    "headRefName": "chore/stack-probe-b",
+    "isDraft": true,
+    "labels": [],
+    "number": 84,
+    "reviewDecision": "",
+    "state": "CLOSED",
+    "statusCheckRollup": [],
+    "title": "chore/stack-probe-b",
+    "updatedAt": "2026-10-11T22:00:54Z",
+    "url": "https://github.com/operator/sample/pull/84"
+  }
+]

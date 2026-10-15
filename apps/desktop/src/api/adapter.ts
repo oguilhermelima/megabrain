@@ -1,4 +1,4 @@
-import type { QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { GithubDetail, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -62,6 +62,8 @@ export interface DesktopApi {
   /** A local VS Code for a worktree or repository; started on demand and reused. */
   openCodeServer(root: string): Promise<CodeServer>
   stopCodeServer(root: string): Promise<void>
+  /** Open a file (optionally at a line) in the running VS Code for that root; starts it when needed. */
+  openInCode(root: string, path: string, line?: number): Promise<CodeServer>
   /** Everything the Settings window shows. */
   settings(): Promise<Settings>
   /** Set the admission policy; null turns it off. */
@@ -84,6 +86,14 @@ export interface DesktopApi {
   importClone(url: string, into: string): Promise<Repository>
   /** Repositories on GitHub the person can clone. */
   githubRepositories(): Promise<GithubRepository[]>
+  /** A repository's pull requests through gh (`github prs`); the CLI caches each answer for 60 s. */
+  githubPullRequests(root: string, state: 'open' | 'closed' | 'merged' | 'all', limit: number): Promise<GithubPullRequestList>
+  /** A repository's issues through gh (`github issues`). */
+  githubIssues(root: string, state: 'open' | 'closed' | 'all', limit: number): Promise<GithubIssueList>
+  /** One pull request's body and comments (`github pr`). */
+  githubPullRequest(root: string, number: number): Promise<GithubDetail>
+  /** One issue's body and comments (`github issue`). */
+  githubIssue(root: string, number: number): Promise<GithubDetail>
   /** Ask the person for a folder with the native picker; null when cancelled. */
   pickFolder(): Promise<string | null>
   /** A chat's conversation; pass the last cursor to get only newer events. */

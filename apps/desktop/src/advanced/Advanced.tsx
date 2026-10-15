@@ -5,12 +5,19 @@ import { Columns } from '@/advanced/Columns'
 import { chatState, groupChats, neighbour } from '@/advanced/model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
-import { Sidebar, type CodeTarget } from '@/advanced/Sidebar'
-import { CollapsedChrome, SidebarHeader, type Mode } from '@/advanced/chrome'
+import { Sidebar, readFilters, writeFilters } from '@/advanced/Sidebar'
+import { filterProjects, partitionHidden, type SidebarFilters } from '@/advanced/sidebar-model'
+import { applyOrder, parseOrder } from '@/advanced/project-order'
+import { CollapsedChrome, SettingsIcon, SidebarHeader, type Mode } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
-import type { OpenChat } from '@/chat/Conversation'
+import type { OpenChat, OpenPath } from '@/chat/Conversation'
 import { SessionView } from '@/chat/SessionView'
-import { CodeView } from '@/code/CodeView'
+import { CodeFrame, type CodeGoto } from '@/code/CodeFrame'
+import { CodeRail } from '@/code/CodeRail'
+import { closeCode, codeTargetForRoot, emptyCodeMode, enterCode, isToggleChatsKey, leaveCode, type CodeModeState, type CodeTarget } from '@/code/code-mode-model'
+import { QuickView } from '@/code/QuickView'
+import { GithubPage } from '@/github/GithubPage'
+import type { GithubKind } from '@/github/useGithubCounts'
 import { ImportProject } from '@/import/ImportProject'
 import { ErrorNote } from '@/components/ui'
 import { useStatus } from '@/lib/useStatus'
@@ -34,8 +41,9 @@ function useWorktrees(): Worktree[] {
   return worktrees
 }
 
-function useProjects(): Project[] {
+function useProjects(): { projects: Project[]; reload: () => void } {
   const [projects, setProjects] = useState<Project[]>([])
+  const [generation, setGeneration] = useState(0)
   useEffect(() => {
     let stopped = false
     const load = () => api.projects().then((value) => !stopped && setProjects(value), () => {})
@@ -45,8 +53,8 @@ function useProjects(): Project[] {
       stopped = true
       clearInterval(timer)
     }
-  }, [])
-  return projects
+  }, [generation])
+  return { projects, reload: () => setGeneration((current) => current + 1) }
 }
 
 function storedMode(): Mode {
@@ -54,6 +62,16 @@ function storedMode(): Mode {
     return localStorage.getItem('megabrain.view') === 'columns' ? 'columns' : 'sidebar'
   } catch {
     return 'sidebar'
+  }
+}
+
+const orderKey = 'megabrain.sidebar.order'
+
+function storedOrder(): string[] {
+  try {
+    return parseOrder(localStorage.getItem(orderKey))
+  } catch {
+    return []
   }
 }
 
@@ -70,17 +88,29 @@ function storedSidebarCollapsed(): boolean {
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
   const worktrees = useWorktrees()
-  const projects = useProjects()
+  const { projects: listed, reload: reloadProjects } = useProjects()
+  const [projectOrder, setProjectOrder] = useState<string[]>(storedOrder)
+  // The order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
+  const projects = useMemo(() => applyOrder(listed, projectOrder), [listed, projectOrder])
   const [mode, setMode] = useState<Mode>(storedMode)
   const [selected, setSelected] = useState<string | null>(null)
   const [sidebarSelected, setSidebarSelected] = useState<Selected | null>(null)
-  const [code, setCode] = useState<CodeTarget | null>(null)
+  const [quick, setQuick] = useState<CodeTarget | null>(null)
+  // A project's pull request or issue page, shown in the main area over chats and the overview.
+  const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
+  const [codeMode, setCodeMode] = useState<CodeModeState>(emptyCodeMode)
+  // The last root shown in Code mode, so the toggle key returns to it from chats.
+  const [lastCode, setLastCode] = useState<CodeTarget | null>(null)
+  // The file each open root was last asked to show from a chat.
+  const [gotos, setGotos] = useState<Record<string, CodeGoto>>({})
   const [importing, setImporting] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [filters, setFilters] = useState<SidebarFilters>(readFilters)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
   const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   const order = useMemo(() => grouped.repositories.flatMap((repository) => repository.worktrees.flatMap((worktree) => worktree.chats.map((chat) => chat.dispatchId))), [grouped])
-  const sessionRows = useMemo(() => sidebarSessionOrder(projects, new Set()), [projects])
+  // ⌘[ and ⌘] walk the sessions the sidebar shows: hidden and filtered-out ones are skipped.
+  const sessionRows = useMemo(() => sidebarSessionOrder(filterProjects(partitionHidden(projects).visible, filters), new Set()), [projects, filters])
 
   const changeMode = (next: Mode) => {
     setMode(next)
@@ -92,8 +122,18 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   }
 
   const open = (dispatchId: string) => {
-    setCode(null)
+    setQuick(null)
+    setGithubPage(null)
     setSelected(dispatchId)
+  }
+
+  const reorderProjects = (next: string[]) => {
+    setProjectOrder(next)
+    try {
+      localStorage.setItem(orderKey, JSON.stringify(next))
+    } catch {
+      // A remembered order is a convenience; the listed order is fine.
+    }
   }
 
   const toggleSidebarCollapsed = () => {
@@ -109,7 +149,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   }
 
   const openSession = (session: ProjectSession, worktreePath: string) => {
-    setCode(null)
+    setQuick(null)
+    setGithubPage(null)
     const dispatchId = session.dispatchId
     const known = dispatchId !== null && (status?.dispatches.some((item) => item.dispatchId === dispatchId) ?? false)
     if (known && dispatchId !== null) setSidebarSelected({ kind: 'dispatch', dispatchId })
@@ -127,7 +168,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   }
 
   const openRelatedChat: OpenChat = (target) => {
-    setCode(null)
+    setQuick(null)
+    setGithubPage(null)
     if ('dispatchId' in target) {
       const dispatch = status?.dispatches.find((item) => item.dispatchId === target.dispatchId)
       if (dispatch !== undefined) {
@@ -175,16 +217,43 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         ? sidebarSelected.session.sessionId
         : (sessionRows.find((row) => row.session.dispatchId === sidebarSelected.dispatchId)?.session.sessionId ?? null)
 
+  const openCode = (target: CodeTarget) => {
+    setQuick(null)
+    setLastCode(target)
+    setCodeMode((current) => enterCode(current, target).state)
+  }
+
+  const openPath: OpenPath = (root, path, line) => {
+    setGotos((current) => ({ ...current, [root]: { path, line } }))
+    openCode(codeTargetForRoot(projects, root))
+  }
+
+  // Leaving Code mode keeps every server running; only closing a root stops its own.
+  const closeCodeRoot = (root: string) => {
+    const { state, stop } = closeCode(codeMode, root)
+    setCodeMode(state)
+    if (lastCode?.root === root) setLastCode(state.open.at(-1) ?? null)
+    if (stop !== null) void api.stopCodeServer(stop).catch(() => {})
+    setGotos(({ [root]: _closed, ...rest }) => rest)
+  }
+
+  const toggleCode = () => {
+    if (codeMode.active !== null) setCodeMode(leaveCode)
+    else if (lastCode !== null) openCode(lastCode)
+  }
+
   const goHome = () => {
     setSidebarSelected(null)
     setSelected(null)
-    setCode(null)
+    setQuick(null)
+    setGithubPage(null)
   }
 
   const openFromOverview = (dispatchId: string) => {
     if (mode === 'columns') open(dispatchId)
     else {
-      setCode(null)
+      setQuick(null)
+      setGithubPage(null)
       setSidebarSelected({ kind: 'dispatch', dispatchId })
     }
   }
@@ -196,6 +265,14 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         setSettingsOpen(true)
         return
       }
+      if (isToggleChatsKey(event)) {
+        event.preventDefault()
+        toggleCode()
+        return
+      }
+      // Code mode owns the window: walking chats or folding the sidebar would change what is
+      // behind it. Escape is never handled here, so VS Code keeps it.
+      if (codeMode.active !== null) return
       if (event.metaKey && event.key.toLowerCase() === 'b') {
         event.preventDefault()
         toggleSidebarCollapsed()
@@ -203,7 +280,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       }
       if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
       event.preventDefault()
-      setCode(null)
+      setQuick(null)
       const step = event.key === ']' ? 1 : -1
       if (mode === 'columns') {
         setSelected((current) => neighbour(order, current, step))
@@ -214,7 +291,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [order, mode, sessionRows, selectedSessionId])
+  }, [order, mode, sessionRows, selectedSessionId, codeMode, lastCode])
 
   const chat = status?.dispatches.find((item) => item.dispatchId === selected) ?? null
   const repositoryOf = (dispatchId: string) =>
@@ -224,35 +301,34 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const sidebarDispatch = sidebarDispatchId === null ? null : status?.dispatches.find((item) => item.dispatchId === sidebarDispatchId) ?? null
 
   const detail =
-    code !== null ? (
-      <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
+    quick !== null ? (
+      <QuickView key={quick.root} root={quick.root} title={quick.title} onClose={() => setQuick(null)} />
     ) : chat !== null ? (
-      <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} onOpenChat={openRelatedChat} />
+      <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} onOpenChat={openRelatedChat} onOpenPath={openPath} />
     ) : (
       status !== null && <Overview status={status} onSelect={openFromOverview} />
     )
 
   const sidebarDetail =
-    code !== null ? (
-      <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
+    quick !== null ? (
+      <QuickView key={quick.root} root={quick.root} title={quick.title} onClose={() => setQuick(null)} />
     ) : sidebarDispatch !== null ? (
-      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={repositoryOf(sidebarDispatch.dispatchId)} onOpenChat={openRelatedChat} />
+      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={repositoryOf(sidebarDispatch.dispatchId)} onOpenChat={openRelatedChat} onOpenPath={openPath} />
     ) : sidebarSelected?.kind === 'session' ? (
-      <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} onOpenChat={openRelatedChat} />
+      <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} onOpenChat={openRelatedChat} onOpenPath={openPath} />
     ) : (
       status !== null && <Overview status={status} onSelect={openFromOverview} />
     )
-  const watcherOn = status?.supervisor.watcher.running === true
-  const settingsOverlay = settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} />
+  const settingsOverlay = settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} onSetup={onSetup} />
 
   const columnsContent =
-    chat !== null || code !== null ? (
+    chat !== null || quick !== null ? (
       <div className="flex min-h-0 flex-1 flex-col">
         <button
           type="button"
           onClick={() => {
             setSelected(null)
-            setCode(null)
+            setQuick(null)
           }}
           className="self-start px-8 pt-4 text-[13px] text-ink-300 hover:text-ink-100"
         >
@@ -264,11 +340,26 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       <Columns chats={status?.dispatches ?? []} worktrees={worktrees} selected={selected} onSelect={open} />
     )
 
+  const inCode = codeMode.active !== null
+  const githubProject = githubPage === null ? null : (projects.find((project) => project.path === githubPage.path) ?? null)
+  const githubView =
+    githubPage !== null && githubProject !== null ? (
+      <GithubPage
+        key={`${githubPage.path}:${githubPage.kind}:${githubPage.focus ?? ''}`}
+        project={githubProject}
+        kind={githubPage.kind}
+        focus={githubPage.focus}
+        onKind={(kind) => setGithubPage({ path: githubPage.path, kind, focus: null })}
+        onClose={() => setGithubPage(null)}
+      />
+    ) : null
+
   return (
     <div className="relative flex h-full">
-      {!sidebarCollapsed && (
+      {inCode && <CodeRail state={codeMode} projects={projects} onSelect={openCode} onClose={closeCodeRoot} onChats={() => setCodeMode(leaveCode)} onSettings={() => setSettingsOpen(true)} />}
+      {!inCode && !sidebarCollapsed && (
         <aside className="glass flex w-[300px] shrink-0 flex-col border-r border-white/[0.06]">
-          <SidebarHeader mode={mode} onMode={changeMode} onHome={goHome} onCollapse={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} />
+          <SidebarHeader mode={mode} onMode={changeMode} onHome={goHome} onCollapse={toggleSidebarCollapsed} />
           <Sidebar
             status={status}
             projects={projects}
@@ -278,30 +369,58 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
               changeMode('sidebar')
               openSession(session, worktree?.path ?? '')
             }}
-            onCode={setCode}
+            onCode={openCode}
+            onQuickView={(target) => {
+              setGithubPage(null)
+              setQuick(target)
+            }}
             onImport={() => setImporting(true)}
+            onChanged={reloadProjects}
+            order={projectOrder}
+            onReorder={reorderProjects}
+            filters={filters}
+            onFilters={(next) => {
+              setFilters(next)
+              writeFilters(next)
+            }}
+            activeGithub={githubPage}
+            onGithub={(project, kind, focus) => {
+              setQuick(null)
+              setGithubPage({ path: project.path, kind, focus: focus ?? null })
+            }}
           />
-          <footer className="flex shrink-0 items-center justify-between border-t border-white/[0.06] px-5 py-2.5 text-[12px] text-ink-400">
-            <span className="flex items-center gap-2" title={`The watcher reports stuck or finished chats; it is ${watcherOn ? 'running' : 'stopped'}.`}>
-              <span className={`size-2 rounded-full ${watcherOn ? 'bg-ok' : 'bg-bad'}`} />
-              watcher {watcherOn ? 'on' : 'off'}
-            </span>
-            <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:bg-white/[0.06] hover:text-ink-200">
-              Run setup
+          <footer className="shrink-0 border-t border-white/[0.06] p-2">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings (⌘,)"
+              className="flex w-full items-center gap-2.5 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-ink-300 hover:bg-white/[0.06] hover:text-ink-100"
+            >
+              <SettingsIcon />
+              Settings
             </button>
           </footer>
         </aside>
       )}
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
-        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
-        {error !== null && (
-          <div className="px-8 pt-4">
-            <ErrorNote error={error} />
-          </div>
-        )}
-        {mode === 'columns' ? columnsContent : sidebarDetail}
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
+        {/* Chats stay mounted under Code mode so a draft or a scroll position survives the trip. */}
+        <div className={inCode ? 'hidden' : 'contents'}>
+          {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
+          {error !== null && (
+            <div className="px-8 pt-4">
+              <ErrorNote error={error} />
+            </div>
+          )}
+          {githubView ?? (mode === 'columns' ? columnsContent : sidebarDetail)}
+        </div>
+        {codeMode.open.map((target) => (
+          <CodeFrame key={target.root} target={target} visible={target.root === codeMode.active} goto={gotos[target.root] ?? null} />
+        ))}
       </main>
-      {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
+      {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => {
+            setImporting(false)
+            reloadProjects()
+          }} />}
       {settingsOverlay}
     </div>
   )

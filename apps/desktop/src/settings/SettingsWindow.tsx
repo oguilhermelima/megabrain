@@ -13,13 +13,13 @@ type Section = 'usage' | 'chains' | 'supervisor' | 'limits' | 'models'
 
 const sections: { key: Section; label: string }[] = [
   { key: 'usage', label: 'Usage' },
+  { key: 'supervisor', label: 'Supervisor and setup' },
   { key: 'chains', label: 'Chains' },
-  { key: 'supervisor', label: 'Supervisor' },
   { key: 'limits', label: 'Limits' },
   { key: 'models', label: 'Models and terminal' },
 ]
 
-export function SettingsWindow({ onClose }: { onClose: () => void }) {
+export function SettingsWindow({ onClose, onSetup }: { onClose: () => void; onSetup: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [section, setSection] = useState<Section>('usage')
   const [error, setError] = useState<unknown>(null)
@@ -116,6 +116,10 @@ export function SettingsWindow({ onClose }: { onClose: () => void }) {
                   pid={settings.supervisor.pid}
                   error={error}
                   onToggle={(running) => void act(() => api.setSupervisor(running))}
+                  onSetup={() => {
+                    onClose()
+                    onSetup()
+                  }}
                 />
               )}
               {section === 'limits' && (

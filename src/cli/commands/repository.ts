@@ -8,6 +8,7 @@ import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from 
 import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
 import { backfillProjectHistory } from "./projects.js";
 import { usageText } from "../../core/usage.js";
+import { setHiddenItem } from "../../db/queries/hidden-items.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type GithubRepository = Readonly<{ nameWithOwner: string; url: string; description: string | null; isPrivate: boolean; updatedAt: string | null }>;
@@ -90,6 +91,22 @@ export async function executeRepository(args: readonly string[], environment: En
     if (removed.value === undefined) return failed(`repository not found: ${selector}`);
     return ok(json ? `${JSON.stringify({ removed: removed.value }, null, 2)}\n` : `removed ${removed.value.name} from registry\n`);
   }
+  if (verb === "hide" || verb === "unhide") {
+    const selector = rest.find((argument) => !argument.startsWith("-"));
+    if (selector === undefined) return failed(`Usage: megabrain repo ${verb} <name|path>`, 2);
+    const pathSelector = await realpath(selector).catch(() => selector);
+    const changed = databaseAction(environment, (db) => {
+      const exact = listRepositories(db).find((repository) => repository.path === pathSelector);
+      const matches = exact === undefined ? listRepositories(db).filter((repository) => repository.name === selector) : [exact];
+      if (matches.length > 1) throw new Error(`repository name is ambiguous: ${selector}; use a path`);
+      const repository = matches[0];
+      if (repository === undefined) return undefined;
+      setHiddenItem(db, "repo", repository.path, verb === "hide");
+      return repository;
+    });
+    if (changed.kind !== "ok") return changed;
+    return changed.value === undefined ? failed(`repository not found: ${selector}`) : ok(`${verb === "hide" ? "hidden" : "shown"} ${changed.value.name}\n`);
+  }
   if (verb === "github") {
     let owner: string | undefined;
     const ownerIndex = rest.indexOf("--owner");
@@ -104,5 +121,5 @@ export async function executeRepository(args: readonly string[], environment: En
       return ok(json ? `${JSON.stringify(repositories, null, 2)}\n` : repositories.map((repository) => `${repository.nameWithOwner}\t${repository.url}\n`).join(""));
     } catch { return failed("gh repo list returned invalid JSON"); }
   }
-  return failed("Usage: megabrain repo list|add|clone|remove|github ...", 2);
+  return failed("Usage: megabrain repo list|add|clone|remove|hide|unhide|github ...", 2);
 }

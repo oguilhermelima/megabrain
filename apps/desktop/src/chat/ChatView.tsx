@@ -2,18 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { ChatRead, Dispatch } from '@/api/schema'
 import { chatState } from '@/advanced/model'
-import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
-import { Conversation, type OpenChat } from '@/chat/Conversation'
-import { Button, ErrorNote, Mono, Spinner } from '@/components/ui'
+import { StateChip, chatName } from '@/advanced/parts'
+import { ChatHeader } from '@/chat/ChatHeader'
+import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
+import { ErrorNote, Mono } from '@/components/ui'
+import { Composer, type Notice } from '@/chat/Composer'
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat }) {
+export function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
   const [read, setRead] = useState<ChatRead | null>(null)
   const [readError, setReadError] = useState<unknown>(null)
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [notice, setNotice] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const pane = useRef<HTMLPreElement>(null)
   const state = chatState(chat)
 
@@ -43,42 +42,23 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
     if (element !== null) element.scrollTop = element.scrollHeight
   }, [read?.text])
 
-  const send = () => {
-    if (text.trim() === '') return
-    setSending(true)
-    setNotice(null)
-    api
-      .reply(chat.dispatchId, text.trim())
-      .then(
-        () => {
-          setNotice({ tone: 'ok', text: 'Sent.' })
-          setText('')
-        },
-        (error: unknown) => setNotice({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
-      )
-      .finally(() => setSending(false))
+  const send = async (text: string): Promise<Notice> => {
+    await api.reply(chat.dispatchId, text)
+    return { tone: 'ok', text: 'Sent.' }
   }
 
   const finding = chat.supervision.finding
   const [tab, setTab] = useState<'conversation' | 'terminal'>('conversation')
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header data-tauri-drag-region className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
-        <AgentBadge agent={chat.agent ?? ''} size="lg" />
-        <div className="min-w-0">
-          <h1 title={chatName(chat)} className="truncate text-[20px] font-semibold tracking-[-0.01em] text-ink-100">{chatName(chat)}</h1>
-          <p className="truncate text-[13px] text-ink-400">
-            {[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
-          </p>
-        </div>
-        <StateChip state={state} />
-        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-400" title="Previous and next chat">
-          <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘[</kbd>
-          <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘]</kbd>
-        </span>
-      </header>
+      <ChatHeader
+        agent={chat.agent ?? ''}
+        title={chatName(chat)}
+        meta={[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
+        status={<StateChip state={state} />}
+      />
       {finding !== null && (
-        <div className="mx-8 mt-5 rounded-[20px] border border-warn/25 bg-warn/[0.08] px-5 py-3.5 text-[13.5px]">
+        <div className="mx-8 mt-3 rounded-[20px] border border-warn/25 bg-warn/[0.08] px-5 py-3.5 text-[13.5px]">
           <span className="font-semibold text-warn">{finding.cause}</span>
           {finding.errorText !== undefined && <span className="text-ink-300"> · {finding.errorText}</span>}
           {finding.recommendation !== undefined && (
@@ -88,7 +68,7 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
           )}
         </div>
       )}
-      <div className="mx-8 mt-5 flex gap-1 self-start rounded-full border border-white/10 bg-white/[0.05] p-1">
+      <div className="mx-8 mt-3 flex gap-1 self-start rounded-full border border-white/10 bg-white/[0.05] p-1">
         {(['conversation', 'terminal'] as const).map((value) => (
           <button
             key={value}
@@ -100,7 +80,11 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
           </button>
         ))}
       </div>
-      {tab === 'conversation' && <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} />}
+      {tab === 'conversation' && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} root={chat.worktreePath ?? null} onOpenPath={onOpenPath} />
+        </div>
+      )}
       <pre
         hidden={tab !== 'terminal'}
         ref={pane}
@@ -113,28 +97,14 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
           <ErrorNote error={readError} />
         </div>
       )}
-      <footer className="px-8 pb-6">
-        {notice !== null && <p className={`mb-2 px-2 text-[13px] ${notice.tone === 'ok' ? 'text-ok' : 'text-bad'}`}>{notice.text}</p>}
-        <form
-          className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.05] py-1.5 pr-1.5 pl-5"
-          onSubmit={(event) => {
-            event.preventDefault()
-            send()
-          }}
-        >
-          <input
-            id="chat-reply"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            disabled={sending || state === 'ended'}
-            placeholder={state === 'ended' ? 'This chat has ended' : `Reply to ${chatName(chat)}…`}
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-400"
-          />
-          <Button variant="primary" type="submit" disabled={text.trim() === '' || sending || state === 'ended'} className="h-9 px-4">
-            {sending ? <Spinner /> : 'Send'}
-          </Button>
-        </form>
-      </footer>
+      <Composer
+        placeholder={state === 'ended' ? 'This chat has ended' : `Reply to ${chatName(chat)}…`}
+        disabled={state === 'ended'}
+        agent={chat.agent ?? null}
+        cwd={chat.worktreePath ?? null}
+        dispatchId={chat.dispatchId}
+        onSend={send}
+      />
     </div>
   )
 }

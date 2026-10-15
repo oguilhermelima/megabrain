@@ -1,5 +1,5 @@
 import type { DesktopApi, PathLink } from '@/api/adapter'
-import { mockSettings, mockGithubRepositories, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -77,6 +77,7 @@ export function createMockApi(): DesktopApi {
     sendToSession: async () => ({ delivered: true, channel: 'claude-peer' }),
     openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     stopCodeServer: async () => {},
+    openInCode: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     settings: async () => settings,
     setPolicy: async (policy) => {
       settings = { ...settings, resources: { ...settings.resources, policy: policy === null ? null : { maxAgents: policy.maxAgents ?? null, minAvailableMib: policy.minAvailableMib ?? null, maxPressure: policy.maxPressure ?? null, maxContainerSuites: policy.maxContainerSuites ?? null } } }
@@ -94,6 +95,24 @@ export function createMockApi(): DesktopApi {
     importFolder: async (path) => mockImported(path, null),
     importClone: async (url, into) => mockImported(`${into}/${url.split('/').at(-1) ?? 'repo'}`, url),
     githubRepositories: async () => mockGithubRepositories,
+    githubPullRequests: async (_root, state, limit) => {
+      await wait(450)
+      const items = mockGithubPullRequests.items.filter((item) => state === 'all' || item.state === state).slice(0, limit)
+      return { ...mockGithubPullRequests, state, limit, items }
+    },
+    githubIssues: async (_root, state, limit) => {
+      await wait(400)
+      const items = mockGithubIssues.items.filter((item) => state === 'all' || item.state === state).slice(0, limit)
+      return { ...mockGithubIssues, state, limit, items }
+    },
+    githubPullRequest: async (_root, number) => {
+      await wait(300)
+      return mockGithubDetail('pr', number)
+    },
+    githubIssue: async (_root, number) => {
+      await wait(300)
+      return mockGithubDetail('issue', number)
+    },
     pickFolder: async () => '/Users/operator/Workspaces/new-project',
     codeTree: async () => mockCodeTree,
     codeRead: async (_root, path) => {

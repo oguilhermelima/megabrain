@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { AnchorHTMLAttributes } from 'react'
+import { Linked } from '@/chat/path-links'
 
 // Links aren't wired to open anywhere yet, so a markdown link renders as inert text that only
 // shows its target on hover, through the title attribute, rather than as something clickable.
@@ -16,10 +17,29 @@ function InertLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement>) 
 
 const components = {
   a: InertLink,
-  p: (props: React.ComponentPropsWithoutRef<'p'>) => <p className="whitespace-pre-wrap" {...props} />,
+  // Text-bearing elements link the file paths in their text (see path-links.tsx).
+  p: ({ children, ...props }: React.ComponentPropsWithoutRef<'p'>) => (
+    <p className="whitespace-pre-wrap" {...props}>
+      <Linked>{children}</Linked>
+    </p>
+  ),
   ul: (props: React.ComponentPropsWithoutRef<'ul'>) => <ul className="list-disc space-y-0.5 pl-5" {...props} />,
   ol: (props: React.ComponentPropsWithoutRef<'ol'>) => <ol className="list-decimal space-y-0.5 pl-5" {...props} />,
-  li: (props: React.ComponentPropsWithoutRef<'li'>) => <li {...props} />,
+  li: ({ children, ...props }: React.ComponentPropsWithoutRef<'li'>) => (
+    <li {...props}>
+      <Linked>{children}</Linked>
+    </li>
+  ),
+  strong: ({ children, ...props }: React.ComponentPropsWithoutRef<'strong'>) => (
+    <strong {...props}>
+      <Linked>{children}</Linked>
+    </strong>
+  ),
+  em: ({ children, ...props }: React.ComponentPropsWithoutRef<'em'>) => (
+    <em {...props}>
+      <Linked>{children}</Linked>
+    </em>
+  ),
   h1: (props: React.ComponentPropsWithoutRef<'h1'>) => <h1 className="text-[17px] font-bold text-ink-100" {...props} />,
   h2: (props: React.ComponentPropsWithoutRef<'h2'>) => <h2 className="text-[16px] font-bold text-ink-100" {...props} />,
   h3: (props: React.ComponentPropsWithoutRef<'h3'>) => <h3 className="text-[15px] font-bold text-ink-100" {...props} />,
@@ -33,7 +53,7 @@ const components = {
       </code>
     ) : (
       <code className="rounded-md bg-white/[0.08] px-1 py-0.5 font-mono text-[13px] text-ink-100" {...props}>
-        {children}
+        <Linked>{children}</Linked>
       </code>
     ),
   pre: (props: React.ComponentPropsWithoutRef<'pre'>) => (
@@ -45,7 +65,11 @@ const components = {
   th: (props: React.ComponentPropsWithoutRef<'th'>) => (
     <th className="border border-white/10 px-2 py-1 text-left font-semibold text-ink-200" {...props} />
   ),
-  td: (props: React.ComponentPropsWithoutRef<'td'>) => <td className="border border-white/10 px-2 py-1 text-ink-300" {...props} />,
+  td: ({ children, ...props }: React.ComponentPropsWithoutRef<'td'>) => (
+    <td className="border border-white/10 px-2 py-1 text-ink-300" {...props}>
+      <Linked>{children}</Linked>
+    </td>
+  ),
   input: (props: React.ComponentPropsWithoutRef<'input'>) =>
     props.type === 'checkbox' ? <input {...props} disabled className="accent-accent" /> : <input {...props} />,
 }

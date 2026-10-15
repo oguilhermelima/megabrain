@@ -9,7 +9,7 @@ export type ProcessOutput = {
 
 export type ProcessAdapter = {
   run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number }): Promise<Result<ProcessOutput>>;
-  startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>>;
+  startDetached(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<{ readonly pid: number }>>;
   invocationCount(): number;
 };
 
@@ -56,10 +56,15 @@ export function createProcessAdapter(): ProcessAdapter {
     }
   }
 
-  async function startDetached(command: string, args: readonly string[]): Promise<Result<{ readonly pid: number }>> {
+  async function startDetached(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<{ readonly pid: number }>> {
     count += 1;
     try {
-      const child = spawn(command, [...args], { stdio: "ignore", detached: true });
+      const child = spawn(command, [...args], {
+        stdio: "ignore",
+        detached: true,
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
+        ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
+      });
       await new Promise<void>((resolve, reject) => {
         child.once("spawn", resolve);
         child.once("error", reject);

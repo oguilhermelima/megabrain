@@ -10,14 +10,19 @@ import { getRepositoryPullRequests, listRepositories, registerRepository, saveRe
 import type { DatabaseAdapter } from "../../db/db.js";
 import { listWorktrees } from "../../db/queries/worktrees.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
+import { readContextMeter } from "../../core/context-meter.js";
+import { listHiddenItems } from "../../db/queries/hidden-items.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
-type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null }>;
+type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; contextTokens?: number | null; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
 type GitWorktree = Readonly<{ path: string; branch: string | null; head: string | null; primary: boolean; parent: string | null }>;
-type Project = Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; missing: boolean; worktrees: readonly (GitWorktree & { pullRequest: { number: number; state: string; url: string } | null; sessions: readonly ProjectSession[] })[] }>;
+type Project = Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; missing: boolean; worktrees: readonly (GitWorktree & { pullRequest: PullRequestSummary | null; sessions: readonly ProjectSession[] })[] }>;
 type Dispatch = ReturnType<typeof listDispatches>[number];
 type RawSession = Readonly<{ agent: ProjectSession["agent"]; id: string; cwd: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; processId?: number }>;
+
+// title and isDraft are null for a value cached before they were read; the cache keeps gh's own JSON.
+type PullRequestSummary = Readonly<{ number: number; state: string; url: string; title: string | null; isDraft: boolean | null }>;
 
 const HISTORY_MARKER = "project-registry-backfilled";
 const DAY = 86_400_000;
@@ -208,9 +213,12 @@ async function grokSessions(home: string): Promise<RawSession[]> {
   }))).filter((session): session is RawSession => session !== undefined);
 }
 
-function codexRolloutPaths(home: string): Promise<string[]> {
+async function codexRolloutPaths(home: string, processAdapter: ProcessAdapter): Promise<string[]> {
   const root = join(home, ".codex", "sessions");
-  return readdir(root).catch(() => []).then(async (years) => {
+  const recent = await processAdapter.run("find", [root, "-type", "f", "-name", "rollout-*.jsonl", "-mmin", "-1440"]);
+  if (recent.kind === "ok") return recent.value.stdout.split("\n").filter((path) => path !== "");
+  const years = await readdir(root).catch(() => []);
+  return (async () => {
     const directories = await Promise.all(years.map(async (year) => {
       const months = await readdir(join(root, year)).catch(() => []);
       return Promise.all(months.map(async (month) => {
@@ -222,11 +230,11 @@ function codexRolloutPaths(home: string): Promise<string[]> {
       }));
     }));
     return directories.flat(3);
-  });
+  })();
 }
 
 async function codexSessions(home: string, processAdapter: ProcessAdapter, titles: ReadonlyMap<string, string>): Promise<RawSession[]> {
-  const paths = await codexRolloutPaths(home);
+  const paths = await codexRolloutPaths(home, processAdapter);
   const cutoff = Date.now() - DAY;
   const eligible: Array<{ path: string; modified: number }> = [];
   await Promise.all(paths.map(async (path) => {
@@ -348,16 +356,16 @@ function parseWorktrees(output: string, mainPath: string, parentByBranch: Readon
     || left.path.localeCompare(right.path));
 }
 
-function pullRequestMap(value: unknown): Map<string, { number: number; state: string; url: string }> {
+function pullRequestMap(value: unknown): Map<string, PullRequestSummary> {
   if (!Array.isArray(value)) return new Map();
   return new Map(value.flatMap((item) => {
     const entry = record(item);
     if (entry === undefined || typeof entry.headRefName !== "string" || typeof entry.number !== "number" || typeof entry.state !== "string" || typeof entry.url !== "string") return [];
-    return [[entry.headRefName, { number: entry.number, state: entry.state, url: entry.url }] as const];
+    return [[entry.headRefName, { number: entry.number, state: entry.state, url: entry.url, title: typeof entry.title === "string" ? entry.title : null, isDraft: typeof entry.isDraft === "boolean" ? entry.isDraft : null }] as const];
   }));
 }
 
-function cachedPullRequestMap(value: string | undefined): Map<string, { number: number; state: string; url: string }> | undefined {
+function cachedPullRequestMap(value: string | undefined): Map<string, PullRequestSummary> | undefined {
   if (value === undefined) return undefined;
   try {
     const parsed: unknown = JSON.parse(value);
@@ -365,12 +373,12 @@ function cachedPullRequestMap(value: string | undefined): Map<string, { number: 
   } catch { return undefined; }
 }
 
-async function repositoryPullRequests(repository: RepositoryRecord, database: DatabaseAdapter, processAdapter: ProcessAdapter): Promise<Map<string, { number: number; state: string; url: string }>> {
+async function repositoryPullRequests(repository: RepositoryRecord, database: DatabaseAdapter, processAdapter: ProcessAdapter): Promise<Map<string, PullRequestSummary>> {
   const cached = getRepositoryPullRequests(database, repository.path);
   const stale = cachedPullRequestMap(cached?.value);
   const now = Date.now();
   if (stale !== undefined && cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < PULL_REQUEST_CACHE_TTL) return stale;
-  const refreshed = await processAdapter.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"], { cwd: repository.path, timeoutMs: 2_000 });
+  const refreshed = await processAdapter.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url,title,isDraft"], { cwd: repository.path, timeoutMs: 2_000 });
   if (refreshed.kind === "ok") {
     try {
       const parsed: unknown = JSON.parse(refreshed.value.stdout);
@@ -384,7 +392,46 @@ async function repositoryPullRequests(repository: RepositoryRecord, database: Da
   return stale ?? new Map();
 }
 
-async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter): Promise<Project> {
+async function claudeIdleEnabled(home: string, cwd: string): Promise<boolean> {
+  let enabled = true;
+  for (const path of [join(home, ".claude", "settings.json"), join(cwd, ".claude", "settings.json"), join(cwd, ".claude", "settings.local.json")]) {
+    try {
+      const value: unknown = JSON.parse(await readFile(path, "utf8"));
+      if (typeof value === "object" && value !== null && !Array.isArray(value) && "idleCompaction" in value && typeof value.idleCompaction === "boolean") enabled = value.idleCompaction;
+    } catch { /* Missing or invalid settings do not disable compaction. */ }
+  }
+  return enabled;
+}
+
+async function timedSessions(sessions: readonly ProjectSession[], home: string, cwd: string, environment: Environment): Promise<ProjectSession[]> {
+  const minimumValue = Number(environment.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS ?? 200000);
+  const minimum = Number.isSafeInteger(minimumValue) && minimumValue >= 0 ? minimumValue : 200000;
+  const measured = await Promise.all(sessions.map(async (session) => {
+    const sessionId = session.sessionId.slice(session.agent.length + 1);
+    const meter = await readContextMeter({
+      agent: session.agent,
+      agentSessionId: sessionId,
+      agentCwd: cwd,
+      ...(session.agent === "claude" ? { agentTranscriptPath: join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`) } : {}),
+    }, home);
+    return { session, contextTokens: meter.status === "known" ? meter.usedTokens : null };
+  }));
+  const needsIdleSetting = measured.some(({ session, contextTokens }) => session.agent === "claude" && session.status !== "working" && session.lastActivityAt !== null && contextTokens !== null && contextTokens >= minimum);
+  const idleEnabled = needsIdleSetting ? await claudeIdleEnabled(home, cwd) : false;
+  return measured.map(({ session, contextTokens }) => {
+    if (session.agent !== "claude" || session.status === "working" || session.lastActivityAt === null) return { ...session, contextTokens, cacheExpiresAt: null, idleCompactAt: null };
+    const timestamp = Date.parse(session.lastActivityAt);
+    if (!Number.isFinite(timestamp)) return { ...session, contextTokens, cacheExpiresAt: null, idleCompactAt: null };
+    return {
+      ...session,
+      contextTokens,
+      cacheExpiresAt: new Date(timestamp + 60 * 60_000).toISOString(),
+      idleCompactAt: idleEnabled && contextTokens !== null && contextTokens >= minimum ? new Date(timestamp + 54 * 60_000).toISOString() : null,
+    };
+  });
+}
+
+async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment): Promise<Project> {
   const checkout = await repositoryCheckout(repository.path, processAdapter);
   if (checkout.kind !== "ok") return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
   const [worktreesResult, parentsResult, pulls] = await Promise.all([
@@ -398,11 +445,11 @@ async function repositoryProject(repository: RepositoryRecord, found: readonly R
     const match = /^branch\.(.*)\.megabrain-parent\s+(.+)$/.exec(line);
     if (match?.[1] !== undefined && match[2] !== undefined) parents.set(match[1], match[2]);
   }
-  const worktrees = parseWorktrees(worktreesResult.value.stdout, repository.path, parents).map((worktree) => ({
+  const worktrees = await Promise.all(parseWorktrees(worktreesResult.value.stdout, repository.path, parents).map(async (worktree) => ({
     ...worktree,
     pullRequest: worktree.branch === null ? null : pulls.get(worktree.branch) ?? null,
-    sessions: projectSessions(worktree.path, found, dispatches),
-  }));
+    sessions: await timedSessions(projectSessions(worktree.path, found, dispatches), home, worktree.path, environment),
+  })));
   return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: false, worktrees };
 }
 
@@ -439,7 +486,11 @@ export async function executeProjects(args: readonly string[], environment: Envi
     const dispatches = listDispatches(opened.value.db, { includeArchived: true });
     const home = environment.HOME ?? process.env.HOME ?? "";
     const found = await sessionsForMachine(home, processAdapter);
-    const projects = await Promise.all(repositories.map((repository) => repositoryProject(repository, found, dispatches, processAdapter, opened.value.db)));
+    const hiddenItems = new Set(listHiddenItems(opened.value.db).map((item) => `${item.kind}:${item.path}`));
+    const projects = await Promise.all(repositories.map(async (repository) => {
+      const project = await repositoryProject(repository, found, dispatches, processAdapter, opened.value.db, home, environment);
+      return { ...project, hidden: hiddenItems.has(`repo:${repository.path}`), worktrees: project.worktrees.map((tree) => ({ ...tree, hidden: hiddenItems.has(`worktree:${tree.path}`) })) };
+    }));
     return ok(`${JSON.stringify(projects, null, 2)}\n`);
   } finally { opened.value.close(); }
 }

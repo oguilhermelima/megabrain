@@ -30,7 +30,8 @@ const changeTone: Record<CodeChange['status'], Tone> = {
   untracked: 'neutral',
 }
 
-export function CodeView({ root, title, onClose }: { root: string; title: string; onClose: () => void }) {
+// A read-only look at a root's files and changes without starting VS Code.
+export function QuickView({ root, title, onClose }: { root: string; title: string; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('files')
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -40,7 +41,6 @@ export function CodeView({ root, title, onClose }: { root: string; title: string
   const [treeError, setTreeError] = useState<unknown>(null)
   const [changes, setChanges] = useState<CodeChange[]>([])
   const [fileState, setFileState] = useState<FileState | null>(null)
-
   useEffect(() => {
     let cancelled = false
     setEntries(null)
@@ -147,9 +147,9 @@ export function CodeView({ root, title, onClose }: { root: string; title: string
           <h2 className="truncate text-[15px] font-semibold text-ink-100">{title}</h2>
           <p className="truncate font-mono text-[12px] text-ink-400">{root}</p>
         </div>
-        <Button variant="ghost" onClick={onClose}>
-          Close
-        </Button>
+        <div className="flex shrink-0 items-center gap-2 pl-4">
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">

@@ -1,4 +1,4 @@
-import type { Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { Settings, GithubDetail, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -380,4 +380,125 @@ export const mockSettings: Settings = {
     { agent: 'agy', model: 'gemini-3.1-pro-high', reasoning: { levels: ['high'] } },
   ],
   terminal: { default: null, detected: 'terminal', available: ['terminal', 'iterm', 'ghostty'] },
+}
+
+// One repository's pull requests and issues as `megabrain github prs|issues --state all --json` lists
+// them: every state, drafts, reviews, failing, pending and passing checks, labels in GitHub colors.
+const githubRef = { nameWithOwner: 'operator/megabrain', url: 'https://github.com/operator/megabrain', path: `${root}/megabrain` }
+const person = (login: string, name: string | null = null) => ({ login, name, isBot: login.startsWith('app/') })
+const label = (name: string, color: string, description = '') => ({ name, color, description })
+const labels = {
+  bug: label('bug', 'd73a4a', "Something isn't working"),
+  enhancement: label('enhancement', 'a2eeef', 'New feature or request'),
+  desktop: label('desktop', '5319e7', 'The desktop app'),
+  docs: label('documentation', '0075ca', 'Improvements or additions to documentation'),
+  deps: label('dependencies', '0366d6', 'Pull requests that update a dependency file'),
+  triage: label('needs-triage', 'fbca04', 'Needs a first look'),
+  good: label('good first issue', '7057ff', 'Good for newcomers'),
+}
+const check = (name: string, state: 'success' | 'failure' | 'pending' | 'skipped' | 'neutral') => ({ name, state })
+const passing = [check('typecheck', 'success'), check('unit', 'success'), check('container', 'success'), check('release-please', 'skipped')]
+
+const pullRequest = (fields: Partial<GithubPullRequest> & Pick<GithubPullRequest, 'number' | 'title' | 'headRefName'>): GithubPullRequest => ({
+  state: 'open',
+  isDraft: false,
+  author: person('operator', 'Operator'),
+  labels: [],
+  assignees: [],
+  createdAt: ago(600),
+  updatedAt: ago(60),
+  url: `https://github.com/operator/megabrain/pull/${fields.number}`,
+  baseRefName: 'main',
+  reviewDecision: 'review_required',
+  checks: passing,
+  comments: 0,
+  additions: 120,
+  deletions: 14,
+  ...fields,
+})
+
+export const mockGithubPullRequests: GithubPullRequestList = {
+  repository: githubRef,
+  state: 'all',
+  limit: 200,
+  fetchedAt: ago(0),
+  items: [
+    pullRequest({ number: 112, title: 'feat(desktop): pull request and issue pages', headRefName: 'feat/desktop-github-pages', labels: [labels.desktop, labels.enhancement], comments: 3, additions: 1840, deletions: 62, updatedAt: ago(4), checks: [check('typecheck', 'success'), check('unit', 'pending'), check('container', 'pending')] }),
+    pullRequest({ number: 111, title: 'fix(spawn): keep the launch line under the tmux limit', headRefName: 'fix/spawn-launch-line', labels: [labels.bug], reviewDecision: 'changes_requested', comments: 7, additions: 48, deletions: 31, updatedAt: ago(35), checks: [check('typecheck', 'success'), check('unit', 'failure'), check('container', 'success')] }),
+    pullRequest({ number: 110, title: 'polish(desktop): move setup and watcher into settings', headRefName: 'polish/desktop-settings', labels: [labels.desktop], reviewDecision: 'approved', comments: 2, updatedAt: ago(90), author: person('fake-contributor', 'Fake Contributor'), assignees: [person('operator', 'Operator')] }),
+    pullRequest({ number: 109, title: 'WIP: native capture for tvOS 27', headRefName: 'feat/native-capture-tvos', isDraft: true, reviewDecision: null, checks: [], additions: 410, deletions: 3, updatedAt: ago(200) }),
+    pullRequest({ number: 108, title: 'docs(readme): document the github commands', headRefName: 'docs/github-commands', labels: [labels.docs], reviewDecision: null, checks: [check('typecheck', 'success'), check('ci/legacy', 'neutral')], additions: 36, deletions: 2, updatedAt: ago(320) }),
+    pullRequest({ number: 107, title: 'chore(deps): bump ws from 8.21.2 to 8.21.3', headRefName: 'dependabot/npm_and_yarn/ws-8.21.3', state: 'merged', author: person('app/dependabot'), labels: [labels.deps], reviewDecision: 'approved', additions: 3, deletions: 3, updatedAt: ago(1500) }),
+    pullRequest({ number: 105, title: 'feat(desktop): onboarding and status panel', headRefName: 'feat/desktop-panel', state: 'merged', labels: [labels.desktop, labels.enhancement], reviewDecision: 'approved', comments: 12, additions: 5210, deletions: 410, updatedAt: ago(4200) }),
+    pullRequest({ number: 104, title: 'refactor(db): fold the JSON state into SQLite', headRefName: 'refactor/sqlite-state', state: 'merged', reviewDecision: 'approved', comments: 5, additions: 2900, deletions: 3100, updatedAt: ago(9000) }),
+    pullRequest({ number: 84, title: 'chore/stack-probe-b', headRefName: 'chore/stack-probe-b', baseRefName: 'chore/stack-probe-a', state: 'closed', isDraft: true, reviewDecision: null, checks: [], comments: 1, additions: 1, deletions: 0, updatedAt: ago(5000) }),
+    pullRequest({ number: 83, title: 'chore/stack-probe-a', headRefName: 'chore/stack-probe-a', state: 'closed', isDraft: true, reviewDecision: null, checks: [], comments: 1, additions: 1, deletions: 0, updatedAt: ago(5010) }),
+  ],
+}
+
+const issue = (fields: Partial<GithubIssue> & Pick<GithubIssue, 'number' | 'title'>): GithubIssue => ({
+  state: 'open',
+  author: person('operator', 'Operator'),
+  labels: [],
+  assignees: [],
+  createdAt: ago(900),
+  updatedAt: ago(120),
+  url: `https://github.com/operator/megabrain/issues/${fields.number}`,
+  comments: 0,
+  milestone: null,
+  ...fields,
+})
+
+export const mockGithubIssues: GithubIssueList = {
+  repository: githubRef,
+  state: 'all',
+  limit: 200,
+  fetchedAt: ago(0),
+  items: [
+    issue({ number: 118, title: 'tmux launch line is cut at 1024 bytes before the shell is ready', labels: [labels.bug], comments: 4, assignees: [person('operator', 'Operator')], milestone: { title: 'v0.3.0', dueOn: '2026-11-01T00:00:00Z' }, updatedAt: ago(12) }),
+    issue({ number: 117, title: 'Desktop: open links from chats and GitHub pages in the browser', labels: [labels.desktop, labels.enhancement], comments: 1, updatedAt: ago(80) }),
+    issue({ number: 116, title: 'doctor reports simulator-web healthy when Firefox is missing', labels: [labels.bug, labels.triage], author: person('fake-contributor', 'Fake Contributor'), updatedAt: ago(300) }),
+    issue({ number: 115, title: 'Document the resource governor in the skill', labels: [labels.docs, labels.good], milestone: { title: 'v0.3.0', dueOn: '2026-11-01T00:00:00Z' }, updatedAt: ago(2000) }),
+    issue({ number: 102, title: 'Supervisor misses a child whose pane died during compaction', state: 'closed', labels: [labels.bug], comments: 6, assignees: [person('operator', 'Operator')], updatedAt: ago(6000) }),
+    issue({ number: 99, title: 'Ship the desktop app as a dmg', state: 'closed', labels: [labels.desktop], comments: 2, milestone: { title: 'v0.2.4', dueOn: null }, updatedAt: ago(9000) }),
+  ],
+}
+
+export const mockGithubDetail = (kind: 'pr' | 'issue', number: number): GithubDetail => {
+  const item = kind === 'pr' ? mockGithubPullRequests.items.find((entry) => entry.number === number) : mockGithubIssues.items.find((entry) => entry.number === number)
+  return {
+    repository: githubRef,
+    number,
+    title: item?.title ?? `#${number}`,
+    state: item?.state ?? 'open',
+    ...(kind === 'pr' ? { isDraft: mockGithubPullRequests.items.find((entry) => entry.number === number)?.isDraft ?? false } : {}),
+    url: item?.url ?? githubRef.url,
+    author: item?.author ?? null,
+    createdAt: item?.createdAt ?? null,
+    body: [
+      '## Summary',
+      '',
+      'Adds the **pull request** and **issue** pages, opened from the two icons on each project row.',
+      '',
+      '- Tabs with counts, search and filters',
+      '- Rich rows: checks, review, labels in their GitHub colors',
+      '- A detail pane with the body and comments',
+      '',
+      '```ts',
+      "api.githubPullRequests(root, 'all', 200)",
+      '```',
+      '',
+      '| Check | State |',
+      '| --- | --- |',
+      '| typecheck | passing |',
+      '| unit | pending |',
+    ].join('\n'),
+    comments:
+      (item?.comments ?? 0) === 0
+        ? []
+        : [
+            { author: person('fake-contributor', 'Fake Contributor'), body: 'Looks good. One question: does the cache key include the limit?', createdAt: ago(50), url: `${item?.url ?? ''}#issuecomment-1` },
+            { author: person('operator', 'Operator'), body: 'It does — one entry per command, state, limit and number.', createdAt: ago(20), url: `${item?.url ?? ''}#issuecomment-2` },
+          ],
+  }
 }

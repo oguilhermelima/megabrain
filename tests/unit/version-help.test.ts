@@ -26,6 +26,13 @@ describe("CLI root help and version", () => {
     expect(await route(args, dependencies)).toEqual({ kind: "ok", value: rootUsage });
   });
 
+  test("pins code open and stop usage before it is documented", async () => {
+    expect(await route(["code", "--help"], dependencies)).toEqual({
+      kind: "ok",
+      value: "Usage: megabrain code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]\n",
+    });
+  });
+
   test("documents operator session send in command help", async () => {
     expect(await route(["send", "--help"], dependencies)).toEqual({
       kind: "ok",

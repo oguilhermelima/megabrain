@@ -124,6 +124,15 @@ describe("orchestrate queue", () => {
     expect(requireOk(listOutbox(db)).find((item) => item.id === "outbox-cancelled")).toMatchObject({ status: "cancelled", attempts: 0 });
   });
 
+  test("cancel JSON returns the full cancelled message for editing", async () => {
+    const root = await state();
+    dispatch(root, "dispatch-owned", "parent-one");
+    const deliveryId = reply(root, "dispatch-owned", "full message text", "outbox-edit");
+    const result = await executeOrchestrateQueue(["cancel", deliveryId, "--operator", "--json"], environment(root), adapter());
+    expect(result.kind).toBe("ok");
+    expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ text: "full message text", state: "cancelled" });
+  });
+
   test("refuses to cancel a foreign item", async () => {
     const root = await state();
     dispatch(root, "dispatch-foreign", "parent-two");

@@ -1,0 +1,24 @@
+{
+  "body": "### Describe the feature or problem you\u2019d like to solve\n\nCurrently, `gh run list` will display `* \u2713 X`, but 'failure' and 'cancelled' are both `X`, which is difficult to distinguish\n\n### Proposed solution\n\nChange the icon of 'cancelled' to a gray `!`\n\n### Additional context\n\nAdd any other context like screenshots or mockups are helpful, if applicable.\n",
+  "comments": [
+    {
+      "id": "ID_redacted",
+      "author": {
+        "login": "fake-maintainer"
+      },
+      "authorAssociation": "NONE",
+      "body": "Confirmed by code inspection: in `Symbol()` (https://github.com/operator/sample/blob/819f972eff771d5ec433c8d03c369cc43f1eab49/pkg/cmd/run/shared/shared.go#L600-L614), both `Failure` and `Cancelled` conclusions fall into the shared `default` branch, which returns the red failure icon (`cs.FailureIconWithColor`). This means `gh run list` currently has no visual way to tell a cancelled run apart from a faile",
+      "createdAt": "2026-10-15T14:03:24Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/operator/sample/issues/14704#issuecomment-6193960893",
+      "viewerDidAuthor": false
+    }
+  ],
+  "number": 14704,
+  "state": "OPEN",
+  "title": "`gh run list` show cancelled jobs icon",
+  "url": "https://github.com/operator/sample/issues/14704"
+}

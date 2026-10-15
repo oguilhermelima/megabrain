@@ -60,6 +60,12 @@ expected_usage_line() {
 
 agents_md="$(cat "$root/AGENTS.md")"
 readme_md="$(cat "$root/README.md")"
+assert_contains "$readme_md" 'megabrain repo hide ~/code/api' "README does not document hiding a repository"
+assert_contains "$readme_md" 'megabrain worktree unhide ~/code/api-feature' "README does not document restoring a worktree"
+assert_contains "$readme_md" 'megabrain commands --agent claude --cwd ~/code/api --json' "README does not document slash command discovery"
+assert_contains "$agents_md" 'repo list|add|clone|remove|hide|unhide|github' "AGENTS.md repo synopsis omits registry visibility commands"
+assert_contains "$agents_md" 'megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json]' "AGENTS.md does not document command discovery"
+assert_contains "$(cat "$root/skills/megabrain/SKILL.md")" 'megabrain worktree hide <path>' "the megabrain skill does not document worktree visibility"
 checked=0
 coverage_failures=()
 

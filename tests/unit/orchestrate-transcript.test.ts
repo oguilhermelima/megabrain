@@ -7,6 +7,8 @@ import { createDispatch } from "../../src/adapters/state-db.js";
 import { stateDatabase } from "../../src/adapters/state-db.js";
 import { ok, failed, type Result } from "../../src/core/result.js";
 import { executeOrchestrateTranscript } from "../../src/cli/commands/orchestrate-transcript.js";
+import { parseSessionLog } from "../../src/core/session-transcript.js";
+import { tagTranscriptOrigins } from "../../src/core/transcript-origin.js";
 
 const temporary: string[] = [];
 async function tempDir(): Promise<string> {
@@ -63,6 +65,25 @@ function transcriptJson(result: Result<string>): { events: Array<{ id: string; a
 }
 
 describe("orchestrate transcript", () => {
+  test("classifies Claude harness records separately from typed text", async () => {
+    const source = await Bun.file(join(process.cwd(), "tests", "fixtures", "transcripts", "claude-harness.jsonl")).text();
+    const parsed = parseSessionLog("claude", "fixture", source);
+    expect(parsed?.events.map(({ kind, text }) => ({ kind, text }))).toEqual([
+      { kind: "user", text: "Please continue." },
+      { kind: "system", text: "Background command Rebase and run local CI on sharing-rules completed (exit code 0)" },
+      { kind: "system", text: "Background command Restart Metro with logging to file failed" },
+      { kind: "system", text: "Message from Mina: Can you review this?" },
+      { kind: "system", text: "Message from megabrain: ✅ child finished\ndetails: megabrain orchestrate watch deadbeef" },
+      { kind: "system", text: "/review src/app.ts" },
+      { kind: "tool-result", text: "Review complete." },
+    ]);
+    expect(parsed?.events.every(({ text }) => !text.includes("/private/tmp/") && !text.includes("task-fake") && !text.includes("toolu_fake") && !text.includes("task-failed") && !text.includes("toolu_failed"))).toBe(true);
+    const dispatchEvents = tagTranscriptOrigins(parsed?.events ?? [], null, [{ dispatchId: "dispatch-deadbeef", chatName: "Worker" }]);
+    expect(dispatchEvents.find(({ text }) => text.startsWith("Message from megabrain:"))?.origin).toEqual({
+      kind: "child", label: "Worker", dispatchId: "dispatch-deadbeef", sessionId: null,
+    });
+  });
+
   test.each(["claude", "codex", "grok"] as const)("parses %s session events in order", async (agent) => {
     const { root, home } = await setup();
     await installFixture(home, agent);

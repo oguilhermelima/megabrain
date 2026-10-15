@@ -182,6 +182,72 @@ export const githubRepositorySchema = z.looseObject({
   updatedAt: z.string().nullable(),
 })
 
+// `megabrain github prs|issues|pr|issue <repo> --json`: a repository's pull requests and issues as
+// gh reports them, normalized by the CLI (lower-case states, one state per check, comment counts).
+const githubPersonSchema = z.looseObject({ login: z.string(), name: z.string().nullable(), isBot: z.boolean() })
+const githubLabelSchema = z.looseObject({ name: z.string(), color: z.string(), description: z.string() })
+const githubRepositoryRefSchema = z.looseObject({ nameWithOwner: z.string(), url: z.string(), path: z.string() })
+
+export const githubCheckSchema = z.looseObject({
+  name: z.string(),
+  state: z.enum(['success', 'failure', 'pending', 'skipped', 'neutral']),
+})
+
+export const githubPullRequestSchema = z.looseObject({
+  number: z.number(),
+  title: z.string(),
+  state: z.enum(['open', 'closed', 'merged']),
+  isDraft: z.boolean(),
+  author: githubPersonSchema.nullable(),
+  labels: z.array(githubLabelSchema),
+  assignees: z.array(z.looseObject({ login: z.string(), name: z.string().nullable() })),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  url: z.string(),
+  headRefName: z.string(),
+  baseRefName: z.string(),
+  /** null when the repository asks for no review. */
+  reviewDecision: z.enum(['approved', 'changes_requested', 'review_required']).nullable(),
+  checks: z.array(githubCheckSchema),
+  comments: z.number(),
+  additions: z.number(),
+  deletions: z.number(),
+})
+
+export const githubIssueSchema = z.looseObject({
+  number: z.number(),
+  title: z.string(),
+  state: z.enum(['open', 'closed']),
+  author: githubPersonSchema.nullable(),
+  labels: z.array(githubLabelSchema),
+  assignees: z.array(z.looseObject({ login: z.string(), name: z.string().nullable() })),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  url: z.string(),
+  comments: z.number(),
+  milestone: z.looseObject({ title: z.string(), dueOn: z.string().nullable() }).nullable(),
+})
+
+const githubListing = <T extends z.ZodType>(item: T) =>
+  z.looseObject({ repository: githubRepositoryRefSchema, state: z.string(), limit: z.number(), fetchedAt: z.string(), items: z.array(item) })
+
+export const githubPullRequestListSchema = githubListing(githubPullRequestSchema)
+export const githubIssueListSchema = githubListing(githubIssueSchema)
+
+// `megabrain github pr|issue <repo> <number> --json`: the body (markdown) and the comments.
+export const githubDetailSchema = z.looseObject({
+  repository: githubRepositoryRefSchema,
+  number: z.number(),
+  title: z.string(),
+  state: z.string(),
+  isDraft: z.boolean().optional(),
+  url: z.string(),
+  author: githubPersonSchema.nullable(),
+  createdAt: z.string().nullable(),
+  body: z.string(),
+  comments: z.array(z.looseObject({ author: githubPersonSchema.nullable(), body: z.string(), createdAt: z.string(), url: z.string() })),
+})
+
 // One agent session found in a worktree, started by megabrain or by hand.
 export const projectSessionSchema = z.looseObject({
   agent: z.enum(['claude', 'codex', 'grok', 'agy']),
@@ -209,7 +275,8 @@ export const projectWorktreeSchema = z.looseObject({
   head: z.string().nullable(),
   primary: z.boolean(),
   parent: z.string().nullable(),
-  pullRequest: z.looseObject({ number: z.number(), state: z.string(), url: z.string() }).nullable(),
+  /** title and isDraft are null when the CLI's cached value predates them, absent from an older CLI. */
+  pullRequest: z.looseObject({ number: z.number(), state: z.string(), url: z.string(), title: z.string().nullable().optional(), isDraft: z.boolean().nullable().optional() }).nullable(),
   /** Hidden by the person; the sidebar shows it only under Hidden. */
   hidden: z.boolean().optional(),
   sessions: z.array(projectSessionSchema),
@@ -332,6 +399,12 @@ export interface AdmissionPolicy {
   maxContainerSuites?: number
 }
 export type GithubRepository = z.infer<typeof githubRepositorySchema>
+export type GithubCheck = z.infer<typeof githubCheckSchema>
+export type GithubPullRequest = z.infer<typeof githubPullRequestSchema>
+export type GithubIssue = z.infer<typeof githubIssueSchema>
+export type GithubPullRequestList = z.infer<typeof githubPullRequestListSchema>
+export type GithubIssueList = z.infer<typeof githubIssueListSchema>
+export type GithubDetail = z.infer<typeof githubDetailSchema>
 export type Project = z.infer<typeof projectsSchema>[number]
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>

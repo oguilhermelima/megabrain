@@ -116,11 +116,85 @@ function roleKind(role: string): TranscriptKind {
   return role === "user" ? "user" : role === "system" || role === "developer" ? "system" : "assistant";
 }
 
+function tagValue(text: string, tag: string): string | undefined {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<${escaped}>([\\s\\S]*?)</${escaped}>`, "i").exec(text)?.[1]?.trim();
+}
+
+function claudeUserText(text: string, at: unknown): Omit<TranscriptEvent, "id">[] {
+  const events: Omit<TranscriptEvent, "id">[] = [];
+  const withoutInjected = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
+  const task = /<task-notification>([\s\S]*?)<\/task-notification>/i.exec(withoutInjected);
+  let remaining = withoutInjected;
+  if (task !== null) {
+    const body = task[1] ?? "";
+    const rawSummary = tagValue(body, "summary") ?? "Background command";
+    const summaryText = rawSummary.replace(/^Background command\s+/i, "")
+      .replace(/\s+was stopped because[\s\S]*$/i, "")
+      .replace(/\s+(?:completed|failed)(?:\s+\(exit code [^)]+\))?\s*$/i, "")
+      .replace(/^"([\s\S]*)"$/, "$1")
+      .replace(/\b([A-Z][A-Z0-9_]*)=(?:postgres(?:ql)?:\/\/|https?:\/\/)[^\s;]+/gi, "$1=[redacted]")
+      .replace(/\/(?:private\/tmp|tmp|Users)\/[^\s"'<>;&|]+/g, "[path]")
+      .replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&")
+      .trim();
+    const summary = summaryText.length <= 120 ? summaryText : "";
+    const status = tagValue(body, "status") ?? (/\b(?:failed|killed|stopped)\b/i.test(rawSummary) ? "failed" : "completed");
+    const exitCode = tagValue(body, "exit-code") ?? tagValue(body, "exitCode")
+      ?? /\(exit code ([^)]+)\)/i.exec(rawSummary)?.[1];
+    const failed = /fail|error|killed|stopped/i.test(status) || (exitCode !== undefined && exitCode !== "0");
+    const suffix = exitCode === undefined ? "" : ` (exit code ${exitCode})`;
+    events.push(event(at, "system", `Background command${summary === "" ? "" : ` ${summary}`} ${failed ? "failed" : "completed"}${suffix}`));
+    remaining = remaining.replace(task[0], "");
+  }
+  const peer = /<cross-session-message\b([^>]*)>([\s\S]*?)<\/cross-session-message>/i.exec(remaining);
+  if (peer !== null) {
+    const name = /from-name="([^"]+)"/i.exec(peer[1])?.[1];
+    const firstLine = peer[2]?.trim().split(/\r?\n/, 1)[0] ?? "";
+    const dispatchDetail = name?.toLowerCase() === "megabrain"
+      ? /details:\s*megabrain orchestrate watch [a-z0-9]{8}\b/i.exec(peer[2] ?? "")?.[0]
+      : undefined;
+    if (firstLine !== "") events.push(event(at, "system", `Message from ${name ?? "another session"}: ${firstLine}${dispatchDetail === undefined ? "" : `\n${dispatchDetail}`}`));
+    remaining = remaining.replace(peer[0], "");
+  }
+  const command = tagValue(remaining, "command-name");
+  const args = tagValue(remaining, "command-args");
+  const stdout = tagValue(remaining, "local-command-stdout");
+  if (command !== undefined) {
+    events.push(event(at, "system", `${command}${args === undefined ? "" : ` ${args}`}`));
+    if (stdout !== undefined && stdout !== "") events.push(event(at, "tool-result", stdout, { name: "local command", status: "ok" }));
+    remaining = remaining.replace(/<command-name>[\s\S]*?<\/command-name>|<command-args>[\s\S]*?<\/command-args>|<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi, "");
+  }
+  const userText = remaining.replace(/<[^>]+>/g, "").trim();
+  if (userText !== "") events.unshift(event(at, "user", userText));
+  return events;
+}
+
 function claudeLine(value: JsonRecord): Omit<TranscriptEvent, "id">[] {
   const type = string(value.type) ?? "";
   if (type !== "user" && type !== "assistant" && type !== "system") return [];
   const message = record(value.message);
   const role = string(message?.role) ?? type;
+  if (role === "user") {
+    const content = message?.content;
+    if (typeof content === "string") return claudeUserText(content, value.timestamp);
+    if (Array.isArray(content)) {
+      const events: Omit<TranscriptEvent, "id">[] = [];
+      for (const partValue of content) {
+        const part = record(partValue);
+        if (part === undefined) continue;
+        if (string(part.type) === "text") events.push(...claudeUserText(string(part.text) ?? "", value.timestamp));
+        else if (string(part.type) === "task-notification") {
+          const summary = string(part.summary) ?? "Background command";
+          const status = string(part.status) ?? "completed";
+          const exitCode = typeof part.exitCode === "number" ? String(part.exitCode) : undefined;
+          const failed = /fail|error/i.test(status) || (exitCode !== undefined && exitCode !== "0");
+          events.push(event(value.timestamp, "system", `Background command ${summary} ${failed ? "failed" : "completed"}${exitCode === undefined ? "" : ` (exit code ${exitCode})`}`));
+        }
+        else events.push(...contentEvents([part], role, value.timestamp));
+      }
+      return events;
+    }
+  }
   return contentEvents(message?.content, role, value.timestamp);
 }
 

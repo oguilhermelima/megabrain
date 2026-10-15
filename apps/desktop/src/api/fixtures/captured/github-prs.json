@@ -1,0 +1,58 @@
+{
+  "repository": {
+    "nameWithOwner": "operator/megabrain",
+    "url": "https://github.com/operator/megabrain",
+    "path": "/Users/operator/Workspaces/megabrain"
+  },
+  "state": "all",
+  "limit": 30,
+  "fetchedAt": "2026-10-15T18:36:49.301Z",
+  "items": [
+    {
+      "number": 84,
+      "title": "chore/stack-probe-b",
+      "state": "closed",
+      "isDraft": true,
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-11T22:00:23Z",
+      "updatedAt": "2026-10-11T22:00:54Z",
+      "url": "https://github.com/operator/megabrain/pull/84",
+      "headRefName": "chore/stack-probe-b",
+      "baseRefName": "chore/stack-probe-a",
+      "reviewDecision": null,
+      "checks": [],
+      "comments": 1,
+      "additions": 1,
+      "deletions": 0
+    },
+    {
+      "number": 83,
+      "title": "chore/stack-probe-a",
+      "state": "closed",
+      "isDraft": true,
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-11T22:00:20Z",
+      "updatedAt": "2026-10-11T22:00:57Z",
+      "url": "https://github.com/operator/megabrain/pull/83",
+      "headRefName": "chore/stack-probe-a",
+      "baseRefName": "main",
+      "reviewDecision": null,
+      "checks": [],
+      "comments": 1,
+      "additions": 1,
+      "deletions": 0
+    }
+  ]
+}

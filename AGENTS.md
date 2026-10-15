@@ -13,16 +13,26 @@
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]. — recommended when you need to open a pull request for a worktree branch.
 - Run megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]. — recommended when you need to manage dependent branches and pull or merge requests.
 - Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]. — recommended when you need to remove a completed worktree after its safety checks pass.
+- Run megabrain worktree create|pr|finish|list|adopt|prune|hide|unhide .... — recommended when you need to find registered worktrees or hide and restore one in the project list.
 - Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]. — recommended when you need to find registered worktrees and inspect their parent relationships.
+- Run megabrain worktree hide|unhide <path>. — recommended when you need to hide or restore a worktree in the project list.
 - Run megabrain worktree adopt <path|branch> [--json]. — recommended when you need to register an existing worktree missing from one orchestrator.
 - Run megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]. — recommended when you need to review or remove old worktrees safely.
-- Run megabrain repo list|add|clone|remove|github .... — recommended when you need to manage megabrain's local project registry.
+- Run megabrain repo list|add|clone|remove|hide|unhide|github .... — recommended when you need to manage megabrain's local project registry.
 - Run megabrain repo list [--json]. — recommended when you need to list registered repositories.
 - Run megabrain repo add <path> [--json]. — recommended when you need to import a local Git checkout.
 - Run megabrain repo clone <url> --into <dir> [--json]. — recommended when you need to clone and register a GitHub repository.
 - Run megabrain repo remove <name|path> [--json]. — recommended when you need to remove a repository from the registry without deleting files.
+- Run megabrain repo hide|unhide <name|path>. — recommended when you need to hide or restore a repository in the project list.
+- Run megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json]. — recommended when you need the slash commands an agent offers in a folder.
 - Run megabrain repo github [--owner <login>] [--json]. — recommended when you need to browse repositories available through GitHub CLI.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
+- Run megabrain github prs|issues|pr|issue .... — recommended when you need to read a repository's GitHub pull requests and issues.
+- Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--json]. — recommended when you need to list a repository's pull requests with checks, reviews, and labels.
+- Run megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--json]. — recommended when you need to list a repository's issues with labels, assignees, and milestones.
+- Run megabrain github pr <repo name|path> <number> [--json]. — recommended when you need one pull request's description and comments.
+- Run megabrain github issue <repo name|path> <number> [--json]. — recommended when you need one issue's description and comments.
+- Run megabrain code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]. — recommended when you need the full VS Code editor for a registered project or worktree inside the desktop app.
 - Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]. — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
 - Run megabrain terminal list [--worktree <path>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
 - Run megabrain terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]. — recommended when you need to open a native terminal window attached to an existing tmux session, or print the attach command.

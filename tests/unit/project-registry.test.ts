@@ -61,6 +61,45 @@ describe("project registry", () => {
     expect(json<unknown[]>(await cli("repo", "list", "--json"))).toHaveLength(1);
   });
 
+  test("projects hide and unhide a repository and worktree without removing either", async () => {
+    const main = await repository("hidden-roundtrip");
+    const tree = join(root, "hidden-tree");
+    await git(main, "worktree", "add", "-b", "hidden-branch", tree);
+    await cli("repo", "add", main);
+    expect((await cli("repo", "hide", main)).kind).toBe("ok");
+    expect((await cli("worktree", "hide", tree)).kind).toBe("ok");
+    let project = json<Array<{ hidden: boolean; worktrees: Array<{ path: string; hidden: boolean }> }>>(await cli("projects", "--json"))[0];
+    expect(project).toMatchObject({ hidden: true });
+    expect(project?.worktrees.find((item) => item.path === tree)).toMatchObject({ hidden: true });
+    await cli("repo", "unhide", main);
+    await cli("worktree", "unhide", tree);
+    project = json<Array<{ hidden: boolean; worktrees: Array<{ path: string; hidden: boolean }> }>>(await cli("projects", "--json"))[0];
+    expect(project).toMatchObject({ hidden: false });
+    expect(project?.worktrees.find((item) => item.path === tree)).toMatchObject({ hidden: false });
+  });
+
+  test("Claude session timers use context tokens, settings and environment minimum", async () => {
+    const path = await repository("timers");
+    const directory = join(home, ".claude", "sessions");
+    mkdirSync(directory, { recursive: true });
+    const activity = new Date(Date.now() - 10_000).toISOString();
+    writeFileSync(join(directory, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: "timer-session", cwd: path, startedAt: activity, updatedAt: activity, status: "idle" }));
+    const transcript = join(home, ".claude", "projects", path.replace(/[^a-zA-Z0-9]/g, "-"));
+    mkdirSync(transcript, { recursive: true });
+    writeFileSync(join(transcript, "timer-session.jsonl"), `${JSON.stringify({ type: "assistant", message: { model: "claude-sonnet", usage: { input_tokens: 210000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })}\n`);
+    await cli("repo", "add", path);
+    const withDefault = json<Array<{ worktrees: Array<{ sessions: Array<{ contextTokens: number; cacheExpiresAt: string; idleCompactAt: string }> }> }>>(await cli("projects", "--json"))[0]?.worktrees[0]?.sessions[0];
+    expect(withDefault?.contextTokens).toBe(210000);
+    expect(Date.parse(withDefault?.cacheExpiresAt ?? "") - Date.parse(activity)).toBe(60 * 60 * 1000);
+    expect(Date.parse(withDefault?.idleCompactAt ?? "") - Date.parse(activity)).toBe(54 * 60 * 1000);
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ idleCompaction: false }));
+    const disabled = json<Array<{ worktrees: Array<{ sessions: Array<{ idleCompactAt: string | null }> }> }>>(await cli("projects", "--json"))[0]?.worktrees[0]?.sessions[0];
+    expect(disabled?.idleCompactAt).toBeNull();
+    env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS = "220000";
+    const aboveMin = json<Array<{ worktrees: Array<{ sessions: Array<{ idleCompactAt: string | null }> }> }>>(await cli("projects", "--json"))[0]?.worktrees[0]?.sessions[0];
+    expect(aboveMin?.idleCompactAt).toBeNull();
+  });
+
   test("repo add refuses a non-repository and remove leaves files intact", async () => {
     const folder = join(root, "folder");
     mkdirSync(folder);
@@ -275,6 +314,49 @@ describe("project registry", () => {
     const stale = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
     expect(stale?.worktrees[0]?.pullRequest?.number).toBe(42);
     expect(ghCalls).toBe(2);
+  });
+
+  test("project pull requests carry the title and draft flag gh reports", async () => {
+    const path = await repository("pull-request-title");
+    await cli("repo", "add", path);
+    const process = createProcessAdapter();
+    const asked: string[][] = [];
+    const adapter: ProcessAdapter = {
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "pr" && args[1] === "list") {
+          asked.push([...args]);
+          return ok({ stdout: JSON.stringify([{ headRefName: "main", number: 7, state: "OPEN", url: "https://example.test/7", title: "Add the pull request page", isDraft: true }]), stderr: "", exitCode: 0 });
+        }
+        return process.run(command, args, options);
+      },
+      startDetached: process.startDetached,
+      invocationCount: process.invocationCount,
+    };
+    const project = json<Array<{ worktrees: Array<{ pullRequest: Record<string, unknown> | null }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
+    expect(asked[0]?.at(-1)).toBe("headRefName,number,state,url,title,isDraft");
+    expect(project?.worktrees[0]?.pullRequest).toEqual({ number: 7, state: "OPEN", url: "https://example.test/7", title: "Add the pull request page", isDraft: true });
+  });
+
+  test("a pull request cached before titles were read still lists, with title and draft unknown", async () => {
+    const path = await repository("pull-request-old-cache");
+    await cli("repo", "add", path);
+    const opened = guardedOpenDatabase(env);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    try { opened.value.db.run("INSERT INTO repository_pull_requests (repository_path, value_json, fetched_at) VALUES (?, ?, ?) ON CONFLICT(repository_path) DO UPDATE SET value_json = excluded.value_json, fetched_at = excluded.fetched_at", [path, JSON.stringify([{ headRefName: "main", number: 42, state: "MERGED", url: "https://example.test/42" }]), Date.now()]); }
+    finally { opened.value.close(); }
+    const process = createProcessAdapter();
+    let ghCalls = 0;
+    const adapter: ProcessAdapter = {
+      run: async (command, args, options) => {
+        if (command === "gh") ghCalls += 1;
+        return process.run(command, args, options);
+      },
+      startDetached: process.startDetached,
+      invocationCount: process.invocationCount,
+    };
+    const project = json<Array<{ worktrees: Array<{ pullRequest: Record<string, unknown> | null }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
+    expect(ghCalls).toBe(0);
+    expect(project?.worktrees[0]?.pullRequest).toEqual({ number: 42, state: "MERGED", url: "https://example.test/42", title: null, isDraft: null });
   });
 
   test("project pull request failures without a good value are cached for 60 seconds", async () => {

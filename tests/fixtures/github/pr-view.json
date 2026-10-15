@@ -1,0 +1,24 @@
+{
+  "body": "### Description\n\nImprove the official `gh` skill by documenting how to pass values safely through\n`gh api`. Agents frequently mishandle `-f/-F`: raw field sends literal\nstrings without type conversion or `@` expansion; typed field converts\n`true/false/null` numbers, expands `{owner}/{repo}/{branch}` from remotes,\nand reads from file when the value starts with `@`. This causes accidental\nfile reads and failed mutations. The existing section also lacked guidance\nabout body ambiguity and verification read-back.\n\nCloses #14701\n\n### How did you test this change?\n\nNot tested by execution; change is ",
+  "comments": [
+    {
+      "id": "ID_redacted",
+      "author": {
+        "login": "fake-contributor"
+      },
+      "authorAssociation": "CONTRIBUTOR",
+      "body": "Thanks for your pull request! Unfortunately, it doesn't meet the requirements for review:\n\n\n- No linked `help wanted` issue found in PR description\n\n**Please update your PR to address the above.** This PR will be automatically closed in **4 days** if these requirements are not met.\n\n<details>\n<summary>Full contribution requirements</summary>\n\n1. Include a detailed description of what this PR does\n",
+      "createdAt": "2026-10-15T10:31:46Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/operator/sample/pull/14700#issuecomment-6190011911",
+      "viewerDidAuthor": false
+    }
+  ],
+  "number": 14700,
+  "state": "OPEN",
+  "title": "docs(gh-skill): document gh api field passing pitfalls",
+  "url": "https://github.com/operator/sample/pull/14700"
+}

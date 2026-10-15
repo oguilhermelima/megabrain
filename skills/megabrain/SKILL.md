@@ -49,8 +49,19 @@ megabrain repo list [--json] — recommended when you need to list registered re
 megabrain repo add <path> [--json] — recommended when you need to import a local Git checkout.
 megabrain repo clone <url> --into <dir> [--json] — recommended when you need to clone and register a repository.
 megabrain repo remove <name|path> [--json] — recommended when you need to remove a registry entry without deleting its files.
+megabrain repo hide <name|path> — recommended when you need to hide a repository from the project list.
+megabrain repo unhide <name|path> — recommended when you need to restore a hidden repository.
+megabrain worktree hide <path> — recommended when you need to hide a worktree from the project list.
+megabrain worktree unhide <path> — recommended when you need to restore a hidden worktree.
+megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
 megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
 megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
+megabrain github prs|issues|pr|issue ... — recommended when you need to read a repository's GitHub pull requests and issues (read-only, through gh, cached 60 seconds).
+megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--json] — recommended when you need a repository's pull requests with checks, reviews, and labels.
+megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--json] — recommended when you need a repository's issues with labels, assignees, and milestones.
+megabrain github pr <repo name|path> <number> [--json] — recommended when you need one pull request's description and comments.
+megabrain github issue <repo name|path> <number> [--json] — recommended when you need one issue's description and comments.
+megabrain code open <root> [--json] | stop <root> [--json] — recommended when you need the full VS Code editor for a registered project or worktree.
 
 ```
 megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json] — recommended when you need to review or remove old worktrees safely.

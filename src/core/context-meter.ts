@@ -12,6 +12,8 @@ export type ContextSubject = Readonly<{
   readonly agentThreadId?: string;
   readonly agentSessionId?: string;
   readonly agentCwd?: string;
+  /** Known transcript location for a session already associated with a project worktree. */
+  readonly agentTranscriptPath?: string;
   readonly grokHome?: string;
   /** The --log-file megabrain gave an Antigravity child; it names the conversation the child created. */
   readonly agyLogFile?: string;
@@ -242,7 +244,7 @@ export async function readContextMeter(subject: ContextSubject, home: string): P
     return tail === undefined ? unknown : codexMeter(tail);
   }
   if (subject.agent === "claude" && subject.agentSessionId !== undefined && subject.agentSessionId !== "") {
-    const path = await findClaudeTranscript(home, subject.agentSessionId);
+    const path = subject.agentTranscriptPath ?? await findClaudeTranscript(home, subject.agentSessionId);
     const tail = path === undefined ? undefined : await readTail(path);
     return tail === undefined ? unknown : claudeMeter(tail, subject.contextWindow);
   }

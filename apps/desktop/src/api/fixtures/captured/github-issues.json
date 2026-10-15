@@ -1,0 +1,63 @@
+{
+  "repository": {
+    "nameWithOwner": "operator/megabrain",
+    "url": "https://github.com/operator/megabrain",
+    "path": "/Users/operator/Workspaces/megabrain"
+  },
+  "state": "all",
+  "limit": 3,
+  "fetchedAt": "2026-10-15T18:39:55.962Z",
+  "items": [
+    {
+      "number": 122,
+      "title": "feat(desktop): a Settings window for chains, supervisor, limits and usage",
+      "state": "closed",
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-15T14:11:23Z",
+      "updatedAt": "2026-10-15T16:24:07Z",
+      "url": "https://github.com/operator/megabrain/issues/122",
+      "comments": 1,
+      "milestone": null
+    },
+    {
+      "number": 121,
+      "title": "feat(desktop): sidebar of every project and an import window",
+      "state": "closed",
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-15T12:06:39Z",
+      "updatedAt": "2026-10-15T16:24:04Z",
+      "url": "https://github.com/operator/megabrain/issues/121",
+      "comments": 1,
+      "milestone": null
+    },
+    {
+      "number": 120,
+      "title": "feat(repo): a project registry fed by megabrain and imports",
+      "state": "closed",
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-15T12:06:38Z",
+      "updatedAt": "2026-10-15T14:23:29Z",
+      "url": "https://github.com/operator/megabrain/issues/120",
+      "comments": 1,
+      "milestone": null
+    }
+  ]
+}

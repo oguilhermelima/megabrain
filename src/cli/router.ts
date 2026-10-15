@@ -47,6 +47,11 @@ import { executeSettings } from "./commands/settings.js";
 import { executeProc } from "../core/proc-runner.js";
 import { executeRepository } from "./commands/repository.js";
 import { executeProjects } from "./commands/projects.js";
+import { executeGithub } from "./commands/github.js";
+import { executeCode } from "./commands/code.js";
+import { runCodeServerProxy } from "../core/code-server-proxy.js";
+import { executeWorktreeHide } from "./commands/worktree-hide.js";
+import { executeCommands } from "./commands/commands.js";
 import { executeSend } from "./commands/send.js";
 
 export type RouterDependencies = {
@@ -112,6 +117,7 @@ async function routeCommand(
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
   const [command, ...commandArgs] = args;
+  if (command === "__code-server-proxy") return runCodeServerProxy(commandArgs, dependencies.environment);
   if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__supervise-worker") return executeSupervisorWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__usage-table") return Promise.resolve(ok(usageTable()));
@@ -121,7 +127,7 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "settings", "send"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "commands"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -158,6 +164,9 @@ async function routeCommand(
   if (command === "proc") return executeProc(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "repo") return executeRepository(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "projects") return executeProjects(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "github") return executeGithub(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "code") return executeCode(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "commands") return executeCommands(commandArgs, dependencies.environment);
   if (command === "model") {
     return executeModel(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
@@ -248,6 +257,7 @@ async function routeCommand(
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
+  if (command === "worktree" && (commandArgs[0] === "hide" || commandArgs[0] === "unhide")) return executeWorktreeHide(commandArgs.slice(1), dependencies.environment, commandArgs[0] === "hide");
   if (command === "worktree" && commandArgs[0] === "create") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-create"))); return executeWorktreeCreate(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "worktree" && commandArgs[0] === "finish") { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-finish"))); return executeWorktreeFinish(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }
   if (command === "worktree" && (commandArgs[0] === "pr" || commandArgs[0] === "open-pr")) { if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText("worktree-pr"))); return executeWorktreePr(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter); }

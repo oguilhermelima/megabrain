@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod code;
+mod attachment;
 pub mod path_link;
 mod pill;
 mod tray;
@@ -39,6 +40,14 @@ struct CliLine {
 
 fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".to_string())
+}
+
+#[tauri::command]
+fn save_attachment(base64: String, extension: String) -> Result<String, String> {
+    let state = std::env::var_os("MEGABRAIN_STATE_DIR").map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|value| PathBuf::from(value).join(".megabrain")))
+        .ok_or_else(|| "HOME is not set".to_string())?;
+    attachment::save_attachment_to(&state, &base64, &extension).map(|path| path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -239,7 +248,8 @@ pub fn run() {
             code_tree,
             code_read,
             code_changes,
-            code_diff
+            code_diff,
+            save_attachment
         ])
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");

@@ -45,7 +45,48 @@ megabrain projects --json
 ```
 
 `projects` lists the main checkout first, followed by its Git worktrees, pull requests, and agent
-sessions. Removing a registry entry leaves the checkout and its files in place.
+sessions. Each session reports its context token count when available. Claude sessions also include
+prompt-cache expiry and idle-compaction times when applicable. Removing a registry entry leaves the
+checkout and its files in place. Hide and restore entries without removing them from the registry:
+
+```sh
+megabrain repo hide ~/code/api
+megabrain worktree hide ~/code/api-feature
+megabrain repo unhide ~/code/api
+megabrain worktree unhide ~/code/api-feature
+```
+
+Read a project's GitHub pull requests and issues through the GitHub CLI. The repository is a
+registered name or a path; its GitHub remote comes from git or the registry. Answers are cached for
+60 seconds under the state directory, and nothing is ever created, merged, closed, or commented on:
+
+```sh
+megabrain github prs api --state open --json
+megabrain github issues ~/code/api --state all --limit 100 --json
+megabrain github pr api 42 --json
+megabrain github issue api 7 --json
+```
+
+The desktop command palette can read the slash commands available in a folder:
+
+```sh
+megabrain commands --agent claude --cwd ~/code/api --json
+```
+
+Open a registered project or worktree in the full VS Code editor inside the desktop app:
+
+```sh
+megabrain code open ~/code/api
+megabrain code goto ~/code/api src/index.ts --line 42
+megabrain code stop ~/code/api
+```
+
+The first open downloads code-server 4.138.0 for macOS arm64 or Linux x64/arm64 into the megabrain
+state directory. The download is checked against the SHA256 digest published with the GitHub
+release. The server keeps editor data and extensions under that state directory, listens only
+through a private Unix socket, and is reached through a localhost proxy that requires a random URL
+token and an HttpOnly cookie. Each project has one reusable server; closing its Code view stops both
+processes. The existing read-only file browser remains available as Quick view.
 
 ## Install
 

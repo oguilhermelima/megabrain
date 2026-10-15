@@ -102,6 +102,7 @@ describe("SQLite database", () => {
       current.close();
       const raw = rawDatabase(directory);
       raw.exec("DELETE FROM schema_migrations WHERE version > 11");
+      raw.exec("DROP TABLE hidden_items");
       raw.close();
 
       const migrated = database(directory);
@@ -113,7 +114,7 @@ describe("SQLite database", () => {
         expect(migrated.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
         insertDispatch(migrated.db, { dispatchId: "queued-spawn", state: "queued", parentSessionId: "parent", queuedSpawnArgs: ["--agent", "codex"] });
         expect(getDispatch(migrated.db, "queued-spawn")?.state).toBe("queued");
-        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(15);
+        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(16);
       } finally { migrated.close(); }
     });
   });
@@ -124,6 +125,7 @@ describe("SQLite database", () => {
       current.close();
       const raw = rawDatabase(directory);
       raw.exec("DELETE FROM schema_migrations WHERE version > 5");
+      raw.exec("DROP TABLE hidden_items");
       raw.exec("DROP TABLE resource_samples");
       raw.exec("DROP INDEX IF EXISTS worktrees_repo_parent_branch; ALTER TABLE worktrees DROP COLUMN parent_branch;");
       raw.exec("ALTER TABLE dispatches DROP COLUMN chat_name");
@@ -145,6 +147,7 @@ describe("SQLite database", () => {
       current.close();
       const raw = rawDatabase(directory);
       raw.exec("DELETE FROM schema_migrations WHERE version > 6");
+      raw.exec("DROP TABLE hidden_items");
       raw.exec("DROP TABLE resource_samples");
       raw.exec("DROP INDEX IF EXISTS worktrees_repo_parent_branch; ALTER TABLE worktrees DROP COLUMN parent_branch;");
       raw.exec(`INSERT INTO dispatches (id, state, agent, worktree_path, branch, chat_name, extra) VALUES
