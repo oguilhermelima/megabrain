@@ -125,28 +125,55 @@ fn code_allowed_roots(cli: &Cli) -> Result<Vec<PathBuf>, String> {
     code::allowed_roots(&cli.executable, &cli.root, &cli.path)
 }
 
-#[tauri::command]
-fn code_tree(cli: State<'_, Cli>, root: String) -> Result<Vec<code::CodeEntry>, String> {
-    let allowed = code_allowed_roots(&cli)?;
-    code::code_tree(Path::new(&root), &allowed)
+async fn run_code_blocking<T, F>(cli: State<'_, Cli>, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&Cli) -> Result<T, String> + Send + 'static,
+{
+    let cli = Cli {
+        executable: cli.executable.clone(),
+        root: cli.root.clone(),
+        path: cli.path.clone(),
+    };
+    tauri::async_runtime::spawn_blocking(move || operation(&cli))
+        .await
+        .map_err(|error| format!("code operation failed to join blocking task: {error}"))?
 }
 
 #[tauri::command]
-fn code_read(cli: State<'_, Cli>, root: String, path: String) -> Result<code::CodeFile, String> {
-    let allowed = code_allowed_roots(&cli)?;
-    code::code_read(Path::new(&root), &path, &allowed)
+async fn code_tree(cli: State<'_, Cli>, root: String) -> Result<Vec<code::CodeEntry>, String> {
+    run_code_blocking(cli, move |cli| {
+        let allowed = code_allowed_roots(cli)?;
+        code::code_tree(Path::new(&root), &allowed)
+    })
+    .await
 }
 
 #[tauri::command]
-fn code_changes(cli: State<'_, Cli>, root: String) -> Result<Vec<code::CodeChange>, String> {
-    let allowed = code_allowed_roots(&cli)?;
-    code::code_changes(Path::new(&root), &allowed)
+async fn code_read(cli: State<'_, Cli>, root: String, path: String) -> Result<code::CodeFile, String> {
+    run_code_blocking(cli, move |cli| {
+        let allowed = code_allowed_roots(cli)?;
+        code::code_read(Path::new(&root), &path, &allowed)
+    })
+    .await
 }
 
 #[tauri::command]
-fn code_diff(cli: State<'_, Cli>, root: String, path: String) -> Result<code::CodeDiff, String> {
-    let allowed = code_allowed_roots(&cli)?;
-    code::code_diff(Path::new(&root), &path, &allowed)
+async fn code_changes(cli: State<'_, Cli>, root: String) -> Result<Vec<code::CodeChange>, String> {
+    run_code_blocking(cli, move |cli| {
+        let allowed = code_allowed_roots(cli)?;
+        code::code_changes(Path::new(&root), &allowed)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn code_diff(cli: State<'_, Cli>, root: String, path: String) -> Result<code::CodeDiff, String> {
+    run_code_blocking(cli, move |cli| {
+        let allowed = code_allowed_roots(cli)?;
+        code::code_diff(Path::new(&root), &path, &allowed)
+    })
+    .await
 }
 
 fn sidecar(current_exe: &Path) -> PathBuf {
