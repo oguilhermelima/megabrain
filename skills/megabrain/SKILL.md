@@ -116,7 +116,7 @@ megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede
 megabrain orchestrate stop <dispatch-id-or-suffix> [--operator] [--json] — recommended when you need to interrupt a working child while keeping its pane and dispatch open.
 megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json] — recommended when you need to redirect a child that is working on the wrong thing or replace queued directions.
 megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--operator] [--json] — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
-megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--json] — recommended when you need ordered user, assistant, thinking and tool events from an agent session log.
+megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--limit <n>] [--json] — recommended when you need ordered user, assistant, thinking and tool events from an agent session log.
 megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--operator] [--json] — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
 megabrain supervise [--status|--stop] — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.

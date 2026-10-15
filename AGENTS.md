@@ -33,7 +33,7 @@
 - Run megabrain orchestrate queue [<dispatch-id-or-suffix>] [--all] [--operator] [--json]. — recommended when you need to list your queued messages, including closed dispatches with --all.
 - Run megabrain orchestrate queue cancel <item-id> [--reason <text>] [--operator] [--json]. — recommended when you need to cancel one of your queued messages.
 - Run megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--operator] [--json]. — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
-- Run megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--json]. — recommended when you need the ordered chat events from an agent's session log.
+- Run megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--limit <n>] [--json]. — recommended when you need the ordered chat events from an agent's session log.
 - Run megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--operator] [--json]. — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
 - Run megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--operator] [--json]. — recommended when you need to send an answer to a child that has asked a question.
 - Run megabrain orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]. — recommended when you need to interrupt a working child while keeping its pane and dispatch open.
