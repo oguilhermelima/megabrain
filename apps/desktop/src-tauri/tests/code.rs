@@ -25,13 +25,24 @@ impl Repository {
         std::fs::write(root.join("tracked.txt"), "before\n").unwrap();
         git(&root, &["add", "tracked.txt"]);
         git(&root, &["commit", "-m", "initial"]);
-        Self { root, _scratch: scratch }
+        Self {
+            root,
+            _scratch: scratch,
+        }
     }
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
-    let output = Command::new("git").current_dir(root).args(args).output().unwrap();
-    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout).unwrap()
 }
 
@@ -50,33 +61,55 @@ fn code_tree_sorts_directories_before_files_and_skips_ignored_build_folders() {
     std::fs::create_dir_all(repo.root.join("target/debug")).unwrap();
     std::fs::write(repo.root.join("target/debug/app"), "ignored").unwrap();
 
-    let entries = code_tree(&repo.root, &[repo.root.clone()]).unwrap();
+    let entries = code_tree(&repo.root, std::slice::from_ref(&repo.root)).unwrap();
     let paths: Vec<_> = entries.iter().map(|entry| entry.path.as_str()).collect();
     assert_eq!(
         paths,
-        ["alpha", "alpha/inner", "alpha/inner/b.txt", "alpha/a.txt", "zeta", "zeta/c.txt", ".gitignore", "tracked.txt"]
+        [
+            "alpha",
+            "alpha/inner",
+            "alpha/inner/b.txt",
+            "alpha/a.txt",
+            "zeta",
+            "zeta/c.txt",
+            ".gitignore",
+            "tracked.txt"
+        ]
     );
-    assert!(entries.iter().all(|entry| !entry.path.contains("node_modules") && !entry.path.starts_with("target")));
+    assert!(entries
+        .iter()
+        .all(|entry| !entry.path.contains("node_modules") && !entry.path.starts_with("target")));
     assert!(!paths.contains(&"ignored.txt"));
-    assert_eq!(entries.iter().find(|entry| entry.path == "alpha/a.txt").unwrap().size, Some(1));
+    assert_eq!(
+        entries
+            .iter()
+            .find(|entry| entry.path == "alpha/a.txt")
+            .unwrap()
+            .size,
+        Some(1)
+    );
 }
 
 #[test]
 fn code_read_returns_text_binary_and_too_large_results() {
     let repo = Repository::new("code-read");
     std::fs::write(repo.root.join("text.txt"), "hello\n").unwrap();
-    std::fs::write(repo.root.join("binary.bin"), [b'x'; 3].into_iter().chain([0]).collect::<Vec<_>>()).unwrap();
+    std::fs::write(
+        repo.root.join("binary.bin"),
+        [b'x'; 3].into_iter().chain([0]).collect::<Vec<_>>(),
+    )
+    .unwrap();
     std::fs::write(repo.root.join("large.txt"), vec![b'x'; MAX_FILE_SIZE + 1]).unwrap();
 
-    let text = code_read(&repo.root, "text.txt", &[repo.root.clone()]).unwrap();
+    let text = code_read(&repo.root, "text.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert_eq!(text.text.as_deref(), Some("hello\n"));
     assert!(!text.binary && !text.too_large);
 
-    let binary = code_read(&repo.root, "binary.bin", &[repo.root.clone()]).unwrap();
+    let binary = code_read(&repo.root, "binary.bin", std::slice::from_ref(&repo.root)).unwrap();
     assert!(binary.binary);
     assert_eq!(binary.text, None);
 
-    let large = code_read(&repo.root, "large.txt", &[repo.root.clone()]).unwrap();
+    let large = code_read(&repo.root, "large.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert!(large.too_large);
     assert_eq!(large.text, None);
 }
@@ -89,10 +122,25 @@ fn code_read_refuses_traversal_absolute_paths_and_symlinks_outside_root() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, repo.root.join("outside-link.txt")).unwrap();
 
-    assert!(code_read(&repo.root, "../outside.txt", &[repo.root.clone()]).is_err());
-    assert!(code_read(&repo.root, outside.to_str().unwrap(), &[repo.root.clone()]).is_err());
+    assert!(code_read(
+        &repo.root,
+        "../outside.txt",
+        std::slice::from_ref(&repo.root)
+    )
+    .is_err());
+    assert!(code_read(
+        &repo.root,
+        outside.to_str().unwrap(),
+        std::slice::from_ref(&repo.root)
+    )
+    .is_err());
     #[cfg(unix)]
-    assert!(code_read(&repo.root, "outside-link.txt", &[repo.root.clone()]).is_err());
+    assert!(code_read(
+        &repo.root,
+        "outside-link.txt",
+        std::slice::from_ref(&repo.root)
+    )
+    .is_err());
 }
 
 #[test]
@@ -109,8 +157,11 @@ fn code_changes_reports_staged_and_unstaged_statuses_and_new_rename_path() {
     git(&repo.root, &["mv", "added.txt", "renamed.txt"]);
     std::fs::write(repo.root.join("untracked.txt"), "new\n").unwrap();
 
-    let changes = code_changes(&repo.root, &[repo.root.clone()]).unwrap();
-    let by_path: HashMap<_, _> = changes.iter().map(|change| (change.path.as_str(), change.status.as_str())).collect();
+    let changes = code_changes(&repo.root, std::slice::from_ref(&repo.root)).unwrap();
+    let by_path: HashMap<_, _> = changes
+        .iter()
+        .map(|change| (change.path.as_str(), change.status.as_str()))
+        .collect();
     assert_eq!(by_path.get("tracked.txt"), Some(&"modified"));
     assert_eq!(by_path.get("deleted.txt"), Some(&"deleted"));
     assert_eq!(by_path.get("renamed.txt"), Some(&"renamed"));
@@ -127,16 +178,16 @@ fn code_diff_returns_head_and_working_contents_for_modified_added_and_deleted_fi
     git(&repo.root, &["commit", "-m", "add deleted fixture"]);
     std::fs::remove_file(repo.root.join("deleted.txt")).unwrap();
 
-    let modified = code_diff(&repo.root, "tracked.txt", &[repo.root.clone()]).unwrap();
+    let modified = code_diff(&repo.root, "tracked.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert_eq!(modified.original, "before\n");
     assert_eq!(modified.modified, "after\n");
     assert!(!modified.binary && !modified.too_large);
 
-    let added = code_diff(&repo.root, "added.txt", &[repo.root.clone()]).unwrap();
+    let added = code_diff(&repo.root, "added.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert_eq!(added.original, "");
     assert_eq!(added.modified, "new\n");
 
-    let deleted = code_diff(&repo.root, "deleted.txt", &[repo.root.clone()]).unwrap();
+    let deleted = code_diff(&repo.root, "deleted.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert_eq!(deleted.original, "gone\n");
     assert_eq!(deleted.modified, "");
 }
@@ -151,11 +202,11 @@ fn code_diff_suppresses_both_sides_for_binary_or_too_large_content() {
     std::fs::write(repo.root.join("binary.txt"), b"now\0binary").unwrap();
     std::fs::write(repo.root.join("large.txt"), vec![b'x'; MAX_FILE_SIZE + 1]).unwrap();
 
-    let binary = code_diff(&repo.root, "binary.txt", &[repo.root.clone()]).unwrap();
+    let binary = code_diff(&repo.root, "binary.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert!(binary.binary && !binary.too_large);
     assert_eq!((&*binary.original, &*binary.modified), ("", ""));
 
-    let large = code_diff(&repo.root, "large.txt", &[repo.root.clone()]).unwrap();
+    let large = code_diff(&repo.root, "large.txt", std::slice::from_ref(&repo.root)).unwrap();
     assert!(large.too_large && !large.binary);
     assert_eq!((&*large.original, &*large.modified), ("", ""));
 }
@@ -175,7 +226,10 @@ fn code_commands_refuse_roots_missing_from_the_allowlist() {
 #[test]
 fn code_diff_response_matches_native_contract() {
     let repo = Repository::new("code-diff-shape");
-    let value: Value = serde_json::to_value(code_diff(&repo.root, "tracked.txt", &[repo.root.clone()]).unwrap()).unwrap();
+    let value: Value = serde_json::to_value(
+        code_diff(&repo.root, "tracked.txt", std::slice::from_ref(&repo.root)).unwrap(),
+    )
+    .unwrap();
     assert_eq!(value["path"], "tracked.txt");
     assert_eq!(value["binary"], false);
     assert_eq!(value["tooLarge"], false);
