@@ -37,9 +37,10 @@ Commands:
   orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
+  settings [--json]                    Read all settings shown in the desktop app
   resources [--json|--all]               Measure machine and open-dispatch resources
   proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
-  chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
+  chain list|limits|add|save|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
   ask "question"                       Ask the coordinator and use its native delivery path
