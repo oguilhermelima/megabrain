@@ -63,7 +63,7 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
   const [tab, setTab] = useState<'conversation' | 'terminal'>('conversation')
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
+      <header data-tauri-drag-region className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
         <AgentBadge agent={chat.agent ?? ''} size="lg" />
         <div className="min-w-0">
           <h1 className="truncate text-[20px] font-semibold text-ink-100">{chatName(chat)}</h1>
