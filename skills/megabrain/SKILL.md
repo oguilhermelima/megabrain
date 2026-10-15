@@ -129,6 +129,7 @@ megabrain orchestrate stop <dispatch-id-or-suffix> [--operator] [--json] — rec
 megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json] — recommended when you need to redirect a child that is working on the wrong thing or replace queued directions.
 megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--operator] [--json] — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
 megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--limit <n>] [--json] — recommended when you need ordered user, assistant, thinking and tool events from an agent session log.
+megabrain send --session <agent:id> --text <text> --operator [--json] — recommended when you need to message any available agent session as the operator.
 megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--operator] [--json] — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
 megabrain supervise [--status|--stop] — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
@@ -199,6 +200,11 @@ read` uses the live pane while available and falls back to that transcript after
 the response identifies the source. Closing and pruning stop the stream before releasing the
 dispatch session. `orchestrate reply` rejects a settled dispatch with a non-zero status and asks
 you to open a new dispatch rather than queueing an undeliverable message.
+
+`orchestrate transcript` tags relayed messages with an `origin` that identifies the parent or child
+chat; ordinary events keep their existing shape. Use `send --session <agent:id> --text <text>
+--operator` to contact any session with an available peer, queue or known tmux channel. A send with
+no available channel reports `delivered: false` and exits non-zero.
 
 `orchestrate change` supersedes queued directions first, then interrupts a working child until its
 composer is idle and stable (10 seconds per wait, up to three interrupts by default). It submits

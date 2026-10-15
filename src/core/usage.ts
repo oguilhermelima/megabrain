@@ -7,6 +7,7 @@ export const USAGE_LINES = {
   "db-migrate": "db migrate [--dry-run] [--json]",
   "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json]",
   "context": "context [--json]",
+  // The caller must opt into operator authority on the command itself.
   "send": "send --session <agent:id> --text <text> --operator [--json]",
   "worktree": "worktree create|pr|finish|list|adopt|prune ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
