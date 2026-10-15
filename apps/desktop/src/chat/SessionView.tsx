@@ -60,7 +60,7 @@ export function SessionView({
             onChange={(event) => setText(event.target.value)}
             disabled={sending || ended}
             placeholder={ended ? 'This session has ended' : `Reply to ${session.title}…`}
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-500"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-400"
           />
           <Button variant="primary" type="submit" disabled={text.trim() === '' || sending || ended} className="h-9 px-4">
             {sending ? <Spinner /> : 'Send'}

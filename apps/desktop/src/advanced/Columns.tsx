@@ -41,7 +41,7 @@ function ChildCard({ node, onSelect }: { node: ChildNode; onSelect: (dispatchId:
             <button type="button" onClick={() => onSelect(node.chat.dispatchId)} className="rounded-full bg-white/[0.08] px-4 py-1.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.14]">
               Open
             </button>
-            {node.children.length > 0 && <span className="text-[12px] text-ink-500">{node.children.length} nested</span>}
+            {node.children.length > 0 && <span className="text-[12px] text-ink-400">{node.children.length} nested</span>}
           </div>
           {node.children.length > 0 && (
             <div className="mt-3 space-y-2 border-l border-white/[0.06] pl-3">
@@ -75,7 +75,7 @@ function Column({ column, onSelect }: { column: ColumnModel; onSelect: (dispatch
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/[0.06]">
         <Conversation target={{ sessionId: column.parentSessionId }} live />
       </div>
-      {column.endedCount > 0 && <div className="shrink-0 px-5 py-2 text-[12px] text-ink-500">{column.endedCount} ended</div>}
+      {column.endedCount > 0 && <div className="shrink-0 px-5 py-2 text-[12px] text-ink-400">{column.endedCount} ended</div>}
     </div>
   )
 }
@@ -84,7 +84,7 @@ function Column({ column, onSelect }: { column: ColumnModel; onSelect: (dispatch
 // filling the rest. Receives every open chat and the worktrees, and reports the chat the person opens.
 export function Columns({ chats, onSelect }: { chats: Dispatch[]; worktrees: Worktree[]; selected: string | null; onSelect: (dispatchId: string) => void }) {
   const columns = buildColumns(chats)
-  if (columns.length === 0) return <div className="flex h-full items-center justify-center text-[14px] text-ink-500">No open chats.</div>
+  if (columns.length === 0) return <div className="flex h-full items-center justify-center text-[14px] text-ink-400">No open chats.</div>
   return (
     <div className="flex h-full overflow-x-auto">
       {columns.map((column) => (

@@ -72,7 +72,7 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
           </p>
         </div>
         <StateChip state={state} />
-        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-500">
+        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-400">
           <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘[</kbd>
           <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘]</kbd>
         </span>
@@ -128,7 +128,7 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
             onChange={(event) => setText(event.target.value)}
             disabled={sending || state === 'ended'}
             placeholder={state === 'ended' ? 'This chat has ended' : `Reply to ${chatName(chat)}…`}
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-500"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-400"
           />
           <Button variant="primary" type="submit" disabled={text.trim() === '' || sending || state === 'ended'} className="h-9 px-4">
             {sending ? <Spinner /> : 'Send'}

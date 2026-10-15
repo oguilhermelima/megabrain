@@ -26,7 +26,7 @@ function AssistantMessage({ event }: { event: TranscriptEvent }) {
 }
 
 function SystemMessage({ event }: { event: TranscriptEvent }) {
-  return <li className="text-center text-[12px] text-ink-500">{event.text}</li>
+  return <li className="text-center text-[12px] text-ink-400">{event.text}</li>
 }
 
 function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenChat: OpenChat | undefined }) {
@@ -43,7 +43,7 @@ function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenC
         </span>
         <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
           <span className="block text-[12px] font-semibold text-ink-300">{header}</span>
-          {!open && <span className="block truncate text-[13px] text-ink-500">{relayedPreview(event.text)}</span>}
+          {!open && <span className="block truncate text-[13px] text-ink-400">{relayedPreview(event.text)}</span>}
         </button>
         {onOpenChat !== undefined && target !== null && (
           <button
@@ -69,11 +69,11 @@ function ThinkingMessage({ event }: { event: TranscriptEvent }) {
   const firstLine = event.text.split('\n')[0] ?? ''
   return (
     <li>
-      <button type="button" onClick={() => setOpen((value) => !value)} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-500 hover:text-ink-400">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
         <span className="orb idle size-2.5 shrink-0" />
         {open ? 'Thinking' : firstLine}
       </button>
-      {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-500 italic">{event.text}</p>}
+      {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">{event.text}</p>}
     </li>
   )
 }
@@ -178,14 +178,14 @@ export function Conversation({
   if (error !== null) return <div className="mx-8 my-5"><ErrorNote error={error} /></div>
   if (transcript === null) {
     return (
-      <div className="mx-8 my-5 flex items-center gap-2 text-[13px] text-ink-500">
+      <div className="mx-8 my-5 flex items-center gap-2 text-[13px] text-ink-400">
         <Spinner />
         Reading…
       </div>
     )
   }
   if (transcript.events.length === 0) {
-    return <div className="mx-8 my-5 text-[13px] text-ink-500">Nothing here yet.</div>
+    return <div className="mx-8 my-5 text-[13px] text-ink-400">Nothing here yet.</div>
   }
 
   const items = buildConversationItems(transcript.events)

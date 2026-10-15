@@ -56,7 +56,7 @@ export function ModelsSection({
             {group.models.map((model) => (
               <li key={model.model} className="flex items-baseline justify-between text-[13px]">
                 <span className="text-ink-100">{model.model}</span>
-                <span className="text-ink-500">{model.reasoning.levels.join(', ')}</span>
+                <span className="text-ink-400">{model.reasoning.levels.join(', ')}</span>
               </li>
             ))}
           </ul>

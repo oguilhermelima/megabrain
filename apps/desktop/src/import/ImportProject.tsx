@@ -93,7 +93,7 @@ function GithubTab({ projects, onImported }: { projects: Project[]; onImported: 
           setChosen(null)
         }}
         placeholder="Search, paste a URL, or owner/name…"
-        className="w-full rounded-full border border-white/15 bg-white/[0.05] px-4 py-2 text-[14px] text-ink-100 outline-none placeholder:text-ink-500"
+        className="w-full rounded-full border border-white/15 bg-white/[0.05] px-4 py-2 text-[14px] text-ink-100 outline-none placeholder:text-ink-400"
       />
       {repositoriesError !== null && <ErrorNote error={repositoriesError} />}
       {repositories !== null && query !== '' && filtered.length > 0 && (
@@ -109,7 +109,7 @@ function GithubTab({ projects, onImported }: { projects: Project[]; onImported: 
                 className={`w-full rounded-xl px-3 py-2 text-left text-[13.5px] ${chosen === repository.url ? 'bg-accent/15 text-ink-100' : 'text-ink-300 hover:bg-white/[0.06]'}`}
               >
                 {repository.nameWithOwner}
-                {repository.description !== null && <span className="ml-2 truncate text-ink-500">{repository.description}</span>}
+                {repository.description !== null && <span className="ml-2 truncate text-ink-400">{repository.description}</span>}
               </button>
             </li>
           ))}

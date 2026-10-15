@@ -334,7 +334,7 @@ function Overview({ status, onSelect }: { status: Status; onSelect: (id: string)
           </button>
         ))}
       </div>
-      <p className="mt-10 text-[13px] text-ink-500">Pick a chat on the left to follow it. ⌘[ and ⌘] move between chats.</p>
+      <p className="mt-10 text-[13px] text-ink-400">Pick a chat on the left to follow it. ⌘[ and ⌘] move between chats.</p>
     </div>
   )
 }
