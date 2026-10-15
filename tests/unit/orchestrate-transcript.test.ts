@@ -189,6 +189,7 @@ describe("orchestrate transcript", () => {
     }, fakeProcess()));
     expect(codexOutput.events[0]?.text).toBe("printf 'codex command'");
 
+    await mkdir(join(home, ".claude", "projects", "sample-project"), { recursive: true });
     await writeFile(join(home, ".claude", "projects", "sample-project", "fixture-session.jsonl"), `${JSON.stringify({
       type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: { command: "echo claude command\necho next" } }] },
     })}\n`);
