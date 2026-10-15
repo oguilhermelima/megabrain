@@ -1,0 +1,144 @@
+{
+  "version": "0.2.4",
+  "hosts": {
+    "orca": true,
+    "superset": true,
+    "tmux": true
+  },
+  "agents": [
+    {
+      "agent": "claude",
+      "label": "Claude Code",
+      "installed": true,
+      "configDir": "/Users/operator/.claude"
+    },
+    {
+      "agent": "codex",
+      "label": "Codex",
+      "installed": true,
+      "configDir": "/Users/operator/.codex"
+    },
+    {
+      "agent": "agy",
+      "label": "Antigravity (agy)",
+      "installed": true,
+      "configDir": "/Users/operator/.gemini/config"
+    },
+    {
+      "agent": "grok",
+      "label": "Grok",
+      "installed": true,
+      "configDir": "/Users/operator/.grok"
+    }
+  ],
+  "modules": [
+    {
+      "module": "orchestration",
+      "label": "Orchestration",
+      "hint": "dispatch and supervise agents in Orca, Superset or tmux",
+      "group": "Agents",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "orchestration-hooks",
+      "label": "Turn-end hooks",
+      "hint": "tell the parent when a child finishes its turn",
+      "group": "Agents",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "resource-hooks",
+      "label": "Resource hooks",
+      "hint": "route dev servers, docker and migrations into megabrain proc (opt-in)",
+      "group": "Agents",
+      "selectedByDefault": false,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "worktree",
+      "label": "Shared worktrees",
+      "hint": "one worktree folder for Orca and Superset",
+      "group": "Agents",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "simulator-web",
+      "label": "Web browsers",
+      "hint": "Playwright Chromium and Firefox for web testing",
+      "group": "Testing",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "simulator-native",
+      "label": "iOS simulators",
+      "hint": "Appium with the XCUITest driver",
+      "group": "Testing",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "simulator-tv",
+      "label": "Apple TV simulator",
+      "hint": "tvOS on the shared XCUITest toolchain",
+      "group": "Testing",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    },
+    {
+      "module": "tv-adb",
+      "label": "Android TV",
+      "hint": "physical or emulated device over adb",
+      "group": "Testing",
+      "selectedByDefault": true,
+      "unavailable": false,
+      "reason": null
+    }
+  ],
+  "defaults": {
+    "agents": [
+      "claude",
+      "codex",
+      "agy"
+    ],
+    "skill": "global",
+    "tmux": "yes",
+    "modules": [
+      "orchestration",
+      "orchestration-hooks",
+      "worktree",
+      "simulator-web",
+      "simulator-native",
+      "simulator-tv",
+      "tv-adb"
+    ]
+  },
+  "previous": {
+    "agents": [
+      "claude",
+      "codex",
+      "agy"
+    ],
+    "skill": "global",
+    "tmux": "yes",
+    "modules": [
+      "tmux-runtime",
+      "orchestration-hooks",
+      "worktree",
+      "simulator-web",
+      "simulator-native",
+      "simulator-tv",
+      "orchestration"
+    ]
+  }
+}
