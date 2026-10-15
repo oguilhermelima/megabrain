@@ -19,9 +19,9 @@ const transcriptCap = (environment: Environment): number => {
   const configured = Number(environment.MEGABRAIN_TRANSCRIPT_MAX_BYTES);
   return Number.isInteger(configured) && configured > 0 ? configured : defaultTranscriptCap;
 };
-type ParentMeta = Readonly<{ meta: RecordValue; dispatchId: string }>;
+export type ParentMeta = Readonly<{ meta: RecordValue; dispatchId: string }>;
 
-async function parentMeta(id: string, environment: Environment, process: ProcessAdapter, allowSuffix = false): Promise<Result<ParentMeta>> {
+export async function parentMeta(id: string, environment: Environment, process: ProcessAdapter, allowSuffix = false): Promise<Result<ParentMeta>> {
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const current = await resolveCaller(environment, process);
