@@ -26,9 +26,9 @@ function ChildCard({ node, onSelect }: { node: ChildNode; onSelect: (dispatchId:
   const finding = node.chat.supervision.finding
   return (
     <div className="rounded-[18px] border border-white/[0.06] bg-white/[0.03]">
-      <button type="button" onClick={() => setExpanded((value) => !value)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+      <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} className="flex w-full items-center gap-3 rounded-[18px] px-4 py-3 text-left hover:bg-white/[0.04]">
         <AgentBadge agent={node.chat.agent ?? 'unknown'} />
-        <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink-100">{chatName(node.chat)}</span>
+        <span title={chatName(node.chat)} className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink-100">{chatName(node.chat)}</span>
         <StateDot state={state} />
       </button>
       {finding !== null && <p className="px-4 pb-3 text-[12.5px] text-warn">{finding.errorText ?? finding.cause}</p>}
@@ -60,9 +60,9 @@ function Column({ column, onSelect }: { column: ColumnModel; onSelect: (dispatch
   const summary = columnSummary(column)
   return (
     <div className="flex h-full w-[440px] shrink-0 flex-col border-r border-white/[0.06]">
-      <div className="flex items-center justify-between px-5 py-4">
-        <span className="text-[15px] font-semibold text-ink-100">{column.label}</span>
-        <span className="flex items-center gap-2">
+      <div data-tauri-drag-region className="flex items-center justify-between gap-3 px-5 pt-6 pb-4">
+        <span title={column.label} className="min-w-0 truncate text-[16px] font-semibold tracking-[-0.01em] text-ink-100">{column.label}</span>
+        <span className="flex shrink-0 items-center gap-2">
           {summary.needsYou > 0 && <StateChip state="needs-you" />}
           {summary.working > 0 && <span className="text-[12.5px] text-ink-400">{summary.working} working</span>}
         </span>
@@ -84,7 +84,13 @@ function Column({ column, onSelect }: { column: ColumnModel; onSelect: (dispatch
 // filling the rest. Receives every open chat and the worktrees, and reports the chat the person opens.
 export function Columns({ chats, onSelect }: { chats: Dispatch[]; worktrees: Worktree[]; selected: string | null; onSelect: (dispatchId: string) => void }) {
   const columns = buildColumns(chats)
-  if (columns.length === 0) return <div className="flex h-full items-center justify-center text-[14px] text-ink-400">No open chats.</div>
+  if (columns.length === 0)
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-1.5 px-8 text-center">
+        <p className="text-[16px] font-semibold text-ink-200">No open chats</p>
+        <p className="max-w-sm text-[13.5px] text-ink-400">Each chat that starts others gets a column here, with the chats it started inside it.</p>
+      </div>
+    )
   return (
     <div className="flex h-full overflow-x-auto">
       {columns.map((column) => (
