@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readContextMeter, resolveGrokSessionId } from "../../src/core/context-meter.js";
+import { findClaudeTranscriptForWorktree, readContextMeter, resolveGrokSessionId } from "../../src/core/context-meter.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { ok, failed } from "../../src/core/result.js";
 
@@ -60,6 +60,17 @@ const assistant = (model: string, usage: Record<string, number>, extra: Record<s
 const usage = { input_tokens: 2, cache_creation_input_tokens: 1271, cache_read_input_tokens: 95984, output_tokens: 389 };
 
 describe("Claude transcript", () => {
+  test("finds a worktree session that starts with Claude metadata", async () => {
+    const cwd = "/Users/operator/Workspaces/Worktrees/feat_orchestrate.transcript";
+    const createdAt = "2026-10-15T05:33:54.000Z";
+    const project = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+    const sessionPath = join(home, ".claude", "projects", project, `${session}.jsonl`);
+    await mkdir(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, await readFile(new URL("../fixtures/claude-session-metadata.jsonl", import.meta.url), "utf8"));
+
+    expect(await findClaudeTranscriptForWorktree(home, cwd, createdAt)).toBe(sessionPath);
+  });
+
   test("sums input, cache read and cache creation of the latest assistant entry over the registry window", async () => {
     await put(transcript, [assistant("claude-sonnet-5-5", { ...usage, cache_read_input_tokens: 1000 }), { type: "user" }, assistant("claude-sonnet-5-5", usage)]);
     expect(await readContextMeter({ agent: "claude", agentSessionId: session, contextWindow: 200000 }, home)).toEqual({
