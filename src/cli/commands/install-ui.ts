@@ -35,7 +35,8 @@ export type MachinePrompter = Readonly<{
   modules: (choices: readonly ModuleChoice[]) => Promise<string[]>;
   confirm: (message: string, initial: boolean) => Promise<boolean>;
   review: (plan: ReviewPlan) => Promise<boolean>;
-  step: (label: string) => StepHandle;
+  /** module names the module being set up, when the step is one; the terminal ignores it. */
+  step: (label: string, module?: string) => StepHandle;
   info: (message: string) => void;
   warn: (message: string) => void;
   outro: (message: string) => void;
@@ -75,6 +76,10 @@ function settled<T>(value: T): Exclude<T, symbol> {
 
 function moduleLabel(module: string): string {
   return MODULE_INFO[module]?.label ?? module;
+}
+
+export function moduleInfo(module: string): Readonly<{ label: string; hint: string; group: string }> {
+  return MODULE_INFO[module] ?? { label: module, hint: "", group: "Other" };
 }
 
 export function createClackPrompter(): MachinePrompter {
