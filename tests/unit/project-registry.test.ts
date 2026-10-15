@@ -171,4 +171,73 @@ describe("project registry", () => {
     const project = json<Array<{ worktrees: Array<{ sessions: Array<{ dispatchId: string | null }> }> }>>(await cli("projects", "--json"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.dispatchId).toBe("dispatch-1");
   });
+
+  test("project sessions prefer dispatch labels and explicit Claude names", async () => {
+    const path = await repository("session-titles");
+    const directory = join(home, ".claude", "sessions");
+    mkdirSync(directory, { recursive: true });
+    const startedAt = new Date().toISOString();
+    writeFileSync(join(directory, `${process.pid}.json`), JSON.stringify({
+      pid: process.pid, sessionId: "title-session", cwd: path, startedAt,
+      name: "Nome escolhido", nameSource: "user", status: "busy", updatedAt: startedAt,
+    }));
+    const opened = guardedOpenDatabase(env);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    try {
+      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", [
+        "dispatch-title", "running", "claude", path, "Título do despacho", startedAt, startedAt,
+        JSON.stringify({ label: "Título do despacho", "$present": ["dispatchId", "state", "agent", "worktreePath", "createdAt"] }),
+      ]);
+    } finally { opened.value.close(); }
+    await cli("repo", "add", path);
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
+    expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Título do despacho");
+  });
+
+  test("Claude titles use the latest AI title from the transcript tail and then the first user message", async () => {
+    const path = await repository("claude-ai-titles");
+    const sessions = join(home, ".claude", "sessions");
+    const project = join(home, ".claude", "projects", path.replace(/[^a-zA-Z0-9]/g, "-"));
+    mkdirSync(sessions, { recursive: true });
+    mkdirSync(project, { recursive: true });
+    const startedAt = new Date().toISOString();
+    const fixtures = await import("node:fs/promises");
+    const aiTitle = (await fixtures.readFile(join(import.meta.dir, "../fixtures/projects/claude-ai-title.jsonl"), "utf8")).trim().replaceAll("redacted-session-id", "claude-ai-title");
+    const userMessage = JSON.stringify({ type: "user", message: { content: "  Primeiro pedido   com espaços " } });
+    writeFileSync(join(sessions, "900001.json"), JSON.stringify({ pid: 900001, sessionId: "claude-ai-title", cwd: path, startedAt, name: "auto-c3", nameSource: "derived", status: "idle", updatedAt: startedAt }));
+    writeFileSync(join(project, "claude-ai-title.jsonl"), `${aiTitle}\n${userMessage}\n`);
+    writeFileSync(join(sessions, "900002.json"), JSON.stringify({ pid: 900002, sessionId: "claude-user-title", cwd: path, startedAt, name: "auto-e7", nameSource: "derived", status: "idle", updatedAt: startedAt }));
+    writeFileSync(join(project, "claude-user-title.jsonl"), `${userMessage}\n`);
+    await cli("repo", "add", path);
+    const result = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; title: string }> }> }>>(await cli("projects", "--json"))[0];
+    const titles = new Map(result?.worktrees[0]?.sessions.map(({ sessionId, title }) => [sessionId, title]));
+    expect(titles.get("claude:claude-ai-title")).toBe("Atualize o registro do projeto");
+    expect(titles.get("claude:claude-user-title")).toBe("Primeiro pedido com espaços");
+  });
+
+  test("Codex titles use the latest session index name and never the generic session label", async () => {
+    const path = await repository("codex-titles");
+    const directory = join(home, ".codex", "sessions", "2026", "10", "15");
+    mkdirSync(directory, { recursive: true });
+    const startedAt = new Date().toISOString();
+    const rollout = join(directory, "rollout-title-session.jsonl");
+    writeFileSync(rollout, `${JSON.stringify({ type: "session_meta", payload: { id: "codex-title-session", cwd: path, timestamp: startedAt } })}\n${JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Pedido inicial do Codex" }] } })}\n`);
+    const fixture = await import("node:fs/promises");
+    const index = (await fixture.readFile(join(import.meta.dir, "../fixtures/projects/codex-session-index.jsonl"), "utf8")).trim();
+    writeFileSync(join(home, ".codex", "session_index.jsonl"), `${index.replaceAll("redacted-session-id", "codex-title-session")}\n${JSON.stringify({ id: "codex-title-session", thread_name: "Nome final do Codex", updated_at: startedAt })}\n`);
+    await cli("repo", "add", path);
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
+    expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Nome final do Codex");
+  });
+
+  test("session titles fall back to the agent name when no session title or user message exists", async () => {
+    const path = await repository("title-fallback");
+    const sessions = join(home, ".claude", "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const startedAt = new Date().toISOString();
+    writeFileSync(join(sessions, "900003.json"), JSON.stringify({ pid: 900003, sessionId: "untitled", cwd: path, startedAt, name: "slug-a1", nameSource: "derived", status: "idle", updatedAt: startedAt }));
+    await cli("repo", "add", path);
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
+    expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Claude");
+  });
 });
