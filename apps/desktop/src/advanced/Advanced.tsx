@@ -56,6 +56,41 @@ function storedMode(): Mode {
   }
 }
 
+function storedSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem('megabrain.sidebar.hidden') === '1'
+  } catch {
+    return false
+  }
+}
+
+function SidebarToggleIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M6 2.5v11" />
+    </svg>
+  )
+}
+
+function ColumnsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M6 2.5v11M10 2.5v11" />
+    </svg>
+  )
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4" />
+    </svg>
+  )
+}
+
 // The advanced window: chats as a sidebar (repositories > worktrees > chats) or as columns (one per
 // parent session), the selected chat followed live, and each project's code.
 export function Advanced({ onSetup }: { onSetup: () => void }) {
@@ -68,6 +103,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [code, setCode] = useState<CodeTarget | null>(null)
   const [importing, setImporting] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
   const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   const order = useMemo(() => grouped.repositories.flatMap((repository) => repository.worktrees.flatMap((worktree) => worktree.chats.map((chat) => chat.dispatchId))), [grouped])
   const sessionRows = useMemo(() => sidebarSessionOrder(projects, new Set()), [projects])
@@ -86,6 +122,18 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setSelected(dispatchId)
   }
 
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      try {
+        localStorage.setItem('megabrain.sidebar.hidden', next ? '1' : '0')
+      } catch {
+        // A remembered collapse state is a convenience; starting expanded is fine.
+      }
+      return next
+    })
+  }
+
   const openSession = (session: ProjectSession, worktreePath: string) => {
     setCode(null)
     const dispatchId = session.dispatchId
@@ -99,6 +147,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       if (event.metaKey && event.key === ',') {
         event.preventDefault()
         setSettingsOpen(true)
+        return
+      }
+      if (event.metaKey && event.key.toLowerCase() === 'b') {
+        event.preventDefault()
+        toggleSidebarCollapsed()
         return
       }
       if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
@@ -124,7 +177,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const sidebarDispatchId = sidebarSelected?.kind === 'dispatch' ? sidebarSelected.dispatchId : null
   const sidebarDispatch = sidebarDispatchId === null ? null : status?.dispatches.find((item) => item.dispatchId === sidebarDispatchId) ?? null
 
-  const toggle = (
+  const viewSwitch = (
     <div className="flex gap-1 rounded-full border border-white/10 bg-white/[0.05] p-1" role="group" aria-label="View">
       {(['sidebar', 'columns'] as const).map((value) => (
         <button
@@ -132,12 +185,55 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           type="button"
           onClick={() => changeMode(value)}
           aria-pressed={mode === value}
-          className={`h-7 rounded-full px-3 text-[12.5px] font-semibold capitalize ${mode === value ? 'bg-white/[0.14] text-ink-100' : 'text-ink-400 hover:text-ink-200'}`}
+          title={value === 'sidebar' ? 'Sidebar view' : 'Columns view'}
+          className={`flex h-7 w-7 items-center justify-center rounded-full ${mode === value ? 'bg-white/[0.14] text-ink-100' : 'text-ink-400 hover:text-ink-200'}`}
         >
-          {value}
+          {value === 'sidebar' ? <SidebarToggleIcon /> : <ColumnsIcon />}
         </button>
       ))}
     </div>
+  )
+
+  const topBar = (
+    <header className="glass flex items-center justify-between border-b border-white/[0.06] py-3 pr-5 pl-24">
+      <span className="flex items-center gap-2">
+        {mode === 'sidebar' && (
+          <button
+            type="button"
+            onClick={toggleSidebarCollapsed}
+            aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+            title="Toggle sidebar (⌘B)"
+            className="rounded-full p-1.5 text-ink-400 hover:bg-white/[0.08] hover:text-ink-200"
+          >
+            <SidebarToggleIcon />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setSidebarSelected(null)
+            setSelected(null)
+            setCode(null)
+          }}
+          className="flex items-center gap-2.5 rounded-full px-1"
+        >
+          <span className="orb size-5" />
+          <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
+        </button>
+      </span>
+      <span className="flex items-center gap-2">
+        {viewSwitch}
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-200"
+        >
+          <SettingsIcon />
+        </button>
+      </span>
+    </header>
   )
 
   const detail =
@@ -164,13 +260,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   if (mode === 'columns')
     return (
       <div className="relative flex h-full flex-col bg-ink-950">
-        <header className="glass flex items-center justify-between border-b border-white/[0.06] pt-9 pr-5 pb-3 pl-24">
-          <span className="flex items-center gap-2.5">
-            <span className="orb size-5" />
-            <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
-          </span>
-          {toggle}
-        </header>
+        {topBar}
         {error !== null && (
           <div className="px-8 pt-4">
             <ErrorNote error={error} />
@@ -193,49 +283,42 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     )
 
   return (
-    <div className="relative grid h-full grid-cols-[300px_minmax(0,1fr)]">
-      <aside className="glass flex min-h-0 flex-col border-r border-white/[0.06]">
-        <div className="flex items-center justify-between px-5 pt-11 pb-3">
-          <button type="button" onClick={() => { setSidebarSelected(null); setCode(null) }} className="flex items-center gap-2.5 rounded-full text-left">
-            <span className="orb size-5" />
-            <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
-          </button>
-        </div>
-        <Sidebar
-          status={status}
-          projects={projects}
-          selectedSessionId={sidebarSelected?.kind === 'session' ? sidebarSelected.session.sessionId : null}
-          onSelectSession={(session) => {
-            const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
-            openSession(session, worktree?.path ?? '')
-          }}
-          onCode={setCode}
-          onImport={() => setImporting(true)}
-        />
-        <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-500">
-          <span className="flex items-center gap-2">
-            <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
-            watcher {status?.supervisor.watcher.running === true ? 'on' : 'off'}
-          </span>
-          <span className="flex items-center gap-1">
-            <button type="button" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings (⌘,)" className="rounded-full p-1.5 hover:bg-white/[0.08] hover:text-ink-200">
-              ⚙
-            </button>
-            <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:text-ink-200">
-              Run setup
-            </button>
-          </span>
-        </footer>
-      </aside>
-      <main className="flex min-h-0 min-w-0 flex-col bg-ink-950">
-        <div className="flex justify-end px-5 pt-3">{toggle}</div>
-        {error !== null && (
-          <div className="px-8 pt-4">
-            <ErrorNote error={error} />
-          </div>
+    <div className="relative flex h-full flex-col bg-ink-950">
+      {topBar}
+      <div className={`grid min-h-0 flex-1 ${sidebarCollapsed ? 'grid-cols-[minmax(0,1fr)]' : 'grid-cols-[300px_minmax(0,1fr)]'}`}>
+        {!sidebarCollapsed && (
+          <aside className="glass flex min-h-0 flex-col border-r border-white/[0.06]">
+            <Sidebar
+              status={status}
+              projects={projects}
+              selectedSessionId={sidebarSelected?.kind === 'session' ? sidebarSelected.session.sessionId : null}
+              onSelectSession={(session) => {
+                const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
+                openSession(session, worktree?.path ?? '')
+              }}
+              onCode={setCode}
+              onImport={() => setImporting(true)}
+            />
+            <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-400">
+              <span className="flex items-center gap-2">
+                <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
+                watcher {status?.supervisor.watcher.running === true ? 'on' : 'off'}
+              </span>
+              <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:text-ink-200">
+                Run setup
+              </button>
+            </footer>
+          </aside>
         )}
-        {sidebarDetail}
-      </main>
+        <main className="flex min-h-0 min-w-0 flex-col bg-ink-950">
+          {error !== null && (
+            <div className="px-8 pt-4">
+              <ErrorNote error={error} />
+            </div>
+          )}
+          {sidebarDetail}
+        </main>
+      </div>
       {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
       {settingsOverlay}
     </div>
