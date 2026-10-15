@@ -383,6 +383,14 @@ export async function executeSupervisorWorker(args: readonly string[], environme
   return ok("supervisor stopped\n");
 }
 
+export function supervisorWatcher(database: Parameters<typeof getDispatch>[0]): Readonly<{ running: boolean; pid: number | null }> {
+  const leases = listLeases(database);
+  const lease = leases.kind === "ok" ? leases.value.find((item) => item.key === LEASE_KEY) : undefined;
+  if (lease === undefined) return { running: false, pid: null };
+  const pid = Number(lease.holder.split("-", 1)[0]);
+  return { running: true, pid: Number.isSafeInteger(pid) && pid > 1 ? pid : null };
+}
+
 function formatStatus(root: string, database: Parameters<typeof getDispatch>[0], resourceLines: readonly string[] = [], measured: Awaited<ReturnType<typeof collectResources>>["dispatches"] = []): string {
   const lease = listLeases(database);
   const dispatches = listDispatches(database);

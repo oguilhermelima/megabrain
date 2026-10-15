@@ -39,6 +39,7 @@ import { ensureAutomaticCutover } from "../db/cutover.js";
 import { executeDeliveryWorker } from "./commands/delivery-worker.js";
 import { executeStack } from "./commands/stack.js";
 import { executeSupervise, executeSupervisorWorker } from "./commands/supervise.js";
+import { executeStatus } from "./commands/status.js";
 import { executeResources } from "./commands/resources.js";
 import { executeProc } from "../core/proc-runner.js";
 
@@ -64,7 +65,7 @@ export async function route(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -94,6 +95,7 @@ export async function route(
     return executeCheck(commandArgs, dependencies.environment, dependencies.processAdapter);
   }
   if (command === "supervise") return executeSupervise(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "status") return executeStatus(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "resources") return executeResources(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "proc") return executeProc(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "model") {
