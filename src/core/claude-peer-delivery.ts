@@ -55,6 +55,7 @@ export type PeerDeliveryInput = Readonly<{
   idleDropMs?: number;
   isRead: () => Promise<boolean>;
   renew: () => Promise<void>;
+  onSent?: (msgId: string) => Promise<void> | void;
   wait?: (milliseconds: number) => Promise<void>;
   now?: () => number;
 }>;
@@ -83,6 +84,7 @@ export async function deliverThroughClaudePeer(input: PeerDeliveryInput): Promis
   const sent = await sendClaudePeer(target, input.text, input.senderMode);
   if (sent.kind !== "ok") return broken(target.version, sent.error);
   const msgId = sent.value;
+  try { await input.onSent?.(msgId); } catch { /* Recording acceptance must not undo a sent peer message. */ }
   let idleSince: number | undefined;
   while (true) {
     const scan = await scanTranscript(target.transcript, scanned, msgId);

@@ -341,6 +341,15 @@ export function renewOutboxLease(handle: DatabaseHandle, id: string, holder: str
   ).changes > 0);
 }
 
+export function markOutboxPeerSent(handle: DatabaseHandle, id: string, holder: string, messageId: string): Result<boolean> {
+  if (id === "" || holder === "" || messageId === "") return failed("outbox, lease holder and peer message ids must be non-empty");
+  const now = new Date().toISOString();
+  return write(handle, ({ db }) => db.run(
+    "UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ?",
+    [`peer-sent:${messageId}`, now, id, holder],
+  ).changes > 0);
+}
+
 export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null): Result<void> {
   const now = new Date().toISOString();
   const result = write(handle, ({ db }) => {

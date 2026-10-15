@@ -252,6 +252,28 @@ async function runWorker(current: Scene, env: Record<string, string> = {}, child
 }
 
 describe("parent notice to a Claude parent", () => {
+  test("records peer acceptance on the sending outbox before Claude consumes the message", async () => {
+    const current = await scene("busy");
+    const inbox = await startInbox(String(current.session.messagingSocketPath));
+    const worker = runWorker(current);
+    await received(inbox);
+    const db = stateDatabase({ HOME: current.root, MEGABRAIN_STATE_DIR: current.root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const userMessage = inbox.frames[0]?.find((frame) => frame.type === "user");
+    if (userMessage === undefined || typeof userMessage.msg_id !== "string") throw new Error("peer message was not accepted");
+    const activeOutbox = listOutbox(db.value);
+    if (activeOutbox.kind !== "ok") throw new Error(activeOutbox.error);
+    try {
+      expect(activeOutbox.value.find((item) => item.id === "ob-peer")).toMatchObject({
+        status: "sending",
+        detail: `peer-sent:${userMessage.msg_id}`,
+      });
+    } finally {
+      await appendFile(current.transcript, `${JSON.stringify({ type: "user", origin: { kind: "peer", msg_id: userMessage.msg_id } })}\n`);
+      await worker;
+    }
+  });
+
   test("goes through the peer socket and never types into the composer", async () => {
     const current = await scene();
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));

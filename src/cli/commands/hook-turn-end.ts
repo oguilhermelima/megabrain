@@ -378,8 +378,36 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
 // scan from reaching the rest (mirrors the shell's `|| true` / `|| continue` at each of these
 // points).
 // Parent-bound mail whose deliverer ended failed is invisible unless something says so: no pointer
-// reached the terminal, and the pointer path never retries. One line per message, marked
-// hook-notified so the same message never blocks twice.
+// reached the terminal, and the pointer path never retries. An in-flight delivery gets time to
+// arrive through its normal channel before the hook surfaces it. One short line per emitted
+// message is marked hook-notified so the same message never blocks twice.
+const PARENT_MAIL_IN_FLIGHT_GRACE_MS = 120_000;
+
+function parentMailSummary(text: string): string {
+  const firstLine = text.split("\n", 1)[0]?.trim() ?? "";
+  if (firstLine === "") return "(no text)";
+  const firstSentence = firstLine.match(/^[\s\S]*?[.!?](?=\s|$)/u)?.[0] ?? firstLine;
+  return Array.from(firstSentence).slice(0, 100).join("");
+}
+
+function parentMailWaitedTooLong(delivery: Readonly<Record<string, unknown>>, outbox: readonly Readonly<Record<string, unknown>>[]): boolean {
+  const createdAtValues = [delivery.createdAt, ...outbox.map((item) => item.createdAt)];
+  const createdAtTimes = createdAtValues
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => Date.parse(value))
+    .filter(Number.isFinite);
+  if (createdAtTimes.length === 0) return false;
+  return Date.now() - Math.min(...createdAtTimes) > PARENT_MAIL_IN_FLIGHT_GRACE_MS;
+}
+
+function parentOutboxMatchesDelivery(item: Readonly<Record<string, unknown>>, sequences: readonly number[], onlyOutstandingDelivery: boolean): boolean {
+  const payload = typeof item.payload === "object" && item.payload !== null && !Array.isArray(item.payload)
+    ? item.payload as JsonRecord
+    : undefined;
+  const sequence = payload?.sequence;
+  return typeof sequence === "number" ? sequences.includes(sequence) : onlyOutstandingDelivery;
+}
+
 function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly<{ failed: readonly string[]; pending: readonly string[] }> {
   const dispatch = getDispatch(database, dispatchId);
   if (dispatch.kind !== "ok" || dispatch.value === undefined || dispatch.value.state === "closed") return { failed: [], pending: [] };
@@ -389,6 +417,7 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
   if (deliveries.kind !== "ok" || messages.kind !== "ok") return { failed: [], pending: [] };
   const failed: string[] = [];
   const pending: string[] = [];
+  const outstandingParentDeliveryCount = deliveries.value.filter((delivery) => delivery.recipient === "parent" && delivery.status === "outstanding").length;
   for (const delivery of deliveries.value) {
     if (delivery.recipient !== "parent" || delivery.status !== "outstanding") continue;
     if (delivery.transport === "hook-notified") continue;
@@ -397,9 +426,9 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
     if (message === undefined) continue;
     const priorDone = messages.value.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
     if (classifyQueueMail(message.from, message.type, priorDone) !== "actionable") continue;
-    const summary = (message?.text ?? "").split("\n")[0]?.trim() ?? "";
-    const line = `${message?.type ?? "mail"} ${summary === "" ? "(no text)" : summary} — megabrain orchestrate watch ${dispatchId}`;
-    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((item) => item.dispatchId === dispatchId && item.targetKind === "parent-pointer") : [];
+    const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}`;
+    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((item) => item.dispatchId === dispatchId && item.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(item, sequences, outstandingParentDeliveryCount === 1)) : [];
+    if (matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
     const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|composer-race|superset-unverifiable-composer|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
     if (delivery.transport === "failed") {
@@ -412,7 +441,7 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
       for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
       continue;
     }
-    if (delivery.transport === "deferred" || pendingOutbox || heldOutbox) {
+    if (heldOutbox || ((delivery.transport === "deferred" || pendingOutbox) && parentMailWaitedTooLong(delivery, matchingOutbox))) {
       pending.push(line);
       for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
     }

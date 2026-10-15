@@ -193,7 +193,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  test("reports pending parent mail as non-error Stop context", async () => {
+  test("stays quiet while an outstanding parent-pointer delivery is in flight", async () => {
     await withRoot("pending-mail", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
       const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -206,11 +206,77 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       setDeliveryTransport(database.value, "d1", appended.value.seq, "deferred", "parent composer is occupied");
 
       const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["deferred"]);
+    });
+  });
+
+  test("reports a deferred delivery after it has been in flight for more than 120 seconds", async () => {
+    await withRoot("stale-pending-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const appended = appendDatabaseMessage(database.value, "d1", { from: "child", type: "done", text: "finished" }, {
+        delivery: { id: "stale-delivery", recipient: "parent", status: "outstanding" },
+        outbox: { id: "stale-parent-outbox", targetKind: "parent-pointer", target: "orca:coord-term", payload: {} },
+      });
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      setDeliveryTransport(database.value, "d1", appended.value.seq, "deferred");
+      const old = new Date(Date.now() - 121_000).toISOString();
+      database.value.db.run("UPDATE outbox SET created_at = ?, updated_at = ? WHERE id = ?", [old, old, "stale-parent-outbox"]);
+
+      const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
       if (result.kind !== "ok") throw new Error(result.error);
       expect(JSON.parse(result.value)).toEqual({ hookSpecificOutput: {
         hookEventName: "Stop",
         additionalContext: "1 unread child message: done finished — megabrain orchestrate watch d1",
       } });
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
+    });
+  });
+
+  test("does not surface or mark a peer-sent message while its worker awaits transcript consumption", async () => {
+    await withRoot("peer-sent-parent-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const appended = appendDatabaseMessage(database.value, "d1", { from: "child", type: "done", text: "finished" }, {
+        delivery: { id: "peer-sent-delivery", recipient: "parent", status: "outstanding" },
+        outbox: { id: "peer-sent-parent-outbox", targetKind: "parent-pointer", target: "orca:coord-term", payload: {} },
+      });
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      setDeliveryTransport(database.value, "d1", appended.value.seq, "deferred");
+      const old = new Date(Date.now() - 121_000).toISOString();
+      database.value.db.run("UPDATE outbox SET status = 'sending', detail = ?, created_at = ?, updated_at = ? WHERE id = ?", ["peer-sent:msg-123", old, old, "peer-sent-parent-outbox"]);
+
+      const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["deferred"]);
+    });
+  });
+
+  test("limits an emitted message to the first 100 characters of its first sentence", async () => {
+    await withRoot("short-parent-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const longSentence = "A".repeat(120);
+      const appended = await appendMessage(root, "d1", "child", "done", `${longSentence}. full report`, "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "failed");
+
+      const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      if (result.kind !== "ok") throw new Error(result.error);
+      const verdict = JSON.parse(result.value) as { reason?: string };
+      expect(verdict.reason).toContain(`done ${"A".repeat(100)} — megabrain orchestrate watch d1`);
+      expect(verdict.reason).not.toContain("A".repeat(101));
+      expect(verdict.reason).not.toContain("full report");
     });
   });
 
@@ -265,8 +331,8 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  test("reports an ask once and marks it as notified", async () => {
-    await withRoot("actionable-mail-once", async (root) => {
+  test("stays quiet for a fresh deferred ask and leaves it unnotified", async () => {
+    await withRoot("actionable-mail-in-flight", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
       const appended = await appendMessage(root, "d1", "child", "ask", "which branch?", "child-session", environment(root), fakeProcess());
       if (appended.kind !== "ok") throw new Error(appended.error);
@@ -275,8 +341,31 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       setDeliveryTransport(database.value, "d1", appended.value, "deferred");
       const first = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
       expect(first).toMatchObject({ kind: "ok" });
+      const deliveries = listDeliveries(database.value, "d1");
+      if (deliveries.kind !== "ok") throw new Error(deliveries.error);
+      expect(first).toEqual({ kind: "ok", value: "{}\n" });
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["deferred"]);
+    });
+  });
+
+  test("reports an aged deferred ask once, briefly, then marks it as notified", async () => {
+    await withRoot("actionable-mail-aged-once", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const appended = await appendMessage(root, "d1", "child", "ask", "which branch?\nfull explanation", "child-session", environment(root), fakeProcess());
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      setDeliveryTransport(database.value, "d1", appended.value, "deferred");
+      const old = new Date(Date.now() - 121_000).toISOString();
+      database.value.db.run("UPDATE outbox SET created_at = ?, updated_at = ? WHERE dispatch_id = ?", [old, old, "d1"]);
+
+      const first = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
+      expect(first).toMatchObject({ kind: "ok" });
       if (first.kind !== "ok") return;
-      expect(JSON.parse(first.value)).toMatchObject({ hookSpecificOutput: { additionalContext: expect.stringContaining("ask which branch?") } });
+      expect(JSON.parse(first.value)).toMatchObject({ hookSpecificOutput: {
+        hookEventName: "Stop",
+        additionalContext: "1 unread child message: ask which branch? — megabrain orchestrate watch d1",
+      } });
       expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
       const deliveries = listDeliveries(database.value, "d1");
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);

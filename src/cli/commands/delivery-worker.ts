@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, markOutboxPeerSent, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import { claudeSessionPermissionClass } from "../../agents/claude-peer.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
@@ -271,6 +271,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         ...(Number.isFinite(idleDrop) && idleDrop > 0 ? { idleDropMs: idleDrop } : {}),
         isRead: async () => readWasPulled(root, dispatch, sequence),
         renew: renewLeases,
+        onSent: (msgId) => { markOutboxPeerSent(database.value, outboxId, holder, msgId); },
       });
     } catch {
       // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.

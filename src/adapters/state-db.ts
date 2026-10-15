@@ -34,6 +34,7 @@ export {
   getWaiter,
   listDeliveries,
   listLeases,
+  markOutboxPeerSent,
   setDeliveryTransport,
   listMessages,
   listNudges,
