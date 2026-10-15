@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod code;
 pub mod path_link;
 mod pill;
 mod tray;
@@ -120,6 +121,34 @@ fn set_tray_summary(app: tauri::AppHandle, findings: usize, lines: Vec<String>) 
     tray::update(&app, findings, &lines).map_err(|error| error.to_string())
 }
 
+fn code_allowed_roots(cli: &Cli) -> Result<Vec<PathBuf>, String> {
+    code::allowed_roots(&cli.executable, &cli.root, &cli.path)
+}
+
+#[tauri::command]
+fn code_tree(cli: State<'_, Cli>, root: String) -> Result<Vec<code::CodeEntry>, String> {
+    let allowed = code_allowed_roots(&cli)?;
+    code::code_tree(Path::new(&root), &allowed)
+}
+
+#[tauri::command]
+fn code_read(cli: State<'_, Cli>, root: String, path: String) -> Result<code::CodeFile, String> {
+    let allowed = code_allowed_roots(&cli)?;
+    code::code_read(Path::new(&root), &path, &allowed)
+}
+
+#[tauri::command]
+fn code_changes(cli: State<'_, Cli>, root: String) -> Result<Vec<code::CodeChange>, String> {
+    let allowed = code_allowed_roots(&cli)?;
+    code::code_changes(Path::new(&root), &allowed)
+}
+
+#[tauri::command]
+fn code_diff(cli: State<'_, Cli>, root: String, path: String) -> Result<code::CodeDiff, String> {
+    let allowed = code_allowed_roots(&cli)?;
+    code::code_diff(Path::new(&root), &path, &allowed)
+}
+
 fn sidecar(current_exe: &Path) -> PathBuf {
     current_exe.parent().unwrap_or(Path::new(".")).join("megabrain-cli")
 }
@@ -178,7 +207,11 @@ pub fn run() {
             set_tray_summary,
             set_pill_expanded,
             pill_geometry,
-            open_main
+            open_main,
+            code_tree,
+            code_read,
+            code_changes,
+            code_diff
         ])
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");
