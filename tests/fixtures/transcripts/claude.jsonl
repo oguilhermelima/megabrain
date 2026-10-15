@@ -1,5 +1,5 @@
-{"type":"user","uuid":"fixture-user-1","timestamp":"2026-10-01T10:00:00.000Z","message":{"role":"user","content":"Please inspect the project."}}
-{"type":"assistant","uuid":"fixture-thinking-1","timestamp":"2026-10-01T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"I should inspect the relevant files."}]}}
-{"type":"assistant","uuid":"fixture-tool-call-1","timestamp":"2026-10-01T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture_1","name":"Read","input":{"file_path":"/Users/operator/project/README.md"}}]}}
-{"type":"user","uuid":"fixture-tool-result-1","timestamp":"2026-10-01T10:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_1","content":"Project documentation."}]}}
-{"type":"assistant","uuid":"fixture-assistant-1","timestamp":"2026-10-01T10:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"The project documentation describes the setup."}]}}
+{"type":"user","uuid":"fixture-0","timestamp":"2026-10-14T19:24:10.491Z","message":{"role":"user","content":"Please inspect the project."}}
+{"type":"assistant","uuid":"fixture-1","timestamp":"2026-10-14T19:24:14.956Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"I should inspect the relevant files."}]}}
+{"type":"assistant","uuid":"fixture-2","timestamp":"2026-10-14T19:24:15.705Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture_1","name":"Read","input":{"file_path":"/Users/operator/project/README.md"}}]}}
+{"type":"user","uuid":"fixture-3","timestamp":"2026-10-14T19:25:01.860Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_1","content":"Project documentation.","is_error":false}]}}
+{"type":"assistant","uuid":"fixture-4","timestamp":"2026-10-14T19:25:49.010Z","message":{"role":"assistant","content":[{"type":"text","text":"The project documentation describes the setup."}]}}
