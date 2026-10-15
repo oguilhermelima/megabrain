@@ -73,3 +73,45 @@ export function formatText(text: string): TextSegment[] {
   })
   return segments
 }
+
+// The field that says what a tool call did, for the tools whose input is JSON.
+const summaryField: Record<string, string> = {
+  Bash: 'command',
+  Read: 'file_path',
+  Edit: 'file_path',
+  MultiEdit: 'file_path',
+  Write: 'file_path',
+  NotebookEdit: 'notebook_path',
+  Grep: 'pattern',
+  Glob: 'pattern',
+}
+
+function firstLine(text: string): string {
+  return text.split('\n')[0] ?? ''
+}
+
+function asText(value: unknown): string | null {
+  if (typeof value === 'string' && value !== '') return value
+  if (Array.isArray(value) && value.length > 0 && value.every((part) => typeof part === 'string')) return value.join(' ')
+  return null
+}
+
+/**
+ * One line saying what a tool call did — the command, the file or the pattern — instead of its raw
+ * JSON input. Known tools use their field, others the first string field; input that is not JSON
+ * shows its first line. The full input stays available when the row is expanded.
+ */
+export function toolSummary(name: string, input: string | undefined): string {
+  if (input === undefined || input === '') return ''
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(input)
+  } catch {
+    return firstLine(input)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return typeof parsed === 'string' ? firstLine(parsed) : ''
+  const fields = parsed as Record<string, unknown>
+  const preferred = summaryField[name]
+  const chosen = (preferred === undefined ? null : asText(fields[preferred])) ?? asText(fields.command) ?? Object.values(fields).map(asText).find((text) => text !== null) ?? ''
+  return firstLine(chosen)
+}

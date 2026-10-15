@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
 import { ErrorNote, Spinner } from '@/components/ui'
-import { buildConversationItems, mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { buildConversationItems, mergeEvents, relayedPreview, relayedTarget, toolSummary, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
 import { MarkdownText } from '@/chat/markdown'
 
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
@@ -78,23 +78,31 @@ function ThinkingMessage({ event }: { event: TranscriptEvent }) {
   )
 }
 
+/** Indented JSON when the input is JSON, the input as given otherwise. */
+function prettyInput(input: string): string {
+  try {
+    return JSON.stringify(JSON.parse(input), null, 2)
+  } catch {
+    return input
+  }
+}
+
 const toolDot: Record<ToolStatus, string> = { ok: 'bg-ok', error: 'bg-bad', running: 'bg-accent' }
 
 function ToolItem({ item }: { item: Extract<ConversationItem, { type: 'tool' }> }) {
   const [open, setOpen] = useState(false)
-  const inputLine = item.call.tool?.input?.split('\n')[0] ?? item.call.text.split('\n')[0] ?? ''
+  const input = item.call.tool?.input
+  const summary = input === undefined ? (item.call.text.split('\n')[0] ?? '') : toolSummary(item.call.tool?.name ?? '', input)
   return (
     <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-[13px]">
         <span className={`size-1.5 shrink-0 rounded-full ${toolDot[item.status]} ${item.status === 'running' ? 'animate-pulse' : ''}`} />
         <span className="shrink-0 font-semibold text-ink-300">{item.call.tool?.name ?? 'tool'}</span>
-        <span className="truncate text-ink-500">{inputLine}</span>
+        <span title={summary} className="truncate font-mono text-[12.5px] text-ink-400">{summary}</span>
       </button>
       {open && (
         <div className="space-y-2 px-3.5 pb-3">
-          {item.call.tool?.input !== undefined && (
-            <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">{item.call.tool.input}</pre>
-          )}
+          {input !== undefined && <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">{prettyInput(input)}</pre>}
           {item.result !== null && (
             <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">{item.result.text}</pre>
           )}
