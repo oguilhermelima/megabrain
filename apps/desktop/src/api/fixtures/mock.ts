@@ -280,4 +280,6 @@ export const mockCodeDiff: CodeDiff = {
     '}',
   ].join('\n'),
   modified: mockCodeFiles['apps/tv/player/use-player-seek.ts'] ?? '',
+  binary: false,
+  tooLarge: false,
 }
