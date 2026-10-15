@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react'
-import { api } from '@/api'
 import type { Project } from '@/api/schema'
 import { githubRepository } from '@/github/github-model'
+import { issuePage, pullRequestPage } from '@/github/github-requests'
 
 export type GithubKind = 'prs' | 'issues'
 
 /** Open pull requests and issues per project path; null until known or when gh could not answer. */
 export type GithubCounts = Record<string, { prs: number | null; issues: number | null }>
 
-// The badges on the project rows. The CLI caches each answer for 60 s, so reading again every minute
-// costs one gh call per project and list at most.
-const countLimit = 100
+// The badges on the project rows: the open total of the first open page, the same request the open
+// tab of a page makes, so the two share one gh call. The CLI caches each answer for 60 s.
 const refreshMs = 60_000
 
 export function useGithubCounts(projects: Project[]): GithubCounts {
@@ -24,8 +23,8 @@ export function useGithubCounts(projects: Project[]): GithubCounts {
     const load = async () => {
       const entries = await Promise.all(
         paths.map(async (path) => {
-          const [prs, issues] = await Promise.allSettled([api.githubPullRequests(path, 'open', countLimit), api.githubIssues(path, 'open', countLimit)])
-          return [path, { prs: prs.status === 'fulfilled' ? prs.value.items.length : null, issues: issues.status === 'fulfilled' ? issues.value.items.length : null }] as const
+          const [prs, issues] = await Promise.allSettled([pullRequestPage(path, 'open', null), issuePage(path, 'open', null)])
+          return [path, { prs: prs.status === 'fulfilled' ? (prs.value.counts.open ?? null) : null, issues: issues.status === 'fulfilled' ? (issues.value.counts.open ?? null) : null }] as const
         }),
       )
       if (!stopped) setCounts(Object.fromEntries(entries))

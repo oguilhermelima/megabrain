@@ -1,5 +1,5 @@
 import type { DesktopApi, PathLink } from '@/api/adapter'
-import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -95,15 +95,13 @@ export function createMockApi(): DesktopApi {
     importFolder: async (path) => mockImported(path, null),
     importClone: async (url, into) => mockImported(`${into}/${url.split('/').at(-1) ?? 'repo'}`, url),
     githubRepositories: async () => mockGithubRepositories,
-    githubPullRequests: async (_root, state, limit) => {
+    githubPullRequests: async (_root, state, limit, after) => {
       await wait(450)
-      const items = mockGithubPullRequests.items.filter((item) => state === 'all' || item.state === state).slice(0, limit)
-      return { ...mockGithubPullRequests, state, limit, items }
+      return { ...mockGithubPullRequests, ...mockPage(mockGithubPullRequests.items, state, limit, after) }
     },
-    githubIssues: async (_root, state, limit) => {
+    githubIssues: async (_root, state, limit, after) => {
       await wait(400)
-      const items = mockGithubIssues.items.filter((item) => state === 'all' || item.state === state).slice(0, limit)
-      return { ...mockGithubIssues, state, limit, items }
+      return { ...mockGithubIssues, ...mockPage(mockGithubIssues.items, state, limit, after) }
     },
     githubPullRequest: async (_root, number) => {
       await wait(300)

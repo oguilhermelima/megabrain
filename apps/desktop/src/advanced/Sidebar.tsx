@@ -98,7 +98,12 @@ function CodeIcon() {
   )
 }
 
-/** Opens a root in Code mode; always shown, beside the … button. */
+// A row's code and … buttons show on hover, while focus is inside the row, and while its menu is
+// open (the row carries data-menu-open then), so they never vanish under the pointer or the keyboard.
+const rowAction =
+  'flex size-6 shrink-0 items-center justify-center rounded-full text-ink-300 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 group-data-[menu-open]:opacity-100 hover:bg-white/[0.1] hover:text-ink-100 focus-visible:opacity-100'
+
+/** Opens a root in Code mode; shown on hover like the … button beside it. */
 function CodeButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -109,7 +114,7 @@ function CodeButton({ label, onClick }: { label: string; onClick: () => void }) 
       }}
       aria-label={label}
       title={label}
-      className="flex size-6 shrink-0 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.1] hover:text-ink-100"
+      className={rowAction}
     >
       <CodeIcon />
     </button>
@@ -127,7 +132,7 @@ function MoreButton({ label, onClick }: { label: string; onClick: (event: MouseE
       aria-label={label}
       title={label}
       aria-haspopup="menu"
-      className="flex size-6 shrink-0 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.1] hover:text-ink-100"
+      className={rowAction}
     >
       <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
         <circle cx="3.5" cy="8" r="1.3" />
@@ -556,9 +561,21 @@ export function Sidebar({
     edge: (path) => (dragState?.target?.path === path && dragState.target.path !== dragState.path ? dragState.target.placement : null),
   }
 
+  // The row whose menu is open keeps its actions visible; see rowAction.
+  const menuRow = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    const row = menuRow.current
+    if (menu === null || row === null) return
+    row.dataset.menuOpen = ''
+    return () => {
+      delete row.dataset.menuOpen
+    }
+  }, [menu])
+
   const openMenu: MenuOpener = (event, items) => {
     event.preventDefault()
     event.stopPropagation()
+    menuRow.current = event.currentTarget.closest<HTMLElement>('.group')
     // A right click opens at the pointer; the … button opens the menu under itself.
     if (event.type === 'contextmenu') {
       setMenu({ anchor: { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY }, gap: 0, items })

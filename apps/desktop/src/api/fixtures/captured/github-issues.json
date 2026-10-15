@@ -5,8 +5,16 @@
     "path": "/Users/operator/Workspaces/megabrain"
   },
   "state": "all",
-  "limit": 3,
-  "fetchedAt": "2026-10-15T18:39:55.962Z",
+  "limit": 6,
+  "after": null,
+  "fetchedAt": "2026-10-15T19:24:50.677Z",
+  "counts": {
+    "open": 11,
+    "closed": 108,
+    "all": 119
+  },
+  "totalCount": 119,
+  "nextCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0xNVQxMjowNToyMFrPAAAAAV1R9Tg=",
   "items": [
     {
       "number": 122,
@@ -43,6 +51,23 @@
       "milestone": null
     },
     {
+      "number": 119,
+      "title": "fix(spawn): tmux launch line is cut at 1024 bytes before the shell is ready",
+      "state": "open",
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-15T05:35:16Z",
+      "updatedAt": "2026-10-15T16:04:59Z",
+      "url": "https://github.com/operator/megabrain/issues/119",
+      "comments": 1,
+      "milestone": null
+    },
+    {
       "number": 120,
       "title": "feat(repo): a project registry fed by megabrain and imports",
       "state": "closed",
@@ -56,6 +81,40 @@
       "createdAt": "2026-10-15T12:06:38Z",
       "updatedAt": "2026-10-15T14:23:29Z",
       "url": "https://github.com/operator/megabrain/issues/120",
+      "comments": 1,
+      "milestone": null
+    },
+    {
+      "number": 118,
+      "title": "feat(desktop): show stacked pull requests in the sidebar",
+      "state": "closed",
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-15T05:23:51Z",
+      "updatedAt": "2026-10-15T12:05:23Z",
+      "url": "https://github.com/operator/megabrain/issues/118",
+      "comments": 1,
+      "milestone": null
+    },
+    {
+      "number": 117,
+      "title": "feat(desktop): columns view with parents and their children",
+      "state": "closed",
+      "author": {
+        "login": "operator",
+        "name": "Operator",
+        "isBot": false
+      },
+      "labels": [],
+      "assignees": [],
+      "createdAt": "2026-10-15T05:23:50Z",
+      "updatedAt": "2026-10-15T12:05:20Z",
+      "url": "https://github.com/operator/megabrain/issues/117",
       "comments": 1,
       "milestone": null
     }

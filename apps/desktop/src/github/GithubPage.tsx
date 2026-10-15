@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
-import type { GithubDetail, GithubIssue, GithubPullRequest, Project } from '@/api/schema'
+import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, Project } from '@/api/schema'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { ErrorNote, Spinner } from '@/components/ui'
@@ -12,26 +12,44 @@ import {
   filterPullRequests,
   githubRepository,
   issueFilterOptions,
-  issueTabCounts,
+  nextPage,
   pullRequestFilterOptions,
-  pullRequestTabCounts,
+  refreshedPage,
+  type GithubPage as Page,
   type IssueFilters,
   type IssueTab,
   type PullRequestFilters,
   type PullRequestTab,
 } from '@/github/github-model'
 import { CloseIcon, CommentIcon, IssueIcon, LinkIcon, MilestoneIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
-import { Avatar, CheckGlyph, ChecksBadge, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, checkStateTone, checkTitle } from '@/github/parts'
+import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
+import { Avatar, CheckGlyph, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, checkStateTone, checkTitle } from '@/github/parts'
 import type { GithubKind } from '@/github/useGithubCounts'
 
-// A repository's pull requests or issues, read through `megabrain github … --json`: tabs with counts,
-// search and filters over one listing of every state, rich rows, and a detail pane with the body and
-// comments on the right.
+// A repository's pull requests or issues, read through `megabrain github … --json`: tabs with every
+// state's total, one light page of the tab at a time (the next one loads on scroll), search and
+// filters over what is loaded, and a detail pane on the right with the body, comments and, for a
+// pull request, its checks, review and line counts.
 
-const listLimit = 200
 const refreshMs = 60_000
 
-type Listing = { kind: 'prs'; items: GithubPullRequest[]; fetchedAt: string } | { kind: 'issues'; items: GithubIssue[]; fetchedAt: string }
+type Listing = { kind: 'prs'; page: Page<GithubPullRequest> } | { kind: 'issues'; page: Page<GithubIssue> }
+type ListRequest = { kind: 'prs'; state: PullRequestState } | { kind: 'issues'; state: IssueState }
+
+async function readPage(root: string, request: ListRequest, after: string | null): Promise<Listing> {
+  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after) }
+  return { kind: 'issues', page: await issuePage(root, request.state, after) }
+}
+
+/** A refresh puts the first page on top of what is loaded; more appends the next page below it. */
+function joined(loaded: Listing | null, next: Listing, how: 'refresh' | 'more'): Listing {
+  if (next.kind === 'prs') {
+    const base = loaded?.kind === 'prs' ? loaded.page : null
+    return { kind: 'prs', page: how === 'more' && base !== null ? nextPage(base, next.page) : refreshedPage(base, next.page) }
+  }
+  const base = loaded?.kind === 'issues' ? loaded.page : null
+  return { kind: 'issues', page: how === 'more' && base !== null ? nextPage(base, next.page) : refreshedPage(base, next.page) }
+}
 
 function ago(iso: string | null, now: number): string {
   const age = relativeAge(iso, now)
@@ -47,34 +65,77 @@ function useNow(intervalMs: number): number {
   return now
 }
 
-function useListing(project: Project, kind: GithubKind) {
+/** One tab's listing, a page at a time; switching tab or repository starts over from its first page. */
+function useListing(root: string, request: ListRequest) {
   const [listing, setListing] = useState<Listing | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const { kind, state } = request
+  const key = `${root}\n${kind}\n${state}`
+  const current = useRef(key)
+  current.current = key
+  const listed = useRef<Listing | null>(null)
+  listed.current = listing
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const next: Listing =
-        kind === 'prs'
-          ? { kind, ...(await api.githubPullRequests(project.path, 'all', listLimit)) }
-          : { kind, ...(await api.githubIssues(project.path, 'all', listLimit)) }
-      setListing(next)
-      setError(null)
-    } catch (cause: unknown) {
-      setError(cause)
-    } finally {
-      setLoading(false)
-    }
-  }, [project.path, kind])
+  const read = useCallback(
+    async (how: 'refresh' | 'more') => {
+      const after = how === 'more' ? (listed.current?.page.nextCursor ?? null) : null
+      if (how === 'more' && after === null) return
+      const setBusy = how === 'more' ? setLoadingMore : setLoading
+      setBusy(true)
+      try {
+        const next = await readPage(root, { kind, state } as ListRequest, after)
+        if (current.current !== key) return
+        setListing((loaded) => joined(loaded, next, how))
+        setError(null)
+      } catch (cause: unknown) {
+        if (current.current === key) setError(cause)
+      } finally {
+        if (current.current === key) setBusy(false)
+      }
+    },
+    [root, kind, state, key],
+  )
 
   useEffect(() => {
-    void load()
-    const timer = setInterval(() => void load(), refreshMs)
+    setListing(null)
+    setError(null)
+    setLoadingMore(false)
+    void read('refresh')
+    const timer = setInterval(() => void read('refresh'), refreshMs)
     return () => clearInterval(timer)
-  }, [load])
+  }, [read])
 
-  return { listing, error, loading, reload: load }
+  const more = useCallback(() => {
+    if (!loadingMore) void read('more')
+  }, [read, loadingMore])
+
+  return { listing, error, loading, loadingMore, reload: () => read('refresh'), more }
+}
+
+/** Asks for the next page when the end of the list scrolls into view. */
+function LoadMore({ onVisible, loading, loaded, total }: { onVisible: () => void; loading: boolean; loaded: number; total: number | null }) {
+  const sentinel = useRef<HTMLDivElement>(null)
+  const visible = useRef(onVisible)
+  visible.current = onVisible
+  useEffect(() => {
+    const element = sentinel.current
+    if (element === null) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) visible.current()
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return (
+    <div ref={sentinel} className="flex items-center gap-2 px-7 pt-3 text-[12px] text-ink-500">
+      {loading && <Spinner />}
+      <button type="button" onClick={onVisible} className="hover:text-ink-200">
+        {loading ? 'Loading more…' : `Showing ${loaded}${total === null ? '' : ` of ${total}`}; load more`}
+      </button>
+    </div>
+  )
 }
 
 function OwnerPicture({ owner }: { owner: string }) {
@@ -198,7 +259,7 @@ function rowClass(selected: boolean) {
   return `grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-[16px] px-4 py-3 text-left transition-colors ${selected ? 'bg-accent/[0.14]' : 'hover:bg-white/[0.04]'}`
 }
 
-function PullRequestRow({ item, selected, compact, now, onSelect }: { item: GithubPullRequest; selected: boolean; compact: boolean; now: number; onSelect: () => void }) {
+function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullRequest; selected: boolean; now: number; onSelect: () => void }) {
   return (
     <button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={rowClass(selected)}>
       <span className="pt-0.5">
@@ -225,13 +286,10 @@ function PullRequestRow({ item, selected, compact, now, onSelect }: { item: Gith
         </Meta>
       </span>
       <span className="flex items-center gap-3 pt-0.5 text-[12px] text-ink-400">
-        {!compact && <ReviewChip decision={item.reviewDecision} />}
-        <ChecksBadge checks={item.checks} />
         <span className={`flex w-8 items-center gap-1 tabular-nums ${item.comments === 0 ? 'invisible' : ''}`}>
           <CommentIcon size={14} />
           {item.comments}
         </span>
-        {!compact && <LineCounts additions={item.additions} deletions={item.deletions} />}
       </span>
     </button>
   )
@@ -312,12 +370,12 @@ function CopyLink({ url }: { url: string }) {
   )
 }
 
-function ChecksList({ item }: { item: GithubPullRequest }) {
+function ChecksList({ checks }: { checks: GithubCheck[] }) {
   const [open, setOpen] = useState(false)
-  const summary = checkSummary(item.checks)
-  if (item.checks.length === 0) return null
+  const summary = checkSummary(checks)
+  if (checks.length === 0) return null
   const order = { failure: 0, pending: 1, success: 2, neutral: 3, skipped: 4 }
-  const sorted = [...item.checks].sort((left, right) => order[left.state] - order[right.state])
+  const sorted = [...checks].sort((left, right) => order[left.state] - order[right.state])
   const shown = open ? sorted : sorted.slice(0, 6)
   return (
     <section className="rounded-[20px] border border-white/[0.08] bg-ink-900">
@@ -346,8 +404,7 @@ function ChecksList({ item }: { item: GithubPullRequest }) {
   )
 }
 
-function DetailPane({ project, kind, pullRequest, issue, onClose }: { project: Project; kind: GithubKind; pullRequest: GithubPullRequest | null; issue: GithubIssue | null; onClose: () => void }) {
-  const number = pullRequest?.number ?? issue?.number ?? 0
+function DetailPane({ project, kind, number, pullRequest, issue, onClose }: { project: Project; kind: GithubKind; number: number; pullRequest: GithubPullRequest | null; issue: GithubIssue | null; onClose: () => void }) {
   const [detail, setDetail] = useState<GithubDetail | null>(null)
   const [error, setError] = useState<unknown>(null)
   const now = useNow(60_000)
@@ -371,12 +428,13 @@ function DetailPane({ project, kind, pullRequest, issue, onClose }: { project: P
   const author = pullRequest?.author ?? issue?.author ?? detail?.author ?? null
   const state = pullRequest?.state ?? issue?.state ?? detail?.state ?? 'open'
   const labels = pullRequest?.labels ?? issue?.labels ?? []
+  const review = detail?.reviewDecision ?? null
 
   return (
     <aside className="flex min-h-0 w-[min(580px,50%)] shrink-0 flex-col border-l border-white/[0.06] bg-ink-950">
       <header className="space-y-3 px-6 pt-5 pb-4">
         <div className="flex items-center gap-2">
-          <StatePill kind={kind === 'prs' ? 'pr' : 'issue'} state={state} draft={pullRequest?.isDraft ?? false} />
+          <StatePill kind={kind === 'prs' ? 'pr' : 'issue'} state={state} draft={pullRequest?.isDraft ?? detail?.isDraft ?? false} />
           <span className="text-[13px] font-semibold text-ink-400 tabular-nums">#{number}</span>
           <span className="ml-auto" />
           {url !== '' && <CopyLink url={url} />}
@@ -395,14 +453,18 @@ function DetailPane({ project, kind, pullRequest, issue, onClose }: { project: P
               <span className="rounded-[7px] bg-white/[0.06] px-1.5 font-mono text-[11.5px] text-ink-200">{pullRequest.headRefName}</span>
               <span className="text-ink-500">→</span>
               <span className="rounded-[7px] bg-white/[0.06] px-1.5 font-mono text-[11.5px] text-ink-200">{pullRequest.baseRefName}</span>
-              {dot}
-              <LineCounts additions={pullRequest.additions} deletions={pullRequest.deletions} />
+              {detail?.additions !== undefined && detail.deletions !== undefined && (
+                <>
+                  {dot}
+                  <LineCounts additions={detail.additions} deletions={detail.deletions} />
+                </>
+              )}
             </>
           )}
         </div>
-        {(labels.length > 0 || (pullRequest !== null && pullRequest.reviewDecision !== null) || (issue !== null && (issue.assignees.length > 0 || issue.milestone !== null))) && (
+        {(labels.length > 0 || review !== null || (issue !== null && (issue.assignees.length > 0 || issue.milestone !== null))) && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {pullRequest !== null && <ReviewChip decision={pullRequest.reviewDecision} />}
+            <ReviewChip decision={review} />
             {labels.map((label) => (
               <LabelChip key={label.name} name={label.name} color={label.color} />
             ))}
@@ -422,7 +484,7 @@ function DetailPane({ project, kind, pullRequest, issue, onClose }: { project: P
         )}
       </header>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-8">
-        {pullRequest !== null && <ChecksList item={pullRequest} />}
+        {detail?.checks !== undefined && <ChecksList checks={detail.checks} />}
         {error !== null && <ErrorNote error={error} />}
         {detail === null && error === null && (
           <div className="flex items-center gap-2 py-6 text-[13px] text-ink-400">
@@ -464,43 +526,38 @@ function DetailPane({ project, kind, pullRequest, issue, onClose }: { project: P
 
 export function GithubPage({ project, kind, focus, onKind, onClose }: { project: Project; kind: GithubKind; focus: number | null; onKind: (kind: GithubKind) => void; onClose: () => void }) {
   const repository = githubRepository(project.remote)
-  const { listing, error, loading, reload } = useListing(project, kind)
   const now = useNow(30_000)
   const [prTab, setPrTab] = useState<PullRequestTab>('open')
   const [issueTab, setIssueTab] = useState<IssueTab>('open')
   const [prFilters, setPrFilters] = useState<PullRequestFilters>(emptyPullRequestFilters)
   const [issueFilters, setIssueFilters] = useState<IssueFilters>(emptyIssueFilters)
-  const [selected, setSelected] = useState<number | null>(null)
+  // Opened on one pull request (a worktree row's number): its detail shows at once, whichever tab lists it.
+  const [selected, setSelected] = useState<number | null>(kind === 'prs' ? focus : null)
+  const { listing, error, loading, loadingMore, reload, more } = useListing(project.path, kind === 'prs' ? { kind, state: prTab } : { kind, state: issueTab })
 
-  const prs = listing?.kind === 'prs' ? listing.items : []
-  const issues = listing?.kind === 'issues' ? listing.items : []
+  const prs = useMemo(() => (listing?.kind === 'prs' ? listing.page.items : []), [listing])
+  const issues = useMemo(() => (listing?.kind === 'issues' ? listing.page.items : []), [listing])
   const shownPrs = useMemo(() => filterPullRequests(prs, prFilters, prTab), [prs, prFilters, prTab])
   const shownIssues = useMemo(() => filterIssues(issues, issueFilters, issueTab), [issues, issueFilters, issueTab])
   const prOptions = useMemo(() => pullRequestFilterOptions(prs), [prs])
   const issueOptions = useMemo(() => issueFilterOptions(issues), [issues])
-  const prCounts = pullRequestTabCounts(prs)
-  const issueCounts = issueTabCounts(issues)
+  // Every state's total travels with each page, so the tabs keep their counts while another tab loads.
+  const [counts, setCounts] = useState<Record<string, number> | null>(null)
+  useEffect(() => {
+    if (listing !== null) setCounts(listing.page.counts)
+  }, [listing])
+  useEffect(() => setCounts(null), [project.path, kind])
   const filtered = kind === 'prs' ? JSON.stringify(prFilters) !== JSON.stringify(emptyPullRequestFilters) : JSON.stringify(issueFilters) !== JSON.stringify(emptyIssueFilters)
   const clearFilters = () => (kind === 'prs' ? setPrFilters(emptyPullRequestFilters) : setIssueFilters(emptyIssueFilters))
   const shownCount = kind === 'prs' ? shownPrs.length : shownIssues.length
   const selectedPr = kind === 'prs' ? (prs.find((item) => item.number === selected) ?? null) : null
   const selectedIssue = kind === 'issues' ? (issues.find((item) => item.number === selected) ?? null) : null
   const known = listing !== null
-  const counted = (count: number) => (known ? count : null)
-  const truncated = (listing?.items.length ?? 0) >= listLimit
+  const counted = (state: string) => counts?.[state] ?? null
   const noun = kind === 'prs' ? 'pull requests' : 'issues'
   const tabName = kind === 'prs' ? prTab : issueTab
-
-  // Opened on one pull request (a worktree row's number): select it on its own tab once it is listed.
-  const focused = useRef(false)
-  useEffect(() => {
-    if (focus === null || focused.current || listing?.kind !== 'prs') return
-    const item = listing.items.find((entry) => entry.number === focus)
-    focused.current = true
-    if (item === undefined) return
-    setPrTab(item.state)
-    setSelected(item.number)
-  }, [focus, listing])
+  const loadedCount = listing?.page.items.length ?? 0
+  const hasMore = (listing?.page.nextCursor ?? null) !== null
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -531,7 +588,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
             {listing !== null && (
               <>
                 {dot}
-                <span className="shrink-0">updated {ago(listing.fetchedAt, now)}</span>
+                <span className="shrink-0">updated {ago(listing.page.fetchedAt, now)}</span>
               </>
             )}
           </p>
@@ -550,10 +607,10 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
             value={prTab}
             onChange={setPrTab}
             tabs={[
-              { value: 'open', label: 'Open', count: counted(prCounts.open) },
-              { value: 'merged', label: 'Merged', count: counted(prCounts.merged) },
-              { value: 'closed', label: 'Closed', count: counted(prCounts.closed) },
-              { value: 'all', label: 'All', count: counted(prCounts.all) },
+              { value: 'open', label: 'Open', count: counted('open') },
+              { value: 'merged', label: 'Merged', count: counted('merged') },
+              { value: 'closed', label: 'Closed', count: counted('closed') },
+              { value: 'all', label: 'All', count: counted('all') },
             ]}
           />
         ) : (
@@ -561,9 +618,9 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
             value={issueTab}
             onChange={setIssueTab}
             tabs={[
-              { value: 'open', label: 'Open', count: counted(issueCounts.open) },
-              { value: 'closed', label: 'Closed', count: counted(issueCounts.closed) },
-              { value: 'all', label: 'All', count: counted(issueCounts.all) },
+              { value: 'open', label: 'Open', count: counted('open') },
+              { value: 'closed', label: 'Closed', count: counted('closed') },
+              { value: 'all', label: 'All', count: counted('all') },
             ]}
           />
         )}
@@ -581,18 +638,6 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
                 { value: 'draft', label: 'Drafts only' },
               ]}
               onChange={(draft) => setPrFilters({ ...prFilters, draft })}
-            />
-            <FilterSelect
-              label="Review"
-              value={prFilters.review}
-              options={[
-                { value: 'any', label: 'Any review' },
-                { value: 'review_required', label: 'Review required' },
-                { value: 'approved', label: 'Approved' },
-                { value: 'changes_requested', label: 'Changes requested' },
-                { value: 'none', label: 'No review needed' },
-              ]}
-              onChange={(review) => setPrFilters({ ...prFilters, review })}
             />
           </>
         ) : (
@@ -625,7 +670,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
               <ErrorNote error={error} />
             </div>
           )}
-          {known && shownCount === 0 &&
+          {known && shownCount === 0 && !hasMore &&
             (filtered ? (
               <Empty title={`No ${tabName === 'all' ? '' : `${tabName} `}${noun} match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clearFilters} className={pillButton}>Clear filters</button>} />
             ) : (
@@ -636,7 +681,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
               {kind === 'prs'
                 ? shownPrs.map((item) => (
                     <li key={item.number}>
-                      <PullRequestRow item={item} selected={item.number === selected} compact={selected !== null} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
+                      <PullRequestRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
                     </li>
                   ))
                 : shownIssues.map((item) => (
@@ -646,10 +691,10 @@ export function GithubPage({ project, kind, focus, onKind, onClose }: { project:
                   ))}
             </ul>
           )}
-          {known && truncated && <p className="px-7 pt-3 text-[12px] text-ink-500">Showing the {listLimit} most recently updated {noun}.</p>}
+          {known && hasMore && <LoadMore onVisible={more} loading={loadingMore} loaded={loadedCount} total={counted(tabName)} />}
         </div>
-        {selected !== null && (selectedPr !== null || selectedIssue !== null) && (
-          <DetailPane key={`${kind}-${selected}`} project={project} kind={kind} pullRequest={selectedPr} issue={selectedIssue} onClose={() => setSelected(null)} />
+        {selected !== null && (
+          <DetailPane key={`${kind}-${selected}`} project={project} kind={kind} number={selected} pullRequest={selectedPr} issue={selectedIssue} onClose={() => setSelected(null)} />
         )}
       </div>
     </div>

@@ -1,0 +1,114 @@
+{
+  "data": {
+    "repository": {
+      "open": {
+        "totalCount": 1042
+      },
+      "closed": {
+        "totalCount": 5507
+      },
+      "items": {
+        "totalCount": 6549,
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0xNVQxMjoyNzowOVrPAAAAAV19i5Q="
+        },
+        "nodes": [
+          {
+            "number": 14702,
+            "title": "[aw] Dependabot PR Triage (skills-driven) exceeded daily AI credits budget",
+            "state": "OPEN",
+            "url": "https://github.com/operator/sample/issues/14702",
+            "createdAt": "2026-10-15T12:56:54Z",
+            "updatedAt": "2026-10-15T18:51:34Z",
+            "author": {
+              "__typename": "Bot",
+              "login": "cli-triage"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "needs-triage",
+                  "color": "D6393F",
+                  "description": "needs to be reviewed"
+                },
+                {
+                  "name": "agentic-workflows",
+                  "color": "ededed",
+                  "description": null
+                }
+              ]
+            },
+            "assignees": {
+              "nodes": []
+            },
+            "comments": {
+              "totalCount": 7
+            },
+            "milestone": null
+          },
+          {
+            "number": 14699,
+            "title": "GitHub CLI / REST API PATCH returns HTTP 200 but ignores pull request body update",
+            "state": "CLOSED",
+            "url": "https://github.com/operator/sample/issues/14699",
+            "createdAt": "2026-10-15T09:20:40Z",
+            "updatedAt": "2026-10-15T12:27:09Z",
+            "author": {
+              "__typename": "User",
+              "login": "fake-reporter",
+              "name": null
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "gh-pr",
+                  "color": "DD04FD",
+                  "description": "relating to the gh pr command"
+                }
+              ]
+            },
+            "assignees": {
+              "nodes": []
+            },
+            "comments": {
+              "totalCount": 5
+            },
+            "milestone": null
+          },
+          {
+            "number": 296122,
+            "title": "Copilot CLI upgrade version issue",
+            "state": "CLOSED",
+            "url": "https://github.com/operator/sample/issues/296122",
+            "createdAt": "2026-02-18T22:08:13Z",
+            "updatedAt": "2026-10-15T18:41:49Z",
+            "author": {
+              "__typename": "User",
+              "login": "fake-yoyo",
+              "name": "Fake yoyo"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "assignees": {
+              "nodes": [
+                {
+                  "login": "fake-assignee",
+                  "name": "Fake assignee"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 1
+            },
+            "milestone": {
+              "title": "1.143.0",
+              "dueOn": "2026-10-19T00:00:00Z"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -86,11 +86,11 @@ export interface DesktopApi {
   importClone(url: string, into: string): Promise<Repository>
   /** Repositories on GitHub the person can clone. */
   githubRepositories(): Promise<GithubRepository[]>
-  /** A repository's pull requests through gh (`github prs`); the CLI caches each answer for 60 s. */
-  githubPullRequests(root: string, state: 'open' | 'closed' | 'merged' | 'all', limit: number): Promise<GithubPullRequestList>
-  /** A repository's issues through gh (`github issues`). */
-  githubIssues(root: string, state: 'open' | 'closed' | 'all', limit: number): Promise<GithubIssueList>
-  /** One pull request's body and comments (`github pr`). */
+  /** One page of a repository's pull requests through gh (`github prs`), after a cursor; the CLI caches each answer for 60 s. */
+  githubPullRequests(root: string, state: 'open' | 'closed' | 'merged' | 'all', limit: number, after: string | null): Promise<GithubPullRequestList>
+  /** One page of a repository's issues through gh (`github issues`). */
+  githubIssues(root: string, state: 'open' | 'closed' | 'all', limit: number, after: string | null): Promise<GithubIssueList>
+  /** One pull request's body, comments, checks, review decision and line counts (`github pr`). */
   githubPullRequest(root: string, number: number): Promise<GithubDetail>
   /** One issue's body and comments (`github issue`). */
   githubIssue(root: string, number: number): Promise<GithubDetail>

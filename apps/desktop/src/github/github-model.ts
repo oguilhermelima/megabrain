@@ -1,8 +1,8 @@
 import type { GithubCheck, GithubIssue, GithubPullRequest } from '@/api/schema'
 
 // What the pull request and issue pages compute from `megabrain github prs|issues --json`: the
-// repository behind a remote, tab counts, the colour of each state, one verdict for a set of
-// checks, and the search and filters. The pages list everything once (state all) and filter here.
+// repository behind a remote, the colour of each state, one verdict for a set of checks, the search
+// and filters over the pages loaded so far, how those pages join, and one shared request per key.
 
 export interface GithubRepositoryName {
   owner: string
@@ -25,16 +25,6 @@ export function githubRepository(remote: string | null): GithubRepositoryName | 
 
 export type PullRequestTab = 'open' | 'merged' | 'closed' | 'all'
 export type IssueTab = 'open' | 'closed' | 'all'
-
-export function pullRequestTabCounts(items: GithubPullRequest[]): Record<PullRequestTab, number> {
-  const count = (state: GithubPullRequest['state']) => items.filter((item) => item.state === state).length
-  return { open: count('open'), merged: count('merged'), closed: count('closed'), all: items.length }
-}
-
-export function issueTabCounts(items: GithubIssue[]): Record<IssueTab, number> {
-  const count = (state: GithubIssue['state']) => items.filter((item) => item.state === state).length
-  return { open: count('open'), closed: count('closed'), all: items.length }
-}
 
 export type PullRequestVisualState = 'open' | 'draft' | 'merged' | 'closed'
 
@@ -81,7 +71,6 @@ export interface PullRequestFilters {
   author: string | null
   label: string | null
   draft: 'any' | 'draft' | 'ready'
-  review: 'any' | 'approved' | 'changes_requested' | 'review_required' | 'none'
 }
 
 export interface IssueFilters {
@@ -91,7 +80,7 @@ export interface IssueFilters {
   assignee: string | null
 }
 
-export const emptyPullRequestFilters: PullRequestFilters = { query: '', author: null, label: null, draft: 'any', review: 'any' }
+export const emptyPullRequestFilters: PullRequestFilters = { query: '', author: null, label: null, draft: 'any' }
 export const emptyIssueFilters: IssueFilters = { query: '', author: null, label: null, assignee: null }
 
 const newestFirst = <T extends { updatedAt: string }>(items: T[]) => [...items].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
@@ -112,8 +101,6 @@ export function filterPullRequests(items: GithubPullRequest[], filters: PullRequ
       if (filters.label !== null && !item.labels.some((label) => label.name === filters.label)) return false
       if (filters.draft === 'draft' && !item.isDraft) return false
       if (filters.draft === 'ready' && item.isDraft) return false
-      if (filters.review === 'none' && item.reviewDecision !== null) return false
-      if (filters.review !== 'any' && filters.review !== 'none' && item.reviewDecision !== filters.review) return false
       return matches(filters.query, item.number, [item.title, item.headRefName, item.baseRefName, item.author?.login, item.author?.name, ...item.labels.map((label) => label.name)])
     }),
   )
@@ -185,4 +172,54 @@ export function countBadge(count: number): string | null {
 /** A person's GitHub picture; GitHub apps (app/…) have none at a guessable address. */
 export function avatarUrl(login: string): string | null {
   return login.startsWith('app/') ? null : `https://github.com/${login}.png?size=64`
+}
+
+/** Items per request: light enough for GitHub to answer quickly; the page asks for more on scroll. */
+export const pageSize = 30
+
+/**
+ * Shares one request per key while it runs: callers asking for the same thing at once (the sidebar
+ * count and the open tab, a refresh during a load) get the same promise. A settled key runs again.
+ */
+export function shareInFlight(): <T>(key: string, run: () => Promise<T>) => Promise<T> {
+  const running = new Map<string, Promise<unknown>>()
+  return <T>(key: string, run: () => Promise<T>): Promise<T> => {
+    const current = running.get(key)
+    if (current !== undefined) return current as Promise<T>
+    const started = run().finally(() => running.delete(key))
+    running.set(key, started)
+    return started
+  }
+}
+
+export function listRequestKey(kind: 'prs' | 'issues', root: string, state: string, limit: number, after: string | null): string {
+  return JSON.stringify([kind, root, state, limit, after])
+}
+
+/** The loaded part of one tab: its items, the cursor of the page after them, and every state's total. */
+export interface GithubPage<T> {
+  items: T[]
+  nextCursor: string | null
+  counts: Record<string, number>
+  fetchedAt: string
+}
+
+/** Front items first, then the back ones not already in front; a number is one item. */
+export function mergeItems<T extends { number: number }>(front: T[], back: T[]): T[] {
+  const listed = new Set(front.map((item) => item.number))
+  return [...front, ...back.filter((item) => !listed.has(item.number))]
+}
+
+/** The page after the loaded ones joins below them and carries the cursor on. */
+export function nextPage<T extends { number: number }>(loaded: GithubPage<T>, page: GithubPage<T>): GithubPage<T> {
+  return { items: mergeItems(loaded.items, page.items), nextCursor: page.nextCursor, counts: page.counts, fetchedAt: loaded.fetchedAt }
+}
+
+/**
+ * A refresh reads the first page again: its items go on top, replacing their old copies, and the pages
+ * loaded below stay with their cursor, so a refresh never scrolls the list back to the start.
+ */
+export function refreshedPage<T extends { number: number }>(loaded: GithubPage<T> | null, first: GithubPage<T>): GithubPage<T> {
+  if (loaded === null) return first
+  return { items: mergeItems(first.items, loaded.items), nextCursor: loaded.nextCursor, counts: first.counts, fetchedAt: first.fetchedAt }
 }

@@ -184,6 +184,7 @@ export const githubRepositorySchema = z.looseObject({
 
 // `megabrain github prs|issues|pr|issue <repo> --json`: a repository's pull requests and issues as
 // gh reports them, normalized by the CLI (lower-case states, one state per check, comment counts).
+// Lists are light pages; checks, review decision and line counts come with one pull request's detail.
 const githubPersonSchema = z.looseObject({ login: z.string(), name: z.string().nullable(), isBot: z.boolean() })
 const githubLabelSchema = z.looseObject({ name: z.string(), color: z.string(), description: z.string() })
 const githubRepositoryRefSchema = z.looseObject({ nameWithOwner: z.string(), url: z.string(), path: z.string() })
@@ -200,18 +201,12 @@ export const githubPullRequestSchema = z.looseObject({
   isDraft: z.boolean(),
   author: githubPersonSchema.nullable(),
   labels: z.array(githubLabelSchema),
-  assignees: z.array(z.looseObject({ login: z.string(), name: z.string().nullable() })),
   createdAt: z.string(),
   updatedAt: z.string(),
   url: z.string(),
   headRefName: z.string(),
   baseRefName: z.string(),
-  /** null when the repository asks for no review. */
-  reviewDecision: z.enum(['approved', 'changes_requested', 'review_required']).nullable(),
-  checks: z.array(githubCheckSchema),
   comments: z.number(),
-  additions: z.number(),
-  deletions: z.number(),
 })
 
 export const githubIssueSchema = z.looseObject({
@@ -228,13 +223,26 @@ export const githubIssueSchema = z.looseObject({
   milestone: z.looseObject({ title: z.string(), dueOn: z.string().nullable() }).nullable(),
 })
 
+/** One page: `after` is the cursor it was asked from, `nextCursor` the one for the page after (null on the last). */
 const githubListing = <T extends z.ZodType>(item: T) =>
-  z.looseObject({ repository: githubRepositoryRefSchema, state: z.string(), limit: z.number(), fetchedAt: z.string(), items: z.array(item) })
+  z.looseObject({
+    repository: githubRepositoryRefSchema,
+    state: z.string(),
+    limit: z.number(),
+    after: z.string().nullable(),
+    fetchedAt: z.string(),
+    /** Every state's total (open, closed, merged for pull requests, all), not just this page's. */
+    counts: z.record(z.string(), z.number()),
+    totalCount: z.number(),
+    nextCursor: z.string().nullable(),
+    items: z.array(item),
+  })
 
 export const githubPullRequestListSchema = githubListing(githubPullRequestSchema)
 export const githubIssueListSchema = githubListing(githubIssueSchema)
 
-// `megabrain github pr|issue <repo> <number> --json`: the body (markdown) and the comments.
+// `megabrain github pr|issue <repo> <number> --json`: the body (markdown) and the comments, and for a
+// pull request its review decision, checks and line counts.
 export const githubDetailSchema = z.looseObject({
   repository: githubRepositoryRefSchema,
   number: z.number(),
@@ -246,6 +254,11 @@ export const githubDetailSchema = z.looseObject({
   createdAt: z.string().nullable(),
   body: z.string(),
   comments: z.array(z.looseObject({ author: githubPersonSchema.nullable(), body: z.string(), createdAt: z.string(), url: z.string() })),
+  /** null when the repository asks for no review. */
+  reviewDecision: z.enum(['approved', 'changes_requested', 'review_required']).nullable().optional(),
+  checks: z.array(githubCheckSchema).optional(),
+  additions: z.number().optional(),
+  deletions: z.number().optional(),
 })
 
 // One agent session found in a worktree, started by megabrain or by hand.

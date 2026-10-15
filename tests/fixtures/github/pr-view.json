@@ -1,13 +1,21 @@
 {
-  "body": "### Description\n\nImprove the official `gh` skill by documenting how to pass values safely through\n`gh api`. Agents frequently mishandle `-f/-F`: raw field sends literal\nstrings without type conversion or `@` expansion; typed field converts\n`true/false/null` numbers, expands `{owner}/{repo}/{branch}` from remotes,\nand reads from file when the value starts with `@`. This causes accidental\nfile reads and failed mutations. The existing section also lacked guidance\nabout body ambiguity and verification read-back.\n\nCloses #14701\n\n### How did you test this change?\n\nNot tested by execution; change is ",
+  "additions": 32,
+  "author": {
+    "id": "ID_redacted",
+    "is_bot": false,
+    "login": "fake-contributor",
+    "name": "Fake contributor"
+  },
+  "body": "### Description\n\nImprove the official `gh` skill by documenting how to pass values safely through\n`gh api`. Agents frequently mishandle `-f/-F`: raw field sends literal\nstrings without type conversion or `@` expansion; typed field converts\n`true/false/null` numbers, expands `{owner}/{repo}/{branch}` from remotes,\nand reads from file when the value starts with `@`. This causes accidental\nfile reads and failed mutations. The existing section also lacked guidance\nabout body ambiguity and verification read-back.\n\nCloses #14701\n\n### How did you test this change?\n\nNot tested by execution; change is documentation only in `skills/gh/SKILL.md`. Verified the flags and placeholder behavior against `gh api --help` locally before writing.\n\n### Key points\n\n- Scope limited strictly to docs in skills/gh/SKILL.md.\n- `--input` documented as deterministic escape hatch when bodies may start with `@`.\n\n### Notes for reviewers\n\nReview starts at the new `Passing values in gh api` section between\n`Fall back to gh api` and `Authentication`.\n\n### Authorship and follow-up\n\nWho wrote this:\n\n- [ ] A human wrote it.\n- [x] An agent wrote it under close human direction.\n- [ ] An agent wrote it independently, and no human has guided the implementation beyond the initial prompt.\n\nWho answers review comments:\n\n- [x] @fake-contributor will read and reply directly.\n- [ ] An agent will draft replies and @fake-contributor will read them before they are posted.\n- [ ] Nobody has explicitly committed to replying.",
   "comments": [
     {
       "id": "ID_redacted",
       "author": {
-        "login": "fake-contributor"
+        "login": "fake-gith",
+        "id": "ID_redacted"
       },
       "authorAssociation": "CONTRIBUTOR",
-      "body": "Thanks for your pull request! Unfortunately, it doesn't meet the requirements for review:\n\n\n- No linked `help wanted` issue found in PR description\n\n**Please update your PR to address the above.** This PR will be automatically closed in **4 days** if these requirements are not met.\n\n<details>\n<summary>Full contribution requirements</summary>\n\n1. Include a detailed description of what this PR does\n",
+      "body": "Thanks for your pull request! Unfortunately, it doesn't meet the requirements for review:\n\n\n- No linked `help wanted` issue found in PR description\n\n**Please update your PR to address the above.** This PR will be automatically closed in **4 days** if these requirements are not met.\n\n<details>\n<summary>Full contribution requirements</summary>\n\n1. Include a detailed description of what this PR does\n2. Link to an issue with the `help wanted` label (use `Fixes #123` or `Closes #123`)\n</details>",
       "createdAt": "2026-10-15T10:31:46Z",
       "includesCreatedEdit": false,
       "isMinimized": false,
@@ -17,8 +25,84 @@
       "viewerDidAuthor": false
     }
   ],
+  "createdAt": "2026-10-15T10:31:30Z",
+  "deletions": 0,
+  "isDraft": false,
   "number": 14700,
+  "reviewDecision": "REVIEW_REQUIRED",
   "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:46Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374858264",
+      "name": "label-external / label_issues",
+      "startedAt": "2026-10-15T10:31:39Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:36Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374859618",
+      "name": "close-from-default-branch / close-from-default-branch",
+      "startedAt": "2026-10-15T10:31:36Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:48Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374858826",
+      "name": "check-requirements / check-requirements",
+      "startedAt": "2026-10-15T10:31:39Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:36Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374860122",
+      "name": "check-requirements / close-unmet-requirements",
+      "startedAt": "2026-10-15T10:31:36Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:36Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374895677",
+      "name": "close-unmet-requirements",
+      "startedAt": "2026-10-15T10:31:42Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:36Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374916525",
+      "name": "close-no-help-wanted",
+      "startedAt": "2026-10-15T10:31:45Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T10:31:36Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/operator/sample/actions/runs/38720886410/job/116374860317",
+      "name": "ready-for-review",
+      "startedAt": "2026-10-15T10:31:36Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Triaging"
+    }
+  ],
   "title": "docs(gh-skill): document gh api field passing pitfalls",
   "url": "https://github.com/operator/sample/pull/14700"
 }

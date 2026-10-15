@@ -1,0 +1,132 @@
+{
+  "data": {
+    "repository": {
+      "open": {
+        "totalCount": 79
+      },
+      "merged": {
+        "totalCount": 3282
+      },
+      "closed": {
+        "totalCount": 1368
+      },
+      "items": {
+        "totalCount": 4729,
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0xNFQxMzoxNzoxOFrPAAAAASDOCjw="
+        },
+        "nodes": [
+          {
+            "number": 14678,
+            "title": "`gh issue artifact` stack 12/12: Add artifact URLs",
+            "state": "OPEN",
+            "isDraft": false,
+            "url": "https://github.com/operator/sample/pull/14678",
+            "createdAt": "2026-10-14T04:39:25Z",
+            "updatedAt": "2026-10-15T19:01:09Z",
+            "headRefName": "fake-maintainer/artifact-urls",
+            "baseRefName": "fake-maintainer/artifact-review-feedback",
+            "author": {
+              "__typename": "User",
+              "login": "fake-maintainer",
+              "name": "Fake maintainer"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "number": 14679,
+            "title": "Reject terminal stdin for `gh auth login --with-token`",
+            "state": "OPEN",
+            "isDraft": true,
+            "url": "https://github.com/operator/sample/pull/14679",
+            "createdAt": "2026-10-14T05:05:15Z",
+            "updatedAt": "2026-10-14T05:07:25Z",
+            "headRefName": "fake-maintainer/auth-login-with-token-tty-error",
+            "baseRefName": "trunk",
+            "author": {
+              "__typename": "User",
+              "login": "fake-maintainer",
+              "name": "Fake maintainer"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "number": 14706,
+            "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
+            "state": "MERGED",
+            "isDraft": false,
+            "url": "https://github.com/operator/sample/pull/14706",
+            "createdAt": "2026-10-15T14:05:39Z",
+            "updatedAt": "2026-10-15T15:15:13Z",
+            "headRefName": "dependabot/github_actions/actions/create-github-app-token-3.3.0",
+            "baseRefName": "trunk",
+            "author": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "dependencies",
+                  "color": "0366d6",
+                  "description": "Pull requests that update a dependency file"
+                },
+                {
+                  "name": "github_actions",
+                  "color": "000000",
+                  "description": "Pull requests that update GitHub Actions code"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "number": 14659,
+            "title": "chore(deps): bump golang.org/x/text from 0.42.0 to 0.43.0",
+            "state": "CLOSED",
+            "isDraft": false,
+            "url": "https://github.com/operator/sample/pull/14659",
+            "createdAt": "2026-10-13T15:11:04Z",
+            "updatedAt": "2026-10-14T13:17:24Z",
+            "headRefName": "dependabot/go_modules/golang.org/x/text-0.43.0",
+            "baseRefName": "trunk",
+            "author": {
+              "__typename": "Bot",
+              "login": "dependabot"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "dependencies",
+                  "color": "0366d6",
+                  "description": "Pull requests that update a dependency file"
+                },
+                {
+                  "name": "go",
+                  "color": "16e2e2",
+                  "description": "Pull requests that update Go code"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 2
+            }
+          }
+        ]
+      }
+    }
+  }
+}

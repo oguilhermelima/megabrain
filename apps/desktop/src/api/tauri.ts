@@ -124,8 +124,8 @@ export function createTauriApi(): DesktopApi {
     importFolder: (path) => cliJson(['repo', 'add', path, '--json'], repositorySchema),
     importClone: (url, into) => cliJson(['repo', 'clone', url, '--into', into, '--json'], repositorySchema),
     githubRepositories: () => cliJson(['repo', 'github', '--json'], githubRepositorySchema.array()),
-    githubPullRequests: (root, state, limit) => cliJson(['github', 'prs', root, '--state', state, '--limit', String(limit), '--json'], githubPullRequestListSchema),
-    githubIssues: (root, state, limit) => cliJson(['github', 'issues', root, '--state', state, '--limit', String(limit), '--json'], githubIssueListSchema),
+    githubPullRequests: (root, state, limit, after) => cliJson(['github', 'prs', root, '--state', state, '--limit', String(limit), ...(after === null ? [] : ['--after', after]), '--json'], githubPullRequestListSchema),
+    githubIssues: (root, state, limit, after) => cliJson(['github', 'issues', root, '--state', state, '--limit', String(limit), ...(after === null ? [] : ['--after', after]), '--json'], githubIssueListSchema),
     githubPullRequest: (root, number) => cliJson(['github', 'pr', root, String(number), '--json'], githubDetailSchema),
     githubIssue: (root, number) => cliJson(['github', 'issue', root, String(number), '--json'], githubDetailSchema),
     pickFolder: async () => {

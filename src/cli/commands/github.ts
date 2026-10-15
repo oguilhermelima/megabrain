@@ -10,9 +10,12 @@ import { usageMessage, usageText, type UsageKey } from "../../core/usage.js";
 import { openDatabase } from "../../db/db.js";
 import { findRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
 
-// Read-only views of a repository's pull requests and issues, through the GitHub CLI. Each answer is
-// normalized to the shape the desktop pages use and cached for 60 seconds under the state directory,
-// one private file per command, repository, state, limit and number.
+// Read-only views of a repository's pull requests and issues, through the GitHub CLI. Lists are one
+// light GraphQL page at a time (a cursor asks for the next), with every state's total; checks, review
+// decision and line counts are read per pull request by the detail call, since asking for them over a
+// whole listing makes GitHub's GraphQL time out. Each answer is normalized to the shape the desktop
+// pages use and cached for 60 seconds under the state directory, one private file per command,
+// repository, state, limit, cursor and number.
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Clock = () => number;
@@ -26,11 +29,35 @@ type GithubRepository = Readonly<{ nameWithOwner: string; url: string; path: str
 
 const CACHE_TTL = 60_000;
 const DEFAULT_LIMIT = 30;
-const MAX_LIMIT = 1000;
+// GraphQL's own ceiling for one page.
+const MAX_LIMIT = 100;
 const GH_TIMEOUT = 20_000;
-const PR_FIELDS = "number,title,state,author,labels,assignees,createdAt,updatedAt,url,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,comments,additions,deletions";
-const ISSUE_FIELDS = "number,title,state,author,labels,assignees,createdAt,updatedAt,url,comments,milestone";
-const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments";
+const AUTHOR = "author { __typename login ... on User { name } }";
+const LABELS = "labels(first: 20) { nodes { name color description } }";
+const PR_QUERY = `query($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!]) {
+  repository(owner: $owner, name: $name) {
+    open: pullRequests(states: [OPEN]) { totalCount }
+    merged: pullRequests(states: [MERGED]) { totalCount }
+    closed: pullRequests(states: [CLOSED]) { totalCount }
+    items: pullRequests(first: $first, after: $after, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes { number title state isDraft url createdAt updatedAt headRefName baseRefName ${AUTHOR} ${LABELS} comments { totalCount } }
+    }
+  }
+}`;
+const ISSUE_QUERY = `query($owner: String!, $name: String!, $first: Int!, $after: String, $states: [IssueState!]) {
+  repository(owner: $owner, name: $name) {
+    open: issues(states: [OPEN]) { totalCount }
+    closed: issues(states: [CLOSED]) { totalCount }
+    items: issues(first: $first, after: $after, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes { number title state url createdAt updatedAt ${AUTHOR} ${LABELS} assignees(first: 10) { nodes { login name } } comments { totalCount } milestone { title dueOn } }
+    }
+  }
+}`;
+const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions";
 const ISSUE_VIEW_FIELDS = "number,title,state,url,author,createdAt,body,comments";
 const STATES: Readonly<Record<"prs" | "issues", readonly string[]>> = { prs: ["open", "closed", "merged", "all"], issues: ["open", "closed", "all"] };
 const USAGE: Readonly<Record<Verb, UsageKey>> = { prs: "github-prs", issues: "github-issues", pr: "github-pr", issue: "github-issue" };
@@ -49,16 +76,22 @@ function nullableText(value: unknown): string | null {
 
 function count(value: unknown): number {
   if (Array.isArray(value)) return value.length;
+  const total = record(value)?.totalCount;
+  if (total !== undefined) return count(total);
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+// gh's own JSON gives a plain array; GraphQL wraps a connection's items in nodes.
 function list(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.flatMap((item): Record<string, unknown>[] => { const entry = record(item); return entry === undefined ? [] : [entry]; }) : [];
+  const items = Array.isArray(value) ? value : record(value)?.nodes;
+  return Array.isArray(items) ? items.flatMap((item): Record<string, unknown>[] => { const entry = record(item); return entry === undefined ? [] : [entry]; }) : [];
 }
 
+// GraphQL names a GitHub app by its slug; gh calls it app/<slug>, which the pages already expect.
 function person(value: unknown): Person | null {
   const entry = record(value);
   if (entry === undefined || typeof entry.login !== "string") return null;
+  if (entry.__typename === "Bot") return { login: entry.login.startsWith("app/") ? entry.login : `app/${entry.login}`, name: null, isBot: true };
   return { login: entry.login, name: nullableText(entry.name), isBot: entry.is_bot === true };
 }
 
@@ -112,17 +145,12 @@ function pullRequest(entry: Record<string, unknown>) {
     isDraft: entry.isDraft === true,
     author: person(entry.author),
     labels: labels(entry.labels),
-    assignees: assignees(entry.assignees),
     createdAt: text(entry.createdAt),
     updatedAt: text(entry.updatedAt),
     url: text(entry.url),
     headRefName: text(entry.headRefName),
     baseRefName: text(entry.baseRefName),
-    reviewDecision: reviewDecision(entry.reviewDecision),
-    checks: checks(entry.statusCheckRollup),
     comments: count(entry.comments),
-    additions: count(entry.additions),
-    deletions: count(entry.deletions),
   };
 }
 
@@ -142,18 +170,40 @@ function issue(entry: Record<string, unknown>) {
   };
 }
 
-function detail(entry: Record<string, unknown>, withDraft: boolean) {
+function detail(entry: Record<string, unknown>, pullRequest: boolean) {
   return {
     number: count(entry.number),
     title: text(entry.title),
     state: lowerState(entry.state),
-    ...(withDraft ? { isDraft: entry.isDraft === true } : {}),
+    ...(pullRequest ? { isDraft: entry.isDraft === true } : {}),
     url: text(entry.url),
     author: person(entry.author),
     createdAt: nullableText(entry.createdAt),
     body: text(entry.body),
     comments: list(entry.comments).map((comment) => ({ author: person(comment.author), body: text(comment.body), createdAt: text(comment.createdAt), url: text(comment.url) })),
+    ...(pullRequest ? { reviewDecision: reviewDecision(entry.reviewDecision), checks: checks(entry.statusCheckRollup), additions: count(entry.additions), deletions: count(entry.deletions) } : {}),
   };
+}
+
+// One page of a list query: every state's total from the aliased counts, the items, and the cursor
+// of the next page (null on the last).
+function page(verb: "prs" | "issues", value: unknown) {
+  const repository = record(record(value)?.data)?.repository;
+  const found = record(repository);
+  const items = record(found?.items);
+  if (found === undefined || items === undefined) return undefined;
+  const counts = verb === "prs"
+    ? { open: count(found.open), merged: count(found.merged), closed: count(found.closed), all: count(found.open) + count(found.merged) + count(found.closed) }
+    : { open: count(found.open), closed: count(found.closed), all: count(found.open) + count(found.closed) };
+  const info = record(items.pageInfo);
+  const nextCursor = info?.hasNextPage === true ? nullableText(info.endCursor) : null;
+  return { counts, totalCount: count(items.totalCount), nextCursor, items: verb === "prs" ? list(items.nodes).map(pullRequest) : list(items.nodes).map(issue) };
+}
+
+// GraphQL can answer 200 with no data and its reason in errors; gh passes that through.
+function graphqlError(value: unknown): string | undefined {
+  const [first] = list(record(value)?.errors);
+  return first === undefined ? undefined : text(first.message) || "GitHub returned an error";
 }
 
 const GITHUB_REMOTE = /^(?:https?:\/\/(?:[^@/]+@)?github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
@@ -220,25 +270,53 @@ function writeCache(environment: Environment, key: string, fetchedAt: number, va
   } catch { /* The cache only saves a gh call; a write failure costs the next one. */ }
 }
 
-async function gh(process: ProcessAdapter, args: readonly string[]): Promise<Result<unknown>> {
-  const name = `gh ${args[0] ?? ""} ${args[1] ?? ""}`;
+// GitHub's gateway gives up on a slow query (504), or briefly cannot serve (502, 503), and a cut-off
+// answer reaches gh as invalid JSON. Each is worth asking once more; anything else is not.
+const TRANSIENT: readonly (readonly [RegExp, string])[] = [
+  [/HTTP 504\b/, "GitHub timed out, try again"],
+  [/HTTP 50[23]\b/, "GitHub is unavailable, try again"],
+  [/unexpected end of JSON input/i, "GitHub sent an incomplete answer, try again"],
+];
+
+type Attempt = { kind: "ok"; value: unknown } | { kind: "failed"; error: string; transient: boolean };
+
+async function attempt(process: ProcessAdapter, name: string, args: readonly string[]): Promise<Attempt> {
   const result = await process.run("gh", args, { timeoutMs: GH_TIMEOUT });
   if (result.kind !== "ok") {
-    if (result.error.includes("executable not found")) return failed("GitHub CLI (gh) is required; install it and sign in with gh auth login");
-    if (result.exitCode === 4 || /gh auth login|not logged in/i.test(result.error)) return failed("GitHub CLI is not signed in; run gh auth login");
-    return failed(`${name} failed: ${result.error.trim().split("\n")[0] ?? ""}`);
+    if (result.error.includes("executable not found")) return { kind: "failed", error: "GitHub CLI (gh) is required; install it and sign in with gh auth login", transient: false };
+    if (result.exitCode === 4 || /gh auth login|not logged in/i.test(result.error)) return { kind: "failed", error: "GitHub CLI is not signed in; run gh auth login", transient: false };
+    const line = result.error.trim().split("\n")[0] ?? "";
+    const known = TRANSIENT.find(([pattern]) => pattern.test(line));
+    return { kind: "failed", error: known === undefined ? `${name} failed: ${line}` : `${name} failed: ${known[1]} (${line})`, transient: known !== undefined };
   }
-  try { return ok(JSON.parse(result.value.stdout)); }
-  catch { return failed(`${name} returned output that is not JSON`); }
+  if (result.value.stdout.trim() === "") return { kind: "failed", error: `${name} returned nothing, try again`, transient: true };
+  try { return { kind: "ok", value: JSON.parse(result.value.stdout) }; }
+  catch { return { kind: "failed", error: `${name} returned output that is not JSON`, transient: false }; }
 }
 
-type Options = Readonly<{ selector: string; state: string; limit: number; number: number; json: boolean }>;
+async function gh(process: ProcessAdapter, args: readonly string[]): Promise<Result<unknown>> {
+  const name = `gh ${args[0] ?? ""} ${args[1] ?? ""}`;
+  let answer = await attempt(process, name, args);
+  if (answer.kind === "failed" && answer.transient) answer = await attempt(process, name, args);
+  return answer.kind === "ok" ? ok(answer.value) : failed(answer.error);
+}
+
+function listCommand(verb: "prs" | "issues", nameWithOwner: string, state: string, limit: number, after: string | null): string[] {
+  const [owner = "", name = ""] = nameWithOwner.split("/");
+  const states = state === "all" ? [] : ["-f", `states[]=${state.toUpperCase()}`];
+  const cursor = after === null ? [] : ["-f", `after=${after}`];
+  // -f sends a string as is; only first is typed (-F), so a repository named like a number stays a name.
+  return ["api", "graphql", "-f", `query=${verb === "prs" ? PR_QUERY : ISSUE_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `first=${limit}`, ...states, ...cursor];
+}
+
+type Options = Readonly<{ selector: string; state: string; limit: number; after: string | null; number: number; json: boolean }>;
 
 function parseOptions(verb: Verb, args: readonly string[]): Result<Options> {
   const usage = failed(usageMessage(USAGE[verb]), 2);
   const positional: string[] = [];
   let state = "open";
   let limit = DEFAULT_LIMIT;
+  let after: string | null = null;
   let json = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index] ?? "";
@@ -254,14 +332,19 @@ function parseOptions(verb: Verb, args: readonly string[]): Result<Options> {
       if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_LIMIT) return failed(`--limit must be a whole number from 1 to ${MAX_LIMIT}`, 2);
       limit = parsed;
       index += 1;
+    } else if ((verb === "prs" || verb === "issues") && argument === "--after") {
+      const value = args[index + 1] ?? "";
+      if (value === "" || value.startsWith("--")) return failed("--after needs the cursor of the previous page", 2);
+      after = value;
+      index += 1;
     } else if (argument.startsWith("--")) return usage;
     else positional.push(argument);
   }
   const [selector, numberText] = positional;
   if (selector === undefined || selector === "") return usage;
-  if (verb === "prs" || verb === "issues") return positional.length === 1 ? ok({ selector, state, limit, number: 0, json }) : usage;
+  if (verb === "prs" || verb === "issues") return positional.length === 1 ? ok({ selector, state, limit, after, number: 0, json }) : usage;
   if (positional.length !== 2 || numberText === undefined || !/^[1-9]\d*$/.test(numberText)) return usage;
-  return ok({ selector, state, limit, number: Number(numberText), json });
+  return ok({ selector, state, limit, after: null, number: Number(numberText), json });
 }
 
 function listingText(verb: "prs" | "issues", items: readonly Record<string, unknown>[]): string {
@@ -284,24 +367,23 @@ export async function executeGithub(args: readonly string[], environment: Enviro
   if (verb === undefined) return failed(usageMessage("github"), 2);
   const options = parseOptions(verb, rest);
   if (options.kind !== "ok") return options;
-  const { selector, state, limit, number, json } = options.value;
+  const { selector, state, limit, after, number, json } = options.value;
   const repository = await resolveRepository(selector, environment, process);
   if (repository.kind !== "ok") return repository;
   const { nameWithOwner } = repository.value;
-  const key = JSON.stringify([verb, nameWithOwner, repository.value.path, state, limit, number]);
+  const key = JSON.stringify([verb, nameWithOwner, repository.value.path, state, limit, after, number]);
   const started = now();
   let output = readCache(environment, key, started);
   if (output === undefined) {
-    const command = verb === "prs" ? ["pr", "list", "-R", nameWithOwner, "--state", state, "--limit", String(limit), "--json", PR_FIELDS]
-      : verb === "issues" ? ["issue", "list", "-R", nameWithOwner, "--state", state, "--limit", String(limit), "--json", ISSUE_FIELDS]
-        : verb === "pr" ? ["pr", "view", String(number), "-R", nameWithOwner, "--json", PR_VIEW_FIELDS]
-          : ["issue", "view", String(number), "-R", nameWithOwner, "--json", ISSUE_VIEW_FIELDS];
+    const command = verb === "prs" || verb === "issues" ? listCommand(verb, nameWithOwner, state, limit, after)
+      : verb === "pr" ? ["pr", "view", String(number), "-R", nameWithOwner, "--json", PR_VIEW_FIELDS]
+        : ["issue", "view", String(number), "-R", nameWithOwner, "--json", ISSUE_VIEW_FIELDS];
     const fetched = await gh(process, command);
     if (fetched.kind !== "ok") return fetched;
     if (verb === "prs" || verb === "issues") {
-      if (!Array.isArray(fetched.value)) return failed(`gh ${command[0]} list returned output in an unexpected shape`);
-      const items = verb === "prs" ? list(fetched.value).map(pullRequest) : list(fetched.value).map(issue);
-      output = { repository: repository.value, state, limit, fetchedAt: new Date(started).toISOString(), items };
+      const found = page(verb, fetched.value);
+      if (found === undefined) return failed(`gh api graphql failed: ${graphqlError(fetched.value) ?? "the answer has an unexpected shape"}`);
+      output = { repository: repository.value, state, limit, after, fetchedAt: new Date(started).toISOString(), ...found };
     } else {
       const entry = record(fetched.value);
       if (entry === undefined) return failed(`gh ${command[0]} view returned output in an unexpected shape`);

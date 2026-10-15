@@ -57,9 +57,9 @@ megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — rec
 megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
 megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
 megabrain github prs|issues|pr|issue ... — recommended when you need to read a repository's GitHub pull requests and issues (read-only, through gh, cached 60 seconds).
-megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--json] — recommended when you need a repository's pull requests with checks, reviews, and labels.
-megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--json] — recommended when you need a repository's issues with labels, assignees, and milestones.
-megabrain github pr <repo name|path> <number> [--json] — recommended when you need one pull request's description and comments.
+megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json] — recommended when you need a repository's pull requests, a page at a time, with labels and every state's total (checks, review and line counts come from github pr).
+megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json] — recommended when you need a repository's issues with labels, assignees, and milestones.
+megabrain github pr <repo name|path> <number> [--json] — recommended when you need one pull request's description, comments, checks, review decision and line counts.
 megabrain github issue <repo name|path> <number> [--json] — recommended when you need one issue's description and comments.
 megabrain code open <root> [--json] | stop <root> [--json] — recommended when you need the full VS Code editor for a registered project or worktree.
 

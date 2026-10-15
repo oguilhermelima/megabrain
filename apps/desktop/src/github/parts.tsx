@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { GithubCheck, GithubIssue, GithubPullRequest } from '@/api/schema'
-import { avatarUrl, checkSummary, labelStyle, pullRequestVisualState, stateColors, type CheckSummary, type PullRequestVisualState } from '@/github/github-model'
+import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest } from '@/api/schema'
+import { avatarUrl, labelStyle, pullRequestVisualState, stateColors, type CheckSummary, type PullRequestVisualState } from '@/github/github-model'
 import { projectColor } from '@/advanced/picture-model'
 import {
   CheckFailIcon,
@@ -75,8 +75,6 @@ export function StatePill({ kind, state, draft }: { kind: 'pr' | 'issue'; state:
   )
 }
 
-const checkTone: Record<CheckSummary['state'], string> = { passing: 'text-ok', failing: 'text-bad', pending: 'text-warn', none: 'text-ink-500' }
-
 export function checkTitle(summary: CheckSummary): string {
   if (summary.state === 'none') return summary.total === 0 ? 'No checks' : `${summary.skipped} skipped`
   const parts = [summary.passed > 0 ? `${summary.passed} passing` : null, summary.failed > 0 ? `${summary.failed} failing` : null, summary.pending > 0 ? `${summary.pending} pending` : null, summary.skipped > 0 ? `${summary.skipped} skipped` : null]
@@ -90,26 +88,17 @@ export function CheckGlyph({ state, size = 14 }: { state: CheckSummary['state'] 
   return <CheckSkippedIcon size={size} />
 }
 
-/** The row's check verdict as one glyph; the counts are in its tooltip. */
-export function ChecksBadge({ checks }: { checks: GithubCheck[] }) {
-  const summary = checkSummary(checks)
-  if (summary.state === 'none') return <span className="size-4 shrink-0" aria-hidden="true" />
-  return (
-    <span title={checkTitle(summary)} aria-label={`Checks: ${checkTitle(summary)}`} className={`grid size-4 shrink-0 place-items-center ${checkTone[summary.state]} ${summary.state === 'pending' ? 'animate-pulse' : ''}`}>
-      <CheckGlyph state={summary.state} />
-    </span>
-  )
-}
-
 export const checkStateTone: Record<GithubCheck['state'], string> = { success: 'text-ok', neutral: 'text-ink-300', failure: 'text-bad', pending: 'text-warn', skipped: 'text-ink-500' }
 
-const reviewChips: Record<NonNullable<GithubPullRequest['reviewDecision']>, { label: string; className: string }> = {
+type ReviewDecision = NonNullable<GithubDetail['reviewDecision']>
+
+const reviewChips: Record<ReviewDecision, { label: string; className: string }> = {
   approved: { label: 'Approved', className: 'bg-ok/[0.14] text-ok' },
   changes_requested: { label: 'Changes requested', className: 'bg-bad/[0.14] text-bad' },
   review_required: { label: 'Review required', className: 'bg-white/[0.07] text-ink-300' },
 }
 
-export function ReviewChip({ decision }: { decision: GithubPullRequest['reviewDecision'] }) {
+export function ReviewChip({ decision }: { decision: ReviewDecision | null }) {
   if (decision === null) return null
   const chip = reviewChips[decision]
   return <span className={`inline-flex h-[20px] shrink-0 items-center rounded-full px-2 text-[11.5px] font-semibold whitespace-nowrap ${chip.className}`}>{chip.label}</span>

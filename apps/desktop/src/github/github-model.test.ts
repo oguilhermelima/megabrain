@@ -11,10 +11,14 @@ import {
   filterPullRequests,
   githubRepository,
   issueFilterOptions,
-  issueTabCounts,
   labelStyle,
+  listRequestKey,
+  mergeItems,
+  nextPage,
+  refreshedPage,
+  shareInFlight,
+  type GithubPage,
   pullRequestFilterOptions,
-  pullRequestTabCounts,
   pullRequestVisualState,
   stateColors,
   worktreePullRequestState,
@@ -42,21 +46,6 @@ describe('githubRepository', () => {
 
   test.each([[null], ['git@gitlab.com:operator/megabrain.git'], ['https://github.example.com/operator/x'], ['']])('%p has no GitHub repository', (remote) => {
     expect(githubRepository(remote)).toBeNull()
-  })
-})
-
-describe('tab counts', () => {
-  test('pull requests count open, merged, closed and all; drafts are open', () => {
-    expect(pullRequestTabCounts(prs)).toEqual({ open: 5, merged: 3, closed: 2, all: 10 })
-  })
-
-  test('issues count open, closed and all', () => {
-    expect(issueTabCounts(issues)).toEqual({ open: 4, closed: 2, all: 6 })
-  })
-
-  test('nothing listed counts zero everywhere', () => {
-    expect(pullRequestTabCounts([])).toEqual({ open: 0, merged: 0, closed: 0, all: 0 })
-    expect(issueTabCounts([])).toEqual({ open: 0, closed: 0, all: 0 })
   })
 })
 
@@ -129,16 +118,13 @@ describe('filterPullRequests', () => {
     expect(search('   ')).toHaveLength(10)
   })
 
-  test('author, label, draft and review filters combine', () => {
+  test('author, label and draft filters combine', () => {
     const filter = (filters: Partial<typeof emptyPullRequestFilters>) => numbers(filterPullRequests(prs, { ...emptyPullRequestFilters, ...filters }, 'all'))
     expect(filter({ author: 'fake-contributor' })).toEqual([110])
     expect(filter({ label: 'desktop' })).toEqual([112, 110, 105])
     expect(filter({ draft: 'draft' })).toEqual([109, 84, 83])
     expect(filter({ draft: 'ready' })).not.toContain(109)
-    expect(filter({ review: 'approved' })).toEqual([110, 107, 105, 104])
-    expect(filter({ review: 'changes_requested' })).toEqual([111])
-    expect(filter({ review: 'none' })).toEqual([109, 108, 84, 83])
-    expect(filter({ label: 'desktop', review: 'approved' })).toEqual([110, 105])
+    expect(filter({ label: 'desktop', draft: 'ready' })).toEqual([112, 110, 105])
   })
 
   test('filter options list each author and label once, sorted', () => {
@@ -202,5 +188,114 @@ describe('small helpers', () => {
   test('avatarUrl uses the GitHub profile picture and has none for apps', () => {
     expect(avatarUrl('operator')).toBe('https://github.com/operator.png?size=64')
     expect(avatarUrl('app/dependabot')).toBeNull()
+  })
+})
+
+describe('shareInFlight', () => {
+  const deferred = () => {
+    let resolve: (value: number) => void = () => {}
+    let reject: (cause: unknown) => void = () => {}
+    const promise = new Promise<number>((done, fail) => {
+      resolve = done
+      reject = fail
+    })
+    return { promise, resolve, reject }
+  }
+
+  test('callers asking for the same key while it runs share one request', async () => {
+    const share = shareInFlight()
+    const pending = deferred()
+    let runs = 0
+    const run = () => {
+      runs += 1
+      return pending.promise
+    }
+    const first = share('prs open', run)
+    const second = share('prs open', run)
+    const third = share('prs open', run)
+    expect(runs).toBe(1)
+    pending.resolve(7)
+    expect(await Promise.all([first, second, third])).toEqual([7, 7, 7])
+  })
+
+  test('another key runs on its own', async () => {
+    const share = shareInFlight()
+    let runs = 0
+    const run = async () => ++runs
+    expect(await Promise.all([share('prs open', run), share('prs merged', run), share('issues open', run)])).toEqual([1, 2, 3])
+  })
+
+  test('a settled request is asked again the next time', async () => {
+    const share = shareInFlight()
+    let runs = 0
+    const run = async () => ++runs
+    expect(await share('prs open', run)).toBe(1)
+    expect(await share('prs open', run)).toBe(2)
+  })
+
+  test('a failure reaches every caller and is not kept', async () => {
+    const share = shareInFlight()
+    const pending = deferred()
+    const first = share('prs all', () => pending.promise)
+    const second = share('prs all', () => pending.promise)
+    pending.reject(new Error('gh api graphql failed: GitHub timed out, try again'))
+    await expect(first).rejects.toThrow('GitHub timed out')
+    await expect(second).rejects.toThrow('GitHub timed out')
+    expect(await share('prs all', async () => 3)).toBe(3)
+  })
+
+  test('the sidebar count and the first page of the open tab are one request', () => {
+    expect(listRequestKey('prs', '/repo', 'open', 30, null)).toBe(listRequestKey('prs', '/repo', 'open', 30, null))
+    const keys = [
+      listRequestKey('prs', '/repo', 'open', 30, null),
+      listRequestKey('issues', '/repo', 'open', 30, null),
+      listRequestKey('prs', '/repo', 'merged', 30, null),
+      listRequestKey('prs', '/repo', 'open', 30, 'Y3Vyc29yOjE='),
+      listRequestKey('prs', '/other', 'open', 30, null),
+      listRequestKey('prs', '/repo', 'open', 31, null),
+    ]
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+})
+
+describe('paging', () => {
+  const item = (number: number, title = `#${number}`) => ({ number, title })
+  const page = (numbers: number[], nextCursor: string | null, counts: Record<string, number> = { open: 40 }): GithubPage<{ number: number; title: string }> => ({
+    items: numbers.map((number) => item(number)),
+    nextCursor,
+    counts,
+    fetchedAt: '2026-10-15T19:00:00Z',
+  })
+
+  test('the next page appends only what is not listed yet and moves the cursor', () => {
+    const first = page([5, 4, 3], 'c1')
+    const next = nextPage(first, page([3, 2, 1], 'c2', { open: 41 }))
+    expect(next.items.map((entry) => entry.number)).toEqual([5, 4, 3, 2, 1])
+    expect(next.nextCursor).toBe('c2')
+    expect(next.counts).toEqual({ open: 41 })
+  })
+
+  test('the last page leaves no cursor', () => {
+    expect(nextPage(page([2], 'c1'), page([1], null)).nextCursor).toBeNull()
+  })
+
+  test('a refreshed first page puts its items on top and keeps the pages loaded below it', () => {
+    const loaded = nextPage(page([5, 4, 3], 'c1'), page([2, 1], 'c2'))
+    const fresh: GithubPage<{ number: number; title: string }> = { ...page([6, 2, 5], 'f1', { open: 42 }), fetchedAt: '2026-10-15T19:01:00Z' }
+    fresh.items[1] = item(2, 'renamed')
+    const refreshed = refreshedPage(loaded, fresh)
+    expect(refreshed.items.map((entry) => entry.number)).toEqual([6, 2, 5, 4, 3, 1])
+    expect(refreshed.items[1]?.title).toBe('renamed')
+    expect(refreshed.nextCursor).toBe('c2')
+    expect(refreshed.counts).toEqual({ open: 42 })
+    expect(refreshed.fetchedAt).toBe('2026-10-15T19:01:00Z')
+  })
+
+  test('with nothing loaded yet the first page is the listing', () => {
+    expect(refreshedPage(null, page([1], 'c1'))).toEqual(page([1], 'c1'))
+  })
+
+  test('mergeItems keeps the front copy of an item listed twice', () => {
+    expect(mergeItems([item(1, 'front')], [item(1, 'back'), item(2)])).toEqual([item(1, 'front'), item(2)])
   })
 })

@@ -28,9 +28,9 @@
 - Run megabrain repo github [--owner <login>] [--json]. — recommended when you need to browse repositories available through GitHub CLI.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
 - Run megabrain github prs|issues|pr|issue .... — recommended when you need to read a repository's GitHub pull requests and issues.
-- Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--json]. — recommended when you need to list a repository's pull requests with checks, reviews, and labels.
-- Run megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--json]. — recommended when you need to list a repository's issues with labels, assignees, and milestones.
-- Run megabrain github pr <repo name|path> <number> [--json]. — recommended when you need one pull request's description and comments.
+- Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's pull requests a page at a time, with labels and every state's total.
+- Run megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's issues with labels, assignees, and milestones.
+- Run megabrain github pr <repo name|path> <number> [--json]. — recommended when you need one pull request's description, comments, checks, review decision and line counts.
 - Run megabrain github issue <repo name|path> <number> [--json]. — recommended when you need one issue's description and comments.
 - Run megabrain code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]. — recommended when you need the full VS Code editor for a registered project or worktree inside the desktop app.
 - Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]. — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
