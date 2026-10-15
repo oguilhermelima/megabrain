@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { createProcessAdapter } from "../../src/adapters/proc.js";
 import { registerMegabrainRepository } from "../../src/core/project-registry.js";
-import { codeServerProxyInvocation, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
+import { BRIDGE_EXTENSION, codeServerPortCandidate, codeServerProxyInvocation, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
 import { ok } from "../../src/core/result.js";
 
 let root = "";
@@ -137,8 +138,12 @@ describe("code server", () => {
       "workbench.preferredDarkColorTheme": "megabrain-dark",
       "window.autoDetectColorScheme": false,
       "workbench.sideBar.location": "right",
+      "editor.minimap.enabled": false,
     });
     expect(readFileSync(join(profile, "extensions", "megabrain.megabrain-bridge-1.0.0", "package.json"), "utf8")).toContain("megabrain-bridge");
+    const bridge = readFileSync(join(profile, "extensions", "megabrain.megabrain-bridge-1.0.0", "extension.js"), "utf8");
+    expect(bridge).toContain("outline.removeView");
+    expect(bridge).toContain("timeline.removeView");
     writeFileSync(join(profile, "extensions", "extensions.json"), "[]\n");
     await manager.stop(path);
     await manager.open(path);
@@ -186,6 +191,59 @@ describe("code server", () => {
     expect(second).toEqual(first);
     expect(fake.started).toHaveLength(2);
     expect(fake.downloaded).toHaveLength(1);
+  });
+
+  test("keeps the assigned port when a project is stopped and reopened", async () => {
+    const path = await repository("stable-port");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const fake = fakes();
+    const manager = createCodeServerManager(env, createProcessAdapter(), fake.dependencies);
+    const first = await manager.open(path);
+    await manager.stop(path);
+    const second = await manager.open(path);
+    expect(second.port).toBe(first.port);
+  });
+
+  test("uses the next port when the root's stable candidate is occupied", async () => {
+    const path = await repository("occupied-port");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const candidate = codeServerPortCandidate(path);
+    const fake = fakes({ portAvailable: async (port) => port !== candidate });
+    const server = await createCodeServerManager(env, createProcessAdapter(), fake.dependencies).open(path);
+    expect(server.port).toBe(candidate + 1);
+  });
+
+  test("hides Outline and Timeline once per profile when the bridge activates", async () => {
+    const called: string[] = [];
+    const values = new Map<string, unknown>();
+    const bridgeModule: { activate?: (context: unknown) => Promise<void> } = {};
+    const fs = {
+      promises: {
+        mkdir: async () => {},
+        readdir: async () => [],
+      },
+      watch: () => ({ close: () => {} }),
+    };
+    const vscode = {
+      commands: { executeCommand: async (id: string) => { called.push(id); } },
+    };
+    runInNewContext(BRIDGE_EXTENSION, {
+      exports: bridgeModule,
+      require: (name: string) => name === "node:fs" ? fs : name === "node:path" ? { join } : vscode,
+      console,
+    });
+    const context = {
+      globalStorageUri: { fsPath: join(root, "bridge-storage") },
+      globalState: {
+        get: (key: string) => values.get(key),
+        update: async (key: string, value: unknown) => { values.set(key, value); },
+      },
+      subscriptions: [] as Array<{ dispose(): void }>,
+    };
+    if (bridgeModule.activate === undefined) throw new Error("bridge activation was not registered");
+    await bridgeModule.activate(context);
+    await bridgeModule.activate(context);
+    expect(called).toEqual(["outline.removeView", "timeline.removeView"]);
   });
 
   test("cleans a stale record and starts a fresh server", async () => {

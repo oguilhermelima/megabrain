@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,6 +12,8 @@ import { failed, type Result } from "./result.js";
 
 export const CODE_SERVER_VERSION = "4.138.0";
 const RELEASE_BASE = `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}`;
+const CODE_SERVER_PORT_FIRST = 41000;
+const CODE_SERVER_PORT_COUNT = 8000;
 
 export type CodeServerAsset = Readonly<{ name: string; url: string; sha256: string }>;
 export type CodeServerInfo = Readonly<{ root: string; url: string; port: number; pid: number; codeServerPid: number }>;
@@ -34,6 +36,7 @@ export const CODE_MANAGED_SETTINGS = {
   "telemetry.telemetryLevel": "off",
   "update.mode": "none",
   "editor.fontFamily": "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace",
+  "editor.minimap.enabled": false,
   "workbench.colorTheme": "megabrain-dark",
   "workbench.preferredDarkColorTheme": "megabrain-dark",
   "window.autoDetectColorScheme": false,
@@ -68,6 +71,7 @@ export type CodeServerDependencies = Readonly<{
   isAlive(pid: number): boolean;
   kill(pid: number): void;
   token(): string;
+  portAvailable?(port: number): Promise<boolean>;
   ready?(port: number, codePid: number, proxyPid: number): Promise<void>;
 }>;
 
@@ -91,6 +95,11 @@ export function selectCodeServerAsset(platform: Platform, arch: string): CodeSer
 
 function rootId(root: string): string {
   return createHash("sha256").update(root).digest("hex").slice(0, 20);
+}
+
+export function codeServerPortCandidate(root: string): number {
+  const hash = createHash("sha256").update(root).digest("hex");
+  return CODE_SERVER_PORT_FIRST + (Number.parseInt(hash.slice(0, 8), 16) % CODE_SERVER_PORT_COUNT);
 }
 
 async function privateDirectory(path: string): Promise<void> {
@@ -207,17 +216,37 @@ async function writeRecord(path: string, record: ServerRecord): Promise<void> {
   await chmod(path, 0o600);
 }
 
-async function freePort(): Promise<number> {
+async function availablePort(port: number): Promise<boolean> {
   const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("could not allocate a localhost port");
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return port;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", () => resolve());
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (server.listening) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+async function readAssignedPort(path: string): Promise<number | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || !("port" in parsed)) return undefined;
+    const port: unknown = parsed.port;
+    return typeof port === "number" && Number.isInteger(port) && port >= CODE_SERVER_PORT_FIRST && port < CODE_SERVER_PORT_FIRST + CODE_SERVER_PORT_COUNT ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeAssignedPort(path: string, root: string, port: number): Promise<void> {
+  const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  await writeFile(temporary, `${JSON.stringify({ root, port })}\n`, { mode: 0o600, flag: "wx" });
+  await rename(temporary, path);
+  await chmod(path, 0o600);
 }
 
 async function ensureDownloaded(stateRoot: string, asset: CodeServerAsset, dependencies: CodeServerDependencies, processAdapter: ProcessAdapter): Promise<string> {
@@ -354,7 +383,7 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
       ], { cwd: canonicalRoot }), "code-server");
       let proxyPid: number | undefined;
       try {
-        const port = await freePort();
+        const port = await reservePort(id, canonicalRoot);
         const invocation = codeServerProxyInvocation(process.execPath, process.argv, socketPath, port);
         const proxyResult = await dependencies.start(invocation.command, invocation.args, { env: { MEGABRAIN_CODE_TOKEN: token } });
         proxyPid = startOrThrow(proxyResult, "code-server proxy");
@@ -370,6 +399,35 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
         await rm(socketPath, { force: true });
         throw cause;
       }
+    } finally {
+      await lock();
+    }
+  }
+
+  async function reservePort(id: string, root: string): Promise<number> {
+    const directory = join(base, "ports");
+    await privateDirectory(directory);
+    const lock = await acquireLock(join(base, "locks", "ports.lock"), dependencies);
+    try {
+      const assignmentPath = join(directory, `${id}.json`);
+      const assigned = await readAssignedPort(assignmentPath);
+      const occupied = new Set<number>();
+      for (const name of await readdir(directory)) {
+        if (name === `${id}.json` || !name.endsWith(".json")) continue;
+        const port = await readAssignedPort(join(directory, name));
+        if (port !== undefined) occupied.add(port);
+      }
+      const canUse = async (port: number) => !occupied.has(port) && await (dependencies.portAvailable?.(port) ?? availablePort(port));
+      if (assigned !== undefined && await canUse(assigned)) return assigned;
+      const first = codeServerPortCandidate(root);
+      for (let offset = 0; offset < CODE_SERVER_PORT_COUNT; offset += 1) {
+        const port = CODE_SERVER_PORT_FIRST + ((first - CODE_SERVER_PORT_FIRST + offset) % CODE_SERVER_PORT_COUNT);
+        if (await canUse(port)) {
+          await writeAssignedPort(assignmentPath, root, port);
+          return port;
+        }
+      }
+      throw new Error("no available code-server ports remain in the managed range");
     } finally {
       await lock();
     }
@@ -489,11 +547,17 @@ const BRIDGE_PACKAGE = {
   },
 };
 
-const BRIDGE_EXTENSION = `const fs = require('node:fs');
+export const BRIDGE_EXTENSION = `const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
 
 exports.activate = async (context) => {
+  const viewsHiddenKey = 'megabrain.viewsHidden';
+  if (!context.globalState.get(viewsHiddenKey)) {
+    await vscode.commands.executeCommand('outline.removeView');
+    await vscode.commands.executeCommand('timeline.removeView');
+    await context.globalState.update(viewsHiddenKey, true);
+  }
   const requests = path.join(context.globalStorageUri.fsPath, 'requests');
   await fs.promises.mkdir(requests, { recursive: true, mode: 0o700 });
   const pending = new Set();
