@@ -120,7 +120,7 @@ describe("project registry", () => {
     await git(main, "worktree", "add", "--detach", detached);
     await cli("repo", "add", main);
     const project = json<Array<{ worktrees: Array<{ path: string; branch: string | null; primary: boolean }> }>>(await cli("projects", "--json"))[0];
-    expect(project?.worktrees.map(({ path }) => path)).toEqual([main, aTree, detached, zTree]);
+    expect(project?.worktrees.map(({ path }) => path)).toEqual([main, aTree, zTree, detached]);
     expect(project?.worktrees[0]?.primary).toBe(true);
     expect(project?.worktrees.find((tree) => tree.path === detached)?.branch).toBeNull();
   });
