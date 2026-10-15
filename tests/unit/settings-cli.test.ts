@@ -57,9 +57,20 @@ describe("megabrain settings", () => {
 
     // Keep these field names aligned with apps/desktop/src/api/schema.ts.
     expect(Object.keys(value).sort()).toEqual(["chains", "limits", "models", "resources", "supervisor", "terminal"]);
+    expect(Object.keys(value.supervisor as object).sort()).toEqual(["pid", "running"]);
     expect(Object.keys(value.resources as object).sort()).toEqual(["historyEnabled", "policy"]);
     expect(Object.keys(value.limits as object).sort()).toEqual(["enabledProviders", "notice", "readings"]);
+    expect(Object.keys((value.limits as { notice: object }).notice).sort()).toEqual(["enabled", "intervalSeconds"]);
     expect(Object.keys(value.terminal as object).sort()).toEqual(["available", "default", "detected"]);
+    const firstReading = (value.limits as { readings: Record<string, unknown>[] }).readings[0];
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("provider");
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("window");
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("status");
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("usedPercent");
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("resetsAt");
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("fetchedAt");
+    expect(Object.keys(firstReading ?? {}).sort()).toContain("reason");
+    expect(value.models).toEqual([{ agent: "codex", model: "model-known", reasoning: { levels: ["low", "high"] } }]);
     expect(value.resources).toEqual({ historyEnabled: false, policy: null });
     expect(value.limits).toMatchObject({ enabledProviders: [], notice: { enabled: false, intervalSeconds: 3600 } });
     const limits = await run(["chain", "limits", "--json"], env);
