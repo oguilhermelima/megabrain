@@ -5,6 +5,15 @@ import { AgentBadge } from '@/advanced/parts'
 import { Conversation, type OpenChat } from '@/chat/Conversation'
 import { Button, Spinner } from '@/components/ui'
 
+const folder = (path: string) => path.split('/').at(-1) ?? path
+
+const statusTone: Record<ProjectSession['status'], string> = {
+  working: 'text-ok bg-ok/[0.12]',
+  waiting: 'text-warn bg-warn/[0.12]',
+  idle: 'text-ink-300 bg-white/[0.06]',
+  ended: 'text-ink-400 bg-white/[0.06]',
+}
+
 export function SessionView({
   session,
   worktreePath,
@@ -18,6 +27,7 @@ export function SessionView({
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const ended = session.status === 'ended'
+  const started = session.startedAt === null ? null : `started ${new Date(session.startedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`
 
   const send = () => {
     if (text.trim() === '') return
@@ -40,9 +50,14 @@ export function SessionView({
       <header data-tauri-drag-region className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
         <AgentBadge agent={session.agent} size="lg" />
         <div className="min-w-0">
-          <h1 className="truncate text-[20px] font-semibold text-ink-100">{session.title}</h1>
-          <p className="truncate text-[13px] text-ink-400">{[session.agent, worktreePath].filter(Boolean).join(' · ')}</p>
+          <h1 title={session.title} className="truncate text-[20px] font-semibold tracking-[-0.01em] text-ink-100">{session.title}</h1>
+          <p title={worktreePath} className="truncate text-[13px] text-ink-400">{[session.agent, folder(worktreePath), started].filter(Boolean).join(' · ')}</p>
         </div>
+        <span className={`rounded-full px-3 py-1 text-[12px] font-semibold whitespace-nowrap ${statusTone[session.status]}`}>{session.status}</span>
+        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-400" title="Previous and next chat">
+          <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘[</kbd>
+          <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘]</kbd>
+        </span>
       </header>
       <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} />
       <footer className="px-8 pb-6">

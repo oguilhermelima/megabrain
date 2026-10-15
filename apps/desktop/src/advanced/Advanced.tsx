@@ -236,7 +236,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     code !== null ? (
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : sidebarDispatch !== null ? (
-      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={null} onOpenChat={openRelatedChat} />
+      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={repositoryOf(sidebarDispatch.dispatchId)} onOpenChat={openRelatedChat} />
     ) : sidebarSelected?.kind === 'session' ? (
       <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} onOpenChat={openRelatedChat} />
     ) : (

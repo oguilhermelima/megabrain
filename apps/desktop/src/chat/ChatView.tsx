@@ -66,13 +66,13 @@ export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; rep
       <header data-tauri-drag-region className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
         <AgentBadge agent={chat.agent ?? ''} size="lg" />
         <div className="min-w-0">
-          <h1 className="truncate text-[20px] font-semibold text-ink-100">{chatName(chat)}</h1>
+          <h1 title={chatName(chat)} className="truncate text-[20px] font-semibold tracking-[-0.01em] text-ink-100">{chatName(chat)}</h1>
           <p className="truncate text-[13px] text-ink-400">
             {[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
           </p>
         </div>
         <StateChip state={state} />
-        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-400">
+        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-400" title="Previous and next chat">
           <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘[</kbd>
           <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘]</kbd>
         </span>
