@@ -3,12 +3,12 @@ import { api } from '@/api'
 import type { ChatRead, Dispatch } from '@/api/schema'
 import { chatState } from '@/advanced/model'
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
-import { Conversation } from '@/chat/Conversation'
+import { Conversation, type OpenChat } from '@/chat/Conversation'
 import { Button, ErrorNote, Mono, Spinner } from '@/components/ui'
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-export function ChatView({ chat, repository }: { chat: Dispatch; repository: string | null }) {
+export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat }) {
   const [read, setRead] = useState<ChatRead | null>(null)
   const [readError, setReadError] = useState<unknown>(null)
   const [text, setText] = useState('')
@@ -100,7 +100,7 @@ export function ChatView({ chat, repository }: { chat: Dispatch; repository: str
           </button>
         ))}
       </div>
-      {tab === 'conversation' && <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} />}
+      {tab === 'conversation' && <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} />}
       <pre
         hidden={tab !== 'terminal'}
         ref={pane}

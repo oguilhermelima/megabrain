@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
 import { ErrorNote, Spinner } from '@/components/ui'
-import { buildConversationItems, mergeEvents, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { buildConversationItems, mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
 import { MarkdownText } from '@/chat/markdown'
+
+export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 
 function UserMessage({ event }: { event: TranscriptEvent }) {
   return (
@@ -25,6 +27,41 @@ function AssistantMessage({ event }: { event: TranscriptEvent }) {
 
 function SystemMessage({ event }: { event: TranscriptEvent }) {
   return <li className="text-center text-[12px] text-ink-500">{event.text}</li>
+}
+
+function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenChat: OpenChat | undefined }) {
+  const origin = event.origin
+  if (origin === undefined) return null
+  const [open, setOpen] = useState(false)
+  const target = relayedTarget(origin)
+  const header = origin.kind === 'parent' ? `From parent · ${origin.label}` : `From ${origin.label}`
+  return (
+    <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+      <div className="flex items-center gap-2 px-3.5 py-2">
+        <span className="shrink-0 text-[13px] text-ink-400" aria-label={origin.kind === 'parent' ? 'relayed from parent' : 'relayed from child'}>
+          {origin.kind === 'parent' ? '↑' : '↓'}
+        </span>
+        <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
+          <span className="block text-[12px] font-semibold text-ink-300">{header}</span>
+          {!open && <span className="block truncate text-[13px] text-ink-500">{relayedPreview(event.text)}</span>}
+        </button>
+        {onOpenChat !== undefined && target !== null && (
+          <button
+            type="button"
+            onClick={() => onOpenChat(target)}
+            className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[12px] font-semibold text-ink-300 hover:bg-white/[0.08]"
+          >
+            →
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="px-3.5 pb-3">
+          <MarkdownText text={event.text} />
+        </div>
+      )}
+    </li>
+  )
 }
 
 function ThinkingMessage({ event }: { event: TranscriptEvent }) {
@@ -67,16 +104,25 @@ function ToolItem({ item }: { item: Extract<ConversationItem, { type: 'tool' }> 
   )
 }
 
-function Item({ item }: { item: ConversationItem }) {
+function Item({ item, onOpenChat }: { item: ConversationItem; onOpenChat: OpenChat | undefined }) {
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
+  if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
   if (event.kind === 'user') return <UserMessage event={event} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} />
   return <SystemMessage event={event} />
 }
 
-export function Conversation({ target, live }: { target: { dispatchId: string } | { sessionId: string }; live: boolean }) {
+export function Conversation({
+  target,
+  live,
+  onOpenChat,
+}: {
+  target: { dispatchId: string } | { sessionId: string }
+  live: boolean
+  onOpenChat?: OpenChat
+}) {
   const [transcript, setTranscript] = useState<Transcript | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [pinned, setPinned] = useState(true)
@@ -139,7 +185,7 @@ export function Conversation({ target, live }: { target: { dispatchId: string } 
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <ol ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 space-y-3 overflow-y-auto pt-5 pb-5 select-text">
         {items.map((item) => (
-          <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} />
+          <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} onOpenChat={onOpenChat} />
         ))}
       </ol>
       {!pinned && (

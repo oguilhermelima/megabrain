@@ -1,10 +1,16 @@
 import type { ProjectSession } from '@/api/schema'
 import { AgentBadge } from '@/advanced/parts'
-import { Conversation } from '@/chat/Conversation'
+import { Conversation, type OpenChat } from '@/chat/Conversation'
 
-// A read-only follow of a session megabrain did not start as a dispatch: no reply box, since
-// replying to it is out of scope.
-export function SessionView({ session, worktreePath }: { session: ProjectSession; worktreePath: string }) {
+export function SessionView({
+  session,
+  worktreePath,
+  onOpenChat,
+}: {
+  session: ProjectSession
+  worktreePath: string
+  onOpenChat?: OpenChat
+}) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
@@ -14,7 +20,7 @@ export function SessionView({ session, worktreePath }: { session: ProjectSession
           <p className="truncate text-[13px] text-ink-400">{[session.agent, worktreePath].filter(Boolean).join(' · ')}</p>
         </div>
       </header>
-      <Conversation target={{ sessionId: session.sessionId }} live={session.status !== 'ended'} />
+      <Conversation target={{ sessionId: session.sessionId }} live={session.status !== 'ended'} onOpenChat={onOpenChat} />
     </div>
   )
 }
