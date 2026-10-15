@@ -4,8 +4,9 @@ import { basename, join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { expandRepositoryUrl, repositoryCheckout } from "../../core/project-registry.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase, withWrite, type Synchronous } from "../../db/db.js";
+import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from "../../db/db.js";
 import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { backfillProjectHistory } from "./projects.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type GithubRepository = Readonly<{ nameWithOwner: string; url: string; description: string | null; isPrivate: boolean; updatedAt: string | null }>;
@@ -22,6 +23,14 @@ function databaseAction<T>(environment: Environment, action: Synchronous<T>): Re
   } finally { opened.value.close(); }
 }
 
+function databaseRead<T>(environment: Environment, action: (database: DatabaseAdapter) => T): Result<T> {
+  const opened = openDatabase(environment);
+  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+  try { return ok(action(opened.value.db)); }
+  catch (cause: unknown) { return failed(cause instanceof Error ? cause.message : String(cause)); }
+  finally { opened.value.close(); }
+}
+
 async function addRepository(path: string, source: "megabrain" | "import", environment: Environment, process: ProcessAdapter): Promise<Result<RepositoryRecord>> {
   const checkout = await repositoryCheckout(path, process);
   if (checkout.kind !== "ok") return checkout;
@@ -31,8 +40,10 @@ async function addRepository(path: string, source: "megabrain" | "import", envir
 export async function executeRepository(args: readonly string[], environment: Environment, process = createProcessAdapter()): Promise<Result<string>> {
   const [verb, ...rest] = args;
   const json = rest.includes("--json");
+  const backfilled = await backfillProjectHistory(environment, process);
+  if (backfilled.kind !== "ok") return backfilled;
   if (verb === "list") {
-    const records = databaseAction(environment, listRepositories);
+    const records = databaseRead(environment, listRepositories);
     if (records.kind !== "ok") return records;
     return ok(json ? `${JSON.stringify(records.value, null, 2)}\n` : records.value.map((record) => parseRepository(record, false)).join(""));
   }
@@ -64,7 +75,12 @@ export async function executeRepository(args: readonly string[], environment: En
     const selector = rest.find((argument) => !argument.startsWith("-"));
     if (selector === undefined) return failed("Usage: megabrain repo remove <name|path> [--json]", 2);
     const pathSelector = await realpath(selector).catch(() => selector);
-    const removed = databaseAction(environment, (db) => removeRepository(db, pathSelector));
+    const removed = databaseAction(environment, (db) => {
+      const exactPath = listRepositories(db).find((repository) => repository.path === pathSelector);
+      const matches = exactPath === undefined ? listRepositories(db).filter((repository) => repository.name === selector) : [exactPath];
+      if (matches.length > 1) throw new Error(`repository name is ambiguous: ${selector}; use a path`);
+      return matches[0] === undefined ? undefined : removeRepository(db, matches[0].path);
+    });
     if (removed.kind !== "ok") return removed;
     if (removed.value === undefined) return failed(`repository not found: ${selector}`);
     return ok(json ? `${JSON.stringify({ removed: removed.value }, null, 2)}\n` : `removed ${removed.value.name} from registry\n`);
