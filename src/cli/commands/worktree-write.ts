@@ -984,7 +984,9 @@ export async function executeWorktreeCreate(
     if (stored.kind !== "ok") return failed(`worktree created at ${path}, but registry write failed: ${stored.error}`);
   } finally { registry.value.close(); }
   const registeredRepository = await registerMegabrainRepository(repo.value, environment, process);
-  if (registeredRepository.kind !== "ok") return failed(`worktree created at ${path}, but project registry write failed: ${registeredRepository.error}`);
+  if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) {
+    return failed(`worktree created at ${path}, but project registry write failed: ${registeredRepository.error}`);
+  }
   return ok(output(result, value.json));
 }
 export async function executeWorktreeFinish(

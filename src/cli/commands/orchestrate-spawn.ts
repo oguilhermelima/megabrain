@@ -875,7 +875,7 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
   const registeredRepository = await registerMegabrainRepository(worktree.path, environment, process);
-  if (registeredRepository.kind !== "ok") return registeredRepository;
+  if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) return registeredRepository;
   prompt = finalPrompt(options, id);
   const resolvedPromptBudget = validatePromptBudget(prompt, selectedRuntime);
   if (resolvedPromptBudget.kind !== "ok") return resolvedPromptBudget;
