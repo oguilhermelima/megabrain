@@ -317,6 +317,13 @@ minute (`MEGABRAIN_SUPERVISE_INTERVAL_SECONDS` changes that), and it exits when 
 `megabrain supervise` starts it by hand, `--status` shows the watcher and each dispatch's last check
 and finding, and `--stop` ends it.
 
+`megabrain status --json` is the operator's view in one call, for a program to poll: the host
+context, the machine (memory, pressure, swap, load), the watcher, every session's dispatches that
+are not closed or archived (with owner, and the supervisor's last check and finding plus its
+recommendation), every queued spawn, message and process, managed processes, the resource history
+and admission settings, and delivery channels. It leaves out Docker containers, because
+`docker stats` takes seconds; `resources --json` has them. Without `--json` it prints a short summary.
+
 `megabrain resources` reports memory pressure, available and total memory, swap, CPU load and
 open dispatch process trees. `--all` includes dispatches owned by other sessions and `--json`
 returns a machine-readable snapshot. Docker usage is included when the daemon is already running.
