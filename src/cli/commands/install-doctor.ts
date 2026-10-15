@@ -1332,11 +1332,13 @@ export async function executeInstall(args: readonly string[], environment: Envir
   let module: string | undefined;
   let yes = false;
   let revert = false;
+  let json = false;
   let browser = "both";
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--yes") { yes = true; continue; }
     if (arg === "--revert") { revert = true; continue; }
+    if (arg === "--json") { json = true; continue; }
     if (arg === "--browser") {
       const value = args[index + 1];
       if (value === undefined) return failed("install accepts a browser value", 2);
@@ -1353,6 +1355,26 @@ export async function executeInstall(args: readonly string[], environment: Envir
     if (!isInteractiveTerminal()) return failed("install without a module id requires an interactive terminal");
     return interactiveInstall(environment, processAdapter, options);
   }
+  const result = await installModuleCommand(module, revert, browser, environment, processAdapter, options);
+  return json ? moduleResultAsJson(module, revert ? "revert" : "install", result) : result;
+}
+
+// One module's outcome as a single JSON object, keeping the exit code the text form would have.
+function moduleResultAsJson(module: string, action: "install" | "revert", result: Result<string>): Result<string> {
+  const message = (result.kind === "ok" ? result.value : result.error).trim();
+  const succeeded = result.kind === "ok" && (result.exitCode ?? 0) === 0;
+  const body = JSON.stringify({ module, action, ok: succeeded, message });
+  return result.kind === "ok" ? ok(`${body}\n`, result.exitCode) : failed(body, result.exitCode);
+}
+
+async function installModuleCommand(
+  module: string,
+  revert: boolean,
+  browser: string,
+  environment: Environment,
+  processAdapter: ProcessAdapter,
+  options: InstallOptions,
+): Promise<Result<string>> {
   if (!modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   if (revert) {
     if (module === "resource-hooks") return revertResourceHooks(environment);
