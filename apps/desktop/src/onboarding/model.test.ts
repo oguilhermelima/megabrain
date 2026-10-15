@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { installPlanSchema, type InstallEvent, type InstallPlan } from '@/api/schema'
+import { installPlanSchema, type InstallEvent, type InstallPlan, type ResultEvent } from '@/api/schema'
 import { emptyProgress, groupModules, initialSelection, installArgs, moduleRetryArgs, reduceInstall, removals } from '@/onboarding/model'
 
 const captured = installPlanSchema.parse(JSON.parse(readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', 'install-plan.json'), 'utf8')))
@@ -103,7 +103,7 @@ describe('reduceInstall', () => {
     ])
   })
   test('collects info, warn and confirm in order, and the result', () => {
-    const result = { type: 'result', ok: true, message: 'done', configured: ['worktree'], failed: [] } as const
+    const result: ResultEvent = { type: 'result', ok: true, message: 'done', configured: ['worktree'], failed: [] }
     const progress = run([
       { type: 'info', message: 'one' },
       { type: 'warn', message: 'two' },
