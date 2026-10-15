@@ -35,7 +35,7 @@ export function Pill() {
         {summary.working === 0 ? 'quiet' : `${summary.working} working`}
       </span>
       {geometry.notchWidth !== null && <span style={{ width: geometry.notchWidth }} />}
-      <span className={`flex items-center gap-1.5 ${summary.needsYou > 0 ? 'text-warn' : 'text-ink-500'}`}>
+      <span className={`flex items-center gap-1.5 ${summary.needsYou > 0 ? 'text-warn' : 'text-ink-400'}`}>
         <span className="size-[7px] rounded-full bg-current" />
         {summary.needsYou > 0 ? `${summary.needsYou} ${summary.needsYou === 1 ? 'needs' : 'need'} you` : summary.queued > 0 ? `${summary.queued} queued` : 'all clear'}
       </span>
@@ -98,7 +98,7 @@ function Assistant({ chats, barHeight }: { chats: Dispatch[]; barHeight: number 
         <Section title={`Working · ${working.length}`}>
           {working.map((chat) => (
             <ChatRow key={chat.dispatchId} chat={chat} selected={chat.dispatchId === selected} onSelect={() => setSelected(chat.dispatchId === selected ? null : chat.dispatchId)}>
-              <span className="truncate text-[13px] text-ink-500">{chat.agent} · {chat.model}</span>
+              <span className="truncate text-[13px] text-ink-400">{chat.agent} · {chat.model}</span>
             </ChatRow>
           ))}
         </Section>
@@ -120,7 +120,7 @@ function Assistant({ chats, barHeight }: { chats: Dispatch[]; barHeight: number 
             onChange={(event) => setText(event.target.value)}
             disabled={sending}
             placeholder={target === null ? 'Pick a chat to reply to — plain-language requests come next' : `Reply to ${chatName(target)}…`}
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-500"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-400"
           />
           <button
             type="submit"
@@ -144,7 +144,7 @@ function Assistant({ chats, barHeight }: { chats: Dispatch[]; barHeight: number 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-1.5">
-      <h2 className="px-2 text-[12px] font-semibold tracking-[0.06em] text-ink-500 uppercase">{title}</h2>
+      <h2 className="px-2 text-[12px] font-semibold tracking-[0.06em] text-ink-400 uppercase">{title}</h2>
       {children}
     </section>
   )

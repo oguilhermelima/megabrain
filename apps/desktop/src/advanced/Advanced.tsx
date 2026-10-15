@@ -6,6 +6,7 @@ import { chatState, groupChats, neighbour } from '@/advanced/model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
 import { Sidebar, type CodeTarget } from '@/advanced/Sidebar'
+import { CollapsedChrome, SidebarHeader, type Mode } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
 import type { OpenChat } from '@/chat/Conversation'
 import { SessionView } from '@/chat/SessionView'
@@ -16,7 +17,6 @@ import { useStatus } from '@/lib/useStatus'
 import { SettingsWindow } from '@/settings/SettingsWindow'
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`
-type Mode = 'sidebar' | 'columns'
 type Selected = { kind: 'dispatch'; dispatchId: string } | { kind: 'session'; session: ProjectSession; worktreePath: string }
 
 function useWorktrees(): Worktree[] {
@@ -63,33 +63,6 @@ function storedSidebarCollapsed(): boolean {
   } catch {
     return false
   }
-}
-
-function SidebarToggleIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
-      <path d="M6 2.5v11" />
-    </svg>
-  )
-}
-
-function ColumnsIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
-      <path d="M6 2.5v11M10 2.5v11" />
-    </svg>
-  )
-}
-
-function SettingsIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4" />
-    </svg>
-  )
 }
 
 // The advanced window: chats as a sidebar (repositories > worktrees > chats) or as columns (one per
@@ -194,6 +167,28 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }, '')
   }
 
+  // A chat opened as a dispatch is still a session row in the sidebar; highlight and walk from it.
+  const selectedSessionId =
+    sidebarSelected === null
+      ? null
+      : sidebarSelected.kind === 'session'
+        ? sidebarSelected.session.sessionId
+        : (sessionRows.find((row) => row.session.dispatchId === sidebarSelected.dispatchId)?.session.sessionId ?? null)
+
+  const goHome = () => {
+    setSidebarSelected(null)
+    setSelected(null)
+    setCode(null)
+  }
+
+  const openFromOverview = (dispatchId: string) => {
+    if (mode === 'columns') open(dispatchId)
+    else {
+      setCode(null)
+      setSidebarSelected({ kind: 'dispatch', dispatchId })
+    }
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey && event.key === ',') {
@@ -214,13 +209,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         setSelected((current) => neighbour(order, current, step))
         return
       }
-      const currentSessionId = sidebarSelected?.kind === 'session' ? sidebarSelected.session.sessionId : null
-      const next = neighbourSession(sessionRows, currentSessionId, step)
+      const next = neighbourSession(sessionRows, selectedSessionId, step)
       if (next !== null) openSession(next.session, next.worktreePath)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [order, mode, sessionRows, sidebarSelected])
+  }, [order, mode, sessionRows, selectedSessionId])
 
   const chat = status?.dispatches.find((item) => item.dispatchId === selected) ?? null
   const repositoryOf = (dispatchId: string) =>
@@ -229,148 +223,84 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const sidebarDispatchId = sidebarSelected?.kind === 'dispatch' ? sidebarSelected.dispatchId : null
   const sidebarDispatch = sidebarDispatchId === null ? null : status?.dispatches.find((item) => item.dispatchId === sidebarDispatchId) ?? null
 
-  const viewSwitch = (
-    <div className="flex gap-1 rounded-full border border-white/10 bg-white/[0.05] p-1" role="group" aria-label="View">
-      {(['sidebar', 'columns'] as const).map((value) => (
-        <button
-          key={value}
-          type="button"
-          onClick={() => changeMode(value)}
-          aria-pressed={mode === value}
-          title={value === 'sidebar' ? 'Sidebar view' : 'Columns view'}
-          className={`flex h-7 w-7 items-center justify-center rounded-full ${mode === value ? 'bg-white/[0.14] text-ink-100' : 'text-ink-400 hover:text-ink-200'}`}
-        >
-          {value === 'sidebar' ? <SidebarToggleIcon /> : <ColumnsIcon />}
-        </button>
-      ))}
-    </div>
-  )
-
-  const topBar = (
-    <header className="glass flex items-center justify-between border-b border-white/[0.06] py-3 pr-5 pl-24">
-      <span className="flex items-center gap-2">
-        {mode === 'sidebar' && (
-          <button
-            type="button"
-            onClick={toggleSidebarCollapsed}
-            aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
-            title="Toggle sidebar (⌘B)"
-            className="rounded-full p-1.5 text-ink-400 hover:bg-white/[0.08] hover:text-ink-200"
-          >
-            <SidebarToggleIcon />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => {
-            setSidebarSelected(null)
-            setSelected(null)
-            setCode(null)
-          }}
-          className="flex items-center gap-2.5 rounded-full px-1"
-        >
-          <span className="orb size-5" />
-          <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
-        </button>
-      </span>
-      <span className="flex items-center gap-2">
-        {viewSwitch}
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="Settings"
-          title="Settings (⌘,)"
-          className="flex h-7 w-7 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-200"
-        >
-          <SettingsIcon />
-        </button>
-      </span>
-    </header>
-  )
-
   const detail =
     code !== null ? (
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : chat !== null ? (
       <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} onOpenChat={openRelatedChat} />
     ) : (
-      status !== null && <Overview status={status} onSelect={open} />
+      status !== null && <Overview status={status} onSelect={openFromOverview} />
     )
 
   const sidebarDetail =
     code !== null ? (
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : sidebarDispatch !== null ? (
-      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={null} onOpenChat={openRelatedChat} />
+      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={repositoryOf(sidebarDispatch.dispatchId)} onOpenChat={openRelatedChat} />
     ) : sidebarSelected?.kind === 'session' ? (
       <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} onOpenChat={openRelatedChat} />
     ) : (
-      status !== null && <Overview status={status} onSelect={open} />
+      status !== null && <Overview status={status} onSelect={openFromOverview} />
     )
+  const watcherOn = status?.supervisor.watcher.running === true
   const settingsOverlay = settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} />
 
-  if (mode === 'columns')
-    return (
-      <div className="relative flex h-full flex-col bg-ink-950">
-        {topBar}
+  const columnsContent =
+    chat !== null || code !== null ? (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <button
+          type="button"
+          onClick={() => {
+            setSelected(null)
+            setCode(null)
+          }}
+          className="self-start px-8 pt-4 text-[13px] text-ink-300 hover:text-ink-100"
+        >
+          ‹ Columns
+        </button>
+        {detail}
+      </div>
+    ) : (
+      <Columns chats={status?.dispatches ?? []} worktrees={worktrees} selected={selected} onSelect={open} />
+    )
+
+  return (
+    <div className="relative flex h-full">
+      {!sidebarCollapsed && (
+        <aside className="glass flex w-[300px] shrink-0 flex-col border-r border-white/[0.06]">
+          <SidebarHeader mode={mode} onMode={changeMode} onHome={goHome} onCollapse={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} />
+          <Sidebar
+            status={status}
+            projects={projects}
+            selectedSessionId={selectedSessionId}
+            onSelectSession={(session) => {
+              const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
+              changeMode('sidebar')
+              openSession(session, worktree?.path ?? '')
+            }}
+            onCode={setCode}
+            onImport={() => setImporting(true)}
+          />
+          <footer className="flex shrink-0 items-center justify-between border-t border-white/[0.06] px-5 py-2.5 text-[12px] text-ink-400">
+            <span className="flex items-center gap-2" title={`The watcher reports stuck or finished chats; it is ${watcherOn ? 'running' : 'stopped'}.`}>
+              <span className={`size-2 rounded-full ${watcherOn ? 'bg-ok' : 'bg-bad'}`} />
+              watcher {watcherOn ? 'on' : 'off'}
+            </span>
+            <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:bg-white/[0.06] hover:text-ink-200">
+              Run setup
+            </button>
+          </footer>
+        </aside>
+      )}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
+        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
         {error !== null && (
           <div className="px-8 pt-4">
             <ErrorNote error={error} />
           </div>
         )}
-        <div className="min-h-0 flex-1">
-          {chat !== null || code !== null ? (
-            <div className="flex h-full flex-col">
-              <button type="button" onClick={() => { setSelected(null); setCode(null) }} className="self-start px-8 pt-4 text-[13px] text-ink-400 hover:text-ink-200">
-                ‹ Columns
-              </button>
-              {detail}
-            </div>
-          ) : (
-            <Columns chats={status?.dispatches ?? []} worktrees={worktrees} selected={selected} onSelect={open} />
-          )}
-        </div>
-        {settingsOverlay}
-      </div>
-    )
-
-  return (
-    <div className="relative flex h-full flex-col bg-ink-950">
-      {topBar}
-      <div className={`grid min-h-0 flex-1 ${sidebarCollapsed ? 'grid-cols-[minmax(0,1fr)]' : 'grid-cols-[300px_minmax(0,1fr)]'}`}>
-        {!sidebarCollapsed && (
-          <aside className="glass flex min-h-0 flex-col border-r border-white/[0.06]">
-            <Sidebar
-              status={status}
-              projects={projects}
-              selectedSessionId={sidebarSelected?.kind === 'session' ? sidebarSelected.session.sessionId : null}
-              onSelectSession={(session) => {
-                const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
-                openSession(session, worktree?.path ?? '')
-              }}
-              onCode={setCode}
-              onImport={() => setImporting(true)}
-            />
-            <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-400">
-              <span className="flex items-center gap-2">
-                <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
-                watcher {status?.supervisor.watcher.running === true ? 'on' : 'off'}
-              </span>
-              <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:text-ink-200">
-                Run setup
-              </button>
-            </footer>
-          </aside>
-        )}
-        <main className="flex min-h-0 min-w-0 flex-col bg-ink-950">
-          {error !== null && (
-            <div className="px-8 pt-4">
-              <ErrorNote error={error} />
-            </div>
-          )}
-          {sidebarDetail}
-        </main>
-      </div>
+        {mode === 'columns' ? columnsContent : sidebarDetail}
+      </main>
       {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
       {settingsOverlay}
     </div>
@@ -404,7 +334,7 @@ function Overview({ status, onSelect }: { status: Status; onSelect: (id: string)
           </button>
         ))}
       </div>
-      <p className="mt-10 text-[13px] text-ink-500">Pick a chat on the left to follow it. ⌘[ and ⌘] move between chats.</p>
+      <p className="mt-10 text-[13px] text-ink-400">Pick a chat on the left to follow it. ⌘[ and ⌘] move between chats.</p>
     </div>
   )
 }

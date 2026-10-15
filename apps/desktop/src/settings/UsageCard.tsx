@@ -22,7 +22,7 @@ function Bar({ label, reading }: { label: string; reading: UsageReading | null }
       <div className="h-2 overflow-hidden rounded-full bg-white/[0.08]">
         <div className={`h-full rounded-full ${barColor[level]}`} style={{ width: `${percent ?? 0}%` }} />
       </div>
-      <p className="truncate text-[12px] text-ink-500">{resets ?? (reading?.reason ?? '')}</p>
+      <p className="truncate text-[12px] text-ink-400">{resets ?? (reading?.reason ?? '')}</p>
     </div>
   )
 }
@@ -53,7 +53,7 @@ export function UsageCard({
         <Bar label="5h" reading={fiveHour} />
         <Bar label="weekly" reading={weekly} />
       </div>
-      {reason !== null && <p className="mt-2 text-[12px] text-ink-500 italic">{reason}</p>}
+      {reason !== null && <p className="mt-2 text-[12px] text-ink-400 italic">{reason}</p>}
     </div>
   )
 }
