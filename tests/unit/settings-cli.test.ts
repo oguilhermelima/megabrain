@@ -116,3 +116,30 @@ describe("chain save", () => {
     expect((await settings(env)).chains).toEqual([{ name: "custom", when: {}, steps: [{ agent: "codex", model: "unregistered", unvalidated: true }] }]);
   });
 });
+
+describe("settings write errors", () => {
+  test("returns one-line failures for invalid settings writes", async () => {
+    const env = sandbox();
+    const writes = [
+      ["resources", "policy", "set"],
+      ["chain", "limits", "--disable", "codex"],
+      ["chain", "save", "invalid", "--when", "{}", "--steps", JSON.stringify([{ agent: "codex", model: "unregistered" }])],
+      ["chain", "delete", "missing", "--json"],
+      ["model", "refresh", "codex"],
+      ["terminal", "default", "putty"],
+    ];
+    for (const args of writes) {
+      const result = await run(args, env);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error.split(/\r?\n/)).toHaveLength(1);
+    }
+  });
+
+  test("reports supervisor stop and start outcomes without invoking real processes", async () => {
+    const env = sandbox();
+    const stop = await run(["supervise", "--stop"], env);
+    expect(stop.kind).toBe("ok");
+    const start = await run(["supervise"], env);
+    expect(start.kind).toBe("ok");
+  });
+});
