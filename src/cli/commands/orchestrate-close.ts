@@ -183,6 +183,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     updatedAt: now,
     terminalState: "released",
     terminalReason: null,
+    ...(current.operator === true ? { closedBy: "operator" } : {}),
   };
   const updated = mutateDispatch(database.value, dispatchId, () => next);
   if (updated.kind !== "ok") return updated;

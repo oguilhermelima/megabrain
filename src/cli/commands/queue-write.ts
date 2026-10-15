@@ -7,7 +7,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
-import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
+import { asOperator, hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
@@ -72,7 +72,14 @@ export async function tmuxCallerPaneSession(environment: QueueEnvironment, proce
 // higher precedence (an explicit override, or a superset/orca terminal handle) already answers
 // the host — the same guard the old close.ts caller() used, now shared by every verb instead of
 // each one hand-rolling it.
+// MEGABRAIN_OPERATOR is set only by the router, for --operator and after operatorRefusal passed;
+// the router drops any value inherited from the environment.
 export async function resolveCaller(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<CallerIdentity> {
+  const caller = await resolveSessionCaller(environment, processAdapter);
+  return environment.MEGABRAIN_OPERATOR === "1" ? asOperator(caller) : caller;
+}
+
+export async function resolveSessionCaller(environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<CallerIdentity> {
   const fields = callerEnvironment(environment);
   const needsTmuxProbe = fields.megabrainSessionHost === undefined
     && fields.supersetTerminalId === undefined
