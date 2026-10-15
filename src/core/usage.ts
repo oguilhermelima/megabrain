@@ -37,6 +37,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
   "supervise": "supervise [--status|--stop]",
+  "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
   "proc": "proc start|run|list|status|stop|restart|logs ...",
   "proc-start": "proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--needs docker] [--slot container-suite] [--json] -- <command and arguments>",

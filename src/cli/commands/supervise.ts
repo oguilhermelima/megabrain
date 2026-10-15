@@ -326,7 +326,7 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
   }
   const historyEnvironment = { ...environment, MEGABRAIN_STATE_DIR: root };
   if (await resourceHistoryEnabled(historyEnvironment)) {
-    const snapshot = await collectResources(historyEnvironment, process, true);
+    const snapshot = await collectResources(historyEnvironment, process, true, false);
     recordResourceSamples(historyEnvironment, database, snapshot.dispatches.flatMap((item) => item.resources === undefined ? [] : [{ dispatchId: item.dispatchId, agent: item.agent, rssBytes: item.resources.rssBytes, cpuPercent: item.resources.cpuPercent }]), now);
   }
   return { open: true, findings };
@@ -383,6 +383,14 @@ export async function executeSupervisorWorker(args: readonly string[], environme
   return ok("supervisor stopped\n");
 }
 
+export function supervisorWatcher(database: Parameters<typeof getDispatch>[0]): Readonly<{ running: boolean; pid: number | null }> {
+  const leases = listLeases(database);
+  const lease = leases.kind === "ok" ? leases.value.find((item) => item.key === LEASE_KEY) : undefined;
+  if (lease === undefined) return { running: false, pid: null };
+  const pid = Number(lease.holder.split("-", 1)[0]);
+  return { running: true, pid: Number.isSafeInteger(pid) && pid > 1 ? pid : null };
+}
+
 function formatStatus(root: string, database: Parameters<typeof getDispatch>[0], resourceLines: readonly string[] = [], measured: Awaited<ReturnType<typeof collectResources>>["dispatches"] = []): string {
   const lease = listLeases(database);
   const dispatches = listDispatches(database);
@@ -407,7 +415,7 @@ export async function executeSupervise(args: readonly string[], environment: Env
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   if (args.length === 1 && args[0] === "--status") {
-    const measured = await collectResources({ MEGABRAIN_STATE_DIR: root }, process, true);
+    const measured = await collectResources({ MEGABRAIN_STATE_DIR: root }, process, true, false);
     const machine = measured.machine;
     const machineLine = machine === null ? "machine: unavailable" : `machine: ${Math.round(machine.availableMemoryBytes / 1024 / 1024)} MiB available / ${Math.round(machine.totalMemoryBytes / 1024 / 1024)} MiB · pressure ${machine.pressure} · swap ${Math.round(machine.swapUsedBytes / 1024 / 1024)} MiB · load ${machine.loadAverage1.toFixed(2)}/${machine.loadAverage5.toFixed(2)} · ${machine.cpuCount} CPUs`;
     return ok(formatStatus(root, database.value, [machineLine], measured.dispatches));

@@ -32,7 +32,7 @@ function itemState(outboxState: string | undefined, deliveryState: string): stri
   return deliveryState;
 }
 
-function queueItems(database: Parameters<typeof listDispatches>[0], dispatchIds: readonly string[]): Result<QueueItem[]> {
+export function queueItems(database: Parameters<typeof listDispatches>[0], dispatchIds: readonly string[]): Result<QueueItem[]> {
   const outboxResult = listOutbox(database);
   if (outboxResult.kind !== "ok") return outboxResult;
   const dispatchResult = listDispatches(database);
