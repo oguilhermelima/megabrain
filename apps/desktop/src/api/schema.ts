@@ -111,6 +111,65 @@ export const statusSchema = z.looseObject({
   deliveryChannels: z.array(z.looseObject({ agent: z.string(), channel: z.string(), status: z.string() })),
 })
 
+// megabrain's own project registry. A project enters it in two ways only: megabrain worked in it
+// (spawn or worktree create registers the repository; the first run backfills from history), or the
+// person imported it (a local folder or a GitHub clone).
+// `megabrain repo list|add <path>|clone <url> [--into <dir>]|remove <name|path> --json`
+export const repositorySchema = z.looseObject({
+  name: z.string(),
+  path: z.string(),
+  remote: z.string().nullable(),
+  source: z.enum(['megabrain', 'import']),
+  addedAt: z.string(),
+})
+
+// `megabrain repo github [--owner <login>] --json`: repositories the person can clone.
+export const githubRepositorySchema = z.looseObject({
+  nameWithOwner: z.string(),
+  url: z.string(),
+  description: z.string().nullable(),
+  isPrivate: z.boolean(),
+  updatedAt: z.string().nullable(),
+})
+
+// One agent session found in a worktree, started by megabrain or by hand.
+export const projectSessionSchema = z.looseObject({
+  agent: z.enum(['claude', 'codex', 'grok', 'agy']),
+  /** agent:id, usable with `orchestrate transcript --session`. */
+  sessionId: z.string(),
+  title: z.string(),
+  status: z.enum(['working', 'idle', 'waiting', 'ended']),
+  startedAt: z.string().nullable(),
+  lastActivityAt: z.string().nullable(),
+  /** Set when megabrain started this session as a dispatch. */
+  dispatchId: z.string().nullable(),
+})
+
+export const projectWorktreeSchema = z.looseObject({
+  path: z.string(),
+  /** Branch name, or null when HEAD is detached. */
+  branch: z.string().nullable(),
+  head: z.string().nullable(),
+  primary: z.boolean(),
+  parent: z.string().nullable(),
+  pullRequest: z.looseObject({ number: z.number(), state: z.string(), url: z.string() }).nullable(),
+  sessions: z.array(projectSessionSchema),
+})
+
+// `megabrain projects --json`: every registered project with its main checkout first, then its
+// worktrees, and the agent sessions in each.
+export const projectsSchema = z.array(
+  z.looseObject({
+    name: z.string(),
+    path: z.string(),
+    remote: z.string().nullable(),
+    source: z.enum(['megabrain', 'import']),
+    /** The folder no longer exists or is no longer a git repository. */
+    missing: z.boolean(),
+    worktrees: z.array(projectWorktreeSchema),
+  }),
+)
+
 export const worktreeListSchema = z.array(
   z.looseObject({
     path: z.string(),
@@ -168,6 +227,11 @@ export type DoctorReport = z.infer<typeof doctorReportSchema>
 export type Status = z.infer<typeof statusSchema>
 export type Dispatch = Status['dispatches'][number]
 export type Worktree = z.infer<typeof worktreeListSchema>[number]
+export type Repository = z.infer<typeof repositorySchema>
+export type GithubRepository = z.infer<typeof githubRepositorySchema>
+export type Project = z.infer<typeof projectsSchema>[number]
+export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
+export type ProjectSession = z.infer<typeof projectSessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
 export type CodeEntry = z.infer<typeof codeEntrySchema>

@@ -1,5 +1,5 @@
 import type { DesktopApi, PathLink } from '@/api/adapter'
-import { mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { mockGithubRepositories, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -63,6 +63,11 @@ export function createMockApi(): DesktopApi {
     },
     openMain: async () => {},
     transcript: async (target) => ({ ...mockTranscript, dispatchId: 'dispatchId' in target ? target.dispatchId : null, sessionId: 'sessionId' in target ? target.sessionId : mockTranscript.sessionId }),
+    projects: async () => mockProjects,
+    importFolder: async (path) => mockImported(path, null),
+    importClone: async (url, into) => mockImported(`${into}/${url.split('/').at(-1) ?? 'repo'}`, url),
+    githubRepositories: async () => mockGithubRepositories,
+    pickFolder: async () => '/Users/operator/Workspaces/new-project',
     codeTree: async () => mockCodeTree,
     codeRead: async (_root, path) => {
       const text = mockCodeFiles[path]

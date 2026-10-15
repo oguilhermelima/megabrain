@@ -1,4 +1,4 @@
-import type { ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -283,3 +283,70 @@ export const mockCodeDiff: CodeDiff = {
   binary: false,
   tooLarge: false,
 }
+
+const ago = (minutes: number) => new Date(Date.parse('2026-10-15T12:00:00.000Z') - minutes * 60_000).toISOString()
+const root = '/Users/operator/Workspaces'
+const tree = '/Users/operator/Workspaces/Worktrees'
+
+export const mockProjects: Project[] = [
+  {
+    name: 'stack',
+    path: `${root}/local/stack`,
+    remote: null,
+    source: 'import',
+    missing: false,
+    worktrees: [
+      { path: `${root}/local/stack`, branch: 'main', head: 'a1b2c3d', primary: true, parent: null, pullRequest: null, sessions: [
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000001', title: 'Monitoring backups', status: 'working', startedAt: ago(840), lastActivityAt: ago(1), dispatchId: null },
+      ] },
+    ],
+  },
+  {
+    name: 'canto',
+    path: `${root}/canto`,
+    remote: 'https://github.com/operator/canto',
+    source: 'megabrain',
+    missing: false,
+    worktrees: [
+      { path: `${root}/canto`, branch: 'main', head: 'f00ba12', primary: true, parent: null, pullRequest: null, sessions: [
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000002', title: 'Six visual changes on home', status: 'working', startedAt: ago(90), lastActivityAt: ago(1), dispatchId: null },
+      ] },
+      { path: `${tree}/fix-player-seek`, branch: 'fix/player-seek', head: 'c0ffee1', primary: false, parent: 'main', pullRequest: { number: 412, state: 'OPEN', url: 'https://github.com/operator/canto/pull/412' }, sessions: [
+        { agent: 'codex', sessionId: 'codex:019a7c2e-55b1-7e20-a3c4-8d9e0f1a2b3c', title: 'fix/player-seek', status: 'waiting', startedAt: ago(60), lastActivityAt: ago(3), dispatchId: 'dispatch-20261014210344000-41100-5d2e8c19' },
+      ] },
+      { path: `${tree}/feat-extension`, branch: 'feat/extension', head: 'beef123', primary: false, parent: 'main', pullRequest: null, sessions: [
+        { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7000-8000-000000000003', title: 'feat/extension', status: 'idle', startedAt: ago(30), lastActivityAt: ago(0), dispatchId: null },
+      ] },
+      { path: `${tree}/canto-detached`, branch: null, head: '0fcc0b0', primary: false, parent: null, pullRequest: null, sessions: [] },
+    ],
+  },
+  {
+    name: 'megabrain',
+    path: `${root}/megabrain`,
+    remote: 'https://github.com/operator/megabrain',
+    source: 'megabrain',
+    missing: false,
+    worktrees: [
+      { path: `${root}/megabrain`, branch: 'main', head: '82d09a0', primary: true, parent: null, pullRequest: null, sessions: [
+        { agent: 'claude', sessionId: 'claude:5f1c2a7e-0d6b-4b8e-9c55-1e2f3a4b5c6d', title: 'Desktop app as an agent IDE', status: 'working', startedAt: ago(600), lastActivityAt: ago(0), dispatchId: null },
+      ] },
+      { path: `${tree}/feat-desktop-panel`, branch: 'feat/desktop-panel', head: '1111111', primary: false, parent: 'main', pullRequest: { number: 83, state: 'OPEN', url: 'https://github.com/operator/megabrain/pull/83' }, sessions: [
+        { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7e20-a3c4-8d9e0f1a2b3c', title: 'feat/desktop-panel', status: 'working', startedAt: ago(40), lastActivityAt: ago(1), dispatchId: 'dispatch-20261014205812000-41022-7a1c9e03' },
+      ] },
+      { path: `${tree}/feat-desktop-panel-columns`, branch: 'feat/desktop-panel-columns', head: '2222222', primary: false, parent: 'feat/desktop-panel', pullRequest: { number: 84, state: 'OPEN', url: 'https://github.com/operator/megabrain/pull/84' }, sessions: [
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000004', title: 'feat/desktop-panel-columns', status: 'working', startedAt: ago(20), lastActivityAt: ago(0), dispatchId: 'dispatch-20261014212200000-41250-3c4d5e6f' },
+      ] },
+      { path: `${tree}/chore-old-probe`, branch: 'chore/old-probe', head: '3333333', primary: false, parent: 'main', pullRequest: { number: 81, state: 'MERGED', url: 'https://github.com/operator/megabrain/pull/81' }, sessions: [
+        { agent: 'grok', sessionId: 'grok:0b1c2d3e-0000-4000-8000-000000000005', title: 'probe the leader socket', status: 'ended', startedAt: ago(2000), lastActivityAt: ago(1900), dispatchId: null },
+      ] },
+    ],
+  },
+  { name: 'old-thing', path: `${root}/old-thing`, remote: null, source: 'import', missing: true, worktrees: [] },
+]
+
+export const mockGithubRepositories: GithubRepository[] = [
+  { nameWithOwner: 'operator/canto', url: 'https://github.com/operator/canto', description: 'Media apps for web, phone and TV', isPrivate: true, updatedAt: ago(60) },
+  { nameWithOwner: 'operator/userscripts', url: 'https://github.com/operator/userscripts', description: null, isPrivate: false, updatedAt: ago(5000) },
+]
+
+export const mockImported = (path: string, remote: string | null): Repository => ({ name: path.split('/').at(-1) ?? path, path, remote, source: 'import', addedAt: ago(0) })
