@@ -1,4 +1,4 @@
-import type { GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -43,6 +43,20 @@ export interface DesktopApi {
   setPillExpanded(expanded: boolean): Promise<void>
   onPillExpanded(listener: (expanded: boolean) => void): () => void
   openMain(): Promise<void>
+  /** Everything the Settings window shows. */
+  settings(): Promise<Settings>
+  /** Set the admission policy; null turns it off. */
+  setPolicy(policy: AdmissionPolicy | null): Promise<void>
+  setResourceHistory(enabled: boolean): Promise<void>
+  setSupervisor(running: boolean): Promise<void>
+  setLimitNotice(enabled: boolean, intervalSeconds?: number): Promise<void>
+  setLimitProvider(provider: string, enabled: boolean): Promise<void>
+  /** Create or replace a chain. */
+  saveChain(chain: Chain): Promise<void>
+  deleteChain(name: string): Promise<void>
+  refreshModels(agent: string): Promise<void>
+  /** null clears the default. */
+  setTerminalDefault(name: string | null): Promise<void>
   /** Every registered project, its worktrees and the agent sessions in them. */
   projects(): Promise<Project[]>
   /** Import a local git repository folder into the registry. */
