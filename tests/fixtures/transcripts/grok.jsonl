@@ -1,5 +1,5 @@
 {"timestamp":1790848800,"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Please inspect the project."}}}}
 {"timestamp":1790848801,"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"thinking","content":{"type":"text","text":"I should inspect the relevant files."}}}}
-{"timestamp":1790848802,"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"tool_call","toolCall":{"id":"tool_fixture_1","name":"read_file","input":{"path":"/Users/operator/project/README.md"}}}}
+{"timestamp":1790848802,"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"tool_call","toolCall":{"id":"tool_fixture_1","name":"read_file","input":{"path":"/Users/operator/project/README.md"}}}}}
 {"timestamp":1790848803,"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"tool_result","toolResult":{"id":"tool_fixture_1","content":"Project documentation.","status":"success"}}}}
-{"timestamp":1790848804,"method":"session/update","params":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The project documentation describes the setup."}}}
+{"timestamp":1790848804,"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The project documentation describes the setup."}}}}

@@ -110,7 +110,12 @@ describe("orchestrate transcript", () => {
     await addDispatch(root, { agentSessionId: "missing-session" });
     const output = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
       MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
-    }, fakeProcess((command) => command === "tmux" ? ok({ stdout: "pane output\n", stderr: "", exitCode: 0 }) : failed("unexpected command"))));
+    }, fakeProcess((command, args) => {
+      if (command !== "tmux") return failed("unexpected command");
+      if (args[0] === "list-panes") return ok({ stdout: "%1\n", stderr: "", exitCode: 0 });
+      if (args[0] === "capture-pane") return ok({ stdout: "pane output\n", stderr: "", exitCode: 0 });
+      return failed("unexpected tmux command");
+    })));
     expect(output.source).toBe("terminal");
     expect(output.events).toEqual([expect.objectContaining({ kind: "system", text: "pane output" })]);
   });
