@@ -72,10 +72,10 @@ function Column({ column, onSelect }: { column: ColumnModel; onSelect: (dispatch
           <ChildCard key={node.chat.dispatchId} node={node} onSelect={onSelect} />
         ))}
       </div>
-      <div className="min-h-0 flex-1 border-t border-white/[0.06]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/[0.06]">
         <Conversation target={{ sessionId: column.parentSessionId }} live />
       </div>
-      {column.endedCount > 0 && <div className="px-5 py-2 text-[12px] text-ink-500">{column.endedCount} ended</div>}
+      {column.endedCount > 0 && <div className="shrink-0 px-5 py-2 text-[12px] text-ink-500">{column.endedCount} ended</div>}
     </div>
   )
 }
