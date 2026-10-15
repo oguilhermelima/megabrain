@@ -33,6 +33,14 @@ function countEnded(chats: Dispatch[], byParent: Map<string, Dispatch[]>, parent
   return count
 }
 
+function hasOpenChat(byParent: Map<string, Dispatch[]>, parentId: string): boolean {
+  const direct = byParent.get(parentId) ?? []
+  return direct.some((chat) => {
+    if (chatState(chat) !== 'ended') return true
+    return chat.agentSessionId !== null && chat.agentSessionId !== undefined && hasOpenChat(byParent, chat.agentSessionId)
+  })
+}
+
 function buildChildren(byParent: Map<string, Dispatch[]>, parentId: string): ChildNode[] {
   const direct = (byParent.get(parentId) ?? []).filter((chat) => chatState(chat) !== 'ended')
   const sorted = [...direct].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
@@ -59,7 +67,7 @@ export function buildColumns(chats: Dispatch[]): ColumnModel[] {
 
   const agentSessionIds = new Set(chats.map((chat) => chat.agentSessionId).filter((id): id is string => id !== null && id !== undefined && id !== ''))
 
-  const rootIds = [...byParent.keys()].filter((parentId) => !agentSessionIds.has(parentId))
+  const rootIds = [...byParent.keys()].filter((parentId) => !agentSessionIds.has(parentId) && hasOpenChat(byParent, parentId))
 
   const columns = rootIds.map((parentSessionId) => {
     const group = byParent.get(parentSessionId) ?? []
