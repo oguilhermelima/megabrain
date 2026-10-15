@@ -58,6 +58,10 @@ function transcript(result: Result<string>): { events: Array<{ id: string; at: s
   return JSON.parse(result.value) as { events: Array<{ id: string; at: string | null; kind: string; text: string; tool?: { name: string; input?: string; status?: string } }>; cursor: string; source: string };
 }
 
+function transcriptJson(result: Result<string>): { events: Array<{ id: string; at: string | null; kind: string; text: string; tool?: { name: string; input?: string; status?: string } }>; cursor: string; source: string; truncated?: boolean } {
+  return transcript(result) as ReturnType<typeof transcript> & { truncated?: boolean };
+}
+
 describe("orchestrate transcript", () => {
   test.each(["claude", "codex", "grok"] as const)("parses %s session events in order", async (agent) => {
     const { root, home } = await setup();
@@ -89,6 +93,45 @@ describe("orchestrate transcript", () => {
     expect(newer.cursor).not.toBe(initial.cursor);
   });
 
+  test("bounds default output to the newest 300 events and preserves the end cursor", async () => {
+    const { root, home } = await setup();
+    const project = join(home, ".claude", "projects", "sample-project");
+    await mkdir(project, { recursive: true });
+    await writeFile(join(project, "fixture-session.jsonl"), Array.from({ length: 305 }, (_, index) => JSON.stringify({
+      type: "user", timestamp: `2026-10-01T10:00:${String(index % 60).padStart(2, "0")}.000Z`, message: { role: "user", content: `event ${index}` },
+    })).join("\n") + "\n");
+    await addDispatch(root, { agentSessionId: "fixture-session" });
+    const environment = { MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller" };
+    const first = transcriptJson(await executeOrchestrateTranscript(["dispatch-1", "--json"], environment, fakeProcess()));
+    expect(first.events).toHaveLength(300);
+    expect(first.events[0]?.text).toBe("event 5");
+    expect(first.events.at(-1)?.text).toBe("event 304");
+    expect(first.truncated).toBe(true);
+    const all = transcriptJson(await executeOrchestrateTranscript(["dispatch-1", "--since", "v1:0", "--limit", "400", "--json"], environment, fakeProcess()));
+    expect(all.events).toHaveLength(305);
+    expect(all.truncated).toBeUndefined();
+    const capped = transcriptJson(await executeOrchestrateTranscript(["dispatch-1", "--since", "v1:0", "--limit", "20", "--json"], environment, fakeProcess()));
+    expect(capped.events.map((event) => event.text)).toEqual(Array.from({ length: 20 }, (_, index) => `event ${index + 285}`));
+    expect(capped.truncated).toBe(true);
+    expect(capped.cursor).toBe(first.cursor);
+  });
+
+  test("finds a Claude child log by worktree, creation time and first-entry cwd", async () => {
+    const { root, home } = await setup();
+    const project = join(home, ".claude", "projects", "-Users-operator-project");
+    await mkdir(project, { recursive: true });
+    const entry = (cwd: string, timestamp: string, text: string) => JSON.stringify({ cwd, type: "assistant", timestamp, message: { role: "assistant", content: text } });
+    await writeFile(join(project, "older.jsonl"), `${entry("/Users/operator/project", "2026-10-01T09:59:59.000Z", "too early")}\n`);
+    await writeFile(join(project, "other-cwd.jsonl"), `${entry("/Users/operator/other", "2026-10-01T10:00:01.000Z", "wrong cwd")}\n`);
+    await writeFile(join(project, "child-session.jsonl"), `${entry("/Users/operator/project", "2026-10-01T10:00:01.000Z", "matched child")}\n`);
+    await addDispatch(root, { agentSessionId: null, createdAt: "2026-10-01T10:00:00.000Z" });
+    const output = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
+      MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
+    }, fakeProcess()));
+    expect(output.source).toBe("claude");
+    expect(output.events.map((event) => event.text)).toEqual(["matched child"]);
+  });
+
   test("caps event text and skips signature-only thinking", async () => {
     const { root, home } = await setup();
     await mkdir(join(home, ".claude", "projects", "sample"), { recursive: true });
@@ -118,6 +161,42 @@ describe("orchestrate transcript", () => {
     })));
     expect(output.source).toBe("terminal");
     expect(output.events).toEqual([expect.objectContaining({ kind: "system", text: "pane output" })]);
+  });
+
+  test.each([
+    [{ id: "terminal-1", ok: true, result: { terminal: { tail: ["first host line", "second host line"] } } }, "first host line\nsecond host line"],
+    [{ id: "terminal-1", ok: true, result: { text: "legacy host text" } }, "legacy host text"],
+  ] as const)("extracts terminal text from the captured host read payload shape", async (payload, expected) => {
+    const { root, home } = await setup();
+    await addDispatch(root, { runtime: "host", childHost: "orca", terminalId: "terminal-1", workspaceId: "workspace-1", agentSessionId: "missing-session" });
+    const output = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
+      MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
+    }, fakeProcess(() => ok({ stdout: JSON.stringify(payload), stderr: "", exitCode: 0 }))));
+    expect(output.source).toBe("terminal");
+    expect(output.events).toEqual([expect.objectContaining({ kind: "system", text: expected })]);
+  });
+
+  test("uses shell commands as tool event text for Codex and Claude", async () => {
+    const { root, home } = await setup();
+    const codex = join(home, ".codex", "sessions", "2026", "10", "01");
+    await mkdir(codex, { recursive: true });
+    await writeFile(join(codex, "rollout-2026-10-01T10-00-00-fixture-thread.jsonl"), [
+      JSON.stringify({ type: "response_item", payload: { type: "function_call", name: "exec", arguments: JSON.stringify({ cmd: "printf 'codex command'\necho next" }) } }),
+    ].join("\n") + "\n");
+    await addDispatch(root, { agent: "codex", agentThreadId: "fixture-thread" });
+    const codexOutput = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
+      MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
+    }, fakeProcess()));
+    expect(codexOutput.events[0]?.text).toBe("printf 'codex command'");
+
+    await writeFile(join(home, ".claude", "projects", "sample-project", "fixture-session.jsonl"), `${JSON.stringify({
+      type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: { command: "echo claude command\necho next" } }] },
+    })}\n`);
+    await addDispatch(root, { agent: "claude", agentSessionId: "fixture-session" });
+    const claudeOutput = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
+      MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
+    }, fakeProcess()));
+    expect(claudeOutput.events[0]?.text).toBe("echo claude command");
   });
 
   test("refuses a foreign dispatch without --operator", async () => {
