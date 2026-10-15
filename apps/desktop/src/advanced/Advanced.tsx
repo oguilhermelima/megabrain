@@ -9,6 +9,7 @@ import { Sidebar, type CodeTarget } from '@/advanced/Sidebar'
 import { ChatView } from '@/chat/ChatView'
 import { SessionView } from '@/chat/SessionView'
 import { CodeView } from '@/code/CodeView'
+import { ImportProject } from '@/import/ImportProject'
 import { ErrorNote } from '@/components/ui'
 import { useStatus } from '@/lib/useStatus'
 
@@ -64,6 +65,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [sidebarSelected, setSidebarSelected] = useState<Selected | null>(null)
   const [code, setCode] = useState<CodeTarget | null>(null)
+  const [importing, setImporting] = useState(false)
   const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   const order = useMemo(() => grouped.repositories.flatMap((repository) => repository.worktrees.flatMap((worktree) => worktree.chats.map((chat) => chat.dispatchId))), [grouped])
   const sessionRows = useMemo(() => sidebarSessionOrder(projects, new Set()), [projects])
@@ -199,8 +201,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             openSession(session, worktree?.path ?? '')
           }}
           onCode={setCode}
-          // Wired to the import sheet once that lane lands.
-          onImport={() => {}}
+          onImport={() => setImporting(true)}
         />
         <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-500">
           <span className="flex items-center gap-2">
@@ -221,6 +222,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         )}
         {sidebarDetail}
       </main>
+      {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
     </div>
   )
 }
