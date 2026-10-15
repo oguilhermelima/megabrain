@@ -43,6 +43,7 @@ import { executeStack } from "./commands/stack.js";
 import { executeSupervise, executeSupervisorWorker } from "./commands/supervise.js";
 import { executeStatus } from "./commands/status.js";
 import { executeResources } from "./commands/resources.js";
+import { executeSettings } from "./commands/settings.js";
 import { executeProc } from "../core/proc-runner.js";
 import { executeRepository } from "./commands/repository.js";
 import { executeProjects } from "./commands/projects.js";
@@ -66,14 +67,38 @@ export async function route(
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
   const { MEGABRAIN_OPERATOR: _inherited, ...environment } = dependencies.environment;
-  if (!args.includes("--operator")) return routeCommand(args, { ...dependencies, environment });
+  if (!args.includes("--operator")) return safeRouteCommand(args, { ...dependencies, environment });
   const [command, verb] = args;
   if (command !== "orchestrate" || verb === undefined || !operatorVerbs.has(verb)) {
     return failed(`--operator is not accepted by megabrain ${[command, verb].filter((part) => part !== undefined && !part.startsWith("-")).join(" ")}; it applies to orchestrate ${[...operatorVerbs].join(", ")}`, 2);
   }
   const refusal = operatorRefusal(environment.MEGABRAIN_DISPATCH_ID, await resolveSessionCaller(environment, dependencies.processAdapter));
   if (refusal !== undefined) return failed(refusal, 2);
-  return routeCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment: { ...environment, MEGABRAIN_OPERATOR: "1" } });
+  return safeRouteCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment: { ...environment, MEGABRAIN_OPERATOR: "1" } });
+}
+
+function oneLine(message: string): string {
+  return message.split(/\r?\n/, 1)[0] || "command failed";
+}
+
+async function safeRouteCommand(args: readonly string[], dependencies: RouterDependencies): Promise<Result<string>> {
+  try {
+    const result = await routeCommand(args, dependencies);
+    if (result.kind === "failed" && isSettingsWrite(args)) return { ...result, error: oneLine(result.error) };
+    return result;
+  } catch (cause: unknown) {
+    return failed(oneLine(cause instanceof Error ? cause.message : String(cause)));
+  }
+}
+
+function isSettingsWrite(args: readonly string[]): boolean {
+  const [command, verb, ...rest] = args;
+  if (command === "resources") return verb === "enable" || verb === "disable" || verb === "policy" && rest[0] !== "show";
+  if (command === "supervise") return args.length === 0 || args.length === 1 && args[0] === "--stop";
+  if (command === "chain") return verb === "save" || verb === "delete" || verb === "limits" && rest.some((arg) => ["--enable", "--disable", "--notice-on", "--notice-off", "--notice-interval"].includes(arg));
+  if (command === "model") return verb === "refresh";
+  if (command === "terminal") return verb === "default" && rest.length > 0;
+  return false;
 }
 
 async function routeCommand(
@@ -90,7 +115,7 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "settings"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -122,6 +147,7 @@ async function routeCommand(
   if (command === "supervise") return executeSupervise(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "status") return executeStatus(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "resources") return executeResources(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "settings") return executeSettings(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "proc") return executeProc(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "repo") return executeRepository(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "projects") return executeProjects(commandArgs, dependencies.environment, dependencies.processAdapter);

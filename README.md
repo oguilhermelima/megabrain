@@ -170,6 +170,14 @@ weekly credit window the Grok CLI's `/usage` shows, and a Grok coordinator is id
 session. The tmux badge and shell wrapper remain unsupported. Grok error patterns come from
 the installed CLI's message strings; unrecognized errors remain unknown.
 
+## Desktop settings
+
+`megabrain settings [--json]` reads the desktop Settings window's values in one call: supervisor,
+resource history and policy, usage-limit providers/notices/readings, chains, models, and terminal
+defaults and detection. Without `--json` it prints a short summary. The window writes through the
+existing `resources`, `supervise`, `chain limits`, `chain save|delete`, `model refresh`, and
+`terminal default` commands, then reads settings again.
+
 ## Chains: choosing who does the work
 
 A chain is an ordered list of steps. Each step names an agent, a model and an effort, and
@@ -201,6 +209,16 @@ megabrain chain run --worktree ~/code/api --prompt "$(cat brief.md)" --json
 The result always says which step it took and why the earlier ones were skipped, and that reason
 is recorded in the dispatch. When your first choice is exhausted you get the second one with an
 explanation, instead of a failure you have to diagnose.
+
+Create or replace a chain without opening an editor with `megabrain chain save`. It takes the
+same JSON selector and ordered steps as `chain add`, validates models the same way, and refuses an
+unknown model unless `--allow-unknown-model` is explicit:
+
+```sh
+megabrain chain save codex-first \
+  --when '{"parentAgent":"codex"}' \
+  --steps '[{"agent":"codex","model":"gpt-6-sol","effort":"low"}]' --json
+```
 
 ## Context policies
 

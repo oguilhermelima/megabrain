@@ -133,6 +133,7 @@ megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--operator] [--
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
 megabrain supervise [--status|--stop] — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 megabrain status [--json] — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
+megabrain settings [--json] — recommended when you need one read of the settings shown in the desktop app.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 megabrain proc start|run|list|status|stop|restart|logs ... — recommended when you need to run and inspect managed processes.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.
@@ -243,6 +244,7 @@ behind.
 megabrain chain list [--json] — recommended when you need to inspect the configured agent-selection chains.
 megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>] — recommended when you need to inspect or change provider usage-limit settings and notices.
 megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json] — recommended when you need to define a chain with matching rules and ordered agent steps.
+megabrain chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json] — recommended when you need to create or replace a chain without opening an editor.
 megabrain chain edit <name> [--allow-unknown-model] [--json] — recommended when you need to change an existing chain configuration.
 megabrain chain delete <name> [--json] — recommended when you need to remove a chain that is no longer used.
 megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json] — recommended when you need to replace a broken or unavailable model in a chain step.

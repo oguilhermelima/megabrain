@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, unlinkSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
@@ -96,8 +96,10 @@ export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArr
 function validateWriteConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> { return validateConfig(config, environment); }
 function writeConfig(config: ChainConfig, path: string): Result<ChainConfig> {
   try {
-    const directory = resolve(path, ".."); mkdirSync(directory, { recursive: true }); const temp = mkdtempSync(resolve(directory, ".chains-write-")); const tempPath = resolve(temp, "chains.json");
-    writeFileSync(tempPath, JSON.stringify(config, null, 2)); if (existsSync(path)) unlinkSync(path); renameSync(tempPath, path); return ok(config);
+    const directory = resolve(path, ".."); mkdirSync(directory, { recursive: true }); const temporaryDirectory = mkdtempSync(resolve(directory, ".chains-write-")); const temporaryPath = resolve(temporaryDirectory, "chains.json");
+    try { writeFileSync(temporaryPath, JSON.stringify(config, null, 2)); renameSync(temporaryPath, path); }
+    finally { rmSync(temporaryDirectory, { recursive: true, force: true }); }
+    return ok(config);
   } catch (cause: unknown) { return error(cause instanceof Error ? cause.message : `could not write chain file: ${path}`); }
 }
 function parseJson(value: string, label: string): Result<unknown> { try { return ok(JSON.parse(value)); } catch { return error(`chain ${label} has invalid JSON definition`); } }
@@ -122,6 +124,52 @@ function addChain(args: readonly string[], environment: ChainEnvironment): Resul
   const written = writeConfig({ ...read.value, chains: { ...read.value.chains, [name]: definition } }, chainPath(environment)); if (written.kind !== "ok") return written;
   return preserveStderr(ok(asJson ? json({ ...definition, name }) : `chain added: ${name}\n`), valid.stderr);
 }
+function saveChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
+  if (args[0] === "-h" || args[0] === "--help") return ok(usage("save"));
+  const name = args[0];
+  if (!name) return error("chain save requires a name", 2);
+  if (!validName(name)) return error(`invalid chain name: ${name}`);
+  let when: Record<string, string> | undefined;
+  let steps: unknown[] | undefined;
+  let asJson = false;
+  let allowUnknown = false;
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--json") asJson = true;
+    else if (arg === "--allow-unknown-model") allowUnknown = true;
+    else if (arg === "--when" || arg === "--steps") {
+      const value = args[index + 1];
+      if (value === undefined) return error(`${arg} requires a value`, 2);
+      index += 1;
+      const parsed = parseJson(value, name);
+      if (parsed.kind !== "ok") return parsed as Result<string>;
+      if (arg === "--when") {
+        const parsedWhen = record(parsed.value);
+        if (parsedWhen === undefined) return error(`chain ${name} has invalid JSON definition`);
+        when = parsedWhen as Record<string, string>;
+      } else {
+        if (!Array.isArray(parsed.value)) return error(`chain ${name} has invalid JSON definition`);
+        steps = parsed.value;
+      }
+    } else return error(`unknown chain save option: ${arg}`, 2);
+  }
+  if (when === undefined || steps === undefined) return error("chain save requires --when and --steps", 2);
+  const chainSteps: Record<string, unknown>[] = [];
+  for (const [index, step] of steps.entries()) {
+    const value = record(step);
+    if (value === undefined) return error(`invalid chain ${name} step ${index + 1}: expected an object`);
+    chainSteps.push(allowUnknown ? { ...value, unvalidated: true } : value);
+  }
+  const definition = { when, steps: chainSteps };
+  const read = readConfig(environment);
+  if (read.kind !== "ok") return read;
+  const config: ChainConfig = { ...read.value, chains: { ...read.value.chains, [name]: definition } };
+  const valid = validateWriteConfig(config, environment);
+  if (valid.kind !== "ok") return valid;
+  const written = writeConfig(config, chainPath(environment));
+  if (written.kind !== "ok") return written;
+  return preserveStderr(ok(asJson ? json({ ...definition, name }) : `chain saved: ${name}\n`), valid.stderr);
+}
 function editChain(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return Promise.resolve(ok(usage("edit")));
   const name = args[0]; if (!name) return Promise.resolve(error(usageMessage("chain-edit"), 2)); let asJson = false;
@@ -143,10 +191,11 @@ function repairChain(args: readonly string[], environment: ChainEnvironment): Re
   for (let i = 1; i < args.length; i += 1) { const arg = args[i]; if (arg === "--json") asJson = true; else if (["--step", "--model", "--effort"].includes(arg)) { const value = args[++i]; if (!value) return error(`${arg} requires a value`, 2); if (arg === "--step") step = Number(value); else if (arg === "--model") model = value; else { effort = value; hasEffort = true; } } else return error(`unknown chain repair option: ${arg}`, 2); }
   if (!Number.isInteger(step) || step <= 0) return error("chain repair requires a positive --step number", 2); if (!model) return error("--model is required for chain repair", 2); const read = readConfig(environment); if (read.kind !== "ok") return read; const current: any = read.value.chains[name]?.steps?.[step - 1]; if (!current) return error(`chain step not found: ${name} step ${step}`); const replacement: any = { ...current, model }; if (hasEffort) replacement.effort = effort; else delete replacement.effort; const config: any = { ...read.value, chains: { ...read.value.chains, [name]: { ...read.value.chains[name], steps: read.value.chains[name].steps.map((entry, index) => index === step - 1 ? replacement : entry) } } }; const valid = validateWriteConfig({ ...config, chains: { [name]: { ...config.chains[name], steps: [replacement] } } }, environment); if (valid.kind !== "ok") return valid; const written = writeConfig(config, chainPath(environment)); if (written.kind !== "ok") return written; return preserveStderr(ok(asJson ? json({ repaired: true, chain: name, step, value: replacement }) : `chain repaired: ${name} step ${step}\n`), valid.stderr);
 }
-function usage(kind: "chain" | "list" | "limits" | "add" | "edit" | "delete" | "repair"): string {
+function usage(kind: "chain" | "list" | "limits" | "add" | "save" | "edit" | "delete" | "repair"): string {
   if (kind === "chain") return usageText("chain");
   if (kind === "limits") return usageText("chain-limits");
   if (kind === "add") return usageText("chain-add");
+  if (kind === "save") return usageText("chain-save");
   if (kind === "edit") return usageText("chain-edit");
   if (kind === "delete") return usageText("chain-delete");
   if (kind === "repair") return usageText("chain-repair");
@@ -182,7 +231,7 @@ function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitRea
     reading: resultReading ? { kind: resultReading.kind, basis: resultReading.basis } : null,
   };
 }
-async function limits(environment: ChainEnvironment, asJson: boolean, config: ChainConfig, processAdapter: ProcessAdapter): Promise<string> {
+export async function readLimitRows(environment: ChainEnvironment, config: ChainConfig, processAdapter: ProcessAdapter): Promise<LimitRow[]> {
   const root = resolveStateDirectory(environment);
   const rows: LimitRow[] = [];
   // Sequential, not parallel: a provider's two windows share one on-disk cache
@@ -194,6 +243,10 @@ async function limits(environment: ChainEnvironment, asJson: boolean, config: Ch
       rows.push(rowFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
     }
   }
+  return rows;
+}
+async function limits(environment: ChainEnvironment, asJson: boolean, config: ChainConfig, processAdapter: ProcessAdapter): Promise<string> {
+  const rows = await readLimitRows(environment, config, processAdapter);
   if (asJson) return JSON.stringify(rows, null, 2) + "\n";
   const output = ["PROVIDER WINDOW   STATUS    USED         RESET        SOURCE   REASON"];
   for (const row of rows) output.push(`${row.provider.padEnd(8)} ${row.window.padEnd(8)} ${row.status.padEnd(9)} ${(row.usedPercent === null ? "-" : row.usedPercent).toString().padEnd(12)} ${(row.resetsAt ?? "-").padEnd(28)} ${row.source.padEnd(8)} ${row.reason ?? "-"}`);
@@ -204,6 +257,7 @@ async function execute(args: readonly string[], environment: ChainEnvironment, p
   if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, formatList(valid.value, asJson)) : valid; }
   if (subcommand === "limits") return limitsCommand(rest, environment, processAdapter);
   if (subcommand === "add") return Promise.resolve(addChain(rest, environment));
+  if (subcommand === "save") return Promise.resolve(saveChain(rest, environment));
   if (subcommand === "edit") return editChain(rest, environment, processAdapter);
   if (subcommand === "delete") return Promise.resolve(deleteChain(rest, environment));
   if (subcommand === "repair") return Promise.resolve(repairChain(rest, environment));
