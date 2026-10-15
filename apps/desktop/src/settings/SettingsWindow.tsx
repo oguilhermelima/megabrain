@@ -48,7 +48,18 @@ export function SettingsWindow({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="absolute inset-0 z-50 flex bg-ink-950/70 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Settings">
-      <div className="glass m-auto flex h-[min(760px,92vh)] w-[min(960px,94vw)] overflow-hidden rounded-[28px] border border-white/[0.08]">
+      <div className="glass relative m-auto flex h-[min(760px,92vh)] w-[min(960px,94vw)] overflow-hidden rounded-[28px] border border-white/[0.08]">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close settings"
+          title="Close (Esc)"
+          className="absolute top-3 right-3 flex size-8 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.1] hover:text-ink-200"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+            <path d="M3 3l10 10M13 3L3 13" />
+          </svg>
+        </button>
         <aside className="flex w-[220px] flex-col gap-1 border-r border-white/[0.06] p-4">
           <h2 className="px-2 pb-3 text-[15px] font-semibold text-ink-100">Settings</h2>
           {sections.map((item) => (
@@ -61,11 +72,8 @@ export function SettingsWindow({ onClose }: { onClose: () => void }) {
               {item.label}
             </button>
           ))}
-          <button type="button" onClick={onClose} className="mt-auto rounded-xl px-3 py-2 text-left text-[13px] text-ink-500 hover:text-ink-200">
-            Close
-          </button>
         </aside>
-        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-6 pt-6">
           {settings === null ? (
             <div className="flex h-full items-center justify-center">
               <Spinner />
