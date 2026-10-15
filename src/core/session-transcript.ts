@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
-import { findClaudeTranscript, findCodexRollout } from "./context-meter.js";
+import { basename, join } from "node:path";
+import { findClaudeTranscript, findClaudeTranscriptForWorktree, findCodexRollout } from "./context-meter.js";
 
 export type TranscriptAgent = "claude" | "codex" | "grok" | "agy";
 export type TranscriptSource = TranscriptAgent | "terminal";
@@ -15,6 +15,7 @@ export type SessionTranscript = Readonly<{
   source: TranscriptSource;
   cursor: string;
   events: readonly TranscriptEvent[];
+  truncated?: true;
 }>;
 
 type JsonRecord = Record<string, unknown>;
@@ -38,6 +39,30 @@ function textValue(value: unknown): string {
 function jsonText(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function shellCommand(name: string, input: string | undefined): string | undefined {
+  if (input === undefined || (name !== "exec" && name.toLowerCase() !== "bash")) return undefined;
+  const commandFrom = (value: unknown): string | undefined => {
+    const item = record(value);
+    const command = string(item?.cmd) ?? string(item?.command);
+    return command?.split("\n", 1)[0]?.slice(0, 200);
+  };
+  try {
+    const parsed: unknown = JSON.parse(input);
+    const command = commandFrom(parsed);
+    if (command !== undefined) return command;
+  } catch { /* Some Codex logs serialize the wrapper call as source text. */ }
+  const match = /(?:cmd|command)\s*:\s*("(?:\\.|[^"\\])*")/.exec(input);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    const command: unknown = JSON.parse(match[1]);
+    return typeof command === "string" ? command.split("\n", 1)[0]?.slice(0, 200) : undefined;
+  } catch { return undefined; }
+}
+
+function toolText(name: string, input: string | undefined): string {
+  return shellCommand(name, input) ?? name;
 }
 
 function capText(value: string): string {
@@ -72,7 +97,7 @@ function contentEvents(content: unknown, role: string, at: unknown): Omit<Transc
     } else if (type === "tool_use" || type === "tool_call" || type === "function_call" || type === "custom_tool_call") {
       const name = string(part.name) ?? string(part.tool_name) ?? "tool";
       const input = jsonText(part.input ?? part.arguments);
-      events.push(event(at, "tool-call", name, { name, ...(input === undefined ? {} : { input }) }));
+      events.push(event(at, "tool-call", toolText(name, input), { name, ...(input === undefined ? {} : { input }) }));
     } else if (type === "tool_result" || type === "function_call_output" || type === "custom_tool_call_output") {
       const result = textValue(part.content ?? part.output ?? part.text);
       const isError = part.is_error === true || part.status === "error" || part.status === "failed";
@@ -108,7 +133,7 @@ function codexPartEvents(payload: JsonRecord, at: unknown): Omit<TranscriptEvent
   if (["function_call", "custom_tool_call", "local_shell_call"].includes(type)) {
     const name = string(payload.name) ?? string(payload.tool_name) ?? (type === "local_shell_call" ? "shell" : "tool");
     const input = jsonText(payload.arguments ?? payload.input);
-    return [event(at, "tool-call", name, { name, ...(input === undefined ? {} : { input }) })];
+    return [event(at, "tool-call", toolText(name, input), { name, ...(input === undefined ? {} : { input }) })];
   }
   if (["function_call_output", "custom_tool_call_output"].includes(type)) {
     const output = textValue(payload.output ?? payload.content);
@@ -167,7 +192,7 @@ function cursorOffset(cursor: string | undefined): number | undefined {
   return Number.isSafeInteger(offset) ? offset : undefined;
 }
 
-export function parseSessionLog(agent: TranscriptAgent, source: string, contents: string, since?: string): Readonly<{ cursor: string; events: readonly TranscriptEvent[] }> | undefined {
+export function parseSessionLog(agent: TranscriptAgent, source: string, contents: string, since?: string, limit = 300): Readonly<{ cursor: string; events: readonly TranscriptEvent[]; truncated?: true }> | undefined {
   const after = cursorOffset(since);
   if (after === undefined) return undefined;
   const bytes = Buffer.from(contents, "utf8");
@@ -190,7 +215,9 @@ export function parseSessionLog(agent: TranscriptAgent, source: string, contents
     start = end;
   }
   const cursor = `v1:${start}`;
-  return { cursor, events: events.filter((entry) => entry.offset >= after).map(({ event: item }) => item) };
+  const matched = events.filter((entry) => entry.offset >= after).map(({ event: item }) => item);
+  const truncated = matched.length > limit;
+  return { cursor, events: truncated ? matched.slice(-limit) : matched, ...(truncated ? { truncated: true as const } : {}) };
 }
 
 export function isTranscriptCursor(cursor: string): boolean {
@@ -232,14 +259,14 @@ export async function sessionLogPath(agent: TranscriptAgent, home: string, sessi
   return undefined;
 }
 
-export async function readTranscriptEvents(agent: TranscriptAgent, home: string, sessionId: string | undefined, cwd: string | undefined, grokHome: string | undefined, since: string | undefined): Promise<Readonly<{ source: TranscriptSource; sessionId: string | null; cursor: string; events: readonly TranscriptEvent[] }> | undefined> {
+export async function readTranscriptEvents(agent: TranscriptAgent, home: string, sessionId: string | undefined, cwd: string | undefined, grokHome: string | undefined, since: string | undefined, limit = 300, pathOverride?: string): Promise<Readonly<{ source: TranscriptSource; sessionId: string | null; cursor: string; events: readonly TranscriptEvent[]; truncated?: true }> | undefined> {
   if (sessionId === undefined || sessionId === "" || agent === "agy") return undefined;
-  const path = await sessionLogPath(agent, home, sessionId, cwd, grokHome);
+  const path = pathOverride ?? await sessionLogPath(agent, home, sessionId, cwd, grokHome);
   if (path === undefined) return undefined;
   let contents: string;
   try { contents = await readFile(path, "utf8"); } catch { return undefined; }
   const source = createHash("sha256").update(path).digest("hex").slice(0, 16);
-  const parsed = parseSessionLog(agent, source, contents, since);
+  const parsed = parseSessionLog(agent, source, contents, since, limit);
   return parsed === undefined ? undefined : { ...parsed, source: agent, sessionId };
 }
 

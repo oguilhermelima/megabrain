@@ -1,5 +1,7 @@
+import { basename } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { findClaudeTranscriptForWorktree } from "../../core/context-meter.js";
 import { formatSessionTranscript, isTranscriptCursor, readTranscriptEvents, terminalTranscript, type SessionTranscript, type TranscriptAgent } from "../../core/session-transcript.js";
 import { usageText } from "../../core/usage.js";
 import { executeOrchestrateRead, parentMeta } from "./orchestrate-read-liveness.js";
@@ -25,10 +27,11 @@ function parseTranscriptSession(value: string): Result<Readonly<{ agent: Transcr
   return ok({ agent: prefix as TranscriptAgent, id });
 }
 
-function transcriptOptions(args: readonly string[]): Result<Readonly<{ id?: string; session?: string; since?: string; json: boolean }>> {
+function transcriptOptions(args: readonly string[]): Result<Readonly<{ id?: string; session?: string; since?: string; limit: number; json: boolean }>> {
   let id: string | undefined;
   let session: string | undefined;
   let since: string | undefined;
+  let limit = 300;
   let json = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index] ?? "";
@@ -42,14 +45,20 @@ function transcriptOptions(args: readonly string[]): Result<Readonly<{ id?: stri
       since = args[index + 1];
       if (since === undefined || since.startsWith("--")) return failed("--since requires a cursor", 2);
       index += 1;
+    } else if (argument === "--limit") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) return failed("--limit requires a number from 1 to 2000", 2);
+      limit = Number(value);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 2000) return failed("--limit must be a number from 1 to 2000", 2);
+      index += 1;
     } else if (argument === "--json") json = true;
-    else if (argument === "-h" || argument === "--help") return ok({ json, id: "--help" });
+    else if (argument === "-h" || argument === "--help") return ok({ json, id: "--help", limit });
     else if (argument.startsWith("-")) return failed(`unknown orchestrate transcript option: ${argument}`, 2);
     else if (id === undefined) id = argument;
     else return failed("orchestrate transcript accepts one dispatch id", 2);
   }
   if ((id === undefined) === (session === undefined)) return failed(usageText("orchestrate-transcript"), 2);
-  return ok({ ...(id === undefined ? {} : { id }), ...(session === undefined ? {} : { session }), ...(since === undefined ? {} : { since }), json });
+  return ok({ ...(id === undefined ? {} : { id }), ...(session === undefined ? {} : { session }), ...(since === undefined ? {} : { since }), limit, json });
 }
 
 async function terminalFallback(dispatchId: string, agent: string, sessionId: string | undefined, since: string | undefined, json: boolean, environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
@@ -58,7 +67,16 @@ async function terminalFallback(dispatchId: string, agent: string, sessionId: st
   if (read.kind === "ok") {
     try {
       const value = objectValue(JSON.parse(read.value) as unknown);
-      text = stringValue(value?.text);
+      const hostText = (payload: unknown): string | undefined => {
+        const host = objectValue(payload);
+        const result = objectValue(host?.result);
+        const terminal = objectValue(result?.terminal);
+        return Array.isArray(terminal?.tail) ? terminal.tail.filter((line): line is string => typeof line === "string").join("\n") : undefined;
+      };
+      const wrappedText = stringValue(value?.text);
+      text = hostText(value) ?? (wrappedText === "" ? "" : (() => {
+        try { return hostText(JSON.parse(wrappedText) as unknown) ?? wrappedText; } catch { return wrappedText; }
+      })());
     } catch { text = read.value; }
   } else return failed(read.error, read.exitCode);
   const transcript: SessionTranscript = terminalTranscript(text, dispatchId, sessionId ?? null, agent, since);
@@ -75,9 +93,9 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
   if (options.value.session !== undefined) {
     const parsed = parseTranscriptSession(options.value.session);
     if (parsed.kind !== "ok") return parsed;
-    const result = home === "" ? undefined : await readTranscriptEvents(parsed.value.agent, home, parsed.value.id, undefined, environment.GROK_HOME, options.value.since);
+    const result = home === "" ? undefined : await readTranscriptEvents(parsed.value.agent, home, parsed.value.id, undefined, environment.GROK_HOME, options.value.since, options.value.limit);
     if (result === undefined) return failed(`session log unavailable for ${parsed.value.agent}:${parsed.value.id}; no dispatch terminal is associated with this session`);
-    const transcript: SessionTranscript = { dispatchId: null, sessionId: result.sessionId, agent: parsed.value.agent, source: result.source, cursor: result.cursor, events: result.events };
+    const transcript: SessionTranscript = { dispatchId: null, sessionId: result.sessionId, agent: parsed.value.agent, source: result.source, cursor: result.cursor, events: result.events, ...(result.truncated ? { truncated: true } : {}) };
     return ok(formatSessionTranscript(transcript, options.value.json));
   }
   const dispatchId = options.value.id;
@@ -86,11 +104,16 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
   if (resolved.kind !== "ok") return resolved;
   const { meta, dispatchId: resolvedId } = resolved.value;
   const agent = stringValue(meta.agent) || "unknown";
-  const sessionId = transcriptSessionId(meta, agent);
+  let sessionId = transcriptSessionId(meta, agent);
+  let pathOverride: string | undefined;
+  if (sessionId === undefined && agent === "claude" && home !== "") {
+    pathOverride = await findClaudeTranscriptForWorktree(home, stringValue(meta.worktreePath), stringValue(meta.createdAt));
+    if (pathOverride !== undefined) sessionId = basename(pathOverride, ".jsonl");
+  }
   const result = home === "" || !transcriptAgents.has(agent as TranscriptAgent) ? undefined
-    : await readTranscriptEvents(agent as TranscriptAgent, home, sessionId, stringValue(meta.worktreePath) || undefined, environment.GROK_HOME, options.value.since);
+    : await readTranscriptEvents(agent as TranscriptAgent, home, sessionId, stringValue(meta.worktreePath) || undefined, environment.GROK_HOME, options.value.since, options.value.limit, pathOverride);
   if (result !== undefined) {
-    const transcript: SessionTranscript = { dispatchId: resolvedId, sessionId: result.sessionId, agent, source: result.source, cursor: result.cursor, events: result.events };
+    const transcript: SessionTranscript = { dispatchId: resolvedId, sessionId: result.sessionId, agent, source: result.source, cursor: result.cursor, events: result.events, ...(result.truncated ? { truncated: true } : {}) };
     return ok(formatSessionTranscript(transcript, options.value.json));
   }
   return terminalFallback(resolvedId, agent, sessionId, options.value.since, options.value.json, environment, process);

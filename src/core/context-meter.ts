@@ -66,6 +66,30 @@ export async function findClaudeTranscript(home: string, sessionId: string): Pro
   return undefined;
 }
 
+/** Find a Claude session created for a dispatch in its worktree's project folder. */
+export async function findClaudeTranscriptForWorktree(home: string, cwd: string, createdAt: string): Promise<string | undefined> {
+  const created = Date.parse(createdAt);
+  if (cwd === "" || !Number.isFinite(created)) return undefined;
+  const project = join(home, ".claude", "projects", cwd.replace(/\//g, "-"));
+  const files = (await listNames(project)).filter((name) => name.endsWith(".jsonl")).sort();
+  const candidates: Array<Readonly<{ path: string; started: number }>> = [];
+  for (const file of files) {
+    const path = join(project, file);
+    let firstLine: string;
+    try {
+      const contents = await readFile(path, "utf8");
+      firstLine = contents.slice(0, contents.indexOf("\n") < 0 ? contents.length : contents.indexOf("\n"));
+    } catch { continue; }
+    try {
+      const entry: unknown = JSON.parse(firstLine);
+      const value = object(entry);
+      const started = typeof value?.timestamp === "string" ? Date.parse(value.timestamp) : Number.NaN;
+      if (value?.cwd === cwd && Number.isFinite(started) && started >= created) candidates.push({ path, started });
+    } catch { /* A malformed first record cannot identify this session safely. */ }
+  }
+  return candidates.sort((left, right) => left.started - right.started)[0]?.path;
+}
+
 /** Match Grok's active session registry to a process inside the dispatch pane, never by recency. */
 export async function resolveGrokSessionId(home: string, panePid: string, cwd: string, process: ProcessAdapter, grokHome = join(home, ".grok")): Promise<string | undefined> {
   if (!/^\d+$/.test(panePid) || cwd === "") return undefined;
