@@ -1,4 +1,4 @@
-import type { ChatRead, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Worktree } from '@/api/schema'
+import type { ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -43,6 +43,13 @@ export interface DesktopApi {
   setPillExpanded(expanded: boolean): Promise<void>
   onPillExpanded(listener: (expanded: boolean) => void): () => void
   openMain(): Promise<void>
+  /** A chat's conversation; pass the last cursor to get only newer events. */
+  transcript(target: { dispatchId: string } | { sessionId: string }, since?: string): Promise<Transcript>
+  /** Read-only code browsing inside a worktree or repository megabrain lists. */
+  codeTree(root: string): Promise<CodeEntry[]>
+  codeRead(root: string, path: string): Promise<CodeFile>
+  codeChanges(root: string): Promise<CodeChange[]>
+  codeDiff(root: string, path: string): Promise<CodeDiff>
 }
 
 export class CliError extends Error {

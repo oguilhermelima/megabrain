@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { z } from 'zod'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { chatReadSchema, doctorReportSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -72,5 +72,14 @@ export function createTauriApi(): DesktopApi {
       }
     },
     openMain: () => invoke('open_main'),
+    transcript: (target, since) =>
+      cliJson(
+        ['orchestrate', 'transcript', ...('dispatchId' in target ? [target.dispatchId] : ['--session', target.sessionId]), ...(since === undefined ? [] : ['--since', since]), '--operator', '--json'],
+        transcriptSchema,
+      ),
+    codeTree: async (root) => codeEntrySchema.array().parse(await invoke('code_tree', { root })),
+    codeRead: async (root, path) => codeFileSchema.parse(await invoke('code_read', { root, path })),
+    codeChanges: async (root) => codeChangeSchema.array().parse(await invoke('code_changes', { root })),
+    codeDiff: async (root, path) => codeDiffSchema.parse(await invoke('code_diff', { root, path })),
   }
 }

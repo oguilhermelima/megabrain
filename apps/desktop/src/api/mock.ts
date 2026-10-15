@@ -1,5 +1,5 @@
 import type { DesktopApi, PathLink } from '@/api/adapter'
-import { mockChatRead, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockWorktrees } from '@/api/fixtures/mock'
+import { mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -62,5 +62,13 @@ export function createMockApi(): DesktopApi {
       return () => pillListeners.delete(listener)
     },
     openMain: async () => {},
+    transcript: async (target) => ({ ...mockTranscript, dispatchId: 'dispatchId' in target ? target.dispatchId : null, sessionId: 'sessionId' in target ? target.sessionId : mockTranscript.sessionId }),
+    codeTree: async () => mockCodeTree,
+    codeRead: async (_root, path) => {
+      const text = mockCodeFiles[path]
+      return { path, text: text ?? `// ${path}`, binary: false, tooLarge: false }
+    },
+    codeChanges: async () => mockCodeChanges,
+    codeDiff: async (_root, path) => ({ ...mockCodeDiff, path }),
   }
 }

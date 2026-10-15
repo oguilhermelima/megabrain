@@ -80,6 +80,9 @@ const dispatchSchema = z.looseObject({
   label: z.string().nullable().optional(),
   owner: z.enum(['mine', 'foreign', 'unknown']),
   parentSessionId: z.string().nullable().optional(),
+  parentHost: z.string().nullable().optional(),
+  // The child's own agent session, when megabrain has seen it (claude:<uuid>, codex:<thread>, …).
+  agentSessionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   supervision: z.object({ lastCheck: z.string().nullable(), finding: findingSchema.nullable() }),
@@ -112,9 +115,39 @@ export const worktreeListSchema = z.array(
   z.looseObject({
     path: z.string(),
     branch: z.string(),
+    parent: z.string().nullable().optional(),
+    pullRequest: z.looseObject({ number: z.number(), state: z.string(), url: z.string() }).nullable().optional(),
     repository: z.looseObject({ name: z.string(), path: z.string() }).optional(),
   }),
 )
+
+// `megabrain orchestrate transcript <dispatch> | --session <agent:id> [--since <cursor>] --operator --json`:
+// the agent's own session log as ordered events. `cursor` is opaque; passing it back as --since
+// returns only newer events. `source` "terminal" means no session log was readable and the events
+// are the pane scrollback as one system event.
+export const transcriptEventSchema = z.looseObject({
+  id: z.string(),
+  at: z.string().nullable(),
+  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system']),
+  text: z.string(),
+  tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
+})
+
+export const transcriptSchema = z.looseObject({
+  dispatchId: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  agent: z.string(),
+  source: z.enum(['claude', 'codex', 'grok', 'agy', 'terminal']),
+  cursor: z.string(),
+  events: z.array(transcriptEventSchema),
+})
+
+// The code browser, from the native side (src-tauri/src/code.rs): read-only, limited to the
+// worktrees and repositories `megabrain worktree list --json` names.
+export const codeEntrySchema = z.looseObject({ path: z.string(), kind: z.enum(['file', 'dir']), size: z.number().nullable() })
+export const codeFileSchema = z.looseObject({ path: z.string(), text: z.string().nullable(), binary: z.boolean(), tooLarge: z.boolean() })
+export const codeChangeSchema = z.looseObject({ path: z.string(), status: z.enum(['modified', 'added', 'deleted', 'renamed', 'untracked']) })
+export const codeDiffSchema = z.looseObject({ path: z.string(), original: z.string(), modified: z.string() })
 
 export const chatReadSchema = z.looseObject({ dispatchId: z.string(), source: z.string(), truncated: z.boolean(), text: z.string() })
 
@@ -129,5 +162,11 @@ export type DoctorReport = z.infer<typeof doctorReportSchema>
 export type Status = z.infer<typeof statusSchema>
 export type Dispatch = Status['dispatches'][number]
 export type Worktree = z.infer<typeof worktreeListSchema>[number]
+export type Transcript = z.infer<typeof transcriptSchema>
+export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
+export type CodeEntry = z.infer<typeof codeEntrySchema>
+export type CodeFile = z.infer<typeof codeFileSchema>
+export type CodeChange = z.infer<typeof codeChangeSchema>
+export type CodeDiff = z.infer<typeof codeDiffSchema>
 export type ChatRead = z.infer<typeof chatReadSchema>
 export type ReplyResult = z.infer<typeof replyResultSchema>
