@@ -7,6 +7,7 @@ export const USAGE_LINES = {
   "db-migrate": "db migrate [--dry-run] [--json]",
   "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json]",
   "context": "context [--json]",
+  "send": "send --session <agent:id> --text <text> --operator [--json]",
   "worktree": "worktree create|pr|finish|list|adopt|prune ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
@@ -161,6 +162,7 @@ Commands:
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
+  send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|github ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
