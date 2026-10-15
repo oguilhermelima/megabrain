@@ -1,0 +1,124 @@
+[
+  {
+    "module": "orchestration",
+    "status": "ok",
+    "reason": "usable runtimes: orca, tmux; other runtimes are optional; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: 0; leaked dispatch sessions: 1; prunable dispatches: 712",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 1,
+    "prunableDispatches": 712,
+    "usableRuntimes": 2
+  },
+  {
+    "module": "orchestration-hooks",
+    "status": "misconfigured",
+    "reason": "claude: entry-present; codex: entry-present; agy: entry-missing; cursor: not-installed; grok: entry-missing (config absent); Codex caveat: Codex shows a \"Hooks need review\" prompt on its next launch.",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "resource-hooks",
+    "status": "missing",
+    "reason": "module is not installed (opt-in)",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "worktree",
+    "status": "misconfigured",
+    "reason": "Superset worktreeBaseDir is unset or unreadable",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "simulator-web",
+    "status": "unknown",
+    "reason": "chromium.ublock: installed 2026.920.1710, expected 2026.1012.1545",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "simulator-native",
+    "status": "ok",
+    "reason": "appium and xcuitest driver are installed",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "simulator-tv",
+    "status": "ok",
+    "reason": "Apple TV simulator uses the shared Appium xcuitest toolchain",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "tv-adb",
+    "status": "ok",
+    "reason": "adb is available",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "tmux-runtime",
+    "status": "ok",
+    "reason": "tmux 3.7c; runtime enabled; tuning block true; tuning file current true; wrapper block in .zshrc true; wrapper file current true; running server RGB true; session registry current; megabrain session config will apply when a session launches",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "skill-sync",
+    "status": "ok",
+    "reason": "skill copies current: 4",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  },
+  {
+    "module": "terminal-openers",
+    "status": "ok",
+    "reason": "terminal-app: available; iterm2: missing; ghostty: missing; wezterm: missing; kitty: missing; alacritty: missing; unverified openers have only been tested with a recording fake",
+    "uncertainDispatches": 0,
+    "uncertainReasons": [],
+    "retainedTerminals": 0,
+    "retainedReasons": [],
+    "leakedDispatchSessions": 0,
+    "prunableDispatches": 0
+  }
+]
