@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type { TranscriptEvent } from '@/api/schema'
-import { buildConversationItems, formatText, mergeEvents } from '@/chat/conversation-model'
+import { buildConversationItems, formatText, mergeEvents, relayedPreview, relayedTarget } from '@/chat/conversation-model'
+import { MarkdownText } from '@/chat/markdown'
 
 function event(id: string, fields: Partial<TranscriptEvent> = {}): TranscriptEvent {
   return { id, at: null, kind: 'assistant', text: '', ...fields }
@@ -84,5 +87,64 @@ describe('formatText', () => {
       { type: 'inline-code', value: 'bun test' },
       { type: 'text', value: ' now' },
     ])
+  })
+})
+
+describe('relayedPreview', () => {
+  test('takes the first line of a relayed message as its preview', () => {
+    expect(relayedPreview('All gates passed.\nTypecheck: 12/12\nTests: 40/40')).toBe('All gates passed.')
+  })
+
+  test('a one-line message previews as itself', () => {
+    expect(relayedPreview('Done.')).toBe('Done.')
+  })
+
+  test('an empty message previews as an empty string', () => {
+    expect(relayedPreview('')).toBe('')
+  })
+})
+
+describe('relayedTarget', () => {
+  test('prefers dispatchId when both are present', () => {
+    expect(relayedTarget({ kind: 'child', label: 'lane', dispatchId: 'd1', sessionId: 's1' })).toEqual({ dispatchId: 'd1' })
+  })
+
+  test('falls back to sessionId when dispatchId is null', () => {
+    expect(relayedTarget({ kind: 'parent', label: 'lane', dispatchId: null, sessionId: 's1' })).toEqual({ sessionId: 's1' })
+  })
+
+  test('is null when neither id is present', () => {
+    expect(relayedTarget({ kind: 'child', label: 'lane', dispatchId: null, sessionId: null })).toBeNull()
+  })
+})
+
+describe('MarkdownText sanitize', () => {
+  test('strips script, iframe, style tags and on* attribute handlers from raw HTML', () => {
+    const markup = renderToStaticMarkup(
+      createElement(MarkdownText, {
+        text: [
+          'before',
+          '<script>alert(1)</script>',
+          '<iframe src="https://evil.example"></iframe>',
+          '<style>body{display:none}</style>',
+          '<div onclick="alert(2)">click me</div>',
+          'after',
+        ].join('\n\n'),
+      }),
+    )
+    expect(markup).not.toContain('<script')
+    expect(markup).not.toContain('<iframe')
+    expect(markup).not.toContain('<style')
+    expect(markup).not.toContain('onclick')
+    expect(markup).toContain('before')
+    expect(markup).toContain('click me')
+    expect(markup).toContain('after')
+  })
+
+  test('renders a link as inert text carrying the url as a hover title, never an href', () => {
+    const markup = renderToStaticMarkup(createElement(MarkdownText, { text: '[docs](https://example.com/docs)' }))
+    expect(markup).not.toContain('href=')
+    expect(markup).toContain('title="https://example.com/docs"')
+    expect(markup).toContain('docs')
   })
 })
