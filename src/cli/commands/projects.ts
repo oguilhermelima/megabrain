@@ -324,6 +324,7 @@ export async function backfillProjectHistory(environment: Environment, processAd
 }
 
 export async function executeProjects(args: readonly string[], environment: Environment, processAdapter = createProcessAdapter()): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain projects [--json]\n");
   if (args.some((argument) => argument !== "--json")) return failed("Usage: megabrain projects [--json]", 2);
   const backfilled = await backfillProjectHistory(environment, processAdapter);
   if (backfilled.kind !== "ok") return backfilled;

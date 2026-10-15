@@ -7,6 +7,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from "../../db/db.js";
 import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
 import { backfillProjectHistory } from "./projects.js";
+import { usageText } from "../../core/usage.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type GithubRepository = Readonly<{ nameWithOwner: string; url: string; description: string | null; isPrivate: boolean; updatedAt: string | null }>;
@@ -39,6 +40,10 @@ async function addRepository(path: string, source: "megabrain" | "import", envir
 
 export async function executeRepository(args: readonly string[], environment: Environment, process = createProcessAdapter()): Promise<Result<string>> {
   const [verb, ...rest] = args;
+  if (args.includes("-h") || args.includes("--help")) {
+    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "github" ? "repo-github" : "repo";
+    return ok(usageText(key));
+  }
   const json = rest.includes("--json");
   const backfilled = await backfillProjectHistory(environment, process);
   if (backfilled.kind !== "ok") return backfilled;
