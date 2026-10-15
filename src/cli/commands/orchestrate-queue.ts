@@ -103,12 +103,12 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
       else return failed(`unknown orchestrate queue cancel option: ${args[index]}`, 2);
     }
     if (reason.trim() === "") return failed("--reason must not be empty", 2);
-    const procCancel = await cancelProcQueueEntry(environment, itemId, await procOwner(environment, process), reason.trim());
+    const caller = await resolveCaller(environment, process);
+    const procCancel = await cancelProcQueueEntry(environment, itemId, caller.operator === true ? undefined : await procOwner(environment, process), reason.trim());
     if (procCancel !== undefined) {
       if (procCancel.kind !== "ok") return procCancel;
       return ok(json ? `${JSON.stringify({ id: itemId, kind: "proc", name: procCancel.value.name, state: "cancelled", reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
     }
-    const caller = await resolveCaller(environment, process);
     const db = stateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
     if (db.kind !== "ok") return db;
     const all = listDispatches(db.value, { includeArchived: true });
@@ -118,7 +118,7 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
       const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId, caller);
       if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
       const cancelled = mutateDispatch(db.value, owner.value, (current) => current.state === "queued"
-        ? { ...current, state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString() }
+        ? { ...current, state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString(), ...(caller.operator === true ? { cancelledBy: "operator" } : {}) }
         : { kind: "no_change" });
       if (cancelled.kind !== "ok") return cancelled;
       if (cancelled.value.state !== "closed" || cancelled.value.queuedCancelledAt === undefined) return failed(`queued spawn ${itemId} started before cancellation`);

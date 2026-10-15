@@ -80,6 +80,8 @@ export type CallerIdentity = {
   readonly terminalId: string | null;
   readonly tmuxSession: string | null;
   readonly tmuxPane: string | null;
+  /** Set by --operator: a person's own program (the desktop app) acting on any dispatch. */
+  readonly operator?: true;
 };
 
 export type DispatchOwnerRecord = {
@@ -203,10 +205,28 @@ export function isLocalProcessOwner(value: string): boolean {
 // agent-session ids existed, whose owner is a terminal handle — the caller's current terminal
 // handle matches. Host must agree either way.
 export function ownsDispatch(caller: CallerIdentity, record: DispatchOwnerRecord): boolean {
+  if (caller.operator === true) return true;
   if (caller.host !== record.parentHost) return false;
   if (caller.id !== "" && caller.id === record.parentSessionId) return true;
   if (caller.terminalId !== null && caller.terminalId === record.parentSessionId) return true;
   return false;
+}
+
+export const OPERATOR_ID = "operator";
+
+// --operator exists for a person's own program, such as the desktop app, which is no agent session
+// and so owns no dispatch. It guards against an agent stepping around ownership by mistake; it is
+// not a security boundary, since everything runs as the same user.
+export function operatorRefusal(dispatchId: string | undefined, caller: CallerIdentity): string | undefined {
+  if (dispatchId !== undefined && dispatchId !== "") return `a child (dispatch ${dispatchId}) cannot act as the operator; --operator is for a person's own program, such as the desktop app`;
+  if (isAgentSessionId(caller.id)) return `${caller.id} is an agent session and cannot act as the operator; --operator is for a person's own program, such as the desktop app`;
+  return undefined;
+}
+
+// The caller acting as the operator keeps its terminal, so close still refuses its own pane, and is
+// recorded as "operator" wherever a session id is written.
+export function asOperator(caller: CallerIdentity): CallerIdentity {
+  return { ...caller, id: OPERATOR_ID, operator: true };
 }
 
 export function resolveContext(
