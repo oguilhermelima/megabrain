@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mockDoctor, mockInstallPlan, mockInstallRun, mockStatus } from '@/api/fixtures/mock'
-import { doctorReportSchema, installEventSchema, installPlanSchema, moduleResultSchema, statusSchema } from '@/api/schema'
+import { mockChatRead, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockWorktrees } from '@/api/fixtures/mock'
+import { chatReadSchema, doctorReportSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
 const json = (name: string): unknown => JSON.parse(readFileSync(join(captured, name), 'utf8'))
@@ -23,6 +23,15 @@ describe('captured CLI payloads parse with the schemas', () => {
   test('doctor --json', () => {
     expect(doctorReportSchema.safeParse(json('doctor.json')).error).toBeUndefined()
   })
+  test('worktree list --json', () => {
+    const parsed = worktreeListSchema.safeParse(json('worktree-list.json'))
+    expect(parsed.error).toBeUndefined()
+    expect(parsed.data?.every((entry) => entry.repository !== undefined)).toBe(true)
+  })
+  test('orchestrate read --json and reply --json', () => {
+    expect(chatReadSchema.safeParse({ dispatchId: 'dispatch-1', pane: '%3', source: 'tmux', truncated: false, text: 'hello' }).success).toBe(true)
+    expect(replyResultSchema.safeParse({ dispatchId: 'dispatch-1', status: 'queued', nudge: 'typed', supersededQueued: 0, supersededDelivered: 0, deliveredSequences: [] }).success).toBe(true)
+  })
   test('install --json events', () => {
     const events = lines('install-failed.ndjson')
     expect(events.map((event) => installEventSchema.safeParse(event).success)).toEqual(events.map(() => true))
@@ -34,6 +43,8 @@ describe('the mock serves payloads the schemas accept', () => {
     expect(installPlanSchema.safeParse(mockInstallPlan).error).toBeUndefined()
     expect(statusSchema.safeParse(mockStatus).error).toBeUndefined()
     expect(doctorReportSchema.safeParse(mockDoctor).error).toBeUndefined()
+    expect(worktreeListSchema.safeParse(mockWorktrees).error).toBeUndefined()
+    expect(chatReadSchema.safeParse(mockChatRead).error).toBeUndefined()
   })
   test('the install run covers every event type and ends in one result', () => {
     for (const event of mockInstallRun) expect(installEventSchema.safeParse(event).error).toBeUndefined()
