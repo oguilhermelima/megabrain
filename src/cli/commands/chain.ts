@@ -125,7 +125,7 @@ function addChain(args: readonly string[], environment: ChainEnvironment): Resul
   return preserveStderr(ok(asJson ? json({ ...definition, name }) : `chain added: ${name}\n`), valid.stderr);
 }
 function saveChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
-  if (args[0] === "-h" || args[0] === "--help") return ok("Usage: megabrain chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json]\n");
+  if (args[0] === "-h" || args[0] === "--help") return ok(usage("save"));
   const name = args[0];
   if (!name) return error("chain save requires a name", 2);
   if (!validName(name)) return error(`invalid chain name: ${name}`);
@@ -195,7 +195,7 @@ function usage(kind: "chain" | "list" | "limits" | "add" | "save" | "edit" | "de
   if (kind === "chain") return usageText("chain");
   if (kind === "limits") return usageText("chain-limits");
   if (kind === "add") return usageText("chain-add");
-  if (kind === "save") return "Usage: megabrain chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json]\n";
+  if (kind === "save") return usageText("chain-save");
   if (kind === "edit") return usageText("chain-edit");
   if (kind === "delete") return usageText("chain-delete");
   if (kind === "repair") return usageText("chain-repair");

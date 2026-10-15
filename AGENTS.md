@@ -41,6 +41,7 @@
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain status [--json]. — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
+- Run megabrain settings [--json]. — recommended when you need one read of the settings shown in the desktop app.
 - Run megabrain resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off. — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 - Run megabrain proc start|run|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.
 - Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--needs docker] [--slot container-suite] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.
@@ -58,6 +59,7 @@
 - Run megabrain chain list [--json]. — recommended when you need to inspect the configured agent-selection chains.
 - Run megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>]. — recommended when you need to inspect or change provider usage-limit settings and notices.
 - Run megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json]. — recommended when you need to define a chain with matching rules and ordered agent steps.
+- Run megabrain chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json]. — recommended when you need to create or replace a chain without opening an editor.
 - Run megabrain chain edit <name> [--allow-unknown-model] [--json]. — recommended when you need to change an existing chain configuration.
 - Run megabrain chain delete <name> [--json]. — recommended when you need to remove a chain that is no longer used.
 - Run megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json]. — recommended when you need to replace a broken or unavailable model in a chain step.

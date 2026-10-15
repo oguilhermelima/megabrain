@@ -38,6 +38,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
+  "settings": "settings [--json]",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
   "proc": "proc start|run|list|status|stop|restart|logs ...",
@@ -54,10 +55,11 @@ export const USAGE_LINES = {
   "received": "received",
   "check": "check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
   "ack": "ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]",
-  "chain": "chain list|limits|add|edit|delete|run|repair ...",
+  "chain": "chain list|limits|add|save|edit|delete|run|repair ...",
   "chain-list": "chain list [--json]",
   "chain-limits": "chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>]",
   "chain-add": "chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json]",
+  "chain-save": "chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json]",
   "chain-edit": "chain edit <name> [--allow-unknown-model] [--json]",
   "chain-delete": "chain delete <name> [--json]",
   "chain-repair": "chain repair <name> --step <number> --model <id> [--effort <level>] [--json]",
@@ -179,9 +181,10 @@ Commands:
   orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
+  settings [--json]                    Read all settings shown in the desktop app
   resources [--json|--all]               Measure machine and open-dispatch resources
   proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
-  chain list|limits|add|edit|delete|run ...  Manage ordered child-agent chains
+  chain list|limits|add|save|edit|delete|run ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
   ask "question"                       Ask the coordinator and use its native delivery path
