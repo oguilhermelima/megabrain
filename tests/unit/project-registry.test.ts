@@ -165,7 +165,7 @@ describe("project registry", () => {
     const opened = guardedOpenDatabase(env);
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", ["dispatch-1", "running", "claude", path, "Agent session", startedAt, startedAt, "{\"$present\":[\"dispatchId\",\"state\",\"agent\",\"worktreePath\"]}"]);
+      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", ["dispatch-1", "running", "claude", path, "Agent session", startedAt, startedAt, "{\"$present\":[\"dispatchId\",\"state\",\"agent\",\"worktreePath\",\"createdAt\"]}"]);
     } finally { opened.value.close(); }
     await cli("repo", "add", path);
     const project = json<Array<{ worktrees: Array<{ sessions: Array<{ dispatchId: string | null }> }> }>>(await cli("projects", "--json"))[0];
