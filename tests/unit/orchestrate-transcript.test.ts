@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, rm, writeFile, appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
@@ -74,17 +74,19 @@ describe("orchestrate transcript", () => {
     expect(output.source).toBe(agent);
   });
 
-  test("returns only events after an opaque cursor and keeps ids stable", async () => {
+  test("pages the transcript by its returned cursor and keeps ids stable", async () => {
     const { root, home } = await setup();
     await installFixture(home, "claude");
     await addDispatch(root, { agentSessionId: "fixture-session" });
     const environment = { MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller" };
     const initial = transcript(await executeOrchestrateTranscript(["dispatch-1"], environment, fakeProcess()));
     const again = transcript(await executeOrchestrateTranscript(["dispatch-1"], environment, fakeProcess()));
-    const newer = transcript(await executeOrchestrateTranscript(["dispatch-1", "--since", initial.events[1]?.id ?? ""], environment, fakeProcess()));
+    const path = join(home, ".claude", "projects", "sample-project", "fixture-session.jsonl");
+    await appendFile(path, `${JSON.stringify({ type: "assistant", uuid: "fixture-appended", timestamp: "2026-10-01T10:00:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "A later response." }] } })}\n`);
+    const newer = transcript(await executeOrchestrateTranscript(["dispatch-1", "--since", initial.cursor], environment, fakeProcess()));
     expect(again.events.map((event) => event.id)).toEqual(initial.events.map((event) => event.id));
-    expect(newer.events.map((event) => event.id)).toEqual(initial.events.slice(2).map((event) => event.id));
-    expect(newer.cursor).toBe(initial.cursor);
+    expect(newer.events.map((event) => event.text)).toEqual(["A later response."]);
+    expect(newer.cursor).not.toBe(initial.cursor);
   });
 
   test("caps event text and skips signature-only thinking", async () => {
