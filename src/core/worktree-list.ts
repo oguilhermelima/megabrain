@@ -28,6 +28,8 @@ export type WorktreeListEntry = {
   readonly purpose?: string | null;
   readonly origin?: "created" | "adopted" | "discovered";
   readonly createdByMegabrain?: boolean;
+  /** The main checkout the worktree belongs to, named after its folder. */
+  readonly repository?: { readonly name: string; readonly path: string };
 };
 
 export type WorktreeListFormat = {
