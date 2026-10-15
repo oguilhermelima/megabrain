@@ -380,6 +380,7 @@ async function repositoryPullRequests(repository: RepositoryRecord, database: Da
       }
     } catch { /* Keep the last known good result on malformed output. */ }
   }
+  saveRepositoryPullRequests(database, repository.path, stale === undefined || cached === undefined ? "[]" : cached.value, now);
   return stale ?? new Map();
 }
 
