@@ -7,6 +7,7 @@ import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
 import { Sidebar, type CodeTarget } from '@/advanced/Sidebar'
 import { ChatView } from '@/chat/ChatView'
+import type { OpenChat } from '@/chat/Conversation'
 import { SessionView } from '@/chat/SessionView'
 import { CodeView } from '@/code/CodeView'
 import { ImportProject } from '@/import/ImportProject'
@@ -142,6 +143,57 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     else setSidebarSelected({ kind: 'session', session, worktreePath })
   }
 
+  const findSession = (sessionId: string) => {
+    for (const project of projects) {
+      for (const worktree of project.worktrees) {
+        const session = worktree.sessions.find((item) => item.sessionId === sessionId)
+        if (session !== undefined) return { session, worktreePath: worktree.path }
+      }
+    }
+    return null
+  }
+
+  const openRelatedChat: OpenChat = (target) => {
+    setCode(null)
+    if ('dispatchId' in target) {
+      const dispatch = status?.dispatches.find((item) => item.dispatchId === target.dispatchId)
+      if (dispatch !== undefined) {
+        if (mode === 'columns') setSelected(dispatch.dispatchId)
+        else setSidebarSelected({ kind: 'dispatch', dispatchId: dispatch.dispatchId })
+        return
+      }
+      const session = projects
+        .flatMap((project) => project.worktrees)
+        .flatMap((worktree) => worktree.sessions.map((item) => ({ session: item, worktreePath: worktree.path })))
+        .find((item) => item.session.dispatchId === target.dispatchId)
+      if (session !== undefined) {
+        setMode('sidebar')
+        openSession(session.session, session.worktreePath)
+      }
+      return
+    }
+
+    const found = findSession(target.sessionId)
+    if (found !== null) {
+      setMode('sidebar')
+      openSession(found.session, found.worktreePath)
+      return
+    }
+
+    const [agent] = target.sessionId.split(':', 1)
+    if (agent !== 'claude' && agent !== 'codex' && agent !== 'grok' && agent !== 'agy') return
+    setMode('sidebar')
+    openSession({
+      agent,
+      sessionId: target.sessionId,
+      title: target.sessionId,
+      status: 'idle',
+      startedAt: null,
+      lastActivityAt: null,
+      dispatchId: null,
+    }, '')
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey && event.key === ',') {
@@ -240,7 +292,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     code !== null ? (
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : chat !== null ? (
-      <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} />
+      <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} onOpenChat={openRelatedChat} />
     ) : (
       status !== null && <Overview status={status} onSelect={open} />
     )
@@ -249,9 +301,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     code !== null ? (
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : sidebarDispatch !== null ? (
-      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={null} />
+      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={null} onOpenChat={openRelatedChat} />
     ) : sidebarSelected?.kind === 'session' ? (
-      <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} />
+      <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} onOpenChat={openRelatedChat} />
     ) : (
       status !== null && <Overview status={status} onSelect={open} />
     )
