@@ -96,7 +96,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
   let asJson = false;
   for (const arg of args) {
     if (arg === "--json") asJson = true;
-    else if (arg === "-h" || arg === "--help") return ok("megabrain settings [--json]\n");
+    else if (arg === "-h" || arg === "--help") return ok("Usage: megabrain settings [--json]\n");
     else return failed(`unknown settings option: ${arg}`, 2);
   }
   const result = await readSettings(environment, processAdapter);
