@@ -21,6 +21,7 @@ export type ContextSubject = Readonly<{
 
 const unknown: ContextMeter = { status: "unknown" };
 const TAIL_BYTES = 512 * 1024;
+const CLAUDE_HEADER_BYTES = 256 * 1024;
 const CLAUDE_WINDOW = 200_000;
 const CLAUDE_LONG_WINDOW = 1_000_000;
 
@@ -64,6 +65,40 @@ export async function findClaudeTranscript(home: string, sessionId: string): Pro
     if ((await listNames(join(root, project))).includes(`${sessionId}.jsonl`)) return join(root, project, `${sessionId}.jsonl`);
   }
   return undefined;
+}
+
+/** Find a Claude session created for a dispatch in its worktree's project folder. */
+export async function findClaudeTranscriptForWorktree(home: string, cwd: string, createdAt: string): Promise<string | undefined> {
+  const created = Date.parse(createdAt);
+  if (cwd === "" || !Number.isFinite(created)) return undefined;
+  const project = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+  const files = (await listNames(project)).filter((name) => name.endsWith(".jsonl")).sort();
+  const candidates: Array<Readonly<{ path: string; started: number }>> = [];
+  for (const file of files) {
+    const path = join(project, file);
+    let contents: string;
+    try {
+      const handle = await open(path, "r");
+      try {
+        const buffer = Buffer.alloc(CLAUDE_HEADER_BYTES);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        contents = buffer.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        await handle.close();
+      }
+    } catch { continue; }
+    for (const line of contents.split("\n")) {
+      try {
+        const value = object(JSON.parse(line) as unknown);
+        const started = typeof value?.timestamp === "string" ? Date.parse(value.timestamp) : Number.NaN;
+        if (typeof value?.cwd === "string" && Number.isFinite(started)) {
+          if (value.cwd === cwd && started >= created) candidates.push({ path, started });
+          break;
+        }
+      } catch { /* Ignore malformed or metadata records until a session record is found. */ }
+    }
+  }
+  return candidates.sort((left, right) => left.started - right.started)[0]?.path;
 }
 
 /** Match Grok's active session registry to a process inside the dispatch pane, never by recency. */

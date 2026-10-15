@@ -22,6 +22,7 @@ import { executeTerminalLifecycle } from "./commands/terminal-lifecycle.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orchestrate-parent.js";
 import { executeOrchestrateQueue } from "./commands/orchestrate-queue.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
+import { executeOrchestrateTranscript } from "./commands/orchestrate-transcript.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
@@ -53,7 +54,7 @@ export type RouterDependencies = {
 };
 
 // The orchestrate verbs that check dispatch ownership and accept --operator.
-const operatorVerbs = new Set(["reply", "change", "stop", "close", "ack", "read", "liveness", "policy", "reconcile", "queue"]);
+const operatorVerbs = new Set(["reply", "change", "stop", "close", "ack", "read", "transcript", "liveness", "policy", "reconcile", "queue"]);
 
 // --operator is taken off the arguments here and handed on as MEGABRAIN_OPERATOR, so every verb
 // resolves its caller through the one resolveCaller; a value inherited from the environment is
@@ -158,6 +159,9 @@ async function routeCommand(
   }
   if (command === "orchestrate" && commandArgs[0] === "read") {
     return executeOrchestrateRead(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "transcript") {
+    return executeOrchestrateTranscript(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "liveness") {
     return executeOrchestrateLiveness(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
