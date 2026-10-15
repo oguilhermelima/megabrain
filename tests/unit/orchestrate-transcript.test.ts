@@ -66,7 +66,7 @@ describe("orchestrate transcript", () => {
       : agent === "codex" ? { agentThreadId: "fixture-thread" }
         : { grokSessionId: "fixture-session" };
     await addDispatch(root, { agent, ...metadata });
-    const output = transcript(await executeOrchestrateTranscript(["dispatch-1"], {
+    const output = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
       MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
     }, fakeProcess()));
     expect(output.events.map((event) => event.kind)).toEqual(["user", "thinking", "tool-call", "tool-result", "assistant"]);
@@ -79,11 +79,11 @@ describe("orchestrate transcript", () => {
     await installFixture(home, "claude");
     await addDispatch(root, { agentSessionId: "fixture-session" });
     const environment = { MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller" };
-    const initial = transcript(await executeOrchestrateTranscript(["dispatch-1"], environment, fakeProcess()));
-    const again = transcript(await executeOrchestrateTranscript(["dispatch-1"], environment, fakeProcess()));
+    const initial = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], environment, fakeProcess()));
+    const again = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], environment, fakeProcess()));
     const path = join(home, ".claude", "projects", "sample-project", "fixture-session.jsonl");
     await appendFile(path, `${JSON.stringify({ type: "assistant", uuid: "fixture-appended", timestamp: "2026-10-01T10:00:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "A later response." }] } })}\n`);
-    const newer = transcript(await executeOrchestrateTranscript(["dispatch-1", "--since", initial.cursor], environment, fakeProcess()));
+    const newer = transcript(await executeOrchestrateTranscript(["dispatch-1", "--since", initial.cursor, "--json"], environment, fakeProcess()));
     expect(again.events.map((event) => event.id)).toEqual(initial.events.map((event) => event.id));
     expect(newer.events.map((event) => event.text)).toEqual(["A later response."]);
     expect(newer.cursor).not.toBe(initial.cursor);
@@ -97,7 +97,7 @@ describe("orchestrate transcript", () => {
       JSON.stringify({ type: "user", uuid: "long", message: { role: "user", content: "x".repeat(9000) } }),
     ].join("\n") + "\n");
     await addDispatch(root, { agentSessionId: "fixture-session" });
-    const output = transcript(await executeOrchestrateTranscript(["dispatch-1"], {
+    const output = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
       MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
     }, fakeProcess()));
     expect(output.events).toHaveLength(1);
@@ -108,7 +108,7 @@ describe("orchestrate transcript", () => {
   test("uses pane scrollback as a terminal system event if the session log is absent", async () => {
     const { root, home } = await setup();
     await addDispatch(root, { agentSessionId: "missing-session" });
-    const output = transcript(await executeOrchestrateTranscript(["dispatch-1"], {
+    const output = transcript(await executeOrchestrateTranscript(["dispatch-1", "--json"], {
       MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
     }, fakeProcess((command) => command === "tmux" ? ok({ stdout: "pane output\n", stderr: "", exitCode: 0 }) : failed("unexpected command"))));
     expect(output.source).toBe("terminal");
@@ -129,9 +129,20 @@ describe("orchestrate transcript", () => {
     const { root, home } = await setup();
     await installFixture(home, "claude");
     const environment = { MEGABRAIN_STATE_DIR: root, HOME: home };
-    expect(transcript(await executeOrchestrateTranscript(["--session", "claude:fixture-session"], environment, fakeProcess())).events).toHaveLength(5);
+    expect(transcript(await executeOrchestrateTranscript(["--session", "claude:fixture-session", "--json"], environment, fakeProcess())).events).toHaveLength(5);
     const unknown = await executeOrchestrateTranscript(["--session", "mystery:session"], environment, fakeProcess());
     expect(unknown.kind).toBe("failed");
     if (unknown.kind === "failed") expect(unknown.error).toContain("unknown agent");
+  });
+
+  test("prints readable event blocks without --json", async () => {
+    const { root, home } = await setup();
+    await installFixture(home, "claude");
+    await addDispatch(root, { agentSessionId: "fixture-session" });
+    const result = await executeOrchestrateTranscript(["dispatch-1"], {
+      MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
+    }, fakeProcess());
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.value.startsWith("user\nPlease inspect the project.\n\nthinking\n")).toBe(true);
   });
 });
