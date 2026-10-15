@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/api'
-import type { Status, Worktree } from '@/api/schema'
+import type { Project, ProjectSession, Status, Worktree } from '@/api/schema'
 import { Columns } from '@/advanced/Columns'
 import { chatState, groupChats, neighbour } from '@/advanced/model'
+import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
 import { Sidebar, type CodeTarget } from '@/advanced/Sidebar'
 import { ChatView } from '@/chat/ChatView'
+import { SessionView } from '@/chat/SessionView'
 import { CodeView } from '@/code/CodeView'
+import { ImportProject } from '@/import/ImportProject'
 import { ErrorNote } from '@/components/ui'
 import { useStatus } from '@/lib/useStatus'
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`
 type Mode = 'sidebar' | 'columns'
+type Selected = { kind: 'dispatch'; dispatchId: string } | { kind: 'session'; session: ProjectSession; worktreePath: string }
 
 function useWorktrees(): Worktree[] {
   const [worktrees, setWorktrees] = useState<Worktree[]>([])
@@ -28,6 +32,21 @@ function useWorktrees(): Worktree[] {
   return worktrees
 }
 
+function useProjects(): Project[] {
+  const [projects, setProjects] = useState<Project[]>([])
+  useEffect(() => {
+    let stopped = false
+    const load = () => api.projects().then((value) => !stopped && setProjects(value), () => {})
+    void load()
+    const timer = setInterval(load, 5_000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [])
+  return projects
+}
+
 function storedMode(): Mode {
   try {
     return localStorage.getItem('megabrain.view') === 'columns' ? 'columns' : 'sidebar'
@@ -41,12 +60,15 @@ function storedMode(): Mode {
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
   const worktrees = useWorktrees()
+  const projects = useProjects()
   const [mode, setMode] = useState<Mode>(storedMode)
   const [selected, setSelected] = useState<string | null>(null)
+  const [sidebarSelected, setSidebarSelected] = useState<Selected | null>(null)
   const [code, setCode] = useState<CodeTarget | null>(null)
+  const [importing, setImporting] = useState(false)
   const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   const order = useMemo(() => grouped.repositories.flatMap((repository) => repository.worktrees.flatMap((worktree) => worktree.chats.map((chat) => chat.dispatchId))), [grouped])
-  const repositoryPaths = useMemo(() => new Map(worktrees.flatMap((worktree) => (worktree.repository === undefined ? [] : [[worktree.repository.name, worktree.repository.path] as const]))), [worktrees])
+  const sessionRows = useMemo(() => sidebarSessionOrder(projects, new Set()), [projects])
 
   const changeMode = (next: Mode) => {
     setMode(next)
@@ -62,20 +84,38 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setSelected(dispatchId)
   }
 
+  const openSession = (session: ProjectSession, worktreePath: string) => {
+    setCode(null)
+    const dispatchId = session.dispatchId
+    const known = dispatchId !== null && (status?.dispatches.some((item) => item.dispatchId === dispatchId) ?? false)
+    if (known && dispatchId !== null) setSidebarSelected({ kind: 'dispatch', dispatchId })
+    else setSidebarSelected({ kind: 'session', session, worktreePath })
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
       event.preventDefault()
       setCode(null)
-      setSelected((current) => neighbour(order, current, event.key === ']' ? 1 : -1))
+      const step = event.key === ']' ? 1 : -1
+      if (mode === 'columns') {
+        setSelected((current) => neighbour(order, current, step))
+        return
+      }
+      const currentSessionId = sidebarSelected?.kind === 'session' ? sidebarSelected.session.sessionId : null
+      const next = neighbourSession(sessionRows, currentSessionId, step)
+      if (next !== null) openSession(next.session, next.worktreePath)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [order])
+  }, [order, mode, sessionRows, sidebarSelected])
 
   const chat = status?.dispatches.find((item) => item.dispatchId === selected) ?? null
   const repositoryOf = (dispatchId: string) =>
     grouped.repositories.find((repository) => repository.worktrees.some((worktree) => worktree.chats.some((item) => item.dispatchId === dispatchId)))?.name ?? null
+
+  const sidebarDispatchId = sidebarSelected?.kind === 'dispatch' ? sidebarSelected.dispatchId : null
+  const sidebarDispatch = sidebarDispatchId === null ? null : status?.dispatches.find((item) => item.dispatchId === sidebarDispatchId) ?? null
 
   const toggle = (
     <div className="flex gap-1 rounded-full border border-white/10 bg-white/[0.05] p-1" role="group" aria-label="View">
@@ -98,6 +138,17 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : chat !== null ? (
       <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} />
+    ) : (
+      status !== null && <Overview status={status} onSelect={open} />
+    )
+
+  const sidebarDetail =
+    code !== null ? (
+      <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
+    ) : sidebarDispatch !== null ? (
+      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={null} />
+    ) : sidebarSelected?.kind === 'session' ? (
+      <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} />
     ) : (
       status !== null && <Overview status={status} onSelect={open} />
     )
@@ -136,12 +187,22 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     <div className="grid h-full grid-cols-[300px_minmax(0,1fr)]">
       <aside className="glass flex min-h-0 flex-col border-r border-white/[0.06]">
         <div className="flex items-center justify-between px-5 pt-11 pb-3">
-          <button type="button" onClick={() => { setSelected(null); setCode(null) }} className="flex items-center gap-2.5 rounded-full text-left">
+          <button type="button" onClick={() => { setSidebarSelected(null); setCode(null) }} className="flex items-center gap-2.5 rounded-full text-left">
             <span className="orb size-5" />
             <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
           </button>
         </div>
-        <Sidebar status={status} repositories={grouped.repositories} repositoryPaths={repositoryPaths} worktrees={worktrees} ended={grouped.ended} selected={selected} onSelect={open} onCode={setCode} />
+        <Sidebar
+          status={status}
+          projects={projects}
+          selectedSessionId={sidebarSelected?.kind === 'session' ? sidebarSelected.session.sessionId : null}
+          onSelectSession={(session) => {
+            const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
+            openSession(session, worktree?.path ?? '')
+          }}
+          onCode={setCode}
+          onImport={() => setImporting(true)}
+        />
         <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-500">
           <span className="flex items-center gap-2">
             <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
@@ -159,8 +220,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             <ErrorNote error={error} />
           </div>
         )}
-        {detail}
+        {sidebarDetail}
       </main>
+      {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
     </div>
   )
 }
