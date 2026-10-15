@@ -26,6 +26,13 @@ describe("CLI root help and version", () => {
     expect(await route(args, dependencies)).toEqual({ kind: "ok", value: rootUsage });
   });
 
+  test("documents operator session send in command help", async () => {
+    expect(await route(["send", "--help"], dependencies)).toEqual({
+      kind: "ok",
+      value: "Usage: megabrain send --session <agent:id> --text <text> --operator [--json]\n",
+    });
+  });
+
   test("returns the wrapper's unknown-command error code", async () => {
     expect(await route(["not-a-command"], dependencies)).toEqual({
       kind: "failed",
