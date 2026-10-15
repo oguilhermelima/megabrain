@@ -5,6 +5,8 @@ import { findClaudeTranscriptForWorktree } from "../../core/context-meter.js";
 import { formatSessionTranscript, isTranscriptCursor, readTranscriptEvents, terminalTranscript, type SessionTranscript, type TranscriptAgent } from "../../core/session-transcript.js";
 import { usageText } from "../../core/usage.js";
 import { executeOrchestrateRead, parentMeta } from "./orchestrate-read-liveness.js";
+import { listDispatches, stateDatabase } from "../../adapters/state-db.js";
+import { tagTranscriptOrigins, type TranscriptOriginDispatch } from "../../core/transcript-origin.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -16,6 +18,21 @@ function transcriptSessionId(meta: RecordValue, agent: string): string | undefin
   if (agent === "codex") return stringValue(meta.agentThreadId) || undefined;
   if (agent === "grok") return stringValue(meta.grokSessionId) || stringValue(meta.agentSessionId) || undefined;
   return stringValue(meta.agentSessionId) || undefined;
+}
+
+function originDispatch(value: Record<string, unknown>): TranscriptOriginDispatch | undefined {
+  const dispatchId = stringValue(value.dispatchId);
+  if (dispatchId === "") return undefined;
+  return {
+    dispatchId,
+    ...(typeof value.chatName === "string" ? { chatName: value.chatName } : {}),
+    ...(typeof value.label === "string" ? { label: value.label } : {}),
+    ...(typeof value.branch === "string" ? { branch: value.branch } : {}),
+    ...(typeof value.agent === "string" ? { agent: value.agent } : {}),
+    ...(typeof value.parentAgent === "string" ? { parentAgent: value.parentAgent } : {}),
+    ...(typeof value.parentChatName === "string" ? { parentChatName: value.parentChatName } : {}),
+    ...(typeof value.parentSessionId === "string" ? { parentSessionId: value.parentSessionId } : {}),
+  };
 }
 
 function parseTranscriptSession(value: string): Result<Readonly<{ agent: TranscriptAgent; id: string }>> {
@@ -95,7 +112,16 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
     if (parsed.kind !== "ok") return parsed;
     const result = home === "" ? undefined : await readTranscriptEvents(parsed.value.agent, home, parsed.value.id, undefined, environment.GROK_HOME, options.value.since, options.value.limit);
     if (result === undefined) return failed(`session log unavailable for ${parsed.value.agent}:${parsed.value.id}; no dispatch terminal is associated with this session`);
-    const transcript: SessionTranscript = { dispatchId: null, sessionId: result.sessionId, agent: parsed.value.agent, source: result.source, cursor: result.cursor, events: result.events, ...(result.truncated ? { truncated: true } : {}) };
+    const database = stateDatabase(environment);
+    if (database.kind !== "ok") return failed(database.error, database.exitCode);
+    const stored = listDispatches(database.value);
+    if (stored.kind !== "ok") return stored;
+    const dispatches = stored.value.flatMap((item) => {
+      const value = originDispatch(item);
+      return value === undefined ? [] : [value];
+    });
+    const events = tagTranscriptOrigins(result.events, null, dispatches);
+    const transcript: SessionTranscript = { dispatchId: null, sessionId: result.sessionId, agent: parsed.value.agent, source: result.source, cursor: result.cursor, events, ...(result.truncated ? { truncated: true } : {}) };
     return ok(formatSessionTranscript(transcript, options.value.json));
   }
   const dispatchId = options.value.id;
@@ -113,7 +139,9 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
   const result = home === "" || !transcriptAgents.has(agent as TranscriptAgent) ? undefined
     : await readTranscriptEvents(agent as TranscriptAgent, home, sessionId, stringValue(meta.worktreePath) || undefined, environment.GROK_HOME, options.value.since, options.value.limit, pathOverride);
   if (result !== undefined) {
-    const transcript: SessionTranscript = { dispatchId: resolvedId, sessionId: result.sessionId, agent, source: result.source, cursor: result.cursor, events: result.events, ...(result.truncated ? { truncated: true } : {}) };
+    const currentDispatch = originDispatch({ ...meta, dispatchId: resolvedId }) ?? null;
+    const events = tagTranscriptOrigins(result.events, currentDispatch, []);
+    const transcript: SessionTranscript = { dispatchId: resolvedId, sessionId: result.sessionId, agent, source: result.source, cursor: result.cursor, events, ...(result.truncated ? { truncated: true } : {}) };
     return ok(formatSessionTranscript(transcript, options.value.json));
   }
   return terminalFallback(resolvedId, agent, sessionId, options.value.since, options.value.json, environment, process);

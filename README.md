@@ -308,6 +308,7 @@ megabrain orchestrate list --mine --json         # show dispatches owned by this
 megabrain orchestrate list --all --json          # include foreign and unknown owners
 megabrain orchestrate adopt <id> [--force] --json # take ownership of a dispatch
 megabrain orchestrate reply <dispatch-id-or-suffix> --text "..."   # answer a question
+megabrain send --session codex:<thread-id> --text "..." --operator # message any available agent session
 megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--close] # mark it consumed and optionally release the terminal
 megabrain orchestrate read <dispatch-id-or-suffix> # what the agent actually did
 megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] --json # ordered chat, thinking and tool events
@@ -618,7 +619,16 @@ ordered user, assistant, thinking and tool events. It returns the newest 300 eve
 `--limit` accepts 1 to 2000. When older events are omitted, JSON includes `truncated: true`. Pass
 the opaque `cursor` back with `--since` to read appended events, still bounded by the same limit.
 If a dispatch session log is missing or unreadable, it returns the terminal scrollback as one system
-event. Antigravity currently uses that terminal fallback.
+event. Antigravity currently uses that terminal fallback. Relayed messages include an `origin` with
+`kind`, `label`, `dispatchId` and `sessionId`; ordinary events remain unchanged. Parent messages in
+a child transcript identify the parent session, while child notices in a parent transcript resolve
+their dispatch suffix to the child's chat name.
+
+`send --session <agent:id> --text <text> --operator` sends directly to a live Claude peer socket,
+Grok leader socket or Codex queue when available, then falls back to the session's known tmux pane.
+It also works with sessions megabrain did not start when they expose a supported channel. The
+operator is not assigned a Claude permission-mode attestation. With no working channel it reports
+`delivered: false`, explains why and exits non-zero. Add `--json` for a machine-readable result.
 
 `orchestrate reply` refuses a dispatch already in a settled state such as `done`, `failed`,
 `closed`, `circuit_broken`, or `timeout`. It exits non-zero and tells you to open a new dispatch,

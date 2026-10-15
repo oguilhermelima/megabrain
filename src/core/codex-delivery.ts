@@ -110,6 +110,24 @@ export async function findCodexProcess(threadId: string, scope: CodexTerminalSco
   return { reason: lsofReason || "Codex rollout file is not open" };
 }
 
+// Resolves a Codex thread outside a megabrain-owned terminal. The rollout held open by the
+// process is the identity proof; a matching command name alone is not enough to queue a message.
+export async function findCodexProcessByThread(threadId: string, process: ProcessAdapter): Promise<CodexProcessResult> {
+  if (threadId === "") return { reason: "Codex thread identity is unknown" };
+  const listed = await process.run("ps", ["-ax", "-o", "pid=,command="]);
+  if (listed.kind !== "ok") return { reason: `Codex process list could not be read: ${listed.error}` };
+  const candidates = listed.value.stdout.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    return match !== null && codexCommand(match[2] ?? "") ? [match[1] as string] : [];
+  });
+  for (const candidate of candidates) {
+    const pid = Number(candidate);
+    const openFiles = await process.run("lsof", ["-p", candidate, "-Fn"]);
+    if (openFiles.kind === "ok" && hasThreadRollout(openFiles.value.stdout, threadId)) return { pid };
+  }
+  return { reason: candidates.length === 0 ? "no Codex process is running" : `no Codex process holds the rollout for thread ${threadId}` };
+}
+
 export async function deliverCodexQueue(threadId: string, pid: number, message: string, process: ProcessAdapter): Promise<CodexQueueResult> {
   if (threadId === "" || !Number.isSafeInteger(pid) || pid <= 0) return { kind: "fallback", reason: "Codex process identity is unknown" };
   const openFiles = await process.run("lsof", ["-p", String(pid), "-Fn"]);
