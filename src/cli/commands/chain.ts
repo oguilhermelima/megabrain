@@ -182,7 +182,7 @@ function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitRea
     reading: resultReading ? { kind: resultReading.kind, basis: resultReading.basis } : null,
   };
 }
-async function limits(environment: ChainEnvironment, asJson: boolean, config: ChainConfig, processAdapter: ProcessAdapter): Promise<string> {
+export async function readLimitRows(environment: ChainEnvironment, config: ChainConfig, processAdapter: ProcessAdapter): Promise<LimitRow[]> {
   const root = resolveStateDirectory(environment);
   const rows: LimitRow[] = [];
   // Sequential, not parallel: a provider's two windows share one on-disk cache
@@ -194,6 +194,10 @@ async function limits(environment: ChainEnvironment, asJson: boolean, config: Ch
       rows.push(rowFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
     }
   }
+  return rows;
+}
+async function limits(environment: ChainEnvironment, asJson: boolean, config: ChainConfig, processAdapter: ProcessAdapter): Promise<string> {
+  const rows = await readLimitRows(environment, config, processAdapter);
   if (asJson) return JSON.stringify(rows, null, 2) + "\n";
   const output = ["PROVIDER WINDOW   STATUS    USED         RESET        SOURCE   REASON"];
   for (const row of rows) output.push(`${row.provider.padEnd(8)} ${row.window.padEnd(8)} ${row.status.padEnd(9)} ${(row.usedPercent === null ? "-" : row.usedPercent).toString().padEnd(12)} ${(row.resetsAt ?? "-").padEnd(28)} ${row.source.padEnd(8)} ${row.reason ?? "-"}`);
