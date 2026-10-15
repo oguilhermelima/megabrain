@@ -20,7 +20,12 @@ function sandbox(): { readonly home: string; readonly state: string; readonly ro
   mkdirSync(join(root, ".megabrain"), { recursive: true });
   writeFileSync(join(root, ".megabrain", "models.json"), JSON.stringify({
     version: 1,
-    models: [{ agent: "codex", model: "model-known", reasoning: { separateAxis: true, levels: ["low", "high"] } }],
+    models: [{
+      agent: "codex",
+      model: "model-known",
+      reasoning: { separateAxis: true, levels: ["low", "high"] },
+      provenance: { kind: "curated", method: "manual curation", obtainedAt: "2026-10-15T00:00:00.000Z" },
+    }],
   }));
   return { home, state, root };
 }
@@ -56,7 +61,10 @@ describe("megabrain settings", () => {
     expect(Object.keys(value.limits as object).sort()).toEqual(["enabledProviders", "notice", "readings"]);
     expect(Object.keys(value.terminal as object).sort()).toEqual(["available", "default", "detected"]);
     expect(value.resources).toEqual({ historyEnabled: false, policy: null });
-    expect(value.limits).toMatchObject({ enabledProviders: [], notice: { enabled: false, intervalSeconds: 3600 }, readings: [] });
+    expect(value.limits).toMatchObject({ enabledProviders: [], notice: { enabled: false, intervalSeconds: 3600 } });
+    const limits = await run(["chain", "limits", "--json"], env);
+    expect(limits.kind).toBe("ok");
+    if (limits.kind === "ok") expect(value.limits && (value.limits as { readings: unknown[] }).readings).toEqual(JSON.parse(limits.value));
     expect(value.chains).toEqual([]);
     expect(value.supervisor).toEqual({ running: false, pid: null });
   });
