@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { route } from "../../src/cli/router.js";
 import { createProcessAdapter } from "../../src/adapters/proc.js";
-import { registerRepository } from "../../src/db/queries/repositories.js";
+import { registerMegabrainRepository } from "../../src/core/project-registry.js";
 import { guardedOpenDatabase } from "./state-db-guard.js";
 
 let root = "";
@@ -92,12 +92,9 @@ describe("project registry", () => {
 
   test("megabrain-created repository registration is idempotent for spawn and worktree create", async () => {
     const path = await repository("registered");
-    const opened = guardedOpenDatabase(env);
-    if (opened.kind !== "ok") throw new Error(opened.error);
-    try {
-      registerRepository(opened.value.db, { name: "registered", path, remote: null, source: "megabrain", addedAt: new Date().toISOString() });
-      registerRepository(opened.value.db, { name: "registered", path, remote: null, source: "megabrain", addedAt: new Date().toISOString() });
-    } finally { opened.value.close(); }
+    const process = createProcessAdapter();
+    await registerMegabrainRepository(path, env, process);
+    await registerMegabrainRepository(path, env, process);
     expect(json<Array<{ source: string }>>(await cli("repo", "list", "--json"))).toEqual([expect.objectContaining({ source: "megabrain" })]);
   });
 
@@ -145,23 +142,30 @@ describe("project registry", () => {
       const item = { pid: 900000 + index, sessionId: `claude-${index}`, cwd: path, startedAt: new Date(now - index * 1000).toISOString(), name: `Session ${index}`, status: "idle", updatedAt: new Date(now - index * 1000).toISOString() };
       writeFileSync(join(sessions, `${item.pid}.json`), JSON.stringify(item));
     }
+    const old = { pid: 999999, sessionId: "claude-old", cwd: path, startedAt: new Date(now - 26 * 60 * 60 * 1000).toISOString(), name: "Old session", status: "idle", updatedAt: new Date(now - 25 * 60 * 60 * 1000).toISOString() };
+    writeFileSync(join(sessions, `${old.pid}.json`), JSON.stringify(old));
     const grok = join(home, ".grok");
     mkdirSync(grok, { recursive: true });
-    writeFileSync(join(grok, "active_sessions.json"), JSON.stringify([{ session_id: "grok-1", cwd: path, pid: 900001, status: "busy", started_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(), title: "Grok session" }]));
+    writeFileSync(join(grok, "active_sessions.json"), JSON.stringify([{ session_id: "grok-1", cwd: path, pid: process.pid, status: "busy", started_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(), title: "Grok session" }]));
     await cli("repo", "add", path);
     const project = json<Array<{ worktrees: Array<{ sessions: Array<{ agent: string; status: string; title: string; sessionId: string }> }> }>>(await cli("projects", "--json"))[0];
     const found = project?.worktrees[0]?.sessions ?? [];
     expect(found.filter((session) => session.agent === "claude")).toHaveLength(5);
     expect(found.some((session) => session.agent === "grok" && session.sessionId === "grok:grok-1")).toBe(true);
+    expect(found.some((session) => session.sessionId === "claude:claude-old")).toBe(false);
     expect(found[0]?.title).toBeTruthy();
   });
 
   test("project command maps dispatch IDs to live sessions", async () => {
     const path = await repository("dispatch-session");
+    const sessionDirectory = join(home, ".claude", "sessions");
+    mkdirSync(sessionDirectory, { recursive: true });
+    const startedAt = new Date().toISOString();
+    writeFileSync(join(sessionDirectory, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: "dispatch-session-id", cwd: path, startedAt, name: "Agent session", status: "busy", updatedAt: startedAt }));
     const opened = guardedOpenDatabase(env);
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", ["dispatch-1", "running", "claude", path, "Agent session", new Date().toISOString(), new Date().toISOString(), "{\"$present\":[\"dispatchId\",\"state\",\"agent\",\"worktreePath\"]}"]);
+      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", ["dispatch-1", "running", "claude", path, "Agent session", startedAt, startedAt, "{\"$present\":[\"dispatchId\",\"state\",\"agent\",\"worktreePath\"]}"]);
     } finally { opened.value.close(); }
     await cli("repo", "add", path);
     const project = json<Array<{ worktrees: Array<{ sessions: Array<{ dispatchId: string | null }> }> }>>(await cli("projects", "--json"))[0];
