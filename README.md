@@ -780,7 +780,8 @@ distinguish an incomplete finish without parsing stderr. Remover failures use `e
 `megabrain worktree list` shows the stack as a tree and includes pull-request state when gh can
 answer cheaply. Use `--flat` for the original path/branch table; JSON remains a flat, scriptable
 array and does not require gh or Orca to list the local stack. Its entries include age, purpose,
-origin, and whether megabrain created the worktree. Worktrees predating the registry appear with
+origin, whether megabrain created the worktree, and the repository (`name`, `path` of the main
+checkout) it belongs to. Worktrees predating the registry appear with
 origin `discovered` and unknown age until adopted. `worktree create --label <text>` records a
 purpose; when the label is absent, the first line of `--prompt` is used.
 Repository names supplied to create and inferred during adopt are stored with the worktree;

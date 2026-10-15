@@ -1,7 +1,8 @@
 import type { DesktopApi, PathLink } from '@/api/adapter'
-import { mockDoctor, mockInstallPlan, mockInstallRun, mockStatus } from '@/api/fixtures/mock'
+import { mockChatRead, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockWorktrees } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const pillListeners = new Set<(expanded: boolean) => void>()
 
 // Runs the UI in a plain browser (`bun run dev`) with fixed data and believable timing.
 export function createMockApi(): DesktopApi {
@@ -46,5 +47,20 @@ export function createMockApi(): DesktopApi {
     },
     setTraySummary: async () => {},
     windowVisible: async () => document.visibilityState === 'visible',
+    worktrees: async () => mockWorktrees,
+    readChat: async (dispatchId) => ({ ...mockChatRead, dispatchId }),
+    reply: async (dispatchId) => {
+      await wait(300)
+      return { dispatchId, status: 'queued', nudge: 'typed' }
+    },
+    pillGeometry: async () => ({ notchWidth: 200, barHeight: 37 }),
+    setPillExpanded: async (expanded) => {
+      for (const listener of pillListeners) listener(expanded)
+    },
+    onPillExpanded(listener) {
+      pillListeners.add(listener)
+      return () => pillListeners.delete(listener)
+    },
+    openMain: async () => {},
   }
 }

@@ -2,6 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "What the main window may call",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main",
+    "pill"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-is-visible",
+    "core:window:allow-show",
+    "core:window:allow-set-focus"
+  ]
 }

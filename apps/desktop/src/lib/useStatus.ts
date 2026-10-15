@@ -6,8 +6,8 @@ import { traySummary } from '@/lib/tray'
 const visibleMs = 2_000
 const hiddenMs = 15_000
 
-/** Polls `megabrain status --json`: every 2 s while the window shows, every 15 s from the tray. */
-export function useStatus(): { status: Status | null; error: unknown } {
+/** Polls `megabrain status --json`: every `everyMs` while the window shows, every 15 s otherwise. */
+export function useStatus(everyMs = visibleMs): { status: Status | null; error: unknown } {
   const [status, setStatus] = useState<Status | null>(null)
   const [error, setError] = useState<unknown>(null)
 
@@ -27,14 +27,14 @@ export function useStatus(): { status: Status | null; error: unknown } {
       }
       if (stopped) return
       const visible = await api.windowVisible().catch(() => true)
-      timer = setTimeout(tick, visible ? visibleMs : hiddenMs)
+      timer = setTimeout(tick, visible ? everyMs : hiddenMs)
     }
     void tick()
     return () => {
       stopped = true
       clearTimeout(timer)
     }
-  }, [])
+  }, [everyMs])
 
   return { status, error }
 }

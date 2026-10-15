@@ -2,8 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { z } from 'zod'
-import { CliError, type DesktopApi, type InstallExit, type PathLink } from '@/api/adapter'
-import { doctorReportSchema, installEventSchema, installPlanSchema, moduleResultSchema, statusSchema } from '@/api/schema'
+import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
+import { chatReadSchema, doctorReportSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -54,5 +54,23 @@ export function createTauriApi(): DesktopApi {
     linkCli: (replace) => invoke<PathLink>('link_cli', { replace }),
     setTraySummary: (findings, lines) => invoke('set_tray_summary', { findings, lines }),
     windowVisible: () => getCurrentWindow().isVisible(),
+    worktrees: () => cliJson(['worktree', 'list', '--json'], worktreeListSchema),
+    readChat: (dispatchId, lines) => cliJson(['orchestrate', 'read', dispatchId, '--lines', String(lines), '--operator', '--json'], chatReadSchema),
+    reply: (dispatchId, text) => cliJson(['orchestrate', 'reply', dispatchId, '--text', text, '--operator', '--json'], replyResultSchema),
+    pillGeometry: () => invoke<PillGeometry>('pill_geometry'),
+    setPillExpanded: (expanded) => invoke('set_pill_expanded', { expanded }),
+    onPillExpanded(listener) {
+      let stop: (() => void) | undefined
+      let cancelled = false
+      void listen<boolean>('pill-expanded', ({ payload }) => listener(payload)).then((unlisten) => {
+        if (cancelled) unlisten()
+        else stop = unlisten
+      })
+      return () => {
+        cancelled = true
+        stop?.()
+      }
+    },
+    openMain: () => invoke('open_main'),
   }
 }

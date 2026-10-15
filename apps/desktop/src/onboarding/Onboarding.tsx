@@ -29,9 +29,9 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-ink-800 bg-ink-900 px-5 py-6">
+      <aside className="glass flex w-64 shrink-0 flex-col border-r border-white/[0.06] px-5 pt-12 pb-6">
         <div className="mb-8 flex items-center gap-2.5">
-          <img src="/icon.png" alt="" className="size-7 rounded-md" />
+          <img src="/icon.png" alt="" className="size-7 rounded-2xl" />
           <div>
             <div className="text-[14px] font-semibold text-ink-100">megabrain</div>
             <div className="text-[11px] text-ink-400">Setup{plan === null ? '' : ` · v${plan.version}`}</div>
@@ -41,7 +41,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
           {steps.map((name, index) => (
             <li
               key={name}
-              className={`flex items-center gap-3 rounded-md px-2 py-1.5 text-[13px] ${index === step ? 'bg-ink-800 text-ink-100' : index < step ? 'text-ink-300' : 'text-ink-500'}`}
+              className={`flex items-center gap-3 rounded-2xl px-3 py-2 text-[14px] ${index === step ? 'bg-ink-800 text-ink-100' : index < step ? 'text-ink-300' : 'text-ink-500'}`}
             >
               <span
                 className={`flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${
@@ -58,7 +58,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
           Everything here runs the megabrain command line. You can run this setup again from the main window.
         </p>
       </aside>
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col bg-ink-950">
         <div className="min-h-0 flex-1 overflow-y-auto px-10 py-8">
           {planError !== null && <ErrorNote error={planError} />}
           {step === 0 && <CommandLineStep />}
@@ -70,7 +70,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
           {step === 4 && <HealthStep />}
           {step > 0 && plan === null && planError === null && <Loading what="Reading this machine" />}
         </div>
-        <footer className="flex items-center justify-between border-t border-ink-800 px-10 py-4">
+        <footer className="flex items-center justify-between border-t border-white/[0.06] px-10 py-4">
           <Button variant="ghost" onClick={back} disabled={step === 0}>
             Back
           </Button>
@@ -92,8 +92,8 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
 function Heading({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <header className="mb-6 max-w-2xl">
-      <h2 className="text-[20px] font-semibold text-ink-100">{title}</h2>
-      <p className="mt-1.5 text-[13px] leading-relaxed text-ink-400">{children}</p>
+      <h2 className="text-[26px] font-semibold tracking-[-0.02em] text-ink-100">{title}</h2>
+      <p className="mt-2 text-[15px] leading-relaxed text-ink-400">{children}</p>
     </header>
   )
 }
@@ -168,13 +168,13 @@ function CommandLineStep() {
           </Row>
           <Row label="megabrain runs">{link.resolvesTo === null ? <span className="text-ink-400">nothing on your PATH answers to megabrain</span> : <Mono>{link.resolvesTo}</Mono>}</Row>
           {link.bundled.includes('/AppTranslocation/') && (
-            <p className="mt-3 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
+            <p className="mt-3 rounded-2xl border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
               macOS is running this app from a temporary copy. Move megabrain to Applications and open it again before linking, or the link will
               break.
             </p>
           )}
           {!link.dirOnPath && (
-            <p className="mt-3 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
+            <p className="mt-3 rounded-2xl border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
               <Mono>~/.local/bin</Mono> is not on your PATH, so agents will not find the link. Add it in your shell profile.
             </p>
           )}
@@ -399,7 +399,7 @@ function InstallStep({ args }: { args: string[] }) {
             {progress.steps.length === 0 && <Loading what="Starting" />}
             <ul className="space-y-1">
               {progress.steps.map((step) => (
-                <li key={step.key} className="rounded-md px-2 py-1.5 hover:bg-ink-850">
+                <li key={step.key} className="rounded-2xl px-2 py-1.5 hover:bg-ink-850">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-ink-100">{step.label}</span>
                     <span className="flex items-center gap-2">

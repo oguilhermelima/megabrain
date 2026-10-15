@@ -1,4 +1,4 @@
-import type { DoctorReport, InstallEvent, InstallPlan, Status } from '@/api/schema'
+import type { ChatRead, DoctorReport, InstallEvent, InstallPlan, Status, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -104,6 +104,23 @@ export const mockStatus: Status = {
       chatName: 'feat/desktop-panel',
       worktreePath: '/Users/operator/Workspaces/Worktrees/feat-desktop-panel',
     }),
+    dispatch('210344000-41100-5d2e8c19', {
+      branch: 'fix/player-seek',
+      chatName: 'fix/player-seek',
+      worktreePath: '/Users/operator/Workspaces/Worktrees/fix-player-seek',
+      supervision: {
+        lastCheck: now,
+        finding: { cause: 'asks-you', errorText: 'Keep the old seek bar on tvOS, or use the new scrubber?', recommendation: 'answer with megabrain orchestrate reply 5d2e8c19 --text "…"' },
+      },
+    }),
+    dispatch('211800000-41200-77aa01ce', {
+      agent: 'claude',
+      model: 'claude-sonnet-5',
+      branch: 'feat/web-community-redesign',
+      chatName: 'feat/web-community-redesign',
+      worktreePath: '/Users/operator/Workspaces/Worktrees/feat-web-community-redesign',
+    }),
+    dispatch('190000000-40000-1f0e0d0c', { state: 'failed', branch: 'chore/agy-trust-probe', chatName: 'chore/agy-trust-probe', updatedAt: '2026-09-26T10:00:00.000Z' }),
     dispatch('211504000-41388-b2d40f71', {
       agent: 'claude',
       model: 'claude-sonnet-5',
@@ -149,4 +166,30 @@ export const mockStatus: Status = {
   processes: [{ name: 'web', state: 'running', pid: 51234, worktree: '/Users/operator/Workspaces/canto' }],
   resources: { history: false, admission: null },
   deliveryChannels: [{ agent: 'claude', channel: 'peer-socket', status: 'working' }],
+}
+
+export const mockWorktrees: Worktree[] = [
+  { path: '/Users/operator/Workspaces/Worktrees/feat-desktop-panel', branch: 'feat/desktop-panel', repository: { name: 'megabrain', path: '/Users/operator/Workspaces/megabrain' } },
+  { path: '/Users/operator/Workspaces/Worktrees/fix-queue-cancel-owner', branch: 'fix/queue-cancel-owner', repository: { name: 'megabrain', path: '/Users/operator/Workspaces/megabrain' } },
+  { path: '/Users/operator/Workspaces/Worktrees/fix-player-seek', branch: 'fix/player-seek', repository: { name: 'canto', path: '/Users/operator/Workspaces/canto' } },
+  { path: '/Users/operator/Workspaces/Worktrees/feat-web-community-redesign', branch: 'feat/web-community-redesign', repository: { name: 'juntin', path: '/Users/operator/Workspaces/juntin' } },
+]
+
+export const mockChatRead: ChatRead = {
+  dispatchId: 'dispatch-20261014210344000-41100-5d2e8c19',
+  source: 'tmux',
+  truncated: false,
+  text: [
+    '• Ran bun test apps/tv/player',
+    '  ✓ seek forward 10s keeps playback rate',
+    '  ✓ seek backward clamps at 0',
+    '  ! seek bar on tvOS: two designs disagree',
+    '',
+    '• Asked the coordinator',
+    '  megabrain ask "Keep the old seek bar on tvOS, or use the new',
+    '  scrubber from the web player? The new one needs focus handling',
+    '  for the remote."',
+    '',
+    'waiting for a reply…',
+  ].join('\n'),
 }

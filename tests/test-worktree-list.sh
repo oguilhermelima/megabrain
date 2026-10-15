@@ -141,18 +141,21 @@ EOF
 # listing, so the repository checkout itself (inSharedRoot: false) is now a legitimate member of
 # a filtered result.
 scenario_listing_json_and_repo_filter() {
-  local output expected filtered filtered_expected repo_one_canonical
+  local output expected filtered filtered_expected repo_one_canonical repo_two_canonical
   setup_listing_fixture
   repo_one_canonical="$(cd "$repo_one" && pwd -P)"
+  repo_two_canonical="$(cd "$state_root/repo-two" && pwd -P)"
   output="$(run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --json)"
   expected="$(jq -n \
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
     --arg two "$fixture_shared_root/two-main" \
+    --arg repoOne "$repo_one_canonical" \
+    --arg repoTwo "$repo_two_canonical" \
     '[
-      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
-      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
-      {path: $two, branch: "feature/two", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false}
+      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false, repository: {name: "repo-one", path: $repoOne}},
+      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false, repository: {name: "repo-one", path: $repoOne}},
+      {path: $two, branch: "feature/two", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false, repository: {name: "repo-two", path: $repoTwo}}
     ]')"
   assert_equal "$output" "$expected"
   assert_contains "$output" "$fixture_shared_root/one-detached"
@@ -164,12 +167,13 @@ scenario_listing_json_and_repo_filter() {
   filtered="$(run_binary "$MEGABRAIN_STATE_DIR" "$fixture_shared_root" --repo "$fixture_shared_root/one-main" --json)"
   filtered_expected="$(jq -n \
     --arg repo "$repo_one_canonical" \
+    --arg repoOne "$repo_one_canonical" \
     --arg detached "$fixture_shared_root/one-detached" \
     --arg one "$fixture_shared_root/one-main" \
     '[
-      {path: $repo, branch: "main", parent: null, inSuperset: false, inSharedRoot: false, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
-      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false},
-      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false}
+      {path: $repo, branch: "main", parent: null, inSuperset: false, inSharedRoot: false, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false, repository: {name: "repo-one", path: $repo}},
+      {path: $detached, branch: "detached", parent: null, inSuperset: false, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false, repository: {name: "repo-one", path: $repoOne}},
+      {path: $one, branch: "feature/one", parent: null, inSuperset: true, inSharedRoot: true, pullRequest: null, createdAt: null, ageDays: null, purpose: null, origin: "discovered", createdByMegabrain: false, repository: {name: "repo-one", path: $repoOne}}
     ]')"
   assert_equal "$filtered" "$filtered_expected"
   case "$filtered" in

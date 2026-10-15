@@ -1,0 +1,104 @@
+[
+  {
+    "path": "/Users/operator/Workspaces/Worktrees/feat-87-ingestion-pipeline",
+    "branch": "feat/87-ingestion-pipeline",
+    "parent": null,
+    "inSuperset": false,
+    "inSharedRoot": true,
+    "pullRequest": null,
+    "createdAt": "2026-10-13T14:53:08.576Z",
+    "ageDays": 1,
+    "purpose": null,
+    "origin": "created",
+    "createdByMegabrain": true,
+    "repository": {
+      "name": "juntin",
+      "path": "/Users/operator/Workspaces/juntin"
+    }
+  },
+  {
+    "path": "/Users/operator/Workspaces/Worktrees/feat-web-community-redesign",
+    "branch": "feat/web-community-redesign",
+    "parent": null,
+    "inSuperset": false,
+    "inSharedRoot": true,
+    "pullRequest": null,
+    "createdAt": "2026-10-13T18:24:48.944Z",
+    "ageDays": 1,
+    "purpose": null,
+    "origin": "created",
+    "createdByMegabrain": true,
+    "repository": {
+      "name": "juntin",
+      "path": "/Users/operator/Workspaces/juntin"
+    }
+  },
+  {
+    "path": "/Users/operator/Workspaces/Worktrees/feat-boot-search-cache-clear",
+    "branch": "feat/boot-search-cache-clear",
+    "parent": null,
+    "inSuperset": false,
+    "inSharedRoot": true,
+    "pullRequest": null,
+    "createdAt": "2026-10-13T00:49:26.449Z",
+    "ageDays": 2,
+    "purpose": null,
+    "origin": "created",
+    "createdByMegabrain": true,
+    "repository": {
+      "name": "qs-tiles",
+      "path": "/Users/operator/Workspaces/qs-tiles"
+    }
+  },
+  {
+    "path": "/Users/operator/Workspaces/Worktrees/feat-core-amoled-redesign",
+    "branch": "feat/core-amoled-redesign",
+    "parent": null,
+    "inSuperset": false,
+    "inSharedRoot": true,
+    "pullRequest": null,
+    "createdAt": "2026-10-13T12:03:53.194Z",
+    "ageDays": 1,
+    "purpose": null,
+    "origin": "created",
+    "createdByMegabrain": true,
+    "repository": {
+      "name": "qs-tiles",
+      "path": "/Users/operator/Workspaces/qs-tiles"
+    }
+  },
+  {
+    "path": "/Users/operator/Workspaces/Worktrees/feat-core-app-screen",
+    "branch": "feat/core-app-screen",
+    "parent": null,
+    "inSuperset": false,
+    "inSharedRoot": true,
+    "pullRequest": null,
+    "createdAt": "2026-10-13T11:31:16.480Z",
+    "ageDays": 1,
+    "purpose": null,
+    "origin": "created",
+    "createdByMegabrain": true,
+    "repository": {
+      "name": "qs-tiles",
+      "path": "/Users/operator/Workspaces/qs-tiles"
+    }
+  },
+  {
+    "path": "/Users/operator/Workspaces/Worktrees/feat-users-tile-direct-switch",
+    "branch": "feat/users-tile-direct-switch",
+    "parent": null,
+    "inSuperset": false,
+    "inSharedRoot": true,
+    "pullRequest": null,
+    "createdAt": "2026-10-13T01:10:21.297Z",
+    "ageDays": 2,
+    "purpose": null,
+    "origin": "created",
+    "createdByMegabrain": true,
+    "repository": {
+      "name": "qs-tiles",
+      "path": "/Users/operator/Workspaces/qs-tiles"
+    }
+  }
+]

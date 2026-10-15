@@ -1,5 +1,5 @@
 import { realpath, readFile, readdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase } from "../../db/db.js";
@@ -45,6 +45,13 @@ async function repositoryForDirectory(process: ProcessAdapter, path: string): Pr
     : initialTop;
   if (topPath === undefined) return undefined;
   return { common: commonPath, path: topPath };
+}
+
+// A non-bare repository's common dir is <checkout>/.git; a bare one has no checkout, so the
+// directory the scan found it through stands in.
+function repositoryOf(common: string, repos: readonly Repository[]): { name: string; path: string } {
+  const path = common.endsWith("/.git") ? common.slice(0, -"/.git".length) : repos.find((repository) => repository.common === common)?.path ?? common;
+  return { name: basename(path), path };
 }
 
 async function runGit(process: ProcessAdapter, path: string, args: readonly string[]): Promise<string | undefined> {
@@ -159,6 +166,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
       pullRequest: pullRequests.get(record.branch) ?? null,
       createdAt: stored?.createdAt ?? null, ageDays, purpose: stored?.purpose ?? null,
       origin: stored?.origin ?? "discovered", createdByMegabrain: stored?.origin === "created",
+      repository: repositoryOf(record.repository, repos),
     });
   }
   const formatted = formatWorktreeList(entries, options.value);

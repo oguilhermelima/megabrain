@@ -108,6 +108,18 @@ export const statusSchema = z.looseObject({
   deliveryChannels: z.array(z.looseObject({ agent: z.string(), channel: z.string(), status: z.string() })),
 })
 
+export const worktreeListSchema = z.array(
+  z.looseObject({
+    path: z.string(),
+    branch: z.string(),
+    repository: z.looseObject({ name: z.string(), path: z.string() }).optional(),
+  }),
+)
+
+export const chatReadSchema = z.looseObject({ dispatchId: z.string(), source: z.string(), truncated: z.boolean(), text: z.string() })
+
+export const replyResultSchema = z.looseObject({ dispatchId: z.string(), status: z.string(), nudge: z.string() })
+
 export type InstallPlan = z.infer<typeof installPlanSchema>
 export type PlanModule = InstallPlan['modules'][number]
 export type InstallEvent = z.infer<typeof installEventSchema>
@@ -116,3 +128,6 @@ export type ModuleResult = z.infer<typeof moduleResultSchema>
 export type DoctorReport = z.infer<typeof doctorReportSchema>
 export type Status = z.infer<typeof statusSchema>
 export type Dispatch = Status['dispatches'][number]
+export type Worktree = z.infer<typeof worktreeListSchema>[number]
+export type ChatRead = z.infer<typeof chatReadSchema>
+export type ReplyResult = z.infer<typeof replyResultSchema>
