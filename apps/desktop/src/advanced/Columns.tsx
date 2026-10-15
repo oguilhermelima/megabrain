@@ -67,7 +67,7 @@ function Column({ column, onSelect }: { column: ColumnModel; onSelect: (dispatch
           {summary.working > 0 && <span className="text-[12.5px] text-ink-400">{summary.working} working</span>}
         </span>
       </div>
-      <div className="space-y-2 px-4 pb-3">
+      <div className="max-h-[45%] shrink-0 space-y-2 overflow-y-auto px-4 pb-3">
         {column.children.map((node) => (
           <ChildCard key={node.chat.dispatchId} node={node} onSelect={onSelect} />
         ))}
