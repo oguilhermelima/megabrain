@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { z } from 'zod'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -85,6 +85,17 @@ export function createTauriApi(): DesktopApi {
         ['orchestrate', 'transcript', ...('dispatchId' in target ? [target.dispatchId] : ['--session', target.sessionId]), ...(since === undefined ? [] : ['--since', since]), '--operator', '--json'],
         transcriptSchema,
       ),
+    setHidden: async (target, hidden) =>
+      void (await cliText('project' in target ? ['repo', hidden ? 'hide' : 'unhide', target.project] : ['worktree', hidden ? 'hide' : 'unhide', target.worktree])),
+    removeProject: async (path) => void (await cliText(['repo', 'remove', path])),
+    removeWorktree: async (path) => void (await cliText(['worktree', 'finish', path, '--delete-branch'])),
+    slashCommands: (agent, cwd) => cliJson(['commands', '--agent', agent, '--cwd', cwd, '--json'], slashCommandSchema.array()),
+    queued: (dispatchId) => cliJson(['orchestrate', 'queue', dispatchId, '--operator', '--json'], queuedMessageSchema.array()),
+    unqueue: async (itemId) => {
+      const result = await cliJson(['orchestrate', 'queue', 'cancel', itemId, '--operator', '--json'], queuedMessageSchema)
+      return result.text
+    },
+    saveAttachment: (base64, extension) => invoke<string>('save_attachment', { base64, extension }),
     sendToSession: (sessionId, text) => cliJson(['send', '--session', sessionId, '--text', text, '--operator', '--json'], sendResultSchema),
     openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
     stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),

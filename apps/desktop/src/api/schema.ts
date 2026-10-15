@@ -193,6 +193,13 @@ export const projectSessionSchema = z.looseObject({
   lastActivityAt: z.string().nullable(),
   /** Set when megabrain started this session as a dispatch. */
   dispatchId: z.string().nullable(),
+  /** Tokens in the session's current context, when the agent records it. */
+  contextTokens: z.number().nullable().optional(),
+  /** When the agent's prompt cache expires if nothing happens (Claude: last activity + 1 hour). */
+  cacheExpiresAt: z.string().nullable().optional(),
+  /** When the agent compacts an idle session on its own (Claude 2.1.299+: last activity + about
+   * 54 minutes, only above its idle-compaction token minimum and while idleCompaction is on). */
+  idleCompactAt: z.string().nullable().optional(),
 })
 
 export const projectWorktreeSchema = z.looseObject({
@@ -203,6 +210,8 @@ export const projectWorktreeSchema = z.looseObject({
   primary: z.boolean(),
   parent: z.string().nullable(),
   pullRequest: z.looseObject({ number: z.number(), state: z.string(), url: z.string() }).nullable(),
+  /** Hidden by the person; the sidebar shows it only under Hidden. */
+  hidden: z.boolean().optional(),
   sessions: z.array(projectSessionSchema),
 })
 
@@ -216,6 +225,7 @@ export const projectsSchema = z.array(
     source: z.enum(['megabrain', 'import']),
     /** The folder no longer exists or is no longer a git repository. */
     missing: z.boolean(),
+    hidden: z.boolean().optional(),
     worktrees: z.array(projectWorktreeSchema),
   }),
 )
@@ -249,6 +259,26 @@ export const transcriptEventSchema = z.looseObject({
 
 // `megabrain send --session <agent:id> --text <text> --operator --json`: a message to any agent
 // session, including ones megabrain did not start.
+// `megabrain commands --agent <agent> --cwd <path> --json`: the slash commands that agent offers
+// in that folder: built-in ones and the person's and project's own (Claude .claude/commands and
+// skills, Codex prompts, ...).
+export const slashCommandSchema = z.looseObject({
+  name: z.string(),
+  description: z.string().nullable(),
+  source: z.enum(['builtin', 'user', 'project', 'skill', 'plugin']),
+  argumentHint: z.string().nullable().optional(),
+})
+
+// `megabrain orchestrate queue <dispatch> --operator --json`: messages waiting to reach a chat.
+export const queuedMessageSchema = z.looseObject({
+  id: z.string(),
+  dispatch: z.string(),
+  type: z.string(),
+  createdAt: z.string(),
+  state: z.string(),
+  text: z.string(),
+})
+
 export const sendResultSchema = z.looseObject({ delivered: z.boolean(), channel: z.string(), detail: z.string().optional() })
 
 // `megabrain code open <root> --json`: a local VS Code (openvscode-server) for one worktree or
@@ -307,6 +337,8 @@ export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
 export type SendResult = z.infer<typeof sendResultSchema>
+export type SlashCommand = z.infer<typeof slashCommandSchema>
+export type QueuedMessage = z.infer<typeof queuedMessageSchema>
 export type CodeServer = z.infer<typeof codeServerSchema>
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
 export type CodeEntry = z.infer<typeof codeEntrySchema>

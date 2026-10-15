@@ -311,7 +311,7 @@ export const mockProjects: Project[] = [
     missing: false,
     worktrees: [
       { path: `${root}/canto`, branch: 'main', head: 'f00ba12', primary: true, parent: null, pullRequest: null, sessions: [
-        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000002', title: 'Six visual changes on home', status: 'working', startedAt: ago(90), lastActivityAt: ago(1), dispatchId: null },
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000002', title: 'Six visual changes on home', status: 'idle', startedAt: ago(90), lastActivityAt: ago(41), dispatchId: null, contextTokens: 412000, cacheExpiresAt: ago(41 - 60), idleCompactAt: ago(41 - 54) },
       ] },
       { path: `${tree}/fix-player-seek`, branch: 'fix/player-seek', head: 'c0ffee1', primary: false, parent: 'main', pullRequest: { number: 412, state: 'OPEN', url: 'https://github.com/operator/canto/pull/412' }, sessions: [
         { agent: 'codex', sessionId: 'codex:019a7c2e-55b1-7e20-a3c4-8d9e0f1a2b3c', title: 'fix/player-seek', status: 'waiting', startedAt: ago(60), lastActivityAt: ago(3), dispatchId: 'dispatch-20261014210344000-41100-5d2e8c19' },
@@ -319,7 +319,7 @@ export const mockProjects: Project[] = [
       { path: `${tree}/feat-extension`, branch: 'feat/extension', head: 'beef123', primary: false, parent: 'main', pullRequest: null, sessions: [
         { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7000-8000-000000000003', title: 'feat/extension', status: 'idle', startedAt: ago(30), lastActivityAt: ago(0), dispatchId: null },
       ] },
-      { path: `${tree}/canto-detached`, branch: null, head: '0fcc0b0', primary: false, parent: null, pullRequest: null, sessions: [] },
+      { path: `${tree}/canto-detached`, hidden: true, branch: null, head: '0fcc0b0', primary: false, parent: null, pullRequest: null, sessions: [] },
     ],
   },
   {
@@ -343,6 +343,7 @@ export const mockProjects: Project[] = [
       ] },
     ],
   },
+  { name: 'archive', path: `${root}/archive`, remote: null, source: 'import', missing: false, hidden: true, worktrees: [] },
   { name: 'old-thing', path: `${root}/old-thing`, remote: null, source: 'import', missing: true, worktrees: [] },
 ]
 

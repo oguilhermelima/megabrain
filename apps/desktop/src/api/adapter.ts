@@ -1,4 +1,4 @@
-import type { CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -43,6 +43,20 @@ export interface DesktopApi {
   setPillExpanded(expanded: boolean): Promise<void>
   onPillExpanded(listener: (expanded: boolean) => void): () => void
   openMain(): Promise<void>
+  /** Hide or show a project or a worktree in the sidebar (stored by megabrain). */
+  setHidden(target: { project: string } | { worktree: string }, hidden: boolean): Promise<void>
+  /** Remove a project from the registry; files stay. */
+  removeProject(path: string): Promise<void>
+  /** Remove a worktree and its branch; refused when the branch has unmerged commits. */
+  removeWorktree(path: string): Promise<void>
+  /** Slash commands an agent offers in a folder. */
+  slashCommands(agent: string, cwd: string): Promise<SlashCommand[]>
+  /** Messages waiting to reach a megabrain chat. */
+  queued(dispatchId: string): Promise<QueuedMessage[]>
+  /** Take a queued message back; resolves to its text so it can be edited. */
+  unqueue(itemId: string): Promise<string>
+  /** Save a pasted or picked image under megabrain's state and return its path for the message. */
+  saveAttachment(base64: string, extension: string): Promise<string>
   /** Send a message to any agent session, as the operator. */
   sendToSession(sessionId: string, text: string): Promise<SendResult>
   /** A local VS Code for a worktree or repository; started on demand and reused. */

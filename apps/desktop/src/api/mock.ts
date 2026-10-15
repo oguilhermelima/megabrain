@@ -64,6 +64,16 @@ export function createMockApi(): DesktopApi {
     },
     openMain: async () => {},
     transcript: async (target) => ({ ...mockTranscript, dispatchId: 'dispatchId' in target ? target.dispatchId : null, sessionId: 'sessionId' in target ? target.sessionId : mockTranscript.sessionId }),
+    setHidden: async () => {},
+    removeProject: async () => {},
+    removeWorktree: async () => {},
+    slashCommands: async (agent) =>
+      agent === 'codex'
+        ? [{ name: 'model', description: 'Choose the model and reasoning effort', source: 'builtin' }, { name: 'review', description: 'Review my current changes', source: 'builtin' }, { name: 'ship', description: 'Ship the current branch', source: 'user', argumentHint: '[pr]' }]
+        : [{ name: 'compact', description: 'Clear history but keep a summary in context', source: 'builtin', argumentHint: '[instructions]' }, { name: 'model', description: 'Set the AI model', source: 'builtin' }, { name: 'review', description: 'Review a pull request', source: 'builtin' }, { name: 'megabrain', description: 'Delegate work to other coding agents', source: 'skill' }, { name: 'deploy', description: 'Deploy this project', source: 'project', argumentHint: '<env>' }],
+    queued: async (dispatchId) => [{ id: 'delivery-mock-1', dispatch: dispatchId, type: 'reply', createdAt: new Date().toISOString(), state: 'outstanding', text: 'Use the new scrubber, and keep the old bar behind a flag.' }],
+    unqueue: async () => 'Use the new scrubber, and keep the old bar behind a flag.',
+    saveAttachment: async (_base64, extension) => `/Users/operator/.megabrain/attachments/mock.${extension}`,
     sendToSession: async () => ({ delivered: true, channel: 'claude-peer' }),
     openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     stopCodeServer: async () => {},
