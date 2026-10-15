@@ -147,7 +147,13 @@ export const transcriptSchema = z.looseObject({
 export const codeEntrySchema = z.looseObject({ path: z.string(), kind: z.enum(['file', 'dir']), size: z.number().nullable() })
 export const codeFileSchema = z.looseObject({ path: z.string(), text: z.string().nullable(), binary: z.boolean(), tooLarge: z.boolean() })
 export const codeChangeSchema = z.looseObject({ path: z.string(), status: z.enum(['modified', 'added', 'deleted', 'renamed', 'untracked']) })
-export const codeDiffSchema = z.looseObject({ path: z.string(), original: z.string(), modified: z.string() })
+export const codeDiffSchema = z.looseObject({
+  path: z.string(),
+  original: z.string(),
+  modified: z.string(),
+  binary: z.boolean().optional(),
+  tooLarge: z.boolean().optional(),
+})
 
 export const chatReadSchema = z.looseObject({ dispatchId: z.string(), source: z.string(), truncated: z.boolean(), text: z.string() })
 
