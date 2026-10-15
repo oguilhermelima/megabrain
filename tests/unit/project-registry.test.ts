@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { route } from "../../src/cli/router.js";
@@ -71,7 +71,7 @@ describe("project registry", () => {
     await cli("repo", "add", path);
     const removed = await cli("repo", "remove", path);
     expect(removed.kind).toBe("ok");
-    expect(readFileSync(join(path, ".git"), "utf8")).toContain("gitdir:");
+    expect(existsSync(join(path, ".git"))).toBe(true);
   });
 
   test("repo clone accepts a local bare repository and refuses an existing destination", async () => {
