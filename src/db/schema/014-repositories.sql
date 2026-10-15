@@ -1,4 +1,4 @@
-CREATE TABLE repositories (
+CREATE TABLE IF NOT EXISTS repositories (
   path TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   remote TEXT,
@@ -6,4 +6,4 @@ CREATE TABLE repositories (
   added_at TEXT NOT NULL
 );
 
-CREATE INDEX repositories_name ON repositories(name);
+CREATE INDEX IF NOT EXISTS repositories_name ON repositories(name);
