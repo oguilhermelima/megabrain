@@ -5,11 +5,12 @@ import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { rust } from '@codemirror/lang-rust'
-import { StreamLanguage } from '@codemirror/language'
+import { StreamLanguage, syntaxHighlighting } from '@codemirror/language'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { MergeView } from '@codemirror/merge'
 import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark'
+import { EditorView, lineNumbers } from '@codemirror/view'
 import { basicSetup } from 'codemirror'
 import { useEffect, useRef } from 'react'
 
@@ -27,6 +28,8 @@ const darkTheme = EditorView.theme(
 )
 
 const readOnlyExtensions: Extension[] = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+
+const syntaxColors: Extension = syntaxHighlighting(oneDarkHighlightStyle)
 
 function languageExtension(language: string): Extension {
   switch (language) {
@@ -64,7 +67,7 @@ export function CodeEditor({ text, language }: { text: string; language: string 
     const previousScrollTop = viewRef.current?.scrollDOM.scrollTop ?? 0
     viewRef.current?.destroy()
     const view = new EditorView({
-      state: EditorState.create({ doc: text, extensions: [basicSetup, languageExtension(language), darkTheme, ...readOnlyExtensions] }),
+      state: EditorState.create({ doc: text, extensions: [basicSetup, languageExtension(language), darkTheme, syntaxColors, ...readOnlyExtensions] }),
       parent: container,
     })
     view.scrollDOM.scrollTop = previousScrollTop
@@ -88,7 +91,7 @@ export function CodeDiffEditor({ original, modified, language }: { original: str
     if (!container) return
     const previousScrollTop = viewRef.current?.a.scrollDOM.scrollTop ?? 0
     viewRef.current?.destroy()
-    const extensions = [languageExtension(language), darkTheme, ...readOnlyExtensions]
+    const extensions = [languageExtension(language), darkTheme, syntaxColors, lineNumbers(), ...readOnlyExtensions]
     const view = new MergeView({
       a: { doc: original, extensions },
       b: { doc: modified, extensions },
