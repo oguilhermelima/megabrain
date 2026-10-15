@@ -111,6 +111,21 @@ describe("install --plan --json", () => {
     expect(plan.defaults).toMatchObject({ agents: ["codex"], skill: "project", modules: ["orchestration-hooks"] });
   });
 
+  test("preselects an opt-in module only because this machine chose it before", async () => {
+    const environment = machine();
+    const opened = guardedStateDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    putInstallModule(opened.value, "machineInstall", {
+      agents: [], skill: "none", tmux: "no", requestedModules: ["resource-hooks"], modules: ["resource-hooks"], version: "0.0.1",
+    });
+    const result = await runMachineInstall(["--plan", "--json"], environment, processAdapter(), async () => ok("installed"), false);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const plan = JSON.parse(result.value);
+    expect(plan.defaults.modules).toEqual(["resource-hooks"]);
+    expect((plan.modules as Event[]).find((entry) => entry.module === "resource-hooks")).toMatchObject({ selectedByDefault: true });
+  });
+
   test("refuses --plan without --json", async () => {
     const result = await runMachineInstall(["--plan"], machine(), processAdapter(), async () => ok("installed"), false);
     expect(result).toMatchObject({ kind: "failed", exitCode: 2 });
