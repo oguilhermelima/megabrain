@@ -155,8 +155,8 @@ export function Conversation({ target, live }: { target: { dispatchId: string } 
 
   const items = buildConversationItems(transcript.events)
   return (
-    <div className="relative min-h-0 flex-1">
-      <ol ref={list} onScroll={onScroll} className="mx-8 my-5 h-full space-y-3 overflow-y-auto pb-2 select-text">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ol ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 space-y-3 overflow-y-auto pt-5 pb-5 select-text">
         {items.map((item) => (
           <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} />
         ))}
