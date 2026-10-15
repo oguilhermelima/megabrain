@@ -75,6 +75,23 @@ describe('buildColumns', () => {
     expect(columns[0]?.children[0]?.children).toEqual([])
   })
 
+  test('leaves out a parent whose chats have all ended', () => {
+    const columns = buildColumns([
+      chat('a', { parentSessionId: 'claude:root', state: 'done' }),
+      chat('b', { parentSessionId: 'claude:root', state: 'failed' }),
+    ])
+    expect(columns).toEqual([])
+  })
+
+  test('keeps a parent with an open grandchild even though its direct child has ended', () => {
+    const columns = buildColumns([
+      chat('a', { parentSessionId: 'claude:root', agentSessionId: 'codex:a', state: 'done' }),
+      chat('b', { parentSessionId: 'codex:a', state: 'running' }),
+    ])
+    expect(columns).toHaveLength(1)
+    expect(columns[0]?.endedCount).toBe(1)
+  })
+
   test('orders columns by their earliest chat and children by createdAt', () => {
     const columns = buildColumns([
       chat('a', { parentSessionId: 'claude:root1', createdAt: '2026-10-15T12:00:00.000Z' }),
