@@ -10,8 +10,10 @@ const agentColors: Record<string, string> = {
 
 const agentLetters: Record<string, string> = { codex: 'CX', claude: 'CL', grok: 'GK', agy: 'AG' }
 
-export function AgentBadge({ agent, size = 'md' }: { agent: string; size?: 'md' | 'lg' }) {
-  const box = size === 'lg' ? 'size-9 rounded-[12px] text-[12px]' : 'size-7 rounded-[9px] text-[10.5px]'
+const badgeBox = { sm: 'size-[18px] rounded-[6px] text-[8.5px]', md: 'size-7 rounded-[9px] text-[10.5px]', lg: 'size-9 rounded-[12px] text-[12px]' }
+
+export function AgentBadge({ agent, size = 'md' }: { agent: string; size?: 'sm' | 'md' | 'lg' }) {
+  const box = badgeBox[size]
   return (
     <span className={`grid shrink-0 place-items-center font-bold text-accent-ink ${box} ${agentColors[agent] ?? 'bg-ink-400'}`} aria-label={agent}>
       {agentLetters[agent] ?? agent.slice(0, 2).toUpperCase()}

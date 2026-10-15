@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { open } from '@tauri-apps/plugin-dialog'
 import type { z } from 'zod'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { settingsSchema, githubRepositorySchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -84,6 +85,9 @@ export function createTauriApi(): DesktopApi {
         ['orchestrate', 'transcript', ...('dispatchId' in target ? [target.dispatchId] : ['--session', target.sessionId]), ...(since === undefined ? [] : ['--since', since]), '--operator', '--json'],
         transcriptSchema,
       ),
+    sendToSession: (sessionId, text) => cliJson(['send', '--session', sessionId, '--text', text, '--operator', '--json'], sendResultSchema),
+    openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
+    stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),
     settings: () => cliJson(['settings', '--json'], settingsSchema),
     setPolicy: async (policy) => {
       if (policy === null) return void (await cliText(['resources', 'policy', 'off']))
@@ -107,8 +111,10 @@ export function createTauriApi(): DesktopApi {
     importFolder: (path) => cliJson(['repo', 'add', path, '--json'], repositorySchema),
     importClone: (url, into) => cliJson(['repo', 'clone', url, '--into', into, '--json'], repositorySchema),
     githubRepositories: () => cliJson(['repo', 'github', '--json'], githubRepositorySchema.array()),
-    // Placeholder until the dialog plugin is wired (the import lane replaces this).
-    pickFolder: async () => null,
+    pickFolder: async () => {
+      const selected = await open({ directory: true, multiple: false })
+      return selected ?? null
+    },
     codeTree: async (root) => codeEntrySchema.array().parse(await invoke('code_tree', { root })),
     codeRead: async (root, path) => codeFileSchema.parse(await invoke('code_read', { root, path })),
     codeChanges: async (root) => codeChangeSchema.array().parse(await invoke('code_changes', { root })),

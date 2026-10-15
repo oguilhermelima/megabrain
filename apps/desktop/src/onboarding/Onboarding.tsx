@@ -41,11 +41,11 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
           {steps.map((name, index) => (
             <li
               key={name}
-              className={`flex items-center gap-3 rounded-2xl px-3 py-2 text-[14px] ${index === step ? 'bg-ink-800 text-ink-100' : index < step ? 'text-ink-300' : 'text-ink-500'}`}
+              className={`flex items-center gap-3 rounded-2xl px-3 py-2 text-[14px] ${index === step ? 'bg-ink-800 text-ink-100' : index < step ? 'text-ink-300' : 'text-ink-400'}`}
             >
               <span
                 className={`flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                  index < step ? 'bg-accent/20 text-accent' : index === step ? 'bg-accent text-ink-950' : 'bg-ink-800 text-ink-500'
+                  index < step ? 'bg-accent/20 text-accent' : index === step ? 'bg-accent text-ink-950' : 'bg-ink-800 text-ink-400'
                 }`}
               >
                 {index < step ? '✓' : index + 1}
@@ -54,7 +54,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
             </li>
           ))}
         </ol>
-        <p className="mt-auto text-[11px] leading-relaxed text-ink-500">
+        <p className="mt-auto text-[11px] leading-relaxed text-ink-400">
           Everything here runs the megabrain command line. You can run this setup again from the main window.
         </p>
       </aside>
@@ -223,7 +223,7 @@ function EnvironmentStep({ plan }: { plan: InstallPlan }) {
               <li key={agent.agent} className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-ink-100">{agent.label}</div>
-                  {agent.configDir !== null && <div className="truncate font-mono text-[11px] text-ink-500">{agent.configDir}</div>}
+                  {agent.configDir !== null && <div className="truncate font-mono text-[11px] text-ink-400">{agent.configDir}</div>}
                 </div>
                 <Badge tone={agent.installed ? 'ok' : 'neutral'}>{agent.installed ? 'installed' : 'not found'}</Badge>
               </li>
@@ -236,7 +236,7 @@ function EnvironmentStep({ plan }: { plan: InstallPlan }) {
               <li key={host.name} className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-ink-100">{host.name}</div>
-                  <div className="text-[11px] text-ink-500">{host.note}</div>
+                  <div className="text-[11px] text-ink-400">{host.note}</div>
                 </div>
                 <Badge tone={host.present ? 'ok' : 'neutral'}>{host.present ? 'found' : 'not found'}</Badge>
               </li>
@@ -244,7 +244,7 @@ function EnvironmentStep({ plan }: { plan: InstallPlan }) {
           </ul>
         </Card>
       </div>
-      <p className="mt-4 max-w-4xl text-[12px] leading-relaxed text-ink-500">
+      <p className="mt-4 max-w-4xl text-[12px] leading-relaxed text-ink-400">
         Web browser testing runs Playwright through Node, so it needs Node 22 or later even though megabrain itself does not.
       </p>
     </>
@@ -284,7 +284,7 @@ function ChooseStep({
                 onChange={(on) => onChange({ ...selection, agents: toggle(selection.agents, agent.agent, on) })}
               >
                 <span className="text-ink-100">{agent.label}</span>
-                {!agent.installed && <span className="ml-2 text-[11px] text-ink-500">not installed</span>}
+                {!agent.installed && <span className="ml-2 text-[11px] text-ink-400">not installed</span>}
               </Check>
             ))}
           </Card>
@@ -298,7 +298,7 @@ function ChooseStep({
                 { value: 'none', label: 'None' },
               ]}
             />
-            <p className="mt-2 text-[11px] leading-relaxed text-ink-500">The megabrain skill teaches the selected agents to use these tools.</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-400">The megabrain skill teaches the selected agents to use these tools.</p>
           </Card>
           <Card title="tmux">
             <Segmented
@@ -310,7 +310,7 @@ function ChooseStep({
                 { value: 'no', label: 'No' },
               ]}
             />
-            <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
               {plan.hosts.tmux ? 'Agents open in tmux splits, with the megabrain theme and agent badges.' : 'tmux is not installed.'}
             </p>
           </Card>
@@ -326,7 +326,7 @@ function ChooseStep({
                   onChange={(on) => onChange({ ...selection, modules: toggle(selection.modules, module.module, on) })}
                 >
                   <span className="text-ink-100">{module.label}</span>
-                  <span className="block text-[11px] leading-relaxed text-ink-500">{module.reason ?? module.hint}</span>
+                  <span className="block text-[11px] leading-relaxed text-ink-400">{module.reason ?? module.hint}</span>
                 </Check>
               ))}
             </Card>
@@ -336,7 +336,7 @@ function ChooseStep({
               <p className="mb-2 text-[12px] text-ink-300">These were set up before and are now unselected: {removing.map((module) => labels.get(module) ?? module).join(', ')}.</p>
               <Check checked={confirmRemovals} onChange={onConfirmRemovals}>
                 <span className="text-ink-100">Remove them</span>
-                <span className="block text-[11px] text-ink-500">Left unchecked, they stay installed.</span>
+                <span className="block text-[11px] text-ink-400">Left unchecked, they stay installed.</span>
               </Check>
             </Card>
           )}

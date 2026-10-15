@@ -3,12 +3,12 @@ import { api } from '@/api'
 import type { ChatRead, Dispatch } from '@/api/schema'
 import { chatState } from '@/advanced/model'
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
-import { Conversation } from '@/chat/Conversation'
+import { Conversation, type OpenChat } from '@/chat/Conversation'
 import { Button, ErrorNote, Mono, Spinner } from '@/components/ui'
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-export function ChatView({ chat, repository }: { chat: Dispatch; repository: string | null }) {
+export function ChatView({ chat, repository, onOpenChat }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat }) {
   const [read, setRead] = useState<ChatRead | null>(null)
   const [readError, setReadError] = useState<unknown>(null)
   const [text, setText] = useState('')
@@ -63,16 +63,16 @@ export function ChatView({ chat, repository }: { chat: Dispatch; repository: str
   const [tab, setTab] = useState<'conversation' | 'terminal'>('conversation')
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
+      <header data-tauri-drag-region className="flex flex-wrap items-center gap-4 border-b border-white/[0.06] px-8 pt-10 pb-5">
         <AgentBadge agent={chat.agent ?? ''} size="lg" />
         <div className="min-w-0">
-          <h1 className="truncate text-[20px] font-semibold text-ink-100">{chatName(chat)}</h1>
+          <h1 title={chatName(chat)} className="truncate text-[20px] font-semibold tracking-[-0.01em] text-ink-100">{chatName(chat)}</h1>
           <p className="truncate text-[13px] text-ink-400">
             {[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
           </p>
         </div>
         <StateChip state={state} />
-        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-500">
+        <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-400" title="Previous and next chat">
           <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘[</kbd>
           <kbd className="rounded-lg border border-white/10 px-1.5 font-mono">⌘]</kbd>
         </span>
@@ -100,7 +100,7 @@ export function ChatView({ chat, repository }: { chat: Dispatch; repository: str
           </button>
         ))}
       </div>
-      {tab === 'conversation' && <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} />}
+      {tab === 'conversation' && <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} />}
       <pre
         hidden={tab !== 'terminal'}
         ref={pane}
@@ -128,7 +128,7 @@ export function ChatView({ chat, repository }: { chat: Dispatch; repository: str
             onChange={(event) => setText(event.target.value)}
             disabled={sending || state === 'ended'}
             placeholder={state === 'ended' ? 'This chat has ended' : `Reply to ${chatName(chat)}…`}
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-500"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-400"
           />
           <Button variant="primary" type="submit" disabled={text.trim() === '' || sending || state === 'ended'} className="h-9 px-4">
             {sending ? <Spinner /> : 'Send'}

@@ -47,6 +47,7 @@ import { executeSettings } from "./commands/settings.js";
 import { executeProc } from "../core/proc-runner.js";
 import { executeRepository } from "./commands/repository.js";
 import { executeProjects } from "./commands/projects.js";
+import { executeSend } from "./commands/send.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -69,8 +70,13 @@ export async function route(
   const { MEGABRAIN_OPERATOR: _inherited, ...environment } = dependencies.environment;
   if (!args.includes("--operator")) return safeRouteCommand(args, { ...dependencies, environment });
   const [command, verb] = args;
+  if (command === "send") {
+    const refusal = operatorRefusal(environment.MEGABRAIN_DISPATCH_ID, await resolveSessionCaller(environment, dependencies.processAdapter));
+    if (refusal !== undefined) return failed(refusal, 2);
+    return safeRouteCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment: { ...environment, MEGABRAIN_OPERATOR: "1" } });
+  }
   if (command !== "orchestrate" || verb === undefined || !operatorVerbs.has(verb)) {
-    return failed(`--operator is not accepted by megabrain ${[command, verb].filter((part) => part !== undefined && !part.startsWith("-")).join(" ")}; it applies to orchestrate ${[...operatorVerbs].join(", ")}`, 2);
+    return failed(`--operator is not accepted by megabrain ${[command, verb].filter((part) => part !== undefined && !part.startsWith("-")).join(" ")}; it applies to send and orchestrate ${[...operatorVerbs].join(", ")}`, 2);
   }
   const refusal = operatorRefusal(environment.MEGABRAIN_DISPATCH_ID, await resolveSessionCaller(environment, dependencies.processAdapter));
   if (refusal !== undefined) return failed(refusal, 2);
@@ -115,7 +121,7 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "settings"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "settings", "send"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -148,6 +154,7 @@ async function routeCommand(
   if (command === "status") return executeStatus(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "resources") return executeResources(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "settings") return executeSettings(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "send") return executeSend(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "proc") return executeProc(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "repo") return executeRepository(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "projects") return executeProjects(commandArgs, dependencies.environment, dependencies.processAdapter);

@@ -7,7 +7,8 @@ export type TranscriptAgent = "claude" | "codex" | "grok" | "agy";
 export type TranscriptSource = TranscriptAgent | "terminal";
 export type TranscriptKind = "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system";
 export type TranscriptTool = Readonly<{ name: string; input?: string; status?: "ok" | "error" }>;
-export type TranscriptEvent = Readonly<{ id: string; at: string | null; kind: TranscriptKind; text: string; tool?: TranscriptTool }>;
+export type TranscriptOrigin = Readonly<{ kind: "parent" | "child"; label: string; dispatchId: string | null; sessionId: string | null }>;
+export type TranscriptEvent = Readonly<{ id: string; at: string | null; kind: TranscriptKind; text: string; tool?: TranscriptTool; origin?: TranscriptOrigin }>;
 export type SessionTranscript = Readonly<{
   dispatchId: string | null;
   sessionId: string | null;

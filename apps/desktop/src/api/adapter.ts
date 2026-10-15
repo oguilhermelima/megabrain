@@ -1,4 +1,4 @@
-import type { AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -43,6 +43,11 @@ export interface DesktopApi {
   setPillExpanded(expanded: boolean): Promise<void>
   onPillExpanded(listener: (expanded: boolean) => void): () => void
   openMain(): Promise<void>
+  /** Send a message to any agent session, as the operator. */
+  sendToSession(sessionId: string, text: string): Promise<SendResult>
+  /** A local VS Code for a worktree or repository; started on demand and reused. */
+  openCodeServer(root: string): Promise<CodeServer>
+  stopCodeServer(root: string): Promise<void>
   /** Everything the Settings window shows. */
   settings(): Promise<Settings>
   /** Set the admission policy; null turns it off. */

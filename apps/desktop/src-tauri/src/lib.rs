@@ -214,6 +214,7 @@ pub fn run() {
                 })
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| match event {
             // Closing the main window keeps megabrain in the pill and the tray; Quit ends it.
             WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {

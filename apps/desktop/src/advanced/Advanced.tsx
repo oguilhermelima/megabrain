@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/api'
-import type { Status, Worktree } from '@/api/schema'
+import type { Project, ProjectSession, Status, Worktree } from '@/api/schema'
 import { Columns } from '@/advanced/Columns'
 import { chatState, groupChats, neighbour } from '@/advanced/model'
+import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { AgentBadge, StateChip, chatName } from '@/advanced/parts'
 import { Sidebar, type CodeTarget } from '@/advanced/Sidebar'
+import { CollapsedChrome, SidebarHeader, type Mode } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
+import type { OpenChat } from '@/chat/Conversation'
+import { SessionView } from '@/chat/SessionView'
 import { CodeView } from '@/code/CodeView'
+import { ImportProject } from '@/import/ImportProject'
 import { ErrorNote } from '@/components/ui'
 import { useStatus } from '@/lib/useStatus'
+import { SettingsWindow } from '@/settings/SettingsWindow'
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`
-type Mode = 'sidebar' | 'columns'
+type Selected = { kind: 'dispatch'; dispatchId: string } | { kind: 'session'; session: ProjectSession; worktreePath: string }
 
 function useWorktrees(): Worktree[] {
   const [worktrees, setWorktrees] = useState<Worktree[]>([])
@@ -28,6 +34,21 @@ function useWorktrees(): Worktree[] {
   return worktrees
 }
 
+function useProjects(): Project[] {
+  const [projects, setProjects] = useState<Project[]>([])
+  useEffect(() => {
+    let stopped = false
+    const load = () => api.projects().then((value) => !stopped && setProjects(value), () => {})
+    void load()
+    const timer = setInterval(load, 5_000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [])
+  return projects
+}
+
 function storedMode(): Mode {
   try {
     return localStorage.getItem('megabrain.view') === 'columns' ? 'columns' : 'sidebar'
@@ -36,17 +57,30 @@ function storedMode(): Mode {
   }
 }
 
+function storedSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem('megabrain.sidebar.hidden') === '1'
+  } catch {
+    return false
+  }
+}
+
 // The advanced window: chats as a sidebar (repositories > worktrees > chats) or as columns (one per
 // parent session), the selected chat followed live, and each project's code.
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
   const worktrees = useWorktrees()
+  const projects = useProjects()
   const [mode, setMode] = useState<Mode>(storedMode)
   const [selected, setSelected] = useState<string | null>(null)
+  const [sidebarSelected, setSidebarSelected] = useState<Selected | null>(null)
   const [code, setCode] = useState<CodeTarget | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
   const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   const order = useMemo(() => grouped.repositories.flatMap((repository) => repository.worktrees.flatMap((worktree) => worktree.chats.map((chat) => chat.dispatchId))), [grouped])
-  const repositoryPaths = useMemo(() => new Map(worktrees.flatMap((worktree) => (worktree.repository === undefined ? [] : [[worktree.repository.name, worktree.repository.path] as const]))), [worktrees])
+  const sessionRows = useMemo(() => sidebarSessionOrder(projects, new Set()), [projects])
 
   const changeMode = (next: Mode) => {
     setMode(next)
@@ -62,105 +96,213 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setSelected(dispatchId)
   }
 
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      try {
+        localStorage.setItem('megabrain.sidebar.hidden', next ? '1' : '0')
+      } catch {
+        // A remembered collapse state is a convenience; starting expanded is fine.
+      }
+      return next
+    })
+  }
+
+  const openSession = (session: ProjectSession, worktreePath: string) => {
+    setCode(null)
+    const dispatchId = session.dispatchId
+    const known = dispatchId !== null && (status?.dispatches.some((item) => item.dispatchId === dispatchId) ?? false)
+    if (known && dispatchId !== null) setSidebarSelected({ kind: 'dispatch', dispatchId })
+    else setSidebarSelected({ kind: 'session', session, worktreePath })
+  }
+
+  const findSession = (sessionId: string) => {
+    for (const project of projects) {
+      for (const worktree of project.worktrees) {
+        const session = worktree.sessions.find((item) => item.sessionId === sessionId)
+        if (session !== undefined) return { session, worktreePath: worktree.path }
+      }
+    }
+    return null
+  }
+
+  const openRelatedChat: OpenChat = (target) => {
+    setCode(null)
+    if ('dispatchId' in target) {
+      const dispatch = status?.dispatches.find((item) => item.dispatchId === target.dispatchId)
+      if (dispatch !== undefined) {
+        if (mode === 'columns') setSelected(dispatch.dispatchId)
+        else setSidebarSelected({ kind: 'dispatch', dispatchId: dispatch.dispatchId })
+        return
+      }
+      const session = projects
+        .flatMap((project) => project.worktrees)
+        .flatMap((worktree) => worktree.sessions.map((item) => ({ session: item, worktreePath: worktree.path })))
+        .find((item) => item.session.dispatchId === target.dispatchId)
+      if (session !== undefined) {
+        setMode('sidebar')
+        openSession(session.session, session.worktreePath)
+      }
+      return
+    }
+
+    const found = findSession(target.sessionId)
+    if (found !== null) {
+      setMode('sidebar')
+      openSession(found.session, found.worktreePath)
+      return
+    }
+
+    const [agent] = target.sessionId.split(':', 1)
+    if (agent !== 'claude' && agent !== 'codex' && agent !== 'grok' && agent !== 'agy') return
+    setMode('sidebar')
+    openSession({
+      agent,
+      sessionId: target.sessionId,
+      title: target.sessionId,
+      status: 'idle',
+      startedAt: null,
+      lastActivityAt: null,
+      dispatchId: null,
+    }, '')
+  }
+
+  // A chat opened as a dispatch is still a session row in the sidebar; highlight and walk from it.
+  const selectedSessionId =
+    sidebarSelected === null
+      ? null
+      : sidebarSelected.kind === 'session'
+        ? sidebarSelected.session.sessionId
+        : (sessionRows.find((row) => row.session.dispatchId === sidebarSelected.dispatchId)?.session.sessionId ?? null)
+
+  const goHome = () => {
+    setSidebarSelected(null)
+    setSelected(null)
+    setCode(null)
+  }
+
+  const openFromOverview = (dispatchId: string) => {
+    if (mode === 'columns') open(dispatchId)
+    else {
+      setCode(null)
+      setSidebarSelected({ kind: 'dispatch', dispatchId })
+    }
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey && event.key === ',') {
+        event.preventDefault()
+        setSettingsOpen(true)
+        return
+      }
+      if (event.metaKey && event.key.toLowerCase() === 'b') {
+        event.preventDefault()
+        toggleSidebarCollapsed()
+        return
+      }
       if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
       event.preventDefault()
       setCode(null)
-      setSelected((current) => neighbour(order, current, event.key === ']' ? 1 : -1))
+      const step = event.key === ']' ? 1 : -1
+      if (mode === 'columns') {
+        setSelected((current) => neighbour(order, current, step))
+        return
+      }
+      const next = neighbourSession(sessionRows, selectedSessionId, step)
+      if (next !== null) openSession(next.session, next.worktreePath)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [order])
+  }, [order, mode, sessionRows, selectedSessionId])
 
   const chat = status?.dispatches.find((item) => item.dispatchId === selected) ?? null
   const repositoryOf = (dispatchId: string) =>
     grouped.repositories.find((repository) => repository.worktrees.some((worktree) => worktree.chats.some((item) => item.dispatchId === dispatchId)))?.name ?? null
 
-  const toggle = (
-    <div className="flex gap-1 rounded-full border border-white/10 bg-white/[0.05] p-1" role="group" aria-label="View">
-      {(['sidebar', 'columns'] as const).map((value) => (
-        <button
-          key={value}
-          type="button"
-          onClick={() => changeMode(value)}
-          aria-pressed={mode === value}
-          className={`h-7 rounded-full px-3 text-[12.5px] font-semibold capitalize ${mode === value ? 'bg-white/[0.14] text-ink-100' : 'text-ink-400 hover:text-ink-200'}`}
-        >
-          {value}
-        </button>
-      ))}
-    </div>
-  )
+  const sidebarDispatchId = sidebarSelected?.kind === 'dispatch' ? sidebarSelected.dispatchId : null
+  const sidebarDispatch = sidebarDispatchId === null ? null : status?.dispatches.find((item) => item.dispatchId === sidebarDispatchId) ?? null
 
   const detail =
     code !== null ? (
       <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
     ) : chat !== null ? (
-      <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} />
+      <ChatView key={chat.dispatchId} chat={chat} repository={repositoryOf(chat.dispatchId)} onOpenChat={openRelatedChat} />
     ) : (
-      status !== null && <Overview status={status} onSelect={open} />
+      status !== null && <Overview status={status} onSelect={openFromOverview} />
     )
 
-  if (mode === 'columns')
-    return (
-      <div className="flex h-full flex-col bg-ink-950">
-        <header className="glass flex items-center justify-between border-b border-white/[0.06] pt-9 pr-5 pb-3 pl-24">
-          <span className="flex items-center gap-2.5">
-            <span className="orb size-5" />
-            <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
-          </span>
-          {toggle}
-        </header>
-        {error !== null && (
-          <div className="px-8 pt-4">
-            <ErrorNote error={error} />
-          </div>
-        )}
-        <div className="min-h-0 flex-1">
-          {chat !== null || code !== null ? (
-            <div className="flex h-full flex-col">
-              <button type="button" onClick={() => { setSelected(null); setCode(null) }} className="self-start px-8 pt-4 text-[13px] text-ink-400 hover:text-ink-200">
-                ‹ Columns
-              </button>
-              {detail}
-            </div>
-          ) : (
-            <Columns chats={status?.dispatches ?? []} worktrees={worktrees} selected={selected} onSelect={open} />
-          )}
-        </div>
+  const sidebarDetail =
+    code !== null ? (
+      <CodeView key={code.root} root={code.root} title={code.title} onClose={() => setCode(null)} />
+    ) : sidebarDispatch !== null ? (
+      <ChatView key={sidebarDispatch.dispatchId} chat={sidebarDispatch} repository={repositoryOf(sidebarDispatch.dispatchId)} onOpenChat={openRelatedChat} />
+    ) : sidebarSelected?.kind === 'session' ? (
+      <SessionView key={sidebarSelected.session.sessionId} session={sidebarSelected.session} worktreePath={sidebarSelected.worktreePath} onOpenChat={openRelatedChat} />
+    ) : (
+      status !== null && <Overview status={status} onSelect={openFromOverview} />
+    )
+  const watcherOn = status?.supervisor.watcher.running === true
+  const settingsOverlay = settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} />
+
+  const columnsContent =
+    chat !== null || code !== null ? (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <button
+          type="button"
+          onClick={() => {
+            setSelected(null)
+            setCode(null)
+          }}
+          className="self-start px-8 pt-4 text-[13px] text-ink-300 hover:text-ink-100"
+        >
+          ‹ Columns
+        </button>
+        {detail}
       </div>
+    ) : (
+      <Columns chats={status?.dispatches ?? []} worktrees={worktrees} selected={selected} onSelect={open} />
     )
 
   return (
-    <div className="grid h-full grid-cols-[300px_minmax(0,1fr)]">
-      <aside className="glass flex min-h-0 flex-col border-r border-white/[0.06]">
-        <div className="flex items-center justify-between px-5 pt-11 pb-3">
-          <button type="button" onClick={() => { setSelected(null); setCode(null) }} className="flex items-center gap-2.5 rounded-full text-left">
-            <span className="orb size-5" />
-            <span className="text-[16px] font-semibold text-ink-100">megabrain</span>
-          </button>
-        </div>
-        <Sidebar status={status} repositories={grouped.repositories} repositoryPaths={repositoryPaths} worktrees={worktrees} ended={grouped.ended} selected={selected} onSelect={open} onCode={setCode} />
-        <footer className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-[12px] text-ink-500">
-          <span className="flex items-center gap-2">
-            <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
-            watcher {status?.supervisor.watcher.running === true ? 'on' : 'off'}
-          </span>
-          <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:text-ink-200">
-            Run setup
-          </button>
-        </footer>
-      </aside>
-      <main className="flex min-h-0 min-w-0 flex-col bg-ink-950">
-        <div className="flex justify-end px-5 pt-3">{toggle}</div>
+    <div className="relative flex h-full">
+      {!sidebarCollapsed && (
+        <aside className="glass flex w-[300px] shrink-0 flex-col border-r border-white/[0.06]">
+          <SidebarHeader mode={mode} onMode={changeMode} onHome={goHome} onCollapse={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} />
+          <Sidebar
+            status={status}
+            projects={projects}
+            selectedSessionId={selectedSessionId}
+            onSelectSession={(session) => {
+              const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
+              changeMode('sidebar')
+              openSession(session, worktree?.path ?? '')
+            }}
+            onCode={setCode}
+            onImport={() => setImporting(true)}
+          />
+          <footer className="flex shrink-0 items-center justify-between border-t border-white/[0.06] px-5 py-2.5 text-[12px] text-ink-400">
+            <span className="flex items-center gap-2" title={`The watcher reports stuck or finished chats; it is ${watcherOn ? 'running' : 'stopped'}.`}>
+              <span className={`size-2 rounded-full ${watcherOn ? 'bg-ok' : 'bg-bad'}`} />
+              watcher {watcherOn ? 'on' : 'off'}
+            </span>
+            <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:bg-white/[0.06] hover:text-ink-200">
+              Run setup
+            </button>
+          </footer>
+        </aside>
+      )}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
+        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
         {error !== null && (
           <div className="px-8 pt-4">
             <ErrorNote error={error} />
           </div>
         )}
-        {detail}
+        {mode === 'columns' ? columnsContent : sidebarDetail}
       </main>
+      {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
+      {settingsOverlay}
     </div>
   )
 }
@@ -192,7 +334,7 @@ function Overview({ status, onSelect }: { status: Status; onSelect: (id: string)
           </button>
         ))}
       </div>
-      <p className="mt-10 text-[13px] text-ink-500">Pick a chat on the left to follow it. ⌘[ and ⌘] move between chats.</p>
+      <p className="mt-10 text-[13px] text-ink-400">Pick a chat on the left to follow it. ⌘[ and ⌘] move between chats.</p>
     </div>
   )
 }

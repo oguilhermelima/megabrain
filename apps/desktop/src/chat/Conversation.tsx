@@ -2,33 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
 import { ErrorNote, Spinner } from '@/components/ui'
-import { buildConversationItems, formatText, mergeEvents, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { buildConversationItems, mergeEvents, relayedPreview, relayedTarget, toolSummary, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { MarkdownText } from '@/chat/markdown'
 
-function FormattedText({ text, className = '' }: { text: string; className?: string }) {
-  return (
-    <p className={`whitespace-pre-wrap ${className}`}>
-      {formatText(text).map((segment, index) =>
-        segment.type === 'code' ? (
-          <pre key={index} className="my-1.5 overflow-x-auto rounded-xl bg-white/[0.06] px-3 py-2 font-mono text-[12.5px] text-ink-100">
-            {segment.value}
-          </pre>
-        ) : segment.type === 'inline-code' ? (
-          <code key={index} className="rounded-md bg-white/[0.08] px-1 py-0.5 font-mono text-[13px] text-ink-100">
-            {segment.value}
-          </code>
-        ) : (
-          <span key={index}>{segment.value}</span>
-        ),
-      )}
-    </p>
-  )
-}
+export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 
 function UserMessage({ event }: { event: TranscriptEvent }) {
   return (
     <li className="flex justify-end">
-      <div className="max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-[14px] text-ink-100">
-        <FormattedText text={event.text} />
+      <div className="max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100">
+        <MarkdownText text={event.text} />
       </div>
     </li>
   )
@@ -36,14 +19,49 @@ function UserMessage({ event }: { event: TranscriptEvent }) {
 
 function AssistantMessage({ event }: { event: TranscriptEvent }) {
   return (
-    <li className="max-w-[80%] text-[14px] text-ink-200">
-      <FormattedText text={event.text} />
+    <li className="max-w-[80%] text-ink-200">
+      <MarkdownText text={event.text} />
     </li>
   )
 }
 
 function SystemMessage({ event }: { event: TranscriptEvent }) {
-  return <li className="text-center text-[12px] text-ink-500">{event.text}</li>
+  return <li className="text-center text-[12px] text-ink-400">{event.text}</li>
+}
+
+function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenChat: OpenChat | undefined }) {
+  const origin = event.origin
+  if (origin === undefined) return null
+  const [open, setOpen] = useState(false)
+  const target = relayedTarget(origin)
+  const header = origin.kind === 'parent' ? `From parent · ${origin.label}` : `From ${origin.label}`
+  return (
+    <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+      <div className="flex items-center gap-2 px-3.5 py-2">
+        <span className="shrink-0 text-[13px] text-ink-400" aria-label={origin.kind === 'parent' ? 'relayed from parent' : 'relayed from child'}>
+          {origin.kind === 'parent' ? '↑' : '↓'}
+        </span>
+        <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
+          <span className="block text-[12px] font-semibold text-ink-300">{header}</span>
+          {!open && <span className="block truncate text-[13px] text-ink-400">{relayedPreview(event.text)}</span>}
+        </button>
+        {onOpenChat !== undefined && target !== null && (
+          <button
+            type="button"
+            onClick={() => onOpenChat(target)}
+            className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[12px] font-semibold text-ink-300 hover:bg-white/[0.08]"
+          >
+            →
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="px-3.5 pb-3">
+          <MarkdownText text={event.text} />
+        </div>
+      )}
+    </li>
+  )
 }
 
 function ThinkingMessage({ event }: { event: TranscriptEvent }) {
@@ -51,32 +69,40 @@ function ThinkingMessage({ event }: { event: TranscriptEvent }) {
   const firstLine = event.text.split('\n')[0] ?? ''
   return (
     <li>
-      <button type="button" onClick={() => setOpen((value) => !value)} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-500 hover:text-ink-400">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
         <span className="orb idle size-2.5 shrink-0" />
         {open ? 'Thinking' : firstLine}
       </button>
-      {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-500 italic">{event.text}</p>}
+      {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">{event.text}</p>}
     </li>
   )
+}
+
+/** Indented JSON when the input is JSON, the input as given otherwise. */
+function prettyInput(input: string): string {
+  try {
+    return JSON.stringify(JSON.parse(input), null, 2)
+  } catch {
+    return input
+  }
 }
 
 const toolDot: Record<ToolStatus, string> = { ok: 'bg-ok', error: 'bg-bad', running: 'bg-accent' }
 
 function ToolItem({ item }: { item: Extract<ConversationItem, { type: 'tool' }> }) {
   const [open, setOpen] = useState(false)
-  const inputLine = item.call.tool?.input?.split('\n')[0] ?? item.call.text.split('\n')[0] ?? ''
+  const input = item.call.tool?.input
+  const summary = input === undefined ? (item.call.text.split('\n')[0] ?? '') : toolSummary(item.call.tool?.name ?? '', input)
   return (
     <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-[13px]">
         <span className={`size-1.5 shrink-0 rounded-full ${toolDot[item.status]} ${item.status === 'running' ? 'animate-pulse' : ''}`} />
         <span className="shrink-0 font-semibold text-ink-300">{item.call.tool?.name ?? 'tool'}</span>
-        <span className="truncate text-ink-500">{inputLine}</span>
+        <span title={summary} className="truncate font-mono text-[12.5px] text-ink-400">{summary}</span>
       </button>
       {open && (
         <div className="space-y-2 px-3.5 pb-3">
-          {item.call.tool?.input !== undefined && (
-            <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">{item.call.tool.input}</pre>
-          )}
+          {input !== undefined && <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">{prettyInput(input)}</pre>}
           {item.result !== null && (
             <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">{item.result.text}</pre>
           )}
@@ -86,16 +112,25 @@ function ToolItem({ item }: { item: Extract<ConversationItem, { type: 'tool' }> 
   )
 }
 
-function Item({ item }: { item: ConversationItem }) {
+function Item({ item, onOpenChat }: { item: ConversationItem; onOpenChat: OpenChat | undefined }) {
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
+  if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
   if (event.kind === 'user') return <UserMessage event={event} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} />
   return <SystemMessage event={event} />
 }
 
-export function Conversation({ target, live }: { target: { dispatchId: string } | { sessionId: string }; live: boolean }) {
+export function Conversation({
+  target,
+  live,
+  onOpenChat,
+}: {
+  target: { dispatchId: string } | { sessionId: string }
+  live: boolean
+  onOpenChat?: OpenChat
+}) {
   const [transcript, setTranscript] = useState<Transcript | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [pinned, setPinned] = useState(true)
@@ -143,14 +178,14 @@ export function Conversation({ target, live }: { target: { dispatchId: string } 
   if (error !== null) return <div className="mx-8 my-5"><ErrorNote error={error} /></div>
   if (transcript === null) {
     return (
-      <div className="mx-8 my-5 flex items-center gap-2 text-[13px] text-ink-500">
+      <div className="mx-8 my-5 flex items-center gap-2 text-[13px] text-ink-400">
         <Spinner />
         Reading…
       </div>
     )
   }
   if (transcript.events.length === 0) {
-    return <div className="mx-8 my-5 text-[13px] text-ink-500">Nothing here yet.</div>
+    return <div className="mx-8 my-5 text-[13px] text-ink-400">Nothing here yet.</div>
   }
 
   const items = buildConversationItems(transcript.events)
@@ -158,7 +193,7 @@ export function Conversation({ target, live }: { target: { dispatchId: string } 
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <ol ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 space-y-3 overflow-y-auto pt-5 pb-5 select-text">
         {items.map((item) => (
-          <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} />
+          <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} onOpenChat={onOpenChat} />
         ))}
       </ol>
       {!pinned && (
