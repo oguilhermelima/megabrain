@@ -9,6 +9,7 @@ import { ChatView } from '@/chat/ChatView'
 import { CodeView } from '@/code/CodeView'
 import { ErrorNote } from '@/components/ui'
 import { useStatus } from '@/lib/useStatus'
+import { SettingsWindow } from '@/settings/SettingsWindow'
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`
 type Mode = 'sidebar' | 'columns'
@@ -44,6 +45,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [mode, setMode] = useState<Mode>(storedMode)
   const [selected, setSelected] = useState<string | null>(null)
   const [code, setCode] = useState<CodeTarget | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   const order = useMemo(() => grouped.repositories.flatMap((repository) => repository.worktrees.flatMap((worktree) => worktree.chats.map((chat) => chat.dispatchId))), [grouped])
   const repositoryPaths = useMemo(() => new Map(worktrees.flatMap((worktree) => (worktree.repository === undefined ? [] : [[worktree.repository.name, worktree.repository.path] as const]))), [worktrees])
@@ -64,6 +66,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey && event.key === ',') {
+        event.preventDefault()
+        setSettingsOpen(true)
+        return
+      }
       if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
       event.preventDefault()
       setCode(null)
@@ -102,9 +109,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       status !== null && <Overview status={status} onSelect={open} />
     )
 
+  const settingsOverlay = settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} />
+
   if (mode === 'columns')
     return (
-      <div className="flex h-full flex-col bg-ink-950">
+      <div className="relative flex h-full flex-col bg-ink-950">
         <header className="glass flex items-center justify-between border-b border-white/[0.06] pt-9 pr-5 pb-3 pl-24">
           <span className="flex items-center gap-2.5">
             <span className="orb size-5" />
@@ -129,11 +138,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             <Columns chats={status?.dispatches ?? []} worktrees={worktrees} selected={selected} onSelect={open} />
           )}
         </div>
+        {settingsOverlay}
       </div>
     )
 
   return (
-    <div className="grid h-full grid-cols-[300px_minmax(0,1fr)]">
+    <div className="relative grid h-full grid-cols-[300px_minmax(0,1fr)]">
       <aside className="glass flex min-h-0 flex-col border-r border-white/[0.06]">
         <div className="flex items-center justify-between px-5 pt-11 pb-3">
           <button type="button" onClick={() => { setSelected(null); setCode(null) }} className="flex items-center gap-2.5 rounded-full text-left">
@@ -147,9 +157,14 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             <span className={`size-2 rounded-full ${status?.supervisor.watcher.running === true ? 'bg-ok' : 'bg-bad'}`} />
             watcher {status?.supervisor.watcher.running === true ? 'on' : 'off'}
           </span>
-          <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:text-ink-200">
-            Run setup
-          </button>
+          <span className="flex items-center gap-1">
+            <button type="button" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings (⌘,)" className="rounded-full p-1.5 hover:bg-white/[0.08] hover:text-ink-200">
+              ⚙
+            </button>
+            <button type="button" onClick={onSetup} className="rounded-full px-2 py-1 hover:text-ink-200">
+              Run setup
+            </button>
+          </span>
         </footer>
       </aside>
       <main className="flex min-h-0 min-w-0 flex-col bg-ink-950">
@@ -161,6 +176,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         )}
         {detail}
       </main>
+      {settingsOverlay}
     </div>
   )
 }
