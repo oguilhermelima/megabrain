@@ -119,3 +119,27 @@ html.native body {
     animation: none;
   }
 }
+
+/* Text that is still being produced: a light band sweeps across it. */
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--color-ink-400) 0%, var(--color-ink-400) 40%, var(--color-ink-100) 50%, var(--color-ink-400) 60%, var(--color-ink-400) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+    color: var(--color-ink-300);
+  }
+}

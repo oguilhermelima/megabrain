@@ -5,7 +5,7 @@ import type { Transcript, TranscriptEvent } from '@/api/schema'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
 import { deriveConversation, type DerivedConversation } from '@/chat/conversation-derive'
-import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
 import { toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
 import { MarkdownText } from '@/chat/markdown'
 import { NoticeCard } from '@/chat/NoticeCard'
@@ -15,14 +15,16 @@ import { LinkedText, PathLinksContext, type PathLinks } from '@/chat/path-links'
 import { firstPath } from '@/code/chat-paths'
 import { reuse } from '@/lib/reuse'
 
+const noLive: LiveRow[] = []
+
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 /** Opens a file under a chat's worktree in Code mode, at a line when one was named. */
 export type OpenPath = (root: string, path: string, line: number | null) => void
 
-function UserMessage({ event }: { event: TranscriptEvent }) {
+function UserMessage({ event, pending = false }: { event: TranscriptEvent; pending?: boolean }) {
   return (
     <li className="flex justify-end">
-      <div className="min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100">
+      <div title={pending ? 'Sending…' : undefined} className={`min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100 transition-opacity ${pending ? 'opacity-70' : ''}`}>
         <UserMessageBody text={event.text} images={event.images} />
       </div>
     </li>
@@ -84,14 +86,15 @@ function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenC
   )
 }
 
-function ThinkingMessage({ event }: { event: TranscriptEvent }) {
+/** Collapsed to its first line; while it streams the header reads Thinking… with a shimmer. */
+function ThinkingMessage({ event, streaming = false }: { event: TranscriptEvent; streaming?: boolean }) {
   const [open, setOpen] = useState(false)
   const firstLine = event.text.split('\n')[0] ?? ''
   return (
     <li>
-      <button type="button" onClick={() => setOpen((value) => !value)} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
-        <span className="orb idle size-2.5 shrink-0" />
-        {open ? 'Thinking' : firstLine}
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
+        <span className={`orb size-2.5 shrink-0 ${streaming ? '' : 'idle'}`} />
+        {streaming ? <span className="shimmer">Thinking…</span> : open ? 'Thinking' : firstLine}
       </button>
       {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">{event.text}</p>}
     </li>
@@ -196,14 +199,22 @@ const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem |
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
-  if (event.kind === 'user') return <UserMessage event={event} />
+  if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
-  if (event.kind === 'thinking') return <ThinkingMessage event={event} />
+  if (event.kind === 'thinking') return <ThinkingMessage event={event} streaming={item.streaming} />
   if (event.kind === 'approval') return <ApprovalMessage event={event} />
   return <SystemMessage event={event} />
 })
 
-const itemKey = (item: NoticeDisplayItem | undefined) => (item === undefined ? '' : item.type === 'message' ? item.event.id : item.id)
+// A streamed message keys by its messageId, so the row its chunks grew is the row the complete
+// event fills, measured once and never remounted.
+const itemKey = (item: NoticeDisplayItem | undefined) => {
+  if (item === undefined) return ''
+  if (item.type !== 'message') return item.id
+  const messageId = item.event.messageId
+  return messageId === undefined ? item.event.id : `${item.event.kind}:${messageId}`
+}
+const footerKey = 'footer'
 // Rows are measured once shown; the estimate only places rows not yet seen.
 const estimatedRowHeight = 48
 const rowGap = 12
@@ -276,11 +287,17 @@ export function ConversationList({
   onOpenChat,
   root = null,
   onOpenPath,
+  live = noLive,
+  footer = null,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
   root?: string | null
   onOpenPath?: OpenPath
+  /** Rows after the history that are still changing: streaming messages and sent ones not yet echoed. */
+  live?: LiveRow[]
+  /** The last row, under everything: a native chat's working indicator. */
+  footer?: ReactNode
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -292,19 +309,26 @@ export function ConversationList({
   // Only the new events are derived on each poll; the settled rows are kept.
   const derived = useRef<DerivedConversation | null>(null)
   const collapsed = useRef<NoticeDisplayItem[]>([])
-  const items = useMemo(() => {
+  const settled = useMemo(() => {
     const next = deriveConversation(derived.current, events)
     derived.current = next
     collapsed.current = collapseNotices(next.display, collapsed.current)
     return collapsed.current
   }, [events])
+  // The live rows change with every chunk; the settled ones above keep their identity.
+  const items = useMemo<NoticeDisplayItem[]>(
+    () => (live.length === 0 ? settled : settled.concat(live.map((row) => ({ type: 'message', event: row.event, streaming: row.streaming, pending: row.pending })))),
+    [settled, live],
+  )
+  const hasFooter = footer !== null
+  const count = items.length + (hasFooter ? 1 : 0)
 
   // Only the rows near the viewport are in the DOM; each is measured as it renders.
   const virtualizer = useVirtualizer({
-    count: items.length,
+    count,
     getScrollElement: () => list.current,
     estimateSize: () => estimatedRowHeight,
-    getItemKey: (index) => itemKey(items[index]),
+    getItemKey: (index) => (index === items.length ? footerKey : itemKey(items[index])),
     gap: rowGap,
     paddingStart: listPadding,
     paddingEnd: listPadding,
@@ -312,13 +336,13 @@ export function ConversationList({
   })
 
   const scrollToLatest = () => {
-    if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' })
+    if (count > 0) virtualizer.scrollToIndex(count - 1, { align: 'end' })
   }
 
   useEffect(() => {
     if (pinned) scrollToLatest()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, pinned])
+  }, [items, hasFooter, pinned])
 
   const onScroll = () => {
     const element = list.current
@@ -326,7 +350,7 @@ export function ConversationList({
     setPinned(element.scrollHeight - element.scrollTop - element.clientHeight < 40)
   }
 
-  if (events.length === 0) {
+  if (count === 0) {
     return <div className="mx-8 my-5 text-[13px] text-ink-400">Nothing here yet.</div>
   }
 
@@ -337,6 +361,13 @@ export function ConversationList({
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {
               const item = items[row.index]
+              if (row.index === items.length && hasFooter) {
+                return (
+                  <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${row.start}px)` }}>
+                    {footer}
+                  </ol>
+                )
+              }
               if (item === undefined) return null
               // Each row is a one-item list, so the message components keep rendering an <li>.
               return (

@@ -19,6 +19,16 @@ describe('sendState', () => {
     expect(sendState({ sendable: true, sending: true, disabled: true })).toBe('disabled')
     expect(sendState({ sendable: true, sending: false, disabled: true })).toBe('disabled')
   })
+
+  test('is stop while the turn runs and the box holds nothing to send', () => {
+    expect(sendState({ sendable: false, sending: false, disabled: false, running: true })).toBe('stop')
+  })
+
+  test('a draft typed while the turn runs can still be sent', () => {
+    expect(sendState({ sendable: true, sending: false, disabled: false, running: true })).toBe('ready')
+    expect(sendState({ sendable: false, sending: true, disabled: false, running: true })).toBe('sending')
+    expect(sendState({ sendable: false, sending: false, disabled: true, running: true })).toBe('disabled')
+  })
 })
 
 describe('composerBanner', () => {

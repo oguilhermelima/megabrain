@@ -330,6 +330,8 @@ export function Composer({
   model = null,
   onModelChange,
   onSend,
+  running = false,
+  onStop,
 }: {
   placeholder: string
   disabled: boolean
@@ -345,6 +347,9 @@ export function Composer({
   onModelChange?: (model: string, effort: string | undefined) => Promise<void>
   /** Sends the message as text and image parts in order; resolves to the notice to show, and clears the box when it is ok. */
   onSend: (parts: MessagePart[]) => Promise<Notice>
+  /** The agent's turn runs: with nothing typed, the send button stops it through onStop. */
+  running?: boolean
+  onStop?: () => void
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -790,7 +795,7 @@ export function Composer({
 
   const ghost =
     'grid size-8 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
-  const button = sendState({ sendable, sending, disabled })
+  const button = sendState({ sendable, sending, disabled, running: running && onStop !== undefined })
   const banner = composerBanner(notice, { failedSend, sendable })
 
   return (
@@ -909,17 +914,21 @@ export function Composer({
               )}
               <button
                 type="button"
-                onClick={send}
-                disabled={button !== 'ready'}
-                aria-label={button === 'sending' ? 'Sending' : 'Send'}
+                onClick={button === 'stop' ? onStop : send}
+                disabled={button !== 'ready' && button !== 'stop'}
+                aria-label={button === 'sending' ? 'Sending' : button === 'stop' ? 'Stop' : 'Send'}
                 aria-busy={button === 'sending'}
-                title={button === 'ready' ? 'Send (Enter)' : undefined}
+                title={button === 'ready' ? 'Send (Enter)' : button === 'stop' ? 'Stop the turn (Esc)' : undefined}
                 className={`grid size-8 shrink-0 place-items-center rounded-full transition-colors duration-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:transition-none ${
-                  button === 'ready' ? 'bg-accent text-accent-ink hover:bg-accent/90' : button === 'sending' ? 'bg-white/[0.1] text-ink-200' : 'bg-white/[0.07] text-ink-500'
+                  button === 'ready' || button === 'stop' ? 'bg-accent text-accent-ink hover:bg-accent/90' : button === 'sending' ? 'bg-white/[0.1] text-ink-200' : 'bg-white/[0.07] text-ink-500'
                 }`}
               >
                 {button === 'sending' ? (
                   <Spinner />
+                ) : button === 'stop' ? (
+                  <svg viewBox="0 0 16 16" className="size-3" fill="currentColor" aria-hidden="true">
+                    <rect x="2" y="2" width="12" height="12" rx="2.5" />
+                  </svg>
                 ) : (
                   <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M8 13V3.5M3.5 8 8 3.5 12.5 8" />

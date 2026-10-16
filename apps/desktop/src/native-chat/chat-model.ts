@@ -1,8 +1,27 @@
-import type { ChatApproval, ChatEventLine, NativeChat, ProjectSession, TranscriptEvent } from '@/api/schema'
+import type { LiveRow } from '@/chat/conversation-model'
+import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatStateEvent, type NativeChat, type ProjectSession, type TranscriptEvent } from '@/api/schema'
 
 // Pure logic for native chats: folding the lines of megabrain chat events into what the view shows,
 // which approval waits for an answer, when the conversation may move to the terminal, and where
-// each chat sits in the sidebar.
+// each chat sits in the sidebar. Besides the stored history, the state holds what is still live: the
+// messages being streamed (drafts) and the ones this view sent that the chat has not echoed yet.
+
+/** A message being generated, grown from its chunks until the complete event replaces it. */
+export interface Draft {
+  messageId: string
+  stream: ChatDeltaEvent['stream']
+  text: string
+  /** Arrival order among drafts and outgoing messages. */
+  order: number
+}
+
+/** A message this view sent, shown at once until the chat's user event confirms it. */
+export interface Outgoing {
+  id: string
+  text: string
+  sentAt: string
+  order?: number
+}
 
 export interface FollowState {
   chat: NativeChat | null
@@ -13,10 +32,18 @@ export interface FollowState {
   approvals: Record<string, ChatApproval>
   /** Approval ids this view answered; the chat record may lag behind the answer. */
   answered: string[]
+  /** When the running turn started, from the last state event; null outside a turn. */
+  turnStartedAt: string | null
+  drafts: Draft[]
+  /** Message ids whose complete event arrived; a late chunk for one is dropped. */
+  finished: string[]
+  outgoing: Outgoing[]
+  /** The next arrival order to hand out. */
+  order: number
 }
 
 export function followState(chat: NativeChat | null): FollowState {
-  return { chat, cursor: null, events: [], approvals: {}, answered: [] }
+  return { chat, cursor: null, events: [], approvals: {}, answered: [], turnStartedAt: null, drafts: [], finished: [], outgoing: [], order: 0 }
 }
 
 const numeric = /^\d+$/
@@ -31,20 +58,110 @@ export function compareCursors(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+const turnEnded = (state: NativeChat['state']) => state === 'idle' || state === 'stopped' || state === 'error'
+
+function applyDelta(state: FollowState, delta: ChatDeltaEvent): FollowState {
+  if (state.finished.includes(delta.messageId)) return state
+  const known = state.drafts.find((draft) => draft.messageId === delta.messageId)
+  if (known !== undefined) {
+    return { ...state, drafts: state.drafts.map((draft) => (draft === known ? { ...draft, text: draft.text + delta.text } : draft)) }
+  }
+  return { ...state, drafts: state.drafts.concat({ messageId: delta.messageId, stream: delta.stream, text: delta.text, order: state.order }), order: state.order + 1 }
+}
+
+function applyState(state: FollowState, event: ChatStateEvent): FollowState {
+  const parsed = nativeChatStateSchema.safeParse(event.text)
+  if (!parsed.success) return state
+  const value = parsed.data
+  const next: FollowState = { ...state, turnStartedAt: turnEnded(value) ? null : (event.turnStartedAt ?? state.turnStartedAt) }
+  if (state.chat !== null) next.chat = { ...state.chat, state: value }
+  // A turn that ended took its unfinished messages with it.
+  if (turnEnded(value)) next.drafts = []
+  return next
+}
+
+const normalized = (text: string) => text.trim().replace(/\s+/g, ' ')
+
+/** The user event confirms the outgoing message with its text, else the oldest one. */
+function confirmOutgoing(outgoing: Outgoing[], event: TranscriptEvent): Outgoing[] {
+  if (outgoing.length === 0) return outgoing
+  const text = normalized(event.text)
+  const index = outgoing.findIndex((message) => normalized(message.text) === text)
+  return outgoing.filter((_, position) => position !== (index === -1 ? 0 : index))
+}
+
 /**
- * Folds one line into the state. A line at or before the cursor is a replay (a resubscription from
- * an older cursor) and returns the same state; an event id already shown is not added again.
+ * Folds one line into the state. A line before the cursor is a replay (a resubscription from an
+ * older cursor) and returns the same state, as does a line at the cursor unless it carries a state
+ * change (sent at the start of every follow) or a chunk; an event id already shown is not added again.
+ * Chunks are never stored and never move the cursor.
  */
 export function applyLine(state: FollowState, line: ChatEventLine): FollowState {
-  if (state.cursor !== null && compareCursors(line.cursor, state.cursor) <= 0) return state
-  const next: FollowState = { ...state, cursor: line.cursor }
-  if (line.chat !== undefined) next.chat = line.chat
   const event = line.event
-  if (event !== undefined && !state.events.some((known) => known.id === event.id)) {
-    next.events = state.events.concat(event)
-    if (line.approval !== undefined) next.approvals = { ...state.approvals, [event.id]: line.approval }
-  }
+  if (event?.kind === 'delta') return applyDelta(state, event)
+  const order = state.cursor === null ? 1 : compareCursors(line.cursor, state.cursor)
+  if (order < 0 || (order === 0 && event?.kind !== 'state')) return state
+  let next: FollowState = { ...state, cursor: line.cursor }
+  if (line.chat !== undefined) next.chat = line.chat
+  if (event === undefined) return next
+  if (event.kind === 'state') return applyState(next, event)
+  if (state.events.some((known) => known.id === event.id)) return next
+  next.events = state.events.concat(event)
+  if (line.approval !== undefined) next.approvals = { ...state.approvals, [event.id]: line.approval }
+  const messageId = event.messageId
+  if (messageId !== undefined) next = { ...next, drafts: next.drafts.filter((draft) => draft.messageId !== messageId), finished: next.finished.concat(messageId) }
+  if (event.kind === 'user') next.outgoing = confirmOutgoing(next.outgoing, event)
   return next
+}
+
+/** Shows a message the person just sent, before the chat echoes it. */
+export function queueOutgoing(state: FollowState, message: Outgoing): FollowState {
+  return { ...state, outgoing: state.outgoing.concat({ ...message, order: state.order }), order: state.order + 1 }
+}
+
+/** Takes back a message whose send failed. */
+export function dropOutgoing(state: FollowState, id: string): FollowState {
+  return { ...state, outgoing: state.outgoing.filter((message) => message.id !== id) }
+}
+
+/** The live rows in the order they arrived. Each keeps the key its stored event will have. */
+export function liveTail(state: FollowState): LiveRow[] {
+  const rows: { order: number; item: LiveRow }[] = [
+    ...state.drafts.map((draft) => ({ order: draft.order, item: { event: { id: `draft-${draft.messageId}`, at: null, kind: draft.stream, text: draft.text, messageId: draft.messageId }, streaming: true } })),
+    ...state.outgoing.map((message) => ({ order: message.order ?? 0, item: { event: { id: `outgoing-${message.id}`, at: message.sentAt, kind: 'user' as const, text: message.text }, pending: true } })),
+  ]
+  return rows.sort((left, right) => left.order - right.order).map((row) => row.item)
+}
+
+/** What the working indicator says and the instant its elapsed time counts from. */
+export interface WorkingStatus {
+  label: string
+  since: string | null
+}
+
+/** The working indicator for the followed chat, or null when nothing is running. */
+export function workingStatus(state: FollowState): WorkingStatus | null {
+  const chat = state.chat
+  if (chat === null) return null
+  const sentAt = state.outgoing[0]?.sentAt ?? null
+  if (chat.state === 'starting') return { label: `Starting ${chat.agent}…`, since: state.turnStartedAt ?? chat.createdAt }
+  if (chat.state === 'waiting-approval') return { label: 'Waiting for approval', since: state.turnStartedAt ?? sentAt }
+  if (chat.state !== 'working') return sentAt === null ? null : { label: 'Thinking', since: sentAt }
+  const since = state.turnStartedAt ?? sentAt
+  const streaming = state.drafts.reduce<Draft | undefined>((newest, draft) => (newest === undefined || draft.order > newest.order ? draft : newest), undefined)
+  if (streaming !== undefined) return { label: streaming.stream === 'thinking' ? 'Thinking' : 'Writing', since }
+  const last = state.events.at(-1)
+  if (last?.kind === 'tool-call') return { label: `Running ${last.tool?.name ?? last.text}`, since }
+  return { label: 'Thinking', since }
+}
+
+/** Elapsed time as the indicator shows it: 42s, 1m 05s, 1h 02m. */
+export function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
 }
 
 export function markAnswered(state: FollowState, approvalId: string): FollowState {

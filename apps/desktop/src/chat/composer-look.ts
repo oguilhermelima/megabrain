@@ -1,12 +1,14 @@
 // Pure look of the composer: what the send button shows and how far the context ring is drawn.
 
-/** ready: accent, sends; empty: grey, nothing to send; sending: a message is on its way; disabled: the box is. */
-export type SendState = 'ready' | 'empty' | 'sending' | 'disabled'
+/** ready: accent, sends; empty: grey, nothing to send; sending: a message is on its way; disabled: the box is; stop: ends the running turn. */
+export type SendState = 'ready' | 'empty' | 'sending' | 'disabled' | 'stop'
 
-export function sendState({ sendable, sending, disabled }: { sendable: boolean; sending: boolean; disabled: boolean }): SendState {
+/** While the agent's turn runs, an empty box turns the button into Stop; a typed draft still sends. */
+export function sendState({ sendable, sending, disabled, running = false }: { sendable: boolean; sending: boolean; disabled: boolean; running?: boolean }): SendState {
   if (disabled) return 'disabled'
   if (sending) return 'sending'
-  return sendable ? 'ready' : 'empty'
+  if (sendable) return 'ready'
+  return running ? 'stop' : 'empty'
 }
 
 /** The stroke offset that draws a ring to a share of its circumference, never less than a sliver. */

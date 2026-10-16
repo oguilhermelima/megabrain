@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState, type KeyboardEvent } from 'react'
+import { lazy, Suspense, useCallback, useMemo, useState, type KeyboardEvent } from 'react'
 import { api } from '@/api'
 import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
@@ -11,7 +11,8 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, markAnswered, modeToggle, pendingApproval, shouldInterrupt, withModel } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, withModel, workingStatus } from '@/native-chat/chat-model'
+import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { useFollowChat } from '@/native-chat/useFollowChat'
 
 // xterm loads the first time a chat moves to its terminal.
@@ -36,6 +37,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const [actionError, setActionError] = useState<unknown>(null)
   const title = chat.title ?? 'New chat'
   const pending = pendingApproval(state)
+  const live = useMemo(() => liveTail(state), [state])
+  const working = workingStatus(state)
 
   const answer = async (approvalId: string, decision: ApprovalDecision) => {
     await api.answerApproval(chat.id, approvalId, decision)
@@ -63,10 +66,21 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       (caught: unknown) => setActionError(caught),
     )
 
+  // The message shows at once and the chat's user event confirms it; a failed send takes it back.
   const send = async (parts: MessagePart[]): Promise<Notice> => {
-    await api.sendChat(chat.id, parts)
+    const id = crypto.randomUUID()
+    const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
+    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString() }))
+    try {
+      await api.sendChat(chat.id, parts)
+    } catch (caught) {
+      update((current) => dropOutgoing(current, id))
+      throw caught
+    }
     return { tone: 'ok', text: 'Sent.' }
   }
+
+  const stop = () => void act(() => api.interruptChat(chat.id))
 
   // The CLI refuses while the agent works; the composer shows its error.
   const changeModel = async (model: string, effort: string | undefined) => {
@@ -117,7 +131,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     if (event.defaultPrevented || !(box instanceof HTMLElement) || !box.isContentEditable) return
     if (!shouldInterrupt(event.key, box.textContent ?? '', chat.state)) return
     event.preventDefault()
-    void act(() => api.interruptChat(chat.id))
+    stop()
   }
 
   return (
@@ -154,7 +168,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               {state.cursor === null && state.events.length === 0 && error === null ? (
                 <TranscriptSkeleton />
               ) : (
-                <ConversationList events={state.events} onOpenChat={onOpenChat} root={chat.cwd} onOpenPath={onOpenPath} />
+                <ConversationList
+                  events={state.events}
+                  live={live}
+                  footer={working === null ? null : <WorkingIndicator status={working} />}
+                  onOpenChat={onOpenChat}
+                  root={chat.cwd}
+                  onOpenPath={onOpenPath}
+                />
               )}
             </ApprovalRendererContext.Provider>
           </div>
@@ -169,6 +190,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               model={chat.model}
               onModelChange={changeModel}
               onSend={send}
+              running={chat.state === 'working'}
+              onStop={stop}
             />
           </div>
         </>

@@ -7,8 +7,16 @@ import type { TranscriptEvent } from '@/api/schema'
 export type ToolStatus = 'ok' | 'error' | 'running'
 
 export type ConversationItem =
-  | { type: 'message'; event: TranscriptEvent }
+  // streaming: a message still being generated; pending: a sent message the chat has not echoed yet.
+  | { type: 'message'; event: TranscriptEvent; streaming?: boolean; pending?: boolean }
   | { type: 'tool'; id: string; call: TranscriptEvent; result: TranscriptEvent | null; status: ToolStatus }
+
+/** A row that is still changing, shown after a conversation's history. */
+export interface LiveRow {
+  event: TranscriptEvent
+  streaming?: boolean
+  pending?: boolean
+}
 
 /** Pairs each tool-call with the tool-result event that immediately follows it (by position). */
 export function buildConversationItems(events: TranscriptEvent[]): ConversationItem[] {

@@ -356,6 +356,8 @@ export const transcriptEventSchema = z.looseObject({
   at: z.string().nullable(),
   kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval']),
   text: z.string(),
+  /** On a native chat's assistant or thinking event: the message its streamed chunks belonged to. */
+  messageId: z.string().optional(),
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
   /** On a user event: the images it carried, a local file or inline; the text keeps an [Image #N] marker where each was. */
   images: z.array(transcriptImageSchema).optional(),
@@ -429,11 +431,30 @@ export const chatApprovalSchema = z.looseObject({
   reason: z.string().nullable().optional(),
   decisions: z.array(z.enum(['allow', 'allow-session', 'deny'])),
 })
+// A change of the chat's state, sent on every change and once at the start of every follow, and
+// stored in history. `text` is the state; one this app does not know is ignored. turnStartedAt is set
+// while a turn runs.
+export const chatStateEventSchema = z.looseObject({
+  id: z.string(),
+  at: z.string().nullable(),
+  kind: z.literal('state'),
+  text: z.string(),
+  turnStartedAt: z.string().nullable().optional(),
+})
+// A chunk of an assistant or thinking message still being generated. Sent to followers only and never
+// stored: the complete event that follows carries the same messageId and replaces the chunks.
+export const chatDeltaEventSchema = z.looseObject({
+  kind: z.literal('delta'),
+  stream: z.enum(['assistant', 'thinking']),
+  messageId: z.string(),
+  text: z.string(),
+})
+export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, z.lazy(() => transcriptEventSchema)])
 // One line of megabrain chat events <id> --since <cursor> --follow --json.
 export const chatEventLineSchema = z.looseObject({
   cursor: z.string(),
   chat: nativeChatSchema.optional(),
-  event: z.lazy(() => transcriptEventSchema).optional(),
+  event: chatEventSchema.optional(),
   approval: chatApprovalSchema.optional(),
 })
 // A part of a message: text and images in order, so an image can sit in the middle of the text.
@@ -540,6 +561,9 @@ export type SendResult = z.infer<typeof sendResultSchema>
 export type NativeChat = z.infer<typeof nativeChatSchema>
 export type ChatApproval = z.infer<typeof chatApprovalSchema>
 export type ChatEventLine = z.infer<typeof chatEventLineSchema>
+export type ChatEvent = z.infer<typeof chatEventSchema>
+export type ChatStateEvent = z.infer<typeof chatStateEventSchema>
+export type ChatDeltaEvent = z.infer<typeof chatDeltaEventSchema>
 export type MessagePart = z.infer<typeof messagePartSchema>
 export type TerminalEngine = z.infer<typeof terminalEngineSchema>
 export type TerminalSession = z.infer<typeof terminalSessionSchema>

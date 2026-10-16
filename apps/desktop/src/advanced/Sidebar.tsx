@@ -22,6 +22,7 @@ import { announceAction } from '@/lib/app-events'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { ownership } from '@/chat/session-ownership'
 import { rowStatus } from '@/native-chat/chat-model'
+import { useChatState } from '@/native-chat/live-state'
 import { nativeStateLabel } from '@/native-chat/parts'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 import { closeNeedsConfirm, terminalLabel, type AppTerminal } from '@/terminal/terminal-list'
@@ -286,7 +287,10 @@ const noChats: NativeChat[] = []
  * A native chat under its worktree: the same row as a session, with a badge while an approval
  * waits. Its menu (right click or the … that replaces the age on hover) holds Stop.
  */
-function NativeChatRow({ chat, selected, now, onSelect, menuItems, onMenu, onDrag }: { chat: NativeChat; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onDrag: RowDragger }) {
+function NativeChatRow({ chat: listed, selected, now, onSelect, menuItems, onMenu, onDrag }: { chat: NativeChat; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onDrag: RowDragger }) {
+  // An open view's follow knows a turn started before the next poll of the list does.
+  const state = useChatState(listed)
+  const chat = state === listed.state ? listed : { ...listed, state }
   const status = rowStatus(chat.state)
   const title = chat.title ?? 'New chat'
   const hasMenu = menuItems.length > 0

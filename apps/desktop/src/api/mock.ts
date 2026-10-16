@@ -1,4 +1,4 @@
-import { mockNativeChat, mockChatLines } from '@/api/fixtures/chat'
+import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { Project, ProjectScripts } from '@/api/schema'
@@ -166,9 +166,12 @@ export function createMockApi(): DesktopApi {
     codeDiff: async (_root, path) => ({ ...mockCodeDiff, path }),
     chats: async () => [mockNativeChat],
     startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
-    sendChat: async () => {},
-    interruptChat: async () => {},
-    answerApproval: async () => {},
+    sendChat: async (chatId, parts) => {
+      await wait(250)
+      sendMockChat(chatId, parts)
+    },
+    interruptChat: async (chatId) => interruptMockChat(chatId),
+    answerApproval: async (chatId, _approvalId, decision) => answerMockApproval(chatId, decision),
     stopChat: async () => {},
     setChatModel: async () => {},
     setChatMode: async (chatId, mode) => ({
@@ -185,16 +188,7 @@ export function createMockApi(): DesktopApi {
       await wait(500)
       return mockSessionHistory.filter((session) => agent === undefined || session.agent === agent)
     },
-    followChat: async (_chatId, _since, onLine) => {
-      let index = 0
-      const timer = setInterval(() => {
-        const line = mockChatLines[index]
-        if (line === undefined) return clearInterval(timer)
-        onLine(line)
-        index += 1
-      }, 400)
-      return () => clearInterval(timer)
-    },
+    followChat: async (chatId, since, onLine) => followMockChat(chatId, since, onLine),
     openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),
     writeTerminal: async () => {},
     resizeTerminal: async () => {},
