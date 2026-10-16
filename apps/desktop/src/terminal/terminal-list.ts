@@ -6,7 +6,7 @@ import { pendingError } from '@/lib/pending-model'
 // The terminals the app opened in this run: a plain shell from the launcher, the worktree menu or
 // ⌘T, or an agent's own TUI. Each is its own sidebar item under the worktree that holds its folder.
 // A native terminal lives for the app run. A tmux one outlives it: on the next start megabrain's CLI
-// lists the sessions the app left on its tmux server, and they come back under their worktree.
+// lists the sessions the app left running on its tmux server, and they come back under their worktree.
 
 /** A terminal the launcher, the worktree menu or ⌘T asked for, before it opens. */
 export type TerminalLaunch = Exclude<LaunchPlan, { kind: 'chat' }> & { id: string; title: string }
@@ -129,15 +129,16 @@ export function appTerminalIdOf(tmuxSession: string | null): string | null {
 }
 
 /**
- * The tmux terminals a past run left, added after the ones this run holds. A live session comes back
- * unattached until shown; one whose session is gone comes back exited so it can be closed. Each keeps
+ * The tmux terminals a past run left running, added after the ones this run holds; each comes back
+ * unattached until shown. One whose session is gone is not a terminal any more: its conversation, if it
+ * had one, lists as an ended row that resumes. A chat's terminal-mode TUI belongs to the chat. Each keeps
  * the item id `ids` remembers for it, so a restored layout finds it.
  */
 export function restoreAppTerminals(list: AppTerminal[], listings: readonly AppTerminalListing[], ids: Readonly<Record<string, string>>): AppTerminal[] {
   const held = new Set(list.map((item) => item.appTerminalId).filter((id) => id !== null))
   const itemOf = new Map(Object.entries(ids).map(([item, appId]) => [appId, item]))
   const restored = listings
-    .filter((listing) => !held.has(listing.id))
+    .filter((listing) => listing.alive && (listing.chatId ?? null) === null && !held.has(listing.id))
     .map((listing): AppTerminal => {
       const id = itemOf.get(listing.id) ?? `terminal-${listing.id}`
       return {
@@ -147,7 +148,7 @@ export function restoreAppTerminals(list: AppTerminal[], listings: readonly AppT
         engine: 'tmux',
         name: null,
         program: listing.title === 'tmux' ? 'shell' : listing.title,
-        status: listing.alive ? 'live' : 'exited',
+        status: 'live',
         exitCode: null,
         error: null,
         sessionId: null,

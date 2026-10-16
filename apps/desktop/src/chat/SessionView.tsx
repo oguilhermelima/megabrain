@@ -8,7 +8,7 @@ import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { Composer, type Notice } from '@/chat/Composer'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
-import { ownership, ownedTerminalTarget, sessionView, type SessionViewMode } from '@/chat/session-ownership'
+import { closable, ownership, ownedTerminalTarget, sessionView, type SessionViewMode } from '@/chat/session-ownership'
 import { noLogState } from '@/chat/session-open-model'
 import { ViewSwitch } from '@/chat/ViewSwitch'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
@@ -86,16 +86,20 @@ export function SessionView({
               <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} channel={compose} missingLog={missingLog} />
             </ConversationAgent.Provider>
           </div>
-          <Composer
-            placeholder={ended ? 'This session has ended' : `Reply to ${session.title}…`}
-            disabled={ended}
-            agent={session.agent}
-            cwd={worktreePath}
-            context={{ tokens: session.contextTokens, window: session.contextWindow }}
-            model={session.model ?? null}
-            onSend={send}
-            channel={compose}
-          />
+          {ended && closable(session) ? (
+            <ResumeBar session={session} onResumed={() => setChosenView('terminal')} />
+          ) : (
+            <Composer
+              placeholder={ended ? 'This session has ended' : `Reply to ${session.title}…`}
+              disabled={ended}
+              agent={session.agent}
+              cwd={worktreePath}
+              context={{ tokens: session.contextTokens, window: session.contextWindow }}
+              model={session.model ?? null}
+              onSend={send}
+              channel={compose}
+            />
+          )}
         </>
       )}
     </div>
@@ -126,9 +130,35 @@ function NoLogNote({ session, onShowTerminal, onOpened }: { session: ProjectSess
       )}
       {state.action === 'open-here' && (
         <Button disabled={opening} onClick={openHere}>
-          {opening ? 'Opening…' : 'Open here'}
+          {opening ? 'Resuming…' : 'Resume here'}
         </Button>
       )}
+      {error !== null && <ErrorNote error={error} />}
+    </div>
+  )
+}
+
+// An ended conversation of ours stays resumable: its agent starts again on demand, in megabrain's own
+// tmux session (`session own`), and the view moves to that terminal once it runs.
+function ResumeBar({ session, onResumed }: { session: ProjectSession; onResumed: () => void }) {
+  const [error, setError] = useState<unknown>(null)
+  const [resuming, setResuming] = useState(false)
+  const resume = () => {
+    setResuming(true)
+    setError(null)
+    api.ownSession(session.sessionId).then(onResumed, (caught: unknown) => {
+      setResuming(false)
+      setError(caught)
+    })
+  }
+  return (
+    <div className="mx-8 mb-4 flex flex-col items-start gap-2 text-[13px] text-ink-300">
+      <div className="flex items-center gap-3">
+        <span>This conversation ended.</span>
+        <Button disabled={resuming} onClick={resume}>
+          {resuming ? 'Resuming…' : 'Resume'}
+        </Button>
+      </div>
       {error !== null && <ErrorNote error={error} />}
     </div>
   )

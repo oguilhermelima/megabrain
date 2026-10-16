@@ -1,4 +1,4 @@
-use crate::app_terminals::{iso_utc, record_app_terminal};
+use crate::app_terminals::{forget_terminal_conversation, iso_utc, record_app_terminal, record_terminal_conversation};
 use crate::terminal::{
     app_owned_session, close_action, encode_output, native_argv, tmux_attach_argv,
     tmux_create_argv, tmux_kill_session_argv, tmux_server_name, CloseAction, CloseReason, Engine,
@@ -78,8 +78,16 @@ fn only_sessions_on_the_app_server_with_the_app_prefix_may_be_killed() {
     assert!(app_owned_session(Some("megabrain-app"), "mb-app-1234"));
     assert!(!app_owned_session(None, "mb-app-1234"));
     assert!(!app_owned_session(Some("default"), "mb-app-1234"));
-    assert!(!app_owned_session(Some("megabrain-app"), "mb-claude-1234"));
     assert!(!app_owned_session(Some("megabrain-app"), "work"));
+}
+
+#[test]
+fn close_kills_owned_session_names_on_the_app_server_and_never_default_server_sessions() {
+    assert!(app_owned_session(Some("megabrain-app"), "mb-claude-0f3a9c12"));
+    assert!(app_owned_session(Some("megabrain-app"), "mb-codex-1234"));
+    assert!(!app_owned_session(None, "mb-claude-0f3a9c12"));
+    assert!(!app_owned_session(Some("default"), "mb-claude-0f3a9c12"));
+    assert!(!app_owned_session(Some("megabrain-app"), "mb-"));
 }
 
 #[test]
@@ -121,6 +129,80 @@ fn app_terminal_records_keep_earlier_entries_in_the_shape_the_cli_reads() {
     let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(state.join("app-terminals.json")).unwrap()).unwrap();
     assert_eq!(written["mb-app-one"], serde_json::json!({"title": "claude", "command": "claude --resume x", "cwd": "/work", "createdAt": "2026-10-15T10:00:00.000Z"}));
     assert_eq!(written["mb-app-two"]["title"], "zsh");
+    let _ = std::fs::remove_dir_all(&state);
+}
+
+fn registry_at(state: &std::path::Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(state.join("conversations.json")).unwrap()).unwrap()
+}
+
+fn write_registry(state: &std::path::Path, value: serde_json::Value) {
+    std::fs::create_dir_all(state).unwrap();
+    std::fs::write(state.join("conversations.json"), value.to_string()).unwrap();
+}
+
+#[test]
+fn a_terminal_the_app_opens_is_one_conversation_in_the_registry() {
+    let state = std::env::temp_dir().join(format!("mb-app-registry-{}", uuid::Uuid::new_v4()));
+    write_registry(&state, serde_json::json!({"version": 1, "conversations": {}, "hiddenKeys": ["claude:hidden"], "migratedFrom": ["chats"]}));
+    record_terminal_conversation(&state, "megabrain-app:mb-app-1234", "/work", "2026-10-16T10:00:00.000Z", None).unwrap();
+    let written = registry_at(&state);
+    assert_eq!(
+        written["conversations"]["terminal:1234"],
+        serde_json::json!({"owner": "app-terminal", "cwd": "/work", "aliases": {"chatId": null, "tmux": "megabrain-app:mb-app-1234", "pid": null, "dispatchId": null}, "createdAt": "2026-10-16T10:00:00.000Z", "hidden": false})
+    );
+    assert_eq!(written["hiddenKeys"], serde_json::json!(["claude:hidden"]));
+    assert_eq!(written["migratedFrom"], serde_json::json!(["chats"]));
+    assert!(!state.join("conversations.json.lock").exists());
+    let _ = std::fs::remove_dir_all(&state);
+}
+
+#[test]
+fn a_registry_not_written_yet_leaves_the_migration_to_the_cli() {
+    let state = std::env::temp_dir().join(format!("mb-app-registry-{}", uuid::Uuid::new_v4()));
+    record_terminal_conversation(&state, "megabrain-app:mb-app-1", "/work", "2026-10-16T10:00:00.000Z", None).unwrap();
+    let written = registry_at(&state);
+    assert_eq!(written["version"], 1);
+    assert_eq!(written["conversations"]["terminal:1"]["owner"], "app-terminal");
+    assert!(written.get("migratedFrom").is_none());
+    let _ = std::fs::remove_dir_all(&state);
+}
+
+#[test]
+fn a_chat_terminal_joins_the_chat_conversation_instead_of_a_record_of_its_own() {
+    let state = std::env::temp_dir().join(format!("mb-app-registry-{}", uuid::Uuid::new_v4()));
+    write_registry(&state, serde_json::json!({"version": 1, "hiddenKeys": [], "migratedFrom": [], "conversations": {
+        "claude:s1": {"owner": "app-chat", "cwd": "/work", "aliases": {"chatId": "chat-1", "tmux": null, "pid": null, "dispatchId": null}, "createdAt": "2026-10-16T09:00:00.000Z", "hidden": false}
+    }}));
+    record_terminal_conversation(&state, "megabrain-app:mb-app-tui", "/work", "2026-10-16T10:00:00.000Z", Some("chat-1")).unwrap();
+    record_terminal_conversation(&state, "megabrain-app:mb-app-new", "/work", "2026-10-16T10:00:00.000Z", Some("chat-2")).unwrap();
+    let conversations = registry_at(&state)["conversations"].clone();
+    assert_eq!(conversations["claude:s1"]["aliases"]["tmux"], "megabrain-app:mb-app-tui");
+    assert_eq!(conversations["chat:chat-2"]["owner"], "app-chat");
+    assert_eq!(conversations["chat:chat-2"]["aliases"]["chatId"], "chat-2");
+    assert_eq!(conversations["chat:chat-2"]["aliases"]["tmux"], "megabrain-app:mb-app-new");
+    assert_eq!(conversations.as_object().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(&state);
+}
+
+#[test]
+fn closing_drops_the_terminal_conversation_and_a_chat_keeps_its_own() {
+    let state = std::env::temp_dir().join(format!("mb-app-registry-{}", uuid::Uuid::new_v4()));
+    let alias = |tmux: &str, owner: &str, chat: serde_json::Value| serde_json::json!({"owner": owner, "cwd": "/work", "aliases": {"chatId": chat, "tmux": tmux, "pid": null, "dispatchId": null}, "createdAt": "2026-10-16T09:00:00.000Z", "hidden": false});
+    write_registry(&state, serde_json::json!({"version": 1, "hiddenKeys": [], "migratedFrom": [], "conversations": {
+        "terminal:a": alias("megabrain-app:mb-app-a", "app-terminal", serde_json::Value::Null),
+        "claude:promoted": alias("megabrain-app:mb-app-b", "app-terminal", serde_json::Value::Null),
+        "claude:chat": alias("megabrain-app:mb-app-c", "app-chat", serde_json::json!("chat-1")),
+        "codex:other": alias("megabrain-app:mb-app-other", "app-terminal", serde_json::Value::Null)
+    }}));
+    forget_terminal_conversation(&state, "megabrain-app:mb-app-a").unwrap();
+    forget_terminal_conversation(&state, "megabrain-app:mb-app-b").unwrap();
+    forget_terminal_conversation(&state, "megabrain-app:mb-app-c").unwrap();
+    let conversations = registry_at(&state)["conversations"].clone();
+    let mut keys: Vec<_> = conversations.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, ["claude:chat", "codex:other"]);
+    assert_eq!(conversations["claude:chat"]["aliases"]["tmux"], serde_json::Value::Null);
     let _ = std::fs::remove_dir_all(&state);
 }
 

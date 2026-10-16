@@ -13,7 +13,7 @@ import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { projectActivity, projectRowClick, projectRowKey } from '@/advanced/project-row-model'
-import { applyRowOrder, moveRow, rowToOpen, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
+import { applyRowOrder, endedRows, moveRow, rowToOpen, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { pruneSidebarState, type SidebarState } from '@/advanced/sidebar-state'
 import { useSidebarState } from '@/advanced/useSidebarLayout'
 import { GroupRowView, SpanningSplits, useSplitRows, type SplitDrop } from '@/advanced/SplitRows'
@@ -42,7 +42,6 @@ import { useFlip } from '@/advanced/useFlip'
 import { closable } from '@/chat/session-ownership'
 import { rowStatus } from '@/native-chat/chat-model'
 import { chatMenu, middleClickAction, sessionMenu, terminalMenu, withSplitItems, type RowMenuActions, type SidebarItemRow } from '@/advanced/item-menus'
-import { hideSession, isHidden, noHiddenSessions, parseHiddenSessions, saveHiddenSessions, unhideSession, type HiddenSessions } from '@/advanced/hidden-sessions'
 import { useChatState } from '@/native-chat/live-state'
 import { nativeStateLabel } from '@/native-chat/parts'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
@@ -266,12 +265,12 @@ function ClockIcon() {
  * An agent session under its worktree. Its menu (right click or the … that replaces the age on hover)
  * releases one megabrain owns; one it does not run opens here or closes, which takes it out of the list.
  */
-function SessionRow({ session, selected, faded, now, onSelect, menuItems, onMenu, onClose, onDrag }: { session: ProjectSession; selected: boolean; faded: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onClose: (() => void) | null; onDrag: RowDragger }) {
+function SessionRow({ session, selected, now, onSelect, menuItems, onMenu, onClose, onDrag }: { session: ProjectSession; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onClose: (() => void) | null; onDrag: RowDragger }) {
   const age = relativeAge(session.lastActivityAt, now)
   const hasMenu = menuItems.length > 0
   const hasEnd = hasMenu || onClose !== null
   return (
-    <div className={`group relative ${faded ? 'opacity-60' : ''}`} onContextMenu={hasMenu ? (event) => onMenu(event, menuItems) : undefined}>
+    <div className="group relative" onContextMenu={hasMenu ? (event) => onMenu(event, menuItems) : undefined}>
       <button
         type="button"
         onClick={onSelect}
@@ -523,8 +522,7 @@ function WorktreeRow({
 }) {
   const running = worktree.sessions.some(live)
   const splits = useSplitRows()
-  const sessions = worktree.sessions.filter((session) => rowControls.sessionView(session, worktree.path) !== null)
-  const ordered = applyRowOrder(worktreeItems(chats, terminals, sessions), rowControls.order[worktree.path] ?? [])
+  const ordered = applyRowOrder(worktreeItems(chats, terminals, worktree.sessions), rowControls.order[worktree.path] ?? [])
   const itemOfRow = (item: KeyedItem): string | null => splits?.itemOf(rowOf(item)) ?? null
   // A split's members show as its one row, where its first member's row was; a split with none of
   // its members' rows here goes on top. Members of a split shown elsewhere hide here too.
@@ -537,6 +535,10 @@ function WorktreeRow({
     const key = itemOfRow(item)
     return key === null || !(splits?.members.has(key) ?? false)
   })
+  // Conversations that ended more than a week ago fold under Ended, closed until the person opens it.
+  const { ended } = endedRows(shown, now)
+  const endedKeys = new Set(ended.map((item) => item.key))
+  const [endedOpen, setEndedOpen] = useState(false)
   const anchored = new Map<string, GroupRow[]>()
   for (const item of ordered) {
     const group = groupOfRow(item)
@@ -570,8 +572,7 @@ function WorktreeRow({
     event.preventDefault()
     event.stopPropagation()
     const action = middleClickAction(rowOf(item))
-    if (action?.kind === 'close') rowControls.close(action.row)
-    else if (action?.kind === 'hide') rowControls.hide(action.session)
+    if (action !== null) rowControls.close(action.row)
   }
   const picked = (item: KeyedItem) => {
     const key = itemOfRow(item)
@@ -587,6 +588,10 @@ function WorktreeRow({
     const item = rowToOpen(shown)
     if (item === null) onNewChat(worktree.path)
     else openItem(item)
+  }
+  const dragOf = (item: KeyedItem): RowDragger => (event, row) => {
+    onDrag(event, row)
+    rowControls.start(event, { kind: 'row', worktreePath: worktree.path, key: item.key, shown: keys, item: itemOfRow(item), label: rowLabel(item) })
   }
   const renderItem = (item: KeyedItem, drag: RowDragger) => {
     if (item.kind === 'native') {
@@ -612,17 +617,15 @@ function WorktreeRow({
       )
     }
     const { session } = item
-    const faded = rowControls.sessionView(session, worktree.path) === 'faded'
     return (
       <SessionRow
         session={session}
         selected={session.sessionId === selectedSessionId}
-        faded={faded}
         now={now}
         onSelect={() => onSelectSession(session)}
         menuItems={withSplit(item, sessionItems(session))}
         onMenu={onMenu}
-        onClose={closable(session) ? () => rowControls.close({ kind: 'session', session }) : faded ? null : () => rowControls.hide(session)}
+        onClose={closable(session) ? () => rowControls.close({ kind: 'session', session }) : null}
         onDrag={drag}
       />
     )
@@ -672,12 +675,9 @@ function WorktreeRow({
         {groupRowsAt(null)}
         {ordered.map((item) => {
           const groups = groupRowsAt(item.key)
-          if (!shown.includes(item)) return groups
+          if (!shown.includes(item) || endedKeys.has(item.key)) return groups
           const key = itemOfRow(item)
-          const drag: RowDragger = (event, row) => {
-            onDrag(event, row)
-            rowControls.start(event, { kind: 'row', worktreePath: worktree.path, key: item.key, shown: keys, item: key, label: rowLabel(item) })
-          }
+          const drag = dragOf(item)
           const source = rowControls.drag?.source
           const target = rowControls.drag?.target ?? null
           return [
@@ -697,6 +697,27 @@ function WorktreeRow({
             </div>,
           ]
         })}
+        {ended.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setEndedOpen((open) => !open)}
+              aria-expanded={endedOpen}
+              title="Conversations that ended more than a week ago"
+              className="flex h-7 w-full items-center gap-1.5 rounded-[12px] pl-[31px] text-left text-[12.5px] text-ink-400 transition-colors hover:bg-row-hover hover:text-ink-300"
+            >
+              <Chevron open={endedOpen} />
+              <span>Ended</span>
+              <span className="tabular-nums">{ended.length}</span>
+            </button>
+            {endedOpen &&
+              ended.map((item) => (
+                <div key={item.key} data-row-key={item.key} onAuxClick={middleClose(item)} className="sidebar-row-in relative rounded-[12px]">
+                  {renderItem(item, dragOf(item))}
+                </div>
+              ))}
+          </>
+        )}
       </div>
     </div>
   )
@@ -1129,10 +1150,6 @@ interface TerminalRows {
 /** What every chat, session and terminal row needs to close and be reordered; one object per change. */
 interface ItemRows {
   close: (row: SidebarDrag) => void
-  /** Takes a session megabrain does not run out of the list until the person shows it again. */
-  hide: (session: ProjectSession) => void
-  /** How a session shows: as usual, faded (closed, shown on request from its worktree's menu) or not at all. */
-  sessionView: (session: ProjectSession, worktreePath: string) => 'shown' | 'faded' | null
   /** Each worktree's saved row order. */
   order: RowOrder
   /** A row, group or member being dragged in the sidebar, and where it would land. */
@@ -1463,42 +1480,7 @@ export const Sidebar = memo(function Sidebar({
     onCloseRow(row).catch(setActionError)
   })
 
-  // Sessions megabrain does not run leave the list on Close and stay out until shown again; a
-  // worktree's menu shows its closed ones again, faded, until it is asked a second time.
   const searchKeys = useShortcutBindings()
-  const [hiddenSessions, setHiddenSessions] = useState<HiddenSessions>(noHiddenSessions)
-  const [showingHidden, setShowingHidden] = useState<ReadonlySet<string>>(new Set())
-  useEffect(() => {
-    let live = true
-    api.hiddenSessions().then((raw) => live && setHiddenSessions(parseHiddenSessions(raw)), setActionError)
-    return () => {
-      live = false
-    }
-  }, [])
-  const saveHidden = useStableCallback((change: (current: HiddenSessions) => HiddenSessions) => {
-    const next = change(hiddenSessions)
-    setHiddenSessions(next)
-    setActionError(null)
-    api.setHiddenSessions(saveHiddenSessions(next)).catch(setActionError)
-  })
-  const hideRowSession = useStableCallback((session: ProjectSession) => saveHidden((current) => hideSession(current, session)))
-  const unhideRowSession = useStableCallback((session: ProjectSession) => saveHidden((current) => unhideSession(current, session.sessionId)))
-  const toggleShowingHidden = useStableCallback((worktreePath: string) =>
-    setShowingHidden((current) => {
-      const next = new Set(current)
-      if (!next.delete(worktreePath)) next.add(worktreePath)
-      return next
-    }),
-  )
-  const sessionView = useCallback(
-    (session: ProjectSession, worktreePath: string) => (!isHidden(hiddenSessions, session) ? 'shown' : showingHidden.has(worktreePath) ? 'faded' : null),
-    [hiddenSessions, showingHidden],
-  )
-  // Open here resumes the session in megabrain's own tmux session, then shows it.
-  const takeOver = useStableCallback((session: ProjectSession) => {
-    setActionError(null)
-    api.ownSession(session.sessionId).then(() => onSelectSession(session), setActionError)
-  })
   const [renamingTerminal, setRenamingTerminal] = useState<string | null>(null)
   const stopChat = useStableCallback((chat: NativeChat) =>
     setConfirm({
@@ -1645,8 +1627,8 @@ export const Sidebar = memo(function Sidebar({
   const listItems = (): MenuItem[] => [...addItems(), { label: 'Refresh', icon: 'refresh', group: 'copy', onSelect: () => refreshProject(null) }]
 
   const rowMenuActions = useMemo<RowMenuActions>(
-    () => ({ close: closeRow, hide: hideRowSession, unhide: unhideRowSession, takeOver, copy: copyText, stop: stopChat, rename: (terminal) => setRenamingTerminal(terminal.id) }),
-    [closeRow, hideRowSession, unhideRowSession, takeOver, copyText, stopChat],
+    () => ({ close: closeRow, copy: copyText, stop: stopChat, rename: (terminal) => setRenamingTerminal(terminal.id) }),
+    [closeRow, copyText, stopChat],
   )
   const actions = useMemo<RowActions>(() => ({
     code: onCode,
@@ -1692,11 +1674,6 @@ export const Sidebar = memo(function Sidebar({
         ...(worktree.branch === null ? [] : [{ label: 'Copy branch name', icon: 'copy', group: 'copy', onSelect: () => copyText(worktree.branch ?? '') } satisfies MenuItem]),
         { label: 'Hide', icon: 'hide', group: 'organise', onSelect: () => setHidden({ worktree: worktree.path }, true) },
       ]
-      const closed = worktree.sessions.filter((session) => isHidden(hiddenSessions, session)).length
-      if (closed > 0) {
-        const showing = showingHidden.has(worktree.path)
-        items.push({ label: showing ? 'Leave closed sessions out' : `Show closed sessions (${closed})`, icon: 'hide', group: 'organise', onSelect: () => toggleShowingHidden(worktree.path) })
-      }
       // The main checkout is the project itself; it is removed with the project, not as a worktree.
       if (!worktree.primary && worktree.branch !== null) items.push({ label: 'Archive…', icon: 'archive', group: 'organise', onSelect: () => confirmArchive(project, worktree) })
       if (!worktree.primary) {
@@ -1716,8 +1693,8 @@ export const Sidebar = memo(function Sidebar({
       return items
     },
     chat: (chat) => chatMenu(chat, rowMenuActions),
-    session: (session) => sessionMenu(session, rowMenuActions, isHidden(hiddenSessions, session)),
-  }), [onCode, onGithub, onOpenProject, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem, confirmArchive, rowMenuActions, hiddenSessions, toggleShowingHidden, showingHidden])
+    session: (session) => sessionMenu(session, rowMenuActions),
+  }), [onCode, onGithub, onOpenProject, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem, confirmArchive, rowMenuActions])
 
   const terminalRows = useMemo<TerminalRows>(() => ({
     selectedId: selectedTerminalId,
@@ -1754,8 +1731,8 @@ export const Sidebar = memo(function Sidebar({
     moveRow,
   )
   const itemRows = useMemo<ItemRows>(
-    () => ({ close: closeRow, hide: hideRowSession, sessionView, order: rowOrder, drag: rowDrag.state, start: rowDrag.start }),
-    [closeRow, hideRowSession, sessionView, rowOrder, rowDrag.state, rowDrag.start],
+    () => ({ close: closeRow, order: rowOrder, drag: rowDrag.state, start: rowDrag.start }),
+    [closeRow, rowOrder, rowDrag.state, rowDrag.start],
   )
 
   const stackRows = useMemo<StackRows>(() => ({ details: stackDetails, folded: collapsed, fold: toggle, busy: stackBusy }), [stackDetails, collapsed, toggle, stackBusy])

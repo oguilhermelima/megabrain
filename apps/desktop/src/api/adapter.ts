@@ -235,7 +235,8 @@ export interface DesktopApi {
   /** Appends one chat start trace line to <state>/logs/desktop-chat-start.log. */
   logChatStartTrace(record: object): Promise<void>
   /** Embedded terminals (native Tauri commands). */
-  openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; cols: number; rows: number }): Promise<TerminalSession>
+  /** `chatId` names the chat whose terminal mode this is, so its TUI stays that chat's conversation. */
+  openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; chatId?: string; cols: number; rows: number }): Promise<TerminalSession>
   writeTerminal(terminalId: string, data: string): Promise<void>
   resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void>
   /** Closing kills the terminal for good. `kill` also reaches a terminal the app lists but does not hold open. */
@@ -249,9 +250,6 @@ export interface DesktopApi {
   sidebarFolders(): Promise<unknown>
   /** Replaces the saved sidebar folders with this JSON (`settings set sidebar-folders`). */
   setSidebarFolders(json: string): Promise<void>
-  /** Sessions the sidebar closed without running them (`settings get hidden-sessions`); advanced/hidden-sessions.ts reads the shape. */
-  hiddenSessions(): Promise<unknown>
-  setHiddenSessions(json: string): Promise<void>
   /** What the sidebar folded and its row order, as `settings get sidebar-state` prints them. */
   sidebarState(): Promise<unknown>
   setSidebarState(json: string): Promise<void>
@@ -282,7 +280,7 @@ export type AppApi = DesktopApi & WorktreeApi
 export type ProjectAppearancePatch = { [K in 'name' | 'color' | 'picture']?: string | null }
 
 /** One tmux terminal the app opened: `id` is what `closeTerminal` takes, `sessionName` what a reopen attaches to. */
-export type AppTerminalListing = { id: string; sessionName: string; cwd: string; title: string; command: string; alive: boolean; createdAt: string }
+export type AppTerminalListing = { id: string; sessionName: string; cwd: string; title: string; command: string; alive: boolean; createdAt: string; chatId?: string | null }
 
 export class CliError extends Error {
   constructor(

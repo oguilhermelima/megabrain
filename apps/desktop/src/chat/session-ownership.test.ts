@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ProjectSession } from '@/api/schema'
-import { closable, ownedTerminalTarget, ownership, sessionView } from '@/chat/session-ownership'
+import { closable, closeOf, ownedTerminalTarget, ownership, sessionView } from '@/chat/session-ownership'
 
 const session: ProjectSession = {
   agent: 'claude',
@@ -73,5 +73,23 @@ describe('closable', () => {
   test('a session from another terminal cannot be ended here', () => {
     expect(closable(session)).toBe(false)
     expect(closable({ ...session, owner: 'external', terminalPid: 54192 })).toBe(false)
+  })
+})
+
+describe('closeOf: one Close per owner', () => {
+  test('a chat conversation closes as its chat: stop, kill its tmux alias, delete', () => {
+    expect(closeOf({ ...session, conversationOwner: 'app-chat', chatId: 'chat-1' })).toEqual({ kind: 'chat', chatId: 'chat-1' })
+  })
+
+  test('a terminal conversation, live or ended, closes by ending its process or tmux session and dropping its entry', () => {
+    expect(closeOf({ ...owned, conversationOwner: 'app-terminal' })).toEqual({ kind: 'terminal', sessionId: owned.sessionId })
+    expect(closeOf({ ...session, owner: 'megabrain', conversationOwner: 'app-terminal', status: 'ended' })).toEqual({ kind: 'terminal', sessionId: session.sessionId })
+    expect(closable({ ...session, owner: 'megabrain', conversationOwner: 'app-terminal', status: 'ended' })).toBe(true)
+  })
+
+  test('a dispatch worker or a foreign session has no Close here', () => {
+    expect(closeOf({ ...session, conversationOwner: 'dispatch', dispatchId: 'd' })).toBeNull()
+    expect(closeOf({ ...session, conversationOwner: 'foreign' })).toBeNull()
+    expect(closable({ ...session, conversationOwner: 'foreign', owner: 'megabrain', tmuxServer: 'megabrain-app', tmuxSession: 'mb-app-x' })).toBe(false)
   })
 })

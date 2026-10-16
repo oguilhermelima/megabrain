@@ -231,13 +231,6 @@ export interface ModeToggle {
   reason: string | null
 }
 
-const RUNNING_TURN_WARNING = 'A turn is running; switching stops it'
-
-/** The terminal opens from every state; a running turn is the one thing the person must agree to stop. */
-export function terminalSwitchWarning(chat: NativeChat): string | null {
-  return chat.state === 'working' || chat.state === 'waiting-approval' ? RUNNING_TURN_WARNING : null
-}
-
 /** Never disabled: the switch resumes a suspended, stopped or failed chat, or starts the agent's TUI fresh. */
 export function modeToggle(chat: NativeChat): ModeToggle {
   return { target: chat.mode === 'terminal' ? 'chat' : 'terminal', enabled: true, reason: null }

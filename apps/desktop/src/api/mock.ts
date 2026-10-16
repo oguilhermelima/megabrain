@@ -22,7 +22,6 @@ export function createMockApi(): DesktopApi {
   }
   let settings = mockSettings
   let sidebarFolders: unknown = { version: 1, folders: [], order: [] }
-  let hiddenSessions: unknown = { version: 1, sessions: {} }
   let sidebarState: unknown = { version: 1, collapsed: [], rows: {} }
   let shortcuts: unknown = { version: 1, bindings: {} }
   let usageOrder: unknown = { version: 1, order: [], hidden: [] }
@@ -397,8 +396,6 @@ export function createMockApi(): DesktopApi {
     setTerminalEngine: async () => {},
     sidebarFolders: async () => sidebarFolders,
     setSidebarFolders: async (json) => void (sidebarFolders = JSON.parse(json) as unknown),
-    hiddenSessions: async () => hiddenSessions,
-    setHiddenSessions: async (json) => void (hiddenSessions = JSON.parse(json) as unknown),
     sidebarState: async () => sidebarState,
     setSidebarState: async (json) => void (sidebarState = JSON.parse(json) as unknown),
     usageOrder: async () => usageOrder,

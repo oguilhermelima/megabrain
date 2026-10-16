@@ -448,6 +448,10 @@ export const projectSessionSchema = z.looseObject({
   tmuxSession: z.string().nullable().optional(),
   /** When the app launched it in a native terminal: the process that terminal started. */
   terminalPid: z.number().nullable().optional(),
+  /** Who owns the conversation: a chat or terminal of the app, a dispatch's worker, or another app; absent from an older CLI. */
+  conversationOwner: z.enum(['app-chat', 'app-terminal', 'dispatch', 'foreign']).optional(),
+  /** The chat whose conversation this is, for an app chat. */
+  chatId: z.string().nullable().optional(),
 })
 
 export const projectWorktreeSchema = z.looseObject({

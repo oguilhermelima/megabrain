@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
+import { chatPaneStays, readyToPrune } from '@/advanced/restore-panes'
 import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
 import { joinLabel } from '@/advanced/item-menus'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
@@ -35,7 +36,7 @@ import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
 import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
-import { appLaunched, closable } from '@/chat/session-ownership'
+import { closable, closeOf } from '@/chat/session-ownership'
 import { RunContext, type RunControls } from '@/run-panel/run-context'
 import { panelFor } from '@/run-panel/run-model'
 import { RunPanel } from '@/run-panel/RunPanel'
@@ -82,9 +83,10 @@ function Loading() {
   return <PaneSkeleton />
 }
 
-function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean; error: unknown; retry: () => void; dropChat: (id: string) => void } {
+function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean; chatsLoaded: boolean; error: unknown; retry: () => void; dropChat: (id: string) => void } {
   const [load, setLoad] = useState<LatestLoad<Project[]>>(initialLoad)
   const [chats, setChats] = useState<NativeChat[]>([])
+  const [chatsLoaded, setChatsLoaded] = useState(false)
   const seq = useRef(0)
   const retry = usePoll(
     projectsPolicy,
@@ -97,7 +99,10 @@ function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: bool
         // Only sessions megabrain started; one opened in Orca or a plain terminal belongs there.
         const mine = sessionsOfOrigin(next, 'megabrain')
         setLoad((previous) => settleLoad(previous, { seq: at, ok: true, value: reuse(previous.value ?? [], mine) }))
-        if (nextChats !== null) setChats((previous) => reuse(previous, nextChats))
+        if (nextChats !== null) {
+          setChats((previous) => reuse(previous, nextChats))
+          setChatsLoaded(true)
+        }
       } catch (error) {
         // The last good list stays; usePoll tries again sooner.
         if (current()) setLoad((previous) => settleLoad(previous, { seq: at, ok: false, error }))
@@ -108,7 +113,7 @@ function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: bool
   )
   // A removed chat leaves the list at once instead of at the next poll.
   const dropChat = useStableCallback((id: string) => setChats((previous) => previous.filter((chat) => chat.id !== id)))
-  return { projects: load.value ?? noProjects, chats, loaded: load.value !== null, error: load.error, retry, dropChat }
+  return { projects: load.value ?? noProjects, chats, loaded: load.value !== null, chatsLoaded, error: load.error, retry, dropChat }
 }
 
 const noProjects: Project[] = []
@@ -163,7 +168,7 @@ function focusPaneInput(paneId: string) {
 // live, and each project's code.
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
-  const { projects: listed, chats: nativeChats, loaded: projectsLoaded, error: projectsError, retry: retryProjects, dropChat } = useProjects()
+  const { projects: listed, chats: nativeChats, loaded: projectsLoaded, chatsLoaded, error: projectsError, retry: retryProjects, dropChat } = useProjects()
   const { layout: savedLayout, change: changeLayout, error: layoutError, ready: layoutReady } = useSidebarLayout()
   // The folders and order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
   const layout = useMemo(() => reconcileLayout(savedLayout, listed.map((project) => project.path)), [savedLayout, listed])
@@ -473,29 +478,30 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         title: `Close ${terminalLabel(terminal)}?`,
         body:
           terminal.engine === 'tmux'
-            ? "The app lets go of this terminal. Its tmux session keeps running on megabrain's tmux server, but the app does not list it again."
+            ? 'Closing the terminal ends its tmux session and whatever runs in it.'
             : 'Its process may still be running. Closing the terminal ends it.',
         action: 'Close terminal',
         run: () => closeTerminal(terminal),
       })
       return
     }
+    // A conversation listed on its own has one Close, by its owner. A chat's closes as the chat; a
+    // terminal conversation's ends its process or tmux session and drops its entry, asking first only
+    // while it still runs.
     const { session } = row
-    if (!closable(session)) return
-    if (appLaunched(session)) {
-      setCloseConfirm({
-        title: `End ${session.title}?`,
-        body: 'The app started this agent in a terminal it no longer shows. Ending it stops the agent; the conversation stays on disk and can be resumed again.',
-        action: 'End session',
-        run: () => api.releaseSession(session.sessionId),
-      })
-      return
+    const close = closeOf(session)
+    if (close === null) return
+    if (close.kind === 'chat') {
+      const chat = nativeChats.find((entry) => entry.id === close.chatId)
+      if (chat !== undefined) return requestClose({ kind: 'native', chat })
+      return api.removeChat(close.chatId).then(() => dropChat(close.chatId))
     }
+    if (session.status === 'ended') return api.releaseSession(close.sessionId)
     setCloseConfirm({
-      title: `Release ${session.title}?`,
-      body: 'megabrain stops owning this session and closes its tmux session, which ends the agent running there. The conversation stays on disk and can be resumed again.',
-      action: 'Release',
-      run: () => api.releaseSession(session.sessionId),
+      title: `Close ${session.title}?`,
+      body: "Closing ends the agent running this conversation and takes it out of the list. The agent's own session stays on disk, so Resume can still open it.",
+      action: 'Close',
+      run: () => api.releaseSession(close.sessionId),
     })
   })
   // A past chat megabrain already shows opens there; any other is resumed in its agent's TUI.
@@ -773,7 +779,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
   }, [terminals, terminalsRestored])
 
-  const listsLoaded = status !== null && projectsLoaded && terminalsRestored
+  const listsLoaded = readyToPrune({ status: status !== null, projects: projectsLoaded, terminals: terminalsRestored, chats: chatsLoaded })
   /** Whether an item still exists; a launcher always does. */
   const itemExists = (item: string): boolean => {
     const parsed = parseItem(item)
@@ -784,7 +790,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'session':
         return findSession(parsed.id) !== null
       case 'native':
-        return nativeChats.some((entry) => entry.id === parsed.id) || startedChat?.id === parsed.id
+        return chatPaneStays(nativeChats, parsed.id) || startedChat?.id === parsed.id
       case 'terminal':
         return keepsPane(terminals, parsed.id)
       case 'launcher':

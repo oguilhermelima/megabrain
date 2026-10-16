@@ -3,12 +3,13 @@ import { sortSessions } from "@/advanced/projects-model";
 import { moveProject, type Placement } from "@/advanced/project-order";
 import { terminalRuns, type AppTerminal } from "@/terminal/terminal-list";
 
-// The rows under one worktree: native chats, terminals the app opened, and agent sessions. A
-// conversation shows once: a native chat or a terminal resumed from Resume runs an agent session
-// that the projects list also reports, so that session folds into the chat's or terminal's row and
-// lends it its data (the compaction clock). So does an agent the app launched in a terminal of its
-// own, found by that terminal's process or tmux session. The person can drag the rows into an order of their own,
-// kept per viewer and per worktree.
+// The rows under one worktree: one per conversation the app owns. Native chats first, then the
+// terminals the app opened, then the conversations neither holds (an ended terminal conversation that
+// resumes on click). The projects list names each conversation's owner and aliases, so a chat claims
+// its conversation by chat id (or agent session id), a terminal by the tmux session or process it runs,
+// and the conversation lends the row its data (the compaction clock). Dispatch workers and sessions
+// other apps run never get a row. The person can drag the rows into an order of their own, kept per
+// viewer and per worktree.
 
 export type WorktreeItem =
   | { kind: "native"; chat: NativeChat; session: ProjectSession | null }
@@ -28,20 +29,30 @@ const sameSession = (session: ProjectSession, agent: string, id: string) =>
   session.sessionId === `${agent}:${id}` ||
   (session.sessionId === id && session.agent === agent);
 
-/** Chats, then terminals, then the sessions neither runs (live before ended), each once. */
+/** Only conversations megabrain owns are rows; a dispatch worker is its coordinator's, a foreign session its app's. */
+const ours = (session: ProjectSession) =>
+  session.conversationOwner !== 'dispatch' && session.conversationOwner !== 'foreign';
+
+/** Chats, then terminals, then the conversations neither runs (live before ended), each once. */
 export function worktreeItems(
   chats: NativeChat[],
   terminals: AppTerminal[],
-  sessions: ProjectSession[],
+  listed: ProjectSession[],
 ): KeyedItem[] {
+  const sessions = listed.filter(ours);
   const absorbed = new Set<ProjectSession>();
-  const claim = (agent: string, id: string | null | undefined) => {
-    if (id === null || id === undefined) return null;
-    const found =
-      sessions.find((session) => sameSession(session, agent, id)) ?? null;
-    if (found !== null) absorbed.add(found);
+  const take = (found: ProjectSession | undefined) => {
+    if (found === undefined) return null;
+    absorbed.add(found);
     return found;
   };
+  const claim = (agent: string, id: string | null | undefined) =>
+    id === null || id === undefined
+      ? null
+      : take(sessions.find((session) => sameSession(session, agent, id)));
+  const claimChat = (chat: NativeChat) =>
+    take(sessions.find((session) => session.chatId === chat.id)) ??
+    claim(chat.agent, chat.agentSessionId);
   const claimRun = (terminal: AppTerminal) => {
     const found =
       sessions.find((session) => !absorbed.has(session) && terminalRuns(terminal, session)) ?? null;
@@ -52,7 +63,7 @@ export function worktreeItems(
     ...chats.map((chat): WorktreeItem => ({
       kind: "native",
       chat,
-      session: claim(chat.agent, chat.agentSessionId),
+      session: claimChat(chat),
     })),
     ...terminals.map((terminal): WorktreeItem => ({
       kind: "terminal",
@@ -72,6 +83,30 @@ const lastActivity = (item: WorktreeItem): string | null => {
   if (item.kind === "native") return item.chat.lastActivityAt ?? item.session?.lastActivityAt ?? null;
   return item.session?.lastActivityAt ?? null;
 };
+
+const ENDED_AFTER = 7 * 86_400_000;
+
+/** Whether the row still runs something: a chat's agent, a terminal's process, a live session. */
+const running = (item: WorktreeItem): boolean => {
+  if (item.kind === 'native') return item.chat.state !== 'suspended' && item.chat.state !== 'stopped' && item.chat.state !== 'error';
+  if (item.kind === 'terminal') return item.terminal.status === 'live' || item.terminal.status === 'starting';
+  return item.session.status !== 'ended';
+};
+
+/**
+ * Conversations of ours that ended more than 7 days ago go under the worktree's Ended group; every
+ * other row stays in the list. Both keep the order they came in.
+ */
+export function endedRows<T extends WorktreeItem>(rows: T[], now: number): { shown: T[]; ended: T[] } {
+  const shown: T[] = [];
+  const ended: T[] = [];
+  for (const row of rows) {
+    const at = lastActivity(row);
+    const old = at !== null && now - Date.parse(at) > ENDED_AFTER;
+    (old && !running(row) ? ended : shown).push(row);
+  }
+  return { shown, ended };
+}
 
 /** The row a click on its worktree opens: the most recently active, the top one on a tie or when
  * none has any activity; null for an empty worktree, which opens its launcher instead. */

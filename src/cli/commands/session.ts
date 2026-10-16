@@ -9,6 +9,7 @@ import { createTmuxSession, getTmux } from "../../hosts/tmux.js";
 import { appHost, appTarget, readAppPanes, readProcessTable } from "../../core/session-origin.js";
 import { findMachineSession } from "./projects.js";
 import { readConversations, removeConversation, setConversationAlias, upsertConversation } from "../../core/conversations.js";
+import { APP_SESSION_PREFIX, forgetAppTerminal } from "../../core/app-terminals.js";
 import { join } from "node:path";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -95,13 +96,28 @@ async function release(target: Readonly<{ key: string; json: boolean }>, environ
   return ok(target.json ? `${JSON.stringify({ session: target.key, owner: "external" }, null, 2)}\n` : `released: ${target.key}\n`);
 }
 
+// A terminal conversation of the app closes for good: its tmux session (either naming scheme) ends if it
+// still runs, its record goes, and so does its entry. One that already ended has only its entry to drop.
+async function closeTerminalConversation(target: Readonly<{ key: string; json: boolean }>, stateDir: string, tmux: string | null, process: ProcessAdapter): Promise<Result<string>> {
+  const [server, session] = (tmux ?? "").split(":");
+  if (server === OWNED_TMUX_SERVER && session !== undefined && session !== "") {
+    await getTmux().killSession(session, ownedTmuxProcess(process));
+    if (session.startsWith(APP_SESSION_PREFIX)) forgetAppTerminal(stateDir, session);
+  }
+  removeConversation(stateDir, target.key);
+  return ok(target.json ? `${JSON.stringify({ session: target.key, owner: "external" }, null, 2)}\n` : `released: ${target.key}\n`);
+}
+
 // A session the desktop app launched in a terminal it no longer shows: end its tmux session or its process.
 async function releaseAppSession(target: Readonly<{ key: string; json: boolean }>, environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
+  const stateDir = stateDirectory(environment);
+  const registered = readConversations(stateDir).conversations[target.key];
+  if (registered?.owner === "app-terminal" && registered.aliases.tmux !== null) return closeTerminalConversation(target, stateDir, registered.aliases.tmux, process);
   const separator = target.key.indexOf(":");
   const found = await findMachineSession(environment.HOME ?? "", process, target.key.slice(0, separator), target.key.slice(separator + 1));
   const host = found?.status === "ended" ? undefined : appHost(await readProcessTable(process), found?.processId);
   const app = appTarget(host, host?.kind === "tmux" ? await readAppPanes(process) : new Map<number, string>());
-  if (app === undefined) return failed(`${target.key} is not owned by megabrain`);
+  if (app === undefined) return registered?.owner === "app-terminal" ? closeTerminalConversation(target, stateDir, null, process) : failed(`${target.key} is not owned by megabrain`);
   if ("tmuxSession" in app) {
     const killed = await getTmux().killSession(app.tmuxSession, ownedTmuxProcess(process));
     if (killed.kind !== "ok") return failed(killed.error);
@@ -109,6 +125,7 @@ async function releaseAppSession(target: Readonly<{ key: string; json: boolean }
     const killed = await process.run("kill", ["-TERM", String(app.terminalPid)]);
     if (killed.kind !== "ok") return failed(killed.error);
   }
+  if (registered?.owner === "app-terminal") removeConversation(stateDir, target.key);
   return ok(target.json ? `${JSON.stringify({ session: target.key, owner: "external" }, null, 2)}\n` : `released: ${target.key}\n`);
 }
 

@@ -17,6 +17,7 @@ const OUTPUT_BATCH_WINDOW: Duration = Duration::from_millis(8);
 const MAX_PRE_LISTEN_OUTPUT: usize = 256 * 1024;
 const TMUX_SERVER: &str = "megabrain-app";
 const APP_SESSION_PREFIX: &str = "mb-app-";
+const OWNED_SESSION_PREFIX: &str = "mb-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
@@ -57,10 +58,11 @@ pub fn close_action(engine: Engine, reason: CloseReason) -> CloseAction {
     }
 }
 
-/// Only the sessions the app created on its own server may be killed; a session on the person's
+/// Only the sessions megabrain created on the app's server may be killed: the app's own `mb-app-<id>`
+/// terminals and the `mb-<agent>-<id>` sessions `session own` resumes there. A session on the person's
 /// default server that the app merely attached to is detached, never killed.
 pub fn app_owned_session(server: Option<&str>, session: &str) -> bool {
-    server == Some(TMUX_SERVER) && session.starts_with(APP_SESSION_PREFIX)
+    server == Some(TMUX_SERVER) && session.len() > OWNED_SESSION_PREFIX.len() && session.starts_with(OWNED_SESSION_PREFIX)
 }
 
 /// `=` makes tmux match the session name exactly instead of by prefix.
@@ -241,6 +243,8 @@ pub struct TerminalOpenOptions {
     cwd: String,
     command: Option<Vec<String>>,
     tmux_session: Option<String>,
+    /// The chat whose terminal mode this is: its TUI joins the chat's conversation instead of being one of its own.
+    chat_id: Option<String>,
     cols: u16,
     rows: u16,
 }
@@ -389,13 +393,21 @@ impl TerminalManager {
             // not the terminal.
             if let Some(state) = app_terminals::state_dir() {
                 let command = options.command.as_deref().map(|parts| parts.join(" ")).unwrap_or_default();
+                let created_at = app_terminals::now_iso();
                 let _ = app_terminals::record_app_terminal(
                     &state,
                     session,
                     &title,
                     &command,
                     &cwd.to_string_lossy(),
-                    &app_terminals::now_iso(),
+                    &created_at,
+                );
+                let _ = app_terminals::record_terminal_conversation(
+                    &state,
+                    &format!("{TMUX_SERVER}:{session}"),
+                    &cwd.to_string_lossy(),
+                    &created_at,
+                    options.chat_id.as_deref(),
                 );
             }
         }
@@ -570,7 +582,7 @@ fn close_process(process: &TerminalProcess, reason: CloseReason) -> Result<(), S
 }
 
 fn kill_tmux_session(target: &TmuxTarget) {
-    // Attached to a session the app did not create, closing the terminal only detaches.
+    // Attached to a session megabrain did not create, closing the terminal only detaches.
     if !app_owned_session(target.server.as_deref(), &target.session) {
         return;
     }
@@ -582,6 +594,7 @@ fn kill_tmux_session(target: &TmuxTarget) {
         .output();
     if let Some(state) = app_terminals::state_dir() {
         let _ = app_terminals::forget_app_terminal(&state, &target.session);
+        let _ = app_terminals::forget_terminal_conversation(&state, &format!("{TMUX_SERVER}:{}", target.session));
     }
 }
 

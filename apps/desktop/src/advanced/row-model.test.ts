@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { NativeChat, ProjectSession } from '@/api/schema'
 import type { AppTerminal } from '@/terminal/terminal-list'
-import { applyRowOrder, moveRow, parseRowOrder, rowKey, rowToOpen, saveRowOrder, worktreeItems, type RowOrder } from '@/advanced/row-model'
+import { applyRowOrder, endedRows, moveRow, parseRowOrder, rowKey, rowToOpen, saveRowOrder, worktreeItems, type RowOrder } from '@/advanced/row-model'
 
 const session = (sessionId: string, extra: Partial<ProjectSession> = {}): ProjectSession => ({
   agent: 'claude',
@@ -109,6 +109,70 @@ describe('worktreeItems', () => {
   test('keeps the default order: chats, terminals, then live sessions before ended ones', () => {
     const rows = worktreeItems([chat('c1', 'claude', null)], [terminal('t1')], [session('claude:ended', { status: 'ended' }), session('claude:live')])
     expect(keys(rows)).toEqual(['chat:c1', 'terminal:t1', 'session:claude:live', 'session:claude:ended'])
+  })
+})
+
+describe('one row per conversation from the projects rows', () => {
+  test('a chat claims its conversation by chat id before the agent reported its session to the chat record', () => {
+    const own = session('claude:s1', { conversationOwner: 'app-chat', chatId: 'c1' })
+    const rows = worktreeItems([chat('c1', 'claude', null)], [], [own])
+    expect(keys(rows)).toEqual(['chat:c1'])
+    expect(rows[0]).toMatchObject({ kind: 'native', session: own })
+  })
+
+  test('a chat, its terminal-mode TUI and its log are one row', () => {
+    const own = session('claude:s1', { conversationOwner: 'app-chat', chatId: 'c1', tmuxServer: 'megabrain-app', tmuxSession: 'mb-app-tui' })
+    expect(keys(worktreeItems([{ ...chat('c1', 'claude', 's1'), mode: 'terminal' }], [], [own]))).toEqual(['chat:c1'])
+  })
+
+  test('a terminal conversation folds into the terminal that runs it', () => {
+    const own = session('claude:t', { conversationOwner: 'app-terminal', tmuxServer: 'megabrain-app', tmuxSession: 'mb-app-term-7' })
+    const open = { ...terminal('t1'), engine: 'tmux' as const, tmuxSession: 'megabrain-app:mb-app-term-7', appTerminalId: 'term-7' }
+    expect(keys(worktreeItems([], [open], [own]))).toEqual(['terminal:t1'])
+  })
+
+  test('an ended terminal conversation of ours keeps its own row, so it can be resumed', () => {
+    const ended = session('claude:t', { conversationOwner: 'app-terminal', status: 'ended' })
+    expect(keys(worktreeItems([], [], [ended]))).toEqual(['session:claude:t'])
+  })
+
+  test('owners are never foreign: dispatch workers and sessions from other apps get no row', () => {
+    const rows = worktreeItems([], [], [
+      session('claude:worker', { conversationOwner: 'dispatch', dispatchId: 'dispatch-1', origin: 'external', owner: 'external' }),
+      session('claude:orca', { conversationOwner: 'foreign', origin: 'external', owner: 'external' }),
+      session('codex:ours', { agent: 'codex', conversationOwner: 'app-terminal' }),
+    ])
+    expect(keys(rows)).toEqual(['session:codex:ours'])
+  })
+})
+
+describe('endedRows', () => {
+  const now = Date.parse('2026-10-16T12:00:00.000Z')
+  const days = (count: number) => new Date(now - count * 86_400_000).toISOString()
+
+  test('conversations that ended more than 7 days ago go under Ended, in their order', () => {
+    const rows = worktreeItems(
+      [{ ...chat('old-chat', 'claude', null), state: 'suspended', lastActivityAt: days(9) }, { ...chat('new-chat', 'claude', null), state: 'suspended', lastActivityAt: days(2) }],
+      [],
+      [session('claude:old', { conversationOwner: 'app-terminal', status: 'ended', lastActivityAt: days(30) }), session('claude:recent', { conversationOwner: 'app-terminal', status: 'ended', lastActivityAt: days(6) })],
+    )
+    const split = endedRows(rows, now)
+    expect(keys(split.shown)).toEqual(['chat:new-chat', 'session:claude:recent'])
+    expect(keys(split.ended)).toEqual(['chat:old-chat', 'session:claude:old'])
+  })
+
+  test('anything still running stays in the list however old its last activity', () => {
+    const rows = worktreeItems(
+      [{ ...chat('working', 'claude', null), state: 'working', lastActivityAt: days(20) }, { ...chat('idle', 'claude', null), state: 'idle', lastActivityAt: days(20) }],
+      [{ ...terminal('t1') }],
+      [session('claude:live', { conversationOwner: 'app-terminal', status: 'idle', lastActivityAt: days(20) })],
+    )
+    expect(endedRows(rows, now).ended).toEqual([])
+  })
+
+  test('a row with no activity at all is not old', () => {
+    const rows = worktreeItems([{ ...chat('c', 'claude', null), state: 'suspended', lastActivityAt: null, createdAt: days(1) }], [], [])
+    expect(endedRows(rows, now).ended).toEqual([])
   })
 })
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { ChatQueueChange } from '@/api/adapter'
 import { activityOf } from '@/components/agent-activity'
 import { api } from '@/api'
@@ -15,11 +15,12 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, terminalSwitchWarning, queueOutgoing, shouldInterrupt, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
 import { useFollowChat } from '@/native-chat/useFollowChat'
+import { backToChat, chatChanged, requestTerminal, stopAndOpen, TERMINAL_WAIT_NOTICE, type DeferredStep } from '@/native-chat/deferred-switch'
 import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
 import { endKeptSession } from '@/terminal/kept-terminals'
 
@@ -46,11 +47,13 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const [startFresh, setStartFresh] = useState(false)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
   const toggle = modeToggle(chat)
-  const mode = target ?? chat.mode
+  // Asked for the terminal mid-turn: the pane shows the terminal view and waits for the turn to end.
+  const [waitingTerminal, setWaitingTerminal] = useState(false)
+  const mode = waitingTerminal ? 'terminal' : (target ?? chat.mode)
   const inTerminal = mode === 'terminal'
   const [actionError, setActionError] = useState<unknown>(null)
   const [switchError, setSwitchError] = useState<unknown>(null)
-  // A step that needs a yes first: moving a running turn to the terminal, or sending a queued message now.
+  // A step that needs a yes first: sending a queued message now, which stops a running turn.
   const [confirming, setConfirming] = useState<{ text: string; action: string; run: () => void } | null>(null)
   const title = chat.title ?? 'New chat'
   const pending = pendingApproval(state)
@@ -140,12 +143,21 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     announceAction()
   }
 
-  // A running turn needs a yes first; every other state switches at once.
-  const requestSwitch = () => {
-    const warning = toggle.target === 'terminal' ? terminalSwitchWarning(chat) : null
-    if (warning === null) void switchMode()
-    else setConfirming({ text: warning, action: 'Switch', run: () => void switchMode() })
+  // The view moves at once. To the terminal mid-turn, it waits for the turn and hands over by itself.
+  const follow = (step: DeferredStep) => {
+    setWaitingTerminal(step.waiting)
+    if (step.run === 'switch') void switchMode()
+    else if (step.run === 'stop-then-switch') void api.interruptChat(chat.id).catch(() => {}).then(() => switchMode())
   }
+  const requestSwitch = () => {
+    if (waitingTerminal) return follow(backToChat(true))
+    if (toggle.target === 'terminal') return follow(requestTerminal(chat))
+    void switchMode()
+  }
+  useEffect(() => {
+    if (waitingTerminal) follow(chatChanged(true, chat))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingTerminal, chat.state])
 
   const switchMode = async () => {
     if (!toggle.enabled || switching) return
@@ -203,7 +215,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     ])
     switchEngine(chat.id, engine)
     switchStep(chat.id, 'terminalOpenCalled', 'terminal')
-    const terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, cols, rows })
+    const terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, chatId: chat.id, cols, rows })
     switchStep(chat.id, 'terminalOpened', 'terminal')
     handedOver.set(chat.id, terminal)
     return terminal
@@ -217,6 +229,31 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     event.preventDefault()
     stop()
   }
+
+  const transcript = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ConversationAgent.Provider value={chat.agent}>
+      <ApprovalRendererContext.Provider value={renderApproval}>
+        {/* Until the first line of the follow arrives the history is still being read. */}
+        {fresh ? (
+          <ChatSuggestions cwd={chat.cwd} agent={chat.agent} onPick={(text) => setFill({ text })} />
+        ) : state.cursor === null && state.events.length === 0 && error === null ? (
+          <TranscriptSkeleton />
+        ) : (
+          <ConversationList
+            events={state.events}
+            live={live}
+            footer={working === null ? null : <WorkingIndicator agent={chat.agent} status={working} />}
+            onOpenChat={onOpenChat}
+            root={chat.cwd}
+            onOpenPath={onOpenPath}
+            channel={compose}
+          />
+        )}
+      </ApprovalRendererContext.Provider>
+      </ConversationAgent.Provider>
+    </div>
+  )
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -253,7 +290,17 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           </button>
         </div>
       )}
-      {inTerminal ? (
+      {waitingTerminal ? (
+        <>
+          <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-ink-300">
+            <span className="min-w-0 flex-1">{TERMINAL_WAIT_NOTICE}</span>
+            <button type="button" onClick={() => follow(stopAndOpen(true))} className="shrink-0 text-[12.5px] text-ink-400 underline-offset-2 hover:text-ink-100 hover:underline">
+              Stop the turn and open now
+            </button>
+          </div>
+          {transcript}
+        </>
+      ) : inTerminal ? (
         <>
           {exited !== undefined && (
             <p className="mx-8 mt-3 text-[13px] text-ink-400">
@@ -282,28 +329,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
         </>
       ) : (
         <>
-          <div className="flex min-h-0 flex-1 flex-col">
-            <ConversationAgent.Provider value={chat.agent}>
-            <ApprovalRendererContext.Provider value={renderApproval}>
-              {/* Until the first line of the follow arrives the history is still being read. */}
-              {fresh ? (
-                <ChatSuggestions cwd={chat.cwd} agent={chat.agent} onPick={(text) => setFill({ text })} />
-              ) : state.cursor === null && state.events.length === 0 && error === null ? (
-                <TranscriptSkeleton />
-              ) : (
-                <ConversationList
-                  events={state.events}
-                  live={live}
-                  footer={working === null ? null : <WorkingIndicator agent={chat.agent} status={working} />}
-                  onOpenChat={onOpenChat}
-                  root={chat.cwd}
-                  onOpenPath={onOpenPath}
-                  channel={compose}
-                />
-              )}
-            </ApprovalRendererContext.Provider>
-            </ConversationAgent.Provider>
-          </div>
+          {transcript}
           {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
           <div onKeyDown={onComposerKey} className="contents">
             <Composer

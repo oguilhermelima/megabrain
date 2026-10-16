@@ -4,6 +4,8 @@ import {
   forgetAppTerminal,
   readAppTerminals,
 } from "../../core/app-terminals.js";
+import { readConversations, updateConversations, type ConversationRegistry } from "../../core/conversations.js";
+import type { MigrationOptions } from "../../core/conversations-migrate.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { OWNED_TMUX_SERVER } from "../../core/session-ownership.js";
 import {
@@ -12,7 +14,8 @@ import {
 } from "../../core/state.js";
 
 // Terminals the desktop app opened on its own tmux server, so the app can bring them back after a
-// restart and kill them when the person closes them.
+// restart and kill them when the person closes them. A chat's terminal mode is the chat's, never a
+// terminal of its own; a gone terminal stays listed only while it ran a conversation of ours.
 
 export type AppTerminal = Readonly<{
   id: string;
@@ -80,6 +83,15 @@ async function liveSessions(
   return sessions;
 }
 
+// The registry's migration asks whether an app session lives; the listing already knows.
+function aliveOn(live: ReadonlyMap<string, unknown>): MigrationOptions {
+  return { isTmuxAlive: (session) => live.has(session) };
+}
+
+function holdersOf(registry: ConversationRegistry, alias: string): (readonly [string, ConversationRegistry["conversations"][string]])[] {
+  return Object.entries(registry.conversations).filter(([, entry]) => entry.aliases.tmux === alias);
+}
+
 export async function executeAppTerminalList(
   args: readonly string[],
   environment: StateEnvironment,
@@ -89,19 +101,40 @@ export async function executeAppTerminalList(
   if (parsed.kind !== "ok") return parsed;
   if (parsed.value.rest.length > 0)
     return failed(`unexpected argument: ${parsed.value.rest[0]}`, 2);
-  const records = readAppTerminals(resolveStateDirectory(environment));
+  const stateDir = resolveStateDirectory(environment);
+  const records = readAppTerminals(stateDir);
   const live = new Map(
     (await liveSessions(process, parsed.value.server)).map((session) => [
       session.sessionName,
       session,
     ]),
   );
+  const migration = aliveOn(live);
+  const registry = readConversations(stateDir, migration);
   const names = new Set(
     [...live.keys(), ...Object.keys(records)].filter((name) =>
       name.startsWith(APP_SESSION_PREFIX),
     ),
   );
-  const terminals: AppTerminal[] = [...names]
+  const gone: string[] = [];
+  const shown = [...names].filter((sessionName) => {
+    const holders = holdersOf(registry, `${parsed.value.server}:${sessionName}`);
+    if (holders.some(([, entry]) => entry.owner === "app-chat")) return false;
+    if (live.has(sessionName)) return true;
+    if (holders.some(([key]) => !key.startsWith("terminal:"))) return true;
+    gone.push(sessionName);
+    return false;
+  });
+  // A gone terminal that never held an agent session has nothing to resume: its record and entry go.
+  if (gone.length > 0) {
+    for (const sessionName of gone) forgetAppTerminal(stateDir, sessionName);
+    const aliases = new Set(gone.map((sessionName) => `${parsed.value.server}:${sessionName}`));
+    updateConversations(stateDir, (current) => ({
+      ...current,
+      conversations: Object.fromEntries(Object.entries(current.conversations).filter(([key, entry]) => !(key.startsWith("terminal:") && entry.aliases.tmux !== null && aliases.has(entry.aliases.tmux)))),
+    }), migration);
+  }
+  const terminals: AppTerminal[] = shown
     .map((sessionName) => {
       const session = live.get(sessionName);
       const record = records[sessionName];
@@ -148,9 +181,8 @@ export async function executeAppTerminalClose(
     return failed(`not an app terminal id: ${id}`, 2);
   const sessionName = `${APP_SESSION_PREFIX}${id}`;
   const stateDir = resolveStateDirectory(environment);
-  const running = (await liveSessions(process, parsed.value.server)).some(
-    (session) => session.sessionName === sessionName,
-  );
+  const live = new Map((await liveSessions(process, parsed.value.server)).map((session) => [session.sessionName, session]));
+  const running = live.has(sessionName);
   const recorded = readAppTerminals(stateDir)[sessionName] !== undefined;
   if (!running && !recorded) return failed(`no app terminal ${id}`);
   if (running) {
@@ -169,6 +201,14 @@ export async function executeAppTerminalClose(
       );
   }
   forgetAppTerminal(stateDir, sessionName);
+  // Its own conversation goes with it; a chat whose terminal mode it was keeps the chat and loses the alias.
+  const alias = `${parsed.value.server}:${sessionName}`;
+  updateConversations(stateDir, (current) => ({
+    ...current,
+    conversations: Object.fromEntries(Object.entries(current.conversations)
+      .filter(([, entry]) => !(entry.owner === "app-terminal" && entry.aliases.tmux === alias))
+      .map(([key, entry]) => [key, entry.aliases.tmux === alias ? { ...entry, aliases: { ...entry.aliases, tmux: null } } : entry])),
+  }), aliveOn(live));
   return ok(
     parsed.value.json
       ? `${JSON.stringify({ id, closed: true })}\n`

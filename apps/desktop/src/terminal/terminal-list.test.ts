@@ -216,8 +216,13 @@ describe('restoreAppTerminals', () => {
     expect(terminalLabel(restoreAppTerminals([], [listing('abc', '/work/repo', true, 'grok')], {})[0] as AppTerminal)).toBe('grok')
   })
 
-  test('a session that is gone comes back exited', () => {
-    expect(restoreAppTerminals([], [listing('abc', '/work/repo', false)], {})[0]).toMatchObject({ status: 'exited', appTerminalId: 'abc' })
+  test('a session that is gone is not restored: its conversation, if any, lists as an ended row instead', () => {
+    expect(restoreAppTerminals([], [listing('abc', '/work/repo', false)], {})).toEqual([])
+  })
+
+  test("a chat's terminal-mode TUI is the chat's, never a terminal row of its own", () => {
+    const list = restoreAppTerminals([], [{ ...listing('tui', '/work/repo'), chatId: 'c1' }, listing('shell', '/work/repo')], {})
+    expect(list.map((item) => item.appTerminalId)).toEqual(['shell'])
   })
 
   test('keeps the item id the layout remembered for that session, else derives one', () => {
@@ -271,8 +276,8 @@ describe('mountsInBackground', () => {
     expect(mountsInBackground(only(addTerminal([], shell('t1')), 't1'))).toBe(true)
   })
 
-  test('a restored terminal that is gone never mounts', () => {
-    expect(mountsInBackground(restoreAppTerminals([], [listing('dead', '/work/repo', false)], {})[0] as AppTerminal)).toBe(false)
+  test('a terminal that is gone is not restored, so there is nothing to mount', () => {
+    expect(restoreAppTerminals([], [listing('dead', '/work/repo', false)], {}).filter(mountsInBackground)).toEqual([])
   })
 })
 
@@ -282,10 +287,10 @@ describe('closeCall', () => {
     expect(closeCall(only(list, 't1'))).toEqual({ id: 'pty-1', kill: false })
   })
 
-  test('a restored terminal the app does not hold, live or exited, is killed by its listing id', () => {
+  test('a restored terminal the app does not hold is killed by its listing id', () => {
     const list = restoreAppTerminals([], [listing('abc', '/work/repo'), listing('dead', '/work/repo', false)], {})
     expect(closeCall(only(list, 'terminal-abc'))).toEqual({ id: 'abc', kill: true })
-    expect(closeCall(only(list, 'terminal-dead'))).toEqual({ id: 'dead', kill: true })
+    expect(list.map((item) => item.id)).toEqual(['terminal-abc'])
   })
 
   test('an exited tmux terminal from this run forgets its session record', () => {

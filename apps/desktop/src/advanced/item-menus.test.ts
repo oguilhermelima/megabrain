@@ -15,7 +15,8 @@ const session = (extra: Partial<ProjectSession> = {}): ProjectSession => ({
   ...extra,
 })
 
-const owned = (extra: Partial<ProjectSession> = {}) => session({ owner: 'megabrain', tmuxServer: 'megabrain-app', tmuxSession: 'claude-1', ...extra })
+const owned = (extra: Partial<ProjectSession> = {}) => session({ owner: 'megabrain', origin: 'megabrain', conversationOwner: 'app-terminal', tmuxServer: 'megabrain-app', tmuxSession: 'mb-claude-1', ...extra })
+const ofChat = (extra: Partial<ProjectSession> = {}) => session({ owner: 'megabrain', origin: 'megabrain', conversationOwner: 'app-chat', chatId: 'chat-1', ...extra })
 
 const chat = (state: NativeChat['state']): NativeChat => ({
   id: 'chat-1',
@@ -51,9 +52,6 @@ function recorder() {
   const calls: string[] = []
   const actions: RowMenuActions = {
     close: (row) => calls.push(`close:${row.kind}`),
-    hide: (target) => calls.push(`hide:${target.sessionId}`),
-    unhide: (target) => calls.push(`unhide:${target.sessionId}`),
-    takeOver: (target) => calls.push(`take-over:${target.sessionId}`),
     copy: (text) => calls.push(`copy:${text}`),
     stop: (target) => calls.push(`stop:${target.id}`),
     rename: (target) => calls.push(`rename:${target.id}`),
@@ -76,17 +74,16 @@ describe('every sidebar item row can be closed from its menu', () => {
     ['a stopped chat', (actions) => chatMenu(chat('stopped'), actions)],
     ['a live terminal', (actions) => terminalMenu(terminal('live'), actions)],
     ['an exited terminal', (actions) => terminalMenu(terminal('exited'), actions)],
-    ['a session megabrain owns', (actions) => sessionMenu(owned(), actions, false)],
-    ['a session started outside megabrain', (actions) => sessionMenu(session(), actions, false)],
-    ['an ended outside session', (actions) => sessionMenu(session({ status: 'ended' }), actions, false)],
-    ['an outside session with a running timer', (actions) => sessionMenu(session({ status: 'working', cacheExpiresAt: '2026-10-15T11:00:00.000Z' }), actions, false)],
+    ['a terminal conversation of ours', (actions) => sessionMenu(owned(), actions)],
+    ['an ended terminal conversation of ours', (actions) => sessionMenu(owned({ status: 'ended', tmuxServer: null, tmuxSession: null }), actions)],
+    ['a chat conversation of ours listed without its chat', (actions) => sessionMenu(ofChat(), actions)],
   ]
   for (const [name, menu] of kinds) {
     test(`${name} has a destructive item that closes, stops, releases or hides it`, () => {
       const { actions } = recorder()
       const items = danger(menu(actions))
       expect(items.length).toBeGreaterThan(0)
-      expect(items.some((item) => /^(Close|Stop|Release|Remove)/.test(item.label))).toBe(true)
+      expect(items.some((item) => /^(Close|Stop|Remove)/.test(item.label))).toBe(true)
     })
   }
 
@@ -109,38 +106,26 @@ describe('every sidebar item row can be closed from its menu', () => {
     expect(calls).toEqual(['close:terminal'])
   })
 
-  test('a session megabrain owns releases, and copies its id', () => {
+  test('each owner has exactly one Close and no Release, Open here or hide', () => {
     const { calls, actions } = recorder()
-    const items = sessionMenu(owned(), actions, false)
-    expect(labels(items)).toEqual(['Copy session id', 'Release from megabrain…'])
-    run(items, 'Release from megabrain…')
-    run(items, 'Copy session id')
-    expect(calls).toEqual(['close:session', 'copy:claude:1'])
+    for (const target of [owned(), owned({ status: 'ended', tmuxServer: null, tmuxSession: null }), ofChat(), owned({ terminalPid: 54192, tmuxServer: null, tmuxSession: null })]) {
+      const items = sessionMenu(target, actions)
+      expect(labels(danger(items))).toHaveLength(1)
+      expect(labels(danger(items))[0]).toMatch(/^Close/)
+      expect(labels(items).some((label) => /Release|Open here|Keep in the list|End session/.test(label))).toBe(false)
+    }
+    run(sessionMenu(owned(), actions), 'Close…')
+    run(sessionMenu(owned({ status: 'ended', tmuxServer: null, tmuxSession: null }), actions), 'Close')
+    expect(calls).toEqual(['close:session', 'close:session'])
   })
 
-  test('a session megabrain does not run opens here, copies its id, and closes by leaving the list', () => {
+  test('a running conversation asks first, an ended one closes at once, both copy their id', () => {
     const { calls, actions } = recorder()
-    const items = sessionMenu(session(), actions, false)
-    expect(labels(items)).toEqual(['Open here', 'Copy session id', 'Close'])
-    run(items, 'Close')
-    run(items, 'Open here')
-    expect(calls).toEqual(['hide:claude:1', 'take-over:claude:1'])
-  })
-
-  test('an agent the app launched whose terminal is gone is ended for real, asking first', () => {
-    const { calls, actions } = recorder()
-    const items = sessionMenu(session({ owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 }), actions, false)
-    expect(labels(items)).toEqual(['Copy session id', 'End session…'])
-    run(items, 'End session…')
-    expect(calls).toEqual(['close:session'])
-  })
-
-  test('a hidden session shown on request offers to come back instead of Close', () => {
-    const { calls, actions } = recorder()
-    const items = sessionMenu(session(), actions, true)
-    expect(labels(items)).toEqual(['Open here', 'Copy session id', 'Keep in the list'])
-    run(items, 'Keep in the list')
-    expect(calls).toEqual(['unhide:claude:1'])
+    expect(labels(sessionMenu(owned(), actions))).toEqual(['Copy session id', 'Close…'])
+    const ended = sessionMenu(owned({ status: 'ended' }), actions)
+    expect(labels(ended)).toEqual(['Copy session id', 'Close'])
+    run(ended, 'Copy session id')
+    expect(calls).toEqual(['copy:claude:1'])
   })
 })
 
@@ -152,10 +137,9 @@ describe('split items sit in their own group', () => {
 
   test('they keep the row items and move the split ones to the split group', () => {
     const { actions } = recorder()
-    const items = withSplitItems(sessionMenu(session(), actions, false), split)
+    const items = withSplitItems(sessionMenu(owned({ status: 'ended' }), actions), split)
     expect(items.filter((item) => item.group === 'split').map((item) => item.label)).toEqual(['Split right', 'Split down'])
     expect(labels(danger(items))).toEqual(['Close'])
-    expect(labels(items)).toContain('Open here')
   })
 
   test('a row without split items keeps its own menu', () => {
@@ -204,14 +188,9 @@ describe('middleClickAction', () => {
     expect(middleClickAction({ kind: 'terminal', terminal: terminal('live') })).toEqual({ kind: 'close', row: { kind: 'terminal', terminal: terminal('live') } })
   })
 
-  test('a session megabrain owns releases, one it does not run leaves the list', () => {
-    expect(middleClickAction({ kind: 'session', session: owned() })).toEqual({ kind: 'close', row: { kind: 'session', session: owned() } })
-    expect(middleClickAction({ kind: 'session', session: session() })).toEqual({ kind: 'hide', session: session() })
-  })
-
-  test('an agent the app launched closes through the same path, not by leaving the list', () => {
-    const launched = session({ owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 })
-    expect(middleClickAction({ kind: 'session', session: launched })).toEqual({ kind: 'close', row: { kind: 'session', session: launched } })
+  test('a conversation row of ours closes through the same path as its Close item', () => {
+    for (const target of [owned(), ofChat(), owned({ status: 'ended', tmuxServer: null, tmuxSession: null })])
+      expect(middleClickAction({ kind: 'session', session: target })).toEqual({ kind: 'close', row: { kind: 'session', session: target } })
   })
 
   test('project, worktree, folder and group rows do nothing', () => {

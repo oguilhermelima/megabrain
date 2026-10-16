@@ -1,23 +1,18 @@
 import type { NativeChat, ProjectSession } from '@/api/schema'
-import { closable, ownership } from '@/chat/session-ownership'
+import { closable } from '@/chat/session-ownership'
 import type { MenuItem } from '@/components/ContextMenu'
 import { rowStatus } from '@/native-chat/chat-model'
 import { closeNeedsConfirm, type AppTerminal } from '@/terminal/terminal-list'
 
 // The menus of the sidebar's item rows: a chat, a terminal or an agent session under its worktree.
-// Every one of them can leave the list from its menu, from its close button and with a middle click.
+// Every one of them has one Close: from its menu, from its close button and with a middle click.
 
 /** An item row: what its menu, its close and a drag act on. */
 export type SidebarItemRow = { kind: 'session'; session: ProjectSession } | { kind: 'native'; chat: NativeChat } | { kind: 'terminal'; terminal: AppTerminal }
 
 export interface RowMenuActions {
-  /** Closes a chat or terminal, or releases a session megabrain owns; what still runs asks first. */
+  /** The row's one Close, by its owner; what still runs asks first. */
   close: (row: SidebarItemRow) => void
-  /** Leaves a session megabrain does not run out of the list until the person shows it again. */
-  hide: (session: ProjectSession) => void
-  unhide: (session: ProjectSession) => void
-  /** Resumes a session in megabrain's own tmux session (`session own`), so it shows and closes here. */
-  takeOver: (session: ProjectSession) => void
   copy: (text: string) => void
   /** Asks, then stops a chat's running turn. */
   stop: (chat: NativeChat) => void
@@ -37,21 +32,11 @@ export function terminalMenu(terminal: AppTerminal, actions: RowMenuActions): Me
   ]
 }
 
-/**
- * A session megabrain owns is released; one it does not run (a TUI in another terminal, an ended
- * one) cannot be ended from here, so its Close takes it out of the list. `hidden` is a hidden one
- * shown on request, which offers to stay in the list instead.
- */
-export function sessionMenu(session: ProjectSession, actions: RowMenuActions, hidden: boolean): MenuItem[] {
+/** A conversation of ours listed on its own (an ended terminal conversation): it copies its id and has one Close, asking first while it runs. */
+export function sessionMenu(session: ProjectSession, actions: RowMenuActions): MenuItem[] {
   const copy: MenuItem = { label: 'Copy session id', icon: 'copy', group: 'copy', onSelect: () => actions.copy(session.sessionId) }
-  if (ownership(session).owned) return [copy, { label: 'Release from megabrain…', icon: 'release', group: 'danger', onSelect: () => actions.close({ kind: 'session', session }) }]
-  // The app launched it in a terminal it no longer shows (one it shows takes the row over).
-  if (closable(session)) return [copy, { label: 'End session…', icon: 'close', group: 'danger', onSelect: () => actions.close({ kind: 'session', session }) }]
-  return [
-    { label: 'Open here', icon: 'terminal', group: 'open', onSelect: () => actions.takeOver(session) },
-    copy,
-    hidden ? { label: 'Keep in the list', icon: 'refresh', group: 'organise', onSelect: () => actions.unhide(session) } : { label: 'Close', icon: 'close', group: 'danger', onSelect: () => actions.hide(session) },
-  ]
+  if (!closable(session)) return [copy]
+  return [copy, { label: session.status === 'ended' ? 'Close' : 'Close…', icon: 'close', group: 'danger', onSelect: () => actions.close({ kind: 'session', session }) }]
 }
 
 /** A row's own items with Split right, Split down and Join with… in their own group. */
@@ -78,7 +63,7 @@ export function joinLabel(target: { name: string | null; members: readonly { tit
 
 export type MiddleClickTarget = SidebarItemRow | { kind: 'project' | 'worktree' | 'folder' | 'group' }
 
-export type MiddleClick = { kind: 'close'; row: SidebarItemRow } | { kind: 'hide'; session: ProjectSession } | null
+export type MiddleClick = { kind: 'close'; row: SidebarItemRow } | null
 
 /** A middle click closes exactly the item it lands on, as its Close item would; other rows ignore it. */
 export function middleClickAction(target: MiddleClickTarget): MiddleClick {
@@ -87,7 +72,7 @@ export function middleClickAction(target: MiddleClickTarget): MiddleClick {
     case 'terminal':
       return { kind: 'close', row: target }
     case 'session':
-      return closable(target.session) ? { kind: 'close', row: target } : { kind: 'hide', session: target.session }
+      return closable(target.session) ? { kind: 'close', row: target } : null
     default:
       return null
   }

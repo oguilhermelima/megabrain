@@ -38,6 +38,17 @@ async function sessionNames(server: string): Promise<string[]> {
   return result.kind === "ok" ? result.value.stdout.split("\n").filter((line) => line !== "") : [];
 }
 
+// A registry that already ran its one-time migration, so a test never reaches the real app server through it.
+async function writeRegistry(stateDir: string, conversations: Record<string, unknown>): Promise<void> {
+  await writeFile(`${stateDir}/conversations.json`, JSON.stringify({ version: 1, conversations, hiddenKeys: [], migratedFrom: [] }));
+}
+
+async function readRegistry(stateDir: string): Promise<Record<string, { owner: string; aliases: { tmux: string | null } }>> {
+  return (JSON.parse(await readFile(`${stateDir}/conversations.json`, "utf8")) as { conversations: Record<string, { owner: string; aliases: { tmux: string | null } }> }).conversations;
+}
+
+const entry = (owner: string, tmux: string | null, chatId: string | null = null) => ({ owner, cwd: "/work", aliases: { chatId, tmux, pid: null, dispatchId: null }, createdAt: "2026-10-15T10:00:00.000Z", hidden: false });
+
 async function listed(stateDir: string, server: string) {
   const result = await executeAppTerminalList(["--server", server, "--json"], { MEGABRAIN_STATE_DIR: stateDir }, process);
   expect(result.kind).toBe("ok");
@@ -99,12 +110,37 @@ describe("terminal list --app", () => {
     expect(Number.isNaN(Date.parse(String(entry?.createdAt)))).toBe(false);
   });
 
-  test("a recorded terminal whose session is gone is listed as not alive", async () => {
+  test("a gone terminal that ran a conversation of ours is listed as not alive", async () => {
     const stateDir = await mkdtemp(`${tmpdir()}/megabrain-app-state-`);
     const server = privateServer();
     const id = randomUUID();
-    recordAppTerminal(stateDir, `mb-app-${id}`, { title: "zsh", command: "", cwd: "/work", createdAt: "2026-10-15T10:00:00.000Z" });
-    expect(await listed(stateDir, server)).toEqual([expect.objectContaining({ id, alive: false, title: "zsh" })]);
+    recordAppTerminal(stateDir, `mb-app-${id}`, { title: "claude", command: "claude --resume r1", cwd: "/work", createdAt: "2026-10-15T10:00:00.000Z" });
+    await writeRegistry(stateDir, { "claude:r1": entry("app-terminal", `${server}:mb-app-${id}`) });
+    expect(await listed(stateDir, server)).toEqual([expect.objectContaining({ id, alive: false, title: "claude" })]);
+  });
+
+  test("a gone terminal that held no conversation is not listed, and its record and entry go", async () => {
+    const stateDir = await mkdtemp(`${tmpdir()}/megabrain-app-state-`);
+    const server = privateServer();
+    const shell = randomUUID();
+    const bare = randomUUID();
+    recordAppTerminal(stateDir, `mb-app-${shell}`, { title: "zsh", command: "", cwd: "/work", createdAt: "2026-10-15T10:00:00.000Z" });
+    recordAppTerminal(stateDir, `mb-app-${bare}`, { title: "zsh", command: "", cwd: "/work", createdAt: "2026-10-15T10:00:00.000Z" });
+    await writeRegistry(stateDir, { [`terminal:${shell}`]: entry("app-terminal", `${server}:mb-app-${shell}`) });
+    expect(await listed(stateDir, server)).toEqual([]);
+    expect(readAppTerminals(stateDir)).toEqual({});
+    expect(await readRegistry(stateDir)).toEqual({});
+  });
+
+  test("a chat's terminal-mode TUI is the chat's, not a terminal of its own", async () => {
+    const stateDir = await mkdtemp(`${tmpdir()}/megabrain-app-state-`);
+    const cwd = await mkdtemp(`${tmpdir()}/megabrain-app-cwd-`);
+    const server = privateServer();
+    const tui = await newSession(server, randomUUID(), cwd);
+    const shellId = randomUUID();
+    await newSession(server, shellId, cwd);
+    await writeRegistry(stateDir, { "claude:s1": entry("app-chat", `${server}:${tui}`, "chat-1") });
+    expect((await listed(stateDir, server)).map((item) => item.id)).toEqual([shellId]);
   });
 
   test("no tmux server running is an empty list, not an error", async () => {
@@ -148,6 +184,25 @@ describe("terminal close --app", () => {
     expect(await sessionNames(server)).toEqual([`mb-app-${keep}`]);
     expect(readAppTerminals(stateDir)[dropSession]).toBeUndefined();
     expect((await listed(stateDir, server)).map((entry) => entry.id)).toEqual([keep]);
+  });
+
+  test("drops the terminal's conversation, and a chat that used it only loses the alias", async () => {
+    const stateDir = await mkdtemp(`${tmpdir()}/megabrain-app-state-`);
+    const cwd = await mkdtemp(`${tmpdir()}/megabrain-app-cwd-`);
+    const server = privateServer();
+    const shell = randomUUID();
+    const tui = randomUUID();
+    await newSession(server, shell, cwd);
+    await newSession(server, tui, cwd);
+    await writeRegistry(stateDir, {
+      [`terminal:${shell}`]: entry("app-terminal", `${server}:mb-app-${shell}`),
+      "claude:s1": entry("app-chat", `${server}:mb-app-${tui}`, "chat-1"),
+    });
+    expect((await executeAppTerminalClose([shell, "--server", server], { MEGABRAIN_STATE_DIR: stateDir }, process)).kind).toBe("ok");
+    expect((await executeAppTerminalClose([tui, "--server", server], { MEGABRAIN_STATE_DIR: stateDir }, process)).kind).toBe("ok");
+    const registry = await readRegistry(stateDir);
+    expect(Object.keys(registry)).toEqual(["claude:s1"]);
+    expect(registry["claude:s1"]).toMatchObject({ owner: "app-chat", aliases: { tmux: null } });
   });
 
   test("closing a terminal whose session already ended still clears its record", async () => {

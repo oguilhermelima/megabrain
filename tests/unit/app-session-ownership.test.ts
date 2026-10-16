@@ -143,4 +143,28 @@ describe("sessions the desktop app launched", () => {
     expect(result.kind).toBe("failed");
     expect(calls.filter((call) => call.command === "kill" || call.args.includes("kill-session"))).toEqual([]);
   });
+
+  test("closing a terminal conversation of ours that ended drops its entry, with nothing left to kill but its tmux alias", async () => {
+    const { machine, calls } = await scenario();
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "conversations.json"), JSON.stringify({ version: 1, hiddenKeys: [], migratedFrom: [], conversations: {
+      "claude:long-gone": { owner: "app-terminal", cwd: project, aliases: { chatId: null, tmux: "megabrain-app:mb-app-gone", pid: null, dispatchId: null }, createdAt: "2026-10-01T10:00:00.000Z", hidden: false },
+    } }));
+    const result = await route(["session", "release", "claude:long-gone", "--json"], { environment: env, processAdapter: machine });
+    expect(result.kind).toBe("ok");
+    expect(calls).toContainEqual({ command: "tmux", args: ["-L", "megabrain-app", "kill-session", "-t", "mb-app-gone"] });
+    expect((JSON.parse(readFileSync(join(state, "conversations.json"), "utf8")) as { conversations: Record<string, unknown> }).conversations).toEqual({});
+  });
+
+  test("closing a live terminal conversation of ours ends its tmux session and drops its entry", async () => {
+    const { machine, calls } = await scenario();
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "conversations.json"), JSON.stringify({ version: 1, hiddenKeys: [], migratedFrom: [], conversations: {
+      "claude:app-tmux": { owner: "app-terminal", cwd: project, aliases: { chatId: null, tmux: "megabrain-app:mb-app-term-7", pid: null, dispatchId: null }, createdAt: "2026-10-16T10:00:00.000Z", hidden: false },
+    } }));
+    const result = await route(["session", "release", "claude:app-tmux", "--json"], { environment: env, processAdapter: machine });
+    expect(result.kind).toBe("ok");
+    expect(calls).toContainEqual({ command: "tmux", args: ["-L", "megabrain-app", "kill-session", "-t", "mb-app-term-7"] });
+    expect((JSON.parse(readFileSync(join(state, "conversations.json"), "utf8")) as { conversations: Record<string, unknown> }).conversations).toEqual({});
+  });
 });

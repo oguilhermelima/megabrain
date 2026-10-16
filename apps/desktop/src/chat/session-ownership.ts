@@ -18,9 +18,24 @@ export function appLaunched(session: ProjectSession): boolean {
   return session.owner === 'megabrain' && typeof session.terminalPid === 'number'
 }
 
-/** megabrain can end it from the app: it owns its tmux session, or the app launched it. */
+/**
+ * The one Close a conversation has, by its owner: a chat closes as the chat (stop, kill its tmux alias,
+ * delete); a terminal conversation, live or ended, by ending its process or tmux session and dropping
+ * its entry. A dispatch worker or another app's session has none. A row from an older CLI, which names
+ * no owner, closes as a terminal while megabrain runs it.
+ */
+export type ConversationClose = { kind: 'chat'; chatId: string } | { kind: 'terminal'; sessionId: string }
+
+export function closeOf(session: ProjectSession): ConversationClose | null {
+  const { conversationOwner: owner, chatId } = session
+  if (owner === 'app-chat') return typeof chatId === 'string' && chatId !== '' ? { kind: 'chat', chatId } : { kind: 'terminal', sessionId: session.sessionId }
+  if (owner === 'app-terminal') return { kind: 'terminal', sessionId: session.sessionId }
+  if (owner === undefined && (ownership(session).owned || appLaunched(session))) return { kind: 'terminal', sessionId: session.sessionId }
+  return null
+}
+
 export function closable(session: ProjectSession): boolean {
-  return ownership(session).owned || appLaunched(session)
+  return closeOf(session) !== null
 }
 
 /** The tmux engine's server:session target for the embedded terminal. */
