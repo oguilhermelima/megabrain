@@ -13,6 +13,16 @@ export function ownership(session: ProjectSession): Ownership {
   return { owned: true, tmuxServer, tmuxSession }
 }
 
+/** The app launched it in a native terminal of its own: it can end the process, with nothing to attach. */
+export function appLaunched(session: ProjectSession): boolean {
+  return session.owner === 'megabrain' && typeof session.terminalPid === 'number'
+}
+
+/** megabrain can end it from the app: it owns its tmux session, or the app launched it. */
+export function closable(session: ProjectSession): boolean {
+  return ownership(session).owned || appLaunched(session)
+}
+
 /** The tmux engine's server:session target for the embedded terminal. */
 export function ownedTerminalTarget(session: ProjectSession): string | null {
   const owned = ownership(session)

@@ -205,6 +205,8 @@ pub struct TerminalSession {
     pub cwd: String,
     pub title: String,
     pub tmux_session: Option<String>,
+    /// Native engine only: the process the PTY started, so an agent session it runs can be matched to it.
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -397,12 +399,14 @@ impl TerminalManager {
                 );
             }
         }
+        let pid = if engine == Engine::Native { child.process_id() } else { None };
         let info = TerminalSession {
             id: id.clone(),
             engine: options.engine,
             cwd: cwd.to_string_lossy().into_owned(),
             title,
             tmux_session,
+            pid,
         };
         let process = Arc::new(TerminalProcess {
             engine,

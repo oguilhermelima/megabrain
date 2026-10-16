@@ -74,7 +74,7 @@ export interface DesktopApi {
   saveAttachment(base64: string, extension: string): Promise<string>
   /** Send a message to any agent session, as the operator. */
   sendToSession(sessionId: string, text: string): Promise<SendResult>
-  /** Forget ownership and kill megabrain's tmux session for it (`session release`). */
+  /** Forget ownership and kill megabrain's tmux session for it, or end an agent the app launched (`session release`). */
   releaseSession(sessionId: string): Promise<void>
   /** Resume a session in a tmux session megabrain owns (`session own`), so the app shows and closes it. */
   ownSession(sessionId: string): Promise<void>

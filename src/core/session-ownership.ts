@@ -8,7 +8,7 @@ export const OWNED_TMUX_SERVER = "megabrain-app";
 export type OwnableAgent = "claude" | "codex";
 export type OwnedSession = Readonly<{ tmuxServer: string; tmuxSession: string; command: string; cwd: string; ownedAt: string }>;
 export type OwnedSessions = Readonly<Record<string, OwnedSession>>;
-export type SessionOwnerFields = Readonly<{ owner: "megabrain"; tmuxServer: string; tmuxSession: string } | { owner: "external" }>;
+export type SessionOwnerFields = Readonly<{ owner: "megabrain"; tmuxServer: string; tmuxSession: string } | { owner: "megabrain"; terminalPid: number } | { owner: "external" }>;
 
 export function ownedSessionName(agent: string, id: string): string {
   return `mb-${agent}-${id.slice(0, 8)}`;
@@ -46,7 +46,10 @@ export function writeOwnedSessions(stateDir: string, sessions: OwnedSessions): v
   renameSync(temporary, file);
 }
 
-export function sessionOwnerFields(owned: OwnedSessions | undefined, sessionKey: string): SessionOwnerFields {
+// A session `session own` recorded, else one the desktop app launched in a terminal of its own.
+export function sessionOwnerFields(owned: OwnedSessions | undefined, sessionKey: string, app?: Readonly<{ terminalPid: number } | { tmuxSession: string }>): SessionOwnerFields {
   const entry = owned?.[sessionKey];
-  return entry === undefined ? { owner: "external" } : { owner: "megabrain", tmuxServer: entry.tmuxServer, tmuxSession: entry.tmuxSession };
+  if (entry !== undefined) return { owner: "megabrain", tmuxServer: entry.tmuxServer, tmuxSession: entry.tmuxSession };
+  if (app === undefined) return { owner: "external" };
+  return "terminalPid" in app ? { owner: "megabrain", terminalPid: app.terminalPid } : { owner: "megabrain", tmuxServer: OWNED_TMUX_SERVER, tmuxSession: app.tmuxSession };
 }

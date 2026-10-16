@@ -43,6 +43,7 @@ const terminal = (status: AppTerminal['status']): AppTerminal => ({
   sessionId: null,
   tmuxSession: null,
   appTerminalId: null,
+  pid: null,
 })
 
 /** Records which action each item runs, so a test can tell Close from Hide by what it does. */
@@ -126,6 +127,14 @@ describe('every sidebar item row can be closed from its menu', () => {
     expect(calls).toEqual(['hide:claude:1', 'take-over:claude:1'])
   })
 
+  test('an agent the app launched whose terminal is gone is ended for real, asking first', () => {
+    const { calls, actions } = recorder()
+    const items = sessionMenu(session({ owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 }), actions, false)
+    expect(labels(items)).toEqual(['Copy session id', 'End session…'])
+    run(items, 'End session…')
+    expect(calls).toEqual(['close:session'])
+  })
+
   test('a hidden session shown on request offers to come back instead of Close', () => {
     const { calls, actions } = recorder()
     const items = sessionMenu(session(), actions, true)
@@ -198,6 +207,11 @@ describe('middleClickAction', () => {
   test('a session megabrain owns releases, one it does not run leaves the list', () => {
     expect(middleClickAction({ kind: 'session', session: owned() })).toEqual({ kind: 'close', row: { kind: 'session', session: owned() } })
     expect(middleClickAction({ kind: 'session', session: session() })).toEqual({ kind: 'hide', session: session() })
+  })
+
+  test('an agent the app launched closes through the same path, not by leaving the list', () => {
+    const launched = session({ owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 })
+    expect(middleClickAction({ kind: 'session', session: launched })).toEqual({ kind: 'close', row: { kind: 'session', session: launched } })
   })
 
   test('project, worktree, folder and group rows do nothing', () => {

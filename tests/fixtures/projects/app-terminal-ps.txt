@@ -1,0 +1,4 @@
+    1     0 /sbin/launchd
+44146     1 /private/tmp/megabrain-app/megabrain.app/Contents/MacOS/megabrain-desktop
+54192 44146 claude --dangerously-skip-permissions
+84376 44146 /private/tmp/megabrain-app/megabrain.app/Contents/MacOS/megabrain-cli chat events bef50f28-1c0c-4025-b3db-e91455ed69dc --follow --json

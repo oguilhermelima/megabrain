@@ -6,6 +6,7 @@ import {
 } from "../../core/session-ownership.js";
 import { usageText } from "../../core/usage.js";
 import { createTmuxSession, getTmux } from "../../hosts/tmux.js";
+import { appHost, appTarget, readAppPanes, readProcessTable } from "../../core/session-origin.js";
 import { findMachineSession } from "./projects.js";
 import { join } from "node:path";
 
@@ -71,10 +72,27 @@ async function release(target: Readonly<{ key: string; json: boolean }>, environ
   const stateDir = stateDirectory(environment);
   const owned = readOwnedSessions(stateDir);
   const entry = owned[target.key];
-  if (entry === undefined) return failed(`${target.key} is not owned by megabrain`);
+  if (entry === undefined) return releaseAppSession(target, environment, process);
   const { [target.key]: _released, ...remaining } = owned;
   writeOwnedSessions(stateDir, remaining);
   await getTmux().killSession(entry.tmuxSession, ownedTmuxProcess(process));
+  return ok(target.json ? `${JSON.stringify({ session: target.key, owner: "external" }, null, 2)}\n` : `released: ${target.key}\n`);
+}
+
+// A session the desktop app launched in a terminal it no longer shows: end its tmux session or its process.
+async function releaseAppSession(target: Readonly<{ key: string; json: boolean }>, environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
+  const separator = target.key.indexOf(":");
+  const found = await findMachineSession(environment.HOME ?? "", process, target.key.slice(0, separator), target.key.slice(separator + 1));
+  const host = found?.status === "ended" ? undefined : appHost(await readProcessTable(process), found?.processId);
+  const app = appTarget(host, host?.kind === "tmux" ? await readAppPanes(process) : new Map<number, string>());
+  if (app === undefined) return failed(`${target.key} is not owned by megabrain`);
+  if ("tmuxSession" in app) {
+    const killed = await getTmux().killSession(app.tmuxSession, ownedTmuxProcess(process));
+    if (killed.kind !== "ok") return failed(killed.error);
+  } else {
+    const killed = await process.run("kill", ["-TERM", String(app.terminalPid)]);
+    if (killed.kind !== "ok") return failed(killed.error);
+  }
   return ok(target.json ? `${JSON.stringify({ session: target.key, owner: "external" }, null, 2)}\n` : `released: ${target.key}\n`);
 }
 

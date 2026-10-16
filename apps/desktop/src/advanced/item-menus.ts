@@ -1,5 +1,5 @@
 import type { NativeChat, ProjectSession } from '@/api/schema'
-import { ownership } from '@/chat/session-ownership'
+import { closable, ownership } from '@/chat/session-ownership'
 import type { MenuItem } from '@/components/ContextMenu'
 import { rowStatus } from '@/native-chat/chat-model'
 import { closeNeedsConfirm, type AppTerminal } from '@/terminal/terminal-list'
@@ -13,7 +13,7 @@ export type SidebarItemRow = { kind: 'session'; session: ProjectSession } | { ki
 export interface RowMenuActions {
   /** Closes a chat or terminal, or releases a session megabrain owns; what still runs asks first. */
   close: (row: SidebarItemRow) => void
-  /** Leaves a session megabrain does not run out of the list until it shows new activity. */
+  /** Leaves a session megabrain does not run out of the list until the person shows it again. */
   hide: (session: ProjectSession) => void
   unhide: (session: ProjectSession) => void
   /** Resumes a session in megabrain's own tmux session (`session own`), so it shows and closes here. */
@@ -45,6 +45,8 @@ export function terminalMenu(terminal: AppTerminal, actions: RowMenuActions): Me
 export function sessionMenu(session: ProjectSession, actions: RowMenuActions, hidden: boolean): MenuItem[] {
   const copy: MenuItem = { label: 'Copy session id', icon: 'copy', group: 'copy', onSelect: () => actions.copy(session.sessionId) }
   if (ownership(session).owned) return [copy, { label: 'Release from megabrain…', icon: 'release', group: 'danger', onSelect: () => actions.close({ kind: 'session', session }) }]
+  // The app launched it in a terminal it no longer shows (one it shows takes the row over).
+  if (closable(session)) return [copy, { label: 'End session…', icon: 'close', group: 'danger', onSelect: () => actions.close({ kind: 'session', session }) }]
   return [
     { label: 'Open here', icon: 'terminal', group: 'open', onSelect: () => actions.takeOver(session) },
     copy,
@@ -85,7 +87,7 @@ export function middleClickAction(target: MiddleClickTarget): MiddleClick {
     case 'terminal':
       return { kind: 'close', row: target }
     case 'session':
-      return ownership(target.session).owned ? { kind: 'close', row: target } : { kind: 'hide', session: target.session }
+      return closable(target.session) ? { kind: 'close', row: target } : { kind: 'hide', session: target.session }
     default:
       return null
   }

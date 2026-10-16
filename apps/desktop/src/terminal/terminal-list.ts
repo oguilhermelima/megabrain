@@ -30,12 +30,14 @@ export interface AppTerminal {
   tmuxSession: string | null
   /** The id megabrain's app terminal list knows it by, for a session the app created on its tmux server. */
   appTerminalId: string | null
+  /** Native engine: the process the PTY started, which an agent session launched in it descends from. */
+  pid: number | null
 }
 
 export function addTerminal(list: AppTerminal[], launch: TerminalLaunch): AppTerminal[] {
   if (list.some((item) => item.id === launch.id)) return list
   const program = launch.kind === 'agent-terminal' ? launch.title : 'shell'
-  return [...list, { id: launch.id, launch, cwd: launch.cwd, engine: launch.engine, name: null, program, status: 'starting', exitCode: null, error: null, sessionId: null, tmuxSession: null, appTerminalId: null }]
+  return [...list, { id: launch.id, launch, cwd: launch.cwd, engine: launch.engine, name: null, program, status: 'starting', exitCode: null, error: null, sessionId: null, tmuxSession: null, appTerminalId: null, pid: null }]
 }
 
 function update(list: AppTerminal[], id: string, change: (item: AppTerminal) => AppTerminal): AppTerminal[] {
@@ -47,11 +49,11 @@ function update(list: AppTerminal[], id: string, change: (item: AppTerminal) => 
 }
 
 /** It opened: tmux attaches with the tmux client, so a plain shell there is still called a shell. */
-export function terminalStarted(list: AppTerminal[], id: string, session: { id: string; title: string; tmuxSession: string | null; engine?: TerminalEngine }): AppTerminal[] {
+export function terminalStarted(list: AppTerminal[], id: string, session: { id: string; title: string; tmuxSession: string | null; engine?: TerminalEngine; pid?: number | null }): AppTerminal[] {
   return update(list, id, (item) => {
     if (item.status === 'exited') return item
     const program = item.launch.kind === 'agent-terminal' || session.title === 'tmux' ? item.program : session.title
-    return { ...item, status: 'live', error: null, sessionId: session.id, tmuxSession: session.tmuxSession, appTerminalId: appTerminalIdOf(session.tmuxSession) ?? item.appTerminalId, program, engine: session.engine ?? item.engine }
+    return { ...item, status: 'live', error: null, sessionId: session.id, tmuxSession: session.tmuxSession, appTerminalId: appTerminalIdOf(session.tmuxSession) ?? item.appTerminalId, program, engine: session.engine ?? item.engine, pid: session.pid ?? null }
   })
 }
 
@@ -110,6 +112,13 @@ export function terminalsByWorktree(list: readonly AppTerminal[], worktreePaths:
 const appServer = 'megabrain-app'
 const appSessionPrefix = 'mb-app-'
 
+/** Whether this terminal runs the agent session: the app launched it there (by process or tmux session). */
+export function terminalRuns(terminal: AppTerminal, session: { terminalPid?: number | null; tmuxServer?: string | null; tmuxSession?: string | null }): boolean {
+  if (terminal.pid !== null && session.terminalPid === terminal.pid) return true
+  if (terminal.tmuxSession === null || session.tmuxSession === undefined || session.tmuxSession === null) return false
+  return terminal.tmuxSession === `${session.tmuxServer ?? appServer}:${session.tmuxSession}` || terminal.tmuxSession === session.tmuxSession
+}
+
 /** The app terminal id behind a tmux session, `mb-app-<id>` or `megabrain-app:mb-app-<id>`; null for any other. */
 export function appTerminalIdOf(tmuxSession: string | null): string | null {
   if (tmuxSession === null) return null
@@ -144,6 +153,7 @@ export function restoreAppTerminals(list: AppTerminal[], listings: readonly AppT
         sessionId: null,
         tmuxSession: `${appServer}:${listing.sessionName}`,
         appTerminalId: listing.id,
+        pid: null,
       }
     })
   return restored.length === 0 ? list : [...list, ...restored]

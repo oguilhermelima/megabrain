@@ -59,6 +59,12 @@ describe('terminalStarted', () => {
     expect(terminalLabel(only(list, 't1'))).toBe('zsh')
   })
 
+  test('keeps the process the terminal runs, so the agent session it starts can be matched to it', () => {
+    const list = terminalStarted(addTerminal([], shell('t1')), 't1', { id: 'pty-1', title: 'claude', tmuxSession: null, pid: 54192 })
+    expect(only(list, 't1').pid).toBe(54192)
+    expect(only(addTerminal([], shell('t2')), 't2').pid).toBeNull()
+  })
+
   test('a tmux shell is still called a shell, not tmux', () => {
     const list = terminalStarted(addTerminal([], { ...shell('t1'), engine: 'tmux' }), 't1', { id: 'pty-1', title: 'tmux', tmuxSession: 'megabrain-app:mb-app-1' })
     expect(terminalLabel(only(list, 't1'))).toBe('shell')

@@ -20,6 +20,7 @@ import { UserMessageBody } from '@/chat/MessageImages'
 import { LinkedText, PathLinksContext, type PathLinks } from '@/chat/path-links'
 import { firstPath } from '@/code/chat-paths'
 import { reuse } from '@/lib/reuse'
+import { isMissingLog } from '@/chat/session-open-model'
 
 const noLive: LiveRow[] = []
 
@@ -260,6 +261,7 @@ export function Conversation({
   root = null,
   onOpenPath,
   channel,
+  missingLog,
 }: {
   target: { dispatchId: string } | { sessionId: string }
   live: boolean
@@ -269,6 +271,8 @@ export function Conversation({
   onOpenPath?: OpenPath
   /** The chat's composer, which quotes and code blocks from the right-click menu go into. */
   channel?: ComposeChannel
+  /** Shown in place of the error when the session has no log yet. */
+  missingLog?: ReactNode
 }) {
   const [transcript, setTranscript] = useState<Transcript | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -307,6 +311,7 @@ export function Conversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, live])
 
+  if (error !== null && missingLog !== undefined && isMissingLog(error)) return <div className="mx-8 my-5">{missingLog}</div>
   if (error !== null) return <div className="mx-8 my-5"><ErrorNote error={error} /></div>
   if (transcript === null) {
     return <TranscriptSkeleton />

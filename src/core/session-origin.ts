@@ -1,5 +1,5 @@
 import type { ProcessAdapter } from "../adapters/proc.js";
-import { OWNED_TMUX_SERVER, type OwnedSessions } from "./session-ownership.js";
+import { OWNED_TMUX_SERVER, ownedTmuxProcess, type OwnedSessions } from "./session-ownership.js";
 
 export type SessionOrigin = "megabrain" | "external";
 export type ProcessTable = ReadonlyMap<number, Readonly<{ ppid: number; command: string }>>;
@@ -31,6 +31,47 @@ export function descendsFromMegabrain(table: ProcessTable, pid: number | null | 
     current = entry.ppid;
   }
   return false;
+}
+
+// Where the app runs a session it launched: the process its native terminal started (the PTY's
+// child), or the pane process of a session on its tmux server.
+export type AppHost = Readonly<{ kind: "native"; pid: number } | { kind: "tmux"; panePid: number }>;
+
+export function appHost(table: ProcessTable, pid: number | null | undefined): AppHost | undefined {
+  const seen = new Set<number>();
+  let current = pid ?? undefined;
+  while (current !== undefined && current > 1 && !seen.has(current)) {
+    seen.add(current);
+    const entry = table.get(current);
+    if (entry === undefined) return undefined;
+    const parent = table.get(entry.ppid)?.command ?? "";
+    if (APP_BINARY.test(parent)) return { kind: "native", pid: current };
+    if (APP_TMUX_SERVER.test(parent)) return { kind: "tmux", panePid: current };
+    current = entry.ppid;
+  }
+  return undefined;
+}
+
+// Pane process to session name on the app's tmux server; empty when the server is not running.
+export async function readAppPanes(processAdapter: ProcessAdapter): Promise<ReadonlyMap<number, string>> {
+  const panes = new Map<number, string>();
+  const output = await ownedTmuxProcess(processAdapter).run("tmux", ["list-panes", "-a", "-F", "#{pane_pid} #{session_name}"]);
+  if (output.kind !== "ok") return panes;
+  for (const line of output.value.stdout.split("\n")) {
+    const match = /^(\d+) (\S+)$/.exec(line.trim());
+    if (match !== null) panes.set(Number(match[1]), match[2] ?? "");
+  }
+  return panes;
+}
+
+// What runs a session the app launched: its terminal's process, or its tmux session on the app's server.
+export type AppTarget = Readonly<{ terminalPid: number } | { tmuxSession: string }>;
+
+export function appTarget(host: AppHost | undefined, panes: ReadonlyMap<number, string>): AppTarget | undefined {
+  if (host === undefined) return undefined;
+  if (host.kind === "native") return { terminalPid: host.pid };
+  const session = panes.get(host.panePid);
+  return session === undefined ? undefined : { tmuxSession: session };
 }
 
 export type OriginEvidence = Readonly<{ key: string; processId?: number | undefined; dispatchPid?: number | null | undefined; owned: OwnedSessions; nativeChats: ReadonlySet<string>; table: ProcessTable }>;

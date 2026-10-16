@@ -1,12 +1,13 @@
 import type { ProjectSession } from '@/api/schema'
 
 // Sessions megabrain does not run, closed from the sidebar. The app cannot end them, so Close takes
-// them out of the list instead, remembering their last activity: one that shows newer activity
-// comes back by itself. Saved through `settings set hidden-sessions`.
+// them out of the list instead. One stays out until the person shows it again; activity in it never
+// brings it back, and a new conversation is a new session id, which was never hidden. Saved through
+// `settings set hidden-sessions`.
 
 export interface HiddenSessions {
   version: 1
-  /** Session id to its last activity when it was hidden. */
+  /** Session id to its last activity when it was hidden, kept for the record. */
   sessions: Record<string, string | null>
 }
 
@@ -35,10 +36,7 @@ export function unhideSession(hidden: HiddenSessions, sessionId: string): Hidden
   return { version: 1, sessions: rest }
 }
 
-const time = (at: string | null) => (at === null ? Number.NEGATIVE_INFINITY : Date.parse(at))
-
-/** Hidden while it has shown nothing newer than when it was closed. */
+/** Hidden from when it was closed until the person shows it again. */
 export function isHidden(hidden: HiddenSessions, session: ProjectSession): boolean {
-  if (!(session.sessionId in hidden.sessions)) return false
-  return time(session.lastActivityAt) <= time(hidden.sessions[session.sessionId] ?? null)
+  return session.sessionId in hidden.sessions
 }

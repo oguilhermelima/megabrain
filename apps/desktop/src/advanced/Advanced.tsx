@@ -33,7 +33,7 @@ import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
 import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
-import { ownership } from '@/chat/session-ownership'
+import { appLaunched, closable } from '@/chat/session-ownership'
 import { RunContext, type RunControls } from '@/run-panel/run-context'
 import { panelFor } from '@/run-panel/run-model'
 import { RunPanel } from '@/run-panel/RunPanel'
@@ -49,7 +49,7 @@ import { chatsByWorktree, rowStatus } from '@/native-chat/chat-model'
 import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
-import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
+import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, spanItem, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
 import { activeGroup, addToGroup, arrangeGroup, arrangeMember, changeGroupPanes, changeGroupStrip, changeShown, closeGroup, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, openLayoutItem, parseLayout, presetsFor, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shiftMember, shownPanes, splitBeside, splitItems, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
 import { matchShortcut, type ShortcutId } from '@/lib/shortcuts'
@@ -477,7 +477,16 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       return
     }
     const { session } = row
-    if (!ownership(session).owned) return
+    if (!closable(session)) return
+    if (appLaunched(session)) {
+      setCloseConfirm({
+        title: `End ${session.title}?`,
+        body: 'The app started this agent in a terminal it no longer shows. Ending it stops the agent; the conversation stays on disk and can be resumed again.',
+        action: 'End session',
+        run: () => api.releaseSession(session.sessionId),
+      })
+      return
+    }
     setCloseConfirm({
       title: `Release ${session.title}?`,
       body: 'megabrain stops owning this session and closes its tmux session, which ends the agent running there. The conversation stays on disk and can be resumed again.',
@@ -508,7 +517,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
     if (focusedParsed?.kind === 'session') {
       const found = findSession(focusedParsed.id)
-      if (found !== null && ownership(found.session).owned) return requestClose({ kind: 'session', session: found.session })
+      if (found !== null && closable(found.session)) return requestClose({ kind: 'session', session: found.session })
     }
     closePaneById(panes.focused)
     return Promise.resolve()
@@ -798,7 +807,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'session': {
         const found = findSession(parsed.id)
         if (found === null) return gone('Session')
-        return { title: found.session.title, node: <SessionView session={found.session} worktreePath={found.worktreePath} onOpenChat={openRelatedChat} onOpenPath={openPath} /> }
+        const runner = terminals.find((terminal) => terminalRuns(terminal, found.session))
+        return { title: found.session.title, node: <SessionView session={found.session} worktreePath={found.worktreePath} onOpenChat={openRelatedChat} onOpenPath={openPath} onShowTerminal={runner === undefined ? undefined : () => selectTerminal(runner)} /> }
       }
       case 'native': {
         const chat = nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null)

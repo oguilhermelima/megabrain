@@ -39,7 +39,7 @@ import { useShortcutBindings } from '@/lib/shortcut-store'
 import { insideRoots } from '@/lib/external'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { useFlip } from '@/advanced/useFlip'
-import { ownership } from '@/chat/session-ownership'
+import { closable } from '@/chat/session-ownership'
 import { rowStatus } from '@/native-chat/chat-model'
 import { chatMenu, middleClickAction, sessionMenu, terminalMenu, withSplitItems, type RowMenuActions, type SidebarItemRow } from '@/advanced/item-menus'
 import { hideSession, isHidden, noHiddenSessions, parseHiddenSessions, saveHiddenSessions, unhideSession, type HiddenSessions } from '@/advanced/hidden-sessions'
@@ -643,7 +643,7 @@ function WorktreeRow({
         onSelect={() => onSelectSession(session)}
         menuItems={withSplit(item, sessionItems(session))}
         onMenu={onMenu}
-        onClose={ownership(session).owned ? () => rowControls.close({ kind: 'session', session }) : faded ? null : () => rowControls.hide(session)}
+        onClose={closable(session) ? () => rowControls.close({ kind: 'session', session }) : faded ? null : () => rowControls.hide(session)}
         onDrag={drag}
       />
     )
@@ -1142,7 +1142,7 @@ interface TerminalRows {
 /** What every chat, session and terminal row needs to close and be reordered; one object per change. */
 interface ItemRows {
   close: (row: SidebarDrag) => void
-  /** Takes a session megabrain does not run out of the list until it shows new activity. */
+  /** Takes a session megabrain does not run out of the list until the person shows it again. */
   hide: (session: ProjectSession) => void
   /** How a session shows: as usual, faded (closed, shown on request from its worktree's menu) or not at all. */
   sessionView: (session: ProjectSession, worktreePath: string) => 'shown' | 'faded' | null
@@ -1474,7 +1474,7 @@ export const Sidebar = memo(function Sidebar({
     onCloseRow(row).catch(setActionError)
   })
 
-  // Sessions megabrain does not run leave the list on Close and come back on new activity; a
+  // Sessions megabrain does not run leave the list on Close and stay out until shown again; a
   // worktree's menu shows its closed ones again, faded, until it is asked a second time.
   const searchKeys = useShortcutBindings()
   const [hiddenSessions, setHiddenSessions] = useState<HiddenSessions>(noHiddenSessions)

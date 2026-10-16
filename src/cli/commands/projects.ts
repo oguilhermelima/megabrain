@@ -16,7 +16,7 @@ import { readContextMeter } from "../../core/context-meter.js";
 import { listHiddenItems } from "../../db/queries/hidden-items.js";
 import { readOwnedSessions, sessionOwnerFields, type OwnedSessions } from "../../core/session-ownership.js";
 import { ChatStore } from "../../chat/store.js";
-import { readProcessTable, sessionOrigin, type ProcessTable, type SessionOrigin } from "../../core/session-origin.js";
+import { appHost, appTarget, readAppPanes, readProcessTable, sessionOrigin, type ProcessTable, type SessionOrigin } from "../../core/session-origin.js";
 import { loadModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { readArchivedWorktrees } from "../../core/archived-worktrees.js";
@@ -25,7 +25,7 @@ import { selfInvocation } from "../../core/self-invocation.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
-type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: SessionOrigin; tmuxServer?: string; tmuxSession?: string; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
+type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: SessionOrigin; tmuxServer?: string; tmuxSession?: string; terminalPid?: number; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
 type GitWorktree = Readonly<{ path: string; branch: string | null; head: string | null; primary: boolean; parent: string | null }>;
 type Project = Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; missing: boolean; worktrees: readonly (GitWorktree & { pullRequest: PullRequestSummary | null; sessions: readonly ProjectSession[] })[] }>;
 type Dispatch = ReturnType<typeof listDispatches>[number];
@@ -484,7 +484,7 @@ function dispatchForSession(session: RawSession, worktree: string, dispatches: r
   return timed[0]?.dispatch ?? null;
 }
 
-type OriginContext = Readonly<{ owned: OwnedSessions; nativeChats: ReadonlySet<string>; table: ProcessTable; filter: "megabrain" | "all" }>;
+type OriginContext = Readonly<{ owned: OwnedSessions; nativeChats: ReadonlySet<string>; table: ProcessTable; appPanes: ReadonlyMap<number, string>; filter: "megabrain" | "all" }>;
 
 function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], context: OriginContext): ProjectSession[] {
   const now = Date.now();
@@ -501,7 +501,7 @@ function projectSessions(path: string, found: readonly RawSession[], dispatches:
       dispatchId: dispatch?.dispatchId ?? null,
       model: session.model ?? null,
       contextWindow: session.contextWindow ?? null,
-      ...sessionOwnerFields(context.owned, `${session.agent}:${session.id}`),
+      ...sessionOwnerFields(context.owned, `${session.agent}:${session.id}`, appTarget(appHost(context.table, session.processId), context.appPanes)),
       origin: sessionOrigin({ key: `${session.agent}:${session.id}`, processId: session.processId, dispatchPid: typeof dispatch?.agentPid === "number" ? dispatch.agentPid : null, owned: context.owned, nativeChats: context.nativeChats, table: context.table }),
     };
   }).filter((session) => context.filter === "all" || session.origin === "megabrain");
@@ -773,7 +773,9 @@ export async function executeProjects(args: readonly string[], environment: Envi
     const found = await sessionsForMachine(home, processAdapter, table, cache);
     const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
     const nativeChats = new Set((existsSync(join(stateDir, "chats")) ? await new ChatStore(stateDir).list().catch(() => []) : []).flatMap((chat) => chat.agentSessionId === null ? [] : [`${chat.agent}:${chat.agentSessionId}`]));
-    const context: OriginContext = { owned: readOwnedSessions(stateDir), nativeChats, table, filter };
+    // The app's tmux server is asked only when a live session runs under it.
+    const appPanes = found.some((session) => appHost(table, session.processId)?.kind === "tmux") ? await readAppPanes(processAdapter) : new Map<number, string>();
+    const context: OriginContext = { owned: readOwnedSessions(stateDir), nativeChats, table, appPanes, filter };
     const hiddenItems = new Set(listHiddenItems(opened.value.db).map((item) => `${item.kind}:${item.path}`));
     const appearance = (await readProjectAppearance(environment)).projects;
     const archived = new Set((await readArchivedWorktrees(environment)).map((item) => `${item.repo}\0${item.branch}`));

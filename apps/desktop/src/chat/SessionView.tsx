@@ -9,8 +9,10 @@ import { Composer, type Notice } from '@/chat/Composer'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
 import { ownership, ownedTerminalTarget, sessionView, type SessionViewMode } from '@/chat/session-ownership'
+import { noLogState } from '@/chat/session-open-model'
 import { ViewSwitch } from '@/chat/ViewSwitch'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
+import { Button, ErrorNote } from '@/components/ui'
 
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
 
@@ -21,11 +23,14 @@ export function SessionView({
   worktreePath,
   onOpenChat,
   onOpenPath,
+  onShowTerminal,
 }: {
   session: ProjectSession
   worktreePath: string
   onOpenChat?: OpenChat
   onOpenPath?: OpenPath
+  /** Shows the app terminal item that runs this session, when one does. */
+  onShowTerminal?: () => void
 }) {
   const [chosenView, setChosenView] = useState<SessionViewMode>('chat')
   const compose = useComposeChannel()
@@ -41,6 +46,7 @@ export function SessionView({
   }
 
   const terminalTarget = ownedTerminalTarget(session)
+  const missingLog = <NoLogNote session={session} onShowTerminal={onShowTerminal ?? (terminalTarget === null ? undefined : () => setChosenView('terminal'))} onOpened={() => setChosenView('terminal')} />
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatHeader
@@ -82,7 +88,7 @@ export function SessionView({
         <>
           <div className="flex min-h-0 flex-1 flex-col">
             <ConversationAgent.Provider value={session.agent}>
-              <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} channel={compose} />
+              <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} channel={compose} missingLog={missingLog} />
             </ConversationAgent.Provider>
           </div>
           <Composer
@@ -101,3 +107,34 @@ export function SessionView({
   )
 }
 
+
+// A session with no log yet: its live state and where it runs, in place of a conversation.
+function NoLogNote({ session, onShowTerminal, onOpened }: { session: ProjectSession; onShowTerminal?: () => void; onOpened: () => void }) {
+  const [error, setError] = useState<unknown>(null)
+  const [opening, setOpening] = useState(false)
+  const state = noLogState(session, onShowTerminal !== undefined)
+  const openHere = () => {
+    setOpening(true)
+    setError(null)
+    api.ownSession(session.sessionId).then(onOpened, (caught: unknown) => {
+      setOpening(false)
+      setError(caught)
+    })
+  }
+  return (
+    <div className="flex flex-col items-start gap-2 text-[13px] text-ink-300">
+      <p>
+        <span className="text-ink-100">{state.activity}</span> · {state.note}
+      </p>
+      {state.action === 'terminal' && onShowTerminal !== undefined && (
+        <Button onClick={onShowTerminal}>Show its terminal</Button>
+      )}
+      {state.action === 'open-here' && (
+        <Button disabled={opening} onClick={openHere}>
+          {opening ? 'Opening…' : 'Open here'}
+        </Button>
+      )}
+      {error !== null && <ErrorNote error={error} />}
+    </div>
+  )
+}

@@ -20,15 +20,21 @@ describe('hidden sessions', () => {
     expect(isHidden(hidden, session('claude:2', '2026-10-15T10:00:00.000Z'))).toBe(false)
   })
 
-  test('it comes back once it shows newer activity', () => {
+  test('newer activity alone never brings it back', () => {
     const hidden = hideSession(noHiddenSessions, session('claude:1', '2026-10-15T10:00:00.000Z'))
-    expect(isHidden(hidden, session('claude:1', '2026-10-15T10:05:00.000Z'))).toBe(false)
+    expect(isHidden(hidden, session('claude:1', '2026-10-15T10:05:00.000Z'))).toBe(true)
+    expect(isHidden(hidden, session('claude:1', '2026-10-16T19:55:00.000Z'))).toBe(true)
   })
 
-  test('a session with no recorded activity stays hidden until it records some', () => {
+  test('a session with no recorded activity stays hidden after it records some', () => {
     const hidden = hideSession(noHiddenSessions, session('claude:1', null))
     expect(isHidden(hidden, session('claude:1', null))).toBe(true)
-    expect(isHidden(hidden, session('claude:1', '2026-10-15T10:05:00.000Z'))).toBe(false)
+    expect(isHidden(hidden, session('claude:1', '2026-10-15T10:05:00.000Z'))).toBe(true)
+  })
+
+  test('a new conversation in the same terminal is a different session, so it shows', () => {
+    const hidden = hideSession(noHiddenSessions, session('claude:1', '2026-10-15T10:00:00.000Z'))
+    expect(isHidden(hidden, session('claude:2', '2026-10-15T10:05:00.000Z'))).toBe(false)
   })
 
   test('unhiding brings it back by hand', () => {

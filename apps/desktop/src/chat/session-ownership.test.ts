@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ProjectSession } from '@/api/schema'
-import { ownedTerminalTarget, ownership, sessionView } from '@/chat/session-ownership'
+import { closable, ownedTerminalTarget, ownership, sessionView } from '@/chat/session-ownership'
 
 const session: ProjectSession = {
   agent: 'claude',
@@ -55,5 +55,23 @@ describe('sessionView', () => {
 
   test('a session released while on the terminal falls back to the chat', () => {
     expect(sessionView({ ...owned, owner: 'external', tmuxSession: null, tmuxServer: null }, 'terminal')).toBe('chat')
+  })
+})
+
+describe('closable', () => {
+  const launched: ProjectSession = { ...session, owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 }
+
+  test('a session megabrain owns on tmux, or one the app launched in a terminal of its own, can be ended from the app', () => {
+    expect(closable(owned)).toBe(true)
+    expect(closable(launched)).toBe(true)
+  })
+
+  test('the app launched it but has no tmux session for it, so there is still nothing to attach', () => {
+    expect(ownership(launched)).toEqual({ owned: false })
+  })
+
+  test('a session from another terminal cannot be ended here', () => {
+    expect(closable(session)).toBe(false)
+    expect(closable({ ...session, owner: 'external', terminalPid: 54192 })).toBe(false)
   })
 })

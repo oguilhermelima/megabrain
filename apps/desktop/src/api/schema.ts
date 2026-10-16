@@ -444,6 +444,8 @@ export const projectSessionSchema = z.looseObject({
   /** When owned: the tmux server (`tmux -L`) and session the agent runs in. */
   tmuxServer: z.string().nullable().optional(),
   tmuxSession: z.string().nullable().optional(),
+  /** When the app launched it in a native terminal: the process that terminal started. */
+  terminalPid: z.number().nullable().optional(),
 })
 
 export const projectWorktreeSchema = z.looseObject({
@@ -680,6 +682,8 @@ export const terminalSessionSchema = z.looseObject({
   title: z.string(),
   /** tmux engine only: the session on megabrain's tmux server. */
   tmuxSession: z.string().nullable(),
+  /** Native engine only: the process the PTY started; absent from an older app. */
+  pid: z.number().nullable().optional(),
 })
 
 export const sendResultSchema = z.looseObject({ delivered: z.boolean(), channel: z.string(), detail: z.string().optional() })

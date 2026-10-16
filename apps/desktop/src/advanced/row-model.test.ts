@@ -43,6 +43,7 @@ const terminal = (id: string, resume?: { agent: 'claude' | 'codex'; id: string }
   sessionId: null,
   tmuxSession: null,
   appTerminalId: null,
+  pid: null,
 })
 
 const keys = (rows: { key: string }[]) => rows.map((row) => row.key)
@@ -82,6 +83,27 @@ describe('worktreeItems', () => {
     expect(keys(rows)).toEqual(['terminal:t1', 'terminal:t2'])
     expect(rows[0]).toMatchObject({ kind: 'terminal', session: resumed })
     expect(rows[1]).toMatchObject({ kind: 'terminal', session: null })
+  })
+
+  test('an agent the app launched in a native terminal folds into that terminal by its process', () => {
+    const launched = session('claude:6e69d457-6446-4efa-b65f-01d6987cc048', { owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 })
+    const own = { ...terminal('t1'), pid: 54192 }
+    const rows = worktreeItems([], [own, { ...terminal('t2'), pid: 60000 }], [launched])
+    expect(keys(rows)).toEqual(['terminal:t1', 'terminal:t2'])
+    expect(rows[0]).toMatchObject({ kind: 'terminal', session: launched })
+  })
+
+  test('an agent the app launched in a tmux terminal folds into that terminal by its tmux session', () => {
+    const launched = session('claude:a1', { owner: 'megabrain', origin: 'megabrain', tmuxServer: 'megabrain-app', tmuxSession: 'mb-app-term-7' })
+    const own = { ...terminal('t1'), engine: 'tmux' as const, tmuxSession: 'megabrain-app:mb-app-term-7', appTerminalId: 'term-7' }
+    const rows = worktreeItems([], [own], [launched])
+    expect(keys(rows)).toEqual(['terminal:t1'])
+    expect(rows[0]).toMatchObject({ kind: 'terminal', session: launched })
+  })
+
+  test('an app agent whose terminal is gone keeps its own row, so it can be ended', () => {
+    const orphan = session('claude:o1', { owner: 'megabrain', origin: 'megabrain', terminalPid: 54192 })
+    expect(keys(worktreeItems([], [{ ...terminal('t1'), pid: 1234 }], [orphan]))).toEqual(['terminal:t1', 'session:claude:o1'])
   })
 
   test('keeps the default order: chats, terminals, then live sessions before ended ones', () => {

@@ -1,12 +1,13 @@
 import type { NativeChat, ProjectSession } from "@/api/schema";
 import { sortSessions } from "@/advanced/projects-model";
 import { moveProject, type Placement } from "@/advanced/project-order";
-import type { AppTerminal } from "@/terminal/terminal-list";
+import { terminalRuns, type AppTerminal } from "@/terminal/terminal-list";
 
 // The rows under one worktree: native chats, terminals the app opened, and agent sessions. A
 // conversation shows once: a native chat or a terminal resumed from Resume runs an agent session
 // that the projects list also reports, so that session folds into the chat's or terminal's row and
-// lends it its data (the compaction clock). The person can drag the rows into an order of their own,
+// lends it its data (the compaction clock). So does an agent the app launched in a terminal of its
+// own, found by that terminal's process or tmux session. The person can drag the rows into an order of their own,
 // kept per viewer and per worktree.
 
 export type WorktreeItem =
@@ -41,6 +42,12 @@ export function worktreeItems(
     if (found !== null) absorbed.add(found);
     return found;
   };
+  const claimRun = (terminal: AppTerminal) => {
+    const found =
+      sessions.find((session) => !absorbed.has(session) && terminalRuns(terminal, session)) ?? null;
+    if (found !== null) absorbed.add(found);
+    return found;
+  };
   const items: WorktreeItem[] = [
     ...chats.map((chat): WorktreeItem => ({
       kind: "native",
@@ -51,9 +58,9 @@ export function worktreeItems(
       kind: "terminal",
       terminal,
       session:
-        terminal.launch.kind === "agent-terminal"
+        (terminal.launch.kind === "agent-terminal"
           ? claim(terminal.launch.agent, terminal.launch.resume)
-          : null,
+          : null) ?? claimRun(terminal),
     })),
   ];
   for (const session of sortSessions(sessions))
