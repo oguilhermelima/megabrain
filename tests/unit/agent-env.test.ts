@@ -55,16 +55,22 @@ process.stdin.resume();
   return { root, cwd, daemon };
 }
 
-async function until(check: () => boolean | Promise<boolean>, label: string) {
-  for (let attempt = 0; attempt < 200; attempt += 1) { if (await check()) return; await new Promise((r) => setTimeout(r, 20)); }
-  throw new Error(`timed out: ${label}`);
+// Polls until the read value passes, on a wall-clock deadline rather than an attempt count, so a slow
+// machine gets the same time and a timeout says what it last saw.
+async function until<T>(read: () => T | Promise<T>, ok: (value: T) => boolean, label: string, ms = 10_000) {
+  const deadline = Date.now() + ms;
+  let seen: T;
+  while (!ok(seen = await read())) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms} ms waiting for ${label}; last saw ${JSON.stringify(seen)}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
 }
 
 describe("chat agent process", () => {
   test("starts without another session's markers", async () => {
     const h = await harness();
     await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd });
-    await until(() => { try { readFileSync(join(h.root, "env.json")); return true; } catch { return false; } }, "child env file");
+    await until(() => { try { readFileSync(join(h.root, "env.json")); return "written"; } catch { return "missing"; } }, (seen) => seen === "written", "child env file");
     const env = JSON.parse(readFileSync(join(h.root, "env.json"), "utf8")) as Record<string, string>;
     expect(markers.filter((name) => name in env)).toEqual([]);
     await h.daemon.close();
@@ -74,10 +80,10 @@ describe("chat agent process", () => {
     const h = await harness();
     const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
     const state = async () => ((await h.daemon.handle({ operation: "list" })) as Chat[]).find((item) => item.id === chat.id)?.state;
-    await until(async () => (await state()) === "idle", "idle after start");
+    await until(state, (seen) => seen === "idle", "idle after start");
     await h.daemon.handle({ operation: "mode", id: chat.id, mode: "terminal" });
     await h.daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
-    await until(async () => (await state()) === "idle", "idle after respawn");
+    await until(state, (seen) => seen === "idle", "idle after respawn");
     await h.daemon.close();
-  });
+  }, 30_000);
 });

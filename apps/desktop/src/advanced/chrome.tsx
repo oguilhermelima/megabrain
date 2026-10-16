@@ -2,19 +2,26 @@ import type { ReactNode } from 'react'
 
 // The window chrome that used to be a top bar, now one row at the top of the sidebar: the band of
 // the macOS traffic lights. The Projects header sits under it, sticky at the top of the list.
-// tauri.conf.json sets trafficLightPosition { x: 18, y: 19 }, and its y is not the lights' top edge:
-// in a real window the lights' centres measured about 22pt from the window top (centre = y + 3).
-// Row 1 is 44px tall so its centre line is 22px, the lights' own; the collapse button sits on it at
-// the right. x 18 puts the three 12pt lights at about 18-70pt with 8pt between them, and the 72px
-// inset leaves that same 8pt before the expand button's icon when the sidebar is hidden. These are
-// measured, not documented by macOS: confirm them in the real window after any change, and change
-// these numbers together.
+// tauri.conf.json sets trafficLightPosition { x: 18, y: 24 }. Its y is not the lights' top edge: it
+// was tuned in the real window so the lights' centre line sits 22px down, the centre of row 1
+// (44px tall), where both sidebar toggles sit too. Its x is the close button's left edge; macOS
+// keeps its own button size and spacing, which the constants below restate. These are measured,
+// not documented by macOS: confirm them in the real window after any change, and change
+// tauri.conf.json and these numbers together.
 
 /** The traffic lights' band: everything in it is vertically centred on the lights. */
 export const lightsRow = 'h-[44px]'
 
-/** Room for the macOS traffic lights, which the Overlay title bar draws over the web view. */
-export const trafficLightsInset = 'pl-[72px]'
+/** tauri.conf.json trafficLightPosition.x: the close button's left edge. */
+const lightsX = 18
+/** A standard window button's frame width, and the step from one button's left edge to the next. */
+const lightWidth = 14
+const lightStep = 20
+/** The clear space between the third light and the first thing beside it. */
+const lightsGap = 12
+
+/** Where the traffic lights end, plus the gap: the left inset of anything sharing their row. */
+export const trafficLightsInset = lightsX + 2 * lightStep + lightWidth + lightsGap
 
 export function SidebarToggleIcon() {
   return (
@@ -34,10 +41,12 @@ export function SettingsIcon() {
   )
 }
 
+/** Code mode's mark: an editor window with brackets in it. */
 export function CodeIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M1.5 5.5h13M6.5 7.75 4.75 9.5l1.75 1.75M9.5 7.75l1.75 1.75-1.75 1.75" />
     </svg>
   )
 }
@@ -81,8 +90,8 @@ export function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
 /** Shown in place of the sidebar when it is hidden: the lights' row with one button to bring it back. */
 export function CollapsedChrome({ onExpand }: { onExpand: () => void }) {
   return (
-    <div data-tauri-drag-region className={`motion-fade flex ${lightsRow} shrink-0 items-center ${trafficLightsInset}`}>
-      <IconButton label="Show sidebar" title="Show sidebar (⌘B)" compact onClick={onExpand}>
+    <div data-tauri-drag-region style={{ paddingLeft: trafficLightsInset }} className={`motion-fade flex ${lightsRow} shrink-0 items-center`}>
+      <IconButton label="Show sidebar" title="Show sidebar (⌘B)" onClick={onExpand}>
         <SidebarToggleIcon />
       </IconButton>
     </div>

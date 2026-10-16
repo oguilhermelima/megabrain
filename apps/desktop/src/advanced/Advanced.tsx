@@ -12,7 +12,9 @@ import { flattenLayout, reconcileLayout } from '@/advanced/sidebar-folders'
 import { useSidebarLayout } from '@/advanced/useSidebarLayout'
 import { CollapsedChrome, SettingsIcon, SidebarHeader } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
+import { worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { OpenCodeContext } from '@/chat/code-context'
+import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenChat, OpenPath } from '@/chat/Conversation'
 import { DispatchesContext } from '@/chat/NoticeCard'
 import { SessionView } from '@/chat/SessionView'
@@ -143,6 +145,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The main area's panes, each showing one item; the sidebar follows the focused one.
   const [panes, setPanes] = useState<Panes>(storedPanes)
   const [pruned, setPruned] = useState(false)
+  // The view each item's pane shows (see the action bar); an item not listed shows Agent.
+  const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
   // A project's pull request or issue page, shown in the main area over chats and the launcher.
   const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
   const [codeMode, setCodeMode] = useState<CodeModeState>(emptyCodeMode)
@@ -658,6 +662,18 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             setSettingsOpen(true)
           },
         }
+  // The action bar is on every item with a worktree but the launcher and a maximised GitHub item.
+  const paneViewFor = (item: string, root: string | null): PaneViewControls | null => {
+    const kind = parseItem(item)?.kind
+    if (root === null || root === '' || kind === undefined || kind === 'launcher' || kind === 'github') return null
+    return {
+      facts: worktreeFacts(projects, root),
+      view: paneViews[item] ?? 'agent',
+      // Code mode and Settings keep ⌘1 to ⌘4 for themselves (VS Code's editor groups among them).
+      focused: item === focusedItem && !inCode && !settingsOpen && githubPage === null,
+      setView: (view) => setPaneViews((current) => ({ ...current, [item]: view })),
+    }
+  }
   // The focused pane's worktree: its run panel shows, and ⌘T opens a terminal there.
   const runRoot = githubPage !== null || focusedItem === null ? null : rootOf(focusedItem)
   const runControls = controlsFor(runRoot)
@@ -814,7 +830,17 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
                   background={backgroundTerminals}
                   render={(item) => {
                     const content = render(item)
-                    return { ...content, node: <RunContext.Provider value={controlsFor(rootOf(item))}><Suspense fallback={<Loading />}>{content.node}</Suspense></RunContext.Provider> }
+                    const root = rootOf(item)
+                    return {
+                      ...content,
+                      node: (
+                        <RunContext.Provider value={controlsFor(root)}>
+                          <PaneViewContext.Provider value={paneViewFor(item, root)}>
+                            <Suspense fallback={<Loading />}>{content.node}</Suspense>
+                          </PaneViewContext.Provider>
+                        </RunContext.Provider>
+                      ),
+                    }
                   }}
                   drag={drag}
                   onClose={closePaneById}

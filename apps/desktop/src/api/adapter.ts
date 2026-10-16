@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -144,6 +144,10 @@ export interface DesktopApi {
   codeRead(root: string, path: string): Promise<CodeFile>
   codeChanges(root: string): Promise<CodeChange[]>
   codeDiff(root: string, path: string): Promise<CodeDiff>
+  /** The files the branch committed since its merge base with `parent` (or origin's default branch). */
+  codeBranchChanges(root: string, parent: string | null): Promise<BranchChanges>
+  /** One file at the merge base beside HEAD's version. */
+  codeBranchDiff(root: string, mergeBase: string, path: string): Promise<CodeDiff>
   /** Native chats (megabrain chat ...). */
   chats(): Promise<NativeChat[]>
   startChat(options: { agent: string; model?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>

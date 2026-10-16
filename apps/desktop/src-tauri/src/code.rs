@@ -55,6 +55,17 @@ pub struct CodeDiff {
     pub too_large: bool,
 }
 
+/// What the branch committed since it left its base: the base ref, the merge base and the files.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchChanges {
+    /// The ref the branch is measured against, or None when neither candidate resolves.
+    pub base: Option<String>,
+    /// The commit HEAD and the base share; None when there is no base or no shared history.
+    pub merge_base: Option<String>,
+    pub changes: Vec<CodeChange>,
+}
+
 #[derive(Default)]
 struct TreeNode {
     dirs: BTreeMap<String, TreeNode>,
@@ -246,7 +257,8 @@ pub fn code_tree(root: &Path, allowed_roots: &[PathBuf]) -> Result<Vec<CodeEntry
     Ok(entries)
 }
 
-fn resolve_file(root: &Path, path: &str) -> Result<PathBuf, String> {
+/// A non-empty relative path with no traversal, outside the skipped directories.
+fn check_relative(path: &str) -> Result<&Path, String> {
     let relative = Path::new(path);
     if path.is_empty()
         || relative
@@ -258,6 +270,11 @@ fn resolve_file(root: &Path, path: &str) -> Result<PathBuf, String> {
     if is_skipped(relative) {
         return Err("file path is inside a skipped directory".into());
     }
+    Ok(relative)
+}
+
+fn resolve_file(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let relative = check_relative(path)?;
     let candidate = root.join(relative);
     if let Ok(canonical) = candidate.canonicalize() {
         if !canonical.starts_with(root) {
@@ -384,7 +401,12 @@ pub fn code_changes(root: &Path, allowed_roots: &[PathBuf]) -> Result<Vec<CodeCh
 }
 
 fn head_file(root: &Path, path: &str) -> Result<Option<Vec<u8>>, String> {
-    let spec = format!("HEAD:{path}");
+    committed_file(root, "HEAD", path)
+}
+
+/// A file as commit `rev` holds it; None when the commit has no such file.
+fn committed_file(root: &Path, rev: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
+    let spec = format!("{rev}:{path}");
     let size = git(root, &["cat-file", "-s", &spec])?;
     if !size.status.success() {
         return Ok(None);
@@ -399,7 +421,7 @@ fn head_file(root: &Path, path: &str) -> Result<Option<Vec<u8>>, String> {
     let output = git(root, &["show", &spec])?;
     if !output.status.success() {
         return Err(format!(
-            "could not read file from HEAD: {}",
+            "could not read file from {rev}: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
@@ -433,6 +455,157 @@ pub fn code_diff(root: &Path, path: &str, allowed_roots: &[PathBuf]) -> Result<C
     let modified = modified.unwrap_or_default();
     let binary = is_binary(&original) || is_binary(&modified);
     if binary {
+        return Ok(CodeDiff {
+            path: path.to_string(),
+            original: String::new(),
+            modified: String::new(),
+            binary: true,
+            too_large: false,
+        });
+    }
+    Ok(CodeDiff {
+        path: path.to_string(),
+        original: String::from_utf8_lossy(&original).into_owned(),
+        modified: String::from_utf8_lossy(&modified).into_owned(),
+        binary: false,
+        too_large: false,
+    })
+}
+
+fn resolves(root: &Path, rev: &str) -> Result<bool, String> {
+    let spec = format!("{rev}^{{commit}}");
+    Ok(git(root, &["rev-parse", "--verify", "--quiet", &spec])?
+        .status
+        .success())
+}
+
+/// The ref a branch's changes are measured against: the worktree's parent branch when it names a
+/// commit, else origin's default branch (refs/remotes/origin/HEAD), else none. A name that git
+/// would read as an option is never passed to it.
+pub fn branch_base(root: &Path, parent: Option<&str>) -> Result<Option<String>, String> {
+    if let Some(parent) = parent.filter(|name| !name.is_empty() && !name.starts_with('-')) {
+        if resolves(root, parent)? {
+            return Ok(Some(parent.to_string()));
+        }
+    }
+    let output = git(
+        root,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    )?;
+    if output.status.success() {
+        let default = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !default.is_empty() && resolves(root, &default)? {
+            return Ok(Some(default));
+        }
+    }
+    Ok(None)
+}
+
+/// The commit HEAD and `base` share; None when they share no history.
+pub fn merge_base(root: &Path, base: &str) -> Result<Option<String>, String> {
+    let output = git(root, &["merge-base", "HEAD", base])?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!sha.is_empty()).then_some(sha))
+}
+
+fn is_commit_id(rev: &str) -> bool {
+    (rev.len() == 40 || rev.len() == 64) && rev.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The files HEAD changed since its merge base with the branch's base, committed changes only.
+pub fn code_branch_changes(
+    root: &Path,
+    parent: Option<&str>,
+    allowed_roots: &[PathBuf],
+) -> Result<BranchChanges, String> {
+    let root = validate_root(root, allowed_roots)?;
+    let base = branch_base(&root, parent)?;
+    let merge = match &base {
+        Some(base) => merge_base(&root, base)?,
+        None => None,
+    };
+    let Some(sha) = merge.clone() else {
+        return Ok(BranchChanges {
+            base,
+            merge_base: merge,
+            changes: Vec::new(),
+        });
+    };
+    let output = git(
+        &root,
+        &[
+            "diff",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            &sha,
+            "HEAD",
+            "--",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "could not read branch changes: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let mut fields = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut changes = Vec::new();
+    while let (Some(status), Some(path)) = (fields.next(), fields.next()) {
+        let status = match status.first() {
+            Some(b'A') => "added",
+            Some(b'D') => "deleted",
+            _ => "modified",
+        };
+        changes.push(CodeChange {
+            path: String::from_utf8_lossy(path).into_owned(),
+            status: status.to_string(),
+        });
+    }
+    changes.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(BranchChanges {
+        base,
+        merge_base: merge,
+        changes,
+    })
+}
+
+/// One file as the merge base held it beside HEAD's version: what the branch committed to it.
+pub fn code_branch_diff(
+    root: &Path,
+    merge_base: &str,
+    path: &str,
+    allowed_roots: &[PathBuf],
+) -> Result<CodeDiff, String> {
+    let root = validate_root(root, allowed_roots)?;
+    if !is_commit_id(merge_base) {
+        return Err("merge base must be a full commit id".into());
+    }
+    // Both sides come from git objects, so the file need not exist on disk.
+    check_relative(path)?;
+    let original = committed_file(&root, merge_base, path)?.unwrap_or_default();
+    let modified = committed_file(&root, "HEAD", path)?.unwrap_or_default();
+    if original.len() > MAX_FILE_SIZE || modified.len() > MAX_FILE_SIZE {
+        return Ok(CodeDiff {
+            path: path.to_string(),
+            original: String::new(),
+            modified: String::new(),
+            binary: false,
+            too_large: true,
+        });
+    }
+    if is_binary(&original) || is_binary(&modified) {
         return Ok(CodeDiff {
             path: path.to_string(),
             original: String::new(),

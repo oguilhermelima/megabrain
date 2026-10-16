@@ -563,14 +563,15 @@ export class ChatDaemon {
       chat.mode = "terminal";
       chat.state = "idle";
       chat.terminalSince = new Date().toISOString();
+      await this.save(chat);
     } else if (chat.mode === "terminal") {
       await this.importTerminalTurns(chat);
       chat.mode = "chat";
       chat.state = "starting";
       await this.save(chat);
+      // runAgent owns the record from here: saving this copy again could land after its idle and undo it.
       void this.runAgent(chat).catch((error) => this.fail(id, error));
     }
-    await this.save(chat);
     // The terminal's command rides along, so opening it costs no second round trip.
     return { chat, terminal: null, command: chat.mode === "terminal" && chat.agentSessionId ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
   }

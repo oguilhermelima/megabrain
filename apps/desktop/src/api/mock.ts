@@ -2,7 +2,7 @@ import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, 
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { GithubDetail, Project, ProjectScripts } from '@/api/schema'
-import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
+import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -238,6 +238,8 @@ export function createMockApi(): DesktopApi {
     },
     codeChanges: async () => mockCodeChanges,
     codeDiff: async (_root, path) => ({ ...mockCodeDiff, path }),
+    codeBranchChanges: async () => mockBranchChanges,
+    codeBranchDiff: async (_root, _mergeBase, path) => ({ ...mockCodeDiff, path }),
     chats: async () => [mockNativeChat],
     startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
     sendChat: async (chatId, parts) => {

@@ -1,4 +1,4 @@
-import type { Settings, GithubDetail, GithubPullRequestFile, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { Settings, GithubDetail, GithubPullRequestFile, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -282,6 +282,15 @@ export const mockCodeChanges: CodeChange[] = [
   { path: 'apps/tv/player/use-player-seek.ts', status: 'modified' },
   { path: 'apps/tv/player/use-player-seek.test.ts', status: 'added' },
 ]
+
+export const mockBranchChanges: BranchChanges = {
+  base: 'main',
+  mergeBase: '4b6b7c76a1f0c3d2e5b8a9c7d6e5f4a3b2c1d0e9',
+  changes: [
+    { path: 'apps/tv/player/use-player-seek.ts', status: 'modified' },
+    { path: 'apps/tv/player/seek-model.ts', status: 'added' },
+  ],
+}
 
 export const mockCodeDiff: CodeDiff = {
   path: 'apps/tv/player/use-player-seek.ts',

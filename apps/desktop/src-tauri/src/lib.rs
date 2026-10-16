@@ -12,6 +12,8 @@ mod terminal;
 mod tray;
 #[cfg(test)]
 mod terminal_tests;
+#[cfg(test)]
+mod code_tests;
 
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
@@ -287,6 +289,24 @@ async fn code_diff(cli: State<'_, Cli>, root: String, path: String) -> Result<co
     .await
 }
 
+#[tauri::command]
+async fn code_branch_changes(cli: State<'_, Cli>, root: String, parent: Option<String>) -> Result<code::BranchChanges, String> {
+    run_code_blocking(cli, move |cli| {
+        let allowed = code_allowed_roots(cli)?;
+        code::code_branch_changes(Path::new(&root), parent.as_deref(), &allowed)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn code_branch_diff(cli: State<'_, Cli>, root: String, merge_base: String, path: String) -> Result<code::CodeDiff, String> {
+    run_code_blocking(cli, move |cli| {
+        let allowed = code_allowed_roots(cli)?;
+        code::code_branch_diff(Path::new(&root), &merge_base, &path, &allowed)
+    })
+    .await
+}
+
 fn sidecar(current_exe: &Path) -> PathBuf {
     current_exe.parent().unwrap_or(Path::new(".")).join("megabrain-cli")
 }
@@ -365,6 +385,8 @@ pub fn run() {
             code_read,
             code_changes,
             code_diff,
+            code_branch_changes,
+            code_branch_diff,
             save_attachment,
             save_image
         ])

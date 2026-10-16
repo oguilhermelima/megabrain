@@ -77,7 +77,8 @@ export function PaneArea({
             className={pane === null ? 'hidden' : `absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${pane.rect.x > 0 ? 'border-l border-white/[0.07]' : ''} ${pane.rect.y > 0 ? 'border-t border-white/[0.07]' : ''}`}
           >
             {split && pane !== null && <PaneHeader title={content.title} focused={pane.id === panes.focused} onDrag={(event) => drag.start(event, { kind: 'pane', paneId: pane.id, label: content.title })} onClose={() => onClose(pane.id)} />}
-            <div className={`flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>{content.node}</div>
+            {/* Positioned, so a PR or Diff view can lie over the item's own content below its top bar. */}
+            <div className={`relative flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>{content.node}</div>
             {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 ring-1 ring-accent/50 ring-inset" />}
             {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} replace={preview.zone === 'center'} />}
           </section>

@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -212,6 +212,8 @@ export function createTauriApi(): DesktopApi {
     codeRead: async (root, path) => codeFileSchema.parse(await invoke('code_read', { root, path })),
     codeChanges: async (root) => codeChangeSchema.array().parse(await invoke('code_changes', { root })),
     codeDiff: async (root, path) => codeDiffSchema.parse(await invoke('code_diff', { root, path })),
+    codeBranchChanges: async (root, parent) => branchChangesSchema.parse(await invoke('code_branch_changes', { root, parent })),
+    codeBranchDiff: async (root, mergeBase, path) => codeDiffSchema.parse(await invoke('code_branch_diff', { root, mergeBase, path })),
     chats: () => cliJson(['chat', 'list', '--json'], nativeChatSchema.array()),
     startChat: ({ agent, model, cwd, parts }) =>
       cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),

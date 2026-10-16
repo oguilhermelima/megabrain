@@ -557,6 +557,10 @@ export const codeDiffSchema = z.looseObject({
   tooLarge: z.boolean().optional(),
 })
 
+// What a branch committed since it left its base (the worktree's parent branch, else origin's
+// default branch); base and mergeBase are null when neither resolves or they share no history.
+export const branchChangesSchema = z.looseObject({ base: z.string().nullable(), mergeBase: z.string().nullable(), changes: z.array(codeChangeSchema) })
+
 export const chatReadSchema = z.looseObject({ dispatchId: z.string(), source: z.string(), truncated: z.boolean(), text: z.string() })
 
 export const replyResultSchema = z.looseObject({ dispatchId: z.string(), status: z.string(), nudge: z.string() })
@@ -620,6 +624,7 @@ export type CodeEntry = z.infer<typeof codeEntrySchema>
 export type CodeFile = z.infer<typeof codeFileSchema>
 export type CodeChange = z.infer<typeof codeChangeSchema>
 export type CodeDiff = z.infer<typeof codeDiffSchema>
+export type BranchChanges = z.infer<typeof branchChangesSchema>
 export type ChatRead = z.infer<typeof chatReadSchema>
 export type ReplyResult = z.infer<typeof replyResultSchema>
 
