@@ -31,7 +31,7 @@ async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
 
 const claude: ChatProtocolAdapter = {
   async prepare(chat, stateDir) {
-    const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
+    const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose"];
     if (chat.model) args.push("--model", chat.model);
     if (chat.effort) args.push("--effort", chat.effort);
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);

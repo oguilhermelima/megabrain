@@ -62,9 +62,10 @@ function validateParts(value: unknown): Part[] {
   });
 }
 function firstText(parts: readonly Part[]): string { return parts.filter((part): part is Extract<Part, { type: "text" }> => part.type === "text").map((part) => part.text).join("").trim(); }
-function event(kind: ChatEvent["kind"], value: string, tool?: ChatEvent["tool"]): ChatEvent {
-  return { id: randomUUID(), at: new Date().toISOString(), kind, text: value, ...(tool === undefined ? {} : { tool }) };
+function event(kind: ChatEvent["kind"], value: string, tool?: ChatEvent["tool"], extra: Partial<ChatEvent> = {}): ChatEvent {
+  return { id: randomUUID(), at: new Date().toISOString(), kind, text: value, ...(tool === undefined ? {} : { tool }), ...extra };
 }
+function withMessage(messageId: string): Partial<ChatEvent> { return messageId === "" ? {} : { messageId }; }
 
 /** Owns every chat child. The CLI is a short-lived socket client; chatd keeps this object alive. */
 export class ChatDaemon {
@@ -75,11 +76,15 @@ export class ChatDaemon {
   private readonly interrupting = new Set<string>();
   private readonly interruptedEvents = new Set<string>();
   private readonly pendingApprovals = new Map<string, { approval: ChatApproval; resolve: (decision: string) => void }>();
-  private readonly subscribers = new Map<string, Set<(line: ChatLine) => void>>();
+  private readonly subscribers = new Map<string, Set<(line: ChatLine, live?: boolean) => void>>();
   private readonly eventChains = new Map<string, Promise<void>>();
   private readonly startTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly outputSeen = new Set<string>();
   private readonly appendChains = new Map<string, Promise<unknown>>();
+  private readonly publishedState = new Map<string, Chat["state"]>();
+  private readonly turnStarted = new Map<string, string>();
+  private readonly currentMessage = new Map<string, string>();
+  private readonly toolNames = new Map<string, Map<string, string>>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private clients = 0;
   private closed = false;
@@ -141,7 +146,7 @@ export class ChatDaemon {
       title: firstText(parts).slice(0, 120) || null, state: "starting", mode: "chat",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };
-    await this.store.put(chat);
+    await this.save(chat);
     await this.publish(chat, event("system", `Started ${agent} chat`));
     const queue = this.queues.get(chat.id) ?? [];
     if (parts.length > 0) { queue.push(parts); this.queues.set(chat.id, queue); await this.publish(chat, event("user", firstText(parts))); }
@@ -156,7 +161,7 @@ export class ChatDaemon {
     const textValue = firstText(parts);
     if (chat.title === null && textValue !== "") chat.title = textValue.slice(0, 120);
     chat.lastActivityAt = new Date().toISOString();
-    await this.store.put(chat);
+    await this.save(chat);
     await this.publish(chat, event("user", textValue));
     this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
@@ -172,7 +177,7 @@ export class ChatDaemon {
     if (chat.agent === "claude" && chat.state === "working") return;
     if (!this.children.has(id) && chat.state === "idle") {
       chat.state = "starting";
-      await this.store.put(chat);
+      await this.save(chat);
       void this.runAgent(chat).catch((error) => this.fail(id, error));
       return;
     }
@@ -216,13 +221,13 @@ export class ChatDaemon {
           this.interrupting.delete(chat.id);
           current.state = "idle";
           current.error = null;
-          await this.store.put(current);
+          await this.save(current);
           await this.publishInterrupted(current);
           return;
         }
         current.state = code === 0 ? "idle" : "stopped";
         current.error = code === 0 ? null : `${signal ?? "agent exited"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`;
-        await this.store.put(current);
+        await this.save(current);
         await this.publish(current, event("system", current.error ?? "Agent process stopped"));
       });
     });
@@ -234,7 +239,7 @@ export class ChatDaemon {
       const current = await this.requireChat(chat.id);
       current.agentSessionId = text(object(thread).thread && object(object(thread).thread).id) || text(object(thread).threadId) || current.agentSessionId;
       current.state = "idle";
-      await this.store.put(current);
+      await this.save(current);
       await this.drain(chat.id);
     } else {
       // Claude prints system/init only after its first user line, so queued input goes out now.
@@ -243,24 +248,59 @@ export class ChatDaemon {
     }
   }
 
+  private async handleClaudeStream(id: string, streamEvent: Record<string, unknown>): Promise<void> {
+    const kind = text(streamEvent.type);
+    if (kind === "message_start") { this.currentMessage.set(id, text(object(streamEvent.message).id)); return; }
+    if (kind === "content_block_delta") {
+      const delta = object(streamEvent.delta);
+      const messageId = this.currentMessage.get(id) ?? "";
+      if (delta.type === "text_delta") this.publishLive(id, event("delta", text(delta.text), undefined, { stream: "assistant", ...withMessage(messageId) }));
+      else if (delta.type === "thinking_delta") this.publishLive(id, event("delta", text(delta.thinking), undefined, { stream: "thinking", ...withMessage(messageId) }));
+      return;
+    }
+    const block = object(streamEvent.content_block);
+    if (kind === "content_block_start" && block.type === "tool_use") await this.publishToolCall(id, text(block.id), text(block.name), "");
+  }
+
+  private async publishToolCall(id: string, toolUseId: string, name: string, input: string): Promise<void> {
+    const names = this.toolNames.get(id) ?? new Map<string, string>();
+    this.toolNames.set(id, names);
+    if (names.has(toolUseId)) return;
+    names.set(toolUseId, name);
+    const chat = await this.requireChat(id);
+    await this.publish(chat, event("tool-call", name, { name, input }));
+  }
+
   private async handleClaude(id: string, child: ChildProcessWithoutNullStreams, item: Record<string, unknown>): Promise<void> {
+    if (item.type === "stream_event") { await this.handleClaudeStream(id, object(item.event)); return; }
     const chat = await this.requireChat(id);
     if (item.type === "system" && item.subtype === "init") {
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
       if (chat.state === "starting") chat.state = "idle";
-      await this.store.put(chat);
+      await this.save(chat);
       await this.drain(id);
       return;
     }
     if (item.type === "assistant") {
       const message = object(item.message);
       this.updateContext(chat, object(message.usage));
-      await this.store.put(chat);
+      await this.save(chat);
       const blocks = Array.isArray(message.content) ? message.content.map(object) : [];
       const textValue = blocks.filter((block) => block.type === "text").map((block) => text(block.text)).join("");
       const thinking = blocks.filter((block) => block.type === "thinking").map((block) => text(block.thinking)).join("");
-      if (thinking) await this.publish(chat, event("thinking", thinking));
-      if (textValue) await this.publish(chat, event("assistant", textValue));
+      const identity = withMessage(text(message.id));
+      if (thinking) await this.publish(chat, event("thinking", thinking, undefined, identity));
+      if (textValue) await this.publish(chat, event("assistant", textValue, undefined, identity));
+      for (const block of blocks.filter((candidate) => candidate.type === "tool_use")) await this.publishToolCall(id, text(block.id), text(block.name), JSON.stringify(block.input ?? {}));
+      return;
+    }
+    if (item.type === "user") {
+      const blocks = Array.isArray(object(item.message).content) ? (object(item.message).content as unknown[]).map(object) : [];
+      for (const block of blocks.filter((candidate) => candidate.type === "tool_result")) {
+        const name = this.toolNames.get(id)?.get(text(block.tool_use_id)) ?? "tool";
+        const content = Array.isArray(block.content) ? block.content.map(object).map((part) => text(part.text)).join("") : text(block.content);
+        await this.publish(chat, event("tool-result", content, { name, status: block.is_error === true ? "error" : "ok" }));
+      }
       return;
     }
     if (item.type === "result") {
@@ -273,7 +313,7 @@ export class ChatDaemon {
       chat.state = item.is_error === true ? "idle" : "idle";
       chat.error = null;
       chat.lastActivityAt = new Date().toISOString();
-      await this.store.put(chat);
+      await this.save(chat);
       if (item.is_error === true && this.interrupting.has(id)) this.interrupting.delete(id);
       await this.drain(id);
     }
@@ -299,7 +339,10 @@ export class ChatDaemon {
       const window = usage.modelContextWindow;
       if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) chat.contextTokens = count;
       if (typeof window === "number" && Number.isSafeInteger(window) && window > 0) chat.contextWindow = window;
-      await this.store.put(chat);
+      await this.save(chat);
+    } else if (/delta$/i.test(method) && /reasoning|thinking|agentMessage|assistantMessage/.test(method)) {
+      const stream = /reasoning|thinking/.test(method) ? "thinking" : "assistant";
+      this.publishLive(id, event("delta", text(params.delta ?? params.text), undefined, { stream, ...withMessage(text(params.itemId)) }));
     } else if (method.includes("reasoning") || method.includes("thinking")) await this.publish(chat, event("thinking", text(params.delta ?? params.text)));
     else if (method.includes("agentMessage") || method.includes("assistantMessage")) await this.publish(chat, event("assistant", text(params.delta ?? params.text)));
     else if (method === "item/started") {
@@ -308,6 +351,9 @@ export class ChatDaemon {
     } else if (method === "item/completed") {
       const itemData = object(params.item);
       const type = text(itemData.type).toLowerCase();
+      const flatten = (value: unknown): string => Array.isArray(value) ? value.map(flatten).join("") : text(value);
+      if (type === "agentmessage" && text(itemData.text)) await this.publish(chat, event("assistant", text(itemData.text), undefined, withMessage(text(itemData.id))));
+      if (type === "reasoning" && (flatten(itemData.summary) || flatten(itemData.content))) await this.publish(chat, event("thinking", flatten(itemData.summary) || flatten(itemData.content), undefined, withMessage(text(itemData.id))));
       if (type.includes("command")) await this.publish(chat, event("tool-result", text(itemData.aggregatedOutput ?? itemData.output), { name: "command", status: itemData.exitCode === 0 ? "ok" : "error" }));
       if (type.includes("approval") && typeof params.id === "number") await this.resolveApproval(id, params.id, { decision: "accept" });
     } else if (method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval") {
@@ -318,11 +364,11 @@ export class ChatDaemon {
       const turn = text(params.turnId);
       this.activeTurns.set(id, turn);
       chat.state = "working";
-      await this.store.put(chat);
+      await this.save(chat);
     } else if (method === "turn/completed") {
       this.activeTurns.delete(id);
       chat.state = "idle";
-      await this.store.put(chat);
+      await this.save(chat);
       if (text(object(params.turn).status) === "interrupted" && this.interrupting.has(id)) {
         this.interrupting.delete(id);
         await this.publishInterrupted(chat);
@@ -353,7 +399,7 @@ export class ChatDaemon {
     const parts = queue.shift() as Part[];
     if (queue.length === 0) this.queues.delete(id);
     chat.state = "working";
-    await this.store.put(chat);
+    await this.save(chat);
     const adapter = chatProtocolAdapters[chat.agent];
     const turnId = await adapter.send(chat, child, parts, (method, params) => this.codexRequest(child, method, params));
     if (turnId) this.activeTurns.set(id, turnId);
@@ -387,7 +433,7 @@ export class ChatDaemon {
     if (chat.agent === "claude") {
       this.interrupting.add(id);
       chat.state = "idle";
-      await this.store.put(chat);
+      await this.save(chat);
       await this.publishInterrupted(chat);
       await chatProtocolAdapters[chat.agent].interrupt(chat, child, this.activeTurns.get(id), (method, params) => child ? this.codexRequest(child, method, params) : Promise.resolve(undefined));
     }
@@ -398,7 +444,7 @@ export class ChatDaemon {
         await chatProtocolAdapters[chat.agent].interrupt(chat, child, turnId, (method, params) => this.codexRequest(child, method, params));
       } else {
         chat.state = "idle";
-        await this.store.put(chat);
+        await this.save(chat);
         await this.publishInterrupted(chat);
       }
     }
@@ -410,7 +456,7 @@ export class ChatDaemon {
     if (child) { child.kill("SIGTERM"); this.children.delete(id); }
     chat.state = "stopped";
     chat.lastActivityAt = new Date().toISOString();
-    await this.store.put(chat);
+    await this.save(chat);
     await this.publish(chat, event("system", "Stopped"));
   }
 
@@ -426,10 +472,10 @@ export class ChatDaemon {
     } else if (chat.mode === "terminal") {
       chat.mode = "chat";
       chat.state = "starting";
-      await this.store.put(chat);
+      await this.save(chat);
       void this.runAgent(chat).catch((error) => this.fail(id, error));
     }
-    await this.store.put(chat);
+    await this.save(chat);
     return { chat, terminal: null };
   }
 
@@ -456,9 +502,9 @@ export class ChatDaemon {
       const child = this.children.get(id);
       if (child) { this.children.delete(id); child.kill("SIGTERM"); }
       chat.state = "starting";
-      await this.store.put(chat);
+      await this.save(chat);
       void this.runAgent(chat).catch((error) => this.fail(id, error));
-    } else await this.store.put(chat);
+    } else await this.save(chat);
     await this.publish(chat, event("system", `Model set to ${model}${effort ? ` (${effort})` : ""}`));
     return chat;
   }
@@ -472,19 +518,25 @@ export class ChatDaemon {
         let cursor = since;
         let replaying = true;
         const pending: ChatLine[] = [];
-        const write = (line: ChatLine) => {
+        const write = (line: ChatLine, live = false) => {
+          if (live) { socket.write(`${JSON.stringify({ ...line, cursor: String(cursor) })}\n`); return; }
           const next = Number(line.cursor);
           if (!Number.isSafeInteger(next) || next <= cursor) return;
           socket.write(`${JSON.stringify(line)}\n`);
           cursor = next;
         };
-        const listener = (line: ChatLine) => replaying ? pending.push(line) : write(line);
+        const pendingLive = new Set<ChatLine>();
+        const listener = (line: ChatLine, live = false) => {
+          if (replaying) { pending.push(line); if (live) pendingLive.add(line); } else write(line, live);
+        };
         listeners.add(listener); this.subscribers.set(id, listeners);
         socket.once("close", () => { listeners.delete(listener); });
         try {
           for (const line of await this.store.events(id, since)) write(line);
-          for (let index = 0; index < pending.length; index += 1) write(pending[index] as ChatLine);
+          for (let index = 0; index < pending.length; index += 1) { const line = pending[index] as ChatLine; write(line, pendingLive.has(line)); }
           replaying = false;
+          const current = await this.store.get(id);
+          if (current) write({ cursor: "", event: this.stateEvent(current) }, true);
         } catch (error) {
           listeners.delete(listener);
           throw error;
@@ -509,7 +561,7 @@ export class ChatDaemon {
   private async createApproval(chat: Chat, tool: string, input: string, reason: string): Promise<ChatApproval> {
     const approval: ChatApproval = { id: randomUUID(), tool, input, reason: reason || null, decisions: ["allow", "allow-session", "deny"] };
     chat.state = "waiting-approval";
-    await this.store.put(chat);
+    await this.save(chat);
     await this.publish(chat, event("approval", `${tool} requires approval`), approval);
     return approval;
   }
@@ -527,7 +579,7 @@ export class ChatDaemon {
     }
     const chat = await this.requireChat(id);
     if (chat.state === "waiting-approval") chat.state = "working";
-    await this.store.put(chat);
+    await this.save(chat);
   }
 
   private async resolveApproval(id: string, requestId: number, response: unknown): Promise<void> {
@@ -550,6 +602,23 @@ export class ChatDaemon {
       return { type: "image", path };
     }));
   }
+  /** Persists the chat and, when its state moved, publishes the new state to followers and history. */
+  private async save(chat: Chat): Promise<void> {
+    await this.store.put(chat);
+    if (this.publishedState.get(chat.id) === chat.state) return;
+    this.publishedState.set(chat.id, chat.state);
+    if (chat.state === "working") { if (!this.turnStarted.has(chat.id)) this.turnStarted.set(chat.id, new Date().toISOString()); }
+    else if (chat.state !== "waiting-approval") this.turnStarted.delete(chat.id);
+    await this.publish(chat, this.stateEvent(chat));
+  }
+  private stateEvent(chat: Chat): ChatEvent {
+    const startedAt = this.turnStarted.get(chat.id);
+    return event("state", chat.state, undefined, chat.state === "working" && startedAt !== undefined ? { turnStartedAt: startedAt } : {});
+  }
+  /** Sends an event to current followers only; the cursor is the last stored one, so a resume never skips history. */
+  private publishLive(id: string, value: ChatEvent): void {
+    for (const listener of this.subscribers.get(id) ?? []) listener({ cursor: "", event: value }, true);
+  }
   private async publish(chat: Chat, value: ChatEvent, approval?: ChatApproval): Promise<void> {
     const previous = this.appendChains.get(chat.id) ?? Promise.resolve();
     const next = previous.then(async () => {
@@ -568,7 +637,7 @@ export class ChatDaemon {
     const chat = await this.store.get(id);
     if (!chat) return;
     chat.state = "error"; chat.error = error instanceof Error ? error.message : String(error);
-    await this.store.put(chat);
+    await this.save(chat);
     await this.publish(chat, event("system", chat.error));
   }
   private scheduleExit(): void {
