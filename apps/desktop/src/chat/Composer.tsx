@@ -901,7 +901,8 @@ export function Composer({
   const banner = composerBanner(notice, { failedSend, sendable })
 
   return (
-    <footer className="shrink-0 px-6 pt-2 pb-3">
+    // A container, so the controls fit the pane's width rather than the window's.
+    <footer className="@container/composer shrink-0 px-6 pt-2 pb-3">
       {preview !== null && <Lightbox images={preview.images} start={preview.start} onClose={closePreview} />}
       {hover !== null && <ChipPreview attachment={attachments.current.get(hover.id)} left={hover.left} top={hover.top} />}
       {dispatchId !== undefined && <QueuePills state={queue} empty={!sendable} />}

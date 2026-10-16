@@ -57,7 +57,7 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
 
   if (pane === null || available === null) {
     return (
-      <header data-tauri-drag-region style={{ ...slide, paddingLeft: inset ?? 24 }} className={`flex shrink-0 items-center gap-3 border-b border-white/[0.06] pr-6 ${band}`}>
+      <header data-tauri-drag-region style={{ ...slide, paddingLeft: inset ?? 24 }} className={`@container/header flex shrink-0 items-center gap-3 border-b border-white/[0.06] pr-6 ${band}`}>
         {identity}
         {actions}
         <RunButton />
@@ -69,17 +69,20 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
   const shown = shownView(pane.view, available)
 
   // Equal side columns put the bar in the bar's true centre; each side truncates or clips inside its own half.
+  // In a narrow pane the right side keeps its own width and the title gives way instead, so nothing overlaps.
   return (
     <>
-      <header ref={header} data-tauri-drag-region style={slide} className={`@container grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-white/[0.06] px-6 ${band}`}>
-        <div data-tauri-drag-region style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-3">
-          {identity}
-        </div>
-        <ActionBar agent={agent} segments={available} shown={shown} onSelect={select} />
-        <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">
-          {shown === 'agent' && actions}
-          <RunButton />
-          <RunPanelToggle />
+      <header ref={header} data-tauri-drag-region style={slide} className={`@container/header shrink-0 border-b border-white/[0.06] px-6 ${band}`}>
+        <div data-tauri-drag-region className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 @max-[640px]/header:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div data-tauri-drag-region style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-3">
+            {identity}
+          </div>
+          <ActionBar agent={agent} segments={available} shown={shown} onSelect={select} />
+          <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">
+            {shown === 'agent' && actions}
+            <RunButton />
+            <RunPanelToggle />
+          </div>
         </div>
       </header>
       {shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} header={header} />}

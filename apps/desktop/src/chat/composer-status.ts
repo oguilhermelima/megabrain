@@ -328,6 +328,24 @@ export interface AgentLimit {
 /** The usage windows the row shows, in order. */
 export const limitWindows = ['5h', 'weekly']
 
+/** How a pane shows the limits: two full rows, one quiet line, or a single ring with the details on demand. */
+export type LimitsLayout = 'full' | 'compact' | 'ring'
+
+/**
+ * The limits' layout for a pane this many pixels wide: full rows from 1000px, one compact line from
+ * 560px, the ring below that. Before the pane is measured it keeps the full rows.
+ */
+export function limitsLayout(paneWidth: number | null): LimitsLayout {
+  if (paneWidth === null || paneWidth >= 1000) return 'full'
+  if (paneWidth >= 560) return 'compact'
+  return 'ring'
+}
+
+/** The limit closest to running out, the first on a tie; the ring shows it. */
+export function highestLimit(limits: AgentLimit[]): AgentLimit | null {
+  return limits.reduce<AgentLimit | null>((highest, limit) => (highest === null || limit.usedPercent > highest.usedPercent ? limit : highest), null)
+}
+
 /** The agent's 5-hour and weekly usage, leaving out a window with no reading. */
 export function agentLimits(readings: UsageReading[], agent: string, now: Date = new Date()): AgentLimit[] {
   return limitWindows.flatMap((window) => {

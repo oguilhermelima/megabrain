@@ -33,12 +33,13 @@ export function ChatSuggestions({ cwd, agent, onPick }: { cwd: string; agent: st
   }, [cwd])
   const { headline, detail } = emptyChatText(agent, cwd)
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div className="motion-fade mx-auto my-auto flex w-full max-w-[700px] flex-col items-center px-8 py-12 text-center">
-        <LivingOrb size={112} />
-        <h2 className="mt-9 text-[22px] font-semibold tracking-[-0.01em] text-ink-100 [overflow-wrap:anywhere]">{headline}</h2>
-        <p className="mt-2 max-w-[440px] text-[14px] leading-relaxed text-ink-400">{detail}</p>
-        <div className="mt-8 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+    // Sized by the pane, not the window, so each pane of a split fits its own width.
+    <div className="@container/empty flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="motion-fade mx-auto my-auto flex w-full max-w-[700px] flex-col items-center px-8 py-12 text-center [--orb:112px] @max-[640px]/empty:px-5 @max-[640px]/empty:py-8 @max-[640px]/empty:[--orb:72px]">
+        <LivingOrb size="var(--orb)" />
+        <h2 className="mt-9 text-[22px] font-semibold tracking-[-0.01em] text-ink-100 [overflow-wrap:anywhere] @max-[640px]/empty:mt-6 @max-[640px]/empty:text-[18px]">{headline}</h2>
+        <p className="mt-2 max-w-[440px] text-[14px] leading-relaxed text-ink-400 @max-[640px]/empty:text-[13px]">{detail}</p>
+        <div className="mt-8 grid w-full grid-cols-1 gap-2.5 @min-[640px]/empty:grid-cols-2 @max-[640px]/empty:mt-6">
           {chatSuggestions(changed).map((item) => (
             <button
               key={item.icon}
@@ -52,10 +53,10 @@ export function ChatSuggestions({ cwd, agent, onPick }: { cwd: string; agent: st
                 </svg>
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-[13.5px] font-medium text-ink-100" title={item.title}>
-                  {item.title}
+                <span className="line-clamp-2 block text-[13.5px] font-medium text-ink-100 [overflow-wrap:anywhere]">{item.title}</span>
+                <span className="mt-0.5 block truncate text-[12.5px] text-ink-400" title={item.hint}>
+                  {item.hint}
                 </span>
-                <span className="mt-0.5 block truncate text-[12.5px] text-ink-400">{item.hint}</span>
               </span>
             </button>
           ))}

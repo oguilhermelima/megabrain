@@ -120,6 +120,7 @@ export function RunButton() {
   const repo = scripts?.repo ?? controls.root
   const primary = primaryAction(controls.panel.last)
   const primaryCommand = commandFor(scripts, primary)
+  const primaryLabel = primaryCommand === null ? `Set up ${runActionLabel[primary]}` : runActionLabel[primary]
 
   const choose = (action: RunAction) => {
     setOpen(false)
@@ -136,10 +137,12 @@ export function RunButton() {
         type="button"
         onClick={() => choose(primary)}
         title={primaryCommand ?? `Set up the ${runActionLabel[primary].toLowerCase()} command`}
-        className="flex h-7 items-center gap-1.5 rounded-l-full border border-white/10 bg-white/[0.05] pr-2.5 pl-3 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.1]"
+        aria-label={primaryLabel}
+        className="flex h-7 items-center gap-1.5 rounded-l-full border border-white/10 bg-white/[0.05] pr-2 pl-2.5 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.1] @3xl/header:pr-2.5 @3xl/header:pl-3"
       >
         <PlayIcon />
-        {primaryCommand === null ? `Set up ${runActionLabel[primary]}` : runActionLabel[primary]}
+        {/* In a narrow chat header only the icon shows, so the title keeps its room. */}
+        <span className="hidden @3xl/header:inline">{primaryLabel}</span>
       </button>
       <button
         type="button"

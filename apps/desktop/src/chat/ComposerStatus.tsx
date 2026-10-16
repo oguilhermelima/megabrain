@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '@/api'
 import { settingsSchema, type Settings } from '@/api/schema'
@@ -15,6 +15,8 @@ import {
   findModel,
   limitWindows,
   formatTokens,
+  highestLimit,
+  limitsLayout,
   menuGroups,
   modelHint,
   modelWindows,
@@ -305,22 +307,28 @@ function ModelMenu({
   )
 }
 
-/** A bar with rounded ends, filled to a share and coloured by tone. */
-function Meter({ fraction, tone }: { fraction: number; tone: LimitTone }) {
+/** A bar with rounded ends, filled to a share and coloured by tone; `small` is the compact line's. */
+function Meter({ fraction, tone, small = false }: { fraction: number; tone: LimitTone; small?: boolean }) {
   return (
-    <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-white/[0.12]">
+    <span className={`shrink-0 overflow-hidden rounded-full bg-white/[0.12] ${small ? 'h-1 w-6' : 'h-1.5 w-16'}`}>
       <span className={`block h-full rounded-full ${toneBar[tone]}`} style={{ width: `${Math.max(3, Math.round(fraction * 100))}%` }} />
     </span>
   )
 }
 
 const windowNames: Record<string, string> = { '5h': '5-hour', weekly: 'Weekly' }
+const shortWindowNames: Record<string, string> = { '5h': '5h', weekly: 'Wk' }
+
+/** The limit in words, with the exact reset time, for a tooltip. */
+function limitTitle(agent: string, limit: AgentLimit): string {
+  const when = limit.resetsAt === null ? 'reset time unknown' : `resets ${limit.resetsAt.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+  return `${agent} ${windowNames[limit.window] ?? limit.window} limit: ${Math.round(limit.usedPercent)}% used, ${when}`
+}
 
 function LimitMeter({ agent, limit }: { agent: string; limit: AgentLimit }) {
   const percent = Math.round(limit.usedPercent)
-  const when = limit.resetsAt === null ? 'reset time unknown' : `resets ${limit.resetsAt.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
   return (
-    <span className="flex h-6 min-w-0 items-center gap-2" title={`${agent} ${windowNames[limit.window] ?? limit.window} limit: ${percent}% used, ${when}`}>
+    <span className="flex h-6 min-w-0 items-center gap-2" title={limitTitle(agent, limit)}>
       <span className="shrink-0 font-medium text-ink-200">{windowNames[limit.window] ?? limit.window}</span>
       <Meter fraction={limit.usedPercent / 100} tone={limit.tone} />
       <span className={`shrink-0 font-semibold tabular-nums ${limit.tone === 'normal' ? 'text-ink-100' : toneText[limit.tone]}`}>{`${percent}%`}</span>
@@ -329,8 +337,41 @@ function LimitMeter({ agent, limit }: { agent: string; limit: AgentLimit }) {
   )
 }
 
+/** One window on the compact line: its short name, a tiny bar and the share; the reset is in the tooltip. */
+function CompactLimit({ agent, limit }: { agent: string; limit: AgentLimit }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" title={limitTitle(agent, limit)}>
+      <span className="shrink-0 text-ink-400">{shortWindowNames[limit.window] ?? limit.window}</span>
+      <Meter fraction={limit.usedPercent / 100} tone={limit.tone} small />
+      <span className={`shrink-0 tabular-nums ${limit.tone === 'normal' ? 'text-ink-300' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
+    </span>
+  )
+}
+
 const ringRadius = 6
 const ringCircumference = 2 * Math.PI * ringRadius
+
+/** A ring filled to a share: an arc on a faint track from twelve o'clock, still, coloured by tone. */
+function Ring({ fraction, tone }: { fraction: number; tone: LimitTone }) {
+  return (
+    <svg viewBox="0 0 16 16" className={`size-4 shrink-0 ${toneText[tone]}`} aria-hidden="true">
+      <circle cx="8" cy="8" r={ringRadius} fill="none" strokeWidth="2.25" className="stroke-white/[0.13]" />
+      <circle
+        cx="8"
+        cy="8"
+        r={ringRadius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeDasharray={ringCircumference}
+        strokeDashoffset={ringOffset(fraction, ringCircumference)}
+        transform="rotate(-90 8 8)"
+        className="transition-[stroke-dashoffset] duration-150 motion-reduce:transition-none"
+      />
+    </svg>
+  )
+}
 
 /**
  * The context used, always as text, beside a ring filled to the share of the window when both are
@@ -345,24 +386,7 @@ function ContextGauge({ meter }: { meter: ContextMeter }) {
       aria-label={meter.title}
       className="flex h-8 shrink-0 items-center gap-2 rounded-full px-2.5 text-[12.5px] outline-none transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
     >
-      {meter.fraction !== null && (
-        <svg viewBox="0 0 16 16" className={`size-4 shrink-0 ${toneText[meter.tone]}`} aria-hidden="true">
-          <circle cx="8" cy="8" r={ringRadius} fill="none" strokeWidth="2.25" className="stroke-white/[0.13]" />
-          <circle
-            cx="8"
-            cy="8"
-            r={ringRadius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.25"
-            strokeLinecap="round"
-            strokeDasharray={ringCircumference}
-            strokeDashoffset={ringOffset(meter.fraction, ringCircumference)}
-            transform="rotate(-90 8 8)"
-            className="transition-[stroke-dashoffset] duration-150 motion-reduce:transition-none"
-          />
-        </svg>
-      )}
+      {meter.fraction !== null && <Ring fraction={meter.fraction} tone={meter.tone} />}
       <span className={`tabular-nums ${meter.tone === 'normal' ? 'text-ink-300' : toneText[meter.tone]}`}>{meter.text}</span>
     </span>
   )
@@ -407,14 +431,16 @@ function Trigger({ agent, label, title, open, onToggle }: { agent: string | null
       }}
       aria-haspopup="menu"
       aria-expanded={open}
-      className="flex h-8 min-w-0 shrink items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] pr-2.5 pl-3 text-[12.5px] text-ink-200 transition-colors duration-100 hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 aria-expanded:border-white/[0.14] aria-expanded:bg-white/[0.09] aria-expanded:text-ink-100 motion-reduce:transition-none"
+      aria-label={`Model: ${label}`}
+      className="flex h-8 min-w-0 shrink items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] pr-2.5 pl-3 text-[12.5px] @max-[480px]/composer:gap-1.5 @max-[480px]/composer:pr-2 @max-[480px]/composer:pl-2.5 text-ink-200 transition-colors duration-100 hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 aria-expanded:border-white/[0.14] aria-expanded:bg-white/[0.09] aria-expanded:text-ink-100 motion-reduce:transition-none"
     >
       {agent !== null && (
         <span aria-hidden="true" className="contents text-ink-400">
           <AgentIcon agent={agent} size={14} />
         </span>
       )}
-      <span className="min-w-0 truncate">{label}</span>
+      {/* In a narrow pane only the agent's mark shows, the name in the tooltip, rather than a cut-off word. */}
+      <span className={`min-w-0 truncate ${agent === null ? '' : '@max-[480px]/composer:hidden'}`}>{label}</span>
       <svg viewBox="0 0 16 16" className="size-3.5 shrink-0 text-ink-400" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
       </svg>
@@ -460,7 +486,7 @@ export function ComposerStatus({
   return (
     <div aria-busy={loading} className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
       {loading && <PickerSkeleton />}
-      {models.length > 0 && <Trigger agent={agent} label={label} title={known ? `${model}${size?.derived === true ? ' (window from the model)' : ''}` : 'The agent picks its default model'} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
+      {models.length > 0 && <Trigger agent={agent} label={label} title={known ? `${label}: ${model}${size?.derived === true ? ' (window from the model)' : ''}` : `${label}: the agent picks its default model`} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
       <ContextGauge meter={meter} />
       {menu.shown !== null && (
         <ModelMenu
@@ -489,20 +515,104 @@ export function ComposerStatus({
   )
 }
 
-/** The agent's 5-hour and weekly limits as one line under the composer, from its left edge, at the toolbar's text size. */
+/** The width of the element's parent, read before paint and again on every resize; null until it mounts. */
+function useParentWidth(ref: RefObject<HTMLElement | null>): number | null {
+  const [width, setWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current?.parentElement ?? null
+    if (element === null) return
+    const measure = () => setWidth(element.getBoundingClientRect().width)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [ref])
+  return width
+}
+
+/** The highest limit as a ring and its share; a click opens both windows with their reset times. */
+function LimitRing({ agent, limits }: { agent: string; limits: AgentLimit[] }) {
+  const [open, setOpen] = useState<Open>(null)
+  const menu = usePresence(open)
+  const close = useRef(() => setOpen(null)).current
+  const highest = highestLimit(limits)
+  if (highest === null) return null
+  const title = limits.map((limit) => limitTitle(agent, limit)).join('\n')
+  return (
+    <>
+      <button
+        type="button"
+        title={title}
+        aria-label={`Usage limits: ${Math.round(highest.usedPercent)}% used`}
+        aria-haspopup="menu"
+        aria-expanded={open !== null}
+        onMouseDown={(event) => {
+          // Lets a second click close the open popover.
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const anchor = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+          setOpen((current) => (current === null ? anchor : null))
+        }}
+        className="flex h-6 shrink-0 items-center gap-1.5 rounded-full px-1.5 transition-colors duration-100 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 aria-expanded:bg-white/[0.08] motion-reduce:transition-none"
+      >
+        <Ring fraction={highest.usedPercent / 100} tone={highest.tone} />
+        <span className={`tabular-nums ${highest.tone === 'normal' ? 'text-ink-300' : toneText[highest.tone]}`}>{`${Math.round(highest.usedPercent)}%`}</span>
+      </button>
+      {menu.shown !== null && (
+        <Popover anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close}>
+          <p className={`${heading} pt-1`}>Usage limits</p>
+          <div className="flex flex-col px-2 pb-1 text-[12.5px] text-ink-300">
+            {limits.map((limit) => (
+              <LimitMeter key={limit.window} agent={agent} limit={limit} />
+            ))}
+          </div>
+        </Popover>
+      )}
+    </>
+  )
+}
+
+/**
+ * The agent's 5-hour and weekly limits under the composer, from its left edge, fitted to the pane:
+ * two full rows from 1000px, one quiet line below that, a single ring under 560px (limitsLayout).
+ */
 export function ComposerLimits({ agent }: { agent: string | null }) {
   const { settings, stale } = useSettings()
-  if (agent === null) return null
-  const limits = settings === null ? [] : agentLimits(settings.limits.readings, agent)
+  const box = useRef<HTMLDivElement>(null)
+  // The composer's footer spans the pane, so its width is the pane's.
+  const layout = limitsLayout(useParentWidth(box))
+  const limits = settings === null || agent === null ? [] : agentLimits(settings.limits.readings, agent)
   const loading = settings === null
-  if (!loading && limits.length === 0) return null
+  const hidden = agent === null || (!loading && limits.length === 0)
+  // The box stays mounted, empty when hidden, so the pane keeps being measured.
   return (
     <div
+      ref={box}
       aria-busy={loading}
-      title={stale ? 'Last known usage; refreshing' : undefined}
-      className={`flex min-w-0 flex-wrap items-center justify-start gap-x-5 px-3 pt-2 text-[12.5px] whitespace-nowrap text-ink-300 transition-opacity duration-150 motion-reduce:transition-none ${stale ? 'opacity-60' : ''}`}
+      title={stale && !hidden ? 'Last known usage; refreshing' : undefined}
+      className={`flex min-w-0 flex-wrap items-center justify-start whitespace-nowrap text-ink-300 transition-opacity duration-150 motion-reduce:transition-none ${hidden ? '' : layout === 'full' ? 'gap-x-5 px-3 pt-2 text-[12.5px]' : 'gap-x-2 px-3 pt-1.5 text-[11.5px]'} ${stale ? 'opacity-60' : ''}`}
     >
-      {loading ? limitWindows.map((window) => <LimitSkeleton key={window} window={window} />) : limits.map((limit) => <LimitMeter key={limit.window} agent={agent} limit={limit} />)}
+      {hidden || agent === null ? null : loading ? (
+        layout === 'full' ? (
+          limitWindows.map((window) => <LimitSkeleton key={window} window={window} />)
+        ) : (
+          <span aria-hidden="true" className={`h-2.5 ${layout === 'ring' ? 'w-10' : 'w-32'} ${shimmer}`} />
+        )
+      ) : layout === 'full' ? (
+        limits.map((limit) => <LimitMeter key={limit.window} agent={agent} limit={limit} />)
+      ) : layout === 'compact' ? (
+        limits.map((limit, index) => (
+          <span key={limit.window} className="flex items-center gap-2">
+            {index > 0 && <span aria-hidden="true" className="text-ink-500">·</span>}
+            <CompactLimit agent={agent} limit={limit} />
+          </span>
+        ))
+      ) : (
+        <LimitRing agent={agent} limits={limits} />
+      )}
     </div>
   )
 }

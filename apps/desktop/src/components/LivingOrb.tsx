@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 // reduced motion leaves a still, softly lit orb.
 
 /** The animated orb, size px across. */
-export function LivingOrb({ size = 112 }: { size?: number }) {
+export function LivingOrb({ size = 112 }: { size?: number | string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(true)
   const [shown, setShown] = useState(() => document.visibilityState !== 'hidden')

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import type { Settings, UsageReading } from '@/api/schema'
 import {
   agentLimits,
+  highestLimit,
+  limitsLayout,
   agentModels,
   contextChoice,
   contextMeter,
@@ -301,6 +303,46 @@ describe('agentLimits', () => {
   test('a missing reading is left out', () => {
     expect(agentLimits(readings, 'grok', now)).toEqual([])
     expect(agentLimits(readings, 'agy', now)).toEqual([])
+  })
+})
+
+describe('limitsLayout', () => {
+  test('a wide pane keeps the full rows, from 1000px up', () => {
+    expect(limitsLayout(1400)).toBe('full')
+    expect(limitsLayout(1000)).toBe('full')
+  })
+
+  test('a pane under 1000px gets one compact line, down to 560px', () => {
+    expect(limitsLayout(999)).toBe('compact')
+    expect(limitsLayout(900)).toBe('compact')
+    expect(limitsLayout(560)).toBe('compact')
+  })
+
+  test('a pane under 560px gets the single ring', () => {
+    expect(limitsLayout(559)).toBe('ring')
+    expect(limitsLayout(420)).toBe('ring')
+    expect(limitsLayout(0)).toBe('ring')
+  })
+
+  test('an unmeasured pane keeps the full rows', () => {
+    expect(limitsLayout(null)).toBe('full')
+  })
+})
+
+describe('highestLimit', () => {
+  const limit = (window: string, usedPercent: number) => ({ window, usedPercent, tone: 'normal' as const, resets: null, resetsAt: null })
+
+  test('the window with the highest use', () => {
+    expect(highestLimit([limit('5h', 13), limit('weekly', 37)])?.window).toBe('weekly')
+    expect(highestLimit([limit('5h', 91), limit('weekly', 37)])?.window).toBe('5h')
+  })
+
+  test('a tie keeps the first window', () => {
+    expect(highestLimit([limit('5h', 40), limit('weekly', 40)])?.window).toBe('5h')
+  })
+
+  test('no limits, no ring', () => {
+    expect(highestLimit([])).toBeNull()
   })
 })
 
