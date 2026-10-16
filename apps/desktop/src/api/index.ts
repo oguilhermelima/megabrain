@@ -6,7 +6,7 @@ import { announceAction } from '@/lib/app-events'
 import { native } from '@/lib/surface'
 
 // The calls that change what status and projects report; the reads refresh once one settles.
-const actions = ['reply', 'setHidden', 'removeProject', 'removeWorktree', 'unqueue', 'sendToSession', 'releaseSession', 'removeChat', 'importFolder', 'importClone', 'setProjectScripts', 'createWorktree', 'setPrState', 'stackRun'] as const
+const actions = ['reply', 'setHidden', 'removeProject', 'removeWorktree', 'unqueue', 'sendToSession', 'releaseSession', 'removeChat', 'importFolder', 'importClone', 'setProjectScripts', 'setProjectAppearance', 'archiveWorktree', 'unarchiveWorktree', 'createWorktree', 'setPrState', 'stackRun'] as const
 
 function announcingActions(base: AppApi): AppApi {
   const wrapped: AppApi = { ...base }

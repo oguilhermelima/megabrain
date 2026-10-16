@@ -1,4 +1,4 @@
-import { createContext, type CSSProperties, type ReactNode } from 'react'
+import { createContext, useContext, type CSSProperties, type ReactNode } from 'react'
 import { agentMarkLook, type AgentActivity } from '@/components/agent-activity'
 
 // Simple monochrome marks that say which agent a chat runs, drawn for this app: a spark for Claude,
@@ -29,10 +29,13 @@ const marks: Record<string, ReactNode> = {
   agy: <path fill="currentColor" d="M8 1.5c.5 3.4 3.1 6 6.5 6.5-3.4.5-6 3.1-6.5 6.5-.5-3.4-3.1-6-6.5-6.5 3.4-.5 6-3.1 6.5-6.5Z" />,
 }
 
+/** A project's colour for the marks inside it (the sidebar sets it per project); null keeps the agents' own colours. */
+export const AgentTint = createContext<string | null>(null)
+
 const motionClass = { spin: 'agent-mark-spin', wave: 'agent-mark-wave', pulse: 'agent-mark-pulse' }
 
 export function AgentIcon({ agent, size = 14, className = '', activity = 'idle' }: { agent: string; size?: number; className?: string; activity?: AgentActivity }) {
-  const look = agentMarkLook(agent, activity)
+  const look = agentMarkLook(agent, activity, useContext(AgentTint))
   const style: CSSProperties | undefined = look.color === null ? undefined : { color: look.color === 'amber' ? 'var(--color-warn)' : look.color }
   return (
     <svg viewBox="0 0 16 16" width={size} height={size} role="img" aria-label={activity === 'idle' ? agent : `${agent}, ${activity}`} style={style} className={`shrink-0 ${look.motion === null ? '' : motionClass[look.motion]} ${className}`}>

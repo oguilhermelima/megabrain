@@ -1,18 +1,47 @@
 import { describe, expect, test } from 'bun:test'
-import { adjacentSection, initialSection, navGroups, sectionInfo, settingsSections } from '@/settings/settings-nav'
+import { adjacentKey, initialKey, navGroups, navKeys, projectKey, sectionInfo, settingsSections } from '@/settings/settings-nav'
+
+const project = (name: string, path: string, appearance?: { name?: string }) => ({ name, path, worktrees: [{ path }], ...(appearance === undefined ? {} : { appearance }) })
+
+const projects = [
+  project('megabrain', '/w/megabrain'),
+  project('canto', '/w/canto', { name: 'Zebra' }),
+  project('Infra', '/w/infra'),
+  project('alpha', '/w/alpha'),
+  { ...project('juntin', '/w/juntin'), worktrees: [{ path: '/w/juntin' }, { path: '/w/trees/juntin-feat' }] },
+]
 
 describe('settings navigation', () => {
-  test('every existing section is reachable exactly once', () => {
+  test('every fixed section is reachable exactly once; projects are no longer a section', () => {
     const keys = settingsSections.map((section) => section.key)
-    expect([...keys].sort()).toEqual(['chains', 'limits', 'models', 'projects', 'supervisor', 'terminal', 'usage'])
+    expect([...keys].sort()).toEqual(['chains', 'limits', 'models', 'supervisor', 'terminal', 'usage'])
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  test('groups list the sections in navigation order, none empty', () => {
-    const groups = navGroups()
+  test('General, Agents and System come first, then Projects as the last group', () => {
+    expect(navGroups(projects).map((group) => group.label)).toEqual(['General', 'Agents', 'System', 'Projects'])
+  })
+
+  test('without projects there is no Projects group, and no group is empty', () => {
+    const groups = navGroups([])
     expect(groups.map((group) => group.label)).toEqual(['General', 'Agents', 'System'])
-    expect(groups.every((group) => group.sections.length > 0)).toBe(true)
-    expect(groups.flatMap((group) => group.sections.map((section) => section.key))).toEqual(settingsSections.map((section) => section.key))
+    expect(groups.every((group) => group.items.length > 0)).toBe(true)
+  })
+
+  test('projects list by display name, alphabetically and ignoring case', () => {
+    const group = navGroups(projects).at(-1)
+    expect(group?.items.map((item) => item.label)).toEqual(['alpha', 'Infra', 'juntin', 'megabrain', 'Zebra'])
+    expect(group?.items.map((item) => item.key)).toEqual(['/w/alpha', '/w/infra', '/w/juntin', '/w/megabrain', '/w/canto'].map(projectKey))
+  })
+
+  test('a project item carries its project, a section item carries none', () => {
+    const groups = navGroups(projects)
+    expect(groups[0]?.items.every((item) => item.project === null)).toBe(true)
+    expect(groups.at(-1)?.items.every((item) => item.project !== null)).toBe(true)
+  })
+
+  test('the keyboard walks sections then projects, in the order shown', () => {
+    expect(navKeys(projects)).toEqual(navGroups(projects).flatMap((group) => group.items.map((item) => item.key)))
   })
 
   test('every section has a title, a one-line description and an icon', () => {
@@ -24,18 +53,23 @@ describe('settings navigation', () => {
     }
   })
 
-  test('opens on usage, or on projects when a project is in focus', () => {
-    expect(initialSection(null)).toBe('usage')
-    expect(initialSection('/repo')).toBe('projects')
+  test('opens on usage, or on the focused project, also when focus names one of its worktrees', () => {
+    expect(initialKey(null, projects)).toBe('usage')
+    expect(initialKey('/w/canto', projects)).toBe(projectKey('/w/canto'))
+    expect(initialKey('/w/trees/juntin-feat', projects)).toBe(projectKey('/w/juntin'))
   })
 
-  test('arrow keys walk the sections and wrap at both ends', () => {
-    const keys = settingsSections.map((section) => section.key)
-    const first = keys[0] as (typeof keys)[number]
-    const last = keys[keys.length - 1] as (typeof keys)[number]
-    expect(adjacentSection(first, 1)).toBe(keys[1] as (typeof keys)[number])
-    expect(adjacentSection(first, -1)).toBe(last)
-    expect(adjacentSection(last, 1)).toBe(first)
+  test('a focus that is not listed opens on that path until the list says otherwise', () => {
+    expect(initialKey('/w/elsewhere', [])).toBe(projectKey('/w/elsewhere'))
+  })
+
+  test('arrow keys walk every item and wrap at both ends', () => {
+    const keys = navKeys(projects)
+    const first = keys[0] ?? 'usage'
+    const last = keys.at(-1) ?? 'usage'
+    expect(adjacentKey(keys, first, 1)).toBe(keys[1] ?? 'usage')
+    expect(adjacentKey(keys, first, -1)).toBe(last)
+    expect(adjacentKey(keys, last, 1)).toBe(first)
   })
 
   test('sectionInfo finds a section by key', () => {

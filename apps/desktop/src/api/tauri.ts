@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -205,6 +205,27 @@ export function createTauriApi(): DesktopApi {
     refreshModels: async (agent) => void (await cliText(['model', 'refresh', agent])),
     setTerminalDefault: async (name) => void (await cliText(['terminal', 'default', name ?? '--clear'])),
     projects: (origin) => cliJson(projectsArgs(origin), projectsSchema),
+    projectAppearance: async () => (await cliJson(['settings', 'get', 'project-appearance', '--json'], projectAppearancesSchema)).projects,
+    setProjectAppearance: async (path, patch) => {
+      const flags = (['name', 'color', 'picture'] as const).flatMap((key) => {
+        const value = patch[key]
+        if (value === undefined) return []
+        return value === null ? [`--no-${key}`] : [`--${key}`, value]
+      })
+      await cliText(['settings', 'set', 'project-appearance', path, ...flags, '--json'])
+    },
+    // A refusal names each uncommitted file and unpushed commit on its own line; the person needs all of them.
+    archiveWorktree: async (path, options) => {
+      const output = await invoke<CliOutput>('run_cli', { args: ['worktree', 'archive', path, ...(options?.force === true ? ['--force'] : []), '--json'] })
+      if (output.code !== 0) throw new CliError(output.stderr.trim() || output.stdout.trim() || `megabrain worktree archive exited ${output.code}`, output.code)
+    },
+    archivedWorktrees: async (repo) =>
+      cliJson(['worktree', 'archived', ...(repo === undefined ? [] : ['--repo', repo]), '--json'], z.union([archivedWorktreeSchema.array(), z.looseObject({ archived: archivedWorktreeSchema.array() }).transform((value) => value.archived)])),
+    unarchiveWorktree: async (repo, branch) => void (await cliText(['worktree', 'unarchive', branch, '--repo', repo, '--json'])),
+    pickImage: async () => {
+      const selected = await open({ directory: false, multiple: false, filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg'] }] })
+      return selected ?? null
+    },
     projectScripts: (root) => cliJson(['repo', 'scripts', root, '--json'], projectScriptsSchema),
     setProjectScripts: (root, scripts) =>
       cliJson(['repo', 'scripts', root, ...Object.entries(scripts).flatMap(([name, command]) => [`--${name}`, command]), '--json'], projectScriptsSchema),

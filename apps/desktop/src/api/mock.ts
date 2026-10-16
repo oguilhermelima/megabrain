@@ -1,7 +1,7 @@
 import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { GithubDetail, Project, ProjectScripts, Chain, ChainStep } from '@/api/schema'
+import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { validateRule } from '@/settings/chain-rules'
@@ -59,6 +59,16 @@ export function createMockApi(): DesktopApi {
     }
     return { repo, scripts: { run: pick('run'), build: pick('build'), install: pick('install') } }
   }
+  // Display names, colours and pictures by repository path, and the branches archived since launch.
+  const appearances: Record<string, ProjectAppearance> = { [mockProjects[1]?.path ?? '']: { name: 'Canto', color: '#e11d48' } }
+  let archived: ArchivedWorktree[] = []
+  const archivedPaths = new Map<string, string>()
+  const listed = (): Project[] =>
+    withOwnership(mockProjects).map((project) => ({
+      ...project,
+      ...(appearances[project.path] === undefined ? {} : { appearance: appearances[project.path] }),
+      worktrees: project.worktrees.filter((worktree) => !archived.some((entry) => entry.repo === project.path && entry.branch === worktree.branch && archivedPaths.get(`${entry.repo}:${entry.branch}`) === worktree.path)),
+    }))
   return {
     kind: 'mock',
     status: async () => {
@@ -203,7 +213,37 @@ export function createMockApi(): DesktopApi {
     deleteChain: async (name) => void (settings = { ...settings, chains: settings.chains.filter((item) => item.name !== name) }),
     refreshModels: async () => {},
     setTerminalDefault: async (name) => void (settings = { ...settings, terminal: { ...settings.terminal, default: name } }),
-    projects: async (origin) => sessionsOfOrigin(withOwnership(mockProjects), origin),
+    projects: async (origin) => sessionsOfOrigin(listed(), origin),
+    projectAppearance: async () => ({ ...appearances }),
+    async setProjectAppearance(path, patch) {
+      await wait(200)
+      const next: ProjectAppearance = { ...appearances[path] }
+      for (const key of ['name', 'color', 'picture'] as const) {
+        const value = patch[key]
+        if (value === null) delete next[key]
+        else if (value !== undefined) next[key] = value
+      }
+      appearances[path] = next
+    },
+    async archiveWorktree(path, options) {
+      await wait(500)
+      const project = mockProjects.find((item) => item.worktrees.some((worktree) => worktree.path === path))
+      const worktree = project?.worktrees.find((item) => item.path === path)
+      if (project === undefined || worktree === undefined || worktree.branch === null) throw new CliError(`${path} is not a worktree megabrain lists.`, 1)
+      if (worktree.primary) throw new CliError('The main checkout cannot be archived.', 1)
+      // A branch with agent sessions stands in for one with work that is not saved.
+      if (options?.force !== true && worktree.sessions.length > 0) throw new CliError(`Refusing to archive ${worktree.branch}:\n  uncommitted: src/app.ts, README.md\n  unpushed: 2 commits ahead of origin/${worktree.branch}`, 1)
+      archivedPaths.set(`${project.path}:${worktree.branch}`, path)
+      archived = [...archived, { repo: project.path, branch: worktree.branch, head: worktree.head, archivedAt: new Date().toISOString(), parent: worktree.parent, pullRequest: worktree.pullRequest }]
+    },
+    archivedWorktrees: async (repo) => archived.filter((entry) => repo === undefined || entry.repo === repo),
+    async unarchiveWorktree(repo, branch) {
+      await wait(500)
+      if (!archived.some((entry) => entry.repo === repo && entry.branch === branch)) throw new CliError(`${branch} is not archived in ${repo}.`, 1)
+      archived = archived.filter((entry) => !(entry.repo === repo && entry.branch === branch))
+      archivedPaths.delete(`${repo}:${branch}`)
+    },
+    pickImage: async () => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#0ea5e9"/><circle cx="12" cy="12" r="5" fill="#fff"/></svg>'),
     projectScripts: async (root) => scriptsFor(root),
     portWho: async (port) => ({ port, listeners: [] }),
     portFree: async (from) => from,

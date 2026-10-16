@@ -1,30 +1,49 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
-import type { AdmissionPolicy, Settings } from '@/api/schema'
+import type { AdmissionPolicy, Project, Settings } from '@/api/schema'
+import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { SettingsSkeleton } from '@/components/Skeleton'
+import { ErrorNote } from '@/components/ui'
 import { ChainsSection } from '@/settings/ChainsSection'
 import { LimitsSection } from '@/settings/LimitsSection'
 import { ModelsSection } from '@/settings/ModelsSection'
-import { ProjectsSection } from '@/settings/ProjectsSection'
+import { ProjectPage } from '@/settings/ProjectPage'
 import { groupReadingsByProvider } from '@/settings/settings-model'
-import { adjacentSection, initialSection, navGroups, sectionInfo, type Section } from '@/settings/settings-nav'
+import { adjacentKey, initialKey, navGroups, navKeys, projectPathOf, sectionInfo, type NavKey } from '@/settings/settings-nav'
 import { ghostIcon, SectionPage, SettingsIcon } from '@/settings/settings-ui'
 import { SupervisorSection } from '@/settings/SupervisorSection'
 import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
 import { UsageSection } from '@/settings/UsageCard'
 
-/** `focusProject` opens on that project's commands, as Edit commands in a chat's run menu does. */
+/** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. */
 export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null }) {
   const [settings, setSettings] = useState<Settings | null>(null)
-  const [section, setSection] = useState<Section>(initialSection(focusProject))
+  const [section, setSection] = useState<NavKey>(initialKey(focusProject, []))
   const [error, setError] = useState<unknown>(null)
+  // Every listed project but the missing ones, for the Projects group and its pages.
+  const [projects, setProjects] = useState<Project[] | null>(null)
+  const [projectsError, setProjectsError] = useState<unknown>(null)
   const nav = useRef<HTMLElement>(null)
   const content = useRef<HTMLElement>(null)
 
   const reload = () => api.settings().then(setSettings, (caught: unknown) => setError(caught))
 
   useEffect(() => void reload(), [])
+
+  const reloadProjects = () =>
+    api.projects('megabrain').then(
+      (next) => {
+        const present = next.filter((project) => !project.missing)
+        setProjects(present)
+        setProjectsError(null)
+        // A focus on a worktree path opens its repository's page once the list names it.
+        setSection((current) => (current === initialKey(focusProject, []) ? initialKey(focusProject, present) : current))
+      },
+      (caught: unknown) => setProjectsError(caught),
+    )
+
+  useEffect(() => void reloadProjects(), [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -51,11 +70,14 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
   }
 
   // Up and down walk the sections while the navigation has focus, the way a sidebar list does.
-  const go = (next: Section) => {
+  const go = (next: NavKey) => {
     setSection(next)
-    nav.current?.querySelector<HTMLElement>(`[data-section="${next}"]`)?.focus()
+    nav.current?.querySelector<HTMLElement>(`[data-section="${CSS.escape(next)}"]`)?.focus()
   }
 
+  const listed = projects ?? []
+  const projectPath = projectPathOf(section)
+  const project = projectPath === null ? null : (listed.find((item) => item.path === projectPath) ?? null)
   const info = sectionInfo(section)
 
   return (
@@ -81,14 +103,14 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
           onKeyDown={(event) => {
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
             event.preventDefault()
-            go(adjacentSection(section, event.key === 'ArrowDown' ? 1 : -1))
+            go(adjacentKey(navKeys(listed), section, event.key === 'ArrowDown' ? 1 : -1))
           }}
         >
           <h1 className="px-3 text-[15px] font-semibold tracking-[-0.01em] text-ink-100">Settings</h1>
-          {navGroups().map((group) => (
-            <div key={group.label} className="grid gap-0.5">
+          {navGroups(listed).map((group) => (
+            <div key={group.label} className={`grid gap-0.5 ${group.label === 'Projects' ? 'border-t border-white/[0.06] pt-4' : ''}`}>
               <p className="px-3 pb-1 text-[11px] font-semibold tracking-[0.06em] text-ink-500 uppercase">{group.label}</p>
-              {group.sections.map((item) => {
+              {group.items.map((item) => {
                 const current = section === item.key
                 return (
                   <button
@@ -98,12 +120,19 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
                     onClick={() => setSection(item.key)}
                     aria-current={current ? 'page' : undefined}
                     tabIndex={current ? 0 : -1}
-                    className={`flex h-8 items-center gap-2.5 rounded-[10px] px-3 text-left text-[13.5px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
+                    title={item.project?.path}
+                    className={`flex h-8 min-w-0 items-center gap-2.5 rounded-[10px] px-3 text-left text-[13.5px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
                       current ? 'bg-white/[0.1] text-ink-100' : 'text-ink-300 hover:bg-white/[0.05] hover:text-ink-100'
                     }`}
                   >
-                    <SettingsIcon name={item.icon} className={`size-4 ${current ? 'text-ink-100' : 'text-ink-400'}`} />
-                    {item.label}
+                    {item.project === null ? (
+                      <SettingsIcon name={sectionInfo(item.key).icon} className={`size-4 ${current ? 'text-ink-100' : 'text-ink-400'}`} />
+                    ) : (
+                      <span className="-ml-1 flex scale-[0.84]">
+                        <ProjectPicture project={item.project} />
+                      </span>
+                    )}
+                    <span className="min-w-0 truncate">{item.label}</span>
                   </button>
                 )
               })}
@@ -111,11 +140,20 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
           ))}
         </nav>
         <main ref={content} className="min-h-0 flex-1 overflow-y-auto px-8 pt-8 pb-10">
-          {settings === null ? (
+          {projectPath !== null ? (
+            project !== null ? (
+              <ProjectPage key={project.path} project={project} onChanged={() => void reloadProjects()} />
+            ) : projectsError !== null ? (
+              <ErrorNote error={projectsError} />
+            ) : projects === null ? (
+              <SettingsSkeleton />
+            ) : (
+              <p className="px-1 text-[13px] text-ink-400">This project is no longer listed.</p>
+            )
+          ) : settings === null ? (
             <SettingsSkeleton />
           ) : (
             <SectionPage icon={info.icon} title={info.label} description={info.description}>
-              {section === 'projects' && <ProjectsSection focusProject={focusProject} />}
               {section === 'usage' && (
                 <UsageSection
                   providers={groupReadingsByProvider(settings.limits.readings)}

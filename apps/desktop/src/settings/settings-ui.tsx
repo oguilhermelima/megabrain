@@ -23,7 +23,6 @@ const iconPaths: Record<SectionIcon, ReactNode> = {
       <path d="m8 11 2.5-3" />
     </>
   ),
-  folder: <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" />,
   cpu: (
     <>
       <rect x="4" y="4" width="8" height="8" rx="1.5" />

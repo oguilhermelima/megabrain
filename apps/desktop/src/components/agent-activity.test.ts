@@ -48,3 +48,26 @@ describe('agentMarkLook', () => {
     expect(agentMarkLook('someone', 'working').motion).toBe('spin')
   })
 })
+
+describe('agentMarkLook with a project colour', () => {
+  const tint = '#12abef'
+
+  test('idle takes the project colour and stays still', () => {
+    for (const agent of ['claude', 'codex', 'agy', 'grok']) expect(agentMarkLook(agent, 'idle', tint)).toEqual({ color: tint, motion: null })
+  })
+
+  test('working takes the project colour over the brand colour and keeps its motion', () => {
+    expect(agentMarkLook('claude', 'working', tint)).toEqual({ color: tint, motion: 'spin' })
+    expect(agentMarkLook('grok', 'working', tint)).toEqual({ color: tint, motion: 'wave' })
+    expect(agentMarkLook('someone', 'working', tint)).toEqual({ color: tint, motion: 'spin' })
+  })
+
+  test('waiting stays amber, the one signal that asks for the person', () => {
+    expect(agentMarkLook('claude', 'waiting', tint)).toEqual({ color: 'amber', motion: 'pulse' })
+  })
+
+  test('no project colour keeps the brand colours', () => {
+    expect(agentMarkLook('claude', 'working', null)).toEqual({ color: '#D97757', motion: 'spin' })
+    expect(agentMarkLook('claude', 'idle', null)).toEqual({ color: null, motion: null })
+  })
+})

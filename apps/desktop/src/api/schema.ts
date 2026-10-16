@@ -419,6 +419,27 @@ export const stackShowSchema = z.looseObject({
   ),
 })
 
+// How the person dressed a project in megabrain only; the repository never changes. picture is
+// the path of megabrain's own copy under ~/.megabrain/project-pictures. Read in appearance-model.ts.
+export const projectAppearanceSchema = z.looseObject({
+  name: z.string().nullable().optional(),
+  color: z.string().nullable().optional(),
+  picture: z.string().nullable().optional(),
+})
+
+/** `megabrain settings get project-appearance --json`, by repository path. */
+export const projectAppearancesSchema = z.looseObject({ projects: z.record(z.string(), projectAppearanceSchema) })
+
+// One branch whose worktree folder megabrain removed and keeps for later (`worktree archived --json`).
+export const archivedWorktreeSchema = z.looseObject({
+  repo: z.string(),
+  branch: z.string(),
+  head: z.string().nullable().optional(),
+  archivedAt: z.string(),
+  parent: z.string().nullable().optional(),
+  pullRequest: z.looseObject({ number: z.number(), state: z.string().optional(), url: z.string().optional() }).nullable().optional(),
+})
+
 // `megabrain projects --json`: every registered project with its main checkout first, then its
 // worktrees, and the agent sessions in each.
 export const projectsSchema = z.array(
@@ -430,6 +451,8 @@ export const projectsSchema = z.array(
     /** The folder no longer exists or is no longer a git repository. */
     missing: z.boolean(),
     hidden: z.boolean().optional(),
+    /** Absent from an older CLI. */
+    appearance: projectAppearanceSchema.optional(),
     worktrees: z.array(projectWorktreeSchema),
   }),
 )
@@ -685,6 +708,8 @@ export type Project = z.infer<typeof projectsSchema>[number]
 export type StackShow = z.infer<typeof stackShowSchema>
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>
+export type ProjectAppearance = z.infer<typeof projectAppearanceSchema>
+export type ArchivedWorktree = z.infer<typeof archivedWorktreeSchema>
 export type HistorySession = z.infer<typeof historySessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
 export type SendResult = z.infer<typeof sendResultSchema>

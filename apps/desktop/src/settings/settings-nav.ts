@@ -1,8 +1,15 @@
-// The Settings window's navigation: which sections exist, how they group and how the keyboard walks them.
+// The Settings window's navigation: the fixed sections in their groups, then every project under a
+// last Projects group, alphabetical by display name, and how the keyboard walks them all.
 
-export type Section = 'usage' | 'projects' | 'models' | 'chains' | 'supervisor' | 'limits' | 'terminal'
+import { compareByDisplayName, displayName } from '@/advanced/appearance-model'
+import type { ProjectAppearance } from '@/api/schema'
 
-export type SectionIcon = 'gauge' | 'folder' | 'cpu' | 'link' | 'eye' | 'sliders' | 'terminal'
+export type Section = 'usage' | 'models' | 'chains' | 'supervisor' | 'limits' | 'terminal'
+
+/** A section, or one project's page by its repository path. */
+export type NavKey = Section | `project:${string}`
+
+export type SectionIcon = 'gauge' | 'cpu' | 'link' | 'eye' | 'sliders' | 'terminal'
 
 export interface SectionInfo {
   key: Section
@@ -16,7 +23,6 @@ export interface SectionInfo {
 /** In navigation order; groups follow the order their first section appears in. */
 export const settingsSections: SectionInfo[] = [
   { key: 'usage', label: 'Usage', description: 'How much of each provider’s limits your agents have used.', icon: 'gauge', group: 'General' },
-  { key: 'projects', label: 'Projects', description: 'The Run, Build and Install commands each project offers in a chat.', icon: 'folder', group: 'General' },
   { key: 'models', label: 'Models', description: 'The models each agent can run, and their reasoning levels.', icon: 'cpu', group: 'Agents' },
   { key: 'chains', label: 'Chains', description: 'Which agent and model a dispatch tries first, and what it falls back to.', icon: 'link', group: 'Agents' },
   { key: 'supervisor', label: 'Supervisor', description: 'The watcher that reports stuck, finished or dead children, and setup.', icon: 'eye', group: 'Agents' },
@@ -24,28 +30,69 @@ export const settingsSections: SectionInfo[] = [
   { key: 'terminal', label: 'Terminal', description: 'The terminal engine inside the app and the one opened outside it.', icon: 'terminal', group: 'System' },
 ]
 
-export function navGroups(): { label: SectionInfo['group']; sections: SectionInfo[] }[] {
-  const groups: { label: SectionInfo['group']; sections: SectionInfo[] }[] = []
+/** What the navigation needs of a project. */
+export interface NavProject {
+  name: string
+  path: string
+  appearance?: ProjectAppearance
+  worktrees: { path: string }[]
+}
+
+export interface NavItem<P extends NavProject = NavProject> {
+  key: NavKey
+  label: string
+  /** The project a project item opens; null for a section. */
+  project: P | null
+}
+
+export type NavGroupLabel = SectionInfo['group'] | 'Projects'
+
+export function projectKey(path: string): NavKey {
+  return `project:${path}`
+}
+
+/** The repository path a key names; null for a section. */
+export function projectPathOf(key: NavKey): string | null {
+  return key.startsWith('project:') ? key.slice('project:'.length) : null
+}
+
+export function navGroups<P extends NavProject>(projects: P[]): { label: NavGroupLabel; items: NavItem<P>[] }[] {
+  const groups: { label: NavGroupLabel; items: NavItem<P>[] }[] = []
   for (const section of settingsSections) {
-    const group = groups.find((item) => item.label === section.group)
-    if (group === undefined) groups.push({ label: section.group, sections: [section] })
-    else group.sections.push(section)
+    const item: NavItem<P> = { key: section.key, label: section.label, project: null }
+    const group = groups.find((entry) => entry.label === section.group)
+    if (group === undefined) groups.push({ label: section.group, items: [item] })
+    else group.items.push(item)
+  }
+  if (projects.length > 0) {
+    groups.push({ label: 'Projects', items: [...projects].sort(compareByDisplayName).map((project) => ({ key: projectKey(project.path), label: displayName(project), project })) })
   }
   return groups
 }
 
-export function sectionInfo(key: Section): SectionInfo {
+/** Every key in the order shown, for the arrow keys. */
+export function navKeys(projects: NavProject[]): NavKey[] {
+  return navGroups(projects).flatMap((group) => group.items.map((item) => item.key))
+}
+
+/** A section's title, line and icon; a project key gets the first section's, which its page does not show. */
+export function sectionInfo(key: NavKey): SectionInfo {
   return settingsSections.find((section) => section.key === key) ?? (settingsSections[0] as SectionInfo)
 }
 
-/** Usage, unless Settings opens on a project's commands. */
-export function initialSection(focusProject: string | null): Section {
-  return focusProject === null ? 'usage' : 'projects'
+/**
+ * Usage, unless Settings opens on a project (Edit commands in a chat's run menu). A worktree path
+ * opens its repository's page; a path the list does not know yet keeps its own key.
+ */
+export function initialKey(focus: string | null, projects: NavProject[]): NavKey {
+  if (focus === null) return 'usage'
+  const owner = projects.find((project) => project.path === focus || project.worktrees.some((worktree) => worktree.path === focus))
+  return projectKey(owner?.path ?? focus)
 }
 
-/** The section an arrow key moves to, wrapping at both ends. */
-export function adjacentSection(current: Section, offset: 1 | -1): Section {
-  const index = settingsSections.findIndex((section) => section.key === current)
-  const next = (index + offset + settingsSections.length) % settingsSections.length
-  return (settingsSections[next] as SectionInfo).key
+/** The key an arrow key moves to, wrapping at both ends; an unknown current starts at the first. */
+export function adjacentKey(keys: NavKey[], current: NavKey, offset: 1 | -1): NavKey {
+  const index = keys.indexOf(current)
+  if (index === -1) return keys[0] ?? current
+  return keys[(index + offset + keys.length) % keys.length] ?? current
 }

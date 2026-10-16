@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -105,6 +105,18 @@ export interface DesktopApi {
   projectScripts(root: string): Promise<ProjectScripts>
   /** Save some of them; an empty string returns that one to detection. */
   setProjectScripts(root: string, scripts: Partial<Record<'run' | 'build' | 'install', string>>): Promise<ProjectScripts>
+  /** How each project is shown in megabrain, by repository path (`settings get project-appearance`); the repository is never touched. */
+  projectAppearance(): Promise<Record<string, ProjectAppearance>>
+  /** Sets or clears (null) a project's display name, colour or picture; the picture is an image file megabrain copies. */
+  setProjectAppearance(path: string, patch: ProjectAppearancePatch): Promise<void>
+  /** Removes a worktree's folder and keeps its branch (`worktree archive`); refused with megabrain's reasons unless forced. */
+  archiveWorktree(path: string, options?: { force?: boolean }): Promise<void>
+  /** The branches megabrain archived, for one repository or all (`worktree archived`). */
+  archivedWorktrees(repo?: string): Promise<ArchivedWorktree[]>
+  /** Recreates an archived branch's worktree where it was (`worktree unarchive`). */
+  unarchiveWorktree(repo: string, branch: string): Promise<void>
+  /** Ask the person for an image with the native picker; null when cancelled. */
+  pickImage(): Promise<string | null>
   /** What listens on a TCP port (`port who`). */
   portWho(port: number): Promise<PortListeners>
   /** The first port from `from` up that nothing listens on (`port free`). */
@@ -206,6 +218,9 @@ export interface WorktreeApi {
 
 /** What the app's `api` offers. */
 export type AppApi = DesktopApi & WorktreeApi
+
+/** A field left out stays as it is; null returns it to what megabrain detects. */
+export type ProjectAppearancePatch = { [K in 'name' | 'color' | 'picture']?: string | null }
 
 /** One tmux terminal the app opened: `id` is what `closeTerminal` takes, `sessionName` what a reopen attaches to. */
 export type AppTerminalListing = { id: string; sessionName: string; cwd: string; title: string; command: string; alive: boolean; createdAt: string }

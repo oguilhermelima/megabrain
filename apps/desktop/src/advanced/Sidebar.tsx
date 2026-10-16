@@ -6,6 +6,8 @@ import { memberStatus, memberStatusLabel, stackActions, stackChain, visibleTree,
 import { useStackDetails, type StackDetails } from '@/advanced/useStackDetails'
 import { projectColor } from '@/advanced/picture-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
+import { displayName, projectTint } from '@/advanced/appearance-model'
+import { archiveDone, archiveFailed, beginArchive, beginRestore, reconcileArchives, restoreDone, restoreFailed, withoutArchived, type ArchiveMap, type ArchiveTarget } from '@/advanced/archive-model'
 import { dropTarget, type Placement } from '@/advanced/project-order'
 import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, moveToFolder, renameFolder, sidebarEntries, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
@@ -15,12 +17,13 @@ import { applyRowOrder, moveRow, parseRowOrder, saveRowOrder, worktreeItems, typ
 import { ContextMenu, menuFrom, openMenuFromKeyboard, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
+import { Toast, type ToastMessage } from '@/components/Toast'
 import { FilterMenu, HeaderButton, SearchField, SearchIcon } from '@/advanced/SidebarTools'
 import { activeFilterLabels, emptyFilters, filterProjects, hasFilters, parseFilters, partitionHidden, sessionTimer, type HiddenPartition, type SidebarFilters } from '@/advanced/sidebar-model'
 import { SidebarSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
 import { activityOf } from '@/components/agent-activity'
-import { AgentIcon } from '@/components/agent-icons'
+import { AgentIcon, AgentTint } from '@/components/agent-icons'
 import { codeTargetFor, type CodeTarget } from '@/code/code-mode-model'
 import { countBadge, githubRepository, stateColors, worktreePullRequestState } from '@/github/github-model'
 import { IssueIcon, PullRequestIcon } from '@/github/icons'
@@ -777,14 +780,14 @@ const ProjectSection = memo(function ProjectSection({
         onContextMenu={(event) => onMenu(event, actions.project(project))}
         onPointerDown={(event) => drag.start(event, project.path)}
         className={`group relative flex h-9 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 select-none hover:bg-row-hover ${dragging ? 'opacity-50' : ''}`}
-        title={`${project.name}\n${project.path}`}
+        title={`${displayName(project)}\n${project.path}`}
       >
         {edge !== null && <DropLine edge={edge} />}
         <ProjectPicture project={project} />
-        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-400">{project.name}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-400">{displayName(project)}</h2>
         <span className="shrink-0 text-[11px] text-ink-400">folder missing</span>
         <RowActions gap="2.5">
-          <MoreButton label={`Manage ${project.name}`} onClick={(event) => onMenu(event, actions.project(project))} />
+          <MoreButton label={`Manage ${displayName(project)}`} onClick={(event) => onMenu(event, actions.project(project))} />
         </RowActions>
       </section>
     )
@@ -856,11 +859,11 @@ const ProjectSection = memo(function ProjectSection({
           onKeyDown={(event) => drag.key(event, project.path)}
           aria-expanded={!collapsed}
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-          title={`${project.name}\n${project.path}\nDrag or press ⌥↑ ⌥↓ to reorder`}
+          title={`${displayName(project)}\n${project.path}\nDrag or press ⌥↑ ⌥↓ to reorder`}
           className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left"
         >
           <ProjectPicture project={project} />
-          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{project.name}</h2>
+          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{displayName(project)}</h2>
           {collapsed && running > 0 && (
             <span title={`${running} running`} className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-ink-400 tabular-nums">
               <span aria-hidden="true" className="size-1.5 rounded-full bg-ok" />
@@ -869,25 +872,28 @@ const ProjectSection = memo(function ProjectSection({
           )}
         </button>
         <RowActions gap="0.5">
-          <NewChatButton label={`New worktree in ${project.name}`} onClick={() => onNewWorktree(project)} />
+          <NewChatButton label={`New worktree in ${displayName(project)}`} onClick={() => onNewWorktree(project)} />
         </RowActions>
         {githubRepository(project.remote) !== null && (
           <>
-            <GithubButton kind="prs" label={`${project.name} pull requests`} count={githubCounts?.prs ?? null} active={githubActive === 'prs'} last={false} onClick={() => onGithub(project, 'prs')} />
-            <GithubButton kind="issues" label={`${project.name} issues`} count={githubCounts?.issues ?? null} active={githubActive === 'issues'} last onClick={() => onGithub(project, 'issues')} />
+            <GithubButton kind="prs" label={`${displayName(project)} pull requests`} count={githubCounts?.prs ?? null} active={githubActive === 'prs'} last={false} onClick={() => onGithub(project, 'prs')} />
+            <GithubButton kind="issues" label={`${displayName(project)} issues`} count={githubCounts?.issues ?? null} active={githubActive === 'issues'} last onClick={() => onGithub(project, 'issues')} />
           </>
         )}
         <RowActions gap="0.5">
-          <MoreButton label={`Manage ${project.name}`} onClick={(event) => onMenu(event, actions.project(project))} />
+          <MoreButton label={`Manage ${displayName(project)}`} onClick={(event) => onMenu(event, actions.project(project))} />
         </RowActions>
       </div>
       <Collapse open={!collapsed}>
-        <div className="space-y-1 pt-1">
-          {renderNodes(nodes)}
-          {creations.map((creation) => (
-            <PendingWorktreeRow key={creation.id} creation={creation} rows={creationRows} />
-          ))}
-        </div>
+        {/* The project's colour reaches only the agent marks of its chats and sessions. */}
+        <AgentTint.Provider value={projectTint(project)}>
+          <div className="space-y-1 pt-1">
+            {renderNodes(nodes)}
+            {creations.map((creation) => (
+              <PendingWorktreeRow key={creation.id} creation={creation} rows={creationRows} />
+            ))}
+          </div>
+        </AgentTint.Provider>
       </Collapse>
     </section>
   )
@@ -1088,8 +1094,8 @@ function HiddenSection({ hidden, onShow }: { hidden: HiddenPartition; onShow: (t
       </button>
       <Collapse open={open}>
         <ul className="space-y-0.5 pt-1">
-          {hidden.hiddenProjects.map((project) => row(`p:${project.path}`, project.name, 'project', { project: project.path }))}
-          {hidden.hiddenWorktrees.map(({ project, worktree }) => row(`w:${worktree.path}`, worktreeName(worktree), project.name, { worktree: worktree.path }))}
+          {hidden.hiddenProjects.map((project) => row(`p:${project.path}`, displayName(project), 'project', { project: project.path }))}
+          {hidden.hiddenWorktrees.map(({ project, worktree }) => row(`w:${worktree.path}`, worktreeName(worktree), displayName(project), { worktree: worktree.path }))}
         </ul>
       </Collapse>
     </section>
@@ -1191,7 +1197,13 @@ export const Sidebar = memo(function Sidebar({
     return list.length === 0 ? [] : [[project.path, list]]
   })), [projects, creations])
   const [actionError, setActionError] = useState<unknown>(null)
-  const partition = useMemo(() => partitionHidden(projects), [projects])
+  // Branches being archived leave the list at once (archive-model.ts); the toast offers Undo.
+  const [archives, setArchives] = useState<ArchiveMap>({})
+  const [toast, setToast] = useState<ToastMessage | null>(null)
+  const closeToast = useCallback(() => setToast(null), [])
+  useEffect(() => setArchives((current) => reconcileArchives(current, projects)), [projects])
+  const shownProjects = useMemo(() => withoutArchived(projects, archives), [projects, archives])
+  const partition = useMemo(() => partitionHidden(shownProjects), [shownProjects])
   const closeMenu = useCallback(() => setMenu(null), [])
   const now = useNow(30_000)
   const visible = useMemo(() => filterProjects(partition.visible, filters), [partition, filters])
@@ -1419,6 +1431,46 @@ export const Sidebar = memo(function Sidebar({
     }
   })
 
+  const restore = useStableCallback((target: ArchiveTarget) => {
+    setActionError(null)
+    setArchives((current) => beginRestore(current, target))
+    api.unarchiveWorktree(target.repo, target.branch).then(
+      () => setArchives((current) => restoreDone(current, target.path)),
+      (caught: unknown) => {
+        setArchives((current) => restoreFailed(current, target.path))
+        setActionError(caught)
+      },
+    )
+  })
+  // Runs inside the confirm, so a refusal shows there with megabrain's reasons and Archive anyway.
+  const archive = useStableCallback((target: ArchiveTarget, confirm: PendingConfirm, force: boolean): Promise<void> => {
+    setArchives((current) => beginArchive(current, target))
+    return api.archiveWorktree(target.path, { force }).then(
+      () => {
+        setArchives((current) => archiveDone(current, target.path))
+        setToast({ id: `${target.path}:${Date.now()}`, text: `Archived ${target.branch}`, action: { label: 'Undo', run: () => restore(target) } })
+      },
+      (caught: unknown) => {
+        setArchives((current) => archiveFailed(current, target.path))
+        if (!force) setConfirm({ ...confirm, alternative: { label: 'Archive anyway', run: () => archive(target, confirm, true) } })
+        throw caught
+      },
+    )
+  })
+  const confirmArchive = useStableCallback((project: Project, worktree: ProjectWorktree) => {
+    const branch = worktree.branch
+    if (branch === null) return
+    const target: ArchiveTarget = { repo: project.path, branch, path: worktree.path }
+    const confirm: PendingConfirm = {
+      title: `Archive ${branch}?`,
+      body: `megabrain removes the folder ${worktree.path} and keeps the branch ${branch}; restore it from the toast or from ${displayName(project)} in Settings. It refuses when the folder has changes that are not committed or commits that are not pushed.`,
+      action: 'Archive',
+      tone: 'primary',
+      run: () => archive(target, confirm, false),
+    }
+    setConfirm(confirm)
+  })
+
   const copyText = useStableCallback((text: string) => {
     setActionError(null)
     navigator.clipboard.writeText(text).catch(setActionError)
@@ -1462,7 +1514,7 @@ export const Sidebar = memo(function Sidebar({
         group: 'danger',
         onSelect: () =>
           setConfirm({
-            title: `Remove ${project.name} from megabrain?`,
+            title: `Remove ${displayName(project)} from megabrain?`,
             body: `megabrain stops listing this project. The folder and its files stay where they are (${project.path}); import it again with + to bring it back.`,
             action: 'Remove',
             run: () => api.removeProject(project.path),
@@ -1483,6 +1535,7 @@ export const Sidebar = memo(function Sidebar({
         { label: 'Hide', icon: 'hide', group: 'organise', onSelect: () => setHidden({ worktree: worktree.path }, true) },
       ]
       // The main checkout is the project itself; it is removed with the project, not as a worktree.
+      if (!worktree.primary && worktree.branch !== null) items.push({ label: 'Archive…', icon: 'archive', group: 'organise', onSelect: () => confirmArchive(project, worktree) })
       if (!worktree.primary) {
         items.push({
           label: 'Remove worktree…',
@@ -1491,7 +1544,7 @@ export const Sidebar = memo(function Sidebar({
           onSelect: () =>
             setConfirm({
               title: `Remove ${name}?`,
-              body: `This deletes the folder ${worktree.path} and the branch ${worktree.branch ?? '(detached)'} from ${project.name}. megabrain refuses when the branch has work that is not merged, and nothing is deleted then.`,
+              body: `This deletes the folder ${worktree.path} and the branch ${worktree.branch ?? '(detached)'} from ${displayName(project)}. megabrain refuses when the branch has work that is not merged, and nothing is deleted then.`,
               action: 'Remove worktree',
               run: () => api.removeWorktree(worktree.path),
             }),
@@ -1523,7 +1576,7 @@ export const Sidebar = memo(function Sidebar({
       if (!ownership(session).owned) return []
       return [{ label: 'Release from megabrain…', icon: 'release', group: 'danger', onSelect: () => closeRow({ kind: 'session', session }) }]
     },
-  }), [onCode, onGithub, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem])
+  }), [onCode, onGithub, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem, confirmArchive])
 
   const [renamingTerminal, setRenamingTerminal] = useState<string | null>(null)
   const terminalRows = useMemo<TerminalRows>(() => ({
@@ -1597,7 +1650,7 @@ export const Sidebar = memo(function Sidebar({
   )
 
   const stackRows = useMemo<StackRows>(() => ({ details: stackDetails, folded: collapsed, fold: toggle, busy: stackBusy }), [stackDetails, collapsed, toggle, stackBusy])
-  const listedByPath = new Map(projects.map((project) => [project.path, project]))
+  const listedByPath = new Map(shownProjects.map((project) => [project.path, project]))
   const shownByPath = new Map(visible.map((project) => [project.path, project]))
   const renderProject = (project: Project) => (
     <ProjectSection
@@ -1755,6 +1808,7 @@ export const Sidebar = memo(function Sidebar({
       </div>
       <ContextMenu menu={menu} onClose={closeMenu} />
       <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
+      <Toast toast={toast} onClose={closeToast} />
       <NewWorktreeDialog
         request={newWorktreeFor}
         taken={creations.filter((item) => item.repo === newWorktreeFor?.project.path && item.status !== 'failed').map((item) => item.branch)}
