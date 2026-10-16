@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { MenuItem } from '@/components/ContextMenu'
 import { AgentIcon } from '@/components/agent-icons'
@@ -6,19 +6,25 @@ import { MenuIconGlyph } from '@/components/menu-icons'
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { visibleMarks, type GroupMember, type GroupRow, type MemberMark, type MemberState } from '@/advanced/split-rows'
 import type { SidebarDrag } from '@/advanced/Sidebar'
-import type { JoinTarget, RowDragStart, RowDragState } from '@/advanced/useRowDrag'
+import type { JoinTarget, MapCell, RowDragStart, RowDragState } from '@/advanced/useRowDrag'
+import { arrangePane, type ArrangeTarget } from '@/panes/arrange'
+import { focusDirection, paneRects, resizeSplit, type Direction, type Divider, type Edge, type Panes, type Rect } from '@/panes/pane-model'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 
 // Split groups in the sidebar (see split-rows.ts): one row per group under its worktree, or under a
 // Splits header when its members span worktrees. Advanced owns the layout and provides this context;
 // the rows read it, so the memoised sidebar does not re-render for it.
 
-/** A change to the groups from the sidebar: a row or group joined, a member leaving, reordered or swapped. */
+/** A change to the groups from the sidebar: a row or group joined, a member leaving, or the layout edited on the hover's map. */
 export type SplitDrop =
   | { kind: 'join'; source: JoinTarget; target: JoinTarget }
   | { kind: 'leave'; groupId: string; item: string }
-  | { kind: 'move'; groupId: string; item: string; index: number }
-  | { kind: 'swap'; groupId: string; a: string; b: string }
+  /** A member dropped on a cell's zone or a side of the map, or moved there from its menu. */
+  | { kind: 'arrange'; groupId: string; item: string; target: ArrangeTarget }
+  /** A member moved one step with Shift and an arrow key. */
+  | { kind: 'shift'; groupId: string; item: string; direction: Direction }
+  /** A divider of the map dragged: the group's panes as they now are. */
+  | { kind: 'resize'; groupId: string; panes: Panes }
 
 /** The sidebar's drag, as the group rows and their hover take part in it (see useRowDrag). */
 export interface GroupDrag {
@@ -44,7 +50,7 @@ export interface SplitRowsValue {
   selected: ReadonlySet<string>
   /** ⌘-click adds or removes a row; a plain click clears the picking. */
   pick: (item: string, add: boolean) => void
-  /** Joins, removes, reorders or swaps, from the hover's buttons and keys as from a drag. */
+  /** Joins, removes or arranges, from the hover's map, menus and keys as from a drag. */
   drop: (drop: SplitDrop) => void
 }
 
@@ -88,42 +94,24 @@ export function MemberMarkIcon({ mark, state }: { mark: MemberMark; state: Membe
   }
 }
 
-/**
- * The arrangement in miniature: one cell per member, the focused one filled. With `onCell` each cell
- * is a drop target for a member dragged in the hover (`swapWith` lights the one it would swap with),
- * and cells glide to their new place when the members reorder.
- */
-export function LayoutGlyph({ row, width, height, onCell, swapWith = null, dragged = null }: { row: GroupRow; width: number; height: number; onCell?: (member: GroupMember) => void; swapWith?: string | null; dragged?: string | null }) {
+/** The arrangement in miniature: one cell per member, the focused one filled. */
+export function LayoutGlyph({ row, width, height }: { row: GroupRow; width: number; height: number }) {
   const gap = width > 40 ? 3 : 1.5
-  const live = onCell !== undefined
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} aria-hidden={live ? undefined : 'true'} className="shrink-0">
-      {row.glyph.map(({ item, rect }, index) => {
-        const member = row.members.find((candidate) => candidate.item === item)
-        const focused = member?.focused === true && row.active
-        const fill = swapWith === item ? 'fill-accent/40 stroke-accent' : dragged === item ? 'fill-accent/25 stroke-accent' : focused ? 'fill-accent/60 stroke-accent' : 'fill-white/[0.06] stroke-ink-400'
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} aria-hidden="true" className="shrink-0">
+      {row.glyph.map(({ item, rect }) => {
+        const focused = row.members.find((candidate) => candidate.item === item)?.focused === true && row.active
         return (
           <rect
             key={item}
-            data-member-cell={live ? item : undefined}
-            style={{
-              x: rect.x * width + gap / 2,
-              y: rect.y * height + gap / 2,
-              width: Math.max(1, rect.width * width - gap),
-              height: Math.max(1, rect.height * height - gap),
-              transition: live ? 'x var(--motion-panel) var(--motion-ease-panel), y var(--motion-panel) var(--motion-ease-panel), width var(--motion-panel) var(--motion-ease-panel), height var(--motion-panel) var(--motion-ease-panel), fill var(--motion-enter)' : undefined,
-            }}
             x={rect.x * width + gap / 2}
             y={rect.y * height + gap / 2}
             width={Math.max(1, rect.width * width - gap)}
             height={Math.max(1, rect.height * height - gap)}
             rx={width > 40 ? 3 : 1.5}
-            onClick={onCell === undefined || member === undefined ? undefined : () => onCell(member)}
-            className={`${fill} ${live ? 'cursor-pointer hover:fill-white/[0.16]' : ''}`}
+            className={focused ? 'fill-accent/60 stroke-accent' : 'fill-white/[0.06] stroke-ink-400'}
             strokeWidth={1}
-          >
-            {live && member !== undefined && <title>{`${index + 1}. ${member.title}`}</title>}
-          </rect>
+          />
         )
       })}
     </svg>
@@ -253,45 +241,24 @@ export function GroupRowView({ row, indent, onMenu, end, drag }: { row: GroupRow
   )
 }
 
-function DragHandle() {
-  return (
-    <svg viewBox="0 0 8 12" width="8" height="12" fill="currentColor" aria-hidden="true" className="shrink-0">
-      <circle cx="2" cy="2" r="1" />
-      <circle cx="6" cy="2" r="1" />
-      <circle cx="2" cy="6" r="1" />
-      <circle cx="6" cy="6" r="1" />
-      <circle cx="2" cy="10" r="1" />
-      <circle cx="6" cy="10" r="1" />
-    </svg>
-  )
-}
+const mapWidth = 264
+const mapHeight = 168
+/** The margin round the map's cells: dropping a cell in it spans that side of the group. */
+const mapPad = 12
+
+const arrowDirections: Readonly<Record<string, Direction>> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 
 /**
- * Every member of a group, in pane order, and the layout in miniature. Drag a line by its handle to
- * reorder the panes (live), onto a cell of the map to swap two, or out to the sidebar to remove it;
- * Alt+Up and Alt+Down move a focused line, × removes it and … opens its menu.
+ * A group's hover: its layout as a map to edit in place, and a line naming the cell under the
+ * pointer (or the focused one). See SplitMap.
  */
 function HoverPreview({ row, anchor, drag, onMenu, onEnter, onLeave }: { row: GroupRow; anchor: DOMRect; drag: GroupDrag; onMenu: (event: MouseEvent<HTMLElement>, items: MenuItem[]) => void; onEnter: () => void; onLeave: () => void }) {
   const splits = useSplitRows()
-  const list = useRef<HTMLUListElement>(null)
-  useSlidingLines(list)
+  const [named, setNamed] = useState<string | null>(null)
   if (splits === null) return null
-  const top = Math.max(8, Math.min(anchor.top - 8, window.innerHeight - 120 - row.members.length * 28))
-  const source = drag.drag?.source ?? null
-  const target = drag.drag?.target ?? null
-  const dragged = source?.kind === 'member' && source.groupId === row.id ? source.item : null
-  const swapWith = target?.kind === 'swap' && target.groupId === row.id ? target.item : null
-  const move = (member: GroupMember, index: number) => {
-    splits.drop({ kind: 'move', groupId: row.id, item: member.item, index })
-    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-member-line="${CSS.escape(member.item)}"] [data-member-focus]`)?.focus())
-  }
-  const remove = (member: GroupMember) => splits.drop({ kind: 'leave', groupId: row.id, item: member.item })
-  const memberMenu = (member: GroupMember, index: number): MenuItem[] => [
-    { label: 'Focus pane', icon: 'select', group: 'open', onSelect: () => splits.focusMember(row.id, member.item) },
-    ...(index > 0 ? [{ label: 'Move up', icon: 'moveOut', group: 'organise', onSelect: () => move(member, index - 1) } satisfies MenuItem] : []),
-    ...(index < row.members.length - 1 ? [{ label: 'Move down', icon: 'bottom', group: 'organise', onSelect: () => move(member, index + 1) } satisfies MenuItem] : []),
-    { label: 'Remove from split', icon: 'unsplit', group: 'danger', onSelect: () => remove(member) },
-  ]
+  const height = mapHeight + 2 * mapPad + 96
+  const top = Math.max(8, Math.min(anchor.top - 8, window.innerHeight - height - 8))
+  const shown = row.members.find((member) => member.item === named) ?? row.members.find((member) => member.focused) ?? row.members[0]
   return createPortal(
     <div
       role="dialog"
@@ -306,95 +273,185 @@ function HoverPreview({ row, anchor, drag, onMenu, onEnter, onLeave }: { row: Gr
       onPointerEnter={onEnter}
       onPointerLeave={onLeave}
       style={{ left: anchor.right + 8, top }}
-      className="glass motion-fade fixed z-[60] w-64 rounded-[14px] border border-white/[0.1] p-2 shadow-2xl"
+      className="glass motion-fade fixed z-[60] rounded-[14px] border border-white/[0.1] p-2 shadow-2xl"
     >
-      <div className="flex items-center gap-2 px-1.5 pb-2">
+      <div className="flex items-center gap-2 px-1.5 pb-1.5">
         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink-200">{row.title}</span>
         <span className="shrink-0 text-[11px] text-ink-400 tabular-nums">{row.members.length} panes</span>
       </div>
-      <div className="flex justify-center pb-2">
-        <LayoutGlyph row={row} width={232} height={Math.round(232 * 0.6)} onCell={(member) => splits.focusMember(row.id, member.item)} swapWith={swapWith} dragged={dragged} />
-      </div>
-      <ul ref={list} className="max-h-[50vh] space-y-0.5 overflow-y-auto">
-        {row.members.map((member, index) => (
-          <li
-            key={member.item}
-            data-member-line={member.item}
-            onContextMenu={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              onMenu(event, memberMenu(member, index))
-            }}
-            className={`group/line flex h-7 items-center gap-1 rounded-[9px] pr-0.5 transition-colors hover:bg-row-hover ${dragged === member.item ? 'bg-accent/[0.12] ring-1 ring-accent/60 ring-inset' : ''}`}
-          >
-            <span
-              onPointerDown={(event) => drag.start(event, { kind: 'member', groupId: row.id, item: member.item, label: member.title })}
-              title="Drag to reorder, onto the map to swap, or out to remove"
-              className="flex h-full w-4 shrink-0 cursor-grab items-center justify-center text-ink-500 group-hover/line:text-ink-300 active:cursor-grabbing"
-            >
-              <DragHandle />
-            </span>
-            <button
-              type="button"
-              data-member-focus=""
-              onClick={() => splits.focusMember(row.id, member.item)}
-              onPointerDown={(event) => drag.start(event, { kind: 'member', groupId: row.id, item: member.item, label: member.title })}
-              onKeyDown={(event) => {
-                if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
-                event.preventDefault()
-                move(member, index + (event.key === 'ArrowUp' ? -1 : 1))
-              }}
-              aria-label={`${index + 1}. ${member.title}`}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              className={`flex h-full min-w-0 flex-1 items-center gap-2 rounded-[7px] text-left text-[12.5px] focus-visible:outline-2 focus-visible:outline-accent ${member.focused && row.active ? 'text-ink-100' : 'text-ink-300'}`}
-            >
-              <span className="w-3 shrink-0 text-right text-[10.5px] text-ink-400 tabular-nums">{index + 1}</span>
-              <MemberMarkIcon mark={member.mark} state={member.state} />
-              <span className="min-w-0 flex-1 truncate">{member.title}</span>
-              <span className={`size-1.5 shrink-0 rounded-full ${stateDot[member.state]} group-hover/line:hidden group-focus-within/line:hidden`} aria-label={member.state} />
-            </button>
-            <span className="hidden shrink-0 items-center group-focus-within/line:flex group-hover/line:flex">
-              <button type="button" aria-label={`Manage ${member.title}`} title="More" aria-haspopup="menu" onClick={(event) => onMenu(event, memberMenu(member, index))} className={lineAction}>
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-                  <circle cx="3.5" cy="8" r="1.3" />
-                  <circle cx="8" cy="8" r="1.3" />
-                  <circle cx="12.5" cy="8" r="1.3" />
-                </svg>
-              </button>
-              <button type="button" aria-label={`Remove ${member.title} from the split`} title="Remove from split" onClick={() => remove(member)} className={lineAction}>
-                <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                  <path d="M4 4l8 8M12 4l-8 8" />
-                </svg>
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
+      <SplitMap row={row} drag={drag} onMenu={onMenu} onName={setNamed} />
+      {shown !== undefined && (
+        <div aria-live="polite" className="flex h-7 items-center gap-2 px-1.5 text-[12.5px] text-ink-200">
+          <MemberMarkIcon mark={shown.mark} state={shown.state} />
+          <span className="min-w-0 flex-1 truncate">{shown.title}</span>
+          <span className={`size-1.5 shrink-0 rounded-full ${stateDot[shown.state]}`} aria-label={shown.state} />
+        </div>
+      )}
+      <p className="px-1.5 pb-0.5 text-[11px] leading-snug text-ink-400">Drag a pane onto another or onto an edge. Right-click for more.</p>
     </div>,
     document.body,
   )
 }
 
-const lineAction = 'grid size-5 place-items-center rounded-full text-ink-400 transition-colors hover:bg-white/[0.1] hover:text-ink-100'
+/** Where a member is dropped and what the map then looks like, while one of this group's members is dragged over it. */
+function mapDrag(row: GroupRow, drag: GroupDrag): { item: string; target: ArrangeTarget | null; preview: { item: string; rect: Rect }[] } | null {
+  const source = drag.drag?.source ?? null
+  if (source?.kind !== 'member' || source.groupId !== row.id) return null
+  const dropped = drag.drag?.target
+  const target = dropped?.kind === 'arrange' && dropped.groupId === row.id ? dropped.target : null
+  const paneId = row.members.find((member) => member.item === source.item)?.paneId
+  if (target === null || paneId === undefined) return { item: source.item, target: null, preview: row.glyph }
+  return { item: source.item, target, preview: paneRects(arrangePane(row.panes, paneId, target).root).panes.map(({ item, rect }) => ({ item, rect })) }
+}
+
+const sideMoves: { side: Edge; label: string; icon: 'splitBottom' | 'splitTop' | 'splitMain' | 'splitRight' }[] = [
+  { side: 'bottom', label: 'Move to bottom (full width)', icon: 'splitBottom' },
+  { side: 'top', label: 'Move to top (full width)', icon: 'splitTop' },
+  { side: 'left', label: 'Move left (full height)', icon: 'splitMain' },
+  { side: 'right', label: 'Move right (full height)', icon: 'splitRight' },
+]
 
 /**
- * The hover's member lines slide to a new place whenever the members reorder, by key or drag: each
- * commit compares every line's top with where it was after the last one. Reduced motion skips it.
+ * The group's layout to edit in place. Drag a cell onto another: an outer third splits beside it,
+ * the middle swaps the two; onto the margin to span that whole side of the group; out to the sidebar
+ * to remove it. The cells show the result live while dragging. Drag a divider to resize; right-click
+ * a cell for its moves. Arrow keys move focus between cells, Shift and an arrow move the focused one.
  */
-function useSlidingLines(list: RefObject<HTMLElement | null>) {
-  const tops = useRef(new Map<string, number>())
-  useLayoutEffect(() => {
-    const lines = [...(list.current?.querySelectorAll<HTMLElement>('[data-member-line]') ?? [])]
-    const now = new Map(lines.map((line) => [line.dataset.memberLine ?? '', line.getBoundingClientRect().top]))
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      for (const line of lines) {
-        const before = tops.current.get(line.dataset.memberLine ?? '')
-        const delta = before === undefined ? 0 : before - (now.get(line.dataset.memberLine ?? '') ?? before)
-        if (Math.abs(delta) >= 1) line.animate([{ transform: `translateY(${delta}px)` }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' })
-      }
-    }
-    tops.current = now
+function SplitMap({ row, drag, onMenu, onName }: { row: GroupRow; drag: GroupDrag; onMenu: (event: MouseEvent<HTMLElement>, items: MenuItem[]) => void; onName: (item: string | null) => void }) {
+  const splits = useSplitRows()
+  const map = useRef<HTMLDivElement>(null)
+  if (splits === null) return null
+  const dragging = mapDrag(row, drag)
+  const rects = dragging?.preview ?? row.glyph
+  const side = dragging?.target?.kind === 'side' ? dragging.target.side : null
+  const aimed = dragging?.target?.kind === 'pane' ? dragging.target.paneId : null
+  const inner = { width: mapWidth, height: mapHeight }
+  const cells: MapCell[] = row.cells.flatMap(({ paneId, rect }) => {
+    const item = row.members.find((member) => member.paneId === paneId)?.item
+    return item === undefined ? [] : [{ paneId, item, rect }]
   })
+  const focusCell = (item: string) => requestAnimationFrame(() => map.current?.querySelector<HTMLElement>(`[data-member-cell="${CSS.escape(item)}"]`)?.focus())
+  const arrange = (member: GroupMember, target: ArrangeTarget) => {
+    splits.drop({ kind: 'arrange', groupId: row.id, item: member.item, target })
+    focusCell(member.item)
+  }
+  const cellMenu = (member: GroupMember): MenuItem[] => [
+    { label: 'Focus pane', icon: 'select', group: 'open', onSelect: () => splits.focusMember(row.id, member.item) },
+    ...sideMoves.map(({ side: edge, label, icon }): MenuItem => ({ label, icon, group: 'organise', onSelect: () => arrange(member, { kind: 'side', side: edge }) })),
+    { label: 'Remove from group', icon: 'unsplit', group: 'danger', onSelect: () => splits.drop({ kind: 'leave', groupId: row.id, item: member.item }) },
+  ]
+  const onKey = (event: KeyboardEvent<HTMLButtonElement>, member: GroupMember) => {
+    const direction = arrowDirections[event.key]
+    if (direction === undefined) return
+    event.preventDefault()
+    if (event.shiftKey) {
+      splits.drop({ kind: 'shift', groupId: row.id, item: member.item, direction })
+      focusCell(member.item)
+      return
+    }
+    const next = focusDirection({ ...row.panes, focused: member.paneId }, direction).focused
+    const item = row.members.find((candidate) => candidate.paneId === next)?.item
+    if (item !== undefined && item !== member.item) focusCell(item)
+  }
+  return (
+    <div
+      ref={map}
+      role="group"
+      aria-label={`Layout of ${row.title}`}
+      data-split-map={JSON.stringify(cells)}
+      data-pad={mapPad}
+      style={{ width: mapWidth + 2 * mapPad, height: mapHeight + 2 * mapPad }}
+      className="relative mx-auto rounded-[10px] bg-black/20"
+      onPointerLeave={() => onName(null)}
+    >
+      {dragging !== null && (['top', 'bottom', 'left', 'right'] as const).map((edge) => <MapSide key={edge} edge={edge} lit={side === edge} />)}
+      {rects.map(({ item, rect }) => {
+        const member = row.members.find((candidate) => candidate.item === item)
+        if (member === undefined) return null
+        const box = { left: mapPad + rect.x * inner.width, top: mapPad + rect.y * inner.height, width: rect.width * inner.width, height: rect.height * inner.height }
+        const moved = dragging?.item === item
+        const target = aimed !== null && aimed === member.paneId
+        return (
+          <button
+            key={item}
+            type="button"
+            data-member-cell={item}
+            aria-label={member.title}
+            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Shift+ArrowLeft Shift+ArrowRight Shift+ArrowUp Shift+ArrowDown"
+            onClick={() => splits.focusMember(row.id, item)}
+            onPointerDown={(event) => drag.start(event, { kind: 'member', groupId: row.id, item, label: member.title })}
+            onPointerEnter={() => onName(item)}
+            onFocus={() => onName(item)}
+            onKeyDown={(event) => onKey(event, member)}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onMenu(event, cellMenu(member))
+            }}
+            style={{ ...box, transition: 'left var(--motion-panel) var(--motion-ease-panel), top var(--motion-panel) var(--motion-ease-panel), width var(--motion-panel) var(--motion-ease-panel), height var(--motion-panel) var(--motion-ease-panel)' }}
+            className="group/cell absolute p-[2px] focus-visible:outline-none"
+          >
+            <span
+              className={`flex size-full cursor-grab items-center justify-center gap-1 overflow-hidden rounded-[6px] border px-1 transition-colors active:cursor-grabbing ${
+                moved ? 'border-accent bg-accent/30' : target ? 'border-accent bg-accent/20' : member.focused && row.active ? 'border-accent/80 bg-accent/25' : 'border-white/[0.14] bg-white/[0.06] hover:bg-white/[0.12]'
+              } group-focus-visible/cell:ring-2 group-focus-visible/cell:ring-accent`}
+            >
+              {box.width >= 22 && box.height >= 18 && <MemberMarkIcon mark={member.mark} state={member.state} />}
+              {box.width >= 64 && box.height >= 26 && <span className="min-w-0 truncate text-[11px] text-ink-200">{member.title}</span>}
+            </span>
+          </button>
+        )
+      })}
+      {dragging === null && row.dividers.map((divider) => <MapDivider key={`${divider.splitId}:${divider.index}`} divider={divider} panes={row.panes} onResize={(panes) => splits.drop({ kind: 'resize', groupId: row.id, panes })} />)}
+    </div>
+  )
+}
+
+/** The margin along one side of the map while a cell is dragged: a drop there spans that whole side; lit while the pointer is in it. */
+function MapSide({ edge, lit }: { edge: Edge; lit: boolean }) {
+  const across = edge === 'top' || edge === 'bottom'
+  const style: CSSProperties = across ? { left: mapPad, right: mapPad, height: mapPad - 3, [edge]: 1 } : { top: mapPad, bottom: mapPad, width: mapPad - 3, [edge]: 1 }
+  return <span aria-hidden="true" data-map-side={edge} style={style} className={`pointer-events-none absolute rounded-full transition-colors duration-100 ${lit ? 'bg-accent' : 'bg-accent/25'}`} />
+}
+
+/** The smallest a cell may get when a divider on the map is dragged, in map pixels. */
+const minCell = 18
+
+/** A divider between cells of the map: drag it to resize those panes. The pointer is captured, so the hover stays open however far it goes. */
+function MapDivider({ divider, panes, onResize }: { divider: Divider; panes: Panes; onResize: (panes: Panes) => void }) {
+  const row = divider.direction === 'row'
+  const span = row ? divider.split.width * mapWidth : divider.split.height * mapHeight
+  const style: CSSProperties = row
+    ? { left: mapPad + divider.at * mapWidth - 3, top: mapPad + divider.split.y * mapHeight, height: divider.split.height * mapHeight, width: 6 }
+    : { top: mapPad + divider.at * mapHeight - 3, left: mapPad + divider.split.x * mapWidth, width: divider.split.width * mapWidth, height: 6 }
+  const start = (event: PointerEvent<HTMLSpanElement>) => {
+    if (event.button !== 0 || span <= 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const element = event.currentTarget
+    element.setPointerCapture(event.pointerId)
+    // Each move resizes from the tree at the press, so the divider follows the pointer without drift.
+    const origin = row ? event.clientX : event.clientY
+    const onMove = (move: globalThis.PointerEvent) => onResize(resizeSplit(panes, divider.splitId, divider.index, ((row ? move.clientX : move.clientY) - origin) / span, minCell / span))
+    const onUp = () => {
+      element.removeEventListener('pointermove', onMove)
+      element.removeEventListener('pointerup', onUp)
+      element.removeEventListener('pointercancel', onUp)
+    }
+    element.addEventListener('pointermove', onMove)
+    element.addEventListener('pointerup', onUp)
+    element.addEventListener('pointercancel', onUp)
+  }
+  return (
+    <span
+      role="separator"
+      aria-orientation={row ? 'vertical' : 'horizontal'}
+      aria-label="Resize panes"
+      onPointerDown={start}
+      style={style}
+      className={`absolute z-10 rounded-full transition-colors hover:bg-accent/60 ${row ? 'cursor-col-resize' : 'cursor-row-resize'}`}
+    />
+  )
 }
 
 /** The Splits header and the groups whose members span worktrees; nothing when there are none. */

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { dropItem, singlePane } from '@/panes/pane-model'
 import { changeShown, focusGroup, layoutOf, openLayoutItem, renameGroup, splitItems, type Layout } from '@/panes/split-groups'
-import { groupRows, groupsByPlace, joinedTitle, memberDropIndex, memberMoveIndex, rowDropZone, strongestState, visibleMarks, type MemberInfo } from '@/advanced/split-rows'
+import { groupRows, groupsByPlace, joinedTitle, rowDropZone, strongestState, visibleMarks, type MemberInfo } from '@/advanced/split-rows'
 
 const info: Record<string, MemberInfo> = {
   'native:1': { title: 'teste teste', mark: { kind: 'agent', agent: 'claude' }, state: 'idle', worktree: '/wt/main' },
@@ -149,30 +149,17 @@ describe('where a row dropped on another row lands', () => {
   })
 })
 
-describe('where a member dragged in the hover list lands', () => {
-  const lines = [
-    { top: 0, bottom: 28 },
-    { top: 30, bottom: 58 },
-    { top: 60, bottom: 88 },
-  ]
-
-  test('over the upper half of a line it takes that line place; over the lower half the next', () => {
-    expect(memberDropIndex(lines, 5)).toBe(0)
-    expect(memberDropIndex(lines, 20)).toBe(1)
-    expect(memberDropIndex(lines, 40)).toBe(1)
-    expect(memberDropIndex(lines, 50)).toBe(2)
-    expect(memberDropIndex(lines, 80)).toBe(3)
+describe('the map in the hover', () => {
+  test('a row carries its tree and the dividers between its cells, to edit the layout on the map', () => {
+    const row = groupRows(pair(), describeItem)[0]
+    expect(row?.panes.root.type).toBe('split')
+    expect(row?.dividers.map((divider) => ({ direction: divider.direction, at: divider.at }))).toEqual([{ direction: 'row', at: 0.5 }])
   })
 
-  test('past either end it goes first or last', () => {
-    expect(memberDropIndex(lines, -40)).toBe(0)
-    expect(memberDropIndex(lines, 400)).toBe(3)
-    expect(memberDropIndex([], 10)).toBe(0)
-  })
-
-  test('as a final place for a member moved from `from`, the slots after it count one less', () => {
-    expect(memberMoveIndex(memberDropIndex(lines, 80), 0)).toBe(2)
-    expect(memberMoveIndex(memberDropIndex(lines, 5), 2)).toBe(0)
-    expect(memberMoveIndex(memberDropIndex(lines, 40), 1)).toBe(1)
+  test('the map cells name each member by its pane', () => {
+    expect(groupRows(pair(), describeItem)[0]?.cells).toEqual([
+      { paneId: 'p1', rect: { x: 0, y: 0, width: 0.5, height: 1 } },
+      { paneId: 'p2', rect: { x: 0.5, y: 0, width: 0.5, height: 1 } },
+    ])
   })
 })

@@ -38,6 +38,8 @@ const paths = {
   splitDown: 'M2.5 3.5h11v9h-11ZM2.5 8h11',
   splitGrid: 'M2.5 3.5h11v9h-11ZM8 3.5v9M2.5 8h11',
   splitMain: 'M2.5 3.5h11v9h-11ZM7 3.5v9M7 8h6.5',
+  splitBottom: 'M2.5 3.5h11v9h-11ZM2.5 9h11M6.2 3.5V9M9.8 3.5V9',
+  splitTop: 'M2.5 3.5h11v9h-11ZM2.5 7h11M6.2 7v5.5M9.8 7v5.5',
   unsplit: 'M2 3.5h4.5v9H2ZM9.5 3.5H14v9H9.5Z',
   trash: 'M2.5 4.5h11M6 4.5V3a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1',
 } as const

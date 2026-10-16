@@ -1,4 +1,5 @@
-import { closePane, dropItem, normalise, paneList, paneOfItem, parsePanes, replaceItem, singlePane, type Edge, type PaneLeaf, type PaneNode, type Panes } from '@/panes/pane-model'
+import { arrangePane, shiftPane, type ArrangeTarget } from '@/panes/arrange'
+import { closePane, dropItem, normalise, paneList, paneOfItem, parsePanes, replaceItem, singlePane, type Direction, type Edge, type PaneLeaf, type PaneNode, type Panes } from '@/panes/pane-model'
 import { addColumn, columnOfPane, emptyStrip, readStrip, type Strip } from '@/panes/strip'
 
 // Splits as groups, the way Zen keeps its split views: every arrangement of two or more panes is a
@@ -25,8 +26,11 @@ export interface Layout {
   single: Panes
 }
 
-/** side by side (a column each), stacked (one column), a grid of columns of two, or one large and a column of the rest. */
-export type Preset = 'row' | 'column' | 'grid' | 'main'
+/**
+ * side by side (a column each), stacked (one column), a grid of columns of two, one large and a
+ * column of the rest, or the focused one spanning the width under (bottom) or over (top) a row of the rest.
+ */
+export type Preset = 'row' | 'column' | 'grid' | 'main' | 'bottom' | 'top'
 
 export { minPaneHeight, minPaneWidth } from '@/panes/strip'
 
@@ -140,7 +144,7 @@ export function removeLayoutItem(layout: Layout, item: string, fallback: { id: s
 }
 
 export function presetsFor(count: number): Preset[] {
-  return count < 3 ? ['row', 'column'] : ['row', 'column', 'grid', 'main']
+  return count < 3 ? ['row', 'column'] : ['row', 'column', 'grid', 'main', 'bottom', 'top']
 }
 
 const even = (count: number) => Array.from({ length: count }, () => 1 / count)
@@ -149,12 +153,17 @@ function line(id: string, direction: 'row' | 'column', children: PaneNode[]): Pa
   return { type: 'split', id, direction, children, sizes: even(children.length) }
 }
 
-/** The members, in order, laid out by `preset`; split ids start with `idBase`. */
-export function presetTree(leaves: PaneLeaf[], preset: Preset, idBase: string): PaneNode {
+/** The members, in order, laid out by `preset`; split ids start with `idBase`. Bottom and top span pane `focused`, else the last. */
+export function presetTree(leaves: PaneLeaf[], preset: Preset, idBase: string, focused?: string): PaneNode {
   if (leaves.length === 1 && leaves[0] !== undefined) return leaves[0]
   let tree: PaneNode
   // Two in a grid are side by side: one column of two would be stacked.
   if (preset === 'grid' && leaves.length <= 2) tree = line(`${idBase}-row`, 'row', leaves)
+  else if (preset === 'bottom' || preset === 'top') {
+    const spanning = leaves.find((leaf) => leaf.id === focused) ?? leaves.at(-1)
+    const rest = line(`${idBase}-rest`, 'row', leaves.filter((leaf) => leaf !== spanning))
+    tree = spanning === undefined ? rest : line(`${idBase}-${preset}`, 'column', preset === 'bottom' ? [rest, spanning] : [spanning, rest])
+  }
   else if (preset === 'row' || preset === 'column') tree = line(`${idBase}-${preset}`, preset, leaves)
   else if (preset === 'main') {
     const [first, ...rest] = leaves
@@ -171,7 +180,7 @@ export function presetTree(leaves: PaneLeaf[], preset: Preset, idBase: string): 
 export function arrangeGroup(layout: Layout, groupId: string, preset: Preset): Layout {
   return {
     ...layout,
-    groups: layout.groups.map((group) => (group.id === groupId ? { ...group, panes: { ...group.panes, root: presetTree(paneList(group.panes.root), preset, group.id) }, strip: emptyStrip } : group)),
+    groups: layout.groups.map((group) => (group.id === groupId ? { ...group, panes: { ...group.panes, root: presetTree(paneList(group.panes.root), preset, group.id, group.panes.focused) }, strip: emptyStrip } : group)),
   }
 }
 
@@ -266,8 +275,8 @@ export function parseLayout(raw: string | null, groupId: string): Layout | null 
   return { groups, active, single }
 }
 
-/** The group `groupId` with its panes changed; the same layout when the change returns them as they were. */
-function withGroupPanes(layout: Layout, groupId: string, change: (panes: Panes) => Panes): Layout {
+/** The group `groupId` with its panes changed (shown or not); the same layout when the change returns them as they were. */
+export function changeGroupPanes(layout: Layout, groupId: string, change: (panes: Panes) => Panes): Layout {
   const group = layout.groups.find((candidate) => candidate.id === groupId)
   if (group === undefined) return layout
   const panes = change(group.panes)
@@ -320,7 +329,7 @@ export function joinItems(layout: Layout, source: string, target: string, ids: {
   if (group !== null) return addToGroup(layout, group.id, source, ids.pane)
   const withTarget = splitItems(layout, [target, source], ids.group, [`${ids.group}-p0`, ids.pane], 'row')
   const panes = groupPanes(withTarget, ids.group)
-  return panes === null ? withTarget : withGroupPanes(withTarget, ids.group, () => ({ ...panes, focused: ids.pane }))
+  return panes === null ? withTarget : changeGroupPanes(withTarget, ids.group, () => ({ ...panes, focused: ids.pane }))
 }
 
 const groupPanes = (layout: Layout, groupId: string) => layout.groups.find((group) => group.id === groupId)?.panes ?? null
@@ -348,7 +357,7 @@ function withLeaves(root: PaneNode, leaves: readonly PaneLeaf[]): PaneNode {
 
 /** Member `item` of group `groupId` moves to place `index` in reading order (clamped); the tree keeps its shape and each pane its id. */
 export function moveMember(layout: Layout, groupId: string, item: string, index: number): Layout {
-  return withGroupPanes(layout, groupId, (panes) => {
+  return changeGroupPanes(layout, groupId, (panes) => {
     const leaves = paneList(panes.root)
     const from = leaves.findIndex((leaf) => leaf.item === item)
     const to = Math.max(0, Math.min(leaves.length - 1, Math.round(index)))
@@ -362,7 +371,7 @@ export function moveMember(layout: Layout, groupId: string, item: string, index:
 
 /** Members `a` and `b` of group `groupId` trade places. */
 export function swapMembers(layout: Layout, groupId: string, a: string, b: string): Layout {
-  return withGroupPanes(layout, groupId, (panes) => {
+  return changeGroupPanes(layout, groupId, (panes) => {
     const leaves = paneList(panes.root)
     const first = leaves.findIndex((leaf) => leaf.item === a)
     const second = leaves.findIndex((leaf) => leaf.item === b)
@@ -373,5 +382,21 @@ export function swapMembers(layout: Layout, groupId: string, a: string, b: strin
     order[first] = right
     order[second] = left
     return { ...panes, root: withLeaves(panes.root, order) }
+  })
+}
+
+/** Member `item` of group `groupId`, shown or not, dropped on `target` (a side of the group, or another member's zone). */
+export function arrangeMember(layout: Layout, groupId: string, item: string, target: ArrangeTarget): Layout {
+  return changeGroupPanes(layout, groupId, (panes) => {
+    const leaf = paneOfItem(panes, item)
+    return leaf === null ? panes : arrangePane(panes, leaf.id, target)
+  })
+}
+
+/** Member `item` of group `groupId` moved one step with the keyboard (see shiftPane). */
+export function shiftMember(layout: Layout, groupId: string, item: string, direction: Direction): Layout {
+  return changeGroupPanes(layout, groupId, (panes) => {
+    const leaf = paneOfItem(panes, item)
+    return leaf === null ? panes : shiftPane(panes, leaf.id, direction)
   })
 }

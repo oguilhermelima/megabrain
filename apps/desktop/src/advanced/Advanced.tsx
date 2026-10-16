@@ -48,13 +48,15 @@ import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, movePane, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
-import { activeGroup, addToGroup, arrangeGroup, changeGroupStrip, changeShown, closeGroup, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, moveMember, openLayoutItem, parseLayout, presetsFor, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shownPanes, splitBeside, splitItems, swapMembers, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
+import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, spanItem, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
+import { activeGroup, addToGroup, arrangeGroup, arrangeMember, changeGroupPanes, changeGroupStrip, changeShown, closeGroup, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, openLayoutItem, parseLayout, presetsFor, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shiftMember, shownPanes, splitBeside, splitItems, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
 import { paneShortcut } from '@/panes/shortcuts'
 import { groupRows, groupsByPlace, type GroupRow, type MemberInfo } from '@/advanced/split-rows'
 import { SplitRowsContext, type SplitDrop, type SplitRowsValue } from '@/advanced/SplitRows'
 import type { JoinTarget } from '@/advanced/useRowDrag'
 import type { MenuItem } from '@/components/ContextMenu'
+import type { MenuIcon } from '@/components/menu-icons'
+import { arrangePane } from '@/panes/arrange'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { emptyStrip, navigate, type Strip } from '@/panes/strip'
 import { windowRowJoin } from '@/panes/window-row'
@@ -617,10 +619,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     return current
   }
   // A row dropped on another row's middle joins them; a member dragged out of its group leaves it; a
-  // group's members reorder or swap from its hover (see useRowDrag).
+  // group is arranged and resized on its hover's map (see useRowDrag and SplitRows).
   const dropSplit = useStableCallback((drop: SplitDrop) => {
-    if (drop.kind === 'move') setLayout((current) => moveMember(current, drop.groupId, drop.item, drop.index))
-    else if (drop.kind === 'swap') setLayout((current) => swapMembers(current, drop.groupId, drop.a, drop.b))
+    if (drop.kind === 'arrange') setLayout((current) => arrangeMember(current, drop.groupId, drop.item, drop.target))
+    else if (drop.kind === 'shift') setLayout((current) => shiftMember(current, drop.groupId, drop.item, drop.direction))
+    else if (drop.kind === 'resize') setLayout((current) => changeGroupPanes(current, drop.groupId, () => drop.panes))
     else if (drop.kind === 'leave') setLayout((current) => leaveGroup(current, drop.item))
     else {
       const next = joined(paneLayout, drop.source, drop.target)
@@ -631,10 +634,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
   })
   const pickSplitRow = useStableCallback((item: string, add: boolean) => setPicks((current) => (!add ? [] : current.includes(item) ? current.filter((entry) => entry !== item) : [...current, item])))
-  // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header moves.
+  // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header
+  // splits beside the pane or swaps with it. Either one dropped on an edge of the split spans that side.
   const drag = usePaneDrag((source, target) => {
     setGithubPage(null)
-    const next = source.kind === 'pane' ? movePane(panes, source.paneId, target.paneId, target.zone) : dropItem(panes, source.item, target.paneId, target.zone, newPaneId())
+    const next =
+      source.kind === 'pane' ? arrangePane(panes, source.paneId, target) : target.kind === 'side' ? spanItem(panes, source.item, target.side, newPaneId()) : dropItem(panes, source.item, target.paneId, target.zone, newPaneId())
     setPanes(() => next)
   })
   // A row from the sidebar starts a drag of the item it opens.
@@ -1139,8 +1144,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
 const noDispatches: readonly Dispatch[] = []
 
-const presetNames: Record<Preset, string> = { row: 'Side by side', column: 'Stacked', grid: 'Grid', main: 'One large + column' }
-const presetIcons: Record<Preset, 'splitRight' | 'splitDown' | 'splitGrid' | 'splitMain'> = { row: 'splitRight', column: 'splitDown', grid: 'splitGrid', main: 'splitMain' }
+const presetNames: Record<Preset, string> = { row: 'Side by side', column: 'Stacked', grid: 'Grid', main: 'One large + column', bottom: 'One on the bottom', top: 'One on the top' }
+const presetIcons: Record<Preset, MenuIcon> = { row: 'splitRight', column: 'splitDown', grid: 'splitGrid', main: 'splitMain', bottom: 'splitBottom', top: 'splitTop' }
 
 /** The items whose top bar carries the action bar, and so can show Code: all but a GitHub item. */
 const paneViewKinds: ReadonlySet<ItemKind> = new Set<ItemKind>(['dispatch', 'session', 'native', 'terminal', 'launcher', 'code'])

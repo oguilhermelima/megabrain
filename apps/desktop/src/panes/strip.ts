@@ -3,8 +3,10 @@ import { focusDirection, normalise, paneList, paneRects, type Direction, type Di
 // A split group as a strip of columns, the way niri scrolls its windows: the root row's children are
 // the columns, side by side, and each one holds a stack of panes (or any tree a drop made of it).
 // A column has its own width; when the columns do not fit, the strip scrolls sideways instead of
-// squeezing them, and a stack taller than the area scrolls its column. No pane ever goes under the
-// minimum. Every function here is pure; PaneArea draws and scrolls the result.
+// squeezing them, and a stack taller than the area scrolls its column. Only a row at the top is a
+// strip: a tree whose top level is a column (one pane spanning the width under or over the rest) is
+// one column as wide as the area, its panes sharing that width. No pane ever goes under the minimum
+// height. Every function here is pure; PaneArea draws and scrolls the result.
 
 /** The smallest a pane may be, in pixels. */
 export const minPaneWidth = 280
@@ -72,9 +74,11 @@ function minimumOf(node: PaneNode): Area {
 /**
  * Every column's place in pixels. A column takes its own width, else its share of the root row
  * spread over at most three columns' worth of area: two or three columns fit side by side, more
- * take a third each and scroll. Never under the minimum its panes need.
+ * take a third each and scroll. Never under the minimum its panes need. A root that is not a row
+ * is one column exactly as wide as the area, so it never scrolls sideways.
  */
 export function stripLayout(root: PaneNode, strip: Strip, area: Area): StripLayout {
+  const strips = root.type === 'split' && root.direction === 'row'
   const columns = stripColumns(root)
   const visible = Math.min(columns.length, 3)
   let x = 0
@@ -82,7 +86,7 @@ export function stripLayout(root: PaneNode, strip: Strip, area: Area): StripLayo
     const minimum = minimumOf(node)
     const own = strip.widths[id]
     const fraction = columns.length === 1 ? 1 : (own ?? (share * columns.length) / visible)
-    const width = Math.max(fraction * area.width, minimum.width)
+    const width = strips ? Math.max(fraction * area.width, minimum.width) : area.width
     const height = Math.max(area.height, minimum.height)
     const { panes, dividers } = paneRects(node)
     const column = { id, node, x, width, height, panes: panes.map((pane) => ({ ...pane, rect: { x: pane.rect.x * width, y: pane.rect.y * height, width: pane.rect.width * width, height: pane.rect.height * height } })), dividers }

@@ -15,6 +15,7 @@ import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { applyRowOrder, moveRow, parseRowOrder, rowToOpen, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { GroupRowView, SpanningSplits, useSplitRows, type SplitDrop } from '@/advanced/SplitRows'
 import { useRowDrag, type RowDragStart, type RowDragState } from '@/advanced/useRowDrag'
+import type { ArrangeTarget } from '@/panes/arrange'
 import type { GroupRow } from '@/advanced/split-rows'
 import { ContextMenu, menuFrom, openMenuFromKeyboard, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { Collapse } from '@/components/Collapse'
@@ -977,9 +978,16 @@ const ProjectSection = memo(function ProjectSection({
   )
 })
 
+/** What a drop on the hover's map does, in words. */
+function arrangeNote(target: ArrangeTarget): string {
+  if (target.kind === 'side') return target.side === 'top' || target.side === 'bottom' ? `Span the width, ${target.side === 'top' ? 'on top' : 'at the bottom'}` : `Span the height, on the ${target.side}`
+  return target.zone === 'center' ? 'Swap panes' : 'Split beside'
+}
+
 /** What a dragged group or member carries, by the pointer; a row dragged out of its group says it leaves. */
 function DragGhost({ state }: { state: RowDragState }) {
-  const note = state.target?.kind === 'leave' ? 'Remove from split' : state.target?.kind === 'join' ? 'Join split' : state.target?.kind === 'swap' ? 'Swap panes' : null
+  const target = state.target
+  const note = target?.kind === 'leave' ? 'Remove from split' : target?.kind === 'join' ? 'Join split' : target?.kind === 'arrange' ? arrangeNote(target.target) : null
   return (
     <div style={{ left: state.x + 12, top: state.y + 12 }} className="pointer-events-none fixed z-[70] max-w-64 rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
       {note !== null && <div className="text-[11px] font-medium text-accent">{note}</div>}
@@ -1722,8 +1730,7 @@ export const Sidebar = memo(function Sidebar({
         captureRows()
         onSplitDrop({ kind: 'leave', groupId, item })
       },
-      slot: (groupId, item, index) => onSplitDrop({ kind: 'move', groupId, item, index }),
-      swap: (groupId, a, b) => onSplitDrop({ kind: 'swap', groupId, a, b }),
+      arrange: (groupId, item, target) => onSplitDrop({ kind: 'arrange', groupId, item, target }),
     },
     moveRow,
   )

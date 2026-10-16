@@ -1,13 +1,14 @@
 import { useState, type PointerEvent, type RefObject } from 'react'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { dropTarget, type Placement } from '@/advanced/project-order'
-import { memberDropIndex, memberMoveIndex, rowDropZone } from '@/advanced/split-rows'
+import { rowDropZone } from '@/advanced/split-rows'
+import { mapTarget, type ArrangeTarget } from '@/panes/arrange'
 
 // Dragging inside the sidebar: a chat, session or terminal row reorders its worktree's rows or, over
 // another row's middle band, joins it into a split; a group row joins the row it is dropped on; a
-// member of a group (one of its marks, or a line in its hover) reorders the group live in the hover,
-// swaps panes on the hover's mini map, joins another row, or leaves the group when it lands anywhere
-// else in the sidebar. Pointer events, like the pane drag (usePaneDrag), since Tauri takes HTML5 drags.
+// member of a group (one of its marks, or a cell of its hover's map) is arranged on the map (beside
+// or swapped with another cell, or spanning a side of the group), joins another row, or leaves the
+// group when it lands anywhere else in the sidebar. Pointer events, like the pane drag (usePaneDrag), since Tauri takes HTML5 drags.
 
 export type RowDragSource =
   /** A row under a worktree; `item` is what it opens, null for one that opens nothing yet. */
@@ -23,10 +24,8 @@ export type RowDropTarget =
   /** `at` is the row key or group id that lights up. */
   | { kind: 'join'; at: string; target: JoinTarget }
   | { kind: 'leave' }
-  /** A place in the hover's member list, as the member's final index. */
-  | { kind: 'slot'; groupId: string; index: number }
-  /** A cell of the hover's mini map. */
-  | { kind: 'swap'; groupId: string; item: string }
+  /** A zone of a cell, or a side, of the hover's map (see panes/arrange). */
+  | { kind: 'arrange'; groupId: string; target: ArrangeTarget }
 
 export interface RowDragState {
   source: RowDragSource
@@ -39,9 +38,7 @@ export interface RowDropHandlers {
   reorder: (worktreePath: string, next: string[]) => void
   join: (source: RowDragSource, target: JoinTarget) => void
   leave: (groupId: string, item: string) => void
-  /** Called while the member moves through the hover list, so the group reorders live. */
-  slot: (groupId: string, item: string, index: number) => void
-  swap: (groupId: string, a: string, b: string) => void
+  arrange: (groupId: string, item: string, target: ArrangeTarget) => void
 }
 
 const threshold = 4
@@ -58,19 +55,14 @@ function targetAt(nav: HTMLElement | null, source: RowDragSource, x: number, y: 
   const hover = element.closest<HTMLElement>('[data-split-hover]')
   if (hover !== null) {
     if (source.kind !== 'member' || hover.dataset.splitHover !== source.groupId) return null
-    const cell = element.closest<SVGElement>('[data-member-cell]')?.dataset.memberCell
-    if (cell !== undefined) return cell === source.item ? null : { kind: 'swap', groupId: source.groupId, item: cell }
-    const lines = [...hover.querySelectorAll<HTMLElement>('[data-member-line]')]
-    const from = lines.findIndex((line) => line.dataset.memberLine === source.item)
-    if (from === -1) return null
-    // Where each line sits, not where a slide (see SplitRows) is drawing it right now: measured
-    // through the transform, a line still sliding would read as its old place and undo the move.
-    const box = hover.getBoundingClientRect()
-    const places = lines.map((line) => {
-      const top = box.top + hover.clientTop + line.offsetTop - (line.parentElement?.scrollTop ?? 0)
-      return { top, bottom: top + line.offsetHeight }
-    })
-    return { kind: 'slot', groupId: source.groupId, index: memberMoveIndex(memberDropIndex(places, y), from) }
+    const map = element.closest<HTMLElement>('[data-split-map]')
+    if (map === null) return null
+    // Against the arrangement as it stands (the map carries it), not the preview it draws meanwhile.
+    const cells = parseCells(map.dataset.splitMap)
+    const own = cells.find((cell) => cell.item === source.item)?.paneId
+    const target = mapTarget(cells, map.getBoundingClientRect(), Number(map.dataset.pad ?? 0), x, y)
+    if (target === null || own === undefined || (target.kind === 'pane' && target.paneId === own)) return null
+    return { kind: 'arrange', groupId: source.groupId, target }
   }
   if (!nav.contains(element)) return null
   const groupRow = element.closest<HTMLElement>('[data-split-group]')
@@ -107,6 +99,23 @@ function targetAt(nav: HTMLElement | null, source: RowDragSource, x: number, y: 
   return found === null || found.path === source.key ? null : { kind: 'reorder', key: found.path, placement: found.placement }
 }
 
+/** The cells a map carries in its data-split-map attribute; none when it is unreadable. */
+function parseCells(raw: string | undefined): MapCell[] {
+  try {
+    const value: unknown = JSON.parse(raw ?? '[]')
+    return Array.isArray(value) ? (value as MapCell[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** A cell of the hover's map, as SplitMap writes it on the map for the drag to hit-test. */
+export interface MapCell {
+  paneId: string
+  item: string
+  rect: { x: number; y: number; width: number; height: number }
+}
+
 /** The release that ends a drag must not also click the row or button it started on. */
 function swallowNextClick() {
   const swallow = (event: MouseEvent) => {
@@ -125,8 +134,6 @@ export function useRowDrag(nav: RefObject<HTMLElement | null>, handlers: RowDrop
     const startX = event.clientX
     const startY = event.clientY
     let moving = false
-    // The live slot the member last moved to, so a move inside the same slot does nothing.
-    let lastSlot: number | null = null
     const stop = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
@@ -138,10 +145,6 @@ export function useRowDrag(nav: RefObject<HTMLElement | null>, handlers: RowDrop
       if (!moving && Math.hypot(move.clientX - startX, move.clientY - startY) < threshold) return
       moving = true
       const target = targetAt(nav.current, source, move.clientX, move.clientY)
-      if (target?.kind === 'slot' && source.kind === 'member' && target.index !== lastSlot) {
-        lastSlot = target.index
-        handlers.slot(target.groupId, source.item, target.index)
-      }
       setState({ source, target, x: move.clientX, y: move.clientY })
     }
     const onUp = (up: globalThis.PointerEvent) => {
@@ -153,7 +156,7 @@ export function useRowDrag(nav: RefObject<HTMLElement | null>, handlers: RowDrop
       if (target.kind === 'reorder' && source.kind === 'row') handlers.reorder(source.worktreePath, moveRow(source.shown, source.key, target.key, target.placement))
       else if (target.kind === 'join') handlers.join(source, target.target)
       else if (target.kind === 'leave' && source.kind === 'member') handlers.leave(source.groupId, source.item)
-      else if (target.kind === 'swap' && source.kind === 'member') handlers.swap(target.groupId, source.item, target.item)
+      else if (target.kind === 'arrange' && source.kind === 'member') handlers.arrange(target.groupId, source.item, target.target)
     }
     const onKey = (key: KeyboardEvent) => {
       if (key.key !== 'Escape' || !moving) return

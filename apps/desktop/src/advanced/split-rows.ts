@@ -1,4 +1,4 @@
-import { paneList, paneRects, type Rect } from '@/panes/pane-model'
+import { paneList, paneRects, type Divider, type Panes, type Rect } from '@/panes/pane-model'
 import type { Layout } from '@/panes/split-groups'
 
 // A split group in the sidebar is one row, as Zen draws a split view as one combined tab: the
@@ -38,6 +38,12 @@ export interface GroupRow {
   active: boolean
   /** Each member's place in the unit square, for the mini layout. */
   glyph: { item: string; rect: Rect }[]
+  /** The same places by pane, as the map in the hover hit-tests a drop against them. */
+  cells: { paneId: string; rect: Rect }[]
+  /** The dividers between the cells, in the unit square, for resizing on the map. */
+  dividers: Divider[]
+  /** The group's tree, which the map arranges and previews. */
+  panes: Panes
 }
 
 const strength: Record<MemberState, number> = { waiting: 3, working: 2, idle: 1, ended: 0 }
@@ -66,6 +72,7 @@ export function groupRows(layout: Layout, describe: (item: string) => MemberInfo
     const members = paneList(group.panes.root).map((leaf): GroupMember => ({ ...describe(leaf.item), item: leaf.item, paneId: leaf.id, focused: leaf.id === group.panes.focused }))
     const worktrees = new Set(members.flatMap((member) => (member.worktree === null ? [] : [member.worktree])))
     const [only] = worktrees
+    const rects = paneRects(group.panes.root)
     return {
       id: group.id,
       name: group.name,
@@ -74,7 +81,10 @@ export function groupRows(layout: Layout, describe: (item: string) => MemberInfo
       state: strongestState(members.map((member) => member.state)),
       worktree: worktrees.size === 1 && only !== undefined ? only : null,
       active: layout.active === group.id,
-      glyph: paneRects(group.panes.root).panes.map(({ item, rect }) => ({ item, rect })),
+      glyph: rects.panes.map(({ item, rect }) => ({ item, rect })),
+      cells: rects.panes.map(({ id, rect }) => ({ paneId: id, rect })),
+      dividers: rects.dividers,
+      panes: group.panes,
     }
   })
 }
@@ -104,15 +114,4 @@ export function rowDropZone(row: { top: number; bottom: number }, y: number, can
   if (y < row.top + height / 4) return 'before'
   if (y > row.bottom - height / 4) return 'after'
   return 'join'
-}
-
-/** The slot, 0 to lines.length, a member dragged in the hover list would drop into: before the line whose lower half it has not passed. */
-export function memberDropIndex(lines: readonly { top: number; bottom: number }[], y: number): number {
-  const index = lines.findIndex((line) => y < (line.top + line.bottom) / 2)
-  return index === -1 ? lines.length : index
-}
-
-/** A slot as the place the member at `from` ends up in, once it has left its own. */
-export function memberMoveIndex(slot: number, from: number): number {
-  return slot > from ? slot - 1 : slot
 }

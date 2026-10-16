@@ -3,6 +3,8 @@ import { closePane, dropItem, paneList, resizeSplit, serialisePanes, singlePane,
 import {
   activeGroup,
   arrangeGroup,
+  arrangeMember,
+  changeGroupPanes,
   changeShown,
   changeGroupStrip,
   closeGroup,
@@ -19,6 +21,7 @@ import {
   removeLayoutItem,
   renameGroup,
   serialiseLayout,
+  shiftMember,
   shownPanes,
   splitBeside,
   splitItems,
@@ -183,8 +186,8 @@ describe('rename, unsplit and close', () => {
 describe('presets', () => {
   test('two members offer side by side and stacked; three or more add grid and main', () => {
     expect(presetsFor(2)).toEqual(['row', 'column'])
-    expect(presetsFor(3)).toEqual(['row', 'column', 'grid', 'main'])
-    expect(presetsFor(8)).toEqual(['row', 'column', 'grid', 'main'])
+    expect(presetsFor(3)).toEqual(['row', 'column', 'grid', 'main', 'bottom', 'top'])
+    expect(presetsFor(8)).toEqual(['row', 'column', 'grid', 'main', 'bottom', 'top'])
   })
 
   test('grid is columns of two', () => {
@@ -279,7 +282,79 @@ describe('minimum pane size', () => {
   })
 })
 
+describe('one pane spanning a side', () => {
+  test('one on the bottom: the focused member spans the width under the rest', () => {
+    const layout = focusGroup(many(5), 'gm', 'i2')
+    expect(shape(shownPanes(arrangeGroup(layout, 'gm', 'bottom')).root)).toEqual({ column: [{ row: ['i1', 'i3', 'i4', 'i5'] }, 'i2'] })
+    expect(shownPanes(arrangeGroup(layout, 'gm', 'bottom')).focused).toBe('p-i2')
+  })
+
+  test('one on the top: the focused member spans the width over the rest', () => {
+    const layout = focusGroup(many(4), 'gm', 'i4')
+    expect(shape(shownPanes(arrangeGroup(layout, 'gm', 'top')).root)).toEqual({ column: ['i4', { row: ['i1', 'i2', 'i3'] }] })
+  })
+
+  test('a member dropped on the bottom side of its group sits under the other four', () => {
+    const next = arrangeMember(many(5, 'row'), 'gm', 'i5', { kind: 'side', side: 'bottom' })
+    expect(shape(shownPanes(next).root)).toEqual({ column: [{ row: ['i1', 'i2', 'i3', 'i4'] }, 'i5'] })
+  })
+
+  test('a member dropped on another member splits beside it, or swaps on its centre', () => {
+    const split = arrangeMember(many(3, 'row'), 'gm', 'i1', { kind: 'pane', paneId: 'p-i3', zone: 'bottom' })
+    expect(shape(shownPanes(split).root)).toEqual({ row: ['i2', { column: ['i3', 'i1'] }] })
+    const swapped = arrangeMember(many(3, 'row'), 'gm', 'i1', { kind: 'pane', paneId: 'p-i3', zone: 'center' })
+    expect(groupItems(swapped, 'gm')).toEqual(['i3', 'i2', 'i1'])
+  })
+
+  test('a group that is not shown is arranged in place and stays in the background', () => {
+    const away = openLayoutItem(many(3, 'row'), 'z')
+    const next = arrangeMember(away, 'gm', 'i3', { kind: 'side', side: 'top' })
+    expect(next.active).toBeNull()
+    expect(shape(next.groups[0]?.panes.root ?? pane('x', 'x'))).toEqual({ column: ['i3', { row: ['i1', 'i2'] }] })
+  })
+
+  test('an unknown group or member changes nothing', () => {
+    const layout = many(3)
+    expect(arrangeMember(layout, 'nope', 'i1', { kind: 'side', side: 'bottom' })).toBe(layout)
+    expect(arrangeMember(layout, 'gm', 'zz', { kind: 'side', side: 'bottom' })).toBe(layout)
+  })
+
+  test('a member moved with the keyboard swaps with its neighbour, or spans the side it has none on', () => {
+    expect(groupItems(shiftMember(many(3, 'row'), 'gm', 'i1', 'right'), 'gm')).toEqual(['i2', 'i1', 'i3'])
+    expect(shape(shownPanes(shiftMember(many(3, 'row'), 'gm', 'i1', 'down')).root)).toEqual({ column: [{ row: ['i2', 'i3'] }, 'i1'] })
+  })
+
+  test('a split inside a group resizes from the map', () => {
+    const layout = many(2, 'row')
+    const root = shownPanes(layout).root
+    const splitId = root.type === 'split' ? root.id : ''
+    const next = changeGroupPanes(layout, 'gm', (panes) => resizeSplit(panes, splitId, 0, 0.2, 0.1))
+    const sizes = shownPanes(next).root
+    expect(sizes.type === 'split' ? sizes.sizes.map((size) => Math.round(size * 10) / 10) : []).toEqual([0.7, 0.3])
+    expect(changeGroupPanes(layout, 'gm', (panes) => panes)).toBe(layout)
+  })
+})
+
 describe('persistence', () => {
+  test('a group with one pane spanning a side round-trips as rows and columns nested', () => {
+    const layout = arrangeMember(many(5, 'row'), 'gm', 'i5', { kind: 'side', side: 'bottom' })
+    const back = parseLayout(serialiseLayout(layout), 'fresh')
+    expect(back).toEqual(layout)
+    expect(shape(back === null ? pane('x', 'x') : shownPanes(back).root)).toEqual({ column: [{ row: ['i1', 'i2', 'i3', 'i4'] }, 'i5'] })
+  })
+
+  test('a save from before trees, a row of columns with its widths, reads unchanged', () => {
+    const raw = JSON.stringify({
+      version: 2,
+      active: 'g1',
+      single: { root: pane('s', 'z'), focused: 's' },
+      groups: [{ id: 'g1', name: 'old', strip: { widths: { c1: 0.5 }, scroll: 0.25 }, panes: { root: { type: 'split', id: 'r', direction: 'row', children: [{ type: 'split', id: 'c1', direction: 'column', children: [pane('p1', 'a'), pane('p2', 'b')], sizes: [0.5, 0.5] }, pane('p3', 'c')], sizes: [0.5, 0.5] }, focused: 'p3' } }],
+    })
+    const layout = parseLayout(raw, 'fresh')
+    expect(layout?.groups[0]?.strip).toEqual({ widths: { c1: 0.5 }, scroll: 0.25 })
+    expect(shape(layout === null ? pane('x', 'x') : shownPanes(layout).root)).toEqual({ row: [{ column: ['a', 'b'] }, 'c'] })
+  })
+
   test('a new group starts with the empty strip', () => {
     expect(activeGroup(many(8))?.strip).toEqual(emptyStrip)
     expect(activeGroup(pair())?.strip).toEqual(emptyStrip)

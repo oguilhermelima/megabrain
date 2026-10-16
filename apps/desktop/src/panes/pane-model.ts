@@ -174,6 +174,38 @@ export function movePane(panes: Panes, source: string, target: string, zone: Zon
   return withRoot(panes, splitAt(base, target, zone, from, `split-${source}`), source)
 }
 
+/**
+ * `node` beside the whole of `root` on `side`: first or last across it. A root already split that
+ * way takes it as one more child with an even share; any other root becomes half of a new split.
+ */
+function atSide(root: PaneNode, node: PaneNode, side: Edge): PaneNode {
+  const direction = side === 'left' || side === 'right' ? 'row' : 'column'
+  const first = side === 'left' || side === 'top'
+  if (root.type === 'split' && root.direction === direction) {
+    const count = root.children.length
+    const share = 1 / (count + 1)
+    const sizes = root.sizes.map((size) => (size * count) / (count + 1))
+    return { ...root, children: first ? [node, ...root.children] : [...root.children, node], sizes: first ? [share, ...sizes] : [...sizes, share] }
+  }
+  return { type: 'split', id: freshId(root, `span-${node.id}`), direction, children: first ? [node, root] : [root, node], sizes: [0.5, 0.5] }
+}
+
+/** Pane `paneId` moves out to span a whole side of the tree: the full width under or over the rest, or the full height left or right of it. */
+export function spanPane(panes: Panes, paneId: string, side: Edge): Panes {
+  const pane = findPane(panes, paneId)
+  if (pane === null) return panes
+  const base = without(panes.root, paneId)
+  if (base === null) return panes
+  return withRoot(panes, atSide(base, pane, side), paneId)
+}
+
+/** A sidebar item dropped on a side of the area spans it as a new pane `newId`; an item already open moves there. */
+export function spanItem(panes: Panes, item: string, side: Edge, newId: string): Panes {
+  const open = paneOfItem(panes, item)
+  if (open !== null) return spanPane(panes, open.id, side)
+  return withRoot(panes, atSide(panes.root, { type: 'pane', id: newId, item }, side), newId)
+}
+
 /** Closes a pane; its siblings take the space. The last pane cannot close. */
 export function closePane(panes: Panes, id: string): Panes {
   if (findPane(panes, id) === null) return panes
@@ -337,10 +369,10 @@ export function focusDirection(panes: Panes, direction: Direction): Panes {
   return best === null ? panes : { ...panes, focused: best.id }
 }
 
-/** The band along each edge that splits; inside it the drop replaces the pane. */
-const edgeBand = 0.25
+/** The band along each edge that splits, a third of the pane; inside them the drop replaces (or swaps) the pane. */
+const edgeBand = 1 / 3
 
-/** Which zone of a pane (its client rect) the pointer is over: the nearer edge's band, else the center. */
+/** Which zone of a pane (its client rect) the pointer is over: the nearer edge's outer third, else the center. */
 export function dropZone(rect: { left: number; top: number; width: number; height: number }, x: number, y: number): Zone {
   const fx = rect.width <= 0 ? 0.5 : (x - rect.left) / rect.width
   const fy = rect.height <= 0 ? 0.5 : (y - rect.top) / rect.height

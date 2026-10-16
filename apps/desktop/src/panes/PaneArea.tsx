@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { equaliseSplit, resizeSplit, zonePreview, type Divider, type Panes, type Rect } from '@/panes/pane-model'
-import type { PaneDrag } from '@/panes/usePaneDrag'
+import { equaliseSplit, resizeSplit, zonePreview, type Divider, type Edge, type Panes, type Rect } from '@/panes/pane-model'
+import { sideBand, type PaneDrag } from '@/panes/usePaneDrag'
 import { columnAt, minPaneHeight, minPaneWidth, resetColumn, resizeColumn, reveal, stripEdges, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
 import { useStripScroll } from '@/panes/useStripScroll'
 import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
@@ -65,8 +65,12 @@ export function PaneArea({
   const target = dragging?.target ?? null
   // Dropping a pane on itself, or an item on the pane that shows it, does nothing, so it shows no preview.
   const source = dragging?.source ?? null
-  const targetItem = target === null ? null : (rects.find((pane) => pane.id === target.paneId)?.item ?? null)
-  const preview = target !== null && source !== null && !(source.kind === 'pane' ? source.paneId === target.paneId : source.item === targetItem) ? target : null
+  const paneTarget = target?.kind === 'pane' ? target : null
+  const targetItem = paneTarget === null ? null : (rects.find((pane) => pane.id === paneTarget.paneId)?.item ?? null)
+  const preview = paneTarget !== null && source !== null && !(source.kind === 'pane' ? source.paneId === paneTarget.paneId : source.item === targetItem) ? paneTarget : null
+  // While something is dragged over a split, a band along each of its edges takes a drop that spans that whole side.
+  const sides = dragging !== null && split
+  const side = sides && target?.kind === 'side' ? target.side : null
 
   // The panes whose item's own top bar is their header (panes/pane-chrome); the rest keep a strip.
   const [headed, setHeaded] = useState<ReadonlySet<string>>(new Set())
@@ -120,7 +124,7 @@ export function PaneArea({
   )
 
   return (
-    <div ref={scroll.area} className="relative min-h-0 flex-1">
+    <div ref={scroll.area} data-pane-area={split ? '' : undefined} className="relative min-h-0 flex-1">
       {/* Sideways scrolling is native, so a two-finger swipe moves the strip; its bar is the minimap. */}
       <div ref={scroll.scroller} className="absolute inset-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="relative h-full" style={{ width: Math.max(layout.width, size.width) }}>
@@ -155,7 +159,7 @@ export function PaneArea({
                   </WindowRowContext.Provider>
                 </div>
                 {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 ring-1 ring-accent/50 ring-inset" />}
-                {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} replace={preview.zone === 'center'} />}
+                {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} label={preview.zone === 'center' ? (source?.kind === 'pane' ? 'Swap' : 'Replace') : 'Split here'} />}
               </section>
             )
           })}
@@ -168,6 +172,8 @@ export function PaneArea({
           {layout.columns.map((column) => column.height > size.height + 1 && <ColumnScrollbar key={`bar:${column.id}`} column={column} offset={scroll.offsetOf(column)} view={size.height} />)}
         </div>
       </div>
+      {sides && (['top', 'bottom', 'left', 'right'] as const).map((edge) => <SideBand key={edge} edge={edge} lit={side === edge} />)}
+      {side !== null && <DropPreview rect={zonePreview(side)} label={side === 'top' || side === 'bottom' ? 'Span the width' : 'Span the height'} />}
       {layout.overflowX && <StripNav layout={layout} focused={panes.focused} titles={titles} area={scroll.area} scroller={scroll.scroller} view={size.width} onScroll={scroll.scrollTo} />}
       {dragging !== null && (
         <div style={{ left: dragging.x + 12, top: dragging.y + 12 }} className="pointer-events-none fixed z-50 max-w-64 truncate rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
@@ -212,12 +218,26 @@ function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string;
   )
 }
 
-/** Where the drop lands: tinted half of the pane for a split, the whole pane to replace it. */
-function DropPreview({ rect, replace }: { rect: Rect; replace: boolean }) {
+/** Where the drop lands: tinted half of the pane for a split, the whole pane to replace or swap it, half the area to span a side. */
+function DropPreview({ rect, label }: { rect: Rect; label: string }) {
   return (
     <span aria-hidden="true" style={percent(rect)} className="pointer-events-none absolute z-40 p-1.5">
-      <span className={`flex size-full items-center justify-center rounded-[14px] border-2 border-accent/70 bg-accent/[0.14] text-[12px] font-medium text-ink-100`}>{replace ? 'Replace' : 'Split here'}</span>
+      <span className={`flex size-full items-center justify-center rounded-[14px] border-2 border-accent/70 bg-accent/[0.14] text-[12px] font-medium text-ink-100`}>{label}</span>
     </span>
+  )
+}
+
+/** The band along one edge of a split during a drag: a drop in it spans that whole side; lit while the pointer is in it. */
+function SideBand({ edge, lit }: { edge: Edge; lit: boolean }) {
+  const across = edge === 'top' || edge === 'bottom'
+  const style: CSSProperties = across ? { left: 0, right: 0, height: sideBand, [edge]: 0 } : { top: 0, bottom: 0, width: sideBand, [edge]: 0 }
+  return (
+    <span
+      aria-hidden="true"
+      data-side-band={edge}
+      style={style}
+      className={`pointer-events-none absolute z-[47] transition-colors duration-100 ${lit ? 'bg-accent/45' : 'bg-accent/[0.1]'} ${across ? 'border-y' : 'border-x'} border-accent/30`}
+    />
   )
 }
 

@@ -99,6 +99,40 @@ describe('adding and moving columns', () => {
   })
 })
 
+describe('the strip is the top row only', () => {
+  const under: PaneNode = { type: 'split', id: 'g', direction: 'column', children: [presetTree(leaves(4), 'row', 'top'), leaf('e')], sizes: [0.5, 0.5] }
+
+  test('a layout whose top level is not a row is one column that fits the area, never scrolling sideways', () => {
+    const layout = stripLayout(under, emptyStrip, { width: 900, height: 700 })
+    expect(layout.columns.map((column) => column.id)).toEqual(['g'])
+    expect(layout.columns[0]?.width).toBe(900)
+    expect(layout.width).toBe(900)
+    expect(layout.overflowX).toBe(false)
+    // Four across on top, the fifth the whole width under them.
+    expect(layout.columns[0]?.panes.map((pane) => pane.rect)).toEqual([
+      { x: 0, y: 0, width: 225, height: 350 },
+      { x: 225, y: 0, width: 225, height: 350 },
+      { x: 450, y: 0, width: 225, height: 350 },
+      { x: 675, y: 0, width: 225, height: 350 },
+      { x: 0, y: 350, width: 900, height: 350 },
+    ])
+  })
+
+  test('it still scrolls down when its panes need more height than the area', () => {
+    const tall: PaneNode = { type: 'split', id: 'g', direction: 'column', children: [...leaves(6), presetTree([leaf('x'), leaf('y')], 'row', 'r')], sizes: Array.from({ length: 7 }, () => 1 / 7) }
+    const layout = stripLayout(tall, emptyStrip, { width: 900, height: 700 })
+    expect(layout.overflowY).toBe(true)
+    expect(layout.overflowX).toBe(false)
+  })
+
+  test('a row on top scrolls as columns, each column holding any tree', () => {
+    const row: PaneNode = { type: 'split', id: 'r', direction: 'row', children: [leaf('a'), under, leaf('z'), leaf('w')], sizes: [0.25, 0.25, 0.25, 0.25] }
+    const layout = stripLayout(row, emptyStrip, laptop)
+    expect(layout.columns.map((column) => column.id)).toEqual(['p-a', 'g', 'p-z', 'p-w'])
+    expect(layout.overflowX).toBe(true)
+  })
+})
+
 describe('widths, and fit or scroll', () => {
   test('two or three columns share the area by default, so they fit', () => {
     const two = stripLayout(presetTree(leaves(2), 'row', 'g'), emptyStrip, laptop)
