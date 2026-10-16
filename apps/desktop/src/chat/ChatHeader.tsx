@@ -25,7 +25,7 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
   latest.current = { available, select }
 
   // ⌘1 to ⌘4 in the capture phase, so a terminal or an editor in the pane does not keep them; a disabled view ignores its key.
-  // Inside VS Code they never reach this window, and they are left alone should one arrive while it has the keyboard.
+  // Inside Code they never reach this window, and they are left alone should one arrive while it has the keyboard.
   const focused = pane?.focused === true
   useEffect(() => {
     if (!focused) return

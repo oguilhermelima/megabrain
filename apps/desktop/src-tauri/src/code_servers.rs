@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
-/// The roots whose VS Code server the app started through `megabrain code open`. The window
+/// The roots whose Code server the app started through `megabrain code open`. The window
 /// stops one after its grace; quitting the app stops whatever is left.
 #[derive(Default)]
 pub struct CodeServers(Mutex<BTreeSet<String>>);

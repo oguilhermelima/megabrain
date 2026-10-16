@@ -1,6 +1,6 @@
 import type { Project, ProjectWorktree } from '@/api/schema'
 
-/** A worktree or repository opened in VS Code. */
+/** A worktree or repository opened in Code. */
 export interface CodeTarget {
   root: string
   title: string
@@ -28,7 +28,7 @@ export interface CodeShown {
 }
 
 /**
- * Which pane's item holds each root's VS Code. A root has one frame, so when two panes show it in
+ * Which pane's item holds each root's Code. A root has one frame, so when two panes show it in
  * Code the one that held it keeps it, else the first in reading order takes it; the other pane
  * points to it. An unchanged assignment is returned as is.
  */
@@ -68,7 +68,7 @@ export function expiredServers(idle: Readonly<Record<string, number>>, now: numb
 /** How long the code frame fades in once revealed. */
 export const frameFadeMs = 150
 
-/** How long after its load event a root's VS Code stays hidden: the workbench paints white before
+/** How long after its load event a root's Code stays hidden: the workbench paints white before
  * its theme, and the frame is cross-origin, so the theme cannot be watched for. A root's first
  * paint this app session is slow (extensions, theme from disk); later ones are quick. */
 export function frameRevealDelay(painted: ReadonlySet<string>, root: string): number {

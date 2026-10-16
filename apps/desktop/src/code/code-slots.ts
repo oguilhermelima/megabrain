@@ -1,5 +1,5 @@
 /**
- * Where each pane wants its VS Code: the element a pane in Code view leaves empty under its top
+ * Where each pane wants its Code: the element a pane in Code view leaves empty under its top
  * bar, by item. Frames never move between parents (moving an iframe reloads it), so the code layer
  * lays each one over its slot instead and listens here for slots that come and go.
  */

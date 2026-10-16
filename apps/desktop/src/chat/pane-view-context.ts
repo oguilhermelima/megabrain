@@ -8,7 +8,7 @@ export interface PaneViewControls {
   /** The focused pane takes ⌘1 to ⌘4. */
   focused: boolean
   setView: (view: PaneView) => void
-  /** What the Code view shows under the bar: the slot VS Code is laid over. */
+  /** What the Code view shows under the bar: the slot Code is laid over. */
   code: ReactNode
 }
 

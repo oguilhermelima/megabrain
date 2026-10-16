@@ -1,6 +1,6 @@
 // What every row menu in the sidebar holds, and the order it shows it in. Items are grouped by kind,
 // the groups always in this order with a separator between them, and destructive items last:
-//   open      New chat, New terminal, Open in VS Code, Show on GitHub, Reveal in Finder
+//   open      New chat, New terminal, Open in Code, Show on GitHub, Reveal in Finder
 //   git       New worktree, New stacked branch, Sync stack, Open PRs, Merge stack
 //   copy      Copy path, Copy branch name, Refresh
 //   organise  Rename, Move to folder, Hide

@@ -83,7 +83,7 @@ megabrain github review <repo name|path> <number> --event approve|request-change
 megabrain github comment <repo name|path> <number> --body <text> [--json] — recommended when you need to comment on a pull request or issue.
 megabrain github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json] — recommended when you need to close or reopen an issue.
 megabrain github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json] — recommended when you need to merge, close or reopen a pull request.
-megabrain code open <root> [--json] | stop <root> [--json] — recommended when you need the full VS Code editor for a registered project or worktree.
+megabrain code open <root> [--json] | stop <root> [--json] — recommended when you need the full Code editor for a registered project or worktree.
 
 ```
 megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json] — recommended when you need to review or remove old worktrees safely.

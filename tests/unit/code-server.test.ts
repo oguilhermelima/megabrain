@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { createProcessAdapter } from "../../src/adapters/proc.js";
 import { registerMegabrainRepository } from "../../src/core/project-registry.js";
-import { BRIDGE_EXTENSION, CODE_ENFORCED_SETTINGS, codeServerPortCandidate, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
+import { BRIDGE_EXTENSION, CODE_CONFIG_VERSION, CODE_ENFORCED_SETTINGS, codeConfigVersion, codeServerPortCandidate, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
+import { CODE_WORKBENCH_CSS } from "../../src/core/code-server-proxy.js";
 import { ok } from "../../src/core/result.js";
 
 let root = "";
@@ -55,6 +56,7 @@ function fakes(overrides: Partial<CodeServerDependencies> = {}) {
     start: async (command, args, options) => {
       started.push({ command, args, options });
       nextPid += 101;
+      alive.add(nextPid - 101);
       return ok({ pid: nextPid - 101 });
     },
     isAlive: (pid) => alive.has(pid),
@@ -74,13 +76,78 @@ describe("code server", () => {
     expect(selectCodeServerAsset("win32", "x64")).toBeUndefined();
   });
 
-  test("puts the activity bar on top and keeps the title bar it forces at its fixed height", () => {
+  test("puts the activity bar on top of a left side bar and keeps the title bar it forces at its fixed height", () => {
     expect(CODE_ENFORCED_SETTINGS).toMatchObject({
       "window.commandCenter": false,
       "workbench.layoutControl.enabled": false,
       "window.menuBarVisibility": "hidden",
       "workbench.activityBar.location": "top",
+      "workbench.sideBar.location": "left",
     });
+  });
+
+  test("enforced layout keys win over layout the person set in the profile's user settings", async () => {
+    const path = await repository("enforced-user");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const profile = join(state, "code-server", "data", createHash("sha256").update(path).digest("hex").slice(0, 20));
+    mkdirSync(join(profile, "User"), { recursive: true });
+    writeFileSync(join(profile, "User", "settings.json"), `${JSON.stringify({
+      "workbench.sideBar.location": "right",
+      "workbench.activityBar.location": "default",
+      "editor.fontSize": 15,
+    })}\n`);
+    await createCodeServerManager(env, createProcessAdapter(), fakes().dependencies).open(path);
+    expect(JSON.parse(readFileSync(join(profile, "User", "settings.json"), "utf8"))).toMatchObject({
+      "workbench.sideBar.location": "left",
+      "workbench.activityBar.location": "top",
+      "editor.fontSize": 15,
+    });
+  });
+
+  test("restarts a live server started with an older configuration and rewrites its settings", async () => {
+    const path = await repository("stale-config");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const id = createHash("sha256").update(path).digest("hex").slice(0, 20);
+    const fake = fakes();
+    const manager = createCodeServerManager(env, createProcessAdapter(), fake.dependencies);
+    const first = await manager.open(path);
+    const recordPath = join(state, "code-server", "servers", `${id}.json`);
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    expect(typeof record.configVersion).toBe("string");
+    // A server from an earlier build: no version in its record, and the old layout in its profile.
+    delete record.configVersion;
+    writeFileSync(recordPath, `${JSON.stringify(record)}\n`);
+    const settingsPath = join(state, "code-server", "data", id, "User", "settings.json");
+    writeFileSync(settingsPath, `${JSON.stringify({ "workbench.activityBar.location": "default", "workbench.sideBar.location": "right" })}\n`);
+    const second = await manager.open(path);
+    expect(fake.alive.has(first.pid)).toBe(false);
+    expect(fake.alive.has(first.codeServerPid)).toBe(false);
+    expect(fake.started).toHaveLength(4);
+    expect(second.codeServerPid).not.toBe(first.codeServerPid);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({ "workbench.activityBar.location": "top", "workbench.sideBar.location": "left" });
+    expect(JSON.parse(readFileSync(recordPath, "utf8"))).toMatchObject({ configVersion: CODE_CONFIG_VERSION });
+  });
+
+  test("restarts a live server whose recorded configuration version differs", async () => {
+    const path = await repository("other-config");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const id = createHash("sha256").update(path).digest("hex").slice(0, 20);
+    const fake = fakes();
+    const manager = createCodeServerManager(env, createProcessAdapter(), fake.dependencies);
+    await manager.open(path);
+    const recordPath = join(state, "code-server", "servers", `${id}.json`);
+    writeFileSync(recordPath, `${JSON.stringify({ ...JSON.parse(readFileSync(recordPath, "utf8")), configVersion: "older" })}\n`);
+    await manager.open(path);
+    expect(fake.started).toHaveLength(4);
+    await manager.open(path);
+    expect(fake.started).toHaveLength(4);
+  });
+
+  test("the configuration version covers the enforced settings, the bridge and the workbench CSS", () => {
+    expect(CODE_CONFIG_VERSION).toBe(codeConfigVersion(CODE_ENFORCED_SETTINGS, BRIDGE_EXTENSION, CODE_WORKBENCH_CSS));
+    expect(codeConfigVersion({ ...CODE_ENFORCED_SETTINGS, "workbench.sideBar.location": "right" }, BRIDGE_EXTENSION, CODE_WORKBENCH_CSS)).not.toBe(CODE_CONFIG_VERSION);
+    expect(codeConfigVersion(CODE_ENFORCED_SETTINGS, `${BRIDGE_EXTENSION}\n`, CODE_WORKBENCH_CSS)).not.toBe(CODE_CONFIG_VERSION);
+    expect(codeConfigVersion(CODE_ENFORCED_SETTINGS, BRIDGE_EXTENSION, `${CODE_WORKBENCH_CSS}\n`)).not.toBe(CODE_CONFIG_VERSION);
   });
 
   test("refuses an unregistered repository without downloading or spawning", async () => {
@@ -132,7 +199,7 @@ describe("code server", () => {
       "workbench.colorTheme": "megabrain-dark",
       "workbench.preferredDarkColorTheme": "megabrain-dark",
       "window.autoDetectColorScheme": false,
-      "workbench.sideBar.location": "right",
+      "workbench.sideBar.location": "left",
       "editor.minimap.enabled": false,
     });
     expect(readFileSync(join(profile, "extensions", "megabrain.megabrain-bridge-1.0.0", "package.json"), "utf8")).toContain("megabrain-bridge");

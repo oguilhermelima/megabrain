@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { CODE_WORKBENCH_CSS } from "../../src/core/code-server-proxy.js";
 
 const directories: string[] = [];
 const servers: HttpServer[] = [];
@@ -173,5 +174,34 @@ describe("code server token proxy", () => {
     const port = await nodeTokenProxy(socket, "secret-token");
     const frame = await nodeWebSocketClient(port, "secret-token");
     expect(JSON.parse(frame)).toEqual({ event: "health", status: "alive" });
+  });
+
+  test("serves the workbench stylesheet with the layout CSS after the original, which it imports", async () => {
+    const socket = await socketPath();
+    const backendUrls: string[] = [];
+    const backend = createHttpServer((request, response) => { backendUrls.push(request.url ?? ""); response.writeHead(200, { "Content-Type": "text/css" }); response.end(".original{}"); });
+    servers.push(backend);
+    backend.listen(socket);
+    await once(backend, "listening");
+
+    const port = await nodeTokenProxy(socket, "secret-token");
+    const stylesheet = "/stable-1/static/out/vs/code/browser/workbench/workbench.css";
+    const patched = await fetch(`http://127.0.0.1:${port}/secret-token${stylesheet}`);
+    expect(patched.status).toBe(200);
+    expect(patched.headers.get("content-type")).toContain("text/css");
+    expect(patched.headers.get("cache-control")).toBe("no-store");
+    const body = await patched.text();
+    expect(body.startsWith('@import url("workbench.css?megabrain-original");')).toBe(true);
+    expect(body).toContain(CODE_WORKBENCH_CSS);
+    expect(backendUrls).toHaveLength(0);
+
+    const original = await fetch(`http://127.0.0.1:${port}/secret-token${stylesheet}?megabrain-original`);
+    expect(await original.text()).toBe(".original{}");
+    expect(backendUrls).toEqual([`${stylesheet}?megabrain-original`]);
+  });
+
+  test("the layout CSS hides the accounts and manage buttons wherever the workbench puts them", () => {
+    expect(CODE_WORKBENCH_CSS).toContain(".global-activity");
+    expect(CODE_WORKBENCH_CSS).toContain("display: none");
   });
 });

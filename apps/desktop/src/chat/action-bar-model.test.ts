@@ -113,10 +113,10 @@ describe('view keys', () => {
     expect(viewForKey(key('1', { altKey: true }))).toBeNull()
     expect(viewForKey(key('1', { ctrlKey: true }))).toBeNull()
   })
-  test('the focused pane takes ⌘1 to ⌘4 while the keyboard is outside VS Code, Code view included', () => {
+  test('the focused pane takes ⌘1 to ⌘4 while the keyboard is outside Code, Code view included', () => {
     expect(['1', '2', '3', '4'].map((value) => paneViewKey(key(value), { focused: true, inEditor: false }))).toEqual(['agent', 'code', 'pr', 'diff'])
   })
-  test('inside VS Code ⌘1 to ⌘4 stay with VS Code', () => {
+  test('inside Code ⌘1 to ⌘4 stay with Code', () => {
     expect(['1', '2', '3', '4'].map((value) => paneViewKey(key(value), { focused: true, inEditor: true }))).toEqual([null, null, null, null])
   })
   test('a pane without focus never takes them', () => {

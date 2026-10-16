@@ -1183,7 +1183,7 @@ export const Sidebar = memo(function Sidebar({
   projects: Project[]
   selectedSessionId: string | null
   onSelectSession: (session: ProjectSession) => void
-  /** Shows a root in Code, the embedded VS Code, in a pane. */
+  /** Shows a root in Code, the embedded editor, in a pane. */
   onCode: (target: CodeTarget) => void
   onImport: () => void
   /** The folders and top-level order, reconciled with the listed projects; drags, ⌥↑ ⌥↓ and the folder menus send the next one. */
@@ -1516,7 +1516,7 @@ export const Sidebar = memo(function Sidebar({
   const actions = useMemo<RowActions>(() => ({
     code: onCode,
     project: (project) => [
-      { label: 'Open in VS Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project)) },
+      { label: 'Open in Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project)) },
       ...(githubRepository(project.remote) === null ? [] : [{ label: 'Show on GitHub', icon: 'external', group: 'open', onSelect: () => onGithub(project, 'prs') } satisfies MenuItem]),
       { label: 'Reveal in Finder', icon: 'reveal', group: 'open', onSelect: () => reveal(project.path) },
       { label: 'New worktree…', icon: 'branch', group: 'git', onSelect: () => openNewWorktree(project) },
@@ -1543,7 +1543,7 @@ export const Sidebar = memo(function Sidebar({
       const items: MenuItem[] = [
         { label: 'New chat', icon: 'chat', group: 'open', onSelect: () => onNewChat(worktree.path) },
         { label: 'New terminal', icon: 'terminal', group: 'open', onSelect: () => onNewTerminal(worktree.path) },
-        { label: 'Open in VS Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project, worktree)) },
+        { label: 'Open in Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project, worktree)) },
         { label: 'Reveal in Finder', icon: 'reveal', group: 'open', onSelect: () => reveal(worktree.path) },
         ...stackActions(project, tree, node).map((action) => stackItem(project, worktree, action)),
         { label: 'Copy path', icon: 'copy', group: 'copy', onSelect: () => copyText(worktree.path) },

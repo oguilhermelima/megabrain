@@ -10,6 +10,7 @@ import { openDatabase } from "../db/db.js";
 import { listRepositories } from "../db/queries/repositories.js";
 import { failed, type Result } from "./result.js";
 import { selfInvocation } from "./self-invocation.js";
+import { CODE_WORKBENCH_CSS } from "./code-server-proxy.js";
 
 export const CODE_SERVER_VERSION = "4.138.0";
 const RELEASE_BASE = `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}`;
@@ -19,13 +20,15 @@ const CODE_SERVER_PORT_COUNT = 8000;
 export type CodeServerAsset = Readonly<{ name: string; url: string; sha256: string }>;
 export type CodeServerInfo = Readonly<{ root: string; url: string; port: number; pid: number; codeServerPid: number }>;
 
-// The activity bar sits on top of the side bar, above the explorer. The web workbench then forces
-// its title bar visible (it moves the account and manage buttons there) and ignores
-// window.customTitleBarVisibility and window.titleBarStyle, so the desktop app's frame crops that
-// bar off instead (titleBarCrop in apps/desktop/src/code/CodeFrame.tsx); the workbench lays out at full height and nothing below
-// it moves. The bar holds only the window title and those two buttons: with no command center, no
-// layout control and a hidden menu bar, its height is fixed. Accounts and settings stay in the
-// command palette (and Settings on Cmd+, inside VS Code).
+// The side bar is on the left with the activity bar on top of it, above the explorer. The web
+// workbench then forces its title bar visible (it moves the account and manage buttons there) and
+// ignores window.customTitleBarVisibility and window.titleBarStyle, so the desktop app's frame crops
+// that bar off instead (titleBarCrop in apps/desktop/src/code/CodeFrame.tsx); the workbench lays out
+// at full height and nothing below it moves. The bar holds only the window title and those two
+// buttons, which CODE_WORKBENCH_CSS also hides: with no command center, no layout control and a
+// hidden menu bar, its height is fixed. Accounts and settings stay in the command palette (and
+// Settings on Cmd+, inside Code). These keys are window-scoped, so a repository's own
+// .vscode/settings.json can still override them; user settings cannot.
 export const CODE_ENFORCED_SETTINGS = {
   "security.workspace.trust.enabled": false,
   "workbench.activityBar.location": "top",
@@ -33,7 +36,7 @@ export const CODE_ENFORCED_SETTINGS = {
   "window.menuBarVisibility": "hidden",
   "window.commandCenter": false,
   "workbench.layoutControl.enabled": false,
-  "workbench.sideBar.location": "right",
+  "workbench.sideBar.location": "left",
   "workbench.secondarySideBar.defaultVisibility": "hidden",
   "workbench.startupEditor": "none",
   "workbench.tips.enabled": false,
@@ -45,6 +48,13 @@ export const CODE_ENFORCED_SETTINGS = {
   "window.autoDetectColorScheme": false,
   "explorer.openEditors.visible": 0,
 } as const;
+
+/** What a running server was started with. A live server whose record carries another version (or
+ * none, from a build before versions) is restarted on open: its settings, bridge and proxy are
+ * stale, and a reused server would keep showing the old layout. */
+export function codeConfigVersion(settings: Readonly<Record<string, unknown>>, bridge: string, workbenchCss: string): string {
+  return createHash("sha256").update(JSON.stringify([settings, bridge, BRIDGE_PACKAGE, BRIDGE_THEME, workbenchCss])).digest("hex").slice(0, 16);
+}
 
 export const CODE_DEFAULT_SETTINGS = {
   "workbench.colorTheme": "megabrain-dark",
@@ -63,6 +73,7 @@ type ServerRecord = Readonly<{
   codeServerPid: number;
   proxyPid: number;
   socketPath: string;
+  configVersion?: string;
 }>;
 
 export type CodeServerDependencies = Readonly<{
@@ -205,7 +216,7 @@ async function readRecord(path: string): Promise<ServerRecord | undefined> {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const row = parsed as Record<string, unknown>;
-    if (typeof row.root !== "string" || typeof row.url !== "string" || typeof row.port !== "number" || typeof row.token !== "string" || typeof row.codeServerPid !== "number" || typeof row.proxyPid !== "number" || typeof row.socketPath !== "string") return undefined;
+    if (typeof row.root !== "string" || typeof row.url !== "string" || typeof row.port !== "number" || typeof row.token !== "string" || typeof row.codeServerPid !== "number" || typeof row.proxyPid !== "number" || typeof row.socketPath !== "string" || (row.configVersion !== undefined && typeof row.configVersion !== "string")) return undefined;
     return row as ServerRecord;
   } catch {
     return undefined;
@@ -346,7 +357,7 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
       const recordPath = join(base, "servers", `${id}.json`);
       await privateDirectory(join(base, "servers"));
       const existing = await readRecord(recordPath);
-      if (existing !== undefined && existing.root === canonicalRoot && dependencies.isAlive(existing.codeServerPid) && dependencies.isAlive(existing.proxyPid)) {
+      if (existing !== undefined && existing.root === canonicalRoot && existing.configVersion === CODE_CONFIG_VERSION && dependencies.isAlive(existing.codeServerPid) && dependencies.isAlive(existing.proxyPid)) {
         return { root: existing.root, url: existing.url, port: existing.port, pid: existing.proxyPid, codeServerPid: existing.codeServerPid };
       }
       if (existing !== undefined) {
@@ -394,7 +405,7 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
         if (dependencies.ready === undefined) await waitForProxy(port, token, codeServerPid, proxyPid, dependencies);
         else await dependencies.ready(port, codeServerPid, proxyPid);
         const url = `http://127.0.0.1:${port}/${token}/`;
-        const record: ServerRecord = { root: canonicalRoot, url, port, token, codeServerPid, proxyPid, socketPath };
+        const record: ServerRecord = { root: canonicalRoot, url, port, token, codeServerPid, proxyPid, socketPath, configVersion: CODE_CONFIG_VERSION };
         await writeRecord(recordPath, record);
         return { root: canonicalRoot, url, port, pid: proxyPid, codeServerPid };
       } catch (cause: unknown) {
@@ -483,7 +494,7 @@ async function writeManagedSettings(path: string): Promise<void> {
   }
   const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   // Enforced settings protect the embedded workspace; defaults seed a new profile while leaving
-  // choices made in VS Code (including its color theme) intact on every later start.
+  // choices made in Code (including its color theme) intact on every later start.
   const defaults = Object.fromEntries(Object.entries(CODE_DEFAULT_SETTINGS).filter(([key]) => !(key in existing)));
   await writeFile(temporary, `${JSON.stringify({ ...existing, ...defaults, ...CODE_ENFORCED_SETTINGS }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   await rename(temporary, path);
@@ -632,3 +643,5 @@ const BRIDGE_THEME = {
     { scope: ["variable", "identifier"], settings: { foreground: "#fafafa" } },
   ],
 };
+
+export const CODE_CONFIG_VERSION = codeConfigVersion(CODE_ENFORCED_SETTINGS, BRIDGE_EXTENSION, CODE_WORKBENCH_CSS);

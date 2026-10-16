@@ -20,7 +20,7 @@ export async function executeCode(args: readonly string[], environment: Environm
       return failed(usageText("code").trimEnd(), 2);
     }
     const server = await createCodeServerManager(environment, processAdapter).goto(root, target, line);
-    return ok(remaining.includes("--json") ? `${JSON.stringify(server, null, 2)}\n` : `Opened ${target} in VS Code\n`);
+    return ok(remaining.includes("--json") ? `${JSON.stringify(server, null, 2)}\n` : `Opened ${target} in Code\n`);
   }
   if ((action !== "open" && action !== "stop") || options.some((option) => option !== "--json") || options.filter((option) => option === "--json").length > 1) {
     return failed(usageText("code").trimEnd(), 2);
@@ -28,8 +28,8 @@ export async function executeCode(args: readonly string[], environment: Environm
   const manager = createCodeServerManager(environment, processAdapter);
   if (action === "open") {
     const server = await manager.open(root);
-    return ok(options.includes("--json") ? `${JSON.stringify(server, null, 2)}\n` : `VS Code is ready at ${server.url}\n`);
+    return ok(options.includes("--json") ? `${JSON.stringify(server, null, 2)}\n` : `Code is ready at ${server.url}\n`);
   }
   await manager.stop(root);
-  return ok(options.includes("--json") ? `${JSON.stringify({ root, stopped: true }, null, 2)}\n` : `Stopped VS Code for ${root}\n`);
+  return ok(options.includes("--json") ? `${JSON.stringify({ root, stopped: true }, null, 2)}\n` : `Stopped Code for ${root}\n`);
 }

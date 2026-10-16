@@ -54,7 +54,7 @@ import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
 import { alreadyOpen } from '@/launcher/resume-model'
 
-// VS Code, the GitHub pages and settings load the first time they open,
+// Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
 const CodeLayer = lazy(() => import('@/code/CodeLayer').then((module) => ({ default: module.CodeLayer })))
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
@@ -151,7 +151,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
   // A project's pull request or issue page, shown in the main area over chats and the launcher.
   const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
-  // The roots whose VS Code runs, in opening order: one frame each, kept mounted until its server stops.
+  // The roots whose Code runs, in opening order: one frame each, kept mounted until its server stops.
   const [codeTargets, setCodeTargets] = useState<CodeTarget[]>([])
   // When each running root stopped being used by any pane (see idleServers).
   const [idleCode, setIdleCode] = useState<Readonly<Record<string, number>>>({})
@@ -293,7 +293,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       return pane === null || pane.id === current.focused ? current : { ...current, focused: pane.id }
     })
 
-  // A worktree's VS Code shows in a pane: the focused pane when it works there, else another pane
+  // A worktree's Code shows in a pane: the focused pane when it works there, else another pane
   // that does, else a code item of its own in the focused pane.
   const showCode = (root: string) => {
     setGithubPage(null)
@@ -731,7 +731,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           },
         }
   // The action bar is on every item with a worktree but a maximised GitHub item: a launcher gets it
-  // once it starts in a worktree, so Agent there is the launcher and Code the worktree's VS Code.
+  // once it starts in a worktree, so Agent there is the launcher and Code the worktree's Code view.
   const paneViewFor = (item: string, root: string | null): PaneViewControls | null => {
     if (root === null || root === '' || !hasActionBar(item)) return null
     const holder = holders[root] ?? null
@@ -754,7 +754,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         setSettingsOpen(true)
         return
       }
-      // Escape is never handled here, so VS Code keeps it.
+      // Escape is never handled here, so Code keeps it.
       if (event.metaKey && event.key.toLowerCase() === 'n' && !event.shiftKey && !event.altKey) {
         event.preventDefault()
         openNewChat(null)

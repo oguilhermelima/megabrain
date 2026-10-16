@@ -119,7 +119,7 @@ megabrain sessions history --cwd ~/code/api --agent claude --limit 20 --json
 megabrain agent command claude --resume <id> --json
 ```
 
-Open a registered project or worktree in the full VS Code editor inside the desktop app:
+Open a registered project or worktree in the full Code editor inside the desktop app:
 
 ```sh
 megabrain code open ~/code/api

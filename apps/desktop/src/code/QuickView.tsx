@@ -34,7 +34,7 @@ const changeTone: Record<CodeChange['status'], Tone> = {
   untracked: 'neutral',
 }
 
-// A read-only look at a root's files and changes without starting VS Code.
+// A read-only look at a root's files and changes without starting Code.
 export function QuickView({ root, title, onClose }: { root: string; title: string; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('files')
   const [filter, setFilter] = useState('')

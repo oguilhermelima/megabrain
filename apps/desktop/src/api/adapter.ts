@@ -72,10 +72,10 @@ export interface DesktopApi {
   openUrl(url: string): Promise<void>
   /** Show a folder or file in Finder (the file manager on Linux). */
   revealPath(path: string): Promise<void>
-  /** A local VS Code for a worktree or repository; started on demand and reused. */
+  /** A local Code editor for a worktree or repository; started on demand and reused. */
   openCodeServer(root: string): Promise<CodeServer>
   stopCodeServer(root: string): Promise<void>
-  /** Open a file (optionally at a line) in the running VS Code for that root; starts it when needed. */
+  /** Open a file (optionally at a line) in the running Code for that root; starts it when needed. */
   openInCode(root: string, path: string, line?: number): Promise<CodeServer>
   /** Everything the Settings window shows. */
   settings(): Promise<Settings>

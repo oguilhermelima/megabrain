@@ -318,7 +318,7 @@ async fn code_branch_diff(cli: State<'_, Cli>, root: String, merge_base: String,
     .await
 }
 
-/// Quitting stops every VS Code server the app started, all at once, and waits for them.
+/// Quitting stops every Code server the app started, all at once, and waits for them.
 fn stop_code_servers(app: &tauri::AppHandle) {
     let cli = app.state::<Cli>();
     let stops: Vec<_> = app

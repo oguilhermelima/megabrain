@@ -3,7 +3,7 @@ import { api } from '@/api'
 import { Button, ErrorNote, Spinner } from '@/components/ui'
 import { frameFadeMs, frameRevealDelay, type CodeTarget } from '@/code/code-pane-model'
 
-// One root's VS Code, filling the box the code layer gives it. The frame and everything behind it
+// One root's Code, filling the box the code layer gives it. The frame and everything behind it
 // paint the app's dark surface, and the frame fades in only after its workbench has had time to
 // paint its theme (see frameRevealDelay), so starting never flashes white. It stays mounted,
 // hidden, while no pane shows it in Code; its server stops only after its grace (see
@@ -18,7 +18,7 @@ const painted = new Set<string>()
  * Measured headlessly against the real workbench; re-measure when the pinned version changes. */
 const titleBarCrop = 30
 
-/** A file to show once VS Code is up; a new request object asks again for the same file. */
+/** A file to show once Code is up; a new request object asks again for the same file. */
 export interface CodeGoto {
   path: string
   line: number | null
@@ -64,7 +64,7 @@ export function CodeFrame({ target, visible, goto }: { target: CodeTarget; visib
   }, [root, loaded])
 
   // A file asked for from a chat opens once the workbench has loaded: before that there is no
-  // window for VS Code to reuse.
+  // window for Code to reuse.
   useEffect(() => {
     if (goto === null || !loaded) return
     setGotoError(null)
@@ -75,7 +75,7 @@ export function CodeFrame({ target, visible, goto }: { target: CodeTarget; visib
     <div hidden={!visible} className="absolute inset-0 overflow-hidden bg-transparent">
       {url !== null && (
         <iframe
-          title={`VS Code for ${title}`}
+          title={`Code for ${title}`}
           src={url}
           onLoad={() => setLoaded(true)}
           style={{ transitionDuration: `${frameFadeMs}ms`, top: -titleBarCrop, height: `calc(100% + ${titleBarCrop}px)` }}
@@ -90,7 +90,7 @@ export function CodeFrame({ target, visible, goto }: { target: CodeTarget; visib
       ) : (
         !revealed && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] text-ink-400" role="status" aria-live="polite">
-            <Spinner /> Starting VS Code for {title}…
+            <Spinner /> Starting Code for {title}…
           </div>
         )
       )}

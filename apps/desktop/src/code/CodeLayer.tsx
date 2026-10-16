@@ -15,7 +15,7 @@ const sameBox = (left: Box | undefined, right: Box | undefined) =>
   left === right || (left !== undefined && right !== undefined && left.left === right.left && left.top === right.top && left.width === right.width && left.height === right.height)
 
 /**
- * Every running root's VS Code, kept mounted in one layer over the panes and laid over the slot of
+ * Every running root's Code, kept mounted in one layer over the panes and laid over the slot of
  * the pane that holds it (see frameHolders), so moving, splitting or resizing panes never reloads
  * a workbench. A root no pane shows stays mounted and hidden until its server stops. During a pane
  * drag the frames let the pointer through, so the drop target is found under them.
@@ -33,7 +33,7 @@ export function CodeLayer({
   slots: CodeSlots
   gotos: Readonly<Record<string, CodeGoto>>
   dragging: boolean
-  /** The keyboard went into a root's VS Code: its pane takes the focus. */
+  /** The keyboard went into a root's Code: its pane takes the focus. */
   onFocus: (root: string) => void
 }) {
   const layer = useRef<HTMLDivElement>(null)

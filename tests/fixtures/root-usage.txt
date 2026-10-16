@@ -15,7 +15,7 @@ Commands:
   projects [--json]                     List projects, worktrees, and agent sessions
   port who|free|kill ...                Find, free and stop port listeners
   github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable ... Read, review and manage GitHub pull requests and issues
-  code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open VS Code for a project
+  code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
   worktree archive|archived|unarchive  Put a branch away (folder removed, branch kept) and bring it back

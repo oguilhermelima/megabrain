@@ -656,7 +656,7 @@ export const terminalSessionSchema = z.looseObject({
 
 export const sendResultSchema = z.looseObject({ delivered: z.boolean(), channel: z.string(), detail: z.string().optional() })
 
-// `megabrain code open <root> --json`: a local VS Code (openvscode-server) for one worktree or
+// `megabrain code open <root> --json`: a local Code editor (code-server) for one worktree or
 // repository, started on demand and reused; `code stop <root>` ends it.
 export const codeServerSchema = z.looseObject({ root: z.string(), url: z.string(), port: z.number(), pid: z.number() })
 

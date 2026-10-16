@@ -16,11 +16,11 @@ describe('menuSections', () => {
       item('Sync stack…', 'git'),
       item('Copy path', 'copy'),
       item('New stacked branch…', 'git'),
-      item('Open in VS Code', 'open'),
+      item('Open in Code', 'open'),
       item('Show on GitHub', 'open'),
     ]
     expect(menuSections(items).map((section) => section.map((entry) => entry.label))).toEqual([
-      ['New terminal', 'Open in VS Code', 'Show on GitHub'],
+      ['New terminal', 'Open in Code', 'Show on GitHub'],
       ['Sync stack…', 'New stacked branch…'],
       ['Copy path'],
       ['Hide'],

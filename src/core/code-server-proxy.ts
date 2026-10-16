@@ -4,6 +4,16 @@ import type { Environment } from "../cli/commands/context.js";
 import { failed, ok, type Result } from "./result.js";
 
 const MAX_HEADER_BYTES = 65_536;
+const WORKBENCH_STYLESHEET = "/out/vs/code/browser/workbench/workbench.css";
+const ORIGINAL_STYLESHEET_QUERY = "megabrain-original";
+
+// Appended to the workbench's own stylesheet, so it holds whatever the settings say: the accounts
+// and manage buttons never show, whether the workbench puts them in its title bar (activity bar on
+// top) or at the foot of a vertical activity bar. Both stay reachable from the command palette.
+export const CODE_WORKBENCH_CSS = `.monaco-workbench .action-item:has(> .codicon-accounts-view-bar-icon),
+.monaco-workbench .action-item:has(> .codicon-settings-view-bar-icon),
+.monaco-workbench .global-activity { display: none !important; }
+`;
 
 type ProxyRequest = Readonly<{
   method: string;
@@ -101,6 +111,27 @@ function rewriteLocation(header: Buffer, token: string): Buffer {
   return Buffer.from(rewritten, "latin1");
 }
 
+// The workbench links one stylesheet; the proxy answers it with an import of the original (served
+// untouched under a marker query) followed by CODE_WORKBENCH_CSS, so it never buffers or rewrites a
+// response body. no-store keeps a changed stylesheet from outliving a restart in the frame's cache.
+function serveWorkbenchStylesheet(client: Socket): void {
+  const body = `@import url("workbench.css?${ORIGINAL_STYLESHEET_QUERY}");\n${CODE_WORKBENCH_CSS}`;
+  client.end([
+    "HTTP/1.1 200 OK",
+    "Content-Type: text/css; charset=utf-8",
+    "Cache-Control: no-store",
+    "Connection: close",
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    "",
+    body,
+  ].join("\r\n"));
+}
+
+function isWorkbenchStylesheet(request: ProxyRequest, target: string): boolean {
+  const parsed = new URL(target, "http://127.0.0.1");
+  return request.method === "GET" && parsed.pathname.endsWith(WORKBENCH_STYLESHEET) && parsed.search === "";
+}
+
 function forward(socketPath: string, client: Socket, request: ProxyRequest, target: string, token: string): void {
   client.pause();
   const upstream = connect(socketPath);
@@ -164,6 +195,7 @@ function handleClient(socketPath: string, token: string, client: Socket): void {
     handled = true;
     client.setTimeout(0);
     const target = tokenPath(request.target, token);
+    if (target !== undefined && isWorkbenchStylesheet(request, target)) return serveWorkbenchStylesheet(client);
     if (target !== undefined) return forward(socketPath, client, request, target, token);
     deny(client);
   });
