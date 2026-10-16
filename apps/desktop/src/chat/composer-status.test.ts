@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import type { Settings, UsageReading } from '@/api/schema'
 import {
   agentLimits,
+  providerUsage,
+  readingAge,
+  resetDistance,
   highestLimit,
   limitsLayout,
   agentModels,
@@ -581,5 +584,63 @@ describe('effortName', () => {
   test('an effort level as the menu labels it', () => {
     expect(['low', 'medium', 'high', 'xhigh', 'max'].map(effortName)).toEqual(['Low', 'Medium', 'High', 'X-High', 'Max'])
     expect(effortName('minimal')).toBe('Minimal')
+  })
+})
+
+describe('providerUsage', () => {
+  const at = (fetchedAt: number | null, item: UsageReading): UsageReading => ({ ...item, fetchedAt })
+
+  test('each provider with a share once, in the order the readings name them, its highest window picked', () => {
+    const usage = providerUsage([reading('codex', '5h', 17), reading('claude', '5h', 4), reading('codex', 'weekly', 66), reading('claude', 'weekly', 88), reading('grok', '5h', null)])
+    expect(usage.map((item) => [item.agent, item.highest.window, item.highest.usedPercent])).toEqual([
+      ['codex', 'weekly', 66],
+      ['claude', 'weekly', 88],
+    ])
+  })
+
+  test('a tie keeps the first window, 5-hour before weekly', () => {
+    expect(providerUsage([reading('codex', 'weekly', 40), reading('codex', '5h', 40)])[0]?.highest.window).toBe('5h')
+  })
+
+  test('rows go 5-hour, weekly, then any other window in reading order, a window without a share left out', () => {
+    const usage = providerUsage([reading('claude', 'opus-weekly', 12), reading('claude', 'weekly', 30), reading('claude', 'monthly', null), reading('claude', 'daily', 5), reading('claude', '5h', 9)])
+    expect(usage[0]?.limits.map((limit) => limit.window)).toEqual(['5h', 'weekly', 'opus-weekly', 'daily'])
+  })
+
+  test('a window outside 5-hour and weekly can be the highest', () => {
+    expect(providerUsage([reading('claude', '5h', 10), reading('claude', 'opus-weekly', 93)])[0]?.highest).toMatchObject({ window: 'opus-weekly', tone: 'red' })
+  })
+
+  test('the snapshot is the newest reading of the provider, null when none says', () => {
+    const usage = providerUsage([at(100, reading('codex', '5h', 1)), at(250, reading('codex', 'weekly', 2)), at(null, reading('claude', '5h', 3))])
+    expect(usage.map((item) => item.fetchedAt)).toEqual([250, null])
+  })
+
+  test('nothing to show without a share', () => {
+    expect(providerUsage([])).toEqual([])
+    expect(providerUsage([reading('grok', '5h', null), reading('grok', 'weekly', null)])).toEqual([])
+  })
+})
+
+describe('readingAge', () => {
+  const now = new Date(1_000_000_000)
+  test('how long ago a snapshot was read, from unix seconds', () => {
+    expect([999_990, 999_700, 999_000 - 7200, 1_000_000 - 3 * 86_400].map((seconds) => readingAge(seconds, now))).toEqual(['just now', '5m ago', '2h ago', '3d ago'])
+  })
+
+  test('null when the reading has no time, and just now for a clock slightly ahead', () => {
+    expect(readingAge(null, now)).toBeNull()
+    expect(readingAge(1_000_030, now)).toBe('just now')
+  })
+})
+
+describe('resetDistance', () => {
+  const now = new Date(Date.UTC(2026, 9, 16, 12, 0))
+  const later = (minutes: number) => new Date(now.getTime() + minutes * 60_000)
+  test('minutes, hours and minutes within a day, days and hours beyond', () => {
+    expect([later(9), later(65), later(23 * 60 + 59), later(3 * 1440 + 4 * 60 + 30)].map((at) => resetDistance(at, now))).toEqual(['in 9m', 'in 1h 5m', 'in 23h 59m', 'in 3d 4h'])
+  })
+  test('a reset already past is now', () => {
+    expect(resetDistance(later(-5), now)).toBe('now')
   })
 })

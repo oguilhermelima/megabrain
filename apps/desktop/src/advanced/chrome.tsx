@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { useShortcutBindings } from '@/lib/shortcut-store'
+import { comboLabel, type ShortcutId } from '@/lib/shortcuts'
 
 // The window chrome that used to be a top bar, now one row at the top of the sidebar: the band of
 // the macOS traffic lights. The Projects header sits under it, sticky at the top of the list.
@@ -23,12 +25,13 @@ const lightsGap = 12
 /** Where the traffic lights end, plus the gap: the left inset of anything sharing their row. */
 export const trafficLightsInset = lightsX + 2 * lightStep + lightWidth + lightsGap
 
-/** The show-sidebar button (size-8) and the gap after it. */
+/** The Settings and show-sidebar buttons (size-8 each), the gap between them and the gap after them. */
 const expandWidth = 32
+const buttonsGap = 4
 const expandGap = 12
 
-/** Where a pane header that joins the window row starts: past the lights and the show-sidebar button. */
-export const windowRowInset = trafficLightsInset + expandWidth + expandGap
+/** Where a pane header that joins the window row starts: past the lights, Settings and the show-sidebar button. */
+export const windowRowInset = trafficLightsInset + 2 * expandWidth + buttonsGap + expandGap
 
 export function SidebarToggleIcon() {
   return (
@@ -83,32 +86,51 @@ export function IconButton({ label, title, onClick, pressed, compact, children }
   )
 }
 
-/** Top of the sidebar: the lights' row, with the button that hides the sidebar at its right. */
-export function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
+/** A button's tooltip with the first keys Settings > Shortcuts gives its shortcut, if any. */
+function useShortcutTitle(label: string, id: ShortcutId): string {
+  const combo = useShortcutBindings()[id][0]
+  return combo === undefined ? label : `${label} (${comboLabel(combo)})`
+}
+
+/** Settings and the sidebar's toggle side by side, Settings first: the window row's two buttons. */
+function WindowButtons({ sidebarOpen, onSettings, onToggle }: { sidebarOpen: boolean; onSettings: () => void; onToggle: () => void }) {
+  const toggleLabel = sidebarOpen ? 'Hide sidebar' : 'Show sidebar'
+  const settingsTitle = useShortcutTitle('Settings', 'settings.open')
+  const toggleTitle = useShortcutTitle(toggleLabel, 'sidebar.toggle')
   return (
-    <div data-tauri-drag-region className={`flex ${lightsRow} shrink-0 items-center justify-end pr-2.5`}>
-      <IconButton label="Hide sidebar" title="Hide sidebar (⌘B)" compact onClick={onCollapse}>
+    <div className="flex items-center" style={{ gap: buttonsGap }}>
+      <IconButton label="Settings" title={settingsTitle} compact={sidebarOpen} onClick={onSettings}>
+        <SettingsIcon />
+      </IconButton>
+      <IconButton label={toggleLabel} title={toggleTitle} compact={sidebarOpen} onClick={onToggle}>
         <SidebarToggleIcon />
       </IconButton>
     </div>
   )
 }
 
+/** Top of the sidebar: the lights' row, with Settings and the button that hides the sidebar at its right. */
+export function SidebarHeader({ onCollapse, onSettings }: { onCollapse: () => void; onSettings: () => void }) {
+  return (
+    <div data-tauri-drag-region className={`flex ${lightsRow} shrink-0 items-center justify-end pr-2.5`}>
+      <WindowButtons sidebarOpen onSettings={onSettings} onToggle={onCollapse} />
+    </div>
+  )
+}
+
 /**
- * Shown in place of the sidebar when it is hidden: the lights' band with one button to bring it back.
- * With `joined` a pane header shares the band (panes/window-row), so this lies over that header's
- * inset instead of taking a row of its own.
+ * Shown in place of the sidebar when it is hidden: the lights' band with Settings and the button that
+ * brings the sidebar back. With `joined` a pane header shares the band (panes/window-row), so this lies
+ * over that header's inset instead of taking a row of its own.
  */
-export function CollapsedChrome({ onExpand, joined }: { onExpand: () => void; joined: boolean }) {
+export function CollapsedChrome({ onExpand, onSettings, joined }: { onExpand: () => void; onSettings: () => void; joined: boolean }) {
   return (
     <div
       data-tauri-drag-region
       style={{ paddingLeft: trafficLightsInset, width: joined ? windowRowInset : undefined }}
       className={`motion-fade flex ${lightsRow} shrink-0 items-center ${joined ? 'absolute top-0 left-0 z-50' : ''}`}
     >
-      <IconButton label="Show sidebar" title="Show sidebar (⌘B)" onClick={onExpand}>
-        <SidebarToggleIcon />
-      </IconButton>
+      <WindowButtons sidebarOpen={false} onSettings={onSettings} onToggle={onExpand} />
     </div>
   )
 }

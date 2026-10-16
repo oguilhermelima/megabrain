@@ -76,14 +76,17 @@ function parseSidebarFolders(raw: string): Result<SidebarFolders> {
   return ok({ version: 1, folders, order: record.order });
 }
 
-// Two more desktop files with the same contract as the folders: the app owns the meaning, the CLI
+// More desktop files with the same contract as the folders: the app owns the meaning, the CLI
 // checks the shape and writes it privately. Shortcut overrides map an action id to its keys; hidden
-// sessions map a session id to its last activity when the sidebar closed it.
+// sessions map a session id to its last activity when the sidebar closed it; the sidebar state holds
+// the keys of what the sidebar folded and each worktree's row order.
 type ShortcutOverrides = { version: 1; bindings: Record<string, string[]> };
 type HiddenSessions = { version: 1; sessions: Record<string, string | null> };
+type SidebarState = { version: 1; collapsed: string[]; rows: Record<string, string[]> };
 
 const emptyShortcutOverrides: ShortcutOverrides = { version: 1, bindings: {} };
 const emptyHiddenSessions: HiddenSessions = { version: 1, sessions: {} };
+const emptySidebarState: SidebarState = { version: 1, collapsed: [], rows: {} };
 
 function desktopFile(environment: Environment, name: string): string {
   return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"), name);
@@ -115,6 +118,19 @@ function parseHiddenSessions(raw: string): Result<HiddenSessions> {
   return ok({ version: 1, sessions });
 }
 
+function parseSidebarState(raw: string): Result<SidebarState> {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return failed("sidebar-state: not valid JSON", 2); }
+  if (!isRecord(value) || !hasOnlyKeys(value, ["version", "collapsed", "rows"]) || value.version !== 1 || !isRecord(value.rows)) return failed("sidebar-state: expected { version: 1, collapsed, rows }", 2);
+  if (!isStringList(value.collapsed)) return failed("sidebar-state: collapsed must be a list of strings", 2);
+  const rows: Record<string, string[]> = {};
+  for (const [path, keys] of Object.entries(value.rows)) {
+    if (!isStringList(keys)) return failed(`sidebar-state: the rows of ${path} must be a list of strings`, 2);
+    rows[path] = keys;
+  }
+  return ok({ version: 1, collapsed: value.collapsed, rows });
+}
+
 interface DesktopFile {
   file: string;
   empty: object;
@@ -138,6 +154,7 @@ const desktopSettings = {
   "sidebar-folders": desktopFileOf("sidebar-settings.json", parseSidebarFolders, emptySidebarFolders, (value) => `sidebar folders: ${value.folders.length}`),
   "shortcuts": desktopFileOf("shortcut-settings.json", parseShortcutOverrides, emptyShortcutOverrides, (value) => `shortcut overrides: ${Object.keys(value.bindings).length}`),
   "hidden-sessions": desktopFileOf("hidden-sessions.json", parseHiddenSessions, emptyHiddenSessions, (value) => `hidden sessions: ${Object.keys(value.sessions).length}`),
+  "sidebar-state": desktopFileOf("sidebar-state.json", parseSidebarState, emptySidebarState, (value) => `sidebar state: ${value.collapsed.length} collapsed, ${Object.keys(value.rows).length} ordered worktrees`),
 } as const;
 
 type DesktopSetting = keyof typeof desktopSettings;
@@ -281,7 +298,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|shortcuts|hidden-sessions|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

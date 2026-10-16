@@ -316,6 +316,16 @@ export function resetText(at: Date, now: Date = new Date()): string {
   return `resets ${hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`}`
 }
 
+/** How far away a reset is: minutes, hours and minutes within a day, days and hours beyond it. */
+export function resetDistance(at: Date, now: Date = new Date()): string {
+  const minutes = Math.ceil((at.getTime() - now.getTime()) / 60_000)
+  if (minutes <= 0) return 'now'
+  if (minutes < 60) return `in ${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`
+  return `in ${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
 export interface AgentLimit {
   window: string
   usedPercent: number
@@ -346,12 +356,63 @@ export function highestLimit(limits: AgentLimit[]): AgentLimit | null {
   return limits.reduce<AgentLimit | null>((highest, limit) => (highest === null || limit.usedPercent > highest.usedPercent ? limit : highest), null)
 }
 
+/** A reading as a limit, or null when it has no share. */
+function readingLimit(reading: UsageReading, now: Date): AgentLimit | null {
+  if (reading.usedPercent === null) return null
+  const resetsAt = parseResetsAt(reading.resetsAt)
+  return { window: reading.window, usedPercent: reading.usedPercent, tone: usageLimitTone(reading.usedPercent), resets: resetsAt === null ? null : resetText(resetsAt, now), resetsAt }
+}
+
 /** The agent's 5-hour and weekly usage, leaving out a window with no reading. */
 export function agentLimits(readings: UsageReading[], agent: string, now: Date = new Date()): AgentLimit[] {
   return limitWindows.flatMap((window) => {
     const reading = readings.find((item) => item.provider === agent && item.window === window)
-    if (reading === undefined || reading.usedPercent === null) return []
-    const resetsAt = parseResetsAt(reading.resetsAt)
-    return [{ window, usedPercent: reading.usedPercent, tone: usageLimitTone(reading.usedPercent), resets: resetsAt === null ? null : resetText(resetsAt, now), resetsAt }]
+    const limit = reading === undefined ? null : readingLimit(reading, now)
+    return limit === null ? [] : [limit]
   })
+}
+
+export interface ProviderUsage {
+  agent: string
+  /** Every window with a share: 5-hour, weekly, then any other in the order the readings give them. */
+  limits: AgentLimit[]
+  /** The window closest to running out, which the summary shows. */
+  highest: AgentLimit
+  /** Unix seconds of the provider's newest reading, or null when none says. */
+  fetchedAt: number | null
+}
+
+const windowRank = (window: string) => {
+  const rank = limitWindows.indexOf(window)
+  return rank === -1 ? limitWindows.length : rank
+}
+
+/** Each provider with a share, in the order the readings first name them, for the sidebar's usage summary and its details. */
+export function providerUsage(readings: UsageReading[], now: Date = new Date()): ProviderUsage[] {
+  const agents = [...new Set(readings.map((reading) => reading.provider))]
+  return agents.flatMap((agent) => {
+    const own = readings.filter((reading) => reading.provider === agent)
+    // A stable sort keeps the readings' own order among windows of the same rank.
+    const limits = own
+      .flatMap((reading) => {
+        const limit = readingLimit(reading, now)
+        return limit === null ? [] : [limit]
+      })
+      .sort((a, b) => windowRank(a.window) - windowRank(b.window))
+    const highest = highestLimit(limits)
+    if (highest === null) return []
+    const times = own.flatMap((reading) => (reading.fetchedAt === null ? [] : [reading.fetchedAt]))
+    return [{ agent, limits, highest, fetchedAt: times.length === 0 ? null : Math.max(...times) }]
+  })
+}
+
+/** How long ago a reading taken at these unix seconds is: just now under a minute, then minutes, hours, days. */
+export function readingAge(fetchedAt: number | null, now: Date = new Date()): string | null {
+  if (fetchedAt === null) return null
+  const minutes = Math.floor((now.getTime() / 1000 - fetchedAt) / 60)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
 }

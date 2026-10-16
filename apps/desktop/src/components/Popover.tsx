@@ -63,7 +63,6 @@ export function Popover({
       window.addEventListener('scroll', onScroll, true)
       window.addEventListener('resize', onClose)
     }
-    ref.current?.querySelector<HTMLElement>(focus)?.focus({ preventScroll: true })
     return () => {
       window.removeEventListener('mousedown', onDown, true)
       window.removeEventListener('keydown', onKey, true)
@@ -78,15 +77,19 @@ export function Popover({
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
-    const place = () => {
-      const rect = element.getBoundingClientRect()
-      setPosition(placeMenu(anchor, { width: rect.width, height: rect.height }, { width: window.innerWidth, height: window.innerHeight }, gap))
-    }
+    // The layout size, not getBoundingClientRect: the pop-in animation scales the panel while it is measured.
+    const place = () => setPosition(placeMenu(anchor, { width: element.offsetWidth, height: element.offsetHeight }, { width: window.innerWidth, height: window.innerHeight }, gap))
     place()
     const observer = new ResizeObserver(place)
     observer.observe(element)
     return () => observer.disconnect()
   }, [anchor, gap])
+
+  // Focus moves in once the panel is placed: it is hidden until then, and a hidden element takes no focus.
+  const placed = position !== null
+  useEffect(() => {
+    if (placed && !leaving) ref.current?.querySelector<HTMLElement>(focus)?.focus({ preventScroll: true })
+  }, [placed, leaving, focus])
 
   return createPortal(
     <div

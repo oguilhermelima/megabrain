@@ -11,8 +11,9 @@ import { filterProjects, partitionHidden, type SidebarFilters } from '@/advanced
 import { applyOrder } from '@/advanced/project-order'
 import { flattenLayout, reconcileLayout } from '@/advanced/sidebar-folders'
 import { useSidebarLayout } from '@/advanced/useSidebarLayout'
-import { CollapsedChrome, SettingsIcon, SidebarHeader, windowRowInset } from '@/advanced/chrome'
+import { CollapsedChrome, SidebarHeader, windowRowInset } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
+import { SidebarUsage } from '@/chat/ComposerStatus'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenChat, OpenPath } from '@/chat/Conversation'
@@ -147,12 +148,20 @@ function storedSidebarCollapsed(): boolean {
   }
 }
 
+/**
+ * The keyboard into a pane's terminal, composer or first field, on the next frame. Without scrolling:
+ * the strip reveals the focused pane itself, and the browser's own scroll would yank it mid-scroll.
+ */
+function focusPaneInput(paneId: string) {
+  requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus({ preventScroll: true }))
+}
+
 // The advanced window: chats in a sidebar (projects > worktrees > chats), the selected chat followed
 // live, and each project's code.
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
   const { projects: listed, chats: nativeChats, loaded: projectsLoaded, error: projectsError, retry: retryProjects, dropChat } = useProjects()
-  const { layout: savedLayout, change: changeLayout, error: layoutError } = useSidebarLayout()
+  const { layout: savedLayout, change: changeLayout, error: layoutError, ready: layoutReady } = useSidebarLayout()
   // The folders and order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
   const layout = useMemo(() => reconcileLayout(savedLayout, listed.map((project) => project.path)), [savedLayout, listed])
   const projects = useMemo(() => applyOrder(listed, flattenLayout(layout)), [listed, layout])
@@ -590,7 +599,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setGithubPage(null)
     setLayout(next)
     const focused = shownPanes(next).focused
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(focused)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
+    focusPaneInput(focused)
   }
   // Rows picked with ⌘-click open together as one split, as Zen joins multi-selected tabs.
   const [picks, setPicks] = useState<string[]>([])
@@ -995,7 +1004,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The keyboard goes with the focus: into the pane's terminal, composer or first field.
   const focusPaneById = (paneId: string) => {
     setPanes((current) => ({ ...current, focused: paneId }))
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
+    focusPaneInput(paneId)
   }
   // Focus the sidebar on its selected row, or its first one; a collapsed sidebar opens first.
   const focusSidebar = () => {
@@ -1063,10 +1072,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   return (
     <div className="relative flex h-full">
       <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
-        <SidebarHeader onCollapse={toggleSidebarCollapsed} />
+        <SidebarHeader onCollapse={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} />
         <SplitRowsContext.Provider value={splitRows}>
           <Sidebar
             loaded={projectsLoaded}
+            layoutReady={layoutReady}
             loadError={projectsError}
             onRetryLoad={retryProjects}
             projects={projects}
@@ -1099,20 +1109,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onDismissCreation={dismissWorktree}
           />
         </SplitRowsContext.Provider>
-        <footer className="shrink-0 border-t border-white/[0.07] px-2.5 py-2">
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            title="Settings (⌘,)"
-            className="flex h-8 w-full items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left text-[13px] font-medium text-ink-300 transition-colors hover:bg-row-hover hover:text-ink-100"
-          >
-            <SettingsIcon />
-            Settings
-          </button>
-        </footer>
+        <SidebarUsage onOpenSettings={() => setSettingsOpen(true)} />
       </SlidePanel>
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
-        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} joined={windowRow !== null || sharedJoined} />}
+        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} joined={windowRow !== null || sharedJoined} />}
         {error !== null && (
           <div className="px-8 pt-4">
             <ErrorNote error={error} />

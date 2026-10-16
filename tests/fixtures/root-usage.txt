@@ -47,6 +47,7 @@ Commands:
   settings [--json]                    Read all settings shown in the desktop app
   settings set terminal-engine ...     Choose the embedded terminal engine
   settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
+  settings get|set sidebar-state       Read or replace what the desktop sidebar folded and its row order
   settings get|set hidden-sessions     Read or replace the sessions the desktop sidebar closed
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys
   settings get|set project-appearance  Read or change a project's name, color and picture (megabrain only)

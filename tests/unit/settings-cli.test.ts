@@ -295,6 +295,52 @@ describe("settings hidden-sessions", () => {
   });
 });
 
+describe("settings sidebar-state", () => {
+  const state = { version: 1, collapsed: ["/repo/a", "stack:/repo/a-wt"], rows: { "/repo/a": ["chat:1", "group:g1", "session:claude:2"] } };
+
+  async function read(env: ReturnType<typeof sandbox>): Promise<unknown> {
+    const result = await run(["settings", "get", "sidebar-state"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(result.error);
+    return JSON.parse(result.value) as unknown;
+  }
+
+  test("reads nothing collapsed and no order before anything was saved", async () => {
+    expect(await read(sandbox())).toEqual({ version: 1, collapsed: [], rows: {} });
+  });
+
+  test("stores the collapse state and row order as a private state-dir file and reads them back", async () => {
+    const env = sandbox();
+    const result = await run(["settings", "set", "sidebar-state", JSON.stringify(state)], env);
+    expect(result).toEqual({ kind: "ok", value: "sidebar state: 2 collapsed, 1 ordered worktrees\n" });
+    expect(await read(env)).toEqual(state);
+    expect(statSync(join(env.state, "sidebar-state.json")).mode & 0o777).toBe(0o600);
+  });
+
+  test("refuses anything else and keeps the saved state", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "sidebar-state", JSON.stringify(state)], env)).kind).toBe("ok");
+    for (const value of [
+      "nope",
+      JSON.stringify({ version: 2, collapsed: [], rows: {} }),
+      JSON.stringify({ version: 1, collapsed: [1], rows: {} }),
+      JSON.stringify({ version: 1, collapsed: [], rows: [] }),
+      JSON.stringify({ version: 1, collapsed: [], rows: { "/repo/a": "chat:1" } }),
+      JSON.stringify({ version: 1, collapsed: [], rows: {}, more: 1 }),
+    ]) {
+      expect((await run(["settings", "set", "sidebar-state", value], env)).kind).toBe("failed");
+    }
+    expect(await read(env)).toEqual(state);
+  });
+
+  test("a broken file reads as nothing saved", async () => {
+    const env = sandbox();
+    mkdirSync(env.state, { recursive: true });
+    writeFileSync(join(env.state, "sidebar-state.json"), "{broken");
+    expect(await read(env)).toEqual({ version: 1, collapsed: [], rows: {} });
+  });
+});
+
 describe("chain save", () => {
   test("creates and replaces a chain without an editor", async () => {
     const env = sandbox();

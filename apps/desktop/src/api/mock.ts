@@ -23,6 +23,7 @@ export function createMockApi(): DesktopApi {
   let settings = mockSettings
   let sidebarFolders: unknown = { version: 1, folders: [], order: [] }
   let hiddenSessions: unknown = { version: 1, sessions: {} }
+  let sidebarState: unknown = { version: 1, collapsed: [], rows: {} }
   let shortcuts: unknown = { version: 1, bindings: {} }
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
@@ -394,6 +395,8 @@ export function createMockApi(): DesktopApi {
     setSidebarFolders: async (json) => void (sidebarFolders = JSON.parse(json) as unknown),
     hiddenSessions: async () => hiddenSessions,
     setHiddenSessions: async (json) => void (hiddenSessions = JSON.parse(json) as unknown),
+    sidebarState: async () => sidebarState,
+    setSidebarState: async (json) => void (sidebarState = JSON.parse(json) as unknown),
     shortcuts: async () => shortcuts,
     setShortcuts: async (json) => void (shortcuts = JSON.parse(json) as unknown),
   }

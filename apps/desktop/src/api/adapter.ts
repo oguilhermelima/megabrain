@@ -238,6 +238,9 @@ export interface DesktopApi {
   /** Sessions the sidebar closed without running them (`settings get hidden-sessions`); advanced/hidden-sessions.ts reads the shape. */
   hiddenSessions(): Promise<unknown>
   setHiddenSessions(json: string): Promise<void>
+  /** What the sidebar folded and its row order, as `settings get sidebar-state` prints them. */
+  sidebarState(): Promise<unknown>
+  setSidebarState(json: string): Promise<void>
   /** The shortcut keys the person changed (`settings get shortcuts`); lib/shortcuts.ts reads the shape. */
   shortcuts(): Promise<unknown>
   setShortcuts(json: string): Promise<void>

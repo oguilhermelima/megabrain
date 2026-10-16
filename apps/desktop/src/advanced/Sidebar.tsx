@@ -12,7 +12,9 @@ import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, move
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
-import { applyRowOrder, moveRow, parseRowOrder, rowToOpen, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
+import { applyRowOrder, moveRow, rowToOpen, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
+import { pruneSidebarState, type SidebarState } from '@/advanced/sidebar-state'
+import { useSidebarState } from '@/advanced/useSidebarLayout'
 import { GroupRowView, SpanningSplits, useSplitRows, type SplitDrop } from '@/advanced/SplitRows'
 import { useRowDrag, type RowDragStart, type RowDragState } from '@/advanced/useRowDrag'
 import type { ArrangeTarget } from '@/panes/arrange'
@@ -62,41 +64,6 @@ export function writeFilters(filters: SidebarFilters) {
     localStorage.setItem(filtersKey, JSON.stringify(filters))
   } catch {
     // Remembered filters are a convenience; starting unfiltered is fine.
-  }
-}
-
-function readCollapsed(): Set<string> {
-  try {
-    const raw = localStorage.getItem('megabrain.sidebar.collapsed')
-    return raw === null ? new Set() : new Set(JSON.parse(raw) as string[])
-  } catch {
-    return new Set()
-  }
-}
-
-const rowOrderKey = 'megabrain.sidebar.rows'
-
-function readRowOrder(): RowOrder {
-  try {
-    return parseRowOrder(localStorage.getItem(rowOrderKey))
-  } catch {
-    return {}
-  }
-}
-
-function writeRowOrder(order: RowOrder) {
-  try {
-    localStorage.setItem(rowOrderKey, saveRowOrder(order))
-  } catch {
-    // Without storage the order lasts for this run.
-  }
-}
-
-function writeCollapsed(collapsed: Set<string>) {
-  try {
-    localStorage.setItem('megabrain.sidebar.collapsed', JSON.stringify([...collapsed]))
-  } catch {
-    // A remembered collapse state is a convenience; starting expanded is fine.
   }
 }
 
@@ -1241,6 +1208,7 @@ function HiddenSection({ hidden, onShow }: { hidden: HiddenPartition; onShow: (t
 // menu (right click or …) to hide it, remove it or open its code; hidden ones wait at the bottom.
 export const Sidebar = memo(function Sidebar({
   loaded,
+  layoutReady,
   loadError,
   onRetryLoad,
   projects,
@@ -1312,6 +1280,8 @@ export const Sidebar = memo(function Sidebar({
   onLayout: (layout: SidebarLayout) => void
   /** Why the folders could not be read or saved, if so. */
   layoutError: unknown
+  /** The saved folders have been read (or failed to be); the list waits for them. */
+  layoutReady: boolean
   filters: SidebarFilters
   onFilters: (filters: SidebarFilters) => void
   /** The GitHub page showing in the main area, if any. */
@@ -1319,7 +1289,17 @@ export const Sidebar = memo(function Sidebar({
   /** Opens a project's pull request or issue page. */
   onGithub: (project: Project, kind: GithubKind, focus?: number) => void
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
+  // What is folded and each worktree's row order, kept across restarts (useSidebarState); the list
+  // waits for them so it never draws unfolded and then jumps.
+  const { state: savedState, change: changeSavedState, error: savedStateError, ready: savedStateReady } = useSidebarState()
+  const collapsed = useMemo(() => new Set(savedState.collapsed), [savedState.collapsed])
+  const ready = layoutReady && savedStateReady
+  // Every save drops what no longer exists: folds of projects and stacks gone, orders of worktrees gone.
+  const saveState = useStableCallback((next: SidebarState) => {
+    const worktrees = projects.flatMap((project) => project.worktrees.map((worktree) => worktree.path))
+    const collapsible = new Set([...projects.map((project) => project.path), ...worktrees.map((path) => `stack:${path}`)])
+    changeSavedState(pruneSidebarState(next, { collapsible, worktrees: new Set([...projects.map((project) => project.path), ...worktrees]) }))
+  })
   const [menu, setMenu] = useState<OpenMenu | null>(null)
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
   // The new worktree dialog: from the project's +, or on a branch to stack on it.
@@ -1354,19 +1334,14 @@ export const Sidebar = memo(function Sidebar({
     searchRef.current?.focus()
   }
   // Projects fold by path (two can share a name); stacks fold by `stack:<worktree path>`.
-  const toggle = useCallback((key: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      writeCollapsed(next)
-      return next
-    })
-  }, [])
+  const toggle = useStableCallback((key: string) => {
+    const folded = savedState.collapsed
+    saveState({ ...savedState, collapsed: folded.includes(key) ? folded.filter((entry) => entry !== key) : [...folded, key] })
+  })
 
   const navRef = useRef<HTMLElement>(null)
-  // The Projects header sits above the list on the sidebar's own glass, like the Settings footer
-  // below it: no tint or blur of its own, which inside the glass would stack a second, darker layer.
+  // The Projects header sits above the list on the sidebar's own glass: no tint or blur of its own,
+  // which inside the glass would stack a second, darker layer.
   // Rows that scroll up fade out under its edge, and a hairline shows once they do.
   const [scrolled, setScrolled] = useState(false)
   // The list keeps a scrollbar gutter the header has not got; the header pads by the measured width,
@@ -1760,17 +1735,13 @@ export const Sidebar = memo(function Sidebar({
   }), [selectedTerminalId, renamingTerminal, onSelectTerminal, onRenameTerminal, rowMenuActions])
 
   // Rows keep the order the person dragged them into, per worktree; new ones show on top.
-  const [rowOrder, setRowOrder] = useState<RowOrder>(readRowOrder)
+  const rowOrder = savedState.rows
   const rowDrag = useRowDrag(
     navRef,
     {
       reorder: (worktreePath, next) => {
         captureRows()
-        setRowOrder((current) => {
-          const order = { ...current, [worktreePath]: next }
-          writeRowOrder(order)
-          return order
-        })
+        saveState({ ...savedState, rows: { ...savedState.rows, [worktreePath]: next } })
       },
       join: (source, target) => {
         const from = source.kind === 'group' ? ({ kind: 'group', groupId: source.groupId } as const) : source.kind === 'member' ? ({ kind: 'item', item: source.item } as const) : source.item === null ? null : ({ kind: 'item', item: source.item } as const)
@@ -1893,11 +1864,11 @@ export const Sidebar = memo(function Sidebar({
             <ErrorNote error={actionError} />
           </div>
         )}
-        {!loaded && loadError === null && projects.length === 0 && <SidebarSkeleton />}
+        {((!loaded && loadError === null && projects.length === 0) || !ready) && <SidebarSkeleton />}
         <SpanningSplits onMenu={openMenu} drag={itemRows} end={(items) => <MoreButton label="Manage split" onClick={(event) => openMenu(event, items)} />} />
-        {layoutError !== null && (
+        {(layoutError ?? savedStateError) !== null && (
           <div className="px-1">
-            <ErrorNote error={layoutError} />
+            <ErrorNote error={layoutError ?? savedStateError} />
           </div>
         )}
         {!loaded && loadError !== null && (
@@ -1908,7 +1879,7 @@ export const Sidebar = memo(function Sidebar({
             </button>
           </div>
         )}
-        {sidebarEntries(layout, shownByPath, filtered).map((entry) =>
+        {ready && sidebarEntries(layout, shownByPath, filtered).map((entry) =>
           entry.kind === 'project' ? (
             renderProject(entry.project)
           ) : (

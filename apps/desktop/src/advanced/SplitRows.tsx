@@ -211,7 +211,9 @@ export function GroupRowView({ row, indent, onMenu, end, drag }: { row: GroupRow
           row.active ? 'bg-row-selected text-ink-100' : row.state === 'ended' ? 'text-ink-400 hover:bg-row-hover hover:text-ink-200' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'
         }`}
       >
-        <span className="flex shrink-0 items-center gap-0.5 rounded-[8px] bg-white/[0.05] px-1 py-0.5">
+        {/* The marks' pill starts 2px left of the icon column, the inset of an 18px button around a 14px
+            mark, so the first mark lines up with a chat row's and one mark leaves the title where theirs is. */}
+        <span className="-ml-0.5 flex shrink-0 items-center gap-0.5 rounded-[6px] bg-white/[0.05]">
           {marks.shown.map((member) => (
             <button
               key={member.item}
