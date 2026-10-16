@@ -1,10 +1,10 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { selectChain, type ChainConfig, type ChainStep } from "../../core/chain.js";
+import { evaluateRule, selectChain, type ChainConfig, type ChainStep, type MatchContext, type Rule } from "../../core/chain.js";
 import { markUsageNoticeSent, readLimit, resetDisplay, usageNoticeDue, usageNoticeReport, type LimitAgent, type LimitReading, type LimitWindowName } from "../../core/chain-limits.js";
 import { resolveParentContext } from "../../core/context.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
-import { readConfig, validateConfig, type ChainEnvironment } from "./chain.js";
+import { matchContext, readConfig, usageForConfig, validateConfig, type ChainEnvironment } from "./chain.js";
 import { executeSpawn } from "./orchestrate-spawn.js";
 import { appendMessage } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
@@ -22,7 +22,7 @@ export type ChainRunDependencies = Readonly<{
   readonly spawn?: (args: readonly string[], environment: ChainRunEnvironment, processAdapter: ProcessAdapter) => Promise<Result<string>>;
 }>;
 
-type SkippedEntry = Readonly<{ readonly step: number; readonly agent: string; readonly kind: "limit" | "failure"; readonly reason: string }>;
+type SkippedEntry = Readonly<{ readonly step: number; readonly agent: string; readonly kind: "limit" | "failure" | "rule"; readonly reason: string }>;
 
 type ParsedArgs = {
   explicitName: string | undefined;
@@ -217,6 +217,8 @@ type ChainStepSelection = Readonly<{
   readonly reportChain: string;
   readonly usedDefault: boolean;
   readonly selectionReason: string;
+  /** When set, a step whose `when` rule does not match it is skipped. A continuation has no such context. */
+  readonly stepContext?: MatchContext;
 }>;
 
 type ChainWalkOptions = Readonly<{
@@ -239,7 +241,7 @@ async function walkChainSteps(
   config: ChainConfig,
   spawn: NonNullable<ChainRunDependencies["spawn"]>,
 ): Promise<Result<string>> {
-  const { steps, reportChain, usedDefault, selectionReason } = selection;
+  const { steps, reportChain, usedDefault, selectionReason, stepContext } = selection;
   const stderrLines: string[] = [];
   const skipped: SkippedEntry[] = [];
 
@@ -258,6 +260,11 @@ async function walkChainSteps(
     const model = stringField(step, "model") ?? "";
     const effort = stringField(step, "effort");
     const until = untilField(step);
+
+    if (stepContext !== undefined && step.when !== undefined && !evaluateRule(step.when as Rule, stepContext).matched) {
+      skipped.push({ step: stepNumber, agent, kind: "rule", reason: `step ${stepNumber} (${agent}) skipped: its when rule did not match` });
+      continue;
+    }
 
     let limitReason = "";
     let untilStatus: "current" | "unknown" | undefined;
@@ -354,11 +361,8 @@ export async function executeChainRun(
   const config = validated.value;
 
   const selectionName = options.chainOption ?? options.explicitName;
-  const selection = selectChain(config, selectionName, {
-    agent: parentAgent === "" ? undefined : parentAgent,
-    model: parentModel === "" ? undefined : parentModel,
-    effort: parentEffort === "" ? undefined : parentEffort,
-  }, options.selectionSource);
+  const context = matchContext({ parentAgent, parentModel, parentEffort, repo: options.repo, branch: options.branch, label: options.label }, await usageForConfig(config, environment, processAdapter));
+  const selection = selectChain(config, selectionName, context.parent, options.selectionSource, context);
   if (selection.kind === "not-found") return failed(`chain not found: ${selection.name}; list chains with megabrain chain list`, 1);
   if (selection.kind === "ambiguous") return failed(`chain selection is ambiguous: candidates: ${selection.candidates.join(", ")}`, 1);
   const usedDefault = selection.kind === "default";
@@ -373,7 +377,7 @@ export async function executeChainRun(
     browser: options.browser, agentArgs: options.agentArgs, json: options.json,
   };
   return walkChainSteps(
-    { steps: selection.steps, reportChain, usedDefault, selectionReason: selection.reason },
+    { steps: selection.steps, reportChain, usedDefault, selectionReason: selection.reason, stepContext: context },
     0,
     walkOptions,
     environment,

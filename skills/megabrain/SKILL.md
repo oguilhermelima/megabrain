@@ -285,8 +285,10 @@ behind.
 ```
 megabrain chain list [--json] — recommended when you need to inspect the configured agent-selection chains.
 megabrain chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>] — recommended when you need to inspect or change provider usage-limit settings and notices.
-megabrain chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json] — recommended when you need to define a chain with matching rules and ordered agent steps.
-megabrain chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json] — recommended when you need to create or replace a chain without opening an editor.
+megabrain chain add <name> --when <json> --steps <json> [--priority <n>] [--dry-run] [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json] — recommended when you need to define a chain with matching rules and ordered agent steps.
+megabrain chain save <name> --when <json> --steps <json> [--priority <n>] [--dry-run] [--allow-unknown-model] [--json] — recommended when you need to create or replace a chain without opening an editor.
+megabrain chain explain [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--repo <name|path>] [--branch <branch>] [--label <text>] [--json] — which chain a context selects and which steps it skips
+megabrain chain step edit <name> <n> [--agent <id>] [--model <id>] [--effort <level>] [--until <json>|--no-until] [--when <json>|--no-when] [--json] | chain step move <name> <from> <to> [--json] — edit or reorder one step (1-based)
 megabrain chain edit <name> [--allow-unknown-model] [--json] — recommended when you need to change an existing chain configuration.
 megabrain chain delete <name> [--json] — recommended when you need to remove a chain that is no longer used.
 megabrain chain repair <name> --step <number> --model <id> [--effort <level>] [--json] — recommended when you need to replace a broken or unavailable model in a chain step.

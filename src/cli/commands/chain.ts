@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rename
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { type ChainConfig } from "../../core/chain.js";
+import { chainUsageKeys, explainChains, validateChainRules, type ChainConfig, type ChainExplanation, type MatchContext, type RuleIssue } from "../../core/chain.js";
 import { readLimit, type LimitAgent, type LimitReading, type LimitWindowName } from "../../core/chain-limits.js";
-import { loadModelRegistry, modelRegistryPaths, type Model } from "../../core/model.js";
+import { loadModelRegistry, modelRegistryPaths, validateReasoning, type Model } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { executeChainRun } from "./chain-run.js";
@@ -58,9 +58,11 @@ export function validateConfig(config: ChainConfig, environment: ChainEnvironmen
   }
   for (const [name, chain] of Object.entries(config.chains)) {
     if (typeof chain !== "object" || chain === null || typeof chain.steps !== "object" || !Array.isArray(chain.steps) || chain.steps.length === 0) return error(`invalid chain ${name}: steps must be a non-empty array`);
+    const ruleIssues = validateChainRules(chain, models !== undefined && !chain.steps.every((step) => (step as Record<string, unknown>).unvalidated === true) ? modelEntries : undefined);
+    if (ruleIssues.length > 0) return error(`invalid chain ${name}: ${ruleIssues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`);
     for (const [index, step] of chain.steps.entries()) {
       if (typeof step !== "object" || step === null) return error(`invalid chain ${name} step ${index + 1}: expected an object`);
-      const record = step as Record<string, unknown>; const bad = Object.keys(record).find((key) => !["agent", "model", "effort", "until", "unvalidated"].includes(key));
+      const record = step as Record<string, unknown>; const bad = Object.keys(record).find((key) => !["agent", "model", "effort", "until", "when", "unvalidated"].includes(key));
       if (bad) return error(`invalid chain ${name} step ${index + 1}: unsupported field ${bad}`);
       if (typeof record.agent !== "string" || record.agent.length === 0) return error(`invalid chain ${name} step ${index + 1}: agent is required`);
       if (typeof record.model !== "string" || record.model.length === 0) return error(`invalid chain ${name} step ${index + 1}: model is required`);
@@ -105,70 +107,162 @@ function writeConfig(config: ChainConfig, path: string): Result<ChainConfig> {
 function parseJson(value: string, label: string): Result<unknown> { try { return ok(JSON.parse(value)); } catch { return error(`chain ${label} has invalid JSON definition`); } }
 function chainExists(config: ChainConfig, name: string): boolean { return Object.prototype.hasOwnProperty.call(config.chains, name); }
 function validName(name: string): boolean { return /^[A-Za-z0-9._-]+$/.test(name); }
-function addChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
-  if (args[0] === "-h" || args[0] === "--help") return ok(usage("add"));
-  const name = args[0]; if (!name) return error(usageMessage("chain-add"), 2);
-  if (!validName(name)) return error(`invalid chain name: ${name}`);
-  let when: Record<string, unknown> = {}; let steps: unknown[] = []; let asJson = false; let allowUnknown = false;
-  for (let i = 1; i < args.length; i += 1) { const arg = args[i]; if (arg === "--json") asJson = true; else if (arg === "--allow-unknown-model") allowUnknown = true; else if (["--when", "--steps", "--step", "--parent-agent", "--parent-model", "--parent-effort"].includes(arg)) {
-    const value = args[++i]; if (value === undefined) return error(`${arg} requires a value`, 2);
-    if (arg === "--when") { const parsed = parseJson(value, name); if (parsed.kind !== "ok" || typeof parsed.value !== "object" || parsed.value === null) return error(`chain ${name} has invalid JSON definition`); when = parsed.value as Record<string, unknown>; }
-    else if (arg === "--steps") { const parsed = parseJson(value, name); if (parsed.kind !== "ok" || !Array.isArray(parsed.value)) return error(`chain ${name} has invalid JSON definition`); steps = parsed.value; }
-    else if (arg === "--step") { const parsed = parseJson(value, name); if (parsed.kind !== "ok") return parsed as Result<string>; steps = [...steps, parsed.value]; }
-    else { when = { ...when, [arg.slice(2).replaceAll("-", "") === "parentagent" ? "parentAgent" : arg.slice(2).replaceAll("-", "")] : value }; }
-  } else return error(`unknown chain add option: ${arg}`, 2); }
-  const read = readConfig(environment); if (read.kind !== "ok") return read; if (chainExists(read.value, name)) return error(`chain already exists: ${name}`);
-  let definition: any = { when, steps };
-  if (allowUnknown) definition = { ...definition, steps: steps.map((step: any) => ({ ...step, unvalidated: true })) };
-  const valid = validateWriteConfig({ ...read.value, chains: { ...read.value.chains, [name]: definition } }, environment); if (valid.kind !== "ok") return valid;
-  const written = writeConfig({ ...read.value, chains: { ...read.value.chains, [name]: definition } }, chainPath(environment)); if (written.kind !== "ok") return written;
-  return preserveStderr(ok(asJson ? json({ ...definition, name }) : `chain added: ${name}\n`), valid.stderr);
+type ChainSaveOptions = Readonly<{ allowUnknownModel?: boolean }>;
+type ChainInput = Readonly<{ when: unknown; steps: readonly unknown[]; priority?: number }>;
+// Stored shape: priority 0 is the default and is never written.
+function toDefinition(chain: ChainInput, allowUnknown: boolean): Record<string, unknown> {
+  const steps = chain.steps.map((step) => allowUnknown && record(step) !== undefined ? { ...record(step), unvalidated: true } : step);
+  return { when: chain.when, ...(chain.priority !== undefined && chain.priority !== 0 ? { priority: chain.priority } : {}), steps };
 }
-function saveChain(args: readonly string[], environment: ChainEnvironment): Result<string> {
-  if (args[0] === "-h" || args[0] === "--help") return ok(usage("save"));
-  const name = args[0];
-  if (!name) return error("chain save requires a name", 2);
+export function saveChain(name: string, chain: ChainInput, environment: ChainEnvironment, options: ChainSaveOptions = {}): Result<Record<string, unknown>> {
   if (!validName(name)) return error(`invalid chain name: ${name}`);
-  let when: Record<string, string> | undefined;
-  let steps: unknown[] | undefined;
-  let asJson = false;
-  let allowUnknown = false;
-  for (let index = 1; index < args.length; index += 1) {
-    const arg = args[index] ?? "";
+  const read = readConfig(environment); if (read.kind !== "ok") return read;
+  const definition = toDefinition(chain, options.allowUnknownModel === true);
+  const config = { ...read.value, chains: { ...read.value.chains, [name]: definition } } as unknown as ChainConfig;
+  const valid = validateWriteConfig(config, environment); if (valid.kind !== "ok") return valid;
+  const written = writeConfig(config, chainPath(environment)); if (written.kind !== "ok") return written;
+  return preserveStderr(ok(definition), valid.stderr);
+}
+// Path-style validation of one chain without touching the file; the app's authority for its editor.
+export function checkChain(chain: ChainInput, environment: ChainEnvironment, options: ChainSaveOptions = {}): Result<RuleIssue[]> {
+  const unvalidated = options.allowUnknownModel === true;
+  const { template } = modelRegistryPaths(environment); let registry: readonly Model[] | undefined;
+  if (existsSync(template)) { const loaded = loadModelRegistry(environment); if (loaded.kind === "failed") return error(loaded.error); registry = loaded.registry.models; }
+  const issues = [...validateChainRules(chain, unvalidated ? undefined : registry)];
+  if (chain.steps.length === 0) issues.push({ path: "steps", message: "expected a non-empty array" });
+  chain.steps.forEach((step, index) => {
+    const path = `steps[${index}]`; const value = record(step);
+    if (value === undefined) { issues.push({ path, message: "expected an object" }); return; }
+    for (const key of Object.keys(value)) if (!["agent", "model", "effort", "until", "when", "unvalidated"].includes(key)) issues.push({ path: `${path}.${key}`, message: "unknown field" });
+    if (typeof value.agent !== "string" || value.agent === "") issues.push({ path: `${path}.agent`, message: "agent is required" });
+    if (typeof value.model !== "string" || value.model === "") issues.push({ path: `${path}.model`, message: "model is required" });
+    if (value.until !== undefined) { const until = record(value.until); if (until === undefined || typeof until.usedPercent !== "number" || typeof until.window !== "string") issues.push({ path: `${path}.until`, message: "expected {usedPercent, window}" }); }
+    if (registry === undefined || unvalidated || value.unvalidated === true || typeof value.agent !== "string" || typeof value.model !== "string") return;
+    const reasoning = validateReasoning({ version: 1, models: [...registry] }, value.agent, value.model, typeof value.effort === "string" ? value.effort : undefined);
+    if (reasoning.kind === "unknown") issues.push({ path: `${path}.model`, message: `unknown model "${value.model}" for agent "${value.agent}"` });
+    else if (reasoning.kind === "invalid") issues.push({ path: `${path}.effort`, message: reasoning.message.split("\n")[0] });
+  });
+  return ok(issues);
+}
+function parsePriority(value: string): number | undefined { const priority = Number(value); return value.trim() !== "" && Number.isFinite(priority) ? priority : undefined; }
+function dryRunReport(issues: readonly RuleIssue[], asJson: boolean): Result<string> {
+  const body = { ok: issues.length === 0, errors: issues };
+  return ok(asJson ? json(body) : issues.length === 0 ? "chain is valid\n" : issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n") + "\n", issues.length === 0 ? undefined : 2);
+}
+// `chain add` and `chain save` share parsing; add refuses an existing name and also accepts --step and the legacy --parent-* shorthands.
+function writeChainCommand(verb: "add" | "save", args: readonly string[], environment: ChainEnvironment): Result<string> {
+  if (args[0] === "-h" || args[0] === "--help") return ok(usage(verb));
+  const name = args[0]; if (!name) return error(verb === "add" ? usageMessage("chain-add") : "chain save requires a name", 2);
+  if (!validName(name)) return error(`invalid chain name: ${name}`);
+  let when: unknown; let steps: unknown[] | undefined; let priority: number | undefined; let asJson = false; let allowUnknown = false; let dryRun = false;
+  const shorthand: Record<string, unknown> = {};
+  const bad = () => error(`chain ${name} has invalid JSON definition`);
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--json") asJson = true; else if (arg === "--allow-unknown-model") allowUnknown = true; else if (arg === "--dry-run") dryRun = true;
+    else if (["--when", "--steps", "--priority"].includes(arg) || (verb === "add" && ["--step", "--parent-agent", "--parent-model", "--parent-effort"].includes(arg))) {
+      const value = args[++i]; if (value === undefined) return error(`${arg} requires a value`, 2);
+      if (arg === "--priority") { priority = parsePriority(value); if (priority === undefined) return error("--priority needs a number", 2); }
+      else if (arg.startsWith("--parent-")) shorthand[arg === "--parent-agent" ? "parentAgent" : arg === "--parent-model" ? "parentModel" : "parentEffort"] = value;
+      else { const parsed = parseJson(value, name); if (parsed.kind !== "ok") return parsed as Result<string>;
+        if (arg === "--when") { if (record(parsed.value) === undefined) return bad(); when = parsed.value; }
+        else if (arg === "--step") steps = [...(steps ?? []), parsed.value];
+        else { if (!Array.isArray(parsed.value)) return bad(); steps = parsed.value; } }
+    } else return error(`unknown chain ${verb} option: ${arg}`, 2);
+  }
+  if (verb === "save" && (when === undefined || steps === undefined)) return error("chain save requires --when and --steps", 2);
+  const chain: ChainInput = { when: when === undefined ? shorthand : { ...record(when), ...shorthand }, steps: steps ?? [], priority };
+  if (dryRun) { const checked = checkChain(chain, environment, { allowUnknownModel: allowUnknown }); return checked.kind === "ok" ? dryRunReport(checked.value, asJson) : checked; }
+  if (verb === "add") { const read = readConfig(environment); if (read.kind !== "ok") return read; if (chainExists(read.value, name)) return error(`chain already exists: ${name}`); }
+  const saved = saveChain(name, chain, environment, { allowUnknownModel: allowUnknown }); if (saved.kind !== "ok") return saved;
+  return preserveStderr(ok(asJson ? json({ ...saved.value, name }) : `chain ${verb === "add" ? "added" : "saved"}: ${name}\n`), saved.stderr);
+}
+const addChain = (args: readonly string[], environment: ChainEnvironment): Result<string> => writeChainCommand("add", args, environment);
+const saveChainCommand = (args: readonly string[], environment: ChainEnvironment): Result<string> => writeChainCommand("save", args, environment);
+
+type StepPatch = Readonly<{ agent?: string; model?: string; effort?: string; until?: unknown; when?: unknown }>;
+function chainAndStep(name: string, index: number, environment: ChainEnvironment): Result<{ config: ChainConfig; steps: unknown[] }> {
+  const read = readConfig(environment); if (read.kind !== "ok") return read;
+  if (!chainExists(read.value, name)) return error(`chain not found: ${name}`);
+  const steps = [...read.value.chains[name].steps];
+  if (!Number.isInteger(index) || index < 1 || index > steps.length) return error(`chain step not found: ${name} step ${index}; steps are numbered 1 to ${steps.length}`);
+  return ok({ config: read.value, steps });
+}
+function persistSteps(name: string, config: ChainConfig, steps: unknown[], environment: ChainEnvironment): Result<ChainConfig> {
+  const next = { ...config, chains: { ...config.chains, [name]: { ...config.chains[name], steps } } } as unknown as ChainConfig;
+  const valid = validateWriteConfig(next, environment); if (valid.kind !== "ok") return valid;
+  return preserveStderr(writeConfig(next, chainPath(environment)), valid.stderr);
+}
+// Steps are numbered from 1. In a patch, `until: null` / `when: null` remove the field.
+export function editStep(name: string, index: number, patch: StepPatch, environment: ChainEnvironment): Result<Record<string, unknown>> {
+  const found = chainAndStep(name, index, environment); if (found.kind !== "ok") return found;
+  const next: Record<string, unknown> = { ...record(found.value.steps[index - 1]) };
+  for (const [key, value] of Object.entries(patch)) { if (value === undefined) continue; if (value === null) delete next[key]; else next[key] = value; }
+  const steps = found.value.steps.map((step, offset) => offset === index - 1 ? next : step);
+  const saved = persistSteps(name, found.value.config, steps, environment); return saved.kind === "ok" ? preserveStderr(ok(next), saved.stderr) : saved;
+}
+export function moveStep(name: string, from: number, to: number, environment: ChainEnvironment): Result<readonly unknown[]> {
+  const found = chainAndStep(name, from, environment); if (found.kind !== "ok") return found;
+  if (!Number.isInteger(to) || to < 1 || to > found.value.steps.length) return error(`chain step position out of range: ${to}; steps are numbered 1 to ${found.value.steps.length}`);
+  const steps = [...found.value.steps]; const [moved] = steps.splice(from - 1, 1); steps.splice(to - 1, 0, moved);
+  const saved = persistSteps(name, found.value.config, steps, environment); return saved.kind === "ok" ? preserveStderr(ok(steps), saved.stderr) : saved;
+}
+function stepCommand(args: readonly string[], environment: ChainEnvironment): Result<string> {
+  const [verb, name, ...rest] = args; if (verb === "-h" || verb === "--help" || verb === undefined) return ok(usageText("chain-step"));
+  if (verb !== "edit" && verb !== "move") return error(`unknown chain step command: ${verb}`, 2);
+  if (!name) return error(usageMessage("chain-step"), 2);
+  const numbers = verb === "edit" ? 1 : 2; const positions = rest.slice(0, numbers).map(Number);
+  if (rest.length < numbers || positions.some((position) => !Number.isInteger(position))) return error(usageMessage("chain-step"), 2);
+  let asJson = false; const patch: Record<string, unknown> = {};
+  for (let i = numbers; i < rest.length; i += 1) {
+    const arg = rest[i];
     if (arg === "--json") asJson = true;
-    else if (arg === "--allow-unknown-model") allowUnknown = true;
-    else if (arg === "--when" || arg === "--steps") {
-      const value = args[index + 1];
-      if (value === undefined) return error(`${arg} requires a value`, 2);
-      index += 1;
-      const parsed = parseJson(value, name);
-      if (parsed.kind !== "ok") return parsed as Result<string>;
-      if (arg === "--when") {
-        const parsedWhen = record(parsed.value);
-        if (parsedWhen === undefined) return error(`chain ${name} has invalid JSON definition`);
-        when = parsedWhen as Record<string, string>;
-      } else {
-        if (!Array.isArray(parsed.value)) return error(`chain ${name} has invalid JSON definition`);
-        steps = parsed.value;
-      }
-    } else return error(`unknown chain save option: ${arg}`, 2);
+    else if (verb === "edit" && ["--agent", "--model", "--effort"].includes(arg)) { const value = rest[++i]; if (value === undefined) return error(`${arg} requires a value`, 2); patch[arg.slice(2)] = value; }
+    else if (verb === "edit" && (arg === "--until" || arg === "--when")) { const value = rest[++i]; if (value === undefined) return error(`${arg} requires a value`, 2); const parsed = parseJson(value, name); if (parsed.kind !== "ok") return parsed as Result<string>; patch[arg.slice(2)] = parsed.value; }
+    else if (verb === "edit" && (arg === "--no-until" || arg === "--no-when")) patch[arg.slice(5)] = null;
+    else return error(`unknown chain step ${verb} option: ${arg}`, 2);
   }
-  if (when === undefined || steps === undefined) return error("chain save requires --when and --steps", 2);
-  const chainSteps: Record<string, unknown>[] = [];
-  for (const [index, step] of steps.entries()) {
-    const value = record(step);
-    if (value === undefined) return error(`invalid chain ${name} step ${index + 1}: expected an object`);
-    chainSteps.push(allowUnknown ? { ...value, unvalidated: true } : value);
+  if (verb === "move") { const moved = moveStep(name, positions[0], positions[1], environment); return moved.kind === "ok" ? preserveStderr(ok(asJson ? json({ chain: name, steps: moved.value }) : `chain step moved: ${name} ${positions[0]} to ${positions[1]}\n`), moved.stderr) : moved; }
+  if (Object.keys(patch).length === 0) return error("chain step edit needs at least one of --agent, --model, --effort, --until, --no-until, --when, --no-when", 2);
+  const edited = editStep(name, positions[0], patch, environment); return edited.kind === "ok" ? preserveStderr(ok(asJson ? json({ chain: name, index: positions[0], step: edited.value }) : `chain step edited: ${name} step ${positions[0]}\n`), edited.stderr) : edited;
+}
+
+export type ExplainInput = Readonly<{ parentAgent?: string; parentModel?: string; parentEffort?: string; repo?: string; branch?: string; label?: string; now?: Date }>;
+const limitProviders = ["codex", "claude", "agy", "grok"];
+// Live usage for every usage condition the config mentions, read through the existing limits cache.
+export async function usageForConfig(config: ChainConfig, environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Map<string, number | undefined>> {
+  const usage = new Map<string, number | undefined>(); const root = resolveStateDirectory(environment);
+  for (const key of chainUsageKeys(config)) {
+    const [provider, window] = key.split(":");
+    if (!limitProviders.includes(provider) || (window !== "5h" && window !== "weekly")) { usage.set(key, undefined); continue; }
+    const reading = await readLimit(provider as LimitAgent, window, config, environment, processAdapter, root);
+    usage.set(key, reading.status === "current" ? reading.usedPercent : undefined);
   }
-  const definition = { when, steps: chainSteps };
-  const read = readConfig(environment);
-  if (read.kind !== "ok") return read;
-  const config: ChainConfig = { ...read.value, chains: { ...read.value.chains, [name]: definition } };
-  const valid = validateWriteConfig(config, environment);
-  if (valid.kind !== "ok") return valid;
-  const written = writeConfig(config, chainPath(environment));
-  if (written.kind !== "ok") return written;
-  return preserveStderr(ok(asJson ? json({ ...definition, name }) : `chain saved: ${name}\n`), valid.stderr);
+  return usage;
+}
+export function matchContext(input: ExplainInput, usage: ReadonlyMap<string, number | undefined>): MatchContext {
+  const known = (value: string | undefined) => value === undefined || value === "" ? undefined : value;
+  return { parent: { agent: known(input.parentAgent), model: known(input.parentModel), effort: known(input.parentEffort) }, repo: known(input.repo), branch: known(input.branch), label: known(input.label), usage, now: input.now };
+}
+export async function chainExplain(input: ExplainInput, environment: ChainEnvironment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<ChainExplanation>> {
+  const read = readConfig(environment); if (read.kind !== "ok") return read;
+  return ok(explainChains(read.value, matchContext(input, await usageForConfig(read.value, environment, processAdapter))));
+}
+async function explainCommand(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args[0] === "-h" || args[0] === "--help") return ok(usageText("chain-explain"));
+  let asJson = false; const input: Record<string, string> = {}; const flags: Record<string, string> = { "--parent-agent": "parentAgent", "--parent-model": "parentModel", "--parent-effort": "parentEffort", "--repo": "repo", "--branch": "branch", "--label": "label" };
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--json") asJson = true;
+    else if (flags[arg] !== undefined) { const value = args[++i]; if (value === undefined) return error(`${arg} requires a value`, 2); input[flags[arg]] = value; }
+    else return error(`unknown chain explain option: ${arg}`, 2);
+  }
+  const explained = await chainExplain(input, environment, processAdapter); if (explained.kind !== "ok") return explained;
+  if (asJson) return ok(json(explained.value));
+  const lines = explained.value.candidates.map((c) => `${c.matched ? "match " : "no    "} ${c.name} (priority ${c.priority}, specificity ${c.specificity})${c.matched ? "" : `: ${c.reasons.filter((r) => /not in|unknown|outside|needs/.test(r))[0] ?? "no match"}`}`);
+  lines.push(`chosen: ${explained.value.chosen ?? "defaultSteps"}`);
+  for (const step of explained.value.steps) lines.push(`  ${step.index}. ${String(step.step.agent)}/${String(step.step.model)}${step.skipped ? ` skipped (${step.reason})` : ""}`);
+  return ok(lines.join("\n") + "\n");
 }
 function editChain(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return Promise.resolve(ok(usage("edit")));
@@ -257,7 +351,9 @@ async function execute(args: readonly string[], environment: ChainEnvironment, p
   if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, formatList(valid.value, asJson)) : valid; }
   if (subcommand === "limits") return limitsCommand(rest, environment, processAdapter);
   if (subcommand === "add") return Promise.resolve(addChain(rest, environment));
-  if (subcommand === "save") return Promise.resolve(saveChain(rest, environment));
+  if (subcommand === "save") return Promise.resolve(saveChainCommand(rest, environment));
+  if (subcommand === "explain") return explainCommand(rest, environment, processAdapter);
+  if (subcommand === "step") return Promise.resolve(stepCommand(rest, environment));
   if (subcommand === "edit") return editChain(rest, environment, processAdapter);
   if (subcommand === "delete") return Promise.resolve(deleteChain(rest, environment));
   if (subcommand === "repair") return Promise.resolve(repairChain(rest, environment));

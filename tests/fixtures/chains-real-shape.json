@@ -1,0 +1,76 @@
+{
+  "chains": {
+    "claude": {
+      "when": {
+        "parentAgent": "claude"
+      },
+      "steps": [
+        {
+          "agent": "codex",
+          "model": "gpt-6-luna",
+          "effort": "medium",
+          "until": {
+            "usedPercent": 95,
+            "window": "5h"
+          }
+        },
+        {
+          "agent": "claude",
+          "model": "claude-sonnet-5",
+          "effort": "medium"
+        }
+      ]
+    },
+    "codex": {
+      "when": {
+        "parentAgent": "codex"
+      },
+      "steps": [
+        {
+          "agent": "claude",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        {
+          "agent": "agy",
+          "model": "gemini-3.1-pro-high"
+        }
+      ]
+    },
+    "agy": {
+      "when": {
+        "parentAgent": "agy"
+      },
+      "steps": [
+        {
+          "agent": "codex",
+          "model": "gpt-6-luna",
+          "effort": "medium",
+          "until": {
+            "usedPercent": 95,
+            "window": "5h"
+          }
+        },
+        {
+          "agent": "claude",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        }
+      ]
+    }
+  },
+  "defaultSteps": [],
+  "usageLimits": {
+    "liveProviders": [
+      "claude",
+      "agy",
+      "grok"
+    ],
+    "cacheTtlSeconds": 30,
+    "timeoutSeconds": 5,
+    "notice": {
+      "enabled": false,
+      "intervalSeconds": 3600
+    }
+  }
+}

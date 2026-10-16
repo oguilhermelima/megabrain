@@ -367,9 +367,26 @@ and rerun with `--browser`.
 
 **Chains start empty and must be added.** A chain is named by the operator, not automatically
 after a parent or child agent. Add one with `chain add`, then `orchestrate spawn` prefers an
-explicit `--chain`, then the most specific selector matching `parentAgent`, `parentModel` and
-`parentEffort`, then `defaultSteps`. `chain run` follows the same selection order. Two selectors
-of equal specificity fail rather than pick arbitrarily.
+explicit `--chain`, then the matching chain with the highest `priority` (default 0), then the
+most specific rule (the number of constrained fields along the matched path), then the chain name,
+then `defaultSteps`. `chain run` follows the same selection order.
+
+A chain's `when` is a rule: a condition whose fields all must hold, or `{"all": [...]}`,
+`{"any": [...]}`, `{"not": rule}`, nested freely. Condition fields take a string or an array
+meaning any of: `parentAgent`, `parentModel`, `parentEffort`, `repo`, `branch`, `label` (the last
+three are globs), `usage` (`{provider, window: "5h"|"weekly", below?, above?}`) and `time`
+(`{days?, from?, to?}`, local time). A step may carry its own `when` and is skipped unless it
+matches. `chain explain --json` shows every candidate, why it matched, and which steps skip;
+`chain step edit|move` change steps in place (numbered from 1); `chain save --dry-run --json`
+validates without writing.
+
+```sh
+megabrain chain save to-luna --priority 1 --when '{"any":[
+  {"parentAgent":"claude","parentModel":"claude-opus-5-5","parentEffort":["low","medium","high"]},
+  {"parentAgent":"codex","parentModel":"gpt-6-astra","parentEffort":["medium","high"]}]}' \
+  --steps '[{"agent":"codex","model":"gpt-6-luna","effort":"medium"}]'
+megabrain chain explain --parent-agent codex --parent-model gpt-6-astra --parent-effort high --json
+```
 
 ```sh
 megabrain chain add my-chain --parent-agent codex \

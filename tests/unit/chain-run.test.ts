@@ -93,12 +93,12 @@ describe("executeChainRun: selection", () => {
     });
   });
 
-  test("reports an ambiguous selector tie with its candidates", async () => {
+  test("breaks a selector tie by chain name", async () => {
     await withRoot("select-tie", async (root) => {
       const step = { agent: "codex", model: "m" };
-      await writeConfig(root, { chains: { a: { when: { parentAgent: "codex" }, steps: [step] }, b: { when: { parentAgent: "codex" }, steps: [step] } }, defaultSteps: [] });
-      const result = await executeChainRun(["--parent-agent", "codex", "--worktree", "/w", "--prompt", "p"], environment(root), fakeProcess());
-      expect(result).toEqual({ kind: "failed", error: "chain selection is ambiguous: candidates: a, b", exitCode: 1 });
+      await writeConfig(root, { chains: { b: { when: { parentAgent: "codex" }, steps: [step] }, a: { when: { parentAgent: "codex" }, steps: [step] } }, defaultSteps: [] });
+      const result = await executeChainRun(["--parent-agent", "codex", "--worktree", "/w", "--prompt", "p", "--json"], environment(root), fakeProcess());
+      expect(result.kind === "ok" && JSON.parse(result.value).chain).toBe("a");
     });
   });
 

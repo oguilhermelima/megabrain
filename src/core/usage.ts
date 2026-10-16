@@ -85,11 +85,13 @@ export const USAGE_LINES = {
   "received": "received",
   "check": "check [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
   "ack": "ack <delivery-id> [--consumer <id>] [--generation <number>] [--json]",
-  "chain": "chain list|limits|add|save|edit|delete|run|repair ...",
+  "chain": "chain list|limits|add|save|edit|delete|run|repair|explain|step ...",
   "chain-list": "chain list [--json]",
   "chain-limits": "chain limits [--json] [--enable <providers>] [--disable <providers>] [--notice-on|--notice-off] [--notice-interval <seconds>]",
-  "chain-add": "chain add <name> --when <json> --steps <json> [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json]",
-  "chain-save": "chain save <name> --when <json> --steps <json> [--allow-unknown-model] [--json]",
+  "chain-add": "chain add <name> --when <json> --steps <json> [--priority <n>] [--dry-run] [--step <json>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--allow-unknown-model] [--json]",
+  "chain-save": "chain save <name> --when <json> --steps <json> [--priority <n>] [--dry-run] [--allow-unknown-model] [--json]",
+  "chain-explain": "chain explain [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--repo <name|path>] [--branch <branch>] [--label <text>] [--json]",
+  "chain-step": "chain step edit <name> <n> [--agent <id>] [--model <id>] [--effort <level>] [--until <json>|--no-until] [--when <json>|--no-when] [--json] | chain step move <name> <from> <to> [--json]",
   "chain-edit": "chain edit <name> [--allow-unknown-model] [--json]",
   "chain-delete": "chain delete <name> [--json]",
   "chain-repair": "chain repair <name> --step <number> --model <id> [--effort <level>] [--json]",
@@ -222,7 +224,7 @@ Commands:
   settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
   resources [--json|--all]               Measure machine and open-dispatch resources
   proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
-  chain list|limits|add|save|edit|delete|run ...  Manage ordered child-agent chains
+  chain list|limits|add|save|edit|delete|run|explain|step ...  Manage ordered child-agent chains
   model list|add|refresh ...            Manage the versioned model registry
   web [--device ...]|viewport|devices|userscript|capture|measure|session-save ...  Configure browser and visual parity workflows
   ask "question"                       Ask the coordinator and use its native delivery path

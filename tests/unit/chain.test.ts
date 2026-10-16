@@ -29,9 +29,9 @@ describe("chain selection", () => {
     expect(selectChain(modelOnly, undefined, { agent: "codex", model: "unknown" }).kind).toBe("default");
     expect(selectChain(config, undefined, { agent: "agy" }).name).toBe("defaultSteps");
   });
-  test("reports equal-specificity ambiguity", () => {
-    const ambiguous: ChainConfig = { ...config, chains: { a: config.chains.parent, b: config.chains.parent } };
-    expect(selectChain(ambiguous, undefined, { agent: "codex" })).toEqual({ kind: "ambiguous", candidates: ["a", "b"] });
+  test("breaks an equal-specificity tie by chain name", () => {
+    const tied: ChainConfig = { ...config, chains: { b: config.chains.parent, a: config.chains.parent } };
+    expect(selectChain(tied, undefined, { agent: "codex" })).toMatchObject({ kind: "selected", name: "a" });
   });
 });
 
