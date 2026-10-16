@@ -29,7 +29,10 @@ export type Chat = {
 export type ChatApproval = { id: string; tool: string; input: string; reason: string | null; decisions: Array<"allow" | "allow-session" | "deny"> };
 /** `state` is stored; `delta` is a chunk of the message `messageId` and goes to followers only. */
 export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; /** On a user event: the images it carried, as local files (never their bytes). */ images?: { path: string }[]; /** On a user event with images: its text and images in the order they were sent. */ parts?: ({ type: "text"; text: string } | { type: "image"; path: string })[]; tool?: { name: string; input?: string; status?: "ok" | "error" } };
-export type ChatLine = { cursor: string; chat?: Chat; event?: ChatEvent; approval?: ChatApproval };
+/** A message sent while a turn ran, waiting to go out as a later turn; its parts keep text and images in order. */
+export type QueuedChatMessage = { id: string; parts: ({ type: "text"; text: string } | { type: "image"; path: string })[]; createdAt: string; updatedAt: string };
+/** `queue` is the chat's whole queue, on the first line of every read and live after each change. */
+export type ChatLine = { cursor: string; chat?: Chat; event?: ChatEvent; approval?: ChatApproval; queue?: QueuedChatMessage[] };
 
 function safeId(id: string): boolean { return /^[a-f\d-]{36}$/i.test(id); }
 
@@ -42,6 +45,7 @@ export class ChatStore {
   dir(id: string): string { if (!safeId(id)) throw new Error("invalid chat id"); return join(this.chatsDir, id); }
   private recordPath(id: string): string { return join(this.dir(id), "chat.json"); }
   private eventsPath(id: string): string { return join(this.dir(id), "events.jsonl"); }
+  private queuePath(id: string): string { return join(this.dir(id), "queue.json"); }
 
   async list(): Promise<Chat[]> {
     await this.initialize();
@@ -67,6 +71,18 @@ export class ChatStore {
     const target = this.recordPath(chat.id);
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(chat)}\n`, { mode: 0o600 });
+    await rename(temporary, target);
+  }
+
+  async queue(id: string): Promise<QueuedChatMessage[]> {
+    try { return JSON.parse(await readFile(this.queuePath(id), "utf8")) as QueuedChatMessage[]; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  }
+
+  async putQueue(id: string, items: readonly QueuedChatMessage[]): Promise<void> {
+    const target = this.queuePath(id);
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(items)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }
 

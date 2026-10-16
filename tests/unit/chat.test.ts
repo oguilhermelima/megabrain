@@ -300,7 +300,7 @@ setInterval(() => {}, 1000);
     }
   });
 
-  test("queues Claude input during work, steers Codex, and preserves Claude image order", async () => {
+  test("queues Claude input during work and preserves Claude image order (Codex: chat-queue.test.ts)", async () => {
     const claude = sandbox();
     fakeAgent(claude.bin, "claude", `
 const readline = require("node:readline");
@@ -343,45 +343,6 @@ rl.on("line", (line) => {
     } finally {
       if (claudeId) await call(["chat", "stop", claudeId], claude);
       await claudeDaemon.close();
-    }
-
-    const codex = sandbox();
-    fakeAgent(codex.bin, "codex", `
-const readline = require("node:readline");
-const { appendFileSync } = require("node:fs");
-const rl = readline.createInterface({ input: process.stdin });
-rl.on("line", (line) => {
-  const request = JSON.parse(line);
-  appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
-  if (request.method === "initialize") process.stdout.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
-  if (request.method === "thread/start") process.stdout.write(JSON.stringify({ id: request.id, result: { thread: { id: "steer-thread" } } }) + "\\n");
-  if (request.method === "turn/start") {
-    process.stdout.write(JSON.stringify({ id: request.id, result: { turn: { id: "steer-turn" } } }) + "\\n");
-    process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId: "steer-thread", turnId: "steer-turn" } }) + "\\n");
-  }
-  if (request.method === "turn/steer") {
-    process.stdout.write(JSON.stringify({ id: request.id, result: { turnId: "steer-turn" } }) + "\\n");
-    process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: "steer-thread", turn: { id: "steer-turn", status: "completed" } } }) + "\\n");
-  }
-});
-`);
-    const codexDaemon = await socketDaemon(codex);
-    let codexId = "";
-    try {
-      const started = await call(["chat", "start", "--agent", "codex", "--cwd", codex.cwd, "--json"], codex);
-      expect(started.kind).toBe("ok");
-      if (started.kind !== "ok") return;
-      codexId = (JSON.parse(started.value) as Chat).id;
-      await waitForChat(codexId, "idle", codex);
-      expect((await call(["chat", "send", codexId, "--parts", JSON.stringify([{ type: "text", text: "first" }])], codex)).kind).toBe("ok");
-      await waitForChat(codexId, "working", codex);
-      expect((await call(["chat", "send", codexId, "--parts", JSON.stringify([{ type: "text", text: "steer me" }])], codex)).kind).toBe("ok");
-      await waitForChat(codexId, "idle", codex);
-      const requests = readFileSync(codex.capture, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: { input?: unknown[] } });
-      expect(requests.find((request) => request.method === "turn/steer")?.params.input).toEqual([{ type: "text", text: "steer me" }]);
-    } finally {
-      if (codexId) await call(["chat", "stop", codexId], codex);
-      await codexDaemon.close();
     }
   });
 

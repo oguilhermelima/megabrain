@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
+import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -23,6 +23,14 @@ export interface InstallExit {
 }
 
 /** Everything the UI may ask of megabrain. Implemented by the Tauri and mock adapters. */
+/** One `chat queue` verb: an edit moves the message to the end, send-now interrupts the turn and sends it, steer puts it into a running Codex turn. */
+export type ChatQueueChange =
+  | { action: 'list' | 'clear' }
+  | { action: 'add'; parts: MessagePart[] }
+  | { action: 'edit'; itemId: string; parts: MessagePart[] }
+  | { action: 'move'; itemId: string; to: number }
+  | { action: 'remove' | 'send-now' | 'steer'; itemId: string }
+
 export interface DesktopApi {
   readonly kind: 'tauri' | 'mock'
   status(): Promise<Status>
@@ -197,8 +205,10 @@ export interface DesktopApi {
   /** Native chats (megabrain chat ...). */
   chats(): Promise<NativeChat[]>
   startChat(options: { agent: string; model?: string; effort?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
-  /** `fresh` starts a new agent session when a suspended chat cannot resume its recorded one. */
-  sendChat(chatId: string, parts: MessagePart[], options?: { fresh?: boolean }): Promise<void>
+  /** `fresh` starts a new agent session when a suspended chat cannot resume its recorded one. While a turn runs the message waits in the chat's queue and `queued` is it. */
+  sendChat(chatId: string, parts: MessagePart[], options?: { fresh?: boolean }): Promise<{ queued: ChatQueueItem | null }>
+  /** Reads or changes a native chat's queue (`chat queue`); answers with the queue after the change. */
+  chatQueue(chatId: string, change: ChatQueueChange): Promise<ChatQueueItem[]>
   interruptChat(chatId: string): Promise<void>
   answerApproval(chatId: string, approvalId: string, decision: 'allow' | 'allow-session' | 'deny'): Promise<void>
   stopChat(chatId: string): Promise<void>

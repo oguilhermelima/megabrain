@@ -25,6 +25,22 @@ function partsJson(value: string | undefined): unknown {
 }
 function argsJson(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
 
+const QUEUE_USAGE = "Usage: megabrain chat queue list|clear <id> --json | add <id> --parts <json> --json | edit <id> <item> --parts <json> --json | move <id> <item> --to <index> --json | remove|send-now|steer <id> <item> --json";
+/** The chatd request for one queue verb; every verb answers with the queue as it is after the change. */
+function queueRequest(args: readonly string[]): Record<string, unknown> & { operation: string } {
+  const [action, id, ...tail] = args;
+  const parts = takeValue(tail, "--parts");
+  const to = takeValue(parts.rest, "--to");
+  const [itemId, ...flags] = to.rest;
+  const withItem = action === "edit" || action === "move" || action === "remove" || action === "send-now" || action === "steer";
+  const wantsParts = action === "add" || action === "edit";
+  const positional = withItem ? flags : to.rest;
+  if (!id || !["list", "clear", "add", ...(withItem ? [action] : [])].includes(action ?? "") || (withItem && !itemId) || positional.length !== 1 || positional[0] !== "--json"
+    || wantsParts !== (parts.value !== undefined) || (action === "move") !== (to.value !== undefined)) throw new Error(QUEUE_USAGE);
+  if (to.value !== undefined && !/^\d+$/.test(to.value)) throw new Error("--to must be a non-negative index");
+  return { operation: "queue", action, id, ...(withItem ? { itemId } : {}), ...(wantsParts ? { parts: partsJson(parts.value) } : {}), ...(to.value === undefined ? {} : { to: Number(to.value) }) };
+}
+
 export async function executeChat(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const [verb, ...rest] = args;
   if (verb === undefined || verb === "-h" || verb === "--help") return ok(usageText("chat"));
@@ -56,10 +72,12 @@ export async function executeChat(args: readonly string[], environment: Environm
       const [id, ...tail] = rest;
       const parsed = takeValue(tail, "--parts");
       const fresh = parsed.rest.includes("--fresh");
-      if (!id || parsed.value === undefined || parsed.rest.some((arg) => arg !== "--fresh")) throw new Error("Usage: megabrain chat send <id> --parts <json> [--fresh]");
-      await callChatd(dir, { operation: "send", id, parts: partsJson(parsed.value), ...(fresh ? { fresh } : {}) }, environment, processAdapter);
-      return ok("");
+      const json = parsed.rest.includes("--json");
+      if (!id || parsed.value === undefined || parsed.rest.some((arg) => arg !== "--fresh" && arg !== "--json")) throw new Error("Usage: megabrain chat send <id> --parts <json> [--fresh] [--json]");
+      value = await callChatd(dir, { operation: "send", id, parts: partsJson(parsed.value), ...(fresh ? { fresh } : {}) }, environment, processAdapter);
+      return ok(json ? argsJson(value) : "");
     }
+    if (verb === "queue") return ok(argsJson(await callChatd(dir, queueRequest(rest), environment, processAdapter)));
     if (verb === "interrupt" || verb === "stop") {
       const [id, ...tail] = rest;
       if (!id || tail.length) throw new Error(`Usage: megabrain chat ${verb} <id>`);

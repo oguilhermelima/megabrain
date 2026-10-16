@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/api'
-import type { NativeChat } from '@/api/schema'
+import type { ChatQueueItem, NativeChat } from '@/api/schema'
 import { applyLine, followState, type FollowState } from '@/native-chat/chat-model'
 import { publishChatState } from '@/native-chat/live-state'
 import { startEvent, startStep } from '@/native-chat/start-trace'
@@ -9,15 +9,29 @@ import { switchState } from '@/native-chat/switch-trace'
 // What each chat view has seen, kept for the app run: reopening a chat shows it at once and the
 // subscription resumes after the last cursor instead of replaying the whole conversation.
 const seen = new Map<string, FollowState>()
+// Each chat's queue as last heard, so reopening shows it before the follow's first line repeats it.
+const seenQueue = new Map<string, ChatQueueItem[]>()
 
 // A follow that ends on its own (chatd restarted, the CLI died) comes back after this long, doubling to the cap.
 const RETRY_MS = 300
 const RETRY_CAP_MS = 5000
 
 /** Follows a native chat live while the view is open; the subscription closes when it leaves. */
-export function useFollowChat(chat: NativeChat): { state: FollowState; error: unknown; update: (change: (state: FollowState) => FollowState) => void } {
+export function useFollowChat(chat: NativeChat): {
+  state: FollowState
+  error: unknown
+  update: (change: (state: FollowState) => FollowState) => void
+  /** The messages waiting for the turn to end, as chatd last said; a queue call's answer sets it too. */
+  queue: ChatQueueItem[]
+  setQueue: (items: ChatQueueItem[]) => void
+} {
   const [state, setState] = useState<FollowState>(() => seen.get(chat.id) ?? followState(chat))
   const [error, setError] = useState<unknown>(null)
+  const [queue, setQueueState] = useState<ChatQueueItem[]>(() => seenQueue.get(chat.id) ?? [])
+  const setQueue = (items: ChatQueueItem[]) => {
+    seenQueue.set(chat.id, items)
+    setQueueState(items)
+  }
 
   const update = (change: (current: FollowState) => FollowState) =>
     setState((current) => {
@@ -43,6 +57,8 @@ export function useFollowChat(chat: NativeChat): { state: FollowState; error: un
             if (stopped) return
             delay = RETRY_MS
             setError(null)
+            // The queue rides on its own lines, the whole of it each time; the latest wins.
+            if (line.queue !== undefined) setQueue(line.queue)
             update((current) => applyLine(current, line))
             if (line.event?.kind === 'state') switchState(chat.id, line.event.text)
             if (line.event !== undefined) startEvent(chat.id, line.event)
@@ -81,5 +97,5 @@ export function useFollowChat(chat: NativeChat): { state: FollowState; error: un
   useEffect(() => publishChatState(chat.id, live), [chat.id, live])
   useEffect(() => () => publishChatState(chat.id, null), [chat.id])
 
-  return { state, error, update }
+  return { state, error, update, queue, setQueue }
 }

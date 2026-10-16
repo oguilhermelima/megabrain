@@ -1,10 +1,12 @@
 import { lazy, Suspense, useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import type { ChatQueueChange } from '@/api/adapter'
 import { activityOf } from '@/components/agent-activity'
 import { api } from '@/api'
 import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { ViewSwitch } from '@/chat/ViewSwitch'
 import { Composer } from '@/chat/Composer'
+import type { QueueControls } from '@/chat/QueueStrip'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { ApprovalRendererContext, ConversationList, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { ErrorNote } from '@/components/ui'
@@ -35,7 +37,7 @@ const resumable = (state: NativeChat['state']) => state === 'suspended' || state
 
 /** A conversation megabrain owns through the agent's protocol, followed live while it is open. */
 export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
-  const { state, error, update } = useFollowChat(listed)
+  const { state, error, update, queue, setQueue } = useFollowChat(listed)
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
   const [switching, setSwitching] = useState(false)
@@ -50,7 +52,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const inTerminal = mode === 'terminal'
   const [actionError, setActionError] = useState<unknown>(null)
   const [switchError, setSwitchError] = useState<unknown>(null)
-  const [confirming, setConfirming] = useState<string | null>(null)
+  // A step that needs a yes first: moving a running turn to the terminal, or sending a queued message now.
+  const [confirming, setConfirming] = useState<{ text: string; action: string; run: () => void } | null>(null)
   const title = chat.title ?? 'New chat'
   const pending = pendingApproval(state)
   const live = useMemo(() => liveTail(state), [state])
@@ -85,20 +88,49 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       (caught: unknown) => setActionError(caught),
     )
 
+  const busy = chat.state === 'working' || chat.state === 'waiting-approval'
+
   // The message shows at once and the chat's user event confirms it; a failed send takes it back.
+  // While a turn runs it waits in the queue instead, which the strip above the composer shows.
   const send = async (parts: MessagePart[]): Promise<null> => {
     const id = crypto.randomUUID()
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
     const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
-    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images, parts }) }))
+    if (!busy) update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images, parts }) }))
     try {
-      await api.sendChat(chat.id, parts, { fresh: startFresh && resumable(chat.state) })
+      const { queued } = await api.sendChat(chat.id, parts, { fresh: startFresh && resumable(chat.state) })
       setStartFresh(false)
+      if (queued !== null) {
+        update((current) => dropOutgoing(current, id))
+        if (!queue.some((item) => item.id === queued.id)) setQueue([...queue, queued])
+      }
     } catch (caught) {
       update((current) => dropOutgoing(current, id))
       throw caught
     }
     return null
+  }
+
+  const changeQueue = async (change: ChatQueueChange) => {
+    setQueue(await api.chatQueue(chat.id, change))
+    announceAction()
+  }
+  const queueControls: QueueControls = {
+    items: queue,
+    // A failed edit keeps the draft in the composer, which shows the error.
+    edit: (itemId, parts) => changeQueue({ action: 'edit', itemId, parts }),
+    move: (itemId, to) => changeQueue({ action: 'move', itemId, to }).catch(setActionError),
+    remove: (itemId) => changeQueue({ action: 'remove', itemId }).catch(setActionError),
+    // Sending now stops a running turn, so it asks first.
+    sendNow: (itemId) => {
+      const run = () => {
+        setConfirming(null)
+        changeQueue({ action: 'send-now', itemId }).catch(setActionError)
+      }
+      if (busy) setConfirming({ text: 'Stop the running turn and send this message now?', action: 'Send now', run })
+      else run()
+    },
+    ...(chat.agent === 'codex' && chat.state === 'working' ? { steer: (itemId: string) => changeQueue({ action: 'steer', itemId }).catch(setActionError) } : {}),
   }
 
   const stop = () => void act(() => api.interruptChat(chat.id))
@@ -114,7 +146,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const requestSwitch = () => {
     const warning = toggle.target === 'terminal' ? terminalSwitchWarning(chat) : null
     if (warning === null) void switchMode()
-    else setConfirming(warning)
+    else setConfirming({ text: warning, action: 'Switch', run: () => void switchMode() })
   }
 
   const switchMode = async () => {
@@ -206,9 +238,9 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       )}
       {confirming !== null && (
         <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-warn">
-          <span className="min-w-0 flex-1">{confirming}</span>
+          <span className="min-w-0 flex-1">{confirming.text}</span>
           <button type="button" onClick={() => setConfirming(null)} className="shrink-0 rounded-full px-3 py-1 text-ink-300 hover:bg-white/[0.07]">Cancel</button>
-          <button type="button" onClick={() => void switchMode()} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07]">Switch</button>
+          <button type="button" onClick={confirming.run} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07]">{confirming.action}</button>
         </div>
       )}
       {switchError !== null && (
@@ -279,7 +311,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
           <div onKeyDown={onComposerKey} className="contents">
             <Composer
-              placeholder={ended(chat.state) ? 'This chat has stopped' : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Reply to ${title}… (Esc stops the turn)` : `Reply to ${title}…`}
+              placeholder={ended(chat.state) ? 'This chat has stopped' : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
               disabled={ended(chat.state)}
               agent={chat.agent}
               cwd={chat.cwd}
@@ -292,6 +324,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               fill={fill}
               channel={compose}
               initCommands={chat.slashCommands}
+              queue={queueControls}
             />
           </div>
         </>

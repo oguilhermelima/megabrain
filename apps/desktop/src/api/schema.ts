@@ -634,12 +634,21 @@ export const chatDeltaEventSchema = z.looseObject({
   text: z.string(),
 })
 export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, z.lazy(() => transcriptEventSchema)])
-// One line of megabrain chat events <id> --since <cursor> --follow --json.
+// A message sent while the native chat's turn ran, waiting in its queue (`chat queue ... --json`).
+export const chatQueueItemSchema = z.looseObject({
+  id: z.string(),
+  parts: z.array(messagePartSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+// One line of megabrain chat events <id> --since <cursor> --follow --json. `queue` is the whole
+// queue: on the first line of every follow and on a live line after each change.
 export const chatEventLineSchema = z.looseObject({
   cursor: z.string(),
   chat: nativeChatSchema.optional(),
   event: chatEventSchema.optional(),
   approval: chatApprovalSchema.optional(),
+  queue: z.array(chatQueueItemSchema).optional(),
 })
 // `agent defaults --json`: each agent's default model and effort from its own config (null when it
 // sets none), and the shell a new terminal opens.
@@ -793,6 +802,7 @@ export type TerminalEngine = z.infer<typeof terminalEngineSchema>
 export type TerminalSession = z.infer<typeof terminalSessionSchema>
 export type SlashCommand = z.infer<typeof slashCommandSchema>
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>
+export type ChatQueueItem = z.infer<typeof chatQueueItemSchema>
 export type CodeServer = z.infer<typeof codeServerSchema>
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
 export type TranscriptImage = z.infer<typeof transcriptImageSchema>

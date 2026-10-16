@@ -6,7 +6,7 @@ import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine } from "./store.js";
+import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type QueuedChatMessage } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
 import { discoverSessionId, readSessionTurns } from "./session-log.js";
 import { selfInvocation } from "../core/self-invocation.js";
@@ -23,7 +23,7 @@ function chatSocket(stateDir: string): string { return join(stateDir, "chatd", "
 function chatPid(stateDir: string): string { return join(stateDir, "chatd", "chatd.pid"); }
 function chatLock(stateDir: string): string { return join(stateDir, "chatd", "start.lock"); }
 /** Bumped whenever the socket contract changes in a way an older chatd cannot serve; a client that finds another number asks that chatd to hand over. */
-export const CHAT_PROTOCOL_VERSION = 1;
+export const CHAT_PROTOCOL_VERSION = 2;
 const DEFAULT_HANDOVER_TIMEOUT_MS = 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
@@ -85,7 +85,14 @@ function withMessage(messageId: string): Partial<ChatEvent> { return messageId =
 export class ChatDaemon {
   readonly store: ChatStore;
   private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
+  /** Messages already sent that wait for the agent to be ready: the first message of a start or a resume, or one sent now. */
   private readonly queues = new Map<string, Part[][]>();
+  /** The person's queue: messages sent during a turn, persisted, drained one per turn. Loaded once per chat. */
+  private readonly queued = new Map<string, QueuedChatMessage[]>();
+  private readonly queueWrites = new Map<string, Promise<unknown>>();
+  /** An interrupt holds the queue until the person sends again, so stopping a turn never fires a queued message. */
+  private readonly queueHeld = new Set<string>();
+  private readonly drainChains = new Map<string, Promise<unknown>>();
   private readonly activeTurns = new Map<string, string>();
   private readonly interrupting = new Set<string>();
   private readonly interruptedEvents = new Set<string>();
@@ -131,6 +138,7 @@ export class ChatDaemon {
         case "handover": return await this.handover();
         case "start": return await this.startChat(request);
         case "send": return await this.send(text(request.id), validateParts(request.parts), request.fresh === true);
+        case "queue": return await this.queueOperation(request);
         case "interrupt": return await this.interrupt(text(request.id));
         case "stop": return await this.stop(text(request.id));
         case "remove": return await this.remove(text(request.id));
@@ -204,21 +212,30 @@ export class ChatDaemon {
     return { handedOver: true, waitedMs: Date.now() - started, interrupted };
   }
 
-  private async send(id: string, inputParts: Part[], fresh = false): Promise<void> {
+  /** A send while a turn runs waits in the queue; otherwise it goes out at once. */
+  private async send(id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> {
     const chat = await this.requireChat(id);
     const parts = await this.normalizeParts(chat.cwd, inputParts);
     if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
+    if (chat.state === "working" || chat.state === "waiting-approval") return { queued: await this.enqueue(chat, parts) };
+    await this.deliver(chat, parts, { fresh });
+    return { queued: null };
+  }
+
+  /** Shows the message and makes it the next turn: resuming the agent, starting it, or writing to it once it is free. */
+  private async deliver(chat: Chat, parts: Part[], options: { fresh?: boolean; keepInterrupt?: boolean } = {}): Promise<void> {
+    const id = chat.id;
     const resuming = chat.state === "suspended" || chat.state === "stopped";
     const textValue = firstText(parts);
     if (chat.title === null && textValue !== "") chat.title = textValue.slice(0, 120);
     chat.lastActivityAt = new Date().toISOString();
     await this.save(chat);
     await this.publish(chat, event("user", textValue, undefined, withImages(parts)));
-    this.interrupting.delete(id);
+    if (options.keepInterrupt !== true) this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
     if (resuming) {
       // The first send is the trigger: opening a chat spawns nothing, so a person browsing history costs no agent process.
-      if (fresh) chat.agentSessionId = null;
+      if (options.fresh === true) chat.agentSessionId = null;
       chat.state = "starting";
       chat.error = null;
       this.queues.set(id, [parts]);
@@ -226,16 +243,9 @@ export class ChatDaemon {
       void this.runAgent(chat).catch((error) => this.resumeFailed(id, error));
       return;
     }
-    if (chat.agent === "codex" && chat.state === "working" && this.activeTurns.has(id)) {
-      const child = this.children.get(id);
-      const turnId = this.activeTurns.get(id);
-      if (child && turnId) chatProtocolAdapters[chat.agent].steer(chat, child, turnId, parts, (method, params) => this.codexRequest(child, method, params)).catch((error) => this.fail(id, error));
-      return;
-    }
     const queue = this.queues.get(id) ?? [];
     queue.push(parts);
     this.queues.set(id, queue);
-    if (chat.agent === "claude" && chat.state === "working") return;
     if (!this.children.has(id) && chat.state === "idle") {
       chat.state = "starting";
       await this.save(chat);
@@ -243,6 +253,97 @@ export class ChatDaemon {
       return;
     }
     await this.drain(id);
+  }
+
+  private async queueOperation(request: Request): Promise<unknown> {
+    const id = text(request.id);
+    const chat = await this.requireChat(id);
+    const action = text(request.action);
+    const items = await this.loadQueue(id);
+    const take = (): QueuedChatMessage => {
+      const index = items.findIndex((item) => item.id === text(request.itemId));
+      if (index === -1) throw new Error(`message ${text(request.itemId) || "(none)"} is not in the queue`);
+      return items.splice(index, 1)[0] as QueuedChatMessage;
+    };
+    switch (action) {
+      case "list": return [...items];
+      case "add":
+        await this.enqueue(chat, await this.normalizeParts(chat.cwd, validateParts(request.parts)));
+        await this.drain(id);
+        return [...await this.loadQueue(id)];
+      case "edit": {
+        // The person's rule: an edited message goes to the end of the queue.
+        const parts = await this.normalizeParts(chat.cwd, validateParts(request.parts));
+        const item = take();
+        items.push({ ...item, parts, updatedAt: new Date().toISOString() });
+        return await this.persistQueue(id);
+      }
+      case "move": {
+        const to = request.to;
+        if (typeof to !== "number" || !Number.isSafeInteger(to) || to < 0) throw new Error("--to must be a non-negative index");
+        const item = take();
+        items.splice(Math.min(to, items.length), 0, item);
+        return await this.persistQueue(id);
+      }
+      case "remove":
+        take();
+        return await this.persistQueue(id);
+      case "clear":
+        items.splice(0);
+        return await this.persistQueue(id);
+      case "send-now": {
+        if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
+        const item = take();
+        await this.persistQueue(id);
+        if (chat.state === "working" || chat.state === "waiting-approval") await this.interrupt(id);
+        await this.deliver(await this.requireChat(id), item.parts, { keepInterrupt: true });
+        return [...await this.loadQueue(id)];
+      }
+      case "steer": {
+        const child = this.children.get(id);
+        const turnId = this.activeTurns.get(id);
+        if (chat.agent !== "codex" || chat.state !== "working" || child === undefined || turnId === undefined) throw new Error("steer needs a running Codex turn");
+        const index = items.findIndex((item) => item.id === text(request.itemId));
+        const item = items[index];
+        if (item === undefined) throw new Error(`message ${text(request.itemId) || "(none)"} is not in the queue`);
+        await chatProtocolAdapters.codex.steer(chat, child, turnId, item.parts, (method, params) => this.codexRequest(child, method, params));
+        const at = items.indexOf(item);
+        if (at !== -1) items.splice(at, 1);
+        await this.persistQueue(id);
+        await this.publish(chat, event("user", firstText(item.parts), undefined, withImages(item.parts)));
+        return [...items];
+      }
+      default: throw new Error("queue action must be list, add, edit, move, remove, clear, send-now or steer");
+    }
+  }
+
+  private async loadQueue(id: string): Promise<QueuedChatMessage[]> {
+    const cached = this.queued.get(id);
+    if (cached !== undefined) return cached;
+    const items = await this.store.queue(id);
+    const raced = this.queued.get(id);
+    if (raced !== undefined) return raced;
+    this.queued.set(id, items);
+    return items;
+  }
+
+  /** Tells followers the queue as it is now, then writes it; writes go in order, so the file ends as the last change left it. */
+  private async persistQueue(id: string): Promise<QueuedChatMessage[]> {
+    const items = [...this.queued.get(id) ?? []];
+    this.broadcast(id, { cursor: "", queue: items });
+    const next = (this.queueWrites.get(id) ?? Promise.resolve()).then(() => this.removed.has(id) ? undefined : this.store.putQueue(id, items));
+    this.queueWrites.set(id, next.catch(() => undefined));
+    await next;
+    return items;
+  }
+
+  private async enqueue(chat: Chat, parts: Part[]): Promise<QueuedChatMessage> {
+    const items = await this.loadQueue(chat.id);
+    const now = new Date().toISOString();
+    const item: QueuedChatMessage = { id: randomUUID(), parts: [...parts], createdAt: now, updatedAt: now };
+    items.push(item);
+    await this.persistQueue(chat.id);
+    return item;
   }
 
   /** A resume that cannot start leaves the chat suspended with the reason, and drops the message it carried. */
@@ -276,6 +377,8 @@ export class ChatDaemon {
         if (line.trim() === "") continue;
         try {
           const parsed = JSON.parse(line) as Record<string, unknown>;
+          // A Codex answer settles its request at once: the event being handled may itself wait for it (a turn that ends starts the next).
+          if (chat.agent === "codex" && this.settleRpc(chat.id, parsed)) continue;
           const previous = this.eventChains.get(chat.id) ?? Promise.resolve();
           const next = previous.then(() => chat.agent === "claude" ? this.handleClaude(chat.id, child, parsed) : this.handleCodex(chat.id, child, parsed)).catch((error: unknown) => this.fail(chat.id, error));
           this.eventChains.set(chat.id, next);
@@ -385,6 +488,8 @@ export class ChatDaemon {
       return;
     }
     if (item.type === "result") {
+      // The interrupted turn's own result, after a message sent now already started the next turn.
+      if (item.is_error === true && this.interrupting.has(id) && chat.state === "working") { this.interrupting.delete(id); return; }
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
       this.updateContext(chat, object(item.usage));
       const modelUsage = object(item.modelUsage);
@@ -404,12 +509,14 @@ export class ChatDaemon {
     }
   }
 
+  private settleRpc(id: string, item: Record<string, unknown>): boolean {
+    if (typeof item.id !== "number" || !("result" in item || "error" in item)) return false;
+    const waiter = this.rpcWaiters.get(id)?.get(item.id);
+    if (waiter) { this.rpcWaiters.get(id)?.delete(item.id); item.error ? waiter.reject(new Error(text(object(item.error).message) || "Codex request failed")) : waiter.resolve(item.result); }
+    return true;
+  }
+
   private async handleCodex(id: string, child: ChildProcessWithoutNullStreams, item: Record<string, unknown>): Promise<void> {
-    if (typeof item.id === "number" && ("result" in item || "error" in item)) {
-      const waiter = this.rpcWaiters.get(id)?.get(item.id);
-      if (waiter) { this.rpcWaiters.get(id)?.delete(item.id); item.error ? waiter.reject(new Error(text(object(item.error).message) || "Codex request failed")) : waiter.resolve(item.result); }
-      return;
-    }
     const method = text(item.method);
     const params = object(item.params);
     const chat = await this.requireChat(id);
@@ -472,13 +579,33 @@ export class ChatDaemon {
     return result;
   }
 
-  private async drain(id: string): Promise<void> {
-    const queue = this.queues.get(id);
+  /** Starts the next turn when the agent is free; drains run one at a time per chat, so two callers never send twice. */
+  private drain(id: string): Promise<void> {
+    const next = (this.drainChains.get(id) ?? Promise.resolve()).then(() => this.drainOnce(id));
+    this.drainChains.set(id, next.catch(() => undefined));
+    return next;
+  }
+
+  private async drainOnce(id: string): Promise<void> {
     const child = this.children.get(id);
     const chat = await this.store.get(id);
-    if (!queue || queue.length === 0 || !child || !chat || chat.state === "working" || chat.state === "waiting-approval") return;
-    const parts = queue.shift() as Part[];
-    if (queue.length === 0) this.queues.delete(id);
+    if (!child || !chat || chat.state === "working" || chat.state === "waiting-approval") return;
+    let parts: Part[];
+    const outbox = this.queues.get(id);
+    if (outbox !== undefined && outbox.length > 0) {
+      parts = outbox.shift() as Part[];
+      if (outbox.length === 0) this.queues.delete(id);
+      this.queueHeld.delete(id);
+    } else {
+      if (chat.state !== "idle" || chat.mode !== "chat" || this.queueHeld.has(id)) return;
+      const items = await this.loadQueue(id);
+      const item = items.shift();
+      if (item === undefined) return;
+      parts = item.parts;
+      await this.persistQueue(id);
+      chat.lastActivityAt = new Date().toISOString();
+      await this.publish(chat, event("user", firstText(parts), undefined, withImages(parts)));
+    }
     chat.state = "working";
     await this.save(chat);
     const adapter = chatProtocolAdapters[chat.agent];
@@ -511,6 +638,7 @@ export class ChatDaemon {
   private async interrupt(id: string): Promise<void> {
     const chat = await this.requireChat(id);
     const child = this.children.get(id);
+    this.queueHeld.add(id);
     if (chat.agent === "claude") {
       this.interrupting.add(id);
       chat.state = "idle";
@@ -552,8 +680,9 @@ export class ChatDaemon {
     this.children.delete(id);
     this.clearStartTimer(id);
     if (child) child.kill("SIGTERM");
-    await Promise.allSettled([this.eventChains.get(id), this.appendChains.get(id)]);
-    for (const map of [this.queues, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.toolNames, this.subscribers]) map.delete(id);
+    await Promise.allSettled([this.eventChains.get(id), this.appendChains.get(id), this.queueWrites.get(id)]);
+    for (const map of [this.queues, this.queued, this.queueWrites, this.drainChains, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.toolNames, this.subscribers]) map.delete(id);
+    this.queueHeld.delete(id);
     this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
     this.outputSeen.delete(id);
@@ -632,8 +761,9 @@ export class ChatDaemon {
 
   private async events(id: string, since: number, follow: boolean, socket?: Socket): Promise<ChatLine[]> {
     const chat = await this.requireChat(id);
+    const head: ChatLine = { cursor: String(since), chat, queue: [...await this.loadQueue(id)] };
     if (socket) {
-      socket.write(`${JSON.stringify({ cursor: String(since), chat })}\n`);
+      socket.write(`${JSON.stringify(head)}\n`);
       if (follow) {
         const listeners = this.subscribers.get(id) ?? new Set();
         let cursor = since;
@@ -666,7 +796,7 @@ export class ChatDaemon {
       }
       for (const line of await this.store.events(id, since)) socket.write(`${JSON.stringify(line)}\n`);
     }
-    return [{ cursor: String(since), chat }, ...await this.store.events(id, since)];
+    return [head, ...await this.store.events(id, since)];
   }
 
   private async permission(id: string, request: Record<string, unknown>): Promise<unknown> {
@@ -738,8 +868,9 @@ export class ChatDaemon {
     return event("state", chat.state, undefined, chat.state === "working" && startedAt !== undefined ? { turnStartedAt: startedAt } : {});
   }
   /** Sends an event to current followers only; the cursor is the last stored one, so a resume never skips history. */
-  private publishLive(id: string, value: ChatEvent): void {
-    for (const listener of this.subscribers.get(id) ?? []) listener({ cursor: "", event: value }, true);
+  private publishLive(id: string, value: ChatEvent): void { this.broadcast(id, { cursor: "", event: value }); }
+  private broadcast(id: string, line: ChatLine): void {
+    for (const listener of this.subscribers.get(id) ?? []) listener(line, true);
   }
   private async publish(chat: Chat, value: ChatEvent, approval?: ChatApproval): Promise<void> {
     const previous = this.appendChains.get(chat.id) ?? Promise.resolve();

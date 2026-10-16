@@ -1,4 +1,4 @@
-import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
@@ -347,8 +347,9 @@ export function createMockApi(): DesktopApi {
     startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
     sendChat: async (chatId, parts) => {
       await wait(250)
-      sendMockChat(chatId, parts)
+      return sendMockChat(chatId, parts)
     },
+    chatQueue: async (chatId, change) => changeMockQueue(chatId, change),
     interruptChat: async (chatId) => interruptMockChat(chatId),
     answerApproval: async (chatId, _approvalId, decision) => answerMockApproval(chatId, decision),
     stopChat: async () => {},

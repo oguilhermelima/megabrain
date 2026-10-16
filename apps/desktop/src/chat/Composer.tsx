@@ -23,6 +23,8 @@ import { caretRect, offsetAtPoint, readDraft, relabel, renderDraft, selectionOff
 import { composerMenu, insertBlock, type ComposerAction } from '@/chat/chat-menu-model'
 import { toSections, type ComposeChannel } from '@/chat/chat-menu'
 import { initialQueueState, queueReducer, type QueueAction, type QueueState } from '@/chat/queue-model'
+import { QueueStrip, type QueueControls } from '@/chat/QueueStrip'
+import { reconcileWalk, walkKey } from '@/chat/queue-walk'
 
 export type { Notice } from '@/chat/composer-look'
 
@@ -357,6 +359,7 @@ export function Composer({
   fill = null,
   channel,
   initCommands,
+  queue,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
   fill?: { text: string } | null
@@ -381,6 +384,8 @@ export function Composer({
   channel?: ComposeChannel
   /** The command names the running agent reported (Claude's init), merged into the discovered list. */
   initCommands?: readonly string[]
+  /** Set for native chats: the messages waiting for the turn to end, shown above the box to edit, reorder, remove or send now. */
+  queue?: QueueControls
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -410,7 +415,13 @@ export function Composer({
   const commands = commandList.commands
   const [recent, rememberCommand] = useRecentCommands(agent)
   const [sentCount, setSentCount] = useState(0)
-  const [queue, queueDispatch] = useChatQueue(dispatchId, sentCount)
+  const [dispatchQueue, queueDispatch] = useChatQueue(dispatchId, sentCount)
+  // The queued message the box holds for editing: Enter saves it, and the queue moves it to its end; Esc gives it back unchanged.
+  const [editing, setEditing] = useState<string | null>(null)
+  const queueItems = queue?.items
+  useEffect(() => {
+    setEditing((current) => reconcileWalk({ editing: current }, queueItems?.map((item) => item.id) ?? []).editing)
+  }, [queueItems])
 
   const kindOf = (id: string) => attachments.current.get(id)?.kind ?? 'image'
 
@@ -490,11 +501,9 @@ export function Composer({
     (message) => show({ tone: 'bad', text: message }),
   )
 
-  // A message taken back from the queue lands in the composer for editing, its image paths as tokens.
-  const restored = queue.restored
-  useEffect(() => {
-    if (restored === null) return
-    const next = messagePartsFromText(restored.text).flatMap((part): Draft => {
+  /** Puts a message's parts in the box, its image paths as tokens, with the caret at the end. */
+  const load = (parts: readonly MessagePart[]) => {
+    const next = parts.flatMap((part): Draft => {
       if (part.type === 'text') return [part]
       const attachment = fromPath(part.path)
       if (attachment === null) return [{ type: 'text', text: part.path }]
@@ -502,8 +511,41 @@ export function Composer({
       return [{ type: 'token', id: attachment.id }]
     })
     apply(next, draftLength(next))
+  }
+
+  /** Empties the box and lets go of its attachments. */
+  const clear = () => {
+    apply([], 0)
+    attachments.current.forEach(releasePreview)
+    attachments.current.clear()
+  }
+
+  // A message taken back from the queue lands in the composer for editing, its image paths as tokens.
+  const restored = dispatchQueue.restored
+  useEffect(() => {
+    if (restored === null) return
+    load(messagePartsFromText(restored.text))
     // Only a newly restored message runs this; apply reads the latest refs.
   }, [restored])
+
+  /** Takes a queued message into the box to edit; whatever was being edited is given back unchanged. */
+  const editQueued = (id: string) => {
+    const item = queue?.items.find((candidate) => candidate.id === id)
+    if (item === undefined) return
+    if (editing === null && sendable) {
+      show({ tone: 'bad', text: 'Send or clear the message in the box before editing a queued one.' })
+      return
+    }
+    clear()
+    setEditing(id)
+    load(item.parts)
+  }
+
+  /** Leaves the edit: the queued message stays as it was. */
+  const cancelEdit = () => {
+    setEditing(null)
+    clear()
+  }
 
   // The slash menu opens while the message is a command word being typed; a second slash means a path.
   const query = draftSlashQuery(draft)
@@ -857,13 +899,15 @@ export function Composer({
     )
       .then((saved) => {
         const paths = new Map(saved)
-        return onSend(
-          toMessageParts(message, (id) => {
-            const found = paths.get(id)
-            if (found === undefined) throw new Error('An attachment went missing; attach it again.')
-            return found
-          }),
-        )
+        const parts = toMessageParts(message, (id) => {
+          const found = paths.get(id)
+          if (found === undefined) throw new Error('An attachment went missing; attach it again.')
+          return found
+        })
+        // An edited queued message is saved in place of being sent; the queue moves it to its end.
+        const edited = editing === null ? undefined : queue?.items.find((item) => item.id === editing)
+        if (edited !== undefined && queue !== undefined) return queue.edit(edited.id, parts).then(() => null)
+        return onSend(parts)
       })
       .then(
         (result) => {
@@ -871,9 +915,8 @@ export function Composer({
           show(result, bad)
           setSentCount((count) => count + 1)
           if (!bad) {
-            apply([], 0)
-            attachments.current.forEach(releasePreview)
-            attachments.current.clear()
+            setEditing(null)
+            clear()
           }
         },
         (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }, true),
@@ -919,6 +962,31 @@ export function Composer({
       }
       return
     }
+    // The arrows walk the queue from an empty box, and Esc leaves the message being edited; Enter saves through send.
+    if (queue !== undefined && (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'Escape') && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      const draftNow = current()
+      const [start, end] = selection()
+      const length = draftLength(draftNow)
+      const step = walkKey({ editing }, event.key, {
+        ids: queue.items.map((item) => item.id),
+        empty: draftNow.length === 0 || (tokenIds(draftNow).length === 0 && draftText(draftNow).trim() === ''),
+        atStart: start === 0 && end === 0,
+        atEnd: start === length && end === length,
+      })
+      if (step.handled) {
+        event.preventDefault()
+        const effect = step.effect
+        if (effect?.type === 'load') {
+          const item = queue.items.find((candidate) => candidate.id === effect.id)
+          if (item !== undefined) {
+            clear()
+            setEditing(item.id)
+            load(item.parts)
+          }
+        } else if (effect?.type === 'clear') cancelEdit()
+        return
+      }
+    }
     if (event.key === 'Escape' && dispatchId !== undefined) {
       event.preventDefault()
       queueDispatch({ type: 'escape', text: draftText(current()) })
@@ -935,7 +1003,8 @@ export function Composer({
     <footer className="@container/composer shrink-0 px-6 pt-2 pb-3">
       {preview !== null && <Lightbox images={preview.images} start={preview.start} onClose={closePreview} />}
       {hover !== null && <ChipPreview attachment={attachments.current.get(hover.id)} left={hover.left} top={hover.top} />}
-      {dispatchId !== undefined && <QueuePills state={queue} empty={!sendable} />}
+      {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
+      {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => editQueued(item.id)} />}
       <div className="relative">
         {slashMenu.shown !== null && (
           <CommandMenu

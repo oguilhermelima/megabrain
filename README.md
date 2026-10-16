@@ -291,6 +291,12 @@ mid-flight without saying so in the transcript.
 
 Chats run without permission prompts. Add `--approvals` to `chat start` to be asked instead.
 
+A message sent while a turn runs waits in the chat's queue, saved beside its transcript, and goes out
+as the next turn when the running one ends, one per turn. An interrupt holds the queue until you send
+again. `chat queue list|add|edit|move|remove|clear <id> ... --json` reads and changes it (an edited
+message moves to the end), `chat queue send-now <id> <item> --json` interrupts the turn and sends that
+message, and `chat queue steer <id> <item> --json` puts it into a running Codex turn instead.
+
 `chat list --json` returns saved chats. Use `chat interrupt <id>` to stop the current turn,
 `chat remove <id> [--json]` to stop a chat and delete its record and transcript (the agent's own
 session log stays, so it can still be resumed),

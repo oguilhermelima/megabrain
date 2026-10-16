@@ -1,4 +1,5 @@
-import type { ChatApproval, ChatEventLine, MessagePart, NativeChat, TranscriptEvent } from '@/api/schema'
+import type { ChatQueueChange } from '@/api/adapter'
+import type { ChatApproval, ChatEventLine, ChatQueueItem, MessagePart, NativeChat, TranscriptEvent } from '@/api/schema'
 
 const now = Date.now()
 const at = (seconds: number) => new Date(now - seconds * 1000).toISOString()
@@ -39,6 +40,9 @@ interface MockChat {
   turnStartedAt: string | null
   /** Cancels the turn playing now. */
   cancel: (() => void) | null
+  /** Messages sent while a turn ran; the next goes out when the turn ends, unless an interrupt holds them. */
+  queue: ChatQueueItem[]
+  held: boolean
 }
 
 const chats = new Map<string, MockChat>()
@@ -49,7 +53,7 @@ function mockChat(chatId: string): MockChat {
   let chat = chats.get(chatId)
   if (chat !== undefined) return chat
   const original = chatId === mockNativeChat.id
-  chat = { lines: original ? mockChatLines.slice() : [], followers: new Set(), state: original ? 'idle' : 'starting', turnStartedAt: original ? null : new Date().toISOString(), cancel: null }
+  chat = { lines: original ? mockChatLines.slice() : [], followers: new Set(), state: original ? 'idle' : 'starting', turnStartedAt: original ? null : new Date().toISOString(), cancel: null, queue: [], held: false }
   chats.set(chatId, chat)
   if (original) play(chatId, openingTurn)
   else play(chatId, [{ type: 'pause', ms: 2600 }, { type: 'state', state: 'idle' }])
@@ -73,6 +77,19 @@ function setState(chat: MockChat, state: NativeChat['state']) {
   if (state === 'working' && chat.turnStartedAt === null) chat.turnStartedAt = new Date().toISOString()
   if (state === 'idle' || state === 'stopped' || state === 'error') chat.turnStartedAt = null
   store(chat, stateLine(chat))
+  if (state !== 'idle' || chat.held) return
+  const next = chat.queue.shift()
+  if (next === undefined) return
+  publishQueue(chat)
+  setTimeout(() => play(chatIdOf(chat), replyTurn(textOf(next.parts))), 0)
+}
+
+const chatIdOf = (chat: MockChat) => [...chats.entries()].find(([, value]) => value === chat)?.[0] ?? ''
+const textOf = (parts: MessagePart[]) => parts.map((part) => (part.type === 'text' ? part.text : '[Image #1]')).join('')
+const busy = (chat: MockChat) => chat.state === 'working' || chat.state === 'waiting-approval'
+
+function publishQueue(chat: MockChat) {
+  for (const follower of chat.followers) follower({ cursor: cursorOf(chat), queue: chat.queue.slice() })
 }
 
 /** One to three words at a time, the way a model's chunks arrive. */
@@ -167,6 +184,7 @@ export function followMockChat(chatId: string, since: string | null, onLine: (li
   const timers = replay.map((line, index) => setTimeout(() => open && onLine(line), 60 * index))
   const start = setTimeout(() => {
     if (!open) return
+    onLine({ cursor: cursorOf(chat), queue: chat.queue.slice() })
     onLine({ cursor: cursorOf(chat), ...stateLine(chat) })
     chat.followers.add(onLine)
   }, 60 * replay.length)
@@ -178,13 +196,66 @@ export function followMockChat(chatId: string, since: string | null, onLine: (li
   }
 }
 
-export function sendMockChat(chatId: string, parts: MessagePart[]) {
-  const text = parts.map((part) => (part.type === 'text' ? part.text : '[Image #1]')).join('')
-  play(chatId, replyTurn(text))
+export function sendMockChat(chatId: string, parts: MessagePart[]): { queued: ChatQueueItem | null } {
+  const chat = mockChat(chatId)
+  if (busy(chat)) {
+    const now = new Date().toISOString()
+    const queued = { id: nextId('q'), parts, createdAt: now, updatedAt: now }
+    chat.queue.push(queued)
+    publishQueue(chat)
+    return { queued }
+  }
+  chat.held = false
+  play(chatId, replyTurn(textOf(parts)))
+  return { queued: null }
+}
+
+/** megabrain chat queue: the same rules as chatd, an edit moving the message to the end. */
+export function changeMockQueue(chatId: string, change: ChatQueueChange): ChatQueueItem[] {
+  const chat = mockChat(chatId)
+  const take = (itemId: string) => {
+    const index = chat.queue.findIndex((item) => item.id === itemId)
+    if (index === -1) throw new Error(`message ${itemId} is not in the queue`)
+    return chat.queue.splice(index, 1)[0] as ChatQueueItem
+  }
+  switch (change.action) {
+    case 'list':
+      return chat.queue.slice()
+    case 'clear':
+      chat.queue = []
+      break
+    case 'add':
+      sendMockChat(chatId, change.parts)
+      break
+    case 'edit':
+      chat.queue.push({ ...take(change.itemId), parts: change.parts, updatedAt: new Date().toISOString() })
+      break
+    case 'move': {
+      const item = take(change.itemId)
+      chat.queue.splice(Math.min(change.to, chat.queue.length), 0, item)
+      break
+    }
+    case 'remove':
+      take(change.itemId)
+      break
+    case 'steer':
+      throw new Error('steer needs a running Codex turn')
+    case 'send-now': {
+      const item = take(change.itemId)
+      publishQueue(chat)
+      interruptMockChat(chatId)
+      chat.held = false
+      play(chatId, replyTurn(textOf(item.parts)))
+      return chat.queue.slice()
+    }
+  }
+  publishQueue(chat)
+  return chat.queue.slice()
 }
 
 export function interruptMockChat(chatId: string) {
   const chat = mockChat(chatId)
+  chat.held = true
   chat.cancel?.()
   chat.cancel = null
   if (chat.state === 'working' || chat.state === 'waiting-approval') setState(chat, 'idle')
