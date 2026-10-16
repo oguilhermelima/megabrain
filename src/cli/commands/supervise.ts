@@ -18,6 +18,7 @@ import { startDeliveryWorker } from "./delivery-worker.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 import { collectResources } from "./resources.js";
 import { notifyAdmissionStatus } from "./admission-notify.js";
+import { selfInvocation } from "../../core/self-invocation.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -342,8 +343,8 @@ export async function startSupervisorWorker(root: string, environment: Environme
   const lease = acquireSupervisorLease(database.value, holder, leaseSeconds(intervalSeconds(environment)));
   if (lease.kind !== "ok") return "failed";
   if (!lease.value) return "already-running";
-  const executable = globalThis.process.argv[1] ?? "megabrain";
-  const started = await process.startDetached(executable, ["__supervise-worker", holder]);
+  const worker = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__supervise-worker", holder]);
+  const started = await process.startDetached(worker.command, worker.args);
   if (started.kind !== "ok") {
     releaseLease(database.value, LEASE_KEY, holder);
     return "failed";

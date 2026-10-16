@@ -26,7 +26,7 @@ async function spawn(
     {},
     (command, args) => {
       // The supervisor worker is also started detached; it is not a viewer.
-      if (args[0] === "__supervise-worker") return ok({ pid: 1 });
+      if (args.includes("__supervise-worker")) return ok({ pid: 1 });
       started.push({ command, args: [...args] });
       return detached(command, args) as ReturnType<typeof ok<{ pid: number }>>;
     },

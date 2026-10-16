@@ -17,13 +17,13 @@ function chat(agent: Chat["agent"], extra: Partial<Chat> = {}): Chat {
 }
 
 describe("chat protocol argv bypasses permission prompts by default", () => {
-  test("claude stream-json carries the bypass flag and keeps the permission tool", async () => {
+  test("claude stream-json carries the bypass flag and skips the permission tool", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "megabrain-bypass-"));
     directories.push(stateDir);
     mkdirSync(join(stateDir, "chats", chat("claude").id), { recursive: true });
     const { args } = await chatProtocolAdapters.claude.prepare(chat("claude"), stateDir);
     expect(args).toContain("--dangerously-skip-permissions");
-    expect(args).toContain("--permission-prompt-tool");
+    expect(args).not.toContain("--permission-prompt-tool");
   });
 
   test("claude stream-json omits the bypass flag when approvals are asked", async () => {

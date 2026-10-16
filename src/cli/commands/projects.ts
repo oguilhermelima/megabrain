@@ -19,6 +19,7 @@ import { ChatStore } from "../../chat/store.js";
 import { readProcessTable, sessionOrigin, type ProcessTable, type SessionOrigin } from "../../core/session-origin.js";
 import { loadModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { selfInvocation } from "../../core/self-invocation.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
@@ -616,7 +617,8 @@ async function schedulePullRequestRefresh(repository: RepositoryRecord, processA
     if (!Number.isFinite(owner) && Date.now() - info.mtimeMs < PULL_REQUEST_CACHE_TTL) return;
     await unlink(lock).catch(() => undefined);
   } catch { /* No refresh is active. */ }
-  await processAdapter.startDetached(process.execPath, ["projects", PULL_REQUEST_REFRESH_ARGUMENT, repository.path], {
+  const refresh = selfInvocation(process.execPath, process.argv, ["projects", PULL_REQUEST_REFRESH_ARGUMENT, repository.path]);
+  await processAdapter.startDetached(refresh.command, refresh.args, {
     env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), ...(environment.HOME === undefined ? {} : { HOME: environment.HOME }) },
   });
 }

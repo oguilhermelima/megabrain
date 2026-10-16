@@ -2,6 +2,7 @@ import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Chat } from "./store.js";
+import { selfInvocation } from "../core/self-invocation.js";
 
 export type MessagePart = { type: "text"; text: string } | { type: "image"; path: string };
 export type RpcRequest = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -30,17 +31,17 @@ async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
 
 const claude: ChatProtocolAdapter = {
   async prepare(chat, stateDir) {
-    const dir = join(stateDir, "chats", chat.id);
-    const binary = process.argv[1] ?? "megabrain";
-    const config = { mcpServers: { megabrain: { type: "stdio", command: binary, args: ["chat", "mcp-permission", chat.id], env: { MEGABRAIN_STATE_DIR: stateDir } } } };
-    const configPath = join(dir, "mcp.json");
-    await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
-    await chmod(configPath, 0o600);
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
     if (chat.model) args.push("--model", chat.model);
     if (chat.effort) args.push("--effort", chat.effort);
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);
-    if (chat.approvals !== true) args.push("--dangerously-skip-permissions");
+    if (chat.approvals !== true) return { command: "claude", args: [...args, "--dangerously-skip-permissions"] };
+    // Only an approving chat needs the permission server, so a bypass chat never pays its startup.
+    const server = selfInvocation(process.execPath, process.argv, ["chat", "mcp-permission", chat.id]);
+    const config = { mcpServers: { megabrain: { type: "stdio", command: server.command, args: server.args, env: { MEGABRAIN_STATE_DIR: stateDir } } } };
+    const configPath = join(stateDir, "chats", chat.id, "mcp.json");
+    await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+    await chmod(configPath, 0o600);
     args.push("--permission-prompt-tool", "mcp__megabrain__permissionPrompt", "--mcp-config", configPath);
     return { command: "claude", args };
   },

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { runtimeScript } from "./self-invocation.js";
 import { accessSync, constants } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
@@ -136,7 +137,8 @@ async function ensureReaper(environment: Environment, processAdapter: ProcessAda
     orb,
   };
   const script = `const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');const c=JSON.parse(Buffer.from(process.argv[1],'base64').toString());const marker=path.join(c.procs,'docker-started-by-megabrain'),pidFile=path.join(c.procs,'docker-reaper.pid'),lock=path.join(c.procs,'docker.lock');fs.writeFileSync(pidFile,String(process.pid));function alive(p){try{process.kill(p,0);return true}catch(e){return e.code==='EPERM'}}function holders(){let n=0;for(const f of (fs.existsSync(c.holds)?fs.readdirSync(c.holds):[])){if(!f.endsWith('.json')||f.startsWith('.'))continue;try{const h=JSON.parse(fs.readFileSync(path.join(c.holds,f),'utf8'));if(alive(h.pid))n++;else fs.rmSync(path.join(c.holds,f),{force:true})}catch{}}return n}function done(){try{if(fs.readFileSync(pidFile,'utf8').trim()===String(process.pid))fs.rmSync(pidFile,{force:true})}catch{}process.exit(0)}let idleSince;setInterval(()=>{if(!fs.existsSync(marker))done();if(holders()>0){idleSince=undefined;return}idleSince??=Date.now();if(Date.now()-idleSince<c.idleMs)return;try{fs.mkdirSync(lock)}catch{return}try{if(holders()===0){cp.spawnSync(c.orb,['stop'],{stdio:'ignore',timeout:120000});fs.rmSync(marker,{force:true})}}finally{fs.rmSync(lock,{recursive:true,force:true})}if(!fs.existsSync(marker))done()},Math.min(1000,c.idleMs));`;
-  const started = await processAdapter.startDetached(process.execPath, ["-e", script, Buffer.from(JSON.stringify(payload)).toString("base64")]);
+  const reaper = runtimeScript(process.execPath, script, Buffer.from(JSON.stringify(payload)).toString("base64"));
+  const started = await processAdapter.startDetached(reaper.command, reaper.args, { env: reaper.env });
   if (started.kind !== "ok") return started;
   await writeFile(pidFile, String(started.value.pid));
   return ok(undefined);

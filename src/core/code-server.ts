@@ -9,6 +9,7 @@ import { resolveStateDirectory, type StateEnvironment } from "./state.js";
 import { openDatabase } from "../db/db.js";
 import { listRepositories } from "../db/queries/repositories.js";
 import { failed, type Result } from "./result.js";
+import { selfInvocation } from "./self-invocation.js";
 
 export const CODE_SERVER_VERSION = "4.138.0";
 const RELEASE_BASE = `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}`;
@@ -45,12 +46,6 @@ export const CODE_DEFAULT_SETTINGS = {
   "editor.fontFamily": "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace",
   "editor.minimap.enabled": false,
 } as const;
-
-export function codeServerProxyInvocation(execPath: string, argv: readonly string[], socketPath: string, port: number): { command: string; args: string[] } {
-  const script = argv[1];
-  const entryArguments = script !== undefined && !script.startsWith("/$bunfs/") ? [script] : [];
-  return { command: execPath, args: [...entryArguments, "__code-server-proxy", socketPath, String(port)] };
-}
 
 type Platform = "darwin" | "linux" | "win32" | string;
 
@@ -387,7 +382,7 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
       let proxyPid: number | undefined;
       try {
         const port = await reservePort(id, canonicalRoot);
-        const invocation = codeServerProxyInvocation(process.execPath, process.argv, socketPath, port);
+        const invocation = selfInvocation(process.execPath, process.argv, ["__code-server-proxy", socketPath, String(port)]);
         const proxyResult = await dependencies.start(invocation.command, invocation.args, { env: { MEGABRAIN_CODE_TOKEN: token } });
         proxyPid = startOrThrow(proxyResult, "code-server proxy");
         if (dependencies.ready === undefined) await waitForProxy(port, token, codeServerPid, proxyPid, dependencies);

@@ -20,6 +20,7 @@ import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { submitKey } from "../../agents/index.js";
 import { deliveryComposer, deliveryHasKeystrokeDialog, readDeliveryScreen } from "./delivery-screen.js";
+import { selfInvocation } from "../../core/self-invocation.js";
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
@@ -66,8 +67,8 @@ export async function startDeliveryWorker(root: string, dispatch: string, outbox
       return acquired.kind === "ok" && acquired.value;
     },
     async (owner) => {
-      const executable = globalThis.process.argv[1] ?? "megabrain";
-      const started = await process.startDetached(executable, ["__delivery-worker", outboxId, owner, leaseKey, String(deadline)]);
+      const worker = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__delivery-worker", outboxId, owner, leaseKey, String(deadline)]);
+      const started = await process.startDetached(worker.command, worker.args);
       return started.kind === "ok";
     },
     async (_key, owner) => { releaseLease(database.value, leaseKey, owner); },

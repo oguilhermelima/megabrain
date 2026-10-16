@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { createProcessAdapter } from "../../src/adapters/proc.js";
 import { registerMegabrainRepository } from "../../src/core/project-registry.js";
-import { BRIDGE_EXTENSION, codeServerPortCandidate, codeServerProxyInvocation, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
+import { BRIDGE_EXTENSION, codeServerPortCandidate, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
 import { ok } from "../../src/core/result.js";
 
 let root = "";
@@ -67,20 +67,6 @@ function fakes(overrides: Partial<CodeServerDependencies> = {}) {
 }
 
 describe("code server", () => {
-  test("starts the proxy through the source script when running from JavaScript", () => {
-    expect(codeServerProxyInvocation("/usr/local/bin/bun", ["bun", "/repo/src/cli/index.ts"], "/tmp/server.sock", 1234)).toEqual({
-      command: "/usr/local/bin/bun",
-      args: ["/repo/src/cli/index.ts", "__code-server-proxy", "/tmp/server.sock", "1234"],
-    });
-  });
-
-  test("starts the proxy as a command when running from the compiled binary", () => {
-    expect(codeServerProxyInvocation("/Applications/Megabrain", ["/Applications/Megabrain", "/$bunfs/root/megabrain"], "/tmp/server.sock", 1234)).toEqual({
-      command: "/Applications/Megabrain",
-      args: ["__code-server-proxy", "/tmp/server.sock", "1234"],
-    });
-  });
-
   test("selects the pinned standalone asset for macOS arm64 and Linux x64 and arm64", () => {
     expect(selectCodeServerAsset("darwin", "arm64")).toMatchObject({ name: "code-server-4.138.0-macos-arm64.tar.gz", sha256: "1ecf699868e64bb9094a7d3ffcac50bb903354a32137dfc4017cb9479ef6b456" });
     expect(selectCodeServerAsset("linux", "x64")).toMatchObject({ name: "code-server-4.138.0-linux-amd64.tar.gz", sha256: "5d63f26c5dabc2acd29610b9b27f413b016aa67019e2cfcdf54031625e18f535" });

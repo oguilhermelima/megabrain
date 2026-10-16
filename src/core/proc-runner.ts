@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { runtimeScript } from "./self-invocation.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -78,10 +79,12 @@ function logDir(env: Readonly<Record<string, string | undefined>>, record: ProcR
 function sessionName(record: Pick<ProcRecord, "worktree" | "name">): string { return `mb-proc-${key(record.worktree)}-${record.name}`; }
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 function commandFor(record: ProcRecord, state: string): string {
-  const script = `const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');const c=JSON.parse(Buffer.from(process.argv[1],'base64').toString());const d=c.dir;fs.mkdirSync(d,{recursive:true});let f=path.join(d,'proc.log');const child=cp.spawn(c.cmd[0],c.cmd.slice(1),{cwd:c.cwd,env:{...process.env,...c.env},stdio:['ignore','pipe','pipe']});for(const sig of ['SIGTERM','SIGHUP','SIGINT'])process.on(sig,()=>{try{child.kill(sig)}catch{}});let pending='';function out(x){pending+=x.toString();let a=pending.split(/\\r?\\n/);pending=a.pop()||'';for(const line of a)write(line)}function write(line){let b=Buffer.byteLength(line+'\\n');try{if(fs.existsSync(f)&&fs.statSync(f).size+b>${MAX_LOG}){for(let i=${LOG_FILES - 1};i>=1;i--){let from=f+'.'+i,to=f+'.'+(i+1);if(fs.existsSync(from)){if(i+1>=${LOG_FILES})fs.unlinkSync(from);else fs.renameSync(from,to)}}if(fs.existsSync(f))fs.renameSync(f,f+'.1')}}catch{}fs.appendFileSync(f,new Date().toISOString()+' '+line+'\\n')}child.stdout.on('data',out);child.stderr.on('data',out);child.on('close',code=>{if(pending)write(pending);write('process exited with code '+(code??1));fs.writeFileSync(${JSON.stringify(state)},JSON.stringify({...c.record,state:'exited',exitCode:code??1},null,2)+'\\n')});`;
+  const script = `const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');const c=JSON.parse(Buffer.from(process.argv[1],'base64').toString());const d=c.dir;fs.mkdirSync(d,{recursive:true});let f=path.join(d,'proc.log');const child=cp.spawn(c.cmd[0],c.cmd.slice(1),{cwd:c.cwd,env:{...process.env,BUN_BE_BUN:undefined,...c.env},stdio:['ignore','pipe','pipe']});for(const sig of ['SIGTERM','SIGHUP','SIGINT'])process.on(sig,()=>{try{child.kill(sig)}catch{}});let pending='';function out(x){pending+=x.toString();let a=pending.split(/\\r?\\n/);pending=a.pop()||'';for(const line of a)write(line)}function write(line){let b=Buffer.byteLength(line+'\\n');try{if(fs.existsSync(f)&&fs.statSync(f).size+b>${MAX_LOG}){for(let i=${LOG_FILES - 1};i>=1;i--){let from=f+'.'+i,to=f+'.'+(i+1);if(fs.existsSync(from)){if(i+1>=${LOG_FILES})fs.unlinkSync(from);else fs.renameSync(from,to)}}if(fs.existsSync(f))fs.renameSync(f,f+'.1')}}catch{}fs.appendFileSync(f,new Date().toISOString()+' '+line+'\\n')}child.stdout.on('data',out);child.stderr.on('data',out);child.on('close',code=>{if(pending)write(pending);write('process exited with code '+(code??1));fs.writeFileSync(${JSON.stringify(state)},JSON.stringify({...c.record,state:'exited',exitCode:code??1},null,2)+'\\n')});`;
   const stateRoot = dirname(dirname(state));
   const payload = Buffer.from(JSON.stringify({ cmd: record.shell === undefined ? record.command : ["/bin/sh", "-lc", record.shell], cwd: record.cwd, env: record.env, dir: join(stateRoot, key(record.worktree), record.name), record, state })).toString("base64");
-  return `node -e ${quote(script)} ${quote(payload)}`;
+  const runner = runtimeScript(process.execPath, script, payload);
+  const assignments = Object.entries(runner.env).map(([name, value]) => `${name}=${quote(value)}`);
+  return [...assignments, quote(runner.command), ...runner.args.map(quote)].join(" ");
 }
 
 async function readRecord(path: string): Promise<ProcRecord | undefined> { try { return JSON.parse(await readFile(path, "utf8")) as ProcRecord; } catch { return undefined; } }

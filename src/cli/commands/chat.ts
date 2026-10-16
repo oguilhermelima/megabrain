@@ -111,6 +111,12 @@ export async function executeChat(args: readonly string[], environment: Environm
   } catch (error) { return errorResult(error); }
 }
 
+const PERMISSION_TOOL = {
+  name: "permissionPrompt",
+  description: "Ask the megabrain chat user to approve a tool call.",
+  inputSchema: { type: "object", properties: { tool_name: { type: "string" }, input: { type: "object" }, tool_use_id: { type: "string" } }, required: ["tool_name", "input"] },
+} as const;
+
 async function runPermissionServer(args: readonly string[], environment: Environment): Promise<Result<string>> {
   const chatId = args[0];
   if (!chatId || args.length !== 1) return failed("Usage: megabrain chat mcp-permission <chatId>", 2);
@@ -118,14 +124,22 @@ async function runPermissionServer(args: readonly string[], environment: Environ
   for await (const line of input) {
     let request: Record<string, unknown>;
     try { request = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    const id = request.id;
+    const reply = (result: unknown) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+    // Notifications carry no id and get no reply.
+    if (request.method === "initialize") {
+      const params = request.params as Record<string, unknown> | undefined;
+      reply({ protocolVersion: typeof params?.protocolVersion === "string" ? params.protocolVersion : "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "megabrain", version: "1" } });
+      continue;
+    }
+    if (request.method === "tools/list") { reply({ tools: [PERMISSION_TOOL] }); continue; }
     if (request.method !== "tools/call") continue;
     const params = request.params as Record<string, unknown> | undefined;
     if (params?.name !== "permissionPrompt") continue;
     let response: unknown;
     try { response = await callPermissionServer(stateDir(environment), chatId, params); }
     catch { response = { behavior: "deny" }; }
-    const id = request.id;
-    process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(response) }] } })}\n`);
+    reply({ content: [{ type: "text", text: JSON.stringify(response) }] });
   }
   return ok("");
 }

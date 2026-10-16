@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
+import { selfInvocation } from "../core/self-invocation.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
@@ -667,13 +668,6 @@ export async function runChatd(stateDir: string): Promise<void> {
   try { await unlink(chatLock(stateDir)); } catch { /* no client lock during direct starts */ }
 }
 
-/** A compiled binary reports a virtual /$bunfs/ script in argv[1]; only a real script path is passed on. */
-export function chatdInvocation(execPath: string, argv: readonly string[]): { command: string; args: string[] } {
-  const script = argv[1];
-  const entryArguments = script !== undefined && !script.startsWith("/$bunfs/") ? [script] : [];
-  return { command: execPath, args: [...entryArguments, "__chatd"] };
-}
-
 export async function callChatd(stateDir: string, request: Request, environment: Environment, processAdapter: { startDetached(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<{ kind: string; error?: string }> }, onLine?: (line: ChatLine) => void): Promise<unknown> {
   const local = instances.get(stateDir);
   if (local) return local.handle(request);
@@ -722,7 +716,7 @@ export async function callChatd(stateDir: string, request: Request, environment:
     return requestWhenReady();
   }
   try {
-    const invocation = chatdInvocation(process.execPath, process.argv);
+    const invocation = selfInvocation(process.execPath, process.argv, ["__chatd"]);
     const launched = await processAdapter.startDetached(invocation.command, invocation.args, { env: { ...environment, MEGABRAIN_CHATD_STATE_DIR: stateDir } });
     if (launched.kind === "ok") return await requestWhenReady();
     // Embedded callers such as the test router share a process; production launches a detached owner.
