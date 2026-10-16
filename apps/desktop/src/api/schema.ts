@@ -344,6 +344,49 @@ export const githubPullRequestFileSchema = z.looseObject({
   additions: z.number(),
   deletions: z.number(),
   patch: z.string().nullable(),
+  /** Whether the viewer marked the file viewed on GitHub; absent from an older CLI. */
+  viewed: z.boolean().optional(),
+})
+
+// `megabrain github pr-files <repo> <number> --page <k> --per-page <m> --no-patch --json`: one page of
+// the changed files without their patches, and how many files the pull request changes in all.
+// `github pr-file <repo> <number> <path> --json` then gives one file with its patch.
+export const githubPullRequestFilesPageSchema = z.looseObject({
+  number: z.number(),
+  total: z.number(),
+  page: z.number(),
+  perPage: z.number(),
+  files: z.array(githubPullRequestFileSchema.extend({ patch: z.string().nullable().optional() }).transform((file) => ({ ...file, patch: file.patch ?? null }))),
+})
+
+// `megabrain github threads <repo> <number> --json`: the review threads on the diff. line is null for
+// a thread on the whole file; isOutdated when the line it was left on has changed since.
+export const githubReviewThreadSchema = z.looseObject({
+  id: z.string(),
+  path: z.string(),
+  line: z.number().nullable(),
+  side: z.enum(['LEFT', 'RIGHT']).catch('RIGHT'),
+  isResolved: z.boolean(),
+  isOutdated: z.boolean(),
+  comments: z.array(z.looseObject({ id: z.string(), author: githubPersonSchema.nullable(), body: z.string(), createdAt: z.string() })),
+})
+
+/** A person or, with isTeam, a team (login org/team-slug) asked for a review or able to give one. */
+export const githubReviewerSchema = githubPersonSchema.extend({ isTeam: z.boolean().optional() })
+
+const lowered = z.string().transform((value) => value.toLowerCase())
+
+// `megabrain github reviewers <repo> <number> --json`: who is asked to review, the reviews given, and
+// what GitHub says about merging (mergeable, mergeStateStatus) and the checks the base branch requires.
+export const githubReviewersSchema = z.looseObject({
+  requested: z.array(githubReviewerSchema),
+  reviews: z.array(z.looseObject({ author: githubPersonSchema.nullable(), state: lowered, submittedAt: z.string().nullable() })),
+  /** mergeable, conflicting or unknown. */
+  mergeable: lowered.nullable(),
+  /** clean, blocked, behind, dirty, draft, has_hooks, unstable or unknown. */
+  mergeStateStatus: lowered.nullable(),
+  reviewDecision: lowered.nullable(),
+  requiredChecks: z.array(z.looseObject({ name: z.string(), state: githubCheckSchema.shape.state.catch('pending') })),
 })
 
 /** The review `megabrain github review` submits: a verdict, its summary and the inline comments on the diff. */
@@ -704,6 +747,10 @@ export type GithubPullRequestList = z.infer<typeof githubPullRequestListSchema>
 export type GithubIssueList = z.infer<typeof githubIssueListSchema>
 export type GithubDetail = z.infer<typeof githubDetailSchema>
 export type GithubPullRequestFile = z.infer<typeof githubPullRequestFileSchema>
+export type GithubPullRequestFilesPage = z.infer<typeof githubPullRequestFilesPageSchema>
+export type GithubReviewThread = z.infer<typeof githubReviewThreadSchema>
+export type GithubReviewer = z.infer<typeof githubReviewerSchema>
+export type GithubReviewers = z.infer<typeof githubReviewersSchema>
 export type Project = z.infer<typeof projectsSchema>[number]
 export type StackShow = z.infer<typeof stackShowSchema>
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>

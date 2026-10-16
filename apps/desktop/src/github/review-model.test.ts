@@ -1,16 +1,20 @@
 import { describe, expect, test } from 'bun:test'
-import type { GithubPullRequestFile } from '@/api/schema'
+import type { GithubPullRequestFile, GithubReviewers, GithubReviewThread } from '@/api/schema'
 import {
   addPending,
   commentTarget,
   editPending,
+  fileRows,
   fileTotals,
   filterFiles,
   issueStateActions,
+  mergeAction,
   parsePatch,
   pendingAt,
+  placeThreads,
   removePending,
   reviewPayload,
+  unresolvedCount,
   type PendingComment,
 } from '@/github/review-model'
 
@@ -178,5 +182,105 @@ describe('issueStateActions', () => {
 
   test('a closed issue reopens', () => {
     expect(issueStateActions('closed')).toEqual([{ label: 'Reopen', state: 'open' }])
+  })
+})
+
+describe('review threads on the diff', () => {
+  const lines = parsePatch('@@ -1,3 +1,3 @@\n a\n-b\n+B\n c')
+  const thread = (id: string, path: string, line: number | null, side: 'LEFT' | 'RIGHT', extra: Partial<GithubReviewThread> = {}): GithubReviewThread => ({
+    id,
+    path,
+    line,
+    side,
+    isResolved: false,
+    isOutdated: false,
+    comments: [{ id: `${id}-1`, author: { login: 'reviewer', name: null, isBot: false }, body: 'why', createdAt: '2026-10-16T10:00:00Z' }],
+    ...extra,
+  })
+
+  test('a right-side thread sits under the added or context line with that new number', () => {
+    const placed = placeThreads('src/a.ts', lines, [thread('t1', 'src/a.ts', 2, 'RIGHT'), thread('t2', 'src/a.ts', 3, 'RIGHT')])
+    expect([...placed.at.entries()].map(([index, list]) => [index, list.map((entry) => entry.id)])).toEqual([
+      [3, ['t1']],
+      [4, ['t2']],
+    ])
+    expect(placed.elsewhere).toEqual([])
+  })
+
+  test('a left-side thread sits under the removed or context line with that old number', () => {
+    const placed = placeThreads('src/a.ts', lines, [thread('t1', 'src/a.ts', 2, 'LEFT'), thread('t2', 'src/a.ts', 1, 'LEFT')])
+    expect([...placed.at.entries()].map(([index, list]) => [index, list.map((entry) => entry.id)])).toEqual([
+      [2, ['t1']],
+      [1, ['t2']],
+    ])
+  })
+
+  test('threads on another file are ignored; outdated or unplaceable ones go above the diff', () => {
+    const placed = placeThreads('src/a.ts', lines, [thread('other', 'src/b.ts', 1, 'RIGHT'), thread('old', 'src/a.ts', 2, 'RIGHT', { isOutdated: true }), thread('gone', 'src/a.ts', 90, 'RIGHT'), thread('file', 'src/a.ts', null, 'RIGHT')])
+    expect(placed.at.size).toBe(0)
+    expect(placed.elsewhere.map((entry) => entry.id)).toEqual(['old', 'gone', 'file'])
+  })
+
+  test('two threads on one line keep their order', () => {
+    const placed = placeThreads('src/a.ts', lines, [thread('t1', 'src/a.ts', 2, 'RIGHT'), thread('t2', 'src/a.ts', 2, 'RIGHT')])
+    expect(placed.at.get(3)?.map((entry) => entry.id)).toEqual(['t1', 't2'])
+  })
+
+  test('the unresolved count leaves resolved threads out', () => {
+    expect(unresolvedCount([thread('a', 'x', 1, 'RIGHT'), thread('b', 'x', 1, 'RIGHT', { isResolved: true }), thread('c', 'y', 2, 'LEFT', { isOutdated: true })])).toBe(2)
+  })
+
+  test('the rows of a file put a notes row after each line that carries something, and one on top when needed', () => {
+    expect(fileRows(4, new Set([1, 3]), false)).toEqual([
+      { kind: 'line', index: 0 },
+      { kind: 'line', index: 1 },
+      { kind: 'notes', index: 1 },
+      { kind: 'line', index: 2 },
+      { kind: 'line', index: 3 },
+      { kind: 'notes', index: 3 },
+    ])
+    expect(fileRows(1, new Set(), true)).toEqual([{ kind: 'top' }, { kind: 'line', index: 0 }])
+  })
+})
+
+describe('mergeAction', () => {
+  const ready = (extra: Partial<GithubReviewers> = {}): GithubReviewers => ({
+    requested: [],
+    reviews: [],
+    mergeable: 'mergeable',
+    mergeStateStatus: 'clean',
+    reviewDecision: 'approved',
+    requiredChecks: [{ name: 'unit', state: 'success' }],
+    ...extra,
+  })
+  const open = { state: 'open', isDraft: false }
+
+  test('a clean pull request merges now', () => {
+    expect(mergeAction(open, ready())).toEqual({ kind: 'merge' })
+    expect(mergeAction(open, ready({ mergeStateStatus: 'unstable' }))).toEqual({ kind: 'merge' })
+    expect(mergeAction(open, ready({ mergeStateStatus: 'has_hooks' }))).toEqual({ kind: 'merge' })
+  })
+
+  test('one blocked by pending checks or a missing review offers auto-merge, saying why', () => {
+    expect(mergeAction(open, ready({ mergeStateStatus: 'blocked', requiredChecks: [{ name: 'unit', state: 'pending' }] }))).toEqual({ kind: 'auto-merge', reason: 'Waiting on required checks: unit.' })
+    expect(mergeAction(open, ready({ mergeStateStatus: 'blocked', reviewDecision: 'review_required' }))).toEqual({ kind: 'auto-merge', reason: 'Waiting on an approving review.' })
+    expect(mergeAction(open, ready({ mergeStateStatus: 'blocked', reviewDecision: 'changes_requested' }))).toEqual({ kind: 'auto-merge', reason: 'Changes were requested.' })
+    expect(mergeAction(open, ready({ mergeStateStatus: 'blocked', requiredChecks: [{ name: 'unit', state: 'failure' }] }))).toEqual({ kind: 'auto-merge', reason: 'Required checks failed: unit.' })
+    expect(mergeAction(open, ready({ mergeStateStatus: 'behind' }))).toEqual({ kind: 'auto-merge', reason: 'The branch is behind its base.' })
+  })
+
+  test('conflicts and drafts block both', () => {
+    expect(mergeAction(open, ready({ mergeable: 'conflicting', mergeStateStatus: 'dirty' }))).toEqual({ kind: 'blocked', reason: 'Resolve the conflicts with the base branch first.' })
+    expect(mergeAction({ state: 'open', isDraft: true }, ready({ mergeStateStatus: 'draft' }))).toEqual({ kind: 'blocked', reason: 'Mark it ready for review before merging.' })
+  })
+
+  test('while GitHub is still computing, the checks and review decide', () => {
+    expect(mergeAction(open, ready({ mergeable: 'unknown', mergeStateStatus: 'unknown' }))).toEqual({ kind: 'merge' })
+    expect(mergeAction(open, ready({ mergeable: 'unknown', mergeStateStatus: 'unknown', reviewDecision: 'review_required' }))).toEqual({ kind: 'auto-merge', reason: 'Waiting on an approving review.' })
+  })
+
+  test('a closed or merged pull request has no merge, and an unread readiness keeps plain merge', () => {
+    expect(mergeAction({ state: 'merged', isDraft: false }, ready())).toEqual({ kind: 'none' })
+    expect(mergeAction(open, null)).toEqual({ kind: 'merge' })
   })
 })

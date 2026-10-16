@@ -1,16 +1,23 @@
-import { Fragment, memo, useMemo, useRef, useState } from 'react'
-import type { GithubPullRequestFile } from '@/api/schema'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import type { GithubPullRequestFile, GithubReviewThread } from '@/api/schema'
 import { languageForPath } from '@/code/code-model'
 import { CodeSkeleton, RowsSkeleton } from '@/components/Skeleton'
-import { ErrorNote } from '@/components/ui'
-import { highlightLines } from '@/github/diff-highlight'
+import { ErrorNote, Spinner } from '@/components/ui'
+import { highlightPatch, type PatchHighlight } from '@/github/diff-highlight'
 import { ChevronIcon, CommentIcon } from '@/github/icons'
 import { LineCounts } from '@/github/parts'
-import { commentTarget, fileTotals, filterFiles, parsePatch, pendingAt, type CommentTarget, type DiffLine, type PendingComment } from '@/github/review-model'
+import { diffWindow, filesToFetch, isLargeDiff, isViewed, shownFiles, startsFolded, viewedCount } from '@/github/pr-files-model'
+import { ReviewThread, type ThreadActions, type ThreadFocus } from '@/github/ReviewThread'
+import { commentTarget, fileRows, parsePatch, pendingAt, placeThreads, unresolvedCount, type CommentTarget, type DiffLine, type FileRow, type PendingComment } from '@/github/review-model'
+import type { PullRequestFiles as Files } from '@/github/usePullRequestFiles'
 
-// A pull request's Files tab: the changed files with their counts and a filter on the left, and on
-// the right each file's unified diff, syntax-coloured and collapsible. A click on a line's number
-// opens a comment there; it stays pending, under its line, until the review is submitted.
+// A pull request's Files tab: the changed files with a filter on the left, and on the right each
+// file's unified diff, syntax-coloured and collapsible. Both columns are virtual: only the files and
+// the diff lines near the viewport are in the DOM, the list reads its files a page at a time, and a
+// diff is fetched when its file nears the viewport. A click on a line's number opens a comment
+// there; it stays pending, under its line, until the review is submitted. Review threads sit under
+// their lines, and each file can be marked viewed, which folds it.
 
 const statusTone: Record<GithubPullRequestFile['status'], { letter: string; className: string }> = {
   added: { letter: 'A', className: 'text-ok' },
@@ -18,9 +25,6 @@ const statusTone: Record<GithubPullRequestFile['status'], { letter: string; clas
   removed: { letter: 'D', className: 'text-bad' },
   renamed: { letter: 'R', className: 'text-accent' },
 }
-
-/** Files this long start folded, so a lockfile does not bury the rest. */
-const foldAbove = 400
 
 const lineTone: Record<DiffLine['kind'], string> = {
   add: 'bg-ok/[0.10]',
@@ -31,6 +35,12 @@ const lineTone: Record<DiffLine['kind'], string> = {
 }
 
 const markers: Record<DiffLine['kind'], string> = { add: '+', del: '-', context: ' ', hunk: '', note: '' }
+
+/** Fixed heights the virtual lists count with; a file's header and each diff line never change size. */
+const headerHeight = 41
+const lineHeight = 20
+const navRowHeight = 44
+const fileGap = 12
 
 export interface PendingControls {
   pending: PendingComment[]
@@ -104,17 +114,197 @@ function PendingNote({ comment, controls }: { comment: PendingComment; controls:
 
 const targetKey = (target: CommentTarget) => `${target.side}:${target.line}`
 
-const FileDiff = memo(function FileDiff({ file, controls, folded, onFold }: { file: GithubPullRequestFile; controls: PendingControls; folded: boolean; onFold: () => void }) {
+/** What the diff column needs besides the files: pending comments, threads and the line to bring into view. */
+export interface ReviewContext {
+  controls: PendingControls
+  threads: GithubReviewThread[]
+  threadActions: ThreadActions
+  focus: ThreadFocus | null
+  onFocused: () => void
+}
+
+/** The index of the diff line a thread or a jump points at, or null when no line of this diff carries it. */
+function lineIndexOf(lines: DiffLine[], line: number, side: 'LEFT' | 'RIGHT'): number | null {
+  const index = lines.findIndex((entry) => (side === 'LEFT' ? entry.kind !== 'add' && entry.oldLine === line : entry.kind !== 'del' && entry.newLine === line))
+  return index < 0 ? null : index
+}
+
+/** One file's diff lines, virtual inside the shared scroller: `offset` is where they start in it. */
+function DiffBody({ file, scroller, offset, review }: { file: GithubPullRequestFile; scroller: HTMLElement | null; offset: number; review: ReviewContext }) {
+  const { controls } = review
   const lines = useMemo(() => parsePatch(file.patch), [file.patch])
-  const spans = useMemo(() => (folded ? [] : highlightLines(lines.map((line) => line.text), languageForPath(file.path))), [folded, lines, file.path])
+  const language = languageForPath(file.path)
+  const [highlight, setHighlight] = useState<PatchHighlight | null>(null)
+  // The colours live while the file is on screen; leaving it drops the tree and every coloured block.
+  useEffect(() => {
+    const created = highlightPatch(
+      lines.map((line) => line.text),
+      language,
+    )
+    setHighlight(created)
+    return () => created.dispose()
+  }, [lines, language])
+  const subscribe = useCallback((listener: () => void) => highlight?.subscribe(listener) ?? (() => {}), [highlight])
+  const coloured = useSyncExternalStore(subscribe, () => highlight?.ready() ?? false)
   const [drafting, setDrafting] = useState<string | null>(null)
-  const pendingHere = controls.pending.filter((comment) => comment.path === file.path)
-  const tone = statusTone[file.status]
+  const pendingHere = useMemo(() => controls.pending.filter((comment) => comment.path === file.path), [controls.pending, file.path])
+
+  const placement = useMemo(() => placeThreads(file.path, lines, review.threads), [file.path, lines, review.threads])
+
+  const rows = useMemo<FileRow[]>(() => {
+    const attached = new Set(placement.at.keys())
+    if (pendingHere.length > 0 || drafting !== null) {
+      lines.forEach((line, index) => {
+        const target = commentTarget(file.path, line)
+        if (target !== null && (pendingAt(pendingHere, target).length > 0 || drafting === targetKey(target))) attached.add(index)
+      })
+    }
+    return fileRows(lines.length, attached, placement.elsewhere.length > 0)
+  }, [lines, file.path, pendingHere, drafting, placement])
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scroller,
+    estimateSize: (index) => (rows[index]?.kind === 'line' ? lineHeight : 120),
+    getItemKey: (index) => {
+      const row = rows[index]
+      return row === undefined ? index : row.kind === 'top' ? 'top' : `${row.kind}:${row.index}`
+    },
+    scrollMargin: offset,
+    // A new virtualizer on the shared scroller would otherwise scroll it back to the top.
+    initialOffset: () => scroller?.scrollTop ?? 0,
+    overscan: 40,
+  })
+
+  // A jump from the Threads tab: bring the thread's line to the middle once this diff is drawn.
+  const { focus, onFocused } = review
+  useEffect(() => {
+    if (focus === null || focus.path !== file.path) return
+    const index = focus.line === null ? null : lineIndexOf(lines, focus.line, focus.side)
+    const row = index === null ? 0 : rows.findIndex((entry) => entry.kind === 'line' && entry.index === index)
+    requestAnimationFrame(() => virtualizer.scrollToIndex(Math.max(0, row), { align: 'center' }))
+    onFocused()
+  }, [focus, onFocused, file.path, lines, rows, virtualizer])
 
   return (
-    <section className="overflow-hidden rounded-[16px] border border-white/[0.08] bg-ink-950">
-      <header className="sticky top-0 z-[1] flex items-center gap-2 border-b border-white/[0.06] bg-ink-900 px-3 py-2">
-        <button type="button" onClick={onFold} aria-expanded={!folded} aria-label={folded ? `Show ${file.path}` : `Fold ${file.path}`} className="flex size-6 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-100">
+    <div className="relative overflow-x-auto overflow-y-hidden font-mono text-[12.5px] leading-[20px]" style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((item) => {
+        const row = rows[item.index]
+        const position = { transform: `translateY(${item.start - offset}px)` }
+        if (row?.kind === 'top') {
+          return (
+            <div key={item.key} ref={virtualizer.measureElement} data-index={item.index} style={position} className="absolute top-0 right-0 left-0 space-y-2 border-b border-white/[0.06] bg-black/30 px-3 py-2">
+              <p className="font-sans text-[11.5px] text-ink-400">On lines this diff no longer shows</p>
+              {placement.elsewhere.map((thread) => (
+                <ReviewThread key={thread.id} thread={thread} actions={review.threadActions} />
+              ))}
+            </div>
+          )
+        }
+        const line = row === undefined ? undefined : lines[row.index]
+        if (row === undefined || line === undefined) return null
+        const target = commentTarget(file.path, line)
+        if (row.kind === 'notes') {
+          const key = target === null ? null : targetKey(target)
+          return (
+            <div key={item.key} ref={virtualizer.measureElement} data-index={item.index} style={position} className="absolute top-0 right-0 left-0 space-y-2 border-y border-white/[0.06] bg-black/30 px-3 py-2">
+              {(placement.at.get(row.index) ?? []).map((thread) => (
+                <ReviewThread key={thread.id} thread={thread} actions={review.threadActions} />
+              ))}
+              {target !== null && pendingAt(pendingHere, target).map((comment) => <PendingNote key={comment.id} comment={comment} controls={controls} />)}
+              {target !== null && drafting === key && (
+                <CommentEditor
+                  initial=""
+                  submitLabel="Add to review"
+                  onCancel={() => setDrafting(null)}
+                  onSubmit={(body) => {
+                    controls.onAdd(target, body)
+                    setDrafting(null)
+                  }}
+                />
+              )}
+            </div>
+          )
+        }
+        if (line.kind === 'hunk' || line.kind === 'note') {
+          return (
+            <div key={item.key} style={{ ...position, height: lineHeight }} className={`absolute top-0 left-0 w-max min-w-full px-3 text-[12px] whitespace-pre ${lineTone[line.kind]}`}>
+              {line.text}
+            </div>
+          )
+        }
+        const spans = coloured ? highlight?.spans(row.index) : null
+        const number = (value: number | null) => (
+          <span className="w-[44px] shrink-0 border-r border-white/[0.04] px-2 text-right text-ink-600 tabular-nums select-none">
+            {target === null ? (
+              value
+            ) : (
+              <button type="button" onClick={() => setDrafting(targetKey(target))} title="Comment on this line" className="w-full text-right hover:text-accent">
+                {value ?? ''}
+              </button>
+            )}
+          </span>
+        )
+        return (
+          <div key={item.key} style={{ ...position, height: lineHeight }} className={`absolute top-0 left-0 flex w-max min-w-full ${lineTone[line.kind]}`}>
+            {number(line.oldLine)}
+            {number(line.newLine)}
+            <span className="pr-4 pl-1 whitespace-pre text-ink-100 select-text">
+              <span className="inline-block w-4 text-ink-500 select-none">{markers[line.kind]}</span>
+              {spans === null || spans === undefined
+                ? line.text
+                : spans.map((span, index) => (
+                    <span key={index} className={span.className}>
+                      {span.text}
+                    </span>
+                  ))}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** A rough height for a file not drawn yet, so the scrollbar is close before its diff arrives. */
+function estimateHeight(file: GithubPullRequestFile, folded: boolean): number {
+  if (folded) return headerHeight + (isLargeDiff(file) ? 52 : 0)
+  return headerHeight + Math.max(1, file.additions + file.deletions + 1) * lineHeight
+}
+
+const FileSection = memo(function FileSection({
+  file,
+  patched,
+  error,
+  folded,
+  onFold,
+  onRetry,
+  scroller,
+  start,
+  viewed,
+  onViewed,
+  review,
+}: {
+  file: GithubPullRequestFile
+  patched: GithubPullRequestFile | undefined
+  error: unknown
+  folded: boolean
+  onFold: (path: string) => void
+  onRetry: (path: string) => void
+  scroller: HTMLElement | null
+  start: number
+  viewed: boolean
+  onViewed: (path: string, viewed: boolean) => void
+  review: ReviewContext
+}) {
+  const tone = statusTone[file.status]
+  const pendingHere = review.controls.pending.filter((comment) => comment.path === file.path).length
+  const openThreads = unresolvedCount(review.threads.filter((thread) => thread.path === file.path))
+  const large = isLargeDiff(file)
+  return (
+    <section className="rounded-[16px] border border-white/[0.08] bg-ink-950">
+      <header style={{ height: headerHeight }} className="sticky top-0 z-[1] flex items-center gap-2 rounded-t-[16px] border-b border-white/[0.06] bg-ink-900 px-3">
+        <button type="button" onClick={() => onFold(file.path)} aria-expanded={!folded} aria-label={folded ? `Show ${file.path}` : `Fold ${file.path}`} className="flex size-6 items-center justify-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-100">
           <span className={`transition-transform ${folded ? '' : 'rotate-90'}`}>
             <ChevronIcon size={12} />
           </span>
@@ -125,101 +315,148 @@ const FileDiff = memo(function FileDiff({ file, controls, folded, onFold }: { fi
           {file.path}
         </span>
         <span className="ml-auto" />
-        {pendingHere.length > 0 && (
-          <span className="flex items-center gap-1 text-[11.5px] font-semibold text-warn">
+        {openThreads > 0 && (
+          <span title={`${openThreads} unresolved ${openThreads === 1 ? 'thread' : 'threads'}`} className="flex items-center gap-1 text-[11.5px] font-semibold text-accent">
             <CommentIcon size={12} />
-            {pendingHere.length}
+            {openThreads}
+          </span>
+        )}
+        {pendingHere > 0 && (
+          <span title={`${pendingHere} pending`} className="flex items-center gap-1 text-[11.5px] font-semibold text-warn">
+            <CommentIcon size={12} />
+            {pendingHere}
           </span>
         )}
         <LineCounts additions={file.additions} deletions={file.deletions} />
+        <label className={`flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold ${viewed ? 'border-accent/40 bg-accent/[0.12] text-accent' : 'border-white/[0.10] text-ink-300 hover:text-ink-100'}`}>
+          <input type="checkbox" checked={viewed} onChange={(event) => onViewed(file.path, event.target.checked)} className="size-3.5 accent-[#8b97ff]" />
+          Viewed
+        </label>
       </header>
+      {folded && large && (
+        <div className="flex items-center gap-3 px-4 py-2.5 text-[12.5px] text-ink-400">
+          <span>
+            Large diff: {(file.additions + file.deletions).toLocaleString()} changed lines.
+          </span>
+          <button type="button" onClick={() => onFold(file.path)} className="h-7 rounded-full bg-white/[0.08] px-3 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.14]">
+            Load diff
+          </button>
+        </div>
+      )}
       {!folded &&
-        (file.patch === null ? (
+        (error !== null ? (
+          <div className="space-y-2 px-4 py-3">
+            <ErrorNote error={error} />
+            <button type="button" onClick={() => onRetry(file.path)} className="rounded-full bg-white/[0.08] px-3 py-1 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.14]">
+              Try again
+            </button>
+          </div>
+        ) : patched === undefined ? (
+          <div style={{ height: estimateHeight(file, false) - headerHeight }} className="flex items-start gap-2 px-4 py-3 text-[12.5px] text-ink-500">
+            <Spinner />
+            Loading the diff
+          </div>
+        ) : patched.patch === null ? (
           <p className="px-4 py-3 text-[12.5px] text-ink-400 italic">GitHub shows no diff for this file (binary, or too large).</p>
         ) : (
-          <div className="overflow-x-auto font-mono text-[12.5px] leading-[20px]">
-            <table className="w-full border-collapse">
-              <tbody>
-                {lines.map((line, index) => {
-                  const target = commentTarget(file.path, line)
-                  const key = target === null ? null : targetKey(target)
-                  const notes = target === null ? [] : pendingAt(controls.pending, target)
-                  const number = (value: number | null) => (
-                    <td className="w-[1%] min-w-[44px] border-r border-white/[0.04] px-2 text-right align-top text-ink-600 tabular-nums select-none">
-                      {target === null ? (
-                        value
-                      ) : (
-                        <button type="button" onClick={() => setDrafting(key)} title="Comment on this line" className="w-full text-right hover:text-accent">
-                          {value ?? ''}
-                        </button>
-                      )}
-                    </td>
-                  )
-                  return (
-                    <Fragment key={index}>
-                      <tr className={`group ${lineTone[line.kind]}`}>
-                        {line.kind === 'hunk' || line.kind === 'note' ? (
-                          <td colSpan={3} className="px-3 whitespace-pre text-[12px]">
-                            {line.text}
-                          </td>
-                        ) : (
-                          <>
-                            {number(line.oldLine)}
-                            {number(line.newLine)}
-                            <td className="relative pr-4 pl-1 whitespace-pre text-ink-100 select-text">
-                              <span className="inline-block w-4 text-ink-500 select-none">{markers[line.kind]}</span>
-                              {(spans[index] ?? [{ text: line.text, className: '' }]).map((span, spanIndex) => (
-                                <span key={spanIndex} className={span.className}>
-                                  {span.text}
-                                </span>
-                              ))}
-                            </td>
-                          </>
-                        )}
-                      </tr>
-                      {(notes.length > 0 || (key !== null && drafting === key)) && target !== null && (
-                        <tr>
-                          <td colSpan={3} className="space-y-2 border-y border-white/[0.06] bg-black/30 px-3 py-2">
-                            {notes.map((comment) => (
-                              <PendingNote key={comment.id} comment={comment} controls={controls} />
-                            ))}
-                            {drafting === key && (
-                              <CommentEditor
-                                initial=""
-                                submitLabel="Add to review"
-                                onCancel={() => setDrafting(null)}
-                                onSubmit={(body) => {
-                                  controls.onAdd(target, body)
-                                  setDrafting(null)
-                                }}
-                              />
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DiffBody file={patched} scroller={scroller} offset={start + headerHeight} review={review} />
         ))}
     </section>
   )
 })
 
-export function PullRequestFiles({ files, error, onRetry, controls }: { files: GithubPullRequestFile[] | null; error: unknown; onRetry: () => void; controls: PendingControls }) {
+export function PullRequestFiles({ files, review }: { files: Files; review: ReviewContext }) {
+  const { controls } = review
   const [query, setQuery] = useState('')
-  // A file's fold, once the person changed it; otherwise long and removed files start folded.
+  const [hideViewed, setHideViewed] = useState(false)
+  // A file's fold, once the person changed it; otherwise large and removed files start folded.
   const [folds, setFolds] = useState<Record<string, boolean>>({})
-  const sections = useRef(new Map<string, HTMLElement>())
-  const shown = useMemo(() => (files === null ? [] : filterFiles(files, query)), [files, query])
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
+  const [navScroller, setNavScroller] = useState<HTMLUListElement | null>(null)
+  const { pages } = files
+  const { marks } = files
+  const filtering = query.trim() !== '' || hideViewed
+  const shown = useMemo(() => shownFiles(pages.files, query, hideViewed, marks), [pages.files, query, hideViewed, marks])
+  const foldedOf = (file: GithubPullRequestFile) => folds[file.path] ?? startsFolded(file, isViewed(file, marks))
+  const latest = useRef({ shown, foldedOf })
+  latest.current = { shown, foldedOf }
+  // Stable, so a file's section re-renders only when its own data changes, not on every scroll.
+  const toggleFold = useCallback((path: string) => {
+    const file = latest.current.shown.find((entry) => entry.path === path)
+    if (file !== undefined) setFolds((current) => ({ ...current, [path]: !latest.current.foldedOf(file) }))
+  }, [])
+  // Marking a file viewed folds it, as on GitHub; clearing the mark opens it again.
+  const { setViewed } = files
+  const markViewed = useCallback(
+    (path: string, viewed: boolean) => {
+      setViewed(path, viewed)
+      setFolds((current) => ({ ...current, [path]: viewed }))
+    },
+    [setViewed],
+  )
 
-  if (files === null) {
-    return error !== null ? (
+  const diffs = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => scroller,
+    estimateSize: (index) => {
+      const file = shown[index]
+      return file === undefined ? headerHeight : estimateHeight(file, foldedOf(file))
+    },
+    getItemKey: (index) => shown[index]?.path ?? index,
+    gap: fileGap,
+    paddingStart: 16,
+    paddingEnd: 16,
+    overscan: 1,
+  })
+  const nav = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => navScroller,
+    estimateSize: () => navRowHeight,
+    getItemKey: (index) => shown[index]?.path ?? index,
+    overscan: 10,
+  })
+
+  // The files on screen and a couple either side get their diffs; the rest may be released.
+  const visible = diffs.range === null ? null : { start: diffs.range.startIndex, end: diffs.range.endIndex }
+  const near = diffWindow(visible, shown.length)
+  const nearKey = near === null ? '' : `${near.start}:${near.end}`
+  const navEnd = nav.range?.endIndex ?? 0
+  useEffect(() => {
+    if (near === null) return
+    const onScreen = shown.slice(near.start, near.end + 1)
+    const folded = new Set(onScreen.filter(foldedOf).map((file) => file.path))
+    files.showDiffs(
+      filesToFetch(shown, near, files.known, folded),
+      onScreen.map((file) => file.path),
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nearKey, shown, folds])
+  useEffect(() => {
+    files.needPage(Math.max(navEnd, near?.end ?? 0), filtering)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navEnd, nearKey, filtering, pages])
+
+  // A jump from the Threads tab: open the file and scroll to it; its diff then centres the line.
+  // A file on a page not read yet makes the list read on until it shows up.
+  const focusPath = review.focus?.path ?? null
+  useEffect(() => {
+    if (focusPath === null) return
+    const index = shown.findIndex((file) => file.path === focusPath)
+    if (index < 0) {
+      if (pages.done) review.onFocused()
+      else files.needPage(pages.files.length, true)
+      return
+    }
+    setFolds((current) => ({ ...current, [focusPath]: false }))
+    requestAnimationFrame(() => diffs.scrollToIndex(index, { align: 'start' }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPath, shown, pages])
+
+  if (pages.pages === 0) {
+    return files.pagesError !== null ? (
       <div className="space-y-3 px-8 py-6">
-        <ErrorNote error={error} />
-        <button type="button" onClick={onRetry} className="rounded-full bg-white/[0.08] px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.14]">
+        <ErrorNote error={files.pagesError} />
+        <button type="button" onClick={files.reload} className="rounded-full bg-white/[0.08] px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.14]">
           Try again
         </button>
       </div>
@@ -233,17 +470,33 @@ export function PullRequestFiles({ files, error, onRetry, controls }: { files: G
     )
   }
 
-  const totals = fileTotals(files)
-  const foldedOf = (file: GithubPullRequestFile) => folds[file.path] ?? (file.status === 'removed' || parsePatch(file.patch).length > foldAbove)
+  const total = pages.total ?? pages.files.length
+  const reveal = (index: number) => {
+    const file = shown[index]
+    if (file === undefined) return
+    setFolds((current) => ({ ...current, [file.path]: false }))
+    requestAnimationFrame(() => diffs.scrollToIndex(index, { align: 'start' }))
+  }
 
   return (
     <div className="flex min-h-0 flex-1">
       <nav aria-label="Changed files" className="flex w-[280px] shrink-0 flex-col border-r border-white/[0.06]">
         <div className="space-y-2 px-4 pt-4 pb-2">
           <p className="flex items-center gap-2 text-[12px] text-ink-400">
-            {totals.files} {totals.files === 1 ? 'file' : 'files'}
-            <LineCounts additions={totals.additions} deletions={totals.deletions} />
+            {total.toLocaleString()} {total === 1 ? 'file' : 'files'}
+            {pages.files.length < total && <span className="text-ink-500">· {pages.files.length.toLocaleString()} listed</span>}
+            {pages.loading && <Spinner />}
           </p>
+          <div className="flex items-center gap-2 text-[12px] text-ink-400">
+            <span className="tabular-nums">
+              {viewedCount(pages.files, marks)} / {total.toLocaleString()} viewed
+            </span>
+            <label className="ml-auto flex cursor-pointer items-center gap-1.5 hover:text-ink-200">
+              <input type="checkbox" checked={hideViewed} onChange={(event) => setHideViewed(event.target.checked)} className="size-3.5 accent-[#8b97ff]" />
+              Hide viewed
+            </label>
+          </div>
+          {files.viewedError !== null && <ErrorNote error={files.viewedError} />}
           <input
             type="search"
             value={query}
@@ -255,24 +508,33 @@ export function PullRequestFiles({ files, error, onRetry, controls }: { files: G
             className="h-8 w-full rounded-full border border-white/[0.08] bg-white/[0.05] px-3 text-[12.5px] text-ink-100 outline-none placeholder:text-ink-500 focus:border-accent/60"
           />
         </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {shown.map((file) => {
+        {files.pagesError !== null && (
+          <div className="space-y-2 px-4 pb-2">
+            <ErrorNote error={files.pagesError} />
+            <button type="button" onClick={() => files.needPage(pages.files.length, true)} className="rounded-full bg-white/[0.08] px-3 py-1 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.14]">
+              Try again
+            </button>
+          </div>
+        )}
+        <ul ref={setNavScroller} className="relative min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          <li aria-hidden="true" style={{ height: nav.getTotalSize() }} className="pointer-events-none" />
+          {nav.getVirtualItems().map((item) => {
+            const file = shown[item.index]
+            if (file === undefined) return null
             const tone = statusTone[file.status]
             const name = file.path.split('/').at(-1) ?? file.path
             const pending = controls.pending.filter((comment) => comment.path === file.path).length
+            const seen = isViewed(file, marks)
             return (
-              <li key={file.path}>
+              <li key={item.key} style={{ transform: `translateY(${item.start}px)`, height: navRowHeight }} className="absolute top-0 right-2 left-2">
                 <button
                   type="button"
                   title={file.path}
-                  onClick={() => {
-                    setFolds((current) => ({ ...current, [file.path]: false }))
-                    requestAnimationFrame(() => sections.current.get(file.path)?.scrollIntoView({ block: 'start' }))
-                  }}
-                  className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] px-2 py-1.5 text-left hover:bg-white/[0.05]"
+                  onClick={() => reveal(item.index)}
+                  className="grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] px-2 text-left hover:bg-white/[0.05]"
                 >
                   <span className={`w-3 font-mono text-[11px] font-bold ${tone.className}`}>{tone.letter}</span>
-                  <span className="min-w-0">
+                  <span className={`min-w-0 ${seen ? 'opacity-50' : ''}`}>
                     <span className="block truncate text-[12.5px] text-ink-100">{name}</span>
                     <span className="block truncate text-[11px] text-ink-500">{file.path.slice(0, Math.max(0, file.path.length - name.length - 1))}</span>
                   </span>
@@ -284,21 +546,33 @@ export function PullRequestFiles({ files, error, onRetry, controls }: { files: G
               </li>
             )
           })}
-          {shown.length === 0 && <li className="px-2 py-3 text-[12.5px] text-ink-500">{files.length === 0 ? 'No files changed.' : 'No file matches.'}</li>}
+          {shown.length === 0 && !pages.loading && <li className="px-2 py-3 text-[12.5px] text-ink-500">{pages.files.length === 0 ? 'No files changed.' : hideViewed && query.trim() === '' ? 'Every file is viewed.' : 'No file matches.'}</li>}
         </ul>
       </nav>
-      <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {shown.map((file) => (
-          <div
-            key={file.path}
-            ref={(element) => {
-              if (element === null) sections.current.delete(file.path)
-              else sections.current.set(file.path, element)
-            }}
-          >
-            <FileDiff file={file} controls={controls} folded={foldedOf(file)} onFold={() => setFolds((current) => ({ ...current, [file.path]: !foldedOf(file) }))} />
-          </div>
-        ))}
+      <div ref={setScroller} className="relative min-h-0 min-w-0 flex-1 overflow-y-auto px-5">
+        <div style={{ height: diffs.getTotalSize() }} />
+        {diffs.getVirtualItems().map((item) => {
+          const file = shown[item.index]
+          if (file === undefined) return null
+          return (
+            // Placed with top, not a transform: a transform would shift the sticky file header off the top.
+            <div key={item.key} ref={diffs.measureElement} data-index={item.index} style={{ top: item.start }} className="absolute right-5 left-5">
+              <FileSection
+                file={file}
+                patched={files.patchOf(file.path)}
+                error={files.diffError(file.path)}
+                folded={foldedOf(file)}
+                onFold={toggleFold}
+                onRetry={files.retryDiff}
+                scroller={scroller}
+                start={item.start}
+                viewed={isViewed(file, marks)}
+                onViewed={markViewed}
+                review={review}
+              />
+            </div>
+          )
+        })}
       </div>
     </div>
   )

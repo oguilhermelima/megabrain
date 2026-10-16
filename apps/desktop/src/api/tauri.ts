@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -44,6 +44,9 @@ async function cliStream(args: string[], onLine: (line: string) => void): Promis
   return () => void invoke('cli_stream_stop', { streamId })
 }
 
+// `github pr-file` answers with the file under `file`, beside the repository and number.
+const pullRequestFileSchema = z.looseObject({ file: githubPullRequestFileSchema })
+
 // What the stream itself says, besides the CLI's lines: why the CLI failed, and that it ended.
 const streamMarkerSchema = z.looseObject({ cursor: z.literal(''), error: z.string().optional(), end: z.literal(true).optional() }).refine((value) => value.error !== undefined || value.end === true)
 
@@ -59,9 +62,6 @@ async function terminalListen(terminalId: string, onData: (base64: string) => vo
   await invoke('terminal_listen', { terminalId, onEvent: channel })
   return () => void invoke('terminal_unlisten', { terminalId })
 }
-
-// `github pr-files` answers with the list, or with an object that holds it under `files`.
-const pullRequestFilesSchema = z.union([githubPullRequestFileSchema.array(), z.looseObject({ files: githubPullRequestFileSchema.array() }).transform((value) => value.files)])
 
 // Priority travels as its own flag and is left out at 0, the default. Step numbers are 1-based on the
 // command line and array positions in the app; the conversion happens here and nowhere else.
@@ -242,7 +242,32 @@ export function createTauriApi(): DesktopApi {
     githubIssues: (root, state, limit, after) => cliJson(['github', 'issues', root, '--state', state, '--limit', String(limit), ...(after === null ? [] : ['--after', after]), '--json'], githubIssueListSchema),
     githubPullRequest: (root, number) => cliJson(['github', 'pr', root, String(number), '--json'], githubDetailSchema),
     githubIssue: (root, number) => cliJson(['github', 'issue', root, String(number), '--json'], githubDetailSchema),
-    prFiles: (root, number) => cliJson(['github', 'pr-files', root, String(number), '--json'], pullRequestFilesSchema),
+    prFilesPage: (root, number, page, perPage) => cliJson(['github', 'pr-files', root, String(number), '--page', String(page), '--per-page', String(perPage), '--no-patch', '--json'], githubPullRequestFilesPageSchema),
+    prFile: async (root, number, path) => (await cliJson(['github', 'pr-file', root, String(number), path, '--json'], pullRequestFileSchema)).file,
+    prThreads: (root, number) => cliJson(['github', 'threads', root, String(number), '--json'], githubReviewThreadSchema.array()),
+    replyThread: async (root, number, threadId, body) => {
+      await cliText(['github', 'thread-reply', root, String(number), threadId, '--body', body, '--json'])
+    },
+    resolveThread: async (root, number, threadId, resolved) => {
+      await cliText(['github', 'thread-resolve', root, String(number), threadId, ...(resolved ? [] : ['--unresolve']), '--json'])
+    },
+    prReviewers: (root, number) => cliJson(['github', 'reviewers', root, String(number), '--json'], githubReviewersSchema),
+    assignableReviewers: (root, query) => cliJson(['github', 'assignable', root, ...(query.trim() === '' ? [] : ['--query', query.trim()]), '--json'], githubReviewerSchema.array()),
+    requestReview: async (root, number, logins, remove) => {
+      await cliText(['github', 'request-review', root, String(number), '--user', logins.join(','), ...(remove ? ['--remove'] : []), '--json'])
+    },
+    setPrReady: async (root, number, ready) => {
+      await cliText(['github', 'pr-ready', root, String(number), ...(ready ? [] : ['--draft']), '--json'])
+    },
+    setAutoMerge: async (root, number, method) => {
+      await cliText(['github', 'auto-merge', root, String(number), ...(method === null ? ['--disable'] : ['--method', method]), '--json'])
+    },
+    rerunChecks: async (root, number, failedOnly) => {
+      await cliText(['github', 'rerun-checks', root, String(number), ...(failedOnly ? ['--failed'] : []), '--json'])
+    },
+    setFileViewed: async (root, number, path, viewed) => {
+      await cliText(['github', 'file-viewed', root, String(number), path, ...(viewed ? [] : ['--unviewed']), '--json'])
+    },
     submitReview: async (root, number, review) => {
       const comments = review.comments ?? []
       await cliText(['github', 'review', root, String(number), '--event', review.event, '--body', review.body, ...(comments.length === 0 ? [] : ['--comments', JSON.stringify(comments)]), '--json'])

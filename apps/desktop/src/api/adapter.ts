@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -137,8 +137,30 @@ export interface DesktopApi {
   githubPullRequest(root: string, number: number): Promise<GithubDetail>
   /** One issue's body and comments (`github issue`). */
   githubIssue(root: string, number: number): Promise<GithubDetail>
-  /** The files a pull request changes, with their patches (`github pr-files`). */
-  prFiles(root: string, number: number): Promise<GithubPullRequestFile[]>
+  /** One page of a pull request's changed files without their patches (`github pr-files --page --no-patch`). */
+  prFilesPage(root: string, number: number, page: number, perPage: number): Promise<GithubPullRequestFilesPage>
+  /** One changed file with its patch (`github pr-file`). */
+  prFile(root: string, number: number, path: string): Promise<GithubPullRequestFile>
+  /** The review threads on the diff (`github threads`). */
+  prThreads(root: string, number: number): Promise<GithubReviewThread[]>
+  /** Answers a review thread (`github thread-reply`). */
+  replyThread(root: string, number: number, threadId: string, body: string): Promise<void>
+  /** Resolves a review thread, or reopens it with resolved false (`github thread-resolve`). */
+  resolveThread(root: string, number: number, threadId: string, resolved: boolean): Promise<void>
+  /** Who is asked to review, the reviews given, mergeability and the required checks (`github reviewers`). */
+  prReviewers(root: string, number: number): Promise<GithubReviewers>
+  /** Up to 50 people and teams who can be asked to review, matching the query (`github assignable`). */
+  assignableReviewers(root: string, query: string): Promise<GithubReviewer[]>
+  /** Asks the logins for a review, or withdraws the request with remove (`github request-review`). */
+  requestReview(root: string, number: number, logins: string[], remove: boolean): Promise<void>
+  /** Marks a draft ready for review, or with ready false turns it back into a draft (`github pr-ready`). */
+  setPrReady(root: string, number: number, ready: boolean): Promise<void>
+  /** Turns auto-merge on with a method, or off with null (`github auto-merge`). */
+  setAutoMerge(root: string, number: number, method: GithubMergeMethod | null): Promise<void>
+  /** Runs the checks again, only the failed ones when failedOnly (`github rerun-checks`). */
+  rerunChecks(root: string, number: number, failedOnly: boolean): Promise<void>
+  /** Marks a file viewed or not (`github file-viewed`). */
+  setFileViewed(root: string, number: number, path: string, viewed: boolean): Promise<void>
   /** Submits a review with its inline comments (`github review`); rejects with gh's message. */
   submitReview(root: string, number: number, review: GithubReview): Promise<void>
   /** Adds a comment to a pull request's or an issue's conversation (`github comment`). */

@@ -2,8 +2,9 @@ import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, 
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
-import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
+import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
+import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { validateRule } from '@/settings/chain-rules'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -24,6 +25,8 @@ export function createMockApi(): DesktopApi {
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
   const githubStates = new Map<string, string>()
+  // Files, threads, reviewers and readiness (fixtures/github-review); a draft change shows in the detail.
+  const { draftOf, ...reviewApi } = createMockReviewApi()
   const githubComment = (kind: 'pr' | 'issue', number: number, body: string) => {
     const key = `${kind}:${number}`
     const added = { author: { login: 'operator', name: 'Operator', isBot: false }, body, createdAt: new Date().toISOString(), url: `https://github.com/operator/megabrain/issues/${number}#mock-${Date.now()}` }
@@ -31,7 +34,8 @@ export function createMockApi(): DesktopApi {
   }
   const githubEdited = (kind: 'pr' | 'issue', detail: GithubDetail): GithubDetail => {
     const key = `${kind}:${detail.number}`
-    return { ...detail, state: githubStates.get(key) ?? detail.state, comments: [...detail.comments, ...(githubComments.get(key) ?? [])] }
+    const draft = kind === 'pr' ? draftOf(detail.number) : undefined
+    return { ...detail, state: githubStates.get(key) ?? detail.state, ...(draft === undefined ? {} : { isDraft: draft }), comments: [...detail.comments, ...(githubComments.get(key) ?? [])] }
   }
   // Sessions released from megabrain's tmux server (`session release`).
   const released = new Set<string>()
@@ -277,10 +281,7 @@ export function createMockApi(): DesktopApi {
       await wait(300)
       return githubEdited('issue', mockGithubDetail('issue', number))
     },
-    prFiles: async (_root, number) => {
-      await wait(350)
-      return mockPullRequestFiles(number)
-    },
+    ...reviewApi,
     submitReview: async (_root, number, review) => {
       await wait(500)
       if (number === 109) throw new CliError('gh: Can not approve your own pull request (HTTP 422)', 1)
