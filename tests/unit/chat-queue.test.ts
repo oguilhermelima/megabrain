@@ -73,6 +73,7 @@ rl.on("line", (line) => {
     const number = ++turns;
     send({ id: request.id, result: { turn: { id: "turn-" + number } } });
     send({ method: "turn/started", params: { threadId: "queue-thread", turnId: "turn-" + number } });
+    if (process.env.CHAT_CHILD_THREAD) send({ method: "turn/completed", params: { threadId: process.env.CHAT_CHILD_THREAD, turn: { id: "child-turn", status: "completed" } } });
     const timer = setInterval(() => {
       if (released() < number) return;
       clearInterval(timer);
@@ -305,6 +306,24 @@ describe("chat queue in the daemon", () => {
     env.releaseTurn();
     await until(() => codexRequests(env).filter((request) => request.method === "turn/start"), (turns) => turns.length === 2, "queued turn started");
     expect(codexRequests(env).filter((request) => request.method === "turn/start")[1]?.params.input).toEqual([{ type: "text", text: "later" }, { type: "localImage", path: env.image }]);
+  });
+
+  test("a Codex subagent thread completing during the main turn does not drain the queue", async () => {
+    const env = sandbox("codex");
+    env.environment.CHAT_CHILD_THREAD = "child-thread";
+    const daemon = await daemonFor(env);
+    const chat = await daemon.handle({ operation: "start", agent: "codex", cwd: env.cwd }) as Chat;
+    await until(() => chatState(daemon, chat.id), (state) => state === "idle", "codex idle");
+    await daemon.handle({ operation: "send", id: chat.id, parts: text("first") });
+    await until(() => chatState(daemon, chat.id), (state) => state === "working", "codex working");
+    await daemon.handle({ operation: "send", id: chat.id, parts: text("later") });
+    // The fake reports the child thread's turn/completed right after the main turn started.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await chatState(daemon, chat.id)).toBe("working");
+    expect(codexRequests(env).filter((request) => request.method === "turn/start")).toHaveLength(1);
+    expect((await queueOf(daemon, chat.id)).map((item) => textOf(item.parts))).toEqual(["later"]);
+    env.releaseTurn();
+    await until(() => codexRequests(env).filter((request) => request.method === "turn/start"), (turns) => turns.length === 2, "queued turn starts after the main turn");
   });
 
   test("steer puts a queued message into the running Codex turn and takes it off the queue", async () => {

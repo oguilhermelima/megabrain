@@ -1,9 +1,10 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Chat, ChatEvent } from "./store.js";
+import { claudeHandBack, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type SubagentEnd } from "./subagents.js";
 
 /** One conversation entry read from an agent's own session log; `sourceId` is stable across reads, so an import can skip what it already holds. */
-export type LoggedTurn = Pick<ChatEvent, "kind" | "text" | "tool" | "messageId"> & { sourceId: string; at: string };
+export type LoggedTurn = Pick<ChatEvent, "kind" | "text" | "tool" | "messageId" | "parentId" | "subagent"> & { sourceId: string; at: string };
 
 function object(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null ? value as Record<string, unknown> : {}; }
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
@@ -28,33 +29,50 @@ export function claudeLogPath(home: string, cwd: string, sessionId: string): str
   return join(home, ".claude", "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"), `${sessionId}.jsonl`);
 }
 
-export function parseClaudeLog(content: string): LoggedTurn[] {
+function endTurn(end: SubagentEnd, name: string): Omit<LoggedTurn, "sourceId" | "at"> {
+  return { kind: "tool-result", text: end.text, tool: { name, status: end.status === "completed" ? "ok" : "error" }, subagent: { id: end.id, status: end.status } };
+}
+
+/**
+ * The turns of a Claude session log. Given `parentId`, the log is a subagent's own (subagents/agent-<id>.jsonl):
+ * its turns carry that id and the prompt it was given is left out.
+ */
+export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[] {
   const names = new Map<string, string>();
   const turns: LoggedTurn[] = [];
+  const parent = parentId === undefined ? {} : { parentId };
   for (const row of records(content)) {
     const uuid = text(row.uuid);
     const at = text(row.timestamp);
-    if ((row.type !== "user" && row.type !== "assistant") || uuid === "" || at === "" || row.isSidechain === true || row.isMeta === true) continue;
+    if ((row.type !== "user" && row.type !== "assistant") || uuid === "" || at === "" || (row.isSidechain === true && parentId === undefined) || row.isMeta === true) continue;
     const message = object(row.message);
     const found: Omit<LoggedTurn, "sourceId" | "at">[] = [];
     if (row.type === "user") {
-      if (typeof message.content === "string") found.push({ kind: "user", text: message.content });
+      if (typeof message.content === "string") { if (parentId === undefined) found.push({ kind: "user", text: message.content }); }
       else {
         const typed = blocks(message.content).filter((block) => block.type === "text").map((block) => text(block.text)).join("");
-        if (typed !== "") found.push({ kind: "user", text: typed });
+        if (typed !== "" && parentId === undefined) found.push({ kind: "user", text: typed });
         for (const block of blocks(message.content).filter((candidate) => candidate.type === "tool_result")) {
-          found.push({ kind: "tool-result", text: flatten(block.content), tool: { name: names.get(text(block.tool_use_id)) ?? "tool", status: block.is_error === true ? "error" : "ok" } });
+          const name = names.get(text(block.tool_use_id)) ?? "tool";
+          if (parentId === undefined && isClaudeSubagentTool(name)) {
+            const end = claudeHandBack(text(block.tool_use_id), block, row.toolUseResult);
+            if (end !== null) found.push(endTurn(end, name));
+            continue;
+          }
+          found.push({ kind: "tool-result", text: flatten(block.content), tool: { name, status: block.is_error === true ? "error" : "ok" }, ...parent });
         }
       }
     } else {
       const messageId = text(message.id);
-      const identity = messageId === "" ? {} : { messageId };
+      const identity = { ...(messageId === "" ? {} : { messageId }), ...parent };
       for (const block of blocks(message.content)) {
         if (block.type === "thinking" && text(block.thinking) !== "") found.push({ kind: "thinking", text: text(block.thinking), ...identity });
         else if (block.type === "text" && text(block.text) !== "") found.push({ kind: "assistant", text: text(block.text), ...identity });
         else if (block.type === "tool_use") {
-          names.set(text(block.id), text(block.name));
-          found.push({ kind: "tool-call", text: text(block.name), tool: { name: text(block.name), input: JSON.stringify(block.input ?? {}) } });
+          const name = text(block.name);
+          names.set(text(block.id), name);
+          const call = { kind: "tool-call" as const, text: name, tool: { name, input: JSON.stringify(block.input ?? {}) } };
+          found.push(parentId === undefined && isClaudeSubagentTool(name) ? { ...call, subagent: claudeSubagent(text(block.id), block.input) } : { ...call, ...parent });
         }
       }
     }
@@ -63,22 +81,82 @@ export function parseClaudeLog(content: string): LoggedTurn[] {
   return turns;
 }
 
+/** A background subagent's end as its own log tells it: its final message, which becomes its result; null while it has none. */
+function claudeSubagentEnd(content: string, id: string): LoggedTurn | null {
+  const last = records(content).filter((row) => row.type === "user" || row.type === "assistant").at(-1);
+  const message = object(last?.message);
+  const stop = text(message.stop_reason);
+  if (last === undefined || last.type !== "assistant" || stop === "" || stop === "tool_use") return null;
+  const report = blocks(message.content).filter((block) => block.type === "text").map((block) => text(block.text)).join("");
+  return { ...endTurn({ id, status: "completed", text: report }, "Agent"), sourceId: `${id}:end`, at: text(last.timestamp) };
+}
+
+/** Claude keeps each subagent's log beside the session's, under <session>/subagents, named by its Agent call in a .meta.json. */
+async function claudeSubagentTurns(path: string, main: LoggedTurn[]): Promise<LoggedTurn[]> {
+  const directory = join(dirname(path), basename(path, ".jsonl"), "subagents");
+  let names: string[];
+  try { names = await readdir(directory); } catch { return []; }
+  const started = new Set(main.flatMap((turn) => turn.kind === "tool-call" && turn.subagent !== undefined ? [turn.subagent.id] : []));
+  const ended = new Set(main.flatMap((turn) => turn.kind === "tool-result" && turn.subagent !== undefined ? [turn.subagent.id] : []));
+  const turns: LoggedTurn[] = [];
+  for (const name of names.filter((entry) => entry.endsWith(".meta.json")).sort()) {
+    try {
+      const id = text(object(JSON.parse(await readFile(join(directory, name), "utf8"))).toolUseId);
+      if (!started.has(id)) continue;
+      const content = await readFile(join(directory, name.replace(/\.meta\.json$/, ".jsonl")), "utf8");
+      turns.push(...parseClaudeLog(content, id));
+      const end = ended.has(id) ? null : claudeSubagentEnd(content, id);
+      if (end !== null) turns.push(end);
+    } catch { /* a subagent log being written or gone: its steps are not shown */ }
+  }
+  return turns;
+}
+
 const CODEX_CONTEXT = ["# AGENTS.md instructions", "<environment_context>", "<user_instructions>", "<skills_instructions>", "<permissions"];
 
-export function parseCodexRollout(content: string): LoggedTurn[] {
+/**
+ * The turns of a Codex rollout. Given `parentId`, the rollout is a spawned thread's: its turns carry that id,
+ * the parent's history it was forked with is left out (it runs under turn contexts whose turn is the root
+ * turn), and so are the messages it was sent.
+ */
+export function parseCodexRollout(content: string, parentId?: string): LoggedTurn[] {
   const names = new Map<string, string>();
   const turns: LoggedTurn[] = [];
-  records(content).forEach((row, index) => {
+  const parent = parentId === undefined ? {} : { parentId };
+  const rows = records(content);
+  const own = parentId === undefined ? 0 : Math.max(0, rows.findIndex((row) => {
+    const context = object(row.payload);
+    return row.type === "turn_context" && typeof context.root_turn_id === "string" && context.turn_id !== context.root_turn_id;
+  }));
+  const spawns = new Map<string, string>();
+  const ended = new Set<string>();
+  rows.forEach((row, index) => {
     const payload = object(row.payload);
     const at = text(row.timestamp);
-    if (row.type !== "response_item" || at === "") return;
     const id = `codex:${typeof row.ordinal === "number" ? row.ordinal : index}`;
+    if (index < own || at === "") return;
+    if (row.type === "event_msg" && payload.type === "item_completed" && parentId === undefined) {
+      const item = object(payload.item);
+      for (const subagent of codexSpawned(item)) {
+        if (spawns.has(subagent.id)) continue;
+        spawns.set(subagent.id, text(item.tool));
+        turns.push({ kind: "tool-call", text: text(item.tool), tool: { name: text(item.tool), input: text(item.prompt) }, subagent, sourceId: `${id}:start:${subagent.id}`, at });
+      }
+      for (const end of codexEnded(item)) {
+        const name = spawns.get(end.id);
+        if (name === undefined || ended.has(end.id)) continue;
+        ended.add(end.id);
+        turns.push({ ...endTurn(end, name), sourceId: `${id}:end:${end.id}`, at });
+      }
+      return;
+    }
+    if (row.type !== "response_item") return;
     const kind = text(payload.type);
     let found: Omit<LoggedTurn, "sourceId" | "at"> | undefined;
     if (kind === "message") {
       const value = blocks(payload.content).map((block) => text(block.text)).join("");
       if (payload.role === "assistant" && value !== "") found = { kind: "assistant", text: value };
-      else if (payload.role === "user" && value !== "" && !CODEX_CONTEXT.some((prefix) => value.startsWith(prefix))) found = { kind: "user", text: value };
+      else if (payload.role === "user" && parentId === undefined && value !== "" && !CODEX_CONTEXT.some((prefix) => value.startsWith(prefix))) found = { kind: "user", text: value };
     } else if (kind === "reasoning") {
       const value = flatten(payload.summary);
       if (value !== "") found = { kind: "thinking", text: value };
@@ -88,8 +166,37 @@ export function parseCodexRollout(content: string): LoggedTurn[] {
     } else if (kind === "function_call_output" || kind === "custom_tool_call_output") {
       found = { kind: "tool-result", text: flatten(payload.output), tool: { name: names.get(text(payload.call_id)) ?? "tool", status: "ok" } };
     }
-    if (found !== undefined) turns.push({ ...found, sourceId: id, at });
+    if (found !== undefined) turns.push({ ...found, ...parent, sourceId: id, at });
   });
+  return turns;
+}
+
+/** Each spawned thread's own rollout, found by its id, under the spawn. */
+async function codexSubagentTurns(home: string, main: LoggedTurn[]): Promise<LoggedTurn[]> {
+  const turns: LoggedTurn[] = [];
+  for (const turn of main) {
+    if (turn.kind !== "tool-call" || turn.subagent === undefined) continue;
+    const path = await codexRolloutPath(home, turn.subagent.id);
+    if (path === null) continue;
+    try { turns.push(...parseCodexRollout(await readFile(path, "utf8"), turn.subagent.id).map((step) => ({ ...step, sourceId: `${turn.subagent?.id}:${step.sourceId}` }))); }
+    catch { /* a rollout being written or gone: its steps are not shown */ }
+  }
+  return turns;
+}
+
+/**
+ * The main log's turns with every subagent's steps, in time order. A subagent the logs never saw end
+ * is stopped: the terminal that ran it is gone by the time its turns are read back.
+ */
+function withSubagents(main: LoggedTurn[], steps: LoggedTurn[]): LoggedTurn[] {
+  const turns = [...main, ...steps].sort((left, right) => left.at < right.at ? -1 : left.at > right.at ? 1 : 0);
+  const ended = new Set(turns.flatMap((turn) => turn.kind === "tool-result" && turn.subagent !== undefined ? [turn.subagent.id] : []));
+  for (const start of main) {
+    if (start.kind !== "tool-call" || start.subagent === undefined || ended.has(start.subagent.id)) continue;
+    const id = start.subagent.id;
+    const last = turns.filter((turn) => turn.parentId === id).at(-1) ?? start;
+    turns.splice(turns.indexOf(last) + 1, 0, { ...endTurn({ id, status: "stopped", text: "" }, start.tool?.name ?? "Agent"), sourceId: `${id}:end`, at: last.at });
+  }
   return turns;
 }
 
@@ -106,8 +213,11 @@ export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agent
   if (chat.agentSessionId === null) return [];
   const path = chat.agent === "claude" ? claudeLogPath(home, chat.cwd, chat.agentSessionId) : await codexRolloutPath(home, chat.agentSessionId);
   if (path === null) return [];
-  try { return (chat.agent === "claude" ? parseClaudeLog : parseCodexRollout)(await readFile(path, "utf8")); }
+  let main: LoggedTurn[];
+  try { main = (chat.agent === "claude" ? parseClaudeLog : parseCodexRollout)(await readFile(path, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  if (!main.some((turn) => turn.subagent !== undefined)) return main;
+  return withSubagents(main, chat.agent === "claude" ? await claudeSubagentTurns(path, main) : await codexSubagentTurns(home, main));
 }
 
 /** The session a terminal TUI started on its own: the newest log in this chat's cwd written after `since`, or null. */

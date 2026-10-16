@@ -24,6 +24,28 @@ const fixtures: Record<string, TranscriptEvent[]> = {
   'relayed and system messages end runs': [call('c1'), result('r1'), relayed('x1'), call('c2'), system('s1'), call('c3'), result('r3')],
   'a stray result': [result('r0'), user('u1'), result('r1'), call('c1'), result('r2'), result('r3')],
   'the mock transcript': mockTranscript.events,
+  'subagents working while the main flow goes on': [
+    user('u1'),
+    subagentStart('a'),
+    subagentStart('b'),
+    event('n1', { kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: '{}' }, parentId: 'a' }),
+    event('a1'),
+    event('n2', { kind: 'tool-result', text: 'out', tool: { name: 'Bash', status: 'ok' }, parentId: 'a' }),
+    subagentEnd('a'),
+    user('u2'),
+    event('a2'),
+    event('n3', { kind: 'assistant', text: 'late', parentId: 'b' }),
+    call('c1'),
+    subagentEnd('b'),
+    event('a3'),
+  ],
+}
+
+function subagentStart(id: string): TranscriptEvent {
+  return event(`start-${id}`, { kind: 'tool-call', text: 'Agent', tool: { name: 'Agent', input: '{}' }, subagent: { id, type: 'general-purpose', description: id } })
+}
+function subagentEnd(id: string): TranscriptEvent {
+  return event(`end-${id}`, { kind: 'tool-result', text: 'done', tool: { name: 'Agent', status: 'ok' }, subagent: { id, status: 'completed' } })
 }
 
 const full = (events: TranscriptEvent[]) => groupToolRuns(buildConversationItems(events))

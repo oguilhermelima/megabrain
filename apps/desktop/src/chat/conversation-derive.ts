@@ -5,7 +5,8 @@ import { closesRun, groupToolRuns, type DisplayItem } from '@/chat/tool-groups'
 // A live chat polls only its new events; deriving the rows again from every event on each poll is
 // O(all events). Everything up to the last message that closes a tool run is settled: a tool call
 // pairs only with the event right after it, and grouping restarts after such a message. So only
-// the events after it are derived again, and the settled rows keep their identity.
+// the events after it are derived again, and the settled rows keep their identity. A subagent still
+// working can take steps after any later message, so nothing from its start on settles until it ends.
 
 export interface DerivedConversation {
   events: TranscriptEvent[]
@@ -28,7 +29,8 @@ function derive(events: TranscriptEvent[], start: number, settled: DisplayItem[]
   let settledEvents = start
   let settledDisplay = settled
   let closing: DisplayItem | undefined
-  for (let index = items.length - 1; index >= 0 && closing === undefined; index--) {
+  const open = items.findIndex((item) => item.type === 'subagent' && item.end === null)
+  for (let index = (open === -1 ? items.length : open) - 1; index >= 0 && closing === undefined; index--) {
     const item = items[index]
     if (item !== undefined && closesRun(item)) closing = item
   }

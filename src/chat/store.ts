@@ -28,7 +28,11 @@ export type Chat = {
 
 export type ChatApproval = { id: string; tool: string; input: string; reason: string | null; decisions: Array<"allow" | "allow-session" | "deny"> };
 /** `state` is stored; `delta` is a chunk of the message `messageId` and goes to followers only. */
-export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; /** On a user event: the images it carried, as local files (never their bytes). */ images?: { path: string }[]; /** On a user event with images: its text and images in the order they were sent. */ parts?: ({ type: "text"; text: string } | { type: "image"; path: string })[]; tool?: { name: string; input?: string; status?: "ok" | "error" } };
+export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; /** On a user event: the images it carried, as local files (never their bytes). */ images?: { path: string }[]; /** On a user event with images: its text and images in the order they were sent. */ parts?: ({ type: "text"; text: string } | { type: "image"; path: string })[]; tool?: { name: string; input?: string; status?: "ok" | "error" };
+  /** On a step a subagent took (its thinking, text, tool calls and results): the id of that subagent. */
+  parentId?: string;
+  /** On the tool call that starts a subagent (no status) and on the tool result that ends it (status set, text its result). */
+  subagent?: { id: string; type?: string; description?: string; status?: "completed" | "failed" | "stopped" } };
 /** A message sent while a turn ran, waiting to go out as a later turn; its parts keep text and images in order. */
 export type QueuedChatMessage = { id: string; parts: ({ type: "text"; text: string } | { type: "image"; path: string })[]; createdAt: string; updatedAt: string };
 /** `queue` is the chat's whole queue, on the first line of every read and live after each change. */

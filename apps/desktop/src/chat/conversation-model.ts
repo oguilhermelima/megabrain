@@ -10,6 +10,8 @@ export type ConversationItem =
   // streaming: a message still being generated; pending: a sent message the chat has not echoed yet.
   | { type: 'message'; event: TranscriptEvent; streaming?: boolean; pending?: boolean }
   | { type: 'tool'; id: string; call: TranscriptEvent; result: TranscriptEvent | null; status: ToolStatus }
+  // A subagent where its call was: the steps it took, and the tool result that ended it once it has.
+  | { type: 'subagent'; id: string; call: TranscriptEvent; steps: ConversationItem[]; end: TranscriptEvent | null }
 
 /** A row that is still changing, shown after a conversation's history. */
 export interface LiveRow {
@@ -18,8 +20,31 @@ export interface LiveRow {
   pending?: boolean
 }
 
-/** Pairs each tool-call with the tool-result event that immediately follows it (by position). */
+const subagentId = (event: TranscriptEvent, kind: 'tool-call' | 'tool-result'): string | null => (event.kind === kind ? (event.subagent?.id ?? null) : null)
+
+/**
+ * Pairs each tool-call with the tool-result event that immediately follows it (by position). A subagent's
+ * steps and end come out of that flow and into the subagent, wherever they arrived; the ones whose
+ * subagent is not among the events are dropped.
+ */
 export function buildConversationItems(events: TranscriptEvent[]): ConversationItem[] {
+  const started = new Set(events.flatMap((event) => subagentId(event, 'tool-call') ?? []))
+  if (started.size === 0 && !events.some((event) => event.parentId !== undefined || subagentId(event, 'tool-result') !== null)) return pairTools(events, new Map(), new Map())
+  const steps = new Map<string, TranscriptEvent[]>()
+  const ends = new Map<string, TranscriptEvent>()
+  const main: TranscriptEvent[] = []
+  for (const event of events) {
+    const ended = subagentId(event, 'tool-result')
+    if (event.parentId !== undefined) {
+      if (started.has(event.parentId)) steps.set(event.parentId, (steps.get(event.parentId) ?? []).concat(event))
+    } else if (ended !== null) {
+      if (started.has(ended) && !ends.has(ended)) ends.set(ended, event)
+    } else main.push(event)
+  }
+  return pairTools(main, steps, ends)
+}
+
+function pairTools(events: TranscriptEvent[], steps: Map<string, TranscriptEvent[]>, ends: Map<string, TranscriptEvent>): ConversationItem[] {
   const items: ConversationItem[] = []
   for (let index = 0; index < events.length; index++) {
     const event = events[index]
@@ -27,6 +52,11 @@ export function buildConversationItems(events: TranscriptEvent[]): ConversationI
     if (event.kind === 'tool-result') continue
     if (event.kind !== 'tool-call') {
       items.push({ type: 'message', event })
+      continue
+    }
+    const subagent = event.subagent?.id
+    if (subagent !== undefined) {
+      items.push({ type: 'subagent', id: subagent, call: event, steps: pairTools(steps.get(subagent) ?? [], steps, ends), end: ends.get(subagent) ?? null })
       continue
     }
     const next = events[index + 1]

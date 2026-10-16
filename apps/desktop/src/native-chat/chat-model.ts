@@ -167,7 +167,9 @@ export function workingStatus(state: FollowState): WorkingStatus | null {
   const since = state.turnStartedAt ?? sentAt
   const streaming = state.drafts.reduce<Draft | undefined>((newest, draft) => (newest === undefined || draft.order > newest.order ? draft : newest), undefined)
   if (streaming !== undefined) return { label: streaming.stream === 'thinking' ? 'Thinking' : 'Writing', since }
-  const last = state.events.at(-1)
+  // A subagent's steps are its own; the turn is running the call that started it.
+  let last: TranscriptEvent | undefined
+  for (let index = state.events.length - 1; index >= 0 && last === undefined; index--) if (state.events[index]?.parentId === undefined) last = state.events[index]
   if (last?.kind === 'tool-call') return { label: `Running ${last.tool?.name ?? last.text}`, since }
   return { label: 'Thinking', since }
 }

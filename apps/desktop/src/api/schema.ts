@@ -541,6 +541,13 @@ export const transcriptEventSchema = z.looseObject({
   /** On a native chat's assistant or thinking event: the message its streamed chunks belonged to. */
   messageId: z.string().optional(),
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
+  /** On a native chat's event that a subagent produced (its thinking, text, tool calls and results): that subagent's id. */
+  parentId: z.string().optional(),
+  // On the tool call that starts a subagent (no status) and on the tool result that ends it, whose text is
+  // its result. A status this app does not know reads as none, so the subagent still shows.
+  subagent: z
+    .looseObject({ id: z.string(), type: z.string().optional(), description: z.string().optional(), status: z.enum(['completed', 'failed', 'stopped']).optional().catch(undefined) })
+    .optional(),
   /** On a user event: the images it carried, a local file or inline; the text keeps an [Image #N] marker where each was. */
   images: z.array(transcriptImageSchema).optional(),
   /** On a native chat's user event with images: its text and images in the order sent, images[k] being the k-th image part. Older events have none. */

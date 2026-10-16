@@ -2,12 +2,13 @@ import { toolSummary, type ConversationItem } from '@/chat/conversation-model'
 
 // Consecutive tool calls between two messages read as one row: "Working: Bash …" while the last call
 // runs, "Ran 6 tools: 5 Bash, 1 Read" once all have results. Thinking between two calls stays in the
-// run; any other message ends it.
+// run; any other message ends it. A subagent ends a run too, and subagents side by side read as one group.
 
 export type ToolItem = Extract<ConversationItem, { type: 'tool' }>
 type MessageItem = Extract<ConversationItem, { type: 'message' }>
+export type SubagentItem = Extract<ConversationItem, { type: 'subagent' }>
 
-export type DisplayItem = MessageItem | { type: 'tool-group'; id: string; items: ConversationItem[] }
+export type DisplayItem = MessageItem | SubagentItem | { type: 'tool-group'; id: string; items: (ToolItem | MessageItem)[] } | { type: 'subagent-group'; id: string; items: SubagentItem[] }
 
 const isThinking = (item: ConversationItem): item is MessageItem => item.type === 'message' && item.event.kind === 'thinking' && item.event.origin === undefined
 
@@ -16,7 +17,7 @@ export const closesRun = (item: ConversationItem): item is MessageItem => item.t
 
 export function groupToolRuns(items: ConversationItem[]): DisplayItem[] {
   const display: DisplayItem[] = []
-  let run: ConversationItem[] | null = null
+  let run: (ToolItem | MessageItem)[] | null = null
   // Thinking seen after the run's last call; it joins the run only if another call follows.
   let held: MessageItem[] = []
   const close = () => {
@@ -42,6 +43,13 @@ export function groupToolRuns(items: ConversationItem[]): DisplayItem[] {
       continue
     }
     close()
+    if (item.type === 'subagent') {
+      const last = display.at(-1)
+      if (last?.type === 'subagent') display[display.length - 1] = { type: 'subagent-group', id: `agents-${last.id}`, items: [last, item] }
+      else if (last?.type === 'subagent-group') display[display.length - 1] = { ...last, items: last.items.concat(item) }
+      else display.push(item)
+      continue
+    }
     display.push(item)
   }
   close()

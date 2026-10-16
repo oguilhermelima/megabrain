@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type QueuedChatMessage } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
 import { discoverSessionId, readSessionTurns } from "./session-log.js";
+import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from "./subagents.js";
 import { selfInvocation } from "../core/self-invocation.js";
 
 type Part = MessagePart;
@@ -80,6 +81,8 @@ function withImages(parts: readonly Part[]): Partial<ChatEvent> {
   return images.length === 0 ? {} : { images, parts: [...parts] };
 }
 function withMessage(messageId: string): Partial<ChatEvent> { return messageId === "" ? {} : { messageId }; }
+/** The text of a tool result or a reasoning summary, given as a string or as parts. */
+function flattenContent(value: unknown): string { return Array.isArray(value) ? value.map(flattenContent).join("") : typeof value === "object" && value !== null ? text((value as Record<string, unknown>).text) : text(value); }
 
 /** Owns every chat child. The CLI is a short-lived socket client; chatd keeps this object alive. */
 export class ChatDaemon {
@@ -106,6 +109,8 @@ export class ChatDaemon {
   private readonly turnStarted = new Map<string, string>();
   private readonly currentMessage = new Map<string, string>();
   private readonly toolNames = new Map<string, Map<string, string>>();
+  /** Each chat's subagents by id: the tool that started one, whether it runs in the background, whether it ended. */
+  private readonly subagents = new Map<string, Map<string, { name: string; background: boolean; ended: boolean }>>();
   /** Removed chats: late agent output must not write their record back. */
   private readonly removed = new Set<string>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -442,21 +447,63 @@ export class ChatDaemon {
       return;
     }
     const block = object(streamEvent.content_block);
-    if (kind === "content_block_start" && block.type === "tool_use") await this.publishToolCall(id, text(block.id), text(block.name), "");
+    // An Agent call is published from the complete message, which carries the type and description its subagent shows.
+    if (kind === "content_block_start" && block.type === "tool_use" && !isClaudeSubagentTool(text(block.name))) await this.publishToolCall(id, text(block.id), text(block.name), "");
   }
 
-  private async publishToolCall(id: string, toolUseId: string, name: string, input: string): Promise<void> {
+  private async publishToolCall(id: string, toolUseId: string, name: string, input: string, extra: Partial<ChatEvent> = {}): Promise<void> {
     const names = this.toolNames.get(id) ?? new Map<string, string>();
     this.toolNames.set(id, names);
     if (names.has(toolUseId)) return;
     names.set(toolUseId, name);
     const chat = await this.requireChat(id);
-    await this.publish(chat, event("tool-call", name, { name, input }));
+    await this.publish(chat, event("tool-call", name, { name, input }, extra));
+  }
+
+  /** A subagent's start is the call that started it, carrying who it is; its steps then carry its id as parentId. */
+  private async startSubagent(chat: Chat, subagent: Subagent, name: string, input: string): Promise<void> {
+    const known = this.subagents.get(chat.id) ?? new Map<string, { name: string; background: boolean; ended: boolean }>();
+    this.subagents.set(chat.id, known);
+    if (known.has(subagent.id)) return;
+    known.set(subagent.id, { name, background: false, ended: false });
+    await this.publish(chat, event("tool-call", name, { name, input }, { subagent }));
+  }
+
+  /** Ends a subagent once, whichever of the agent's reports of it arrives first. */
+  private async endSubagent(chat: Chat, end: SubagentEnd): Promise<void> {
+    const known = this.subagents.get(chat.id)?.get(end.id);
+    if (known === undefined || known.ended) return;
+    known.ended = true;
+    await this.publish(chat, event("tool-result", end.text, { name: known.name, status: end.status === "completed" ? "ok" : "error" }, { subagent: { id: end.id, status: end.status } }));
+  }
+
+  /** A step a Claude subagent took: its message, or the results of its tool calls, never the prompt it was given. */
+  private async publishClaudeStep(chat: Chat, parentId: string, item: Record<string, unknown>): Promise<void> {
+    const blocks = Array.isArray(object(item.message).content) ? (object(item.message).content as unknown[]).map(object) : [];
+    const identity = { parentId, ...withMessage(text(object(item.message).id)) };
+    for (const block of blocks) {
+      if (item.type === "assistant" && block.type === "thinking" && text(block.thinking) !== "") await this.publish(chat, event("thinking", text(block.thinking), undefined, identity));
+      else if (item.type === "assistant" && block.type === "text" && text(block.text) !== "") await this.publish(chat, event("assistant", text(block.text), undefined, identity));
+      else if (item.type === "assistant" && block.type === "tool_use") await this.publishToolCall(chat.id, text(block.id), text(block.name), JSON.stringify(block.input ?? {}), { parentId });
+      else if (item.type === "user" && block.type === "tool_result") {
+        const name = this.toolNames.get(chat.id)?.get(text(block.tool_use_id)) ?? "tool";
+        await this.publish(chat, event("tool-result", flattenContent(block.content), { name, status: block.is_error === true ? "error" : "ok" }, { parentId }));
+      }
+    }
   }
 
   private async handleClaude(id: string, child: ChildProcessWithoutNullStreams, item: Record<string, unknown>): Promise<void> {
-    if (item.type === "stream_event") { await this.handleClaudeStream(id, object(item.event)); return; }
+    // A subagent's output names the Agent call that runs it; its chunks are never the chat's own.
+    const parentId = text(item.parent_tool_use_id);
+    if (item.type === "stream_event") { if (parentId === "") await this.handleClaudeStream(id, object(item.event)); return; }
     const chat = await this.requireChat(id);
+    if (parentId !== "" && (item.type === "assistant" || item.type === "user")) { await this.publishClaudeStep(chat, parentId, item); return; }
+    if (item.type === "system" && item.subtype === "task_notification") {
+      // A foreground subagent ends on its hand-back, which carries the whole report; a background one only here.
+      const end = claudeNotified(item);
+      if (this.subagents.get(id)?.get(end.id)?.background === true) await this.endSubagent(chat, end);
+      return;
+    }
     if (item.type === "system" && item.subtype === "init") {
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
       if (Array.isArray(item.slash_commands)) chat.slashCommands = item.slash_commands.filter((name): name is string => typeof name === "string");
@@ -475,15 +522,25 @@ export class ChatDaemon {
       const identity = withMessage(text(message.id));
       if (thinking) await this.publish(chat, event("thinking", thinking, undefined, identity));
       if (textValue) await this.publish(chat, event("assistant", textValue, undefined, identity));
-      for (const block of blocks.filter((candidate) => candidate.type === "tool_use")) await this.publishToolCall(id, text(block.id), text(block.name), JSON.stringify(block.input ?? {}));
+      for (const block of blocks.filter((candidate) => candidate.type === "tool_use")) {
+        const input = JSON.stringify(block.input ?? {});
+        if (isClaudeSubagentTool(text(block.name))) await this.startSubagent(chat, claudeSubagent(text(block.id), block.input), text(block.name), input);
+        else await this.publishToolCall(id, text(block.id), text(block.name), input);
+      }
       return;
     }
     if (item.type === "user") {
       const blocks = Array.isArray(object(item.message).content) ? (object(item.message).content as unknown[]).map(object) : [];
       for (const block of blocks.filter((candidate) => candidate.type === "tool_result")) {
+        const subagent = this.subagents.get(id)?.get(text(block.tool_use_id));
+        if (subagent !== undefined) {
+          const end = claudeHandBack(text(block.tool_use_id), block, item.tool_use_result);
+          if (end === null) subagent.background = true;
+          else await this.endSubagent(chat, end);
+          continue;
+        }
         const name = this.toolNames.get(id)?.get(text(block.tool_use_id)) ?? "tool";
-        const content = Array.isArray(block.content) ? block.content.map(object).map((part) => text(part.text)).join("") : text(block.content);
-        await this.publish(chat, event("tool-result", content, { name, status: block.is_error === true ? "error" : "ok" }));
+        await this.publish(chat, event("tool-result", flattenContent(block.content), { name, status: block.is_error === true ? "error" : "ok" }));
       }
       return;
     }
@@ -501,6 +558,8 @@ export class ChatDaemon {
       chat.lastActivityAt = new Date().toISOString();
       await this.save(chat);
       if (item.is_error === true && this.interrupting.has(id)) this.interrupting.delete(id);
+      // The turn ended: a foreground subagent that never handed back was stopped with it.
+      for (const [subagentId, subagent] of this.subagents.get(id) ?? []) if (!subagent.background) await this.endSubagent(chat, { id: subagentId, status: "stopped", text: "" });
       await this.drain(id);
     }
     if (item.type === "control_request") {
@@ -520,6 +579,9 @@ export class ChatDaemon {
     const method = text(item.method);
     const params = object(item.params);
     const chat = await this.requireChat(id);
+    // A spawned thread reports through the same connection; only its steps are shown, under its subagent.
+    const thread = text(params.threadId);
+    if (thread !== "" && chat.agentSessionId !== null && thread !== chat.agentSessionId) { await this.handleCodexSubagent(chat, thread, method, params); return; }
     if (method === "thread/tokenUsage/updated") {
       const usage = object(params.tokenUsage);
       const last = object(usage.last ?? usage.total);
@@ -539,6 +601,8 @@ export class ChatDaemon {
     } else if (method === "item/completed") {
       const itemData = object(params.item);
       const type = text(itemData.type).toLowerCase();
+      for (const subagent of codexSpawned(itemData)) await this.startSubagent(chat, subagent, text(itemData.tool), text(itemData.prompt));
+      for (const end of codexEnded(itemData)) await this.endSubagent(chat, end);
       const flatten = (value: unknown): string => Array.isArray(value) ? value.map(flatten).join("") : text(value);
       if (type === "agentmessage" && text(itemData.text)) await this.publish(chat, event("assistant", text(itemData.text), undefined, withMessage(text(itemData.id))));
       if (type === "reasoning" && (flatten(itemData.summary) || flatten(itemData.content))) await this.publish(chat, event("thinking", flatten(itemData.summary) || flatten(itemData.content), undefined, withMessage(text(itemData.id))));
@@ -563,6 +627,19 @@ export class ChatDaemon {
       }
       await this.drain(id);
     }
+  }
+
+  private async handleCodexSubagent(chat: Chat, thread: string, method: string, params: Record<string, unknown>): Promise<void> {
+    if (this.subagents.get(chat.id)?.has(thread) !== true) return;
+    const itemData = object(params.item);
+    const type = text(itemData.type).toLowerCase();
+    const parent = { parentId: thread };
+    if (method === "item/started" && type.includes("command")) await this.publish(chat, event("tool-call", text(itemData.command), { name: "command", input: text(itemData.command) }, parent));
+    if (method !== "item/completed") return;
+    if (type === "agentmessage" && text(itemData.text)) await this.publish(chat, event("assistant", text(itemData.text), undefined, { ...parent, ...withMessage(text(itemData.id)) }));
+    const reasoning = flattenContent(itemData.summary) || flattenContent(itemData.content);
+    if (type === "reasoning" && reasoning) await this.publish(chat, event("thinking", reasoning, undefined, { ...parent, ...withMessage(text(itemData.id)) }));
+    if (type.includes("command")) await this.publish(chat, event("tool-result", text(itemData.aggregatedOutput ?? itemData.output), { name: "command", status: itemData.exitCode === 0 ? "ok" : "error" }, parent));
   }
 
   private readonly rpcWaiters = new Map<string, Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>>();
@@ -681,7 +758,7 @@ export class ChatDaemon {
     this.clearStartTimer(id);
     if (child) child.kill("SIGTERM");
     await Promise.allSettled([this.eventChains.get(id), this.appendChains.get(id), this.queueWrites.get(id)]);
-    for (const map of [this.queues, this.queued, this.queueWrites, this.drainChains, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.toolNames, this.subscribers]) map.delete(id);
+    for (const map of [this.queues, this.queued, this.queueWrites, this.drainChains, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.toolNames, this.subagents, this.subscribers]) map.delete(id);
     this.queueHeld.delete(id);
     this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
@@ -725,8 +802,8 @@ export class ChatDaemon {
     const since = chat.terminalSince ?? "";
     for (const turn of await readSessionTurns(chat, this.environment.HOME ?? homedir())) {
       if (turn.at <= since || known.has(turn.sourceId)) continue;
-      const { kind, text: value, at, tool, messageId, sourceId } = turn;
-      await this.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), sourceId });
+      const { kind, text: value, at, tool, messageId, parentId, subagent, sourceId } = turn;
+      await this.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), ...(parentId === undefined ? {} : { parentId }), ...(subagent === undefined ? {} : { subagent }), sourceId });
     }
   }
 

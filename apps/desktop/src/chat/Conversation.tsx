@@ -9,7 +9,9 @@ import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
 import { ErrorNote } from '@/components/ui'
 import { deriveConversation, type DerivedConversation } from '@/chat/conversation-derive'
 import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
-import { toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
+import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
+import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
+import { formatElapsed } from '@/native-chat/chat-model'
 import { MarkdownText } from '@/chat/markdown'
 import { chatMenu, quoteText, toolCommand, type ChatAction } from '@/chat/chat-menu-model'
 import { markMenu, markedParts, toSections, type ComposeChannel } from '@/chat/chat-menu'
@@ -226,10 +228,106 @@ function ToolGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 
   )
 }
 
+/** Time from `since` to `until`, counting each second while `until` is null. */
+function Elapsed({ since, until }: { since: string | null; until: string | null }) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (until !== null) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [until])
+  const start = since === null ? Number.NaN : Date.parse(since)
+  if (Number.isNaN(start)) return null
+  return <>{formatElapsed((until === null ? now : Date.parse(until)) - start)}</>
+}
+
+const subagentOutcome: Record<Exclude<SubagentState, 'working'>, { label: string; tone: string }> = {
+  completed: { label: 'Done', tone: 'text-ok' },
+  failed: { label: 'Failed', tone: 'text-bad' },
+  stopped: { label: 'Stopped', tone: 'text-ink-400' },
+}
+
+/**
+ * A subagent where the call that started it was: its type and task, whether it still works, its tool count
+ * and time, and in one line its latest step (its result once it ended). Open, it lists its own steps with the
+ * rows the main chat uses, then its result.
+ */
+function SubagentBlock({ item, onOpenChat }: { item: SubagentItem; onOpenChat: OpenChat | undefined }) {
+  const [open, setOpen] = useState(false)
+  const summary = subagentSummary(item)
+  const working = summary.state === 'working'
+  const outcome = summary.state === 'working' ? null : subagentOutcome[summary.state]
+  // Collapsed, the result shows as one plain line: its first, without bold and code marks.
+  const line = working || summary.result === null || summary.result === '' ? summary.latest : (summary.result.split('\n')[0] ?? '').replace(/\*\*|`/g, '')
+  const steps = open ? groupToolRuns(visibleSteps(item)) : []
+  return (
+    <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex w-full min-w-0 flex-col gap-0.5 px-3.5 py-2 text-left text-[13px]">
+        <span className="flex w-full min-w-0 items-center gap-2">
+          <span className="w-3 shrink-0 text-[10px] text-ink-400">{open ? '▾' : '▸'}</span>
+          <WorkMark size={12} working={working} />
+          <span className="shrink-0 font-semibold text-ink-200">{summary.type}</span>
+          <span title={summary.description} className="min-w-0 flex-1 truncate text-ink-300">{summary.description}</span>
+          <span className="shrink-0 text-[12px] text-ink-400 tabular-nums">
+            {summary.tools} {summary.tools === 1 ? 'tool' : 'tools'}
+            {summary.errors > 0 && <span className="font-semibold text-bad"> · {summary.errors} failed</span>}
+            {' · '}
+            <Elapsed since={summary.startedAt} until={summary.endedAt} />
+          </span>
+          {outcome !== null && <span className={`shrink-0 text-[12px] font-semibold ${outcome.tone}`}>{outcome.label}</span>}
+        </span>
+        {!open && line !== null && line !== '' && (
+          <span title={line} className={`truncate pl-[2.6rem] text-[12.5px] text-ink-400 ${working ? 'font-mono' : ''}`}>{line}</span>
+        )}
+      </button>
+      {open && (
+        <div className="space-y-2 px-3.5 pb-3 pl-[2.6rem]">
+          {steps.length > 0 && (
+            <ol className="space-y-1.5">
+              {steps.map((step) => (
+                <Item key={step.type === 'message' ? step.event.id : step.id} item={step} onOpenChat={onOpenChat} />
+              ))}
+            </ol>
+          )}
+          {summary.result !== null && summary.result !== '' && (
+            <div onContextMenu={markMessage(summary.result)} className="rounded-xl bg-white/[0.05] px-3 py-2 text-ink-200">
+              <span className="mb-1 block text-[11px] font-semibold tracking-wide text-ink-400 uppercase">Result</span>
+              <MarkdownText text={summary.result} />
+            </div>
+          )}
+          {working && steps.length === 0 && <p className="text-[12.5px] text-ink-400">No steps yet.</p>}
+        </div>
+      )}
+    </li>
+  )
+}
+
+/** Subagents started side by side: how many still work, then each one's block. */
+function SubagentGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 'subagent-group' }>; onOpenChat: OpenChat | undefined }) {
+  const summary = subagentGroupSummary(group)
+  return (
+    <li className="max-w-[85%] space-y-1.5">
+      <p className="flex items-center gap-2 px-1 text-[13px] text-ink-400">
+        <WorkMark size={12} working={summary.working > 0} />
+        <span className="font-semibold text-ink-300">{summary.total} subagents</span>
+        <span>· {summary.working > 0 ? `${summary.working} working` : 'all finished'}</span>
+        {summary.failed > 0 && <span className="font-semibold text-bad">· {summary.failed} failed</span>}
+      </p>
+      <ol className="space-y-1.5">
+        {group.items.map((item) => (
+          <SubagentBlock key={item.id} item={item} onOpenChat={onOpenChat} />
+        ))}
+      </ol>
+    </li>
+  )
+}
+
 // Memoised: a settled row keeps its item object across polls (see conversation-derive.ts).
 const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem | NoticeDisplayItem; onOpenChat: OpenChat | undefined }) {
   if (item.type === 'notice') return <NoticeCard card={item} onOpenChat={onOpenChat} />
   if (item.type === 'tool-group') return <ToolGroup group={item} onOpenChat={onOpenChat} />
+  if (item.type === 'subagent-group') return <SubagentGroup group={item} onOpenChat={onOpenChat} />
+  if (item.type === 'subagent') return <SubagentBlock item={item} onOpenChat={onOpenChat} />
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />

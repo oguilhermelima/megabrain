@@ -18,7 +18,7 @@ function result(id: string, status: 'ok' | 'error' = 'ok'): TranscriptEvent {
 const display = (events: TranscriptEvent[]): DisplayItem[] => groupToolRuns(buildConversationItems(events))
 
 function shape(items: DisplayItem[]): string[] {
-  return items.map((item) => (item.type === 'tool-group' ? `group:${item.items.map((member) => (member.type === 'tool' ? member.id : member.event.id)).join(',')}` : item.event.id))
+  return items.map((item) => (item.type === 'tool-group' ? `group:${item.items.map((member) => (member.type === 'tool' ? member.id : member.event.id)).join(',')}` : item.type === 'message' ? item.event.id : item.id))
 }
 
 function onlyGroup(items: DisplayItem[]): Extract<DisplayItem, { type: 'tool-group' }> {

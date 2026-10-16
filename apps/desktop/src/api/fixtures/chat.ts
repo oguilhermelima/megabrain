@@ -163,6 +163,32 @@ const approvedTurn = (allowed: boolean): Step[] =>
       ]
     : [{ type: 'state', state: 'working' }, { type: 'stream', stream: 'assistant', text: 'Understood, I will not run the tests.' }, { type: 'state', state: 'idle' }]
 
+// Two subagents side by side, each with steps of its own, as chatd stores them: the Agent call carries
+// `subagent`, the steps `parentId`, and the result that ends one `subagent` with its status.
+const agentCall = (id: string, type: string, description: string): Step => ({
+  type: 'event',
+  event: { kind: 'tool-call', text: 'Agent', tool: { name: 'Agent', input: JSON.stringify({ description, subagent_type: type }) }, subagent: { id, type, description } },
+})
+const agentStep = (parentId: string, event: Omit<TranscriptEvent, 'id' | 'at'>): Step => ({ type: 'event', event: { ...event, parentId } })
+const agentEnd = (id: string, text: string): Step => ({ type: 'event', event: { kind: 'tool-result', text, tool: { name: 'Agent', status: 'ok' }, subagent: { id, status: 'completed' } } })
+const subagentSteps: Step[] = [
+  agentCall('mock-agent-steps', 'Explore', 'Map the onboarding steps'),
+  agentCall('mock-agent-tests', 'general-purpose', 'Find the tests that cover the step order'),
+  { type: 'pause', ms: 900 },
+  agentStep('mock-agent-steps', { kind: 'tool-call', text: 'Glob', tool: { name: 'Glob', input: '{"pattern":"apps/web/src/app/onboarding/_steps/*"}' } }),
+  agentStep('mock-agent-tests', { kind: 'tool-call', text: 'Grep', tool: { name: 'Grep', input: '{"pattern":"step order"}' } }),
+  { type: 'pause', ms: 1400 },
+  agentStep('mock-agent-steps', { kind: 'tool-result', text: 'account.tsx\nprofile.tsx\nwelcome.tsx', tool: { name: 'Glob', status: 'ok' } }),
+  agentStep('mock-agent-tests', { kind: 'tool-result', text: 'apps/web/src/app/onboarding/page.test.tsx', tool: { name: 'Grep', status: 'ok' } }),
+  agentStep('mock-agent-steps', { kind: 'assistant', text: 'Three step files; welcome.tsx is not imported anywhere.' }),
+  { type: 'pause', ms: 1200 },
+  agentEnd('mock-agent-steps', 'Three steps live under `_steps`: account, profile and welcome. **welcome.tsx** is unused.'),
+  agentStep('mock-agent-tests', { kind: 'tool-call', text: 'Read', tool: { name: 'Read', input: '{"file_path":"apps/web/src/app/onboarding/page.test.tsx"}' } }),
+  { type: 'pause', ms: 1600 },
+  agentStep('mock-agent-tests', { kind: 'tool-result', text: "it('renders the steps in order', …)", tool: { name: 'Read', status: 'ok' } }),
+  agentEnd('mock-agent-tests', 'page.test.tsx checks the order in one test: *renders the steps in order*.'),
+]
+
 const replyTurn = (text: string): Step[] => [
   { type: 'event', event: { kind: 'user', text } },
   { type: 'state', state: 'working' },
@@ -171,6 +197,7 @@ const replyTurn = (text: string): Step[] => [
   { type: 'event', event: { kind: 'tool-call', text: 'Read', tool: { name: 'Read', input: '{"file_path":"apps/web/src/app/onboarding/page.tsx"}' } } },
   { type: 'pause', ms: 1100 },
   { type: 'event', event: { kind: 'tool-result', text: 'export default function Onboarding() { … }', tool: { name: 'Read', status: 'ok' } } },
+  ...subagentSteps,
   { type: 'stream', stream: 'assistant', text: 'Got it. The onboarding page still renders the steps in order, so there is nothing else to change here. Tell me if you want the copy reviewed too.' },
   { type: 'state', state: 'idle' },
 ]
