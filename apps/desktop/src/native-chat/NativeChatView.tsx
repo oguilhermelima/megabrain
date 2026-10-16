@@ -13,7 +13,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, withModel, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, terminalSwitchWarning, queueOutgoing, shouldInterrupt, withModel, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
@@ -47,6 +47,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const mode = target ?? chat.mode
   const inTerminal = mode === 'terminal'
   const [actionError, setActionError] = useState<unknown>(null)
+  const [switchError, setSwitchError] = useState<unknown>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
   const title = chat.title ?? 'New chat'
   const pending = pendingApproval(state)
   const live = useMemo(() => liveTail(state), [state])
@@ -105,9 +107,18 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     announceAction()
   }
 
+  // A running turn needs a yes first; every other state switches at once.
+  const requestSwitch = () => {
+    const warning = toggle.target === 'terminal' ? terminalSwitchWarning(chat) : null
+    if (warning === null) void switchMode()
+    else setConfirming(warning)
+  }
+
   const switchMode = async () => {
     if (!toggle.enabled || switching) return
     const to = toggle.target
+    setConfirming(null)
+    setSwitchError(null)
     setSwitching(true)
     setTarget(to)
     setExited(undefined)
@@ -127,7 +138,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       setActionError(null)
       announceAction()
     } catch (caught) {
-      setActionError(caught)
+      setSwitchError(caught)
     } finally {
       opening.current = null
       setTarget(null)
@@ -170,12 +181,25 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
         title={title}
         meta={[chat.agent, chat.model, folder(chat.cwd)].filter(Boolean).join(' · ')}
         metaTitle={chat.cwd}
-        actions={<ViewSwitch view={mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={() => void switchMode()} />}
+        actions={<ViewSwitch view={mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={requestSwitch} />}
       />
       {(error !== null || actionError !== null) && (
         <div className="mx-8 mt-3 space-y-2">
           {error !== null && <ErrorNote error={error} />}
           {actionError !== null && <ErrorNote error={actionError} />}
+        </div>
+      )}
+      {confirming !== null && (
+        <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-warn">
+          <span className="min-w-0 flex-1">{confirming}</span>
+          <button type="button" onClick={() => setConfirming(null)} className="shrink-0 rounded-full px-3 py-1 text-ink-300 hover:bg-white/[0.07]">Cancel</button>
+          <button type="button" onClick={() => void switchMode()} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07]">Switch</button>
+        </div>
+      )}
+      {switchError !== null && (
+        <div className="mx-8 mt-3 flex items-start gap-3">
+          <div className="min-w-0 flex-1"><ErrorNote error={switchError} /></div>
+          <button type="button" onClick={() => void switchMode()} className="shrink-0 rounded-full px-3 py-1 text-[13px] text-ink-100 hover:bg-white/[0.07]">Retry</button>
         </div>
       )}
       {resumable(chat.state) && chat.error != null && (

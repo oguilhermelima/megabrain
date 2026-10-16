@@ -200,21 +200,16 @@ export interface ModeToggle {
   reason: string | null
 }
 
-const busyReason: Record<NativeChat['state'], string | null> = {
-  idle: null,
-  working: 'Wait until the agent finishes its turn',
-  'waiting-approval': 'Answer the pending approval first',
-  starting: 'The chat is still starting',
-  suspended: 'Send a message to resume the chat first',
-  stopped: 'The chat has stopped',
-  error: 'The chat stopped on an error',
+const RUNNING_TURN_WARNING = 'A turn is running; switching stops it'
+
+/** The terminal opens from every state; a running turn is the one thing the person must agree to stop. */
+export function terminalSwitchWarning(chat: NativeChat): string | null {
+  return chat.state === 'working' || chat.state === 'waiting-approval' ? RUNNING_TURN_WARNING : null
 }
 
-/** The conversation moves to the terminal only while the agent is idle; it can always come back. */
+/** Never disabled: the switch resumes a suspended, stopped or failed chat, or starts the agent's TUI fresh. */
 export function modeToggle(chat: NativeChat): ModeToggle {
-  if (chat.mode === 'terminal') return { target: 'chat', enabled: true, reason: null }
-  const reason = busyReason[chat.state]
-  return { target: 'terminal', enabled: reason === null, reason }
+  return { target: chat.mode === 'terminal' ? 'chat' : 'terminal', enabled: true, reason: null }
 }
 
 /** Esc in an empty composer stops the agent's turn. */

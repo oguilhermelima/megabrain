@@ -116,7 +116,7 @@ rl.on("line", (line) => {
     }
   });
 
-  test("keeps image parts in order and refuses terminal handoff during a turn", async () => {
+  test("keeps image parts in order and hands over to the terminal during a turn", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "codex", `
 const readline = require("node:readline");
@@ -154,9 +154,9 @@ rl.on("line", (line) => {
     const listed = await call(["chat", "list", "--json"], env);
     expect(listed.kind).toBe("ok");
     if (listed.kind === "ok") expect(JSON.parse(listed.value)).toContainEqual(expect.objectContaining({ id: chat.id, contextTokens: 19980, contextWindow: 258400 }));
-    const refused = await call(["chat", "mode", chat.id, "terminal", "--json"], env);
-    expect(refused.kind).toBe("failed");
-    if (refused.kind === "failed") expect(refused.error).toMatch(/idle|working/i);
+    const moved = await call(["chat", "mode", chat.id, "terminal", "--json"], env);
+    expect(moved.kind).toBe("ok");
+    if (moved.kind === "ok") expect(JSON.parse(moved.value)).toMatchObject({ chat: { mode: "terminal", state: "idle" } });
   });
 
   test("changes Codex model and effort for the next turn", async () => {

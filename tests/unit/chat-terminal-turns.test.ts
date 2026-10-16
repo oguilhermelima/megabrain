@@ -283,12 +283,12 @@ describe("switching to the terminal", () => {
     expect(result.command?.slice(0, 3)).toEqual(["claude", "--resume", "recorded-session"]);
   });
 
-  test("a chat with no agent session yet has no command and still switches", async () => {
+  test("a chat with no agent session yet opens a fresh TUI", async () => {
     const env = sandbox();
     const daemon = await daemonFor(env);
     await new ChatStore(env.state).put(record(env, { mode: "chat", terminalSince: undefined, agentSessionId: null }));
     const result = await daemon.handle({ operation: "mode", id: ID, mode: "terminal" }) as { command: string[] | null; chat: Chat };
-    expect(result).toMatchObject({ command: null, chat: { mode: "terminal" } });
+    expect(result).toMatchObject({ command: ["claude", "--dangerously-skip-permissions"], chat: { mode: "terminal" } });
   });
 });
 

@@ -52,8 +52,7 @@ const claude: ChatProtocolAdapter = {
   async steer() { throw new Error("Claude does not support steering a running turn"); },
   async interrupt(_chat, child) { child?.kill("SIGINT"); },
   terminalCommand(chat) {
-    if (!chat.agentSessionId) throw new Error("chat has no agent session to resume yet");
-    return ["claude", "--resume", chat.agentSessionId, ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
+    return ["claude", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
   },
 };
 
@@ -73,8 +72,7 @@ const codex: ChatProtocolAdapter = {
     if (turnId) await request("turn/interrupt", { threadId: chat.agentSessionId, turnId });
   },
   terminalCommand(chat) {
-    if (!chat.agentSessionId) throw new Error("chat has no agent session to resume yet");
-    return ["codex", "resume", chat.agentSessionId, ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
+    return ["codex", ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
   },
 };
 

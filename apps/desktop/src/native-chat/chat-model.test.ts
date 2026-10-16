@@ -125,13 +125,9 @@ describe('approvals', () => {
 })
 
 describe('modeToggle', () => {
-  test('chat to terminal only while idle', () => {
-    expect(modeToggle({ ...chat, state: 'idle' })).toEqual({ target: 'terminal', enabled: true, reason: null })
-    for (const state of ['working', 'waiting-approval', 'starting', 'stopped', 'error'] as const) {
-      const toggle = modeToggle({ ...chat, state })
-      expect(toggle.target).toBe('terminal')
-      expect(toggle.enabled).toBe(false)
-      expect(toggle.reason).not.toBeNull()
+  test('chat to terminal is offered in every state', () => {
+    for (const state of ['idle', 'working', 'waiting-approval', 'starting', 'suspended', 'stopped', 'error'] as const) {
+      expect(modeToggle({ ...chat, state })).toEqual({ target: 'terminal', enabled: true, reason: null })
     }
   })
 

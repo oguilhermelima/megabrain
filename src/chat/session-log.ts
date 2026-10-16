@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Chat, ChatEvent } from "./store.js";
 
@@ -108,4 +108,33 @@ export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agent
   if (path === null) return [];
   try { return (chat.agent === "claude" ? parseClaudeLog : parseCodexRollout)(await readFile(path, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+}
+
+/** The session a terminal TUI started on its own: the newest log in this chat's cwd written after `since`, or null. */
+export async function discoverSessionId(chat: Pick<Chat, "agent" | "cwd">, home: string, since: string): Promise<string | null> {
+  const after = Date.parse(since);
+  const newest = async (root: string, accept: (name: string) => boolean): Promise<string[]> => {
+    try {
+      const found: { name: string; at: number }[] = [];
+      for (const name of await readdir(root, { recursive: true })) {
+        if (!accept(name)) continue;
+        const at = (await stat(join(root, name))).mtimeMs;
+        if (at > after) found.push({ name, at });
+      }
+      return found.sort((a, b) => b.at - a.at).map((item) => item.name);
+    } catch { return []; }
+  };
+  if (chat.agent === "claude") {
+    const root = join(home, ".claude", "projects", chat.cwd.replace(/[^A-Za-z0-9]/g, "-"));
+    const [name] = await newest(root, (entry) => entry.endsWith(".jsonl") && !entry.includes("/"));
+    return name === undefined ? null : name.slice(0, -".jsonl".length);
+  }
+  const root = join(home, ".codex", "sessions");
+  for (const name of await newest(root, (entry) => entry.endsWith(".jsonl") && (entry.split("/").at(-1) ?? "").startsWith("rollout-"))) {
+    try {
+      const meta = object(object(JSON.parse((await readFile(join(root, name), "utf8")).split("\n")[0] ?? "")).payload);
+      if (text(meta.cwd) === chat.cwd && text(meta.id) !== "") return text(meta.id);
+    } catch { /* unreadable log: try the next */ }
+  }
+  return null;
 }

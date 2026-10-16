@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
-import { readSessionTurns } from "./session-log.js";
+import { discoverSessionId, readSessionTurns } from "./session-log.js";
 import { selfInvocation } from "../core/self-invocation.js";
 
 type Part = MessagePart;
@@ -556,15 +556,20 @@ export class ChatDaemon {
   private async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> {
     const chat = await this.requireChat(id);
     if (mode !== "chat" && mode !== "terminal") throw new Error("mode must be chat or terminal");
-    if (mode === "terminal" && chat.state !== "idle") throw new Error(`cannot switch to terminal while chat is ${chat.state}; wait until it is idle`);
     if (mode === "terminal") {
       const child = this.children.get(id);
       if (child) { child.kill("SIGTERM"); this.children.delete(id); }
+      this.clearStartTimer(id);
+      for (const map of [this.queues, this.activeTurns]) map.delete(id);
+      if (chat.state === "working" || chat.state === "waiting-approval") await this.publish(chat, event("system", "Interrupted"));
+      chat.error = null;
       chat.mode = "terminal";
       chat.state = "idle";
       chat.terminalSince = new Date().toISOString();
       await this.save(chat);
     } else if (chat.mode === "terminal") {
+      // A TUI opened without a session writes its own; adopt it so the chat resumes where the terminal left off.
+      if (chat.agentSessionId === null) chat.agentSessionId = await discoverSessionId(chat, this.environment.HOME ?? homedir(), chat.terminalSince ?? chat.createdAt);
       await this.importTerminalTurns(chat);
       chat.mode = "chat";
       chat.state = "starting";
@@ -573,7 +578,7 @@ export class ChatDaemon {
       void this.runAgent(chat).catch((error) => this.fail(id, error));
     }
     // The terminal's command rides along, so opening it costs no second round trip.
-    return { chat, terminal: null, command: chat.mode === "terminal" && chat.agentSessionId ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
+    return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
   }
 
   /** Turns typed in the terminal live only in the agent's log; they join the chat, once each, before the agent respawns. */
@@ -589,7 +594,6 @@ export class ChatDaemon {
 
   private async terminalCommand(id: string): Promise<string[]> {
     const chat = await this.requireChat(id);
-    if (!chat.agentSessionId) throw new Error("chat has no agent session to resume yet");
     return chatProtocolAdapters[chat.agent].terminalCommand(chat);
   }
 
