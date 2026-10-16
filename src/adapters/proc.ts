@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { scrubAgentEnvironment } from "../core/agent-env.js";
 import { failed, ok, type Result } from "../core/result.js";
 
 export type ProcessOutput = {
@@ -8,7 +9,7 @@ export type ProcessOutput = {
 };
 
 export type ProcessAdapter = {
-  run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number }): Promise<Result<ProcessOutput>>;
+  run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number; readonly scrubAgentEnvironment?: boolean }): Promise<Result<ProcessOutput>>;
   startDetached(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> }): Promise<Result<{ readonly pid: number }>>;
   invocationCount(): number;
 };
@@ -20,16 +21,21 @@ function missingExecutable(error: unknown): boolean {
     /^Executable not found in \$PATH:/.test(error.message);
 }
 
+function childEnvironment(options: { readonly env?: Readonly<Record<string, string>>; readonly scrubAgentEnvironment?: boolean }): Record<string, string | undefined> {
+  const merged = { ...process.env, ...options.env };
+  return options.scrubAgentEnvironment === true ? scrubAgentEnvironment(merged) : merged;
+}
+
 export function createProcessAdapter(): ProcessAdapter {
   let count = 0;
 
-  async function run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number }): Promise<Result<ProcessOutput>> {
+  async function run(command: string, args: readonly string[], options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number; readonly scrubAgentEnvironment?: boolean }): Promise<Result<ProcessOutput>> {
     count += 1;
     try {
       const child = spawn(command, [...args], {
         stdio: ["ignore", "pipe", "pipe"],
         ...(options?.cwd ? { cwd: options.cwd } : {}),
-        ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
+        ...(options?.env || options?.scrubAgentEnvironment ? { env: childEnvironment(options) } : {}),
       });
       let stdout = "";
       let stderr = "";

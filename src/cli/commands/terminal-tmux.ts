@@ -41,7 +41,7 @@ export async function createTmuxTerminal(
   const args = reuse
     ? ["new-window", "-d", "-t", `${name}:`, "-c", worktreePath, "-P", "-F", paneFormat, command]
     : ["new-session", "-d", "-s", name, "-c", worktreePath, "-P", "-F", paneFormat, command];
-  const result = await process.run("tmux", args);
+  const result = await process.run("tmux", args, { scrubAgentEnvironment: true });
   if (result.kind !== "ok") return failed(`could not open a tmux terminal: ${result.error}`, result.exitCode);
   const pane = parsePane(result.value.stdout);
   if (pane === undefined) return failed("could not open a tmux terminal: tmux returned no pane");

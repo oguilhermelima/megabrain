@@ -38,6 +38,31 @@ const IDENTITY_ENV: &[&str] = &[
     "TMUX_PANE",
 ];
 
+/// Mirror of src/core/agent-env.ts: variables naming the agent session or host pane that opened the app.
+pub fn is_agent_marker(name: &str) -> bool {
+    const KEPT_PREFIXES: &[&str] = &["CLAUDE_CODE_USE_", "CLAUDE_CODE_OAUTH_", "CLAUDE_CODE_API_KEY", "CLAUDE_CODE_DISABLE_", "CLAUDE_CODE_MAX_"];
+    if name == "CODEX_HOME" || KEPT_PREFIXES.iter().any(|prefix| name.starts_with(prefix)) {
+        return false;
+    }
+    const EXACT: &[&str] = &["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT", "TMUX", "TMUX_PANE"];
+    const PREFIXES: &[&str] = &[
+        "CLAUDE_CODE_", "ORCA_", "SUPERSET_", "CODEX_", "GROK_", "ANTIGRAVITY_",
+        "MEGABRAIN_DISPATCH", "MEGABRAIN_SESSION", "MEGABRAIN_PARENT", "MEGABRAIN_CHILD",
+    ];
+    EXACT.contains(&name) || PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
+/// The app is the operator, however it was opened. Everything it starts afterwards (chatd, terminals,
+/// the tmux server) inherits this cleaned environment.
+pub fn scrub_agent_env() {
+    let names: Vec<_> = std::env::vars_os().map(|(name, _)| name).collect();
+    for name in names {
+        if name.to_str().is_some_and(is_agent_marker) {
+            std::env::remove_var(&name);
+        }
+    }
+}
+
 pub fn cli_command(executable: &Path, root: &Path, path: &str, args: &[&str]) -> Command {
     let mut command = Command::new(executable);
     command
@@ -103,4 +128,19 @@ pub fn login_path() -> Option<String> {
     }
     let output = child.wait_with_output().ok()?;
     path_from_shell_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(test)]
+mod scrub_tests {
+    use super::is_agent_marker;
+
+    #[test]
+    fn marks_session_variables_and_keeps_configuration() {
+        for name in ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ORCA_PANE_KEY", "SUPERSET_TERMINAL_ID", "CODEX_THREAD_ID", "GROK_AGENT", "ANTIGRAVITY_AGENT", "AI_AGENT", "MEGABRAIN_DISPATCH_ID", "TMUX", "TMUX_PANE"] {
+            assert!(is_agent_marker(name), "{name}");
+        }
+        for name in ["PATH", "HOME", "CODEX_HOME", "MEGABRAIN_STATE_DIR", "CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_API_KEY"] {
+            assert!(!is_agent_marker(name), "{name}");
+        }
+    }
 }

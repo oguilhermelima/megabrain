@@ -1,3 +1,4 @@
+import { scrubAgentEnvironment } from "../core/agent-env.js";
 import { randomUUID } from "node:crypto";
 import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -186,7 +187,7 @@ export class ChatDaemon {
 
   private async runAgent(chat: Chat): Promise<void> {
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, this.stateDir);
-    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...process.env, ...this.environment }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: scrubAgentEnvironment({ ...process.env, ...this.environment }), stdio: ["pipe", "pipe", "pipe"] });
     this.children.set(chat.id, child);
     this.outputSeen.delete(chat.id);
     let stdout = "";
@@ -243,7 +244,9 @@ export class ChatDaemon {
       await this.drain(chat.id);
     } else {
       // Claude prints system/init only after its first user line, so queued input goes out now.
-      // With nothing queued the chat stays starting until init or the first send, which writes to the open stdin.
+      // With nothing queued the process is up with stdin open, which is idle: the first send writes to it.
+      const current = await this.requireChat(chat.id);
+      if (current.state === "starting" && (this.queues.get(chat.id)?.length ?? 0) === 0) { current.state = "idle"; await this.save(current); }
       await this.drain(chat.id);
     }
   }
@@ -786,7 +789,7 @@ export async function callChatd(stateDir: string, request: Request, environment:
   }
   try {
     const invocation = selfInvocation(process.execPath, process.argv, ["__chatd"]);
-    const launched = await processAdapter.startDetached(invocation.command, invocation.args, { env: { ...environment, MEGABRAIN_CHATD_STATE_DIR: stateDir } });
+    const launched = await processAdapter.startDetached(invocation.command, invocation.args, { env: { ...scrubAgentEnvironment({ ...process.env, ...environment }), MEGABRAIN_CHATD_STATE_DIR: stateDir } });
     if (launched.kind === "ok") return await requestWhenReady();
     // Embedded callers such as the test router share a process; production launches a detached owner.
     const daemon = new ChatDaemon(stateDir, environment);

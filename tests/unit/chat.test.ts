@@ -464,8 +464,10 @@ rl.on("line", (line) => {
       if (terminal.kind === "ok") expect(JSON.parse(terminal.value)).toMatchObject({ chat: { mode: "terminal" }, terminal: null });
       const resumed = await call(["chat", "mode", chatId, "chat", "--json"], env);
       expect(resumed.kind).toBe("ok");
+      let captured = readFileSync(env.capture, "utf8");
+      for (let attempt = 0; attempt < 250 && !captured.includes("--resume"); attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 20)); captured = readFileSync(env.capture, "utf8"); }
+      expect(captured).toContain("--resume");
       await waitForChat(chatId, "idle", env);
-      expect(readFileSync(env.capture, "utf8")).toContain("--resume");
     } finally {
       if (chatId) await call(["chat", "stop", chatId], env);
       await daemon.close();

@@ -296,6 +296,7 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    cli::scrub_agent_env();
     let app = tauri::Builder::default()
         .setup(|app| {
             let executable = sidecar(&std::env::current_exe()?);
