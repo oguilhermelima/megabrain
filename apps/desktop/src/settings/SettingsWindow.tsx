@@ -11,6 +11,7 @@ import { ProjectPage } from '@/settings/ProjectPage'
 import { groupReadingsByProvider } from '@/settings/settings-model'
 import { adjacentKey, initialKey, navGroups, navKeys, projectPathOf, sectionInfo, type NavKey } from '@/settings/settings-nav'
 import { ghostIcon, SectionPage, SettingsIcon } from '@/settings/settings-ui'
+import { ShortcutsSection } from '@/settings/ShortcutsSection'
 import { SupervisorSection } from '@/settings/SupervisorSection'
 import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
@@ -53,7 +54,10 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  useEffect(() => content.current?.scrollTo({ top: 0 }), [section])
+  // A block body: Chromium's scrollTo returns a promise, which React would call as the cleanup.
+  useEffect(() => {
+    content.current?.scrollTo({ top: 0 })
+  }, [section])
 
   /** Runs a write, shows its error if it fails, re-reads settings either way; true when it worked. */
   const act = async (run: () => Promise<void>): Promise<boolean> => {
@@ -197,6 +201,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
                   onToggleHistory={(enabled) => void act(() => api.setResourceHistory(enabled))}
                 />
               )}
+              {section === 'shortcuts' && <ShortcutsSection />}
               {section === 'models' && <ModelsSection models={settings.models} error={error} onRefresh={async (agent) => void (await act(() => api.refreshModels(agent)))} />}
               {section === 'terminal' && (
                 <TerminalSection

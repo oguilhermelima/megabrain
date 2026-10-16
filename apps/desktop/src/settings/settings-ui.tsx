@@ -23,6 +23,12 @@ const iconPaths: Record<SectionIcon, ReactNode> = {
       <path d="m8 11 2.5-3" />
     </>
   ),
+  keyboard: (
+    <>
+      <rect x="1.5" y="4" width="13" height="8" rx="1.5" />
+      <path d="M4 6.5h.01M6.5 6.5h.01M9 6.5h.01M11.5 6.5h.01M5 9.5h6" />
+    </>
+  ),
   cpu: (
     <>
       <rect x="4" y="4" width="8" height="8" rx="1.5" />

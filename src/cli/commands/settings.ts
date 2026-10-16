@@ -47,10 +47,6 @@ type SidebarFolders = {
 
 const emptySidebarFolders: SidebarFolders = { version: 1, folders: [], order: [] };
 
-function sidebarFoldersFile(environment: Environment): string {
-  return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"), "sidebar-settings.json");
-}
-
 const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every((entry) => typeof entry === "string");
 const hasOnlyKeys = (value: object, keys: readonly string[]) => Object.keys(value).every((key) => keys.includes(key));
 
@@ -80,15 +76,87 @@ function parseSidebarFolders(raw: string): Result<SidebarFolders> {
   return ok({ version: 1, folders, order: record.order });
 }
 
-async function readSidebarFolders(environment: Environment): Promise<SidebarFolders> {
-  try {
-    const parsed = parseSidebarFolders(await readFile(sidebarFoldersFile(environment), "utf8"));
-    return parsed.kind === "ok" ? parsed.value : emptySidebarFolders;
-  } catch { return emptySidebarFolders; }
+// Two more desktop files with the same contract as the folders: the app owns the meaning, the CLI
+// checks the shape and writes it privately. Shortcut overrides map an action id to its keys; hidden
+// sessions map a session id to its last activity when the sidebar closed it.
+type ShortcutOverrides = { version: 1; bindings: Record<string, string[]> };
+type HiddenSessions = { version: 1; sessions: Record<string, string | null> };
+
+const emptyShortcutOverrides: ShortcutOverrides = { version: 1, bindings: {} };
+const emptyHiddenSessions: HiddenSessions = { version: 1, sessions: {} };
+
+function desktopFile(environment: Environment, name: string): string {
+  return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"), name);
 }
 
-async function writeSidebarFolders(environment: Environment, value: SidebarFolders): Promise<void> {
-  await writePrivateJson(sidebarFoldersFile(environment), value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+function parseShortcutOverrides(raw: string): Result<ShortcutOverrides> {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return failed("shortcuts: not valid JSON", 2); }
+  if (!isRecord(value) || !hasOnlyKeys(value, ["version", "bindings"]) || value.version !== 1 || !isRecord(value.bindings)) return failed("shortcuts: expected { version: 1, bindings }", 2);
+  const bindings: Record<string, string[]> = {};
+  for (const [id, keys] of Object.entries(value.bindings)) {
+    if (!isStringList(keys)) return failed(`shortcuts: the keys of ${id} must be a list of strings`, 2);
+    bindings[id] = keys;
+  }
+  return ok({ version: 1, bindings });
+}
+
+function parseHiddenSessions(raw: string): Result<HiddenSessions> {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return failed("hidden-sessions: not valid JSON", 2); }
+  if (!isRecord(value) || !hasOnlyKeys(value, ["version", "sessions"]) || value.version !== 1 || !isRecord(value.sessions)) return failed("hidden-sessions: expected { version: 1, sessions }", 2);
+  const sessions: Record<string, string | null> = {};
+  for (const [id, at] of Object.entries(value.sessions)) {
+    if (typeof at !== "string" && at !== null) return failed(`hidden-sessions: the last activity of ${id} must be a string or null`, 2);
+    sessions[id] = at;
+  }
+  return ok({ version: 1, sessions });
+}
+
+interface DesktopFile {
+  file: string;
+  empty: object;
+  /** The checked value and the line `set` prints, or why it was refused. */
+  parse: (raw: string) => Result<{ value: object; saved: string }>;
+}
+
+function desktopFileOf<T extends object>(file: string, parse: (raw: string) => Result<T>, empty: T, saved: (value: T) => string): DesktopFile {
+  return {
+    file,
+    empty,
+    parse: (raw) => {
+      const parsed = parse(raw);
+      return parsed.kind === "ok" ? ok({ value: parsed.value, saved: saved(parsed.value) }) : parsed;
+    },
+  };
+}
+
+/** The desktop files `settings get|set <name>` reads and replaces whole. */
+const desktopSettings = {
+  "sidebar-folders": desktopFileOf("sidebar-settings.json", parseSidebarFolders, emptySidebarFolders, (value) => `sidebar folders: ${value.folders.length}`),
+  "shortcuts": desktopFileOf("shortcut-settings.json", parseShortcutOverrides, emptyShortcutOverrides, (value) => `shortcut overrides: ${Object.keys(value.bindings).length}`),
+  "hidden-sessions": desktopFileOf("hidden-sessions.json", parseHiddenSessions, emptyHiddenSessions, (value) => `hidden sessions: ${Object.keys(value.sessions).length}`),
+} as const;
+
+type DesktopSetting = keyof typeof desktopSettings;
+const isDesktopSetting = (name: string | undefined): name is DesktopSetting => name !== undefined && Object.hasOwn(desktopSettings, name);
+
+async function readDesktopSetting(environment: Environment, name: DesktopSetting): Promise<object> {
+  const setting = desktopSettings[name];
+  try {
+    const parsed = setting.parse(await readFile(desktopFile(environment, setting.file), "utf8"));
+    return parsed.kind === "ok" ? parsed.value.value : setting.empty;
+  } catch { return setting.empty; }
+}
+
+async function writeDesktopSetting(environment: Environment, name: DesktopSetting, raw: string): Promise<Result<string>> {
+  const setting = desktopSettings[name];
+  const parsed = setting.parse(raw);
+  if (parsed.kind !== "ok") return parsed;
+  await writePrivateJson(desktopFile(environment, setting.file), parsed.value.value);
+  return ok(`${parsed.value.saved}\n`);
 }
 
 const APPEARANCE_USAGE = "Usage: megabrain settings set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]";
@@ -213,16 +281,13 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || args[1] !== "sidebar-folders") return failed("Usage: megabrain settings get sidebar-folders|project-appearance", 2);
-    return ok(`${JSON.stringify(await readSidebarFolders(environment))}\n`);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|shortcuts|hidden-sessions|project-appearance", 2);
+    return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
-  if (args[0] === "set" && args[1] === "sidebar-folders") {
+  if (args[0] === "set" && isDesktopSetting(args[1])) {
     const raw = args[2];
-    if (args.length !== 3 || raw === undefined) return failed("Usage: megabrain settings set sidebar-folders <json>", 2);
-    const parsed = parseSidebarFolders(raw);
-    if (parsed.kind !== "ok") return parsed;
-    await writeSidebarFolders(environment, parsed.value);
-    return ok(`sidebar folders: ${parsed.value.folders.length}\n`);
+    if (args.length !== 3 || raw === undefined) return failed(`Usage: megabrain settings set ${args[1]} <json>`, 2);
+    return writeDesktopSetting(environment, args[1], raw);
   }
   if (args[0] === "set") {
     if (args.length !== 3 || args[1] !== "terminal-engine" || (args[2] !== "native" && args[2] !== "tmux")) return failed("Usage: megabrain settings set terminal-engine native|tmux", 2);

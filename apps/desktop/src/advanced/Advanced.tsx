@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent
 import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
+import { joinLabel } from '@/advanced/item-menus'
 import { groupChats, worktreeRepositories } from '@/advanced/model'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
@@ -50,7 +51,8 @@ import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, spanItem, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
 import { activeGroup, addToGroup, arrangeGroup, arrangeMember, changeGroupPanes, changeGroupStrip, changeShown, closeGroup, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, openLayoutItem, parseLayout, presetsFor, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shiftMember, shownPanes, splitBeside, splitItems, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
-import { paneShortcut } from '@/panes/shortcuts'
+import { matchShortcut, type ShortcutId } from '@/lib/shortcuts'
+import { recordingShortcut, useShortcutBindings } from '@/lib/shortcut-store'
 import { groupRows, groupsByPlace, type GroupRow, type MemberInfo } from '@/advanced/split-rows'
 import { SplitRowsContext, type SplitDrop, type SplitRowsValue } from '@/advanced/SplitRows'
 import type { JoinTarget } from '@/advanced/useRowDrag'
@@ -600,6 +602,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       ...joinChoices(item),
     ]
   })
+  const joinItem = (title: string) => {
+    const { label, full } = joinLabel({ name: null, members: [{ title }] })
+    return { label, title: full }
+  }
   // Join with…, the keyboard's way to drop a row on another: every group the row is not in, and the
   // item shown alone, when it is another one.
   const joinChoices = (item: string): MenuItem[] => {
@@ -607,8 +613,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     const alone = paneLayout.active === null ? (paneList(paneLayout.single.root)[0]?.item ?? null) : null
     const groups = splitRowsValue.filter((row) => row.id !== own)
     return [
-      ...groups.map((row): MenuItem => ({ label: `Join with ${row.title}`, icon: 'splitGrid', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'group', groupId: row.id } }) })),
-      ...(alone === null || alone === item || groupOfItem(paneLayout, alone) !== null ? [] : [{ label: `Join with ${describeItem(alone).title}`, icon: 'splitRight', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'item', item: alone } }) } satisfies MenuItem]),
+      ...groups.map((row): MenuItem => {
+        const { label, full } = joinLabel(row)
+        return { label, title: full, icon: 'splitGrid', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'group', groupId: row.id } }) }
+      }),
+      ...(alone === null || alone === item || groupOfItem(paneLayout, alone) !== null
+        ? []
+        : [{ ...joinItem(describeItem(alone).title), icon: 'splitRight', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'item', item: alone } }) } satisfies MenuItem]),
     ]
   }
   /** What a join from the sidebar makes of the layout: a row joins a row or a group, a group takes in a row. */
@@ -904,72 +915,74 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The focused pane's worktree: its run panel shows, and ⌘T opens a terminal there.
   const runRoot = githubPage !== null || focusedItem === null ? null : rootOf(focusedItem)
   const runControls = controlsFor(runRoot)
+  // The window's shortcuts, by the keys Settings > Shortcuts gives them (lib/shortcuts.ts). Escape is
+  // never handled here, so Code keeps it; nothing is, while Settings records a combination.
+  const shortcutKeys = useShortcutBindings()
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey && event.key === ',') {
-        event.preventDefault()
-        setSettingsOpen(true)
-        return
-      }
-      // Escape is never handled here, so Code keeps it.
-      if (event.metaKey && event.key.toLowerCase() === 'n' && !event.shiftKey && !event.altKey) {
-        event.preventDefault()
-        openNewChat(null)
-        return
-      }
-      if (event.metaKey && event.key.toLowerCase() === 'b') {
-        event.preventDefault()
-        toggleSidebarCollapsed()
-        return
-      }
-      if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
+      if (recordingShortcut()) return
+      const id = matchShortcut(event, shortcutKeys)
+      if (id === 'settings.open') setSettingsOpen(true)
+      else if (id === 'chat.new') openNewChat(null)
+      else if (id === 'sidebar.toggle') toggleSidebarCollapsed()
+      else if (id === 'sidebar.focus') focusSidebar()
+      else if (id === 'item.next' || id === 'item.previous') {
+        const next = neighbourSession(sessionRows, selectedSessionId, id === 'item.next' ? 1 : -1)
+        if (next !== null) openSession(next.session, next.worktreePath)
+      } else return
       event.preventDefault()
-      const step = event.key === ']' ? 1 : -1
-      const next = neighbourSession(sessionRows, selectedSessionId, step)
-      if (next !== null) openSession(next.session, next.worktreePath)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [sessionRows, selectedSessionId])
+  }, [sessionRows, selectedSessionId, shortcutKeys, sidebarCollapsed])
 
-  // ⌘T opens a terminal in the focused pane's worktree and ⌘⌥ arrows move the focus between panes.
-  // They listen in the capture phase, so a terminal or an editor in a pane does not keep them.
+  // The pane keys and ⌘T listen in the capture phase, so a terminal or an editor in a pane does not keep them.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const shortcut = paneShortcut(event)
-      if (shortcut !== null && !settingsOpen) {
-        event.preventDefault()
-        event.stopPropagation()
-        // In a split ⌘W closes the focused pane and its item stays in the sidebar; alone it closes the item.
-        if (shortcut === 'close-pane') {
-          if (paneList(panes.root).length > 1) closePaneById(panes.focused)
-          else closeFocused().catch(() => {})
-        } else splitWith(null, shortcut === 'split-right' ? 'right' : 'bottom')
-        return
-      }
-      if (!event.metaKey || event.shiftKey || event.ctrlKey) return
-      if (event.key.toLowerCase() === 't' && !event.altKey) {
-        event.preventDefault()
-        event.stopPropagation()
+      if (recordingShortcut()) return
+      const id = matchShortcut(event, shortcutKeys)
+      if (id === null) return
+      const direction = paneDirections[id]
+      if (id === 'terminal.new') {
         const cwd = runRoot ?? worktreeChoices(projects)[0]?.path ?? null
         if (cwd !== null && cwd !== '') openTerminal(cwd, null)
-        return
-      }
-      const direction = event.altKey ? arrowDirections[event.key] : undefined
-      if (direction === undefined) return
+      } else if (settingsOpen) return
+      else if (id === 'pane.close') {
+        // In a split it closes the focused pane and its item stays in the sidebar; alone it closes the item.
+        if (paneList(panes.root).length > 1) closePaneById(panes.focused)
+        else closeFocused().catch(() => {})
+      } else if (id === 'pane.splitRight' || id === 'pane.splitDown') splitWith(null, id === 'pane.splitRight' ? 'right' : 'bottom')
+      else if (id === 'pane.next' || id === 'pane.previous') {
+        const leaves = paneList(panes.root)
+        const at = leaves.findIndex((leaf) => leaf.id === panes.focused)
+        const target = leaves[(at + (id === 'pane.next' ? 1 : -1) + leaves.length) % leaves.length]?.id ?? null
+        if (target === null || leaves.length < 2) return
+        focusPaneById(target)
+      } else if (direction !== undefined) {
+        // Left and right go between columns, up and down within one; the strip scrolls to the pane.
+        const target = navigate(panes.root, panes.focused, direction)
+        if (target === null) return
+        focusPaneById(target)
+      } else return
       event.preventDefault()
       event.stopPropagation()
-      // Left and right go between columns, up and down within one; the strip scrolls to the pane.
-      const target = navigate(panes.root, panes.focused, direction)
-      if (target === null) return
-      const next = { ...panes, focused: target }
-      setPanes(() => next)
-      // The keyboard goes with the focus: into the pane's terminal, composer or first field.
-      requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(next.focused)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [runRoot, projects, panes, paneLayout, settingsOpen])
+  }, [runRoot, projects, panes, paneLayout, settingsOpen, shortcutKeys])
+  // The keyboard goes with the focus: into the pane's terminal, composer or first field.
+  const focusPaneById = (paneId: string) => {
+    setPanes((current) => ({ ...current, focused: paneId }))
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
+  }
+  // Focus the sidebar on its selected row, or its first one; a collapsed sidebar opens first.
+  const focusSidebar = () => {
+    if (sidebarCollapsed) toggleSidebarCollapsed()
+    requestAnimationFrame(() => {
+      const nav = document.querySelector<HTMLElement>('nav[aria-label="Projects"]')
+      ;(nav?.querySelector<HTMLElement>('[aria-current="true"]') ?? nav?.querySelector<HTMLElement>('button'))?.focus()
+    })
+  }
 
   const runPanelRoots = Object.keys(runs.panels).filter((root) => runs.panels[root]?.tabs.length !== 0)
   const runPanelShown = runControls !== null && runControls.panel.open
@@ -1155,7 +1168,7 @@ function hasActionBar(item: string): boolean {
   return kind !== undefined && paneViewKinds.has(kind)
 }
 
-const arrowDirections: Partial<Record<string, Direction>> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
+const paneDirections: Partial<Record<ShortcutId, Direction>> = { 'pane.focusLeft': 'left', 'pane.focusRight': 'right', 'pane.focusUp': 'up', 'pane.focusDown': 'down' }
 
 /** A pane whose item is no longer listed: a dispatch that was pruned, a chat that ended elsewhere. */
 function GoneNote() {

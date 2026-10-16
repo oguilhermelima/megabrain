@@ -14,7 +14,7 @@ const projects = [
 describe('settings navigation', () => {
   test('every fixed section is reachable exactly once; projects are no longer a section', () => {
     const keys = settingsSections.map((section) => section.key)
-    expect([...keys].sort()).toEqual(['chains', 'limits', 'models', 'supervisor', 'terminal', 'usage'])
+    expect([...keys].sort()).toEqual(['chains', 'limits', 'models', 'shortcuts', 'supervisor', 'terminal', 'usage'])
     expect(new Set(keys).size).toBe(keys.length)
   })
 

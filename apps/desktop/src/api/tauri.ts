@@ -163,6 +163,7 @@ export function createTauriApi(): DesktopApi {
     openUrl: (url) => openUrl(url),
     revealPath: (path) => revealItemInDir(path),
     releaseSession: async (sessionId) => void (await cliText(['session', 'release', sessionId, '--json'])),
+    ownSession: async (sessionId) => void (await cliText(['session', 'own', sessionId, '--json'])),
     openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
     stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),
     openInCode: (root, path, line) =>
@@ -348,5 +349,9 @@ export function createTauriApi(): DesktopApi {
     setTerminalEngine: async (engine) => void (await cliText(['settings', 'set', 'terminal-engine', engine])),
     sidebarFolders: () => cliJson(['settings', 'get', 'sidebar-folders'], z.unknown()),
     setSidebarFolders: async (json) => void (await cliText(['settings', 'set', 'sidebar-folders', json])),
+    hiddenSessions: () => cliJson(['settings', 'get', 'hidden-sessions'], z.unknown()),
+    setHiddenSessions: async (json) => void (await cliText(['settings', 'set', 'hidden-sessions', json])),
+    shortcuts: () => cliJson(['settings', 'get', 'shortcuts'], z.unknown()),
+    setShortcuts: async (json) => void (await cliText(['settings', 'set', 'shortcuts', json])),
   }
 }

@@ -15,6 +15,8 @@ export interface MenuRow {
   disabled?: boolean
   /** In the danger colour. */
   danger?: boolean
+  /** The whole text, as a tooltip, when the label is shortened. */
+  title?: string
   onSelect: () => void
 }
 
@@ -23,6 +25,8 @@ export interface MenuItem {
   label: string
   icon: MenuIcon
   group: MenuGroup
+  /** The whole text, as a tooltip, when the label is shortened. */
+  title?: string
   onSelect: () => void
 }
 
@@ -169,6 +173,7 @@ function MenuCard({ menu, leaving, onClose }: { menu: OpenMenu; leaving: boolean
               type="button"
               role="menuitem"
               disabled={row.disabled === true}
+              title={row.title}
               onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })}
               onClick={() => {
                 restore()

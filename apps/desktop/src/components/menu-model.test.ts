@@ -4,8 +4,8 @@ import { menuFocusStep, menuGroups, menuSections, shortcutLabel, type MenuGroup 
 const item = (label: string, group: MenuGroup) => ({ label, group })
 
 describe('menuSections', () => {
-  test('the groups run open, git, copy, organise, then destructive', () => {
-    expect(menuGroups).toEqual(['open', 'git', 'copy', 'organise', 'danger'])
+  test('the groups run open, split, git, copy, organise, then destructive', () => {
+    expect(menuGroups).toEqual(['open', 'split', 'git', 'copy', 'organise', 'danger'])
   })
 
   test('sorts items into their groups in the fixed order, keeping order within a group', () => {

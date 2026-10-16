@@ -22,6 +22,8 @@ export function createMockApi(): DesktopApi {
   }
   let settings = mockSettings
   let sidebarFolders: unknown = { version: 1, folders: [], order: [] }
+  let hiddenSessions: unknown = { version: 1, sessions: {} }
+  let shortcuts: unknown = { version: 1, bindings: {} }
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
   const githubStates = new Map<string, string>()
@@ -37,14 +39,21 @@ export function createMockApi(): DesktopApi {
     const draft = kind === 'pr' ? draftOf(detail.number) : undefined
     return { ...detail, state: githubStates.get(key) ?? detail.state, ...(draft === undefined ? {} : { isDraft: draft }), comments: [...detail.comments, ...(githubComments.get(key) ?? [])] }
   }
-  // Sessions released from megabrain's tmux server (`session release`).
+  // Sessions released from megabrain's tmux server (`session release`), and ones taken over (`session own`).
   const released = new Set<string>()
+  const taken = new Set<string>()
   const withOwnership = (projects: Project[]): Project[] =>
     projects.map((project) => ({
       ...project,
       worktrees: project.worktrees.map((worktree) => ({
         ...worktree,
-        sessions: worktree.sessions.map((session) => (released.has(session.sessionId) ? { ...session, owner: 'external' as const, tmuxServer: null, tmuxSession: null } : session)),
+        sessions: worktree.sessions.map((session) =>
+          released.has(session.sessionId)
+            ? { ...session, owner: 'external' as const, tmuxServer: null, tmuxSession: null }
+            : taken.has(session.sessionId)
+              ? { ...session, owner: 'megabrain' as const, tmuxServer: 'megabrain-app', tmuxSession: session.sessionId.replace(':', '-') }
+              : session,
+        ),
       })),
     }))
   const ownedSession = (sessionId: string) =>
@@ -157,7 +166,14 @@ export function createMockApi(): DesktopApi {
     sendToSession: async (sessionId) => ({ delivered: true, channel: ownedSession(sessionId) ? 'tmux' : 'claude-peer' }),
     openUrl: async (url) => void window.open(url, '_blank', 'noopener'),
     revealPath: async () => {},
-    releaseSession: async (sessionId) => void released.add(sessionId),
+    releaseSession: async (sessionId) => {
+      taken.delete(sessionId)
+      released.add(sessionId)
+    },
+    ownSession: async (sessionId) => {
+      released.delete(sessionId)
+      taken.add(sessionId)
+    },
     openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     stopCodeServer: async () => {},
     openInCode: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
@@ -376,5 +392,9 @@ export function createMockApi(): DesktopApi {
     setTerminalEngine: async () => {},
     sidebarFolders: async () => sidebarFolders,
     setSidebarFolders: async (json) => void (sidebarFolders = JSON.parse(json) as unknown),
+    hiddenSessions: async () => hiddenSessions,
+    setHiddenSessions: async (json) => void (hiddenSessions = JSON.parse(json) as unknown),
+    shortcuts: async () => shortcuts,
+    setShortcuts: async (json) => void (shortcuts = JSON.parse(json) as unknown),
   }
 }

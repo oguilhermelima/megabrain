@@ -212,6 +212,89 @@ describe("settings sidebar-folders", () => {
   });
 });
 
+describe("settings shortcuts", () => {
+  const overrides = { version: 1, bindings: { "pane.close": ["mod+shift+w"], "terminal.new": [] } };
+
+  async function read(env: ReturnType<typeof sandbox>): Promise<unknown> {
+    const result = await run(["settings", "get", "shortcuts"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(result.error);
+    return JSON.parse(result.value) as unknown;
+  }
+
+  test("reads no overrides before anything was saved", async () => {
+    expect(await read(sandbox())).toEqual({ version: 1, bindings: {} });
+  });
+
+  test("stores the overrides as a private state-dir file and reads them back", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "shortcuts", JSON.stringify(overrides)], env)).kind).toBe("ok");
+    expect(await read(env)).toEqual(overrides);
+    const file = join(env.state, "shortcut-settings.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(overrides);
+  });
+
+  test("refuses anything that is not a set of overrides and keeps the saved one", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "shortcuts", JSON.stringify(overrides)], env)).kind).toBe("ok");
+    const refused = [
+      "not json",
+      JSON.stringify([]),
+      JSON.stringify({ version: 2, bindings: {} }),
+      JSON.stringify({ version: 1, bindings: [] }),
+      JSON.stringify({ version: 1, bindings: { "pane.close": "mod+w" } }),
+      JSON.stringify({ version: 1, bindings: { "pane.close": [3] } }),
+      JSON.stringify({ version: 1, bindings: {}, extra: true }),
+    ];
+    for (const value of refused) {
+      const result = await run(["settings", "set", "shortcuts", value], env);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error.split(/\r?\n/)).toHaveLength(1);
+    }
+    expect(await read(env)).toEqual(overrides);
+  });
+
+  test("reads no overrides when the saved file is damaged", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "shortcut-settings.json"), "{broken");
+    expect(await read(env)).toEqual({ version: 1, bindings: {} });
+  });
+});
+
+describe("settings hidden-sessions", () => {
+  const hidden = { version: 1, sessions: { "claude:1": "2026-10-15T10:00:00.000Z", "codex:2": null } };
+
+  async function read(env: ReturnType<typeof sandbox>): Promise<unknown> {
+    const result = await run(["settings", "get", "hidden-sessions"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(result.error);
+    return JSON.parse(result.value) as unknown;
+  }
+
+  test("reads nothing hidden before anything was saved", async () => {
+    expect(await read(sandbox())).toEqual({ version: 1, sessions: {} });
+  });
+
+  test("stores the hidden sessions as a private state-dir file and reads them back", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "hidden-sessions", JSON.stringify(hidden)], env)).kind).toBe("ok");
+    expect(await read(env)).toEqual(hidden);
+    const file = join(env.state, "hidden-sessions.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  test("refuses anything else and keeps the saved list", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "hidden-sessions", JSON.stringify(hidden)], env)).kind).toBe("ok");
+    for (const value of ["nope", JSON.stringify({ version: 1, sessions: [] }), JSON.stringify({ version: 1, sessions: { "claude:1": 4 } }), JSON.stringify({ version: 1, sessions: {}, more: 1 })]) {
+      const result = await run(["settings", "set", "hidden-sessions", value], env);
+      expect(result.kind).toBe("failed");
+    }
+    expect(await read(env)).toEqual(hidden);
+  });
+});
+
 describe("chain save", () => {
   test("creates and replaces a chain without an editor", async () => {
     const env = sandbox();

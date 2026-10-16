@@ -1,13 +1,14 @@
 // What every row menu in the sidebar holds, and the order it shows it in. Items are grouped by kind,
 // the groups always in this order with a separator between them, and destructive items last:
 //   open      New chat, New terminal, Open in Code, Show on GitHub, Reveal in Finder
+//   split     Split right, Split down, Join with…
 //   git       New worktree, New stacked branch, Sync stack, Open PRs, Merge stack
 //   copy      Copy path, Copy branch name, Refresh
 //   organise  Rename, Move to folder, Hide
 //   danger    Close, Stop, Release, Remove, Delete folder (in the danger colour)
 // Within a group, items keep the order they were given in.
 
-export const menuGroups = ['open', 'git', 'copy', 'organise', 'danger'] as const
+export const menuGroups = ['open', 'split', 'git', 'copy', 'organise', 'danger'] as const
 
 export type MenuGroup = (typeof menuGroups)[number]
 

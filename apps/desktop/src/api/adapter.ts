@@ -68,6 +68,8 @@ export interface DesktopApi {
   sendToSession(sessionId: string, text: string): Promise<SendResult>
   /** Forget ownership and kill megabrain's tmux session for it (`session release`). */
   releaseSession(sessionId: string): Promise<void>
+  /** Resume a session in a tmux session megabrain owns (`session own`), so the app shows and closes it. */
+  ownSession(sessionId: string): Promise<void>
   /** Open an https address in the system's browser, or a mailto address in the mail app. */
   openUrl(url: string): Promise<void>
   /** Show a folder or file in Finder (the file manager on Linux). */
@@ -233,6 +235,12 @@ export interface DesktopApi {
   sidebarFolders(): Promise<unknown>
   /** Replaces the saved sidebar folders with this JSON (`settings set sidebar-folders`). */
   setSidebarFolders(json: string): Promise<void>
+  /** Sessions the sidebar closed without running them (`settings get hidden-sessions`); advanced/hidden-sessions.ts reads the shape. */
+  hiddenSessions(): Promise<unknown>
+  setHiddenSessions(json: string): Promise<void>
+  /** The shortcut keys the person changed (`settings get shortcuts`); lib/shortcuts.ts reads the shape. */
+  shortcuts(): Promise<unknown>
+  setShortcuts(json: string): Promise<void>
 }
 
 /** Worktree creation (`worktree create`); kept apart from DesktopApi so its adapters live in worktree-create.ts. */
