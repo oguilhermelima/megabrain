@@ -253,7 +253,14 @@ html.native body {
   inset: 0;
   overflow: hidden;
   border-radius: 9999px;
+  /* WebKit (the Tauri webview on macOS) does not clip composited children - the animated, blended
+     blobs - to a rounded overflow, so they would fill the square box. clip-path and the mask clip
+     them in every engine; translateZ gives the body its own layer for them to clip against. */
+  -webkit-clip-path: circle(50%);
+  clip-path: circle(50%);
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
   isolation: isolate;
+  transform: translateZ(0);
   background: #11121f;
   box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06) inset;
 }
