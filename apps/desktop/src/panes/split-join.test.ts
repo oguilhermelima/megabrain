@@ -135,7 +135,7 @@ describe('reordering members from the hover', () => {
     const layout = moveMember(two(), 'g4', 'a', 2)
     expect(groupItems(layout, 'g4')).toEqual(['b', 'c', 'a', 'd'])
     const after = groupPanes(layout, 'g4')
-    expect(shape(after.root)).toEqual({ column: [{ row: ['b', 'c'] }, { row: ['a', 'd'] }] })
+    expect(shape(after.root)).toEqual({ row: [{ column: ['b', 'c'] }, { column: ['a', 'd'] }] })
     const sizes = (node: PaneNode): unknown => (node.type === 'pane' ? null : [node.sizes, node.children.map(sizes)])
     expect(sizes(after.root)).toEqual(sizes(before.root))
   })

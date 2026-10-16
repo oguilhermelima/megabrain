@@ -67,13 +67,16 @@ export function CodeLayer({
     }
     observe()
     const unsubscribe = slots.subscribe(observe)
-    // A pane rising into view moves its slot by a transform, which resizes nothing.
+    // A pane rising into view moves its slot by a transform, and a scrolled column of panes moves it
+    // by an offset (it sends a scroll event); neither resizes anything.
     const settle = () => measure()
     document.addEventListener('animationend', settle, true)
+    document.addEventListener('scroll', settle, true)
     return () => {
       unsubscribe()
       observer.disconnect()
       document.removeEventListener('animationend', settle, true)
+      document.removeEventListener('scroll', settle, true)
     }
   }, [slots])
 

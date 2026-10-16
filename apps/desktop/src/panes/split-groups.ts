@@ -1,16 +1,20 @@
-import { closePane, dropItem, normalise, paneList, paneRects, parsePanes, replaceItem, singlePane, type Edge, type PaneLeaf, type PaneNode, type Panes } from '@/panes/pane-model'
+import { closePane, dropItem, normalise, paneList, paneOfItem, parsePanes, replaceItem, singlePane, type Edge, type PaneLeaf, type PaneNode, type Panes } from '@/panes/pane-model'
+import { addColumn, columnOfPane, emptyStrip, readStrip, type Strip } from '@/panes/strip'
 
 // Splits as groups, the way Zen keeps its split views: every arrangement of two or more panes is a
 // group with an id, its members (the items its panes show), its layout tree and an optional name.
 // The main area shows one group, or one item alone. Opening a member shows its group; opening any
 // other item shows it alone and the group waits in the sidebar. An item is in one group at most, and
-// a group left with one member dissolves. Every operation is pure.
+// a group left with one member dissolves. A group lays out as a strip of columns (panes/strip) and
+// keeps its column widths and scroll. Every operation is pure.
 
 export interface SplitGroup {
   id: string
   name: string | null
   /** Two or more panes. */
   panes: Panes
+  /** Its columns' own widths and how far it is scrolled. */
+  strip: Strip
 }
 
 export interface Layout {
@@ -21,12 +25,10 @@ export interface Layout {
   single: Panes
 }
 
-/** side by side, stacked, a grid of rows of two (of three past four members), or one large and a column of the rest. */
+/** side by side (a column each), stacked (one column), a grid of columns of two, or one large and a column of the rest. */
 export type Preset = 'row' | 'column' | 'grid' | 'main'
 
-/** The smallest a pane may be, in pixels: a split that would go under it is refused, and dividers stop there. */
-export const minPaneWidth = 280
-export const minPaneHeight = 160
+export { minPaneHeight, minPaneWidth } from '@/panes/strip'
 
 const leafCount = (panes: Panes) => paneList(panes.root).length
 
@@ -34,7 +36,7 @@ const leafCount = (panes: Panes) => paneList(panes.root).length
 export function layoutOf(panes: Panes, groupId: string): Layout {
   if (leafCount(panes) < 2) return { groups: [], active: null, single: panes }
   const first = paneList(panes.root)[0]
-  return { groups: [{ id: groupId, name: null, panes }], active: groupId, single: singlePane(first?.item ?? '', first?.id ?? groupId) }
+  return { groups: [{ id: groupId, name: null, panes, strip: emptyStrip }], active: groupId, single: singlePane(first?.item ?? '', first?.id ?? groupId) }
 }
 
 export function activeGroup(layout: Layout): SplitGroup | null {
@@ -83,7 +85,7 @@ export function changeShown(layout: Layout, change: (panes: Panes) => Panes, new
   }
   if (leafCount(next) < 2) return { groups, active: null, single: next }
   if (placed) return { ...layout, groups }
-  return { groups: [...groups, { id: newGroupId, name: null, panes: next }], active: newGroupId, single: layout.single }
+  return { groups: [...groups, { id: newGroupId, name: null, panes: next, strip: emptyStrip }], active: newGroupId, single: layout.single }
 }
 
 /** A sidebar click: a member shows its group, focused on it; any other item shows alone. */
@@ -151,24 +153,25 @@ function line(id: string, direction: 'row' | 'column', children: PaneNode[]): Pa
 export function presetTree(leaves: PaneLeaf[], preset: Preset, idBase: string): PaneNode {
   if (leaves.length === 1 && leaves[0] !== undefined) return leaves[0]
   let tree: PaneNode
-  if (preset === 'row' || preset === 'column') tree = line(`${idBase}-${preset}`, preset, leaves)
+  // Two in a grid are side by side: one column of two would be stacked.
+  if (preset === 'grid' && leaves.length <= 2) tree = line(`${idBase}-row`, 'row', leaves)
+  else if (preset === 'row' || preset === 'column') tree = line(`${idBase}-${preset}`, preset, leaves)
   else if (preset === 'main') {
     const [first, ...rest] = leaves
     tree = first === undefined ? line(`${idBase}-row`, 'row', leaves) : { type: 'split', id: `${idBase}-main`, direction: 'row', children: [first, line(`${idBase}-rest`, 'column', rest)], sizes: [0.5, 0.5] }
   } else {
-    const columns = leaves.length <= 4 ? 2 : 3
-    const rows: PaneNode[] = []
-    for (let index = 0; index < leaves.length; index += columns) rows.push(line(`${idBase}-r${index / columns}`, 'row', leaves.slice(index, index + columns)))
-    tree = line(`${idBase}-grid`, 'column', rows)
+    const columns: PaneNode[] = []
+    for (let index = 0; index < leaves.length; index += 2) columns.push(line(`${idBase}-c${index / 2}`, 'column', leaves.slice(index, index + 2)))
+    tree = line(`${idBase}-grid`, 'row', columns)
   }
   return normalise(tree) ?? tree
 }
 
-/** Lays group `groupId` out again by `preset`, keeping its panes, focus and name. */
+/** Lays group `groupId` out again by `preset`, keeping its panes, focus and name; its strip starts over. */
 export function arrangeGroup(layout: Layout, groupId: string, preset: Preset): Layout {
   return {
     ...layout,
-    groups: layout.groups.map((group) => (group.id === groupId ? { ...group, panes: { ...group.panes, root: presetTree(paneList(group.panes.root), preset, group.id) } } : group)),
+    groups: layout.groups.map((group) => (group.id === groupId ? { ...group, panes: { ...group.panes, root: presetTree(paneList(group.panes.root), preset, group.id) }, strip: emptyStrip } : group)),
   }
 }
 
@@ -183,25 +186,27 @@ export function splitItems(layout: Layout, items: string[], groupId: string, pan
     const kept = stripItems(group, members)
     return kept === null ? [] : [kept]
   })
-  return { groups: [...groups, { id: groupId, name: null, panes }], active: groupId, single: layout.single }
-}
-
-/** Whether every pane of a split tree is at least the minimum size in an area of that many pixels; one pane always fits. */
-export function fits(root: PaneNode, area: { width: number; height: number }): boolean {
-  if (root.type === 'pane') return true
-  const epsilon = 1e-6
-  return paneRects(root).panes.every(({ rect }) => rect.width * area.width >= minPaneWidth - epsilon && rect.height * area.height >= minPaneHeight - epsilon)
+  return { groups: [...groups, { id: groupId, name: null, panes, strip: emptyStrip }], active: groupId, single: layout.single }
 }
 
 /**
- * Split right or down from the focused pane: `item` opens beside it, or `launcher` when the focused
- * pane already shows `item`. Null when a pane would go under the minimum in `area`.
+ * Split right or down from the focused pane: `item` opens as a new column right of the focused
+ * pane's column, or under the pane in its column, or `launcher` does when the focused pane already
+ * shows `item`. Never refused for room: the strip scrolls. Null when nothing changes.
  */
-export function splitBeside(layout: Layout, item: string, edge: Extract<Edge, 'right' | 'bottom'>, launcher: string, ids: { pane: string; group: string }, area: { width: number; height: number }): Layout | null {
+export function splitBeside(layout: Layout, item: string, edge: Extract<Edge, 'right' | 'bottom'>, launcher: string, ids: { pane: string; group: string }): Layout | null {
   const shown = shownPanes(layout)
   const focusedItem = paneList(shown.root).find((leaf) => leaf.id === shown.focused)?.item
-  const next = dropItem(shown, focusedItem === item ? launcher : item, shown.focused, edge, ids.pane)
-  if (next === shown || !fits(next.root, area)) return null
+  const opened = focusedItem === item ? launcher : item
+  let next: Panes
+  if (edge === 'bottom') next = dropItem(shown, opened, shown.focused, 'bottom', ids.pane)
+  else {
+    const open = paneOfItem(shown, opened)
+    const base = open === null ? shown : closePane(shown, open.id)
+    const root = addColumn(base.root, columnOfPane(base.root, shown.focused) ?? '', { type: 'pane', id: ids.pane, item: opened }, `split-${ids.pane}`)
+    next = { root, focused: ids.pane }
+  }
+  if (next === shown) return null
   return changeShown(layout, () => next, ids.group)
 }
 
@@ -255,7 +260,7 @@ export function parseLayout(raw: string | null, groupId: string): Layout | null 
     const items = paneList(panes.root).map((leaf) => leaf.item)
     if (items.length < 2 || items.some((item) => taken.has(item))) continue
     for (const item of items) taken.add(item)
-    groups.push({ id: entry.id, name: typeof entry.name === 'string' && entry.name.trim() !== '' ? entry.name : null, panes })
+    groups.push({ id: entry.id, name: typeof entry.name === 'string' && entry.name.trim() !== '' ? entry.name : null, panes, strip: readStrip(entry.strip) })
   }
   const active = typeof value.active === 'string' && groups.some((group) => group.id === value.active) ? value.active : null
   return { groups, active, single }
@@ -268,6 +273,15 @@ function withGroupPanes(layout: Layout, groupId: string, change: (panes: Panes) 
   const panes = change(group.panes)
   if (panes === group.panes) return layout
   return { ...layout, groups: layout.groups.map((candidate) => (candidate.id === groupId ? { ...candidate, panes } : candidate)) }
+}
+
+/** Group `groupId` with its strip changed (a column resized, the strip scrolled); the same layout when nothing changes. */
+export function changeGroupStrip(layout: Layout, groupId: string, change: (strip: Strip) => Strip): Layout {
+  const group = layout.groups.find((candidate) => candidate.id === groupId)
+  if (group === undefined) return layout
+  const strip = change(group.strip)
+  if (strip === group.strip) return layout
+  return { ...layout, groups: layout.groups.map((candidate) => (candidate.id === groupId ? { ...candidate, strip } : candidate)) }
 }
 
 /** `leaf` beside the whole tree: one more child of a root row, evenly sized, or a row of the tree and it. */

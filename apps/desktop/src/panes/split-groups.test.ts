@@ -4,8 +4,8 @@ import {
   activeGroup,
   arrangeGroup,
   changeShown,
+  changeGroupStrip,
   closeGroup,
-  fits,
   focusGroup,
   groupOfItem,
   layoutOf,
@@ -25,6 +25,7 @@ import {
   unsplitGroup,
   type Layout,
 } from '@/panes/split-groups'
+import { emptyStrip, stripColumns } from '@/panes/strip'
 
 const pane = (id: string, item: string): PaneNode => ({ type: 'pane', id, item })
 
@@ -40,8 +41,6 @@ const groupItems = (layout: Layout, id: string) => {
   const group = layout.groups.find((candidate) => candidate.id === id)
   return group === undefined ? null : items(group.panes)
 }
-
-const big = { width: 3000, height: 2000 }
 
 /** One pane showing `a`, no group. */
 const start = (): Layout => layoutOf(singlePane('a', 'p1'), 'g0')
@@ -188,22 +187,22 @@ describe('presets', () => {
     expect(presetsFor(8)).toEqual(['row', 'column', 'grid', 'main'])
   })
 
-  test('grid fills rows of two up to four members', () => {
+  test('grid is columns of two', () => {
     const leaves = ['a', 'b', 'c', 'd'].map((item, index) => ({ type: 'pane' as const, id: `p${index}`, item }))
-    expect(shape(presetTree(leaves, 'grid', 'g'))).toEqual({ column: [{ row: ['a', 'b'] }, { row: ['c', 'd'] }] })
-    expect(shape(presetTree(leaves.slice(0, 3), 'grid', 'g'))).toEqual({ column: [{ row: ['a', 'b'] }, 'c'] })
+    expect(shape(presetTree(leaves, 'grid', 'g'))).toEqual({ row: [{ column: ['a', 'b'] }, { column: ['c', 'd'] }] })
+    expect(shape(presetTree(leaves.slice(0, 3), 'grid', 'g'))).toEqual({ row: [{ column: ['a', 'b'] }, 'c'] })
   })
 
-  test('five members: grid in rows of three, main is one large and a column of the rest', () => {
+  test('five members: grid in columns of two, main is one large and a column of the rest', () => {
     const layout = many(5)
-    expect(shape(shownPanes(layout).root)).toEqual({ column: [{ row: ['i1', 'i2', 'i3'] }, { row: ['i4', 'i5'] }] })
+    expect(shape(shownPanes(layout).root)).toEqual({ row: [{ column: ['i1', 'i2'] }, { column: ['i3', 'i4'] }, 'i5'] })
     const main = arrangeGroup(layout, 'gm', 'main')
     expect(shape(shownPanes(main).root)).toEqual({ row: ['i1', { column: ['i2', 'i3', 'i4', 'i5'] }] })
   })
 
-  test('eight members: grid has rows of three, stacked is one column, side by side one row', () => {
+  test('eight members: grid is four columns of two, stacked is one column, side by side one row', () => {
     const layout = many(8)
-    expect(shape(shownPanes(layout).root)).toEqual({ column: [{ row: ['i1', 'i2', 'i3'] }, { row: ['i4', 'i5', 'i6'] }, { row: ['i7', 'i8'] }] })
+    expect(shape(shownPanes(layout).root)).toEqual({ row: [{ column: ['i1', 'i2'] }, { column: ['i3', 'i4'] }, { column: ['i5', 'i6'] }, { column: ['i7', 'i8'] }] })
     expect(shape(shownPanes(arrangeGroup(layout, 'gm', 'column')).root)).toEqual({ column: ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8'] })
     expect(shape(shownPanes(arrangeGroup(layout, 'gm', 'row')).root)).toEqual({ row: ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8'] })
   })
@@ -241,24 +240,33 @@ describe('minimum pane size', () => {
     expect(minPaneHeight).toBe(160)
   })
 
-  test('fits checks every pane against the minimum', () => {
-    const row = presetTree(['a', 'b', 'c'].map((item, index) => ({ type: 'pane' as const, id: `p${index}`, item })), 'row', 'g')
-    expect(fits(row, { width: 900, height: 600 })).toBe(true)
-    expect(fits(row, { width: 800, height: 600 })).toBe(false)
-    expect(fits(pane('p', 'a'), { width: 100, height: 100 })).toBe(true)
-  })
-
-  test('a split that would go under the minimum is refused with null', () => {
-    expect(splitBeside(start(), 'b', 'right', 'launch', { pane: 'p2', group: 'g1' }, { width: 500, height: 800 })).toBeNull()
-    expect(splitBeside(start(), 'b', 'bottom', 'launch', { pane: 'p2', group: 'g1' }, { width: 500, height: 300 })).toBeNull()
-  })
-
   test('split beside puts an item next to the focused pane, or a launcher when it is the focused item', () => {
-    const beside = splitBeside(start(), 'b', 'right', 'launch', { pane: 'p2', group: 'g1' }, big)
+    const beside = splitBeside(start(), 'b', 'right', 'launch', { pane: 'p2', group: 'g1' })
     expect(beside === null ? null : shape(shownPanes(beside).root)).toEqual({ row: ['a', 'b'] })
-    const self = splitBeside(start(), 'a', 'bottom', 'launch', { pane: 'p2', group: 'g1' }, big)
+    const self = splitBeside(start(), 'a', 'bottom', 'launch', { pane: 'p2', group: 'g1' })
     expect(self === null ? null : shape(shownPanes(self).root)).toEqual({ column: ['a', 'launch'] })
     expect(self === null ? null : shownPanes(self).focused).toBe('p2')
+  })
+
+  test('a split is never refused for room: the strip scrolls instead', () => {
+    let layout: Layout | null = start()
+    for (let count = 2; count <= 9 && layout !== null; count++) layout = splitBeside(layout, `n${count}`, 'right', 'launch', { pane: `p${count}`, group: 'g1' })
+    expect(layout === null ? null : stripColumns(shownPanes(layout).root).length).toBe(9)
+  })
+
+  test('split right from a pane in a stack adds a column right after that column', () => {
+    const grid = many(4)
+    const focused = changeShown(grid, (panes) => ({ ...panes, focused: 'p-i2' }), 'unused')
+    const next = splitBeside(focused, 'z', 'right', 'launch', { pane: 'pz', group: 'unused' })
+    expect(next === null ? null : shape(shownPanes(next).root)).toEqual({ row: [{ column: ['i1', 'i2'] }, 'z', { column: ['i3', 'i4'] }] })
+    expect(next === null ? null : shownPanes(next).focused).toBe('pz')
+  })
+
+  test('split down from a pane in a stack adds to that column under it', () => {
+    const grid = many(4)
+    const focused = changeShown(grid, (panes) => ({ ...panes, focused: 'p-i1' }), 'unused')
+    const next = splitBeside(focused, 'z', 'bottom', 'launch', { pane: 'pz', group: 'unused' })
+    expect(next === null ? null : shape(shownPanes(next).root)).toEqual({ row: [{ column: ['i1', 'z', 'i2'] }, { column: ['i3', 'i4'] }] })
   })
 
   test('resizing never takes a member of an eight-member group under the share it is given', () => {
@@ -272,6 +280,46 @@ describe('minimum pane size', () => {
 })
 
 describe('persistence', () => {
+  test('a new group starts with the empty strip', () => {
+    expect(activeGroup(many(8))?.strip).toEqual(emptyStrip)
+    expect(activeGroup(pair())?.strip).toEqual(emptyStrip)
+  })
+
+  test("column widths and the scroll position are kept with the group and survive a round trip", () => {
+    const layout = changeGroupStrip(many(8), 'gm', () => ({ widths: { 'gm-c0': 0.5 }, scroll: 0.75 }))
+    expect(activeGroup(layout)?.strip).toEqual({ widths: { 'gm-c0': 0.5 }, scroll: 0.75 })
+    expect(parseLayout(serialiseLayout(layout), 'fresh')).toEqual(layout)
+  })
+
+  test('changing the strip of an unknown group, or to the same strip, changes nothing', () => {
+    const layout = many(3)
+    expect(changeGroupStrip(layout, 'nope', () => ({ widths: {}, scroll: 1 }))).toBe(layout)
+    expect(changeGroupStrip(layout, 'gm', (strip) => strip)).toBe(layout)
+  })
+
+  test('the strip stays with its group while another one is shown and while panes change', () => {
+    const scrolled = changeGroupStrip(many(4), 'gm', () => ({ widths: {}, scroll: 0.5 }))
+    const away = openLayoutItem(scrolled, 'elsewhere')
+    expect(away.groups.find((group) => group.id === 'gm')?.strip.scroll).toBe(0.5)
+    const closed = changeShown(scrolled, (panes) => closePane(panes, 'p-i4'), 'unused')
+    expect(activeGroup(closed)?.strip.scroll).toBe(0.5)
+  })
+
+  test('arranging a group again starts its strip over', () => {
+    const scrolled = changeGroupStrip(many(8), 'gm', () => ({ widths: { x: 0.5 }, scroll: 0.5 }))
+    expect(activeGroup(arrangeGroup(scrolled, 'gm', 'row'))?.strip).toEqual(emptyStrip)
+  })
+
+  test('a stored group without a strip, or with a broken one, reads with the empty strip', () => {
+    const layout = many(3)
+    const stored = JSON.parse(serialiseLayout(layout)) as { groups: { strip?: unknown }[] }
+    const first = stored.groups[0]
+    if (first !== undefined) delete first.strip
+    expect(activeGroup(parseLayout(JSON.stringify(stored), 'fresh') ?? layout)?.strip).toEqual(emptyStrip)
+    if (first !== undefined) first.strip = { widths: 'no', scroll: 'far' }
+    expect(activeGroup(parseLayout(JSON.stringify(stored), 'fresh') ?? layout)?.strip).toEqual(emptyStrip)
+  })
+
   test('groups, names, the active group and the single pane survive a round trip', () => {
     const layout = renameGroup(openLayoutItem(changeShown(pair(), (panes) => dropItem(panes, 'c', 'p2', 'bottom', 'p3'), 'unused'), 'z'), 'g1', 'review')
     const back = parseLayout(serialiseLayout(layout), 'fresh')

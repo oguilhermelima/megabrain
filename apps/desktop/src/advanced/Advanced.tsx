@@ -48,15 +48,15 @@ import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, focusDirection, movePane, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
-import { activeGroup, addToGroup, arrangeGroup, changeShown, closeGroup, fits, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, minPaneHeight, minPaneWidth, moveMember, openLayoutItem, parseLayout, presetsFor, presetTree, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shownPanes, splitBeside, splitItems, swapMembers, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
+import { closePane, dropItem, movePane, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
+import { activeGroup, addToGroup, arrangeGroup, changeGroupStrip, changeShown, closeGroup, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, moveMember, openLayoutItem, parseLayout, presetsFor, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shownPanes, splitBeside, splitItems, swapMembers, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
 import { paneShortcut } from '@/panes/shortcuts'
 import { groupRows, groupsByPlace, type GroupRow, type MemberInfo } from '@/advanced/split-rows'
 import { SplitRowsContext, type SplitDrop, type SplitRowsValue } from '@/advanced/SplitRows'
 import type { JoinTarget } from '@/advanced/useRowDrag'
 import type { MenuItem } from '@/components/ContextMenu'
-import { Toast, type ToastMessage } from '@/components/Toast'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
+import { emptyStrip, navigate, type Strip } from '@/panes/strip'
 import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
 import { alreadyOpen } from '@/launcher/resume-model'
@@ -541,24 +541,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return { title: codeTargetForRoot(projects, parsed.id).title, mark: { kind: 'code' }, state: 'idle', worktree }
     }
   }
-  // The pixels the panes share, so a split or a layout that would make a pane too small is refused.
-  const paneAreaRef = useRef<HTMLDivElement>(null)
-  const areaSize = () => {
-    const rect = paneAreaRef.current?.getBoundingClientRect()
-    return rect === undefined ? { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY } : { width: rect.width, height: rect.height }
-  }
-  const [splitNote, setSplitNote] = useState<ToastMessage | null>(null)
-  const sayTooSmall = (what: string) => setSplitNote({ id: crypto.randomUUID(), text: `No room: ${what} needs every pane at least ${minPaneWidth} × ${minPaneHeight} px.` })
-  const closeSplitNote = useStableCallback(() => setSplitNote(null))
-  const arrange = (row: GroupRow, preset: Preset) => {
-    const group = paneLayout.groups.find((candidate) => candidate.id === row.id)
-    if (group === undefined) return
-    if (!fits(presetTree(paneList(group.panes.root), preset, group.id), areaSize())) {
-      sayTooSmall(`${presetNames[preset]} with ${row.members.length} panes`)
-      return
-    }
-    setLayout((current) => focusGroup(arrangeGroup(current, row.id, preset), row.id))
-  }
+  // A split never runs out of room: its columns scroll (panes/strip), so no layout is refused for size.
+  const arrange = (row: GroupRow, preset: Preset) => setLayout((current) => focusGroup(arrangeGroup(current, row.id, preset), row.id))
+  // The shown group's column widths and scroll, kept with the group; the group is bound now, so a
+  // scroll saved after another group shows still lands on its own.
+  const shownGroupId = paneLayout.active
+  const changeStrip = useMemo(() => (shownGroupId === null ? null : (change: (strip: Strip) => Strip) => setLayout((current) => changeGroupStrip(current, shownGroupId, change))), [shownGroupId])
+  const [stripScrolls, setStripScrolls] = useState(false)
   const focusSplit = useStableCallback((groupId: string) => {
     setGithubPage(null)
     setLayout((current) => focusGroup(current, groupId))
@@ -583,11 +572,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // is the focused pane's own item). ⌘D and ⌘⇧D do the same with a launcher.
   const splitWith = (item: string | null, edge: 'right' | 'bottom') => {
     const launcher = newLauncher()
-    const next = splitBeside(paneLayout, item ?? launcher, edge, launcher, { pane: newPaneId(), group: newGroupId() }, areaSize())
-    if (next === null) {
-      sayTooSmall(edge === 'right' ? 'splitting right' : 'splitting down')
-      return
-    }
+    const next = splitBeside(paneLayout, item ?? launcher, edge, launcher, { pane: newPaneId(), group: newGroupId() })
+    if (next === null) return
     setGithubPage(null)
     setLayout(next)
     const focused = shownPanes(next).focused
@@ -599,10 +585,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     const unique = [...new Set(items)]
     const ids = unique.map(() => newPaneId())
     const preset: Preset = unique.length === 2 ? 'row' : 'grid'
-    if (!fits(presetTree(unique.map((item, index) => ({ type: 'pane', id: ids[index] ?? '', item })), preset, 'check'), areaSize())) {
-      sayTooSmall(`opening ${unique.length} panes`)
-      return
-    }
     setGithubPage(null)
     setPicks([])
     setLayout((current) => splitItems(current, unique, newGroupId(), ids, preset))
@@ -635,7 +617,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     return current
   }
   // A row dropped on another row's middle joins them; a member dragged out of its group leaves it; a
-  // group's members reorder or swap from its hover (see useRowDrag). A join that leaves a pane too small is refused.
+  // group's members reorder or swap from its hover (see useRowDrag).
   const dropSplit = useStableCallback((drop: SplitDrop) => {
     if (drop.kind === 'move') setLayout((current) => moveMember(current, drop.groupId, drop.item, drop.index))
     else if (drop.kind === 'swap') setLayout((current) => swapMembers(current, drop.groupId, drop.a, drop.b))
@@ -643,11 +625,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     else {
       const next = joined(paneLayout, drop.source, drop.target)
       if (next === paneLayout) return
-      const group = activeGroup(next)
-      if (group !== null && !fits(group.panes.root, areaSize())) {
-        sayTooSmall(`joining ${paneList(group.panes.root).length} panes`)
-        return
-      }
       setGithubPage(null)
       setPicks([])
       setLayout(next)
@@ -658,10 +635,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const drag = usePaneDrag((source, target) => {
     setGithubPage(null)
     const next = source.kind === 'pane' ? movePane(panes, source.paneId, target.paneId, target.zone) : dropItem(panes, source.item, target.paneId, target.zone, newPaneId())
-    if (target.zone !== 'center' && !fits(next.root, areaSize())) {
-      sayTooSmall('splitting here')
-      return
-    }
     setPanes(() => next)
   })
   // A row from the sidebar starts a drag of the item it opens.
@@ -981,8 +954,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       if (direction === undefined) return
       event.preventDefault()
       event.stopPropagation()
-      const next = focusDirection(panes, direction)
-      if (next.focused === panes.focused) return
+      // Left and right go between columns, up and down within one; the strip scrolls to the pane.
+      const target = navigate(panes.root, panes.focused, direction)
+      if (target === null) return
+      const next = { ...panes, focused: target }
       setPanes(() => next)
       // The keyboard goes with the focus: into the pane's terminal, composer or first field.
       requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(next.focused)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
@@ -1028,7 +1003,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
   }, [splitRowsSignature, picks])
 
-  const windowRow = windowRowJoin({ collapsed: sidebarCollapsed, covered: githubView !== null, panes: paneRects(panes.root).panes, hasTopBar: hasActionBar })
+  // A strip that scrolls moves its top-left pane away from the lights, so then they keep a row of their own.
+  const windowRow = windowRowJoin({ collapsed: sidebarCollapsed, covered: githubView !== null || stripScrolls, panes: paneRects(panes.root).panes, hasTopBar: hasActionBar })
 
   return (
     <div className="relative flex h-full">
@@ -1090,7 +1066,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         )}
         <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
           {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
-          <div ref={paneAreaRef} className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative flex min-h-0 flex-1 flex-col">
             <PaneArea
               panes={panes}
               onPanes={setPanes}
@@ -1110,6 +1086,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
                 }
               }}
               drag={drag}
+              strip={activeGroup(paneLayout)?.strip ?? emptyStrip}
+              stripKey={shownGroupId}
+              onStrip={changeStrip}
+              onOverflow={setStripScrolls}
               onClose={closePaneById}
               windowRow={windowRow === null ? null : { join: windowRow, inset: windowRowInset }}
               overlay={
@@ -1150,7 +1130,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         </SlidePanel>
       )}
       <ConfirmDialog confirm={closeConfirm} onClose={() => setCloseConfirm(null)} />
-      <Toast toast={splitNote} onClose={closeSplitNote} />
       <ConfirmDialog confirm={runs.confirm} onClose={runs.dismissConfirm} />
       {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
       {settingsOverlay}
