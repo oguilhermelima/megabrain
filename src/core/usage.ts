@@ -28,11 +28,16 @@ export const USAGE_LINES = {
   "repo-scripts": "repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]",
   "repo-github": "repo github [--owner <login>] [--json]",
   "projects": "projects [--json]",
-  "github": "github prs|issues|pr|issue ...",
+  "github": "github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state ...",
   "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-pr": "github pr <repo name|path> <number> [--json]",
   "github-issue": "github issue <repo name|path> <number> [--json]",
+  "github-pr-files": "github pr-files <repo name|path> <number> [--json]",
+  "github-review": "github review <repo name|path> <number> --event approve|request-changes|comment --body <text> [--comments <json>] [--json]",
+  "github-comment": "github comment <repo name|path> <number> --body <text> [--json]",
+  "github-issue-state": "github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]",
+  "github-pr-state": "github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json]",
   "code": "code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]",
   "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
@@ -178,7 +183,7 @@ Commands:
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|scripts|github ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
-  github prs|issues|pr|issue ...        Read a repository's GitHub pull requests and issues
+  github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state ... Read, review and manage GitHub pull requests and issues
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open VS Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

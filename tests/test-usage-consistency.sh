@@ -86,8 +86,9 @@ while IFS= read -r key; do
   line="$(expected_usage_line "$key")"
   [ -n "$line" ] || fail "no usage line for key: $key"
 
-  # Keys are the command path with spaces replaced by dashes.
-  read -r -a argv <<<"$(printf '%s' "$key" | tr '-' ' ')"
+  # Keys are the command path with spaces replaced by dashes; github verbs such as
+  # pr-files keep their own dash.
+  if [ "${key#github-}" != "$key" ]; then argv=(github "${key#github-}"); else read -r -a argv <<<"$(printf '%s' "$key" | tr '-' ' ')"; fi
   if ! help_output="$("$binary" "${argv[@]}" --help 2>&1)"; then
     fail "megabrain ${argv[*]} --help exited non-zero"
   fi
@@ -149,6 +150,7 @@ usage_top_level_commands() {
 skill_covers_usage_key() {
   local key="$1" words parent group_line
   words="$(printf '%s' "$key" | tr '-' ' ')"
+  [ "${key#github-}" = "$key" ] || words="github ${key#github-}"
   case "$skill_text" in
     *"megabrain $words"*) return 0 ;;
   esac

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
@@ -15,11 +16,14 @@ import { findRepository, type RepositoryRecord } from "../../db/queries/reposito
 // decision and line counts are read per pull request by the detail call, since asking for them over a
 // whole listing makes GitHub's GraphQL time out. Each answer is normalized to the shape the desktop
 // pages use and cached for 60 seconds under the state directory, one private file per command,
-// repository, state, limit, cursor and number.
+// repository, state, limit, cursor and number. The review verbs (pr-files, review, comment,
+// issue-state, pr-state) go through the same gh runner but are never cached, and a write is asked
+// once: repeating a timed-out POST could post twice.
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Clock = () => number;
 type Verb = "prs" | "issues" | "pr" | "issue";
+type ReviewVerb = "pr-files" | "review" | "comment" | "issue-state" | "pr-state";
 
 type Person = Readonly<{ login: string; name: string | null; isBot: boolean }>;
 type Label = Readonly<{ name: string; color: string; description: string }>;
@@ -57,10 +61,17 @@ const ISSUE_QUERY = `query($owner: String!, $name: String!, $first: Int!, $after
     }
   }
 }`;
-const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions";
+const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions,headRefName,baseRefName";
 const ISSUE_VIEW_FIELDS = "number,title,state,url,author,createdAt,body,comments";
 const STATES: Readonly<Record<"prs" | "issues", readonly string[]>> = { prs: ["open", "closed", "merged", "all"], issues: ["open", "closed", "all"] };
-const USAGE: Readonly<Record<Verb, UsageKey>> = { prs: "github-prs", issues: "github-issues", pr: "github-pr", issue: "github-issue" };
+const USAGE: Readonly<Record<Verb | ReviewVerb, UsageKey>> = {
+  "prs": "github-prs", "issues": "github-issues", "pr": "github-pr", "issue": "github-issue",
+  "pr-files": "github-pr-files", "review": "github-review", "comment": "github-comment", "issue-state": "github-issue-state", "pr-state": "github-pr-state",
+};
+const REVIEW_VERBS: readonly string[] = ["pr-files", "review", "comment", "issue-state", "pr-state"];
+const REVIEW_EVENTS: Readonly<Record<string, string>> = { "approve": "APPROVE", "request-changes": "REQUEST_CHANGES", "comment": "COMMENT" };
+const ISSUE_REASONS: Readonly<Record<string, string>> = { "completed": "completed", "not planned": "not_planned" };
+const MERGE_METHODS: readonly string[] = ["merge", "squash", "rebase"];
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -181,7 +192,7 @@ function detail(entry: Record<string, unknown>, pullRequest: boolean) {
     createdAt: nullableText(entry.createdAt),
     body: text(entry.body),
     comments: list(entry.comments).map((comment) => ({ author: person(comment.author), body: text(comment.body), createdAt: text(comment.createdAt), url: text(comment.url) })),
-    ...(pullRequest ? { reviewDecision: reviewDecision(entry.reviewDecision), checks: checks(entry.statusCheckRollup), additions: count(entry.additions), deletions: count(entry.deletions) } : {}),
+    ...(pullRequest ? { reviewDecision: reviewDecision(entry.reviewDecision), checks: checks(entry.statusCheckRollup), additions: count(entry.additions), deletions: count(entry.deletions), headRefName: text(entry.headRefName), baseRefName: text(entry.baseRefName) } : {}),
   };
 }
 
@@ -270,6 +281,22 @@ function writeCache(environment: Environment, key: string, fetchedAt: number, va
   } catch { /* The cache only saves a gh call; a write failure costs the next one. */ }
 }
 
+// A write changes the pull request or issue and every list that shows it, so the repository's cached
+// reads all go; another repository's stay.
+function dropCached(environment: Environment, nameWithOwner: string): void {
+  try {
+    const directory = cacheDirectory(environment);
+    for (const name of readdirSync(directory)) {
+      if (!name.endsWith(".json")) continue;
+      try {
+        const entry = record(JSON.parse(readFileSync(join(directory, name), "utf8")));
+        const key: unknown = typeof entry?.key === "string" ? JSON.parse(entry.key) : undefined;
+        if (Array.isArray(key) && key[1] === nameWithOwner) rmSync(join(directory, name), { force: true });
+      } catch { /* An unreadable entry is replaced on its next read. */ }
+    }
+  } catch { /* No cache directory, nothing to drop. */ }
+}
+
 // GitHub's gateway gives up on a slow query (504), or briefly cannot serve (502, 503), and a cut-off
 // answer reaches gh as invalid JSON. Each is worth asking once more; anything else is not.
 const TRANSIENT: readonly (readonly [RegExp, string])[] = [
@@ -294,10 +321,9 @@ async function attempt(process: ProcessAdapter, name: string, args: readonly str
   catch { return { kind: "failed", error: `${name} returned output that is not JSON`, transient: false }; }
 }
 
-async function gh(process: ProcessAdapter, args: readonly string[]): Promise<Result<unknown>> {
-  const name = `gh ${args[0] ?? ""} ${args[1] ?? ""}`;
+async function gh(process: ProcessAdapter, args: readonly string[], { name = `gh ${args[0] ?? ""} ${args[1] ?? ""}`, retry = true }: { name?: string; retry?: boolean } = {}): Promise<Result<unknown>> {
   let answer = await attempt(process, name, args);
-  if (answer.kind === "failed" && answer.transient) answer = await attempt(process, name, args);
+  if (retry && answer.kind === "failed" && answer.transient) answer = await attempt(process, name, args);
   return answer.kind === "ok" ? ok(answer.value) : failed(answer.error);
 }
 
@@ -360,8 +386,188 @@ function detailText(value: Record<string, unknown>): string {
   return `#${count(value.number)} ${text(value.title)} (${text(value.state)})\n${text(value.url)}\n\n${text(value.body)}\n${comments}`;
 }
 
+export type PullRequestFile = Readonly<{
+  path: string; previousPath?: string; status: "added" | "modified" | "removed" | "renamed";
+  additions: number; deletions: number; patch: string | null;
+}>;
+export type ReviewComment = Readonly<{ path: string; line: number; side: "LEFT" | "RIGHT"; body: string }>;
+export type ReviewEvent = "approve" | "request-changes" | "comment";
+export type PullRequestAction = "merge" | "close" | "reopen";
+
+const FILE_STATUSES: Readonly<Record<string, PullRequestFile["status"]>> = { added: "added", removed: "removed", renamed: "renamed", modified: "modified", changed: "modified", copied: "added" };
+
+function writeCall(method: "POST" | "PATCH" | "PUT", endpoint: string, fields: Readonly<Record<string, string>>): string[] {
+  return ["api", "-X", method, endpoint, ...Object.entries(fields).flatMap(([name, value]) => ["-f", `${name}=${value}`])];
+}
+
+export async function prFiles(process: ProcessAdapter, nameWithOwner: string, number: number): Promise<Result<PullRequestFile[]>> {
+  const fetched = await gh(process, ["api", `repos/${nameWithOwner}/pulls/${number}/files`, "--paginate", "-X", "GET", "-F", "per_page=100"], { name: "gh api pull files" });
+  if (fetched.kind !== "ok") return fetched;
+  // gh joins array pages into one array; a slurped answer is an array of them.
+  if (!Array.isArray(fetched.value)) return failed(`gh api pull files returned output in an unexpected shape: ${text(record(fetched.value)?.message) || "not a list"}`);
+  const entries = fetched.value.flatMap((entry: unknown) => Array.isArray(entry) ? entry : [entry]);
+  const files: PullRequestFile[] = [];
+  for (const entry of entries) {
+    const file = record(entry);
+    const path = text(file?.filename);
+    if (file === undefined || path === "") continue;
+    const previousPath = text(file.previous_filename);
+    files.push({
+      path, ...(previousPath === "" ? {} : { previousPath }), status: FILE_STATUSES[text(file.status)] ?? "modified",
+      additions: count(file.additions), deletions: count(file.deletions), patch: nullableText(file.patch),
+    });
+  }
+  return ok(files);
+}
+
+export async function submitReview(process: ProcessAdapter, nameWithOwner: string, number: number, review: Readonly<{ event: ReviewEvent; body: string; comments?: readonly ReviewComment[] }>): Promise<Result<{ id: number; state: string; url: string }>> {
+  // Inline comments are a nested array, which -f cannot express, so the request goes in a private file.
+  const directory = mkdtempSync(join(tmpdir(), "megabrain-review-"));
+  try {
+    const file = join(directory, "review.json");
+    writeFileSync(file, JSON.stringify({ event: REVIEW_EVENTS[review.event], body: review.body, ...(review.comments === undefined || review.comments.length === 0 ? {} : { comments: review.comments }) }), { mode: 0o600 });
+    const sent = await gh(process, ["api", "-X", "POST", `repos/${nameWithOwner}/pulls/${number}/reviews`, "--input", file], { name: "gh api review", retry: false });
+    if (sent.kind !== "ok") return sent;
+    const answer = record(sent.value) ?? {};
+    return ok({ id: count(answer.id), state: text(answer.state), url: text(answer.html_url) });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+export async function addComment(process: ProcessAdapter, nameWithOwner: string, number: number, body: string): Promise<Result<{ id: number; url: string }>> {
+  const sent = await gh(process, writeCall("POST", `repos/${nameWithOwner}/issues/${number}/comments`, { body }), { name: "gh api comment", retry: false });
+  if (sent.kind !== "ok") return sent;
+  const answer = record(sent.value) ?? {};
+  return ok({ id: count(answer.id), url: text(answer.html_url) });
+}
+
+export async function setIssueState(process: ProcessAdapter, nameWithOwner: string, number: number, state: "open" | "closed", reason?: "completed" | "not planned"): Promise<Result<{ state: string; url: string }>> {
+  const reasonField: Record<string, string> = reason === undefined ? {} : { state_reason: ISSUE_REASONS[reason] ?? reason };
+  const sent = await gh(process, writeCall("PATCH", `repos/${nameWithOwner}/issues/${number}`, { state, ...reasonField }), { name: "gh api issue state", retry: false });
+  if (sent.kind !== "ok") return sent;
+  const answer = record(sent.value) ?? {};
+  return ok({ state: text(answer.state), url: text(answer.html_url) });
+}
+
+export async function setPrState(process: ProcessAdapter, nameWithOwner: string, number: number, action: PullRequestAction, options: Readonly<{ method?: "merge" | "squash" | "rebase" }> = {}): Promise<Result<Record<string, unknown>>> {
+  const call = action === "merge" ? writeCall("PUT", `repos/${nameWithOwner}/pulls/${number}/merge`, { merge_method: options.method ?? "merge" })
+    : writeCall("PATCH", `repos/${nameWithOwner}/pulls/${number}`, { state: action === "close" ? "closed" : "open" });
+  const sent = await gh(process, call, { name: "gh api pull request state", retry: false });
+  if (sent.kind !== "ok") return sent;
+  const answer = record(sent.value) ?? {};
+  if (action === "merge") return ok({ merged: answer.merged === true, sha: text(answer.sha), message: text(answer.message) });
+  return ok({ state: text(answer.state), url: text(answer.html_url) });
+}
+
+type ReviewOptions = Readonly<{
+  selector: string; number: number; json: boolean; event: ReviewEvent | undefined; body: string | undefined;
+  comments: readonly ReviewComment[] | undefined; state: string | undefined; reason: string | undefined; method: string | undefined;
+}>;
+
+function parseComments(raw: string): Result<readonly ReviewComment[]> {
+  let parsedValue: unknown;
+  try { parsedValue = JSON.parse(raw); } catch { return failed("--comments must be JSON", 2); }
+  if (!Array.isArray(parsedValue)) return failed("--comments must be a list of {path, line, side, body}", 2);
+  const comments: ReviewComment[] = [];
+  for (const entry of parsedValue) {
+    const comment = record(entry);
+    const side = comment?.side;
+    if (comment === undefined || typeof comment.path !== "string" || comment.path === "" || typeof comment.body !== "string"
+      || typeof comment.line !== "number" || !Number.isSafeInteger(comment.line) || comment.line < 1 || (side !== "LEFT" && side !== "RIGHT")) {
+      return failed("--comments entries need a path, a whole line number, a side of LEFT or RIGHT, and a body", 2);
+    }
+    comments.push({ path: comment.path, line: comment.line, side, body: comment.body });
+  }
+  return ok(comments);
+}
+
+function parseReviewOptions(verb: ReviewVerb, args: readonly string[]): Result<ReviewOptions> {
+  const usage = failed(usageMessage(USAGE[verb]), 2);
+  const allowed: Readonly<Record<ReviewVerb, readonly string[]>> = { "pr-files": [], "review": ["--event", "--body", "--comments"], "comment": ["--body"], "issue-state": ["--reason"], "pr-state": ["--method"] };
+  const positional: string[] = [];
+  const values: Record<string, string> = {};
+  let json = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index] ?? "";
+    if (argument === "--json") json = true;
+    else if (allowed[verb].includes(argument)) {
+      const value = args[index + 1];
+      if (value === undefined) return usage;
+      values[argument] = value;
+      index += 1;
+    } else if (argument.startsWith("--")) return usage;
+    else positional.push(argument);
+  }
+  const [selector, numberText, third] = positional;
+  if (selector === undefined || selector === "" || numberText === undefined || !/^[1-9]\d*$/.test(numberText)) return usage;
+  if (positional.length !== (verb === "issue-state" || verb === "pr-state" ? 3 : 2)) return usage;
+  const base = { selector, number: Number(numberText), json, event: undefined, body: undefined, comments: undefined, state: third, reason: values["--reason"], method: values["--method"] };
+  if (verb === "comment" && values["--body"] === undefined) return usage;
+  if (verb === "review") {
+    const event = values["--event"];
+    if (event === undefined || values["--body"] === undefined) return usage;
+    if (REVIEW_EVENTS[event] === undefined) return failed("--event must be one of approve, request-changes, comment", 2);
+    const comments = values["--comments"] === undefined ? ok(undefined) : parseComments(values["--comments"]);
+    if (comments.kind !== "ok") return comments;
+    return ok({ ...base, event: event as ReviewEvent, body: values["--body"], comments: comments.value });
+  }
+  if (verb === "issue-state") {
+    if (third !== "open" && third !== "closed") return usage;
+    if (base.reason !== undefined && (third !== "closed" || ISSUE_REASONS[base.reason] === undefined)) return failed("--reason applies to closed, and is completed or not planned", 2);
+  }
+  if (verb === "pr-state") {
+    if (third !== "merge" && third !== "close" && third !== "reopen") return usage;
+    if (base.method !== undefined && (third !== "merge" || !MERGE_METHODS.includes(base.method))) return failed("--method applies to merge, and is merge, squash or rebase", 2);
+  }
+  return ok({ ...base, body: values["--body"] });
+}
+
+async function executeReview(verb: ReviewVerb, args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
+  const options = parseReviewOptions(verb, args);
+  if (options.kind !== "ok") return options;
+  const { selector, number, json, event, body, comments, state, reason, method } = options.value;
+  const repository = await resolveRepository(selector, environment, process);
+  if (repository.kind !== "ok") return repository;
+  const { nameWithOwner } = repository.value;
+  let output: Record<string, unknown>;
+  let line: string;
+  if (verb === "pr-files") {
+    const files = await prFiles(process, nameWithOwner, number);
+    if (files.kind !== "ok") return files;
+    output = { files: files.value };
+    line = files.value.map((file) => `${file.status}\t+${file.additions}\t-${file.deletions}\t${file.path}\n`).join("");
+  } else if (verb === "review" && event !== undefined && body !== undefined) {
+    const sent = await submitReview(process, nameWithOwner, number, { event, body, ...(comments === undefined ? {} : { comments }) });
+    if (sent.kind !== "ok") return sent;
+    output = { event, ...sent.value };
+    line = `reviewed #${number} (${event}) ${sent.value.url}\n`;
+  } else if (verb === "comment" && body !== undefined) {
+    const sent = await addComment(process, nameWithOwner, number, body);
+    if (sent.kind !== "ok") return sent;
+    output = { ...sent.value };
+    line = `commented on #${number} ${sent.value.url}\n`;
+  } else if (verb === "issue-state" && (state === "open" || state === "closed")) {
+    const sent = await setIssueState(process, nameWithOwner, number, state, reason === "completed" || reason === "not planned" ? reason : undefined);
+    if (sent.kind !== "ok") return sent;
+    output = { ...sent.value };
+    line = `#${number} is ${sent.value.state}\n`;
+  } else if (verb === "pr-state" && (state === "merge" || state === "close" || state === "reopen")) {
+    const chosen = method === "squash" || method === "rebase" || method === "merge" ? method : undefined;
+    const sent = await setPrState(process, nameWithOwner, number, state, chosen === undefined ? {} : { method: chosen });
+    if (sent.kind !== "ok") return sent;
+    output = { action: state, ...(state === "merge" ? { method: chosen ?? "merge" } : {}), ...sent.value };
+    line = state === "merge" ? `merged #${number}${sent.value.merged === true ? "" : " (not merged)"}\n` : `#${number} is ${text(sent.value.state)}\n`;
+  } else return failed(usageMessage(USAGE[verb]), 2);
+  if (verb !== "pr-files") dropCached(environment, nameWithOwner);
+  return ok(json ? `${JSON.stringify({ repository: repository.value, number, ...output }, null, 2)}\n` : line);
+}
+
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
+  if (verbArgument !== undefined && REVIEW_VERBS.includes(verbArgument)) {
+    const reviewVerb = verbArgument as ReviewVerb;
+    if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(USAGE[reviewVerb]));
+    return executeReview(reviewVerb, rest, environment, process);
+  }
   const verb = verbArgument === "prs" || verbArgument === "issues" || verbArgument === "pr" || verbArgument === "issue" ? verbArgument : undefined;
   if (args.includes("-h") || args.includes("--help")) return ok(usageText(verb === undefined ? "github" : USAGE[verb]));
   if (verb === undefined) return failed(usageMessage("github"), 2);

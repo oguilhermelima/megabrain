@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter, type ProcessOutput } from "../../src/adapters/proc.js";
@@ -13,7 +13,7 @@ import { assertUnitStateDirectory } from "./state-db-guard.js";
 // statusCheckRollup entries of both kinds (check runs and commit statuses).
 const fixture = (name: string): string => readFileSync(new URL(`../fixtures/github/${name}`, import.meta.url), "utf8");
 
-const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions";
+const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions,headRefName,baseRefName";
 const ISSUE_VIEW_FIELDS = "number,title,state,url,author,createdAt,body,comments";
 // What made GitHub's GraphQL time out on a whole listing: none of it belongs in a list query.
 const HEAVY_FIELDS = ["statusCheckRollup", "reviewDecision", "additions", "deletions", "commits", "reviews", "files"];
@@ -475,7 +475,7 @@ describe("github cache", () => {
 
 describe("github routing and usage", () => {
   const usage = {
-    "github": "github prs|issues|pr|issue ...",
+    "github": "github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state ...",
     "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
     "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
     "github-pr": "github pr <repo name|path> <number> [--json]",
@@ -497,5 +497,328 @@ describe("github routing and usage", () => {
   test("an unknown verb or a missing repository prints the usage", async () => {
     expect(await route(["github", "merge", "x"], { environment: env, processAdapter: fakeGh })).toMatchObject({ kind: "failed", error: `Usage: megabrain ${usage.github}`, exitCode: 2 });
     expect(await route(["github", "prs"], { environment: env, processAdapter: fakeGh })).toMatchObject({ kind: "failed", error: `Usage: megabrain ${usage["github-prs"]}`, exitCode: 2 });
+  });
+});
+
+const REVIEW_USAGE = {
+  "pr-files": "github pr-files <repo name|path> <number> [--json]",
+  "review": "github review <repo name|path> <number> --event approve|request-changes|comment --body <text> [--comments <json>] [--json]",
+  "comment": "github comment <repo name|path> <number> --body <text> [--json]",
+  "issue-state": "github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]",
+  "pr-state": "github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json]",
+};
+
+const FILES_PAGE = [
+  { filename: "src/a.ts", status: "modified", additions: 3, deletions: 1, changes: 4, patch: "@@ -1 +1,3 @@\n-a\n+b\n+c\n+d" },
+  { filename: "src/new.ts", status: "added", additions: 2, deletions: 0, changes: 2, patch: "@@ -0,0 +1,2 @@\n+x\n+y" },
+  { filename: "assets/logo.png", status: "added", additions: 0, deletions: 0, changes: 0 },
+  { filename: "src/moved.ts", previous_filename: "src/old.ts", status: "renamed", additions: 0, deletions: 0, changes: 0 },
+  { filename: "src/gone.ts", status: "removed", additions: 0, deletions: 5, changes: 5, patch: "@@ -1,5 +0,0 @@\n-1" },
+];
+
+const flag = (args: GhCall, name: string): string | undefined => {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+};
+const fields = (args: GhCall): Record<string, string> => {
+  const found: Record<string, string> = {};
+  args.forEach((arg, index) => {
+    if (arg !== "-f" && arg !== "-F") return;
+    const [name = "", ...value] = (args[index + 1] ?? "").split("=");
+    found[name] = value.join("=");
+  });
+  return found;
+};
+
+describe("github pr-files", () => {
+  test("pages through the files endpoint and normalizes every entry", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(JSON.stringify(FILES_PAGE));
+    const result = parsed<{ repository: { nameWithOwner: string }; number: number; files: Record<string, unknown>[] }>(await github(["pr-files", path, "7", "--json"]));
+    expect(calls).toHaveLength(1);
+    const [call = []] = calls;
+    expect(call[0]).toBe("api");
+    expect(call).toContain("repos/operator/sample/pulls/7/files");
+    expect(call).toContain("--paginate");
+    expect(result.repository.nameWithOwner).toBe("operator/sample");
+    expect(result.number).toBe(7);
+    expect(result.files).toEqual([
+      { path: "src/a.ts", status: "modified", additions: 3, deletions: 1, patch: "@@ -1 +1,3 @@\n-a\n+b\n+c\n+d" },
+      { path: "src/new.ts", status: "added", additions: 2, deletions: 0, patch: "@@ -0,0 +1,2 @@\n+x\n+y" },
+      { path: "assets/logo.png", status: "added", additions: 0, deletions: 0, patch: null },
+      { path: "src/moved.ts", previousPath: "src/old.ts", status: "renamed", additions: 0, deletions: 0, patch: null },
+      { path: "src/gone.ts", status: "removed", additions: 0, deletions: 5, patch: "@@ -1,5 +0,0 @@\n-1" },
+    ]);
+  });
+
+  test("joins the pages gh returns when it slurps them", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(JSON.stringify([FILES_PAGE.slice(0, 2), FILES_PAGE.slice(2)]));
+    const result = parsed<{ files: { path: string }[] }>(await github(["pr-files", path, "7", "--json"]));
+    expect(result.files.map((file) => file.path)).toEqual(FILES_PAGE.map((file) => file.filename));
+  });
+
+  test("never serves a stale answer from the cache", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout("[]");
+    await github(["pr-files", path, "7", "--json"]);
+    await github(["pr-files", path, "7", "--json"]);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("reports gh's own message when the pull request does not exist", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => failed("gh: Not Found (HTTP 404)", 1);
+    const result = await github(["pr-files", path, "999", "--json"]);
+    expect(result.kind === "failed" ? result.error : "").toContain("gh: Not Found (HTTP 404)");
+  });
+
+  test("an answer that is not a list is an unexpected shape", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(JSON.stringify({ message: "nope" }));
+    expect((await github(["pr-files", path, "7", "--json"])).kind).toBe("failed");
+  });
+});
+
+describe("github review", () => {
+  let body: Record<string, unknown> = {};
+  beforeEach(() => {
+    body = {};
+    answer = (args) => {
+      const file = flag(args, "--input");
+      if (file !== undefined && existsSync(file)) body = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+      return stdout(JSON.stringify({ id: 55, state: "COMMENTED", html_url: "https://github.com/operator/sample/pull/7#pullrequestreview-55" }));
+    };
+  });
+
+  test.each([["approve", "APPROVE"], ["request-changes", "REQUEST_CHANGES"], ["comment", "COMMENT"]])("%s posts a %s review", async (event, expected) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const result = parsed<{ number: number; event: string; id: number; url: string }>(await github(["review", path, "7", "--event", event, "--body", "looks fine", "--json"]));
+    const [call = []] = calls;
+    expect(call.slice(0, 4)).toEqual(["api", "-X", "POST", "repos/operator/sample/pulls/7/reviews"]);
+    expect(body).toEqual({ event: expected, body: "looks fine" });
+    expect(result).toMatchObject({ number: 7, event, id: 55, url: "https://github.com/operator/sample/pull/7#pullrequestreview-55" });
+  });
+
+  test("sends inline comments with their line and side", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const comments = [{ path: "src/a.ts", line: 3, side: "RIGHT", body: "why?" }, { path: "src/a.ts", line: 1, side: "LEFT", body: "gone" }];
+    await github(["review", path, "7", "--event", "request-changes", "--body", "see inline", "--comments", JSON.stringify(comments), "--json"]);
+    expect(body).toEqual({ event: "REQUEST_CHANGES", body: "see inline", comments });
+  });
+
+  test("keeps a body with quotes and newlines intact", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const text = 'a "quoted" line\nsecond $(not run) `tick`';
+    await github(["review", path, "7", "--event", "comment", "--body", text, "--json"]);
+    expect(body.body).toBe(text);
+  });
+
+  test("leaves no request file behind", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    let file = "";
+    answer = (args) => { file = flag(args, "--input") ?? ""; return stdout("{}"); };
+    await github(["review", path, "7", "--event", "comment", "--body", "x", "--json"]);
+    expect(file).not.toBe("");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test.each([
+    ["no event", ["--body", "x"]],
+    ["an unknown event", ["--event", "merge", "--body", "x"]],
+    ["comments that are not JSON", ["--event", "comment", "--body", "x", "--comments", "{oops"]],
+    ["comments that are not a list", ["--event", "comment", "--body", "x", "--comments", "{}"]],
+    ["a comment without a path", ["--event", "comment", "--body", "x", "--comments", '[{"line":1,"side":"RIGHT","body":"b"}]']],
+    ["a comment with a bad side", ["--event", "comment", "--body", "x", "--comments", '[{"path":"a","line":1,"side":"BOTH","body":"b"}]']],
+    ["a comment with a fractional line", ["--event", "comment", "--body", "x", "--comments", '[{"path":"a","line":1.5,"side":"RIGHT","body":"b"}]']],
+  ])("refuses %s before calling gh", async (_name, extra) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const result = await github(["review", path, "7", ...extra]);
+    expect(result).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a failed review carries gh's message and is not retried", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => failed("HTTP 504: Gateway Timeout", 1);
+    const result = await github(["review", path, "7", "--event", "approve", "--body", "ok"]);
+    expect(result.kind === "failed" ? result.error : "").toContain("HTTP 504");
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("github comment", () => {
+  test("posts to the conversation endpoint, which serves pull requests and issues alike", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(JSON.stringify({ id: 9, html_url: "https://github.com/operator/sample/issues/3#issuecomment-9" }));
+    const result = parsed<{ number: number; id: number; url: string }>(await github(["comment", path, "3", "--body", "thanks", "--json"]));
+    const [call = []] = calls;
+    expect(call.slice(0, 4)).toEqual(["api", "-X", "POST", "repos/operator/sample/issues/3/comments"]);
+    expect(fields(call)).toEqual({ body: "thanks" });
+    expect(result).toMatchObject({ number: 3, id: 9, url: "https://github.com/operator/sample/issues/3#issuecomment-9" });
+  });
+
+  test("a comment without a body is a usage error", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    expect(await github(["comment", path, "3"])).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("surfaces gh's message", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => failed("gh: Resource not accessible by integration (HTTP 403)", 1);
+    const result = await github(["comment", path, "3", "--body", "x"]);
+    expect(result.kind === "failed" ? result.error : "").toContain("Resource not accessible by integration");
+  });
+});
+
+describe("github issue-state", () => {
+  beforeEach(() => { answer = () => stdout(JSON.stringify({ number: 3, state: "closed", html_url: "https://github.com/operator/sample/issues/3" })); });
+
+  test("closes with a reason", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const result = parsed<{ number: number; state: string }>(await github(["issue-state", path, "3", "closed", "--reason", "completed", "--json"]));
+    const [call = []] = calls;
+    expect(call.slice(0, 4)).toEqual(["api", "-X", "PATCH", "repos/operator/sample/issues/3"]);
+    expect(fields(call)).toEqual({ state: "closed", state_reason: "completed" });
+    expect(result).toMatchObject({ number: 3, state: "closed" });
+  });
+
+  test("spells not planned the way the API does", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["issue-state", path, "3", "closed", "--reason", "not planned"]);
+    expect(fields(calls[0] ?? [])).toEqual({ state: "closed", state_reason: "not_planned" });
+  });
+
+  test("reopens without a reason", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["issue-state", path, "3", "open"]);
+    expect(fields(calls[0] ?? [])).toEqual({ state: "open" });
+  });
+
+  test.each([
+    ["an unknown state", ["merged"]],
+    ["a reason on open", ["open", "--reason", "completed"]],
+    ["an unknown reason", ["closed", "--reason", "duplicate"]],
+    ["no state", []],
+  ])("refuses %s before calling gh", async (_name, extra) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    expect(await github(["issue-state", path, "3", ...extra])).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("github pr-state", () => {
+  beforeEach(() => { answer = () => stdout(JSON.stringify({ number: 7, state: "closed", merged: true, sha: "abc123" })); });
+
+  test("merges with the chosen method", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const result = parsed<{ number: number; action: string; method: string }>(await github(["pr-state", path, "7", "merge", "--method", "squash", "--json"]));
+    const [call = []] = calls;
+    expect(call.slice(0, 4)).toEqual(["api", "-X", "PUT", "repos/operator/sample/pulls/7/merge"]);
+    expect(fields(call)).toEqual({ merge_method: "squash" });
+    expect(result).toMatchObject({ number: 7, action: "merge", method: "squash" });
+  });
+
+  test("merges as a merge commit by default", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["pr-state", path, "7", "merge"]);
+    expect(fields(calls[0] ?? [])).toEqual({ merge_method: "merge" });
+  });
+
+  test.each([["close", "closed"], ["reopen", "open"]])("%s patches the pull request to %s", async (action, state) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["pr-state", path, "7", action]);
+    const [call = []] = calls;
+    expect(call.slice(0, 4)).toEqual(["api", "-X", "PATCH", "repos/operator/sample/pulls/7"]);
+    expect(fields(call)).toEqual({ state });
+  });
+
+  test.each([
+    ["an unknown action", ["squash"]],
+    ["a method on close", ["close", "--method", "squash"]],
+    ["an unknown method", ["merge", "--method", "fast-forward"]],
+    ["no action", []],
+  ])("refuses %s before calling gh", async (_name, extra) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    expect(await github(["pr-state", path, "7", ...extra])).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a refused merge carries gh's message and is not retried", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => failed("gh: Pull Request is not mergeable (HTTP 405)", 1);
+    const result = await github(["pr-state", path, "7", "merge"]);
+    expect(result.kind === "failed" ? result.error : "").toContain("not mergeable");
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("github review verbs routing", () => {
+  test.each(Object.entries(REVIEW_USAGE))("%s --help prints its pinned usage", async (verb, line) => {
+    expect(await route(["github", verb, "--help"], { environment: env, processAdapter: fakeGh })).toEqual({ kind: "ok", value: `Usage: megabrain ${line}\n` });
+  });
+
+  test("a bad number prints the usage", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    expect(await github(["pr-files", path, "zero"])).toMatchObject({ kind: "failed", error: `Usage: megabrain ${REVIEW_USAGE["pr-files"]}`, exitCode: 2 });
+  });
+});
+
+describe("github pr branches", () => {
+  test("carries the head and base branch of the pull request", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const view = { ...(JSON.parse(fixture("pr-view.json")) as Record<string, unknown>), headRefName: "feat/review", baseRefName: "main" };
+    answer = (args) => args[0] === "pr" && args[1] === "view" ? stdout(JSON.stringify(view)) : failed("unexpected");
+    expect(parsed<{ headRefName: string; baseRefName: string }>(await github(["pr", path, "14700", "--json"]))).toMatchObject({ headRefName: "feat/review", baseRefName: "main" });
+  });
+
+  test("an issue has no branches", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const result = parsed<Record<string, unknown>>(await github(["issue", path, "1", "--json"]));
+    expect("headRefName" in result).toBe(false);
+  });
+});
+
+describe("github writes drop the cached reads", () => {
+  const writes: [string, string[]][] = [
+    ["review", ["review", "PATH", "14700", "--event", "comment", "--body", "x"]],
+    ["comment", ["comment", "PATH", "14700", "--body", "x"]],
+    ["issue-state", ["issue-state", "PATH", "1", "closed"]],
+    ["pr-state", ["pr-state", "PATH", "14700", "close"]],
+  ];
+
+  test.each(writes)("%s makes the next pr, issue and list reads fresh", async (_name, write) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const other = await repository("other", "git@github.com:operator/other.git");
+    const reads = [["pr", path, "14700"], ["issue", path, "1"], ["prs", path], ["issues", path]];
+    for (const read of reads) await github([...read, "--json"]);
+    await github(["prs", other, "--json"]);
+    expect(calls).toHaveLength(5);
+    answer = () => stdout("{}");
+    expect((await github(write.map((part) => part === "PATH" ? path : part))).kind).toBe("ok");
+    answer = byCommand;
+    calls = [];
+    for (const read of reads) await github([...read, "--json"]);
+    expect(calls).toHaveLength(4);
+    await github(["prs", other, "--json"]);
+    expect(calls).toHaveLength(4);
+  });
+
+  test("a failed write leaves the cache alone", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["pr", path, "14700", "--json"]);
+    answer = () => failed("gh: Not Found (HTTP 404)", 1);
+    expect((await github(["comment", path, "14700", "--body", "x"])).kind).toBe("failed");
+    answer = byCommand;
+    calls = [];
+    await github(["pr", path, "14700", "--json"]);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("pr-files prints an object with a files list", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout("[]");
+    expect(parsed<{ files: unknown[] }>(await github(["pr-files", path, "7", "--json"])).files).toEqual([]);
   });
 });

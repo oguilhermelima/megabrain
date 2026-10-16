@@ -69,6 +69,11 @@ megabrain github prs api --state open --json
 megabrain github issues ~/code/api --state all --limit 100 --json
 megabrain github pr api 42 --json
 megabrain github issue api 7 --json
+megabrain github pr-files api 42 --json
+megabrain github review api 42 --event request-changes --body "see inline" --comments '[{"path":"src/a.ts","line":3,"side":"RIGHT","body":"why?"}]' --json
+megabrain github comment api 42 --body "thanks" --json
+megabrain github issue-state api 7 closed --reason "not planned" --json
+megabrain github pr-state api 42 merge --method squash --json
 ```
 
 The desktop command palette can read the slash commands available in a folder:
