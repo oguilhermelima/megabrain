@@ -630,7 +630,10 @@ export async function prReviewers(process: ProcessAdapter, nameWithOwner: string
 }
 
 export async function requestReview(process: ProcessAdapter, nameWithOwner: string, number: number, users: readonly string[], remove: boolean): Promise<Result<{ users: readonly string[]; remove: boolean }>> {
-  const call = ["api", "-X", remove ? "DELETE" : "POST", `repos/${nameWithOwner}/pulls/${number}/requested_reviewers`, ...users.flatMap((user) => ["-f", `reviewers[]=${user}`])];
+  const foreign = users.find((entry) => entry.includes("/") && entry.slice(0, entry.indexOf("/")) !== nameWithOwner.split("/")[0]);
+  if (foreign !== undefined) return failed(`team ${foreign} is not in the organization that owns ${nameWithOwner}`, 2);
+  const field = (entry: string): string[] => ["-f", entry.includes("/") ? `team_reviewers[]=${entry.slice(entry.indexOf("/") + 1)}` : `reviewers[]=${entry}`];
+  const call = ["api", "-X", remove ? "DELETE" : "POST", `repos/${nameWithOwner}/pulls/${number}/requested_reviewers`, ...users.flatMap(field)];
   const sent = await gh(process, call, { name: "gh api requested reviewers", retry: false });
   return sent.kind === "ok" ? ok({ users, remove }) : sent;
 }
@@ -881,7 +884,11 @@ async function executeFlow(verb: FlowVerb, args: readonly string[], environment:
     const raw = values["--user"];
     if (raw === undefined) return usage;
     users = raw.split(",");
-    if (users.some((user) => !LOGIN.test(user))) return failed("--user needs GitHub logins separated by commas", 2);
+    const valid = (entry: string): boolean => {
+      const [org, slug, ...rest] = entry.split("/");
+      return slug === undefined ? LOGIN.test(entry) : rest.length === 0 && LOGIN.test(org ?? "") && LOGIN.test(slug);
+    };
+    if (users.some((user) => !valid(user))) return failed("--user needs GitHub logins or <org>/<team-slug> entries separated by commas", 2);
   }
   let method: "merge" | "squash" | "rebase" | undefined;
   if (verb === "auto-merge") {

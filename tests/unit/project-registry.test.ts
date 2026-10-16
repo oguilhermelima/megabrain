@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { route } from "../../src/cli/router.js";
@@ -321,6 +321,27 @@ describe("project registry", () => {
     await cli("repo", "add", path);
     const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Nome final do Codex");
+  });
+
+  test("Codex sessions reach back seven days while Claude keeps twenty-four hours", async () => {
+    const path = await repository("codex-window");
+    const directory = join(home, ".codex", "sessions", "2026", "10", "10");
+    mkdirSync(directory, { recursive: true });
+    const hours = 60 * 60 * 1000;
+    for (const [id, age] of [["codex-3d", 72], ["codex-6d", 144], ["codex-8d", 192]] as const) {
+      const rollout = join(directory, `rollout-${id}.jsonl`);
+      writeFileSync(rollout, `${JSON.stringify({ type: "session_meta", payload: { id, cwd: path, timestamp: new Date(Date.now() - age * hours).toISOString() } })}\n`);
+      const modified = new Date(Date.now() - age * hours);
+      utimesSync(rollout, modified, modified);
+    }
+    const claude = join(home, ".claude", "sessions");
+    mkdirSync(claude, { recursive: true });
+    const stamp = new Date(Date.now() - 72 * hours).toISOString();
+    writeFileSync(join(claude, "999998.json"), JSON.stringify({ pid: 999998, sessionId: "claude-3d", cwd: path, startedAt: stamp, name: "Claude three days", status: "idle", updatedAt: stamp }));
+    await cli("repo", "add", path);
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string }> }> }>>(await cli("projects", "--json"))[0];
+    const ids = (project?.worktrees[0]?.sessions ?? []).map((session) => session.sessionId).sort();
+    expect(ids).toEqual(["codex:codex-3d", "codex:codex-6d"]);
   });
 
   test("session titles fall back to the agent name when no session title or user message exists", async () => {

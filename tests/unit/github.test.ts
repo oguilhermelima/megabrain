@@ -1122,6 +1122,31 @@ describe("github request-review", () => {
     expect((calls[0] ?? []).slice(0, 4)).toEqual(["api", "-X", "DELETE", "repos/operator/sample/pulls/7/requested_reviewers"]);
   });
 
+  test("routes org/team-slug entries to team_reviewers by slug", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout("{}");
+    const result = parsed<{ users: string[]; remove: boolean }>(await github(["request-review", path, "7", "--user", "alice,operator/core-team", "--json"]));
+    const [call = []] = calls;
+    const fields = call.filter((arg, index) => call[index - 1] === "-f");
+    expect(fields).toEqual(["reviewers[]=alice", "team_reviewers[]=core-team"]);
+    expect(result).toMatchObject({ users: ["alice", "operator/core-team"], remove: false });
+  });
+
+  test("--remove withdraws a team with DELETE", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout("{}");
+    await github(["request-review", path, "7", "--user", "operator/core-team", "--remove", "--json"]);
+    const [call = []] = calls;
+    expect(call.slice(0, 4)).toEqual(["api", "-X", "DELETE", "repos/operator/sample/pulls/7/requested_reviewers"]);
+    expect(call.filter((arg, index) => call[index - 1] === "-f")).toEqual(["team_reviewers[]=core-team"]);
+  });
+
+  test.each([[["--user", "other/core-team"]], [["--user", "operator/"]], [["--user", "/core-team"]], [["--user", "a/b/c"]]])("%j is a usage error for a team", async (extra) => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    expect(await github(["request-review", path, "7", ...extra])).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(calls).toHaveLength(0);
+  });
+
   test.each([[[]], [["--user", ""]], [["--user", "a,,b"]], [["--user", "bad login"]]])("%j is a usage error", async (extra) => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     expect(await github(["request-review", path, "7", ...extra])).toMatchObject({ kind: "failed", exitCode: 2 });

@@ -39,6 +39,9 @@ type PullRequestSummary = Readonly<{ number: number; state: string; url: string;
 
 const HISTORY_MARKER = "project-registry-backfilled";
 const DAY = 86_400_000;
+// Codex rollouts are cheap to list and its sessions are resumed over days, so its ended sessions reach further back.
+const CODEX_WINDOW = 7 * DAY;
+const recentWindow = (agent: ProjectSession["agent"]): number => agent === "codex" ? CODEX_WINDOW : DAY;
 const PULL_REQUEST_CACHE_TTL = 60_000;
 const PROJECT_CACHE_FILE = "projects-derived-cache.json";
 type ProjectCache = {
@@ -347,7 +350,7 @@ async function grokSessions(home: string): Promise<RawSession[]> {
 
 async function codexRolloutPaths(home: string, processAdapter: ProcessAdapter): Promise<string[]> {
   const root = join(home, ".codex", "sessions");
-  const recent = await processAdapter.run("find", [root, "-type", "f", "-name", "rollout-*.jsonl", "-mmin", "-1440"]);
+  const recent = await processAdapter.run("find", [root, "-type", "f", "-name", "rollout-*.jsonl", "-mmin", String(-CODEX_WINDOW / 60_000)]);
   if (recent.kind === "ok") return recent.value.stdout.split("\n").filter((path) => path !== "");
   const years = await readdir(root).catch(() => []);
   return (async () => {
@@ -367,7 +370,7 @@ async function codexRolloutPaths(home: string, processAdapter: ProcessAdapter): 
 
 async function codexSessions(home: string, processAdapter: ProcessAdapter, titles: ReadonlyMap<string, string>, table: ProcessTable): Promise<RawSession[]> {
   const paths = await codexRolloutPaths(home, processAdapter);
-  const cutoff = Date.now() - DAY;
+  const cutoff = Date.now() - CODEX_WINDOW;
   const eligible: Array<{ path: string; modified: number }> = [];
   await Promise.all(paths.map(async (path) => {
     try { const info = await stat(path); if (info.mtimeMs >= cutoff) eligible.push({ path, modified: info.mtimeMs }); } catch { /* A rollout may be rotated while listing. */ }
@@ -503,7 +506,7 @@ function projectSessions(path: string, found: readonly RawSession[], dispatches:
     };
   }).filter((session) => context.filter === "all" || session.origin === "megabrain");
   const live = sessions.filter((session) => session.status !== "ended");
-  const ended = sessions.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= DAY)
+  const ended = sessions.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
     .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5);
   return [...live, ...ended];
 }

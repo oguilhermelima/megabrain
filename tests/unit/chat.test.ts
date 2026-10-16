@@ -56,6 +56,19 @@ async function waitForChat(id: string, state: string, env: ReturnType<typeof san
   throw new Error(`chat ${id} did not reach ${state}`);
 }
 
+// The daemon marks a chat working before it writes the turn request, so the state alone does not
+// mean the agent has received the input; wait for the request itself to land in the capture file.
+async function waitForRequest(method: string, env: ReturnType<typeof sandbox>) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const lines = existsSync(env.capture) ? readFileSync(env.capture, "utf8").split("\n") : [];
+    for (const line of lines) {
+      try { const request = JSON.parse(line) as { method?: string }; if (request.method === method) return; } catch { /* A line still being written. */ }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`agent never received ${method}`);
+}
+
 async function socketDaemon(env: ReturnType<typeof sandbox>) {
   const daemon = new ChatDaemon(env.state, { HOME: env.root, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`, CHAT_CAPTURE: env.capture, CHAT_USAGE_FIXTURE: join(process.cwd(), "tests/fixtures/chat-codex-usage.jsonl") });
   await daemon.start();
@@ -144,6 +157,7 @@ rl.on("line", (line) => {
     if (started.kind !== "ok") return;
     const chat = JSON.parse(started.value) as { id: string };
     await waitForChat(chat.id, "working", env);
+    await waitForRequest("turn/start", env);
     const recorded = readFileSync(env.capture, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: { input?: unknown[] } });
     const turn = recorded.find((request) => request.method === "turn/start");
     expect(turn?.params.input).toEqual([
