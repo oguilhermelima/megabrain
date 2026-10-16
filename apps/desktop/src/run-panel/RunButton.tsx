@@ -3,7 +3,7 @@ import { api } from '@/api'
 import type { ProjectScripts } from '@/api/schema'
 import { onAction } from '@/lib/app-events'
 import { useRunControls } from '@/run-panel/run-context'
-import { commandFor, primaryAction, runActionLabel, runActions, type RunAction } from '@/run-panel/run-model'
+import { commandFor, liveRuns, primaryAction, runActionLabel, runActions, type RunAction } from '@/run-panel/run-model'
 
 function useProjectScripts(root: string | null): ProjectScripts | null {
   const [scripts, setScripts] = useState<ProjectScripts | null>(null)
@@ -41,6 +41,48 @@ function Caret() {
     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m4 6 4 4 4-4" />
     </svg>
+  )
+}
+
+function PanelIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="2.75" width="12" height="10.5" rx="2" />
+      <path d="M10 2.75v10.5" />
+    </svg>
+  )
+}
+
+/**
+ * Shows or hides the open chat's run panel once anything has run there. Hiding stops nothing, so
+ * while runs are live the button carries a green dot and their count, and stays in reach to bring
+ * their output back.
+ */
+export function RunPanelToggle() {
+  const controls = useRunControls()
+  if (controls === null || controls.panel.tabs.length === 0) return null
+  const { open } = controls.panel
+  const live = liveRuns(controls.panel)
+  const state = live === 0 ? 'nothing running' : `${live} running`
+  return (
+    <button
+      type="button"
+      onClick={() => controls.setPanelOpen(!open)}
+      aria-pressed={open}
+      aria-label={`${open ? 'Hide' : 'Show'} run panel (${state})`}
+      title={open ? `Hide run panel (${state}; runs keep going)` : `Show run panel (${state})`}
+      className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
+        open ? 'border-white/15 bg-white/[0.12] text-ink-100' : 'border-white/10 bg-white/[0.05] text-ink-300 hover:bg-white/[0.1] hover:text-ink-100'
+      }`}
+    >
+      <PanelIcon />
+      {live > 0 && (
+        <>
+          <span className="size-1.5 rounded-full bg-ok shadow-[0_0_6px_var(--color-ok)]" aria-hidden="true" />
+          <span className="tabular-nums text-ok">{live}</span>
+        </>
+      )}
+    </button>
   )
 }
 
@@ -108,20 +150,7 @@ export function RunButton() {
         <Caret />
       </button>
       {open && (
-        <div role="menu" className="glass absolute top-full right-0 z-50 mt-1.5 w-[300px] max-w-[80vw] rounded-[16px] border border-white/[0.1] p-1.5 shadow-2xl">
-          {!controls.panel.open && controls.panel.tabs.length > 0 && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false)
-                controls.showPanel()
-              }}
-              className={item}
-            >
-              Show run panel
-            </button>
-          )}
+        <div role="menu" className="popover absolute top-full right-0 z-50 mt-1.5 w-[300px] max-w-[80vw] p-1.5">
           {runActions.map((action) => {
             const command = commandFor(scripts, action)
             return (

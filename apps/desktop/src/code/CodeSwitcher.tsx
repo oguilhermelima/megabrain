@@ -57,7 +57,7 @@ export function CodeSwitcher({
       role="dialog"
       aria-label="Open project"
       style={{ left: anchor.right + 8, top }}
-      className="glass fixed z-50 flex max-h-[min(420px,calc(100vh-16px))] w-[300px] flex-col rounded-[16px] border border-white/[0.1] p-1.5 shadow-2xl"
+      className="popover fixed z-50 flex max-h-[min(420px,calc(100vh-16px))] w-[300px] flex-col p-1.5"
     >
       <input
         autoFocus

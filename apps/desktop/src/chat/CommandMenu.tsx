@@ -174,7 +174,7 @@ export function CommandMenu({
       role="dialog"
       aria-label={label}
       style={{ ...(position ?? { left: 0, top: 0, visibility: 'hidden' }), width: shownWidth }}
-      className="glass fixed z-[100] flex max-h-[min(420px,calc(100vh-16px))] flex-col overflow-hidden rounded-[16px] border border-white/[0.1] shadow-2xl"
+      className="popover fixed z-[100] flex max-h-[min(420px,calc(100vh-16px))] flex-col overflow-hidden"
     >
       {search !== undefined && (
         <div className="shrink-0 border-b border-white/[0.07] p-1.5">

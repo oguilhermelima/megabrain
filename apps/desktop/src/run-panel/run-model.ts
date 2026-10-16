@@ -94,6 +94,11 @@ export function isRunning(panels: RunPanels, worktree: string, action: RunAction
   return tab !== undefined && tab.status.kind !== 'exited'
 }
 
+/** How many of the panel's runs are starting or running; hiding the panel stops none of them. */
+export function liveRuns(panel: WorktreePanel): number {
+  return panel.tabs.filter((tab) => tab.status.kind !== 'exited').length
+}
+
 export function selectTab(panels: RunPanels, worktree: string, action: RunAction): RunPanels {
   return withPanel(panels, worktree, (panel) => (panel.tabs.some((tab) => tab.action === action) ? { ...panel, active: action } : panel))
 }

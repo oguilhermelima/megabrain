@@ -7,7 +7,8 @@ export interface RunControls {
   root: string
   panel: WorktreePanel
   run: (action: RunAction, command: string) => void
-  showPanel: () => void
+  /** Shows or hides the run panel; hiding it leaves every run going. */
+  setPanelOpen: (open: boolean) => void
   /** Opens Settings on the project's commands; `repo` is the repository the scripts belong to. */
   editCommands: (repo: string) => void
 }

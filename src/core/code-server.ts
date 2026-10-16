@@ -19,12 +19,15 @@ const CODE_SERVER_PORT_COUNT = 8000;
 export type CodeServerAsset = Readonly<{ name: string; url: string; sha256: string }>;
 export type CodeServerInfo = Readonly<{ root: string; url: string; port: number; pid: number; codeServerPid: number }>;
 
+// The web workbench always draws its own title bar and ignores window.customTitleBarVisibility
+// and window.titleBarStyle. It hides the bar only when nothing needs it: no command center,
+// no layout control, a hidden menu bar, and an activity bar in its default place (top or bottom
+// moves the account and manage buttons into the title bar and forces it visible).
 export const CODE_ENFORCED_SETTINGS = {
   "security.workspace.trust.enabled": false,
-  "workbench.activityBar.location": "top",
+  "workbench.activityBar.location": "default",
   "workbench.statusBar.visible": false,
   "window.menuBarVisibility": "hidden",
-  "window.customTitleBarVisibility": "never",
   "window.commandCenter": false,
   "workbench.layoutControl.enabled": false,
   "workbench.sideBar.location": "right",

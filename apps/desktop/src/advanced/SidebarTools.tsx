@@ -133,7 +133,7 @@ export function FilterMenu({ filters, onFilters }: { filters: SidebarFilters; on
         {count > 0 && <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9.5px] leading-none font-bold text-ink-100 tabular-nums">{count}</span>}
       </HeaderButton>
       {open && (
-        <div role="menu" aria-label="Filters" className="glass absolute top-full right-0 z-50 mt-1.5 w-[220px] rounded-[16px] border border-white/[0.1] p-1.5 shadow-2xl">
+        <div role="menu" aria-label="Filters" className="popover absolute top-full right-0 z-50 mt-1.5 w-[220px] p-1.5">
           <Group label="Status">
             <FilterRow on={filters.active} onClick={() => set({ active: !filters.active })} title="Only worktrees with a live session">
               Active

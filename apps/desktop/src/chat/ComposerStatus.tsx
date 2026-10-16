@@ -31,7 +31,7 @@ import { onVisibility, windowShows } from '@/lib/app-events'
 import { createSharedRead, isStale, storageCache, type SharedRead } from '@/lib/shared-read'
 
 const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
-const toneBar: Record<LimitTone, string> = { normal: 'bg-ink-300', amber: 'bg-warn', red: 'bg-bad' }
+const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
 
 // Settings for the limits and the model list, read once for every composer in the app: at most
 // every minute while the window shows, paused while it is hidden. The 5-hour and weekly limits are
@@ -120,7 +120,7 @@ function Popover({ anchor, label, onClose, children }: { anchor: AnchorRect; lab
       role="menu"
       aria-label={label}
       style={position === null ? { left: 0, top: 0, visibility: 'hidden' } : position}
-      className="glass fixed z-[100] max-h-[calc(100vh-16px)] min-w-[240px] overflow-y-auto rounded-[14px] border border-ink-700/80 p-2 shadow-[0_16px_48px_-12px_rgba(0,0,0,0.6),0_2px_8px_rgba(0,0,0,0.3)]"
+      className="popover fixed z-[100] max-h-[calc(100vh-16px)] min-w-[240px] overflow-y-auto p-2"
     >
       {children}
     </div>,
@@ -299,11 +299,11 @@ function ModelMenu({
   )
 }
 
-/** A thin bar with rounded ends, filled to a share and coloured by tone. */
-function Meter({ fraction, tone, width }: { fraction: number; tone: LimitTone; width: string }) {
+/** A bar with rounded ends, filled to a share and coloured by tone. */
+function Meter({ fraction, tone }: { fraction: number; tone: LimitTone }) {
   return (
-    <span className={`h-1 ${width} shrink-0 overflow-hidden rounded-full bg-white/[0.08]`}>
-      <span className={`block h-full rounded-full ${toneBar[tone]}`} style={{ width: `${Math.max(2, Math.round(fraction * 100))}%` }} />
+    <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-white/[0.12]">
+      <span className={`block h-full rounded-full ${toneBar[tone]}`} style={{ width: `${Math.max(3, Math.round(fraction * 100))}%` }} />
     </span>
   )
 }
@@ -314,11 +314,11 @@ function LimitMeter({ agent, limit }: { agent: string; limit: AgentLimit }) {
   const percent = Math.round(limit.usedPercent)
   const when = limit.resetsAt === null ? 'reset time unknown' : `resets ${limit.resetsAt.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
   return (
-    <span className="flex h-5 min-w-0 items-center gap-1.5" title={`${agent} ${windowNames[limit.window] ?? limit.window} limit: ${percent}% used, ${when}`}>
-      <span className="shrink-0">{limit.window}</span>
-      <Meter fraction={limit.usedPercent / 100} tone={limit.tone} width="w-10" />
-      <span className={`shrink-0 tabular-nums ${limit.tone === 'normal' ? 'text-ink-400' : toneText[limit.tone]}`}>{`${percent}%`}</span>
-      {limit.resets !== null && <span className="min-w-0 truncate">{limit.resets}</span>}
+    <span className="flex h-6 min-w-0 items-center gap-2" title={`${agent} ${windowNames[limit.window] ?? limit.window} limit: ${percent}% used, ${when}`}>
+      <span className="shrink-0 font-medium text-ink-200">{windowNames[limit.window] ?? limit.window}</span>
+      <Meter fraction={limit.usedPercent / 100} tone={limit.tone} />
+      <span className={`shrink-0 font-semibold tabular-nums ${limit.tone === 'normal' ? 'text-ink-100' : toneText[limit.tone]}`}>{`${percent}%`}</span>
+      {limit.resets !== null && <span className="min-w-0 truncate text-ink-400">{limit.resets}</span>}
     </span>
   )
 }
@@ -375,9 +375,9 @@ function PickerSkeleton() {
 
 function LimitSkeleton({ window }: { window: string }) {
   return (
-    <span aria-hidden="true" className="flex h-5 min-w-0 items-center gap-1.5">
-      <span className="shrink-0">{window}</span>
-      <span className={`h-1 w-10 shrink-0 ${shimmer}`} />
+    <span aria-hidden="true" className="flex h-6 min-w-0 items-center gap-2">
+      <span className="shrink-0 font-medium text-ink-200">{windowNames[window] ?? window}</span>
+      <span className={`h-1.5 w-16 shrink-0 ${shimmer}`} />
       <span className={`h-2.5 w-[72px] shrink-0 ${shimmer}`} />
     </span>
   )
@@ -481,7 +481,7 @@ export function ComposerStatus({
   )
 }
 
-/** The agent's 5-hour and weekly limits as one quiet line under the composer, apart from the text. */
+/** The agent's 5-hour and weekly limits as one line under the composer, from its left edge, at the toolbar's text size. */
 export function ComposerLimits({ agent }: { agent: string | null }) {
   const { settings, stale } = useSettings()
   if (agent === null) return null
@@ -492,7 +492,7 @@ export function ComposerLimits({ agent }: { agent: string | null }) {
     <div
       aria-busy={loading}
       title={stale ? 'Last known usage; refreshing' : undefined}
-      className={`flex min-w-0 flex-wrap items-center justify-end gap-x-4 px-4 pt-1.5 text-[11.5px] whitespace-nowrap text-ink-500 transition-opacity duration-150 motion-reduce:transition-none ${stale ? 'opacity-60' : ''}`}
+      className={`flex min-w-0 flex-wrap items-center justify-start gap-x-5 px-3 pt-2 text-[12.5px] whitespace-nowrap text-ink-300 transition-opacity duration-150 motion-reduce:transition-none ${stale ? 'opacity-60' : ''}`}
     >
       {loading ? limitWindows.map((window) => <LimitSkeleton key={window} window={window} />) : limits.map((limit) => <LimitMeter key={limit.window} agent={agent} limit={limit} />)}
     </div>

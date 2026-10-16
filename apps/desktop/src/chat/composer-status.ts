@@ -14,9 +14,17 @@ export function formatTokens(tokens: number): string {
 
 export type LimitTone = 'normal' | 'amber' | 'red'
 
+/** The context meter's tone: amber above 80 percent, red above 95. */
 export function limitTone(usedPercent: number): LimitTone {
   if (usedPercent > 95) return 'red'
   if (usedPercent > 80) return 'amber'
+  return 'normal'
+}
+
+/** A usage limit's tone: warning (amber) above 70 percent, critical (red) above 90. */
+export function usageLimitTone(usedPercent: number): LimitTone {
+  if (usedPercent > 90) return 'red'
+  if (usedPercent > 70) return 'amber'
   return 'normal'
 }
 
@@ -325,6 +333,6 @@ export function agentLimits(readings: UsageReading[], agent: string, now: Date =
     const reading = readings.find((item) => item.provider === agent && item.window === window)
     if (reading === undefined || reading.usedPercent === null) return []
     const resetsAt = parseResetsAt(reading.resetsAt)
-    return [{ window, usedPercent: reading.usedPercent, tone: limitTone(reading.usedPercent), resets: resetsAt === null ? null : resetText(resetsAt, now), resetsAt }]
+    return [{ window, usedPercent: reading.usedPercent, tone: usageLimitTone(reading.usedPercent), resets: resetsAt === null ? null : resetText(resetsAt, now), resetsAt }]
   })
 }

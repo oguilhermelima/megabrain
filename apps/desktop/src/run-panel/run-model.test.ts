@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { projectScriptsSchema, type ProjectScripts } from '@/api/schema'
-import { closeTab, commandFor, isRunning, markExited, markStarted, needsSetup, panelFor, primaryAction, runActions, runShellCommand, selectTab, setPanelOpen, startRun, type RunPanels } from '@/run-panel/run-model'
+import { closeTab, commandFor, isRunning, liveRuns, markExited, markStarted, needsSetup, panelFor, primaryAction, runActions, runShellCommand, selectTab, setPanelOpen, startRun, type RunPanels } from '@/run-panel/run-model'
 
 const scripts = (fields: Partial<ProjectScripts['scripts']> = {}): ProjectScripts => ({
   repo: '/repo',
@@ -152,5 +152,30 @@ describe('run panel tabs', () => {
 
   test('opening the panel of a worktree with no tabs keeps it closed', () => {
     expect(panelFor(setPanelOpen({}, a, true), a).open).toBe(false)
+  })
+})
+
+describe('liveRuns', () => {
+  test('counts the runs that are starting or running, not the exited ones', () => {
+    let panels = startRun({}, a, 'run', 'bun dev')
+    panels = startRun(panels, a, 'build', 'bun run build')
+    panels = startRun(panels, a, 'install', 'bun install')
+    const run = panelFor(panels, a).tabs[0]
+    const install = panelFor(panels, a).tabs[2]
+    if (run === undefined || install === undefined) throw new Error('missing tabs')
+    panels = markStarted(panels, a, 'run', run.generation, 'term-1')
+    panels = markExited(panels, a, 'install', install.generation, 0)
+    expect(liveRuns(panelFor(panels, a))).toBe(2)
+  })
+
+  test('keeps counting a hidden panel, because hiding stops nothing', () => {
+    const panels = setPanelOpen(startRun({}, a, 'run', 'bun dev'), a, false)
+    expect(panelFor(panels, a).open).toBe(false)
+    expect(panelFor(panels, a).tabs).toHaveLength(1)
+    expect(liveRuns(panelFor(panels, a))).toBe(1)
+  })
+
+  test('is zero for a worktree that never ran anything', () => {
+    expect(liveRuns(panelFor({}, b))).toBe(0)
   })
 })

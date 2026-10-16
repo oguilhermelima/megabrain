@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { createProcessAdapter } from "../../src/adapters/proc.js";
 import { registerMegabrainRepository } from "../../src/core/project-registry.js";
-import { BRIDGE_EXTENSION, codeServerPortCandidate, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
+import { BRIDGE_EXTENSION, CODE_ENFORCED_SETTINGS, codeServerPortCandidate, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
 import { ok } from "../../src/core/result.js";
 
 let root = "";
@@ -74,6 +74,15 @@ describe("code server", () => {
     expect(selectCodeServerAsset("win32", "x64")).toBeUndefined();
   });
 
+  test("enforces every setting the web workbench checks before hiding its title bar", () => {
+    expect(CODE_ENFORCED_SETTINGS).toMatchObject({
+      "window.commandCenter": false,
+      "workbench.layoutControl.enabled": false,
+      "window.menuBarVisibility": "hidden",
+      "workbench.activityBar.location": "default",
+    });
+  });
+
   test("refuses an unregistered repository without downloading or spawning", async () => {
     const path = await repository("unregistered");
     const fake = fakes();
@@ -118,7 +127,7 @@ describe("code server", () => {
     const settingsPath = join(profile, "User", "settings.json");
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       "security.workspace.trust.enabled": false,
-      "workbench.activityBar.location": "top",
+      "workbench.activityBar.location": "default",
       "workbench.statusBar.visible": false,
       "workbench.colorTheme": "megabrain-dark",
       "workbench.preferredDarkColorTheme": "megabrain-dark",
@@ -140,7 +149,7 @@ describe("code server", () => {
     await manager.open(path);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       "workbench.colorTheme": "Default Light Modern",
-      "workbench.activityBar.location": "top",
+      "workbench.activityBar.location": "default",
       "security.workspace.trust.enabled": false,
     });
     expect(JSON.parse(readFileSync(join(profile, "extensions", "extensions.json"), "utf8"))).toContainEqual(expect.objectContaining({

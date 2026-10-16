@@ -53,7 +53,7 @@ export function RowMenu({ menu, onClose }: { menu: OpenMenu; onClose: () => void
       ref={ref}
       role="menu"
       style={position === null ? { left: 0, top: 0, visibility: 'hidden' } : position}
-      className="glass fixed z-[100] max-h-[calc(100vh-16px)] min-w-[200px] overflow-y-auto rounded-[16px] border border-white/[0.1] p-1.5 shadow-2xl"
+      className="popover fixed z-[100] max-h-[calc(100vh-16px)] min-w-[200px] overflow-y-auto p-1.5"
     >
       {menu.items.map((item) => (
         <button

@@ -648,7 +648,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           root,
           panel: panelFor(runs.panels, root),
           run: (action, command) => runs.run(root, action, command),
-          showPanel: () => runs.setOpen(root, true),
+          setPanelOpen: (open) => runs.setOpen(root, open),
           editCommands: (repo) => {
             setSettingsProject(repo)
             setSettingsOpen(true)

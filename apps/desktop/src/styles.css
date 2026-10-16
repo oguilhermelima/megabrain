@@ -55,6 +55,15 @@ html.native body {
   background: transparent;
 }
 
+/* Every popover, menu and floating list. The top bar's menus were glass over black, which comes out
+   as ink-900; that colour, opaque, so a menu over the see-through sidebar looks the same. */
+.popover {
+  background: var(--color-ink-900);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+}
+
 .glass {
   background: rgba(16, 16, 20, 0.62);
   -webkit-backdrop-filter: blur(40px) saturate(170%);

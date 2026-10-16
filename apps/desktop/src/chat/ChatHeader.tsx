@@ -3,11 +3,11 @@ import { CodeIcon, IconButton } from '@/advanced/chrome'
 import { AgentBadge } from '@/advanced/parts'
 import { useOpenCode } from '@/chat/code-context'
 import { useRunControls } from '@/run-panel/run-context'
-import { RunButton } from '@/run-panel/RunButton'
+import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
 
 /**
  * The top bar every chat view and the launcher share: agent icon (none on the launcher), one-line title and one small metadata line, then
- * the view's own controls, then the code and run buttons of the chat's worktree on the right. It sits about 12px below the window top; when the sidebar is
+ * the view's own controls, then the code and run buttons of the chat's worktree on the right, with the run panel's toggle once anything ran. It sits about 12px below the window top; when the sidebar is
  * hidden the window's own drag strip above it clears the traffic lights.
  */
 export function ChatHeader({ agent, title, meta, metaTitle, actions }: { agent: string | null; title: string; meta: string; metaTitle?: string; actions?: ReactNode }) {
@@ -27,6 +27,7 @@ export function ChatHeader({ agent, title, meta, metaTitle, actions }: { agent: 
         </IconButton>
       )}
       <RunButton />
+      <RunPanelToggle />
     </header>
   )
 }

@@ -261,7 +261,7 @@ function ChipPreview({ attachment, left, top }: { attachment: Attachment | undef
   const src = attachment === undefined ? null : previewOf(attachment)
   if (attachment === undefined || src === null) return null
   return createPortal(
-    <div style={{ left, top: top - 6 }} className="pointer-events-none fixed z-[100] -translate-y-full rounded-xl border border-white/[0.12] bg-ink-900 p-1 shadow-2xl">
+    <div style={{ left, top: top - 6 }} className="popover pointer-events-none fixed z-[100] -translate-y-full p-1">
       <img src={src} alt={attachment.name} className="block max-h-40 max-w-64 rounded-lg object-contain" />
       <p className="max-w-64 truncate px-1 pt-1 text-[11px] text-ink-400">{attachment.name}</p>
     </div>,

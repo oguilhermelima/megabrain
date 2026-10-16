@@ -15,6 +15,7 @@ import {
   formatTokens,
   groupModels,
   limitTone,
+  usageLimitTone,
   menuGroups,
   modelCommand,
   modelHint,
@@ -221,6 +222,22 @@ describe('limitTone', () => {
     expect(limitTone(80.1)).toBe('amber')
     expect(limitTone(95)).toBe('amber')
     expect(limitTone(95.1)).toBe('red')
+  })
+})
+
+describe('usageLimitTone', () => {
+  test('warning above 70 percent, critical above 90, sooner than the context meter', () => {
+    expect(usageLimitTone(0)).toBe('normal')
+    expect(usageLimitTone(70)).toBe('normal')
+    expect(usageLimitTone(70.1)).toBe('amber')
+    expect(usageLimitTone(90)).toBe('amber')
+    expect(usageLimitTone(90.1)).toBe('red')
+    expect(usageLimitTone(100)).toBe('red')
+  })
+
+  test('an agent limit takes its tone from the usage rule', () => {
+    const limits = agentLimits([reading('claude', '5h', 75, null), reading('claude', 'weekly', 92, null)], 'claude')
+    expect(limits.map((limit) => limit.tone)).toEqual(['amber', 'red'])
   })
 })
 
