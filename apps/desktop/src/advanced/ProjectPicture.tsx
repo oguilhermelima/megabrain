@@ -34,11 +34,17 @@ function resolvePicture(project: Project): Promise<string | null> {
   return pending
 }
 
+const boxes = {
+  row: 'size-6 shrink-0 rounded-[8px] text-[10.5px]',
+  large: 'size-10 shrink-0 rounded-[12px] text-[15px]',
+  hero: 'size-16 shrink-0 rounded-[20px] text-[22px]',
+}
+
 /**
  * The picture the person chose in Settings, else the detected one (picture-model.ts), else the
- * initials of the display name. 24px in a sidebar row; large (40px) heads a project's page.
+ * initials of the display name. 24px in a sidebar row, large is 40px, and hero (64px) heads a project's page.
  */
-export function ProjectPicture({ project, size = 'row' }: { project: Project; size?: 'row' | 'large' }) {
+export function ProjectPicture({ project, size = 'row' }: { project: Project; size?: 'row' | 'large' | 'hero' }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const chosen = customPicture(project)
@@ -61,7 +67,7 @@ export function ProjectPicture({ project, size = 'row' }: { project: Project; si
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.path, project.missing])
 
-  const box = size === 'large' ? 'size-10 shrink-0 rounded-[12px] text-[15px]' : 'size-6 shrink-0 rounded-[8px] text-[10.5px]'
+  const box = boxes[size]
   if (chosenUrl !== null && !chosenFailed) {
     return <img src={chosenUrl} alt="" draggable={false} onError={() => setChosenFailed(true)} className={`${box} bg-white/[0.06] object-cover`} />
   }

@@ -973,6 +973,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           root,
           panel: panelFor(runs.panels, root),
           run: (action, command, port) => runs.run(root, action, command, port),
+          stop: (action) => {
+            const tab = panelFor(runs.panels, root).tabs.find((entry) => entry.action === action)
+            if (tab !== undefined) runs.stop(root, tab)
+          },
           setPanelOpen: (open) => runs.setOpen(root, open),
           editCommands: (repo) => {
             setSettingsProject(repo)

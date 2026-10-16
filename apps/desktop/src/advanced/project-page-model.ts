@@ -1,7 +1,8 @@
-import type { NativeChat, Project, ProjectScripts, ProjectSession } from '@/api/schema'
+import type { BranchChanges, CodeChange, NativeChat, Project, ProjectScripts, ProjectSession } from '@/api/schema'
 import { rowToOpen, worktreeItems, type KeyedItem } from '@/advanced/row-model'
 import { worktreePullRequestState, type PullRequestVisualState } from '@/github/github-model'
 import { rowStatus } from '@/native-chat/chat-model'
+import type { WorktreePanel } from '@/run-panel/run-model'
 
 // What a project's page shows, from the calls the sidebar already makes (`projects --json`, the
 // native chats, `github prs|issues`, `repo scripts`): its worktrees, its chats across them, the
@@ -14,13 +15,19 @@ export interface WorktreeSummary {
   path: string
   /** The branch, or the commit a detached HEAD sits at. */
   name: string
+  /** null on a detached HEAD. */
+  branch: string | null
   primary: boolean
   pullRequest: { number: number; state: PullRequestVisualState | null; title: string | null } | null
   lastActivityAt: string | null
   /** Native chats and agent sessions, a chat that runs a listed session counted once. */
   chatCount: number
+  /** Of those, the ones working now. */
+  working: number
   open: WorktreeOpen
 }
+
+const itemStatus = (item: KeyedItem): ProjectSession['status'] | null => (item.kind === 'native' ? rowStatus(item.chat.state) : item.kind === 'session' ? item.session.status : null)
 
 const itemActivity = (item: KeyedItem): string | null => (item.kind === 'native' ? (item.chat.lastActivityAt ?? item.session?.lastActivityAt ?? null) : (item.session?.lastActivityAt ?? null))
 
@@ -42,10 +49,12 @@ export function worktreeSummaries(project: Project, chats: Record<string, Native
       return {
         path: worktree.path,
         name: worktreeName(worktree),
+        branch: worktree.branch,
         primary: worktree.primary,
         pullRequest: pullRequest === null ? null : { number: pullRequest.number, state: worktreePullRequestState(pullRequest), title: pullRequest.title ?? null },
         lastActivityAt: newest(items.map(itemActivity)),
         chatCount: items.length,
+        working: items.filter((item) => itemStatus(item) === 'working').length,
         open: latest === null || latest.kind === 'terminal' ? { kind: 'launcher' } : latest.kind === 'native' ? { kind: 'native', chat: latest.chat } : { kind: 'session', session: latest.session },
       }
     })
@@ -116,4 +125,63 @@ export function scriptRows(scripts: ProjectScripts | null): ScriptRow[] {
  */
 export function defaultBranch(project: Project): string | null {
   return project.worktrees.find((worktree) => worktree.primary)?.branch ?? null
+}
+
+/** A worktree's changed files by kind, against its base: what it committed plus what is not committed yet. */
+export interface ChangeCounts {
+  added: number
+  modified: number
+  deleted: number
+  /** Files with changes not committed yet, of all those counted. */
+  uncommitted: number
+}
+
+type ChangeKind = 'added' | 'modified' | 'deleted'
+
+const changeKind = (status: CodeChange['status']): ChangeKind => (status === 'added' || status === 'untracked' ? 'added' : status === 'deleted' ? 'deleted' : 'modified')
+
+/**
+ * Each path once. Uncommitted work says what a file is now, except that a file the branch added stays
+ * added while it is still being edited, and one the branch added and the work then deleted is no change.
+ */
+export function changeCounts(uncommitted: readonly CodeChange[], branch: BranchChanges | null): ChangeCounts {
+  const kinds = new Map<string, ChangeKind>((branch?.changes ?? []).map((change) => [change.path, changeKind(change.status)]))
+  for (const change of uncommitted) {
+    const now = changeKind(change.status)
+    const before = kinds.get(change.path)
+    if (before === 'added' && now === 'deleted') kinds.delete(change.path)
+    else kinds.set(change.path, before === 'added' ? 'added' : now)
+  }
+  const counts: ChangeCounts = { added: 0, modified: 0, deleted: 0, uncommitted: new Set(uncommitted.map((change) => change.path)).size }
+  for (const kind of kinds.values()) counts[kind] += 1
+  return counts
+}
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+
+/**
+ * The hero's line of live facts. Pull requests and issues are left out until read, and for a project
+ * not on GitHub; chats working now only when some are.
+ */
+export function heroFacts({ worktrees, working, pulls, issues }: { worktrees: number; working: number; pulls: number | null; issues: number | null }): { key: string; text: string; live?: boolean }[] {
+  return [
+    { key: 'worktrees', text: plural(worktrees, 'worktree', 'worktrees') },
+    ...(pulls === null ? [] : [{ key: 'pulls', text: plural(pulls, 'open pull request', 'open pull requests') }]),
+    ...(issues === null ? [] : [{ key: 'issues', text: plural(issues, 'open issue', 'open issues') }]),
+    ...(working === 0 ? [] : [{ key: 'working', text: `${plural(working, 'chat', 'chats')} working`, live: true }]),
+  ]
+}
+
+export type ScriptState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'running' } | { kind: 'failed'; code: number | null } | { kind: 'stopped' }
+
+/**
+ * Where a command stands in the worktree's run panel: never run there (idle), starting (which also
+ * covers a run waiting in megabrain's queue), running, or done. A run that ended on its own with a
+ * code other than 0 failed; one stopped, or that exited cleanly, is stopped.
+ */
+export function scriptState(panel: WorktreePanel | null, action: ScriptAction): ScriptState {
+  const tab = panel?.tabs.find((item) => item.action === action)
+  if (tab === undefined) return { kind: 'idle' }
+  if (tab.status.kind !== 'exited') return { kind: tab.status.kind }
+  return tab.status.code !== null && tab.status.code !== 0 ? { kind: 'failed', code: tab.status.code } : { kind: 'stopped' }
 }

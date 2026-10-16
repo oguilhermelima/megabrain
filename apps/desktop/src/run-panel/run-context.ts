@@ -9,6 +9,8 @@ export interface RunControls {
   panel: WorktreePanel
   /** `port` is the port the command binds, when known; a taken one is offered a way around before running. */
   run: (action: RunAction, command: string, port?: ScriptPort | null) => void
+  /** Stops the action's run, after the run panel's confirmation; nothing when it does not run. */
+  stop: (action: RunAction) => void
   /** Shows or hides the run panel; hiding it leaves every run going. */
   setPanelOpen: (open: boolean) => void
   /** Opens Settings on the project's commands; `repo` is the repository the scripts belong to. */

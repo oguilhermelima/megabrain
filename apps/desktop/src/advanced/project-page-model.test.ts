@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { NativeChat, Project, ProjectScripts, ProjectSession, ProjectWorktree } from '@/api/schema'
-import { defaultBranch, newestFirst, recentChats, scriptRows, worktreeSummaries } from '@/advanced/project-page-model'
+import { changeCounts, defaultBranch, heroFacts, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries } from '@/advanced/project-page-model'
+import type { RunTab, WorktreePanel } from '@/run-panel/run-model'
 
 const session = (sessionId: string, lastActivityAt: string | null, extra: Partial<ProjectSession> = {}): ProjectSession => ({
   agent: 'claude',
@@ -74,6 +75,14 @@ describe('worktreeSummaries', () => {
     expect(row?.lastActivityAt).toBe('2026-10-16T11:00:00.000Z')
   })
 
+  test('counts the chats working now, and keeps the branch apart from the name', () => {
+    const busy = { '/work/canto-new': [chat('n1', '/work/canto-new', null, { state: 'working' })] }
+    const row = worktreeSummaries(canto, busy).find((entry) => entry.path === '/work/canto-new')
+    expect(row?.working).toBe(1)
+    expect(row?.branch).toBe('feat/new')
+    expect(worktreeSummaries(canto, busy).find((entry) => entry.path === '/work/canto-detached')?.branch).toBeNull()
+  })
+
   test('a chat that runs a listed session counts once', () => {
     const resumed = { '/work/canto-new': [chat('n1', '/work/canto-new', null, { agent: 'claude', agentSessionId: 'a' })] }
     expect(worktreeSummaries(canto, resumed).find((entry) => entry.path === '/work/canto-new')?.chatCount).toBe(1)
@@ -142,5 +151,76 @@ describe('defaultBranch', () => {
 
   test('is unknown without a main checkout on a branch', () => {
     expect(defaultBranch(project([worktree('/work/canto', null, { primary: true })]))).toBeNull()
+  })
+})
+
+describe('changeCounts', () => {
+  const branch = (changes: { path: string; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }[]) => ({ base: 'main', mergeBase: 'abc', changes })
+
+  test('counts committed and uncommitted files by kind, each path once', () => {
+    const counts = changeCounts(
+      [
+        { path: 'a.ts', status: 'modified' },
+        { path: 'new.ts', status: 'untracked' },
+      ],
+      branch([
+        { path: 'a.ts', status: 'modified' },
+        { path: 'b.ts', status: 'added' },
+        { path: 'old.ts', status: 'deleted' },
+        { path: 'moved.ts', status: 'renamed' },
+      ]),
+    )
+    expect(counts).toEqual({ added: 2, modified: 2, deleted: 1, uncommitted: 2 })
+  })
+
+  test('a file the branch added stays added while edited, and is no change once deleted again', () => {
+    const counts = changeCounts(
+      [
+        { path: 'b.ts', status: 'modified' },
+        { path: 'c.ts', status: 'deleted' },
+      ],
+      branch([
+        { path: 'b.ts', status: 'added' },
+        { path: 'c.ts', status: 'added' },
+      ]),
+    )
+    expect(counts).toEqual({ added: 1, modified: 0, deleted: 0, uncommitted: 2 })
+  })
+
+  test('without a base only the uncommitted work counts', () => {
+    expect(changeCounts([{ path: 'x', status: 'deleted' }], null)).toEqual({ added: 0, modified: 0, deleted: 1, uncommitted: 1 })
+    expect(changeCounts([], null)).toEqual({ added: 0, modified: 0, deleted: 0, uncommitted: 0 })
+  })
+})
+
+describe('heroFacts', () => {
+  test('worktrees, open pull requests and issues, and the chats working now', () => {
+    expect(heroFacts({ worktrees: 3, working: 1, pulls: 2, issues: 1 }).map((fact) => fact.text)).toEqual(['3 worktrees', '2 open pull requests', '1 open issue', '1 chat working'])
+    expect(heroFacts({ worktrees: 1, working: 2, pulls: 0, issues: 0 }).find((fact) => fact.key === 'working')).toEqual({ key: 'working', text: '2 chats working', live: true })
+  })
+
+  test('leaves out what is not read yet or not on GitHub, and an idle project says nothing about chats', () => {
+    expect(heroFacts({ worktrees: 1, working: 0, pulls: null, issues: null }).map((fact) => fact.text)).toEqual(['1 worktree'])
+  })
+})
+
+describe('scriptState', () => {
+  const tab = (action: RunTab['action'], status: RunTab['status']): RunTab => ({ action, command: 'x', generation: 1, terminalId: null, status, movedTo: null, conflict: null })
+  const panel = (tabs: RunTab[]): WorktreePanel => ({ open: true, tabs, active: null, last: null })
+
+  test('idle until run in the worktree', () => {
+    expect(scriptState(null, 'run')).toEqual({ kind: 'idle' })
+    expect(scriptState(panel([tab('build', { kind: 'running' })]), 'run')).toEqual({ kind: 'idle' })
+  })
+
+  test('starting (or queued) and running while its tab is live', () => {
+    expect(scriptState(panel([tab('run', { kind: 'starting' })]), 'run')).toEqual({ kind: 'starting' })
+    expect(scriptState(panel([tab('run', { kind: 'running' })]), 'run')).toEqual({ kind: 'running' })
+  })
+
+  test('failed on a code other than 0, stopped when stopped or clean', () => {
+    expect(scriptState(panel([tab('run', { kind: 'exited', code: 1 })]), 'run')).toEqual({ kind: 'failed', code: 1 })
+    expect(scriptState(panel([tab('run', { kind: 'exited', code: 0 })]), 'run')).toEqual({ kind: 'stopped' })
+    expect(scriptState(panel([tab('run', { kind: 'exited', code: null })]), 'run')).toEqual({ kind: 'stopped' })
   })
 })
