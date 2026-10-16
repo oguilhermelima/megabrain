@@ -71,6 +71,11 @@ function firstText(parts: readonly Part[]): string { return parts.filter((part):
 function event(kind: ChatEvent["kind"], value: string, tool?: ChatEvent["tool"], extra: Partial<ChatEvent> = {}): ChatEvent {
   return { id: randomUUID(), at: new Date().toISOString(), kind, text: value, ...(tool === undefined ? {} : { tool }), ...extra };
 }
+/** The images a message carried, for its user event; a message of text alone carries no field. */
+function withImages(parts: readonly Part[]): Partial<ChatEvent> {
+  const images = parts.flatMap((part) => part.type === "image" ? [{ path: part.path }] : []);
+  return images.length === 0 ? {} : { images };
+}
 function withMessage(messageId: string): Partial<ChatEvent> { return messageId === "" ? {} : { messageId }; }
 
 /** Owns every chat child. The CLI is a short-lived socket client; chatd keeps this object alive. */
@@ -155,7 +160,7 @@ export class ChatDaemon {
     await this.save(chat);
     await this.publish(chat, event("system", `Started ${agent} chat`));
     const queue = this.queues.get(chat.id) ?? [];
-    if (parts.length > 0) { queue.push(parts); this.queues.set(chat.id, queue); await this.publish(chat, event("user", firstText(parts))); }
+    if (parts.length > 0) { queue.push(parts); this.queues.set(chat.id, queue); await this.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
     void this.runAgent(chat).catch((error: unknown) => this.fail(chat.id, error));
     return chat;
   }
@@ -205,7 +210,7 @@ export class ChatDaemon {
     if (chat.title === null && textValue !== "") chat.title = textValue.slice(0, 120);
     chat.lastActivityAt = new Date().toISOString();
     await this.save(chat);
-    await this.publish(chat, event("user", textValue));
+    await this.publish(chat, event("user", textValue, undefined, withImages(parts)));
     this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
     if (resuming) {

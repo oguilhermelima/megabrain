@@ -26,7 +26,7 @@ export type Chat = {
 
 export type ChatApproval = { id: string; tool: string; input: string; reason: string | null; decisions: Array<"allow" | "allow-session" | "deny"> };
 /** `state` is stored; `delta` is a chunk of the message `messageId` and goes to followers only. */
-export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; tool?: { name: string; input?: string; status?: "ok" | "error" } };
+export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; /** On a user event: the images it carried, as local files (never their bytes). */ images?: { path: string }[]; tool?: { name: string; input?: string; status?: "ok" | "error" } };
 export type ChatLine = { cursor: string; chat?: Chat; event?: ChatEvent; approval?: ChatApproval };
 
 function safeId(id: string): boolean { return /^[a-f\d-]{36}$/i.test(id); }

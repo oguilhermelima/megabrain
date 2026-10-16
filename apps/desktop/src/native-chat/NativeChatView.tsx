@@ -13,13 +13,15 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, terminalSwitchWarning, queueOutgoing, shouldInterrupt, withModel, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, terminalSwitchWarning, queueOutgoing, shouldInterrupt, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
 import { useFollowChat } from '@/native-chat/useFollowChat'
+import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
+import { endKeptSession } from '@/terminal/kept-terminals'
 
-// xterm loads the first time a chat moves to its terminal.
+// xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
 
 // The terminal each chat handed over to, kept for the app run so reopening the chat reattaches to it.
@@ -87,7 +89,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const send = async (parts: MessagePart[]): Promise<null> => {
     const id = crypto.randomUUID()
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
-    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString() }))
+    const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
+    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images }) }))
     try {
       await api.sendChat(chat.id, parts, { fresh: startFresh && resumable(chat.state) })
       setStartFresh(false)
@@ -117,6 +120,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const switchMode = async () => {
     if (!toggle.enabled || switching) return
     const to = toggle.target
+    beginSwitch(chat.id, chat.agent, to)
     setConfirming(null)
     setSwitchError(null)
     setSwitching(true)
@@ -128,16 +132,24 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     const moved = (async () => {
       // One writer at a time: the terminal's TUI goes before the chat's agent process starts.
       if (closing !== undefined) await api.closeTerminal(closing.id)
-      return api.setChatMode(chat.id, to)
+      if (to === 'chat') {
+        endKeptSession(chat.id)
+        switchStep(chat.id, 'terminalClosed')
+      }
+      switchStep(chat.id, 'modeSent')
+      const result = await api.setChatMode(chat.id, to)
+      switchStep(chat.id, 'modeReturned')
+      return result
     })()
     opening.current = to === 'terminal' ? moved : null
     try {
       const result = await moved
       if (result.terminal !== null) handedOver.set(chat.id, result.terminal)
-      update((current) => ({ ...current, chat: result.chat }))
+      update((current) => withSwitchResult(current, result.chat))
       setActionError(null)
       announceAction()
     } catch (caught) {
+      endSwitch(chat.id, 'error', caught)
       setSwitchError(caught)
     } finally {
       opening.current = null
@@ -159,7 +171,10 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       (switched === null ? Promise.resolve(null) : switched.then((result) => result.command)).then((value) => value ?? api.chatTerminalCommand(chat.id)),
       terminalEngine(),
     ])
+    switchEngine(chat.id, engine)
+    switchStep(chat.id, 'terminalOpenCalled', 'terminal')
     const terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, cols, rows })
+    switchStep(chat.id, 'terminalOpened', 'terminal')
     handedOver.set(chat.id, terminal)
     return terminal
   }
@@ -218,7 +233,23 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
             </p>
           )}
           <Suspense fallback={<TerminalSkeleton label={`Opening ${chat.agent} in the terminal`} />}>
-            <TerminalView key={chat.id} connect={connectTerminal} onExit={(code) => setExited(code)} startingLabel={`Opening ${chat.agent} in the terminal`} awaitOutput />
+            <TerminalView
+              key={chat.id}
+              keep={chat.id}
+              connect={connectTerminal}
+              onOutput={() => switchStep(chat.id, 'firstOutput', 'terminal')}
+              onFirstPaint={() => {
+                switchStep(chat.id, 'firstPaint', 'terminal')
+                endSwitch(chat.id, 'ok', undefined, 'terminal')
+              }}
+              onFailed={(caught) => endSwitch(chat.id, 'error', caught, 'terminal')}
+              onExit={(code) => {
+                endSwitch(chat.id, 'error', `the terminal exited${code === null ? '' : ` with code ${code}`} before it painted`, 'terminal')
+                setExited(code)
+              }}
+              startingLabel={`Opening ${chat.agent} in the terminal`}
+              awaitOutput
+            />
           </Suspense>
         </>
       ) : (

@@ -1,4 +1,4 @@
-use crate::cli_stream::{first_error_line, forward_stdout_lines};
+use crate::cli_stream::{end_line, first_error_line, forward_stdout_lines};
 use std::io::Cursor;
 
 #[test]
@@ -18,4 +18,9 @@ fn cli_stream_reports_only_the_first_stderr_line_as_a_contract_error() {
         first_error_line("a quote: \" and a newline\n"),
         r#"{"cursor":"","error":"a quote: \" and a newline"}"#
     );
+}
+
+#[test]
+fn cli_stream_ends_with_a_marker_the_follower_can_tell_from_events() {
+    assert_eq!(end_line(), r#"{"cursor":"","end":true}"#);
 }

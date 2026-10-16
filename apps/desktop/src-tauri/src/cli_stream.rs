@@ -65,6 +65,10 @@ impl CliStreams {
             {
                 let _ = on_line.send(first_error_line(&stderr));
             }
+            // A stream that ended without being stopped says so, so the follower can come back.
+            if !stream.stopped.load(Ordering::Acquire) {
+                let _ = on_line.send(end_line());
+            }
             if let Ok(mut streams) = streams.lock() {
                 streams.remove(&worker_id);
             }
@@ -107,6 +111,10 @@ where
         on_line(line?);
     }
     Ok(())
+}
+
+pub fn end_line() -> String {
+    json!({ "cursor": "", "end": true }).to_string()
 }
 
 pub fn first_error_line(stderr: &str) -> String {

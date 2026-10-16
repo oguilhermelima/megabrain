@@ -9,10 +9,13 @@ mod attachment;
 pub mod path_link;
 mod pill;
 mod process_tree;
+mod switch_trace;
 mod terminal;
 mod tray;
 #[cfg(test)]
 mod terminal_tests;
+#[cfg(test)]
+mod switch_trace_tests;
 #[cfg(test)]
 mod code_tests;
 
@@ -59,6 +62,12 @@ fn save_attachment(base64: String, extension: String) -> Result<String, String> 
         .or_else(|| std::env::var_os("HOME").map(|value| PathBuf::from(value).join(".megabrain")))
         .ok_or_else(|| "HOME is not set".to_string())?;
     attachment::save_attachment_to(&state, &base64, &extension).map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn switch_trace_log(record: serde_json::Value) -> Result<(), String> {
+    let state = app_terminals::state_dir().ok_or_else(|| "HOME is not set".to_string())?;
+    switch_trace::append_switch_trace(&state, &record).map(|_| ())
 }
 
 #[tauri::command]
@@ -405,6 +414,7 @@ pub fn run() {
             code_branch_changes,
             code_branch_diff,
             save_attachment,
+            switch_trace_log,
             save_image
         ])
         .build(tauri::generate_context!())

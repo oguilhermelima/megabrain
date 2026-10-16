@@ -6,6 +6,7 @@ import { api } from '@/api'
 import type { TerminalSession } from '@/api/schema'
 import { Button, ErrorNote } from '@/components/ui'
 import { onPanelsSettled, panelsMoving } from '@/lib/panel-motion'
+import { keptTerminals, type KeptTerminal } from '@/terminal/kept-terminals'
 import { base64ToBytes } from '@/terminal/terminal-model'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 
@@ -26,17 +27,85 @@ function appTheme(): ITheme {
   }
 }
 
+/** What the view showing an xterm wants to hear from it; null while no view shows it. */
+interface Sinks {
+  output: (session: TerminalSession, data: string) => void
+  exit: (code: number | null) => void
+  error: (error: unknown) => void
+}
+
+/** One xterm and the session it shows. A kept one outlives its view; any other dies with it. */
+interface Screen extends KeptTerminal {
+  terminal: Terminal
+  fit: FitAddon
+  /** The element xterm draws into, moved into whichever view shows it. */
+  mount: HTMLDivElement
+  sinks: Sinks | null
+  disposed: boolean
+  dispose: () => void
+}
+
+function createScreen(): Screen {
+  const mount = document.createElement('div')
+  mount.style.width = '100%'
+  mount.style.height = '100%'
+  const terminal = new Terminal({ theme: appTheme(), fontFamily: token('--font-mono', 'Menlo, monospace'), fontSize: 12.5, lineHeight: 1.2, cursorBlink: true, allowProposedApi: false })
+  const fit = new FitAddon()
+  terminal.loadAddon(fit)
+  const screen: Screen = { terminal, fit, mount, session: null, unlisten: undefined, sinks: null, disposed: false, dispose: () => {} }
+  const input = terminal.onData((data) => {
+    if (screen.session !== null) void api.writeTerminal(screen.session.id, data).catch((error: unknown) => screen.sinks?.error(error))
+  })
+  const resized = terminal.onResize(({ cols, rows }) => {
+    if (screen.session !== null) void api.resizeTerminal(screen.session.id, cols, rows).catch(() => {})
+  })
+  screen.dispose = () => {
+    screen.disposed = true
+    screen.unlisten?.()
+    input.dispose()
+    resized.dispose()
+    terminal.dispose()
+  }
+  return screen
+}
+
+/** Shows a session on the screen: its bytes go to xterm and to the view that shows it, if any. */
+async function listen(screen: Screen, session: TerminalSession) {
+  screen.session = session
+  const stop = await api.onTerminalData(
+    session.id,
+    (data) => {
+      screen.terminal.write(base64ToBytes(data))
+      screen.sinks?.output(session, data)
+    },
+    (code) => {
+      // Only the session on screen ends the screen's session; a late exit of an earlier one does not.
+      if (screen.session?.id === session.id) {
+        screen.unlisten?.()
+        screen.unlisten = undefined
+        screen.session = null
+      }
+      screen.sinks?.exit(code)
+    },
+  )
+  if (screen.disposed || screen.session?.id !== session.id) stop()
+  else screen.unlisten = stop
+}
+
 /**
  * An embedded terminal. `connect` opens or finds the terminal at the size the view fits, then input
  * goes to it, its bytes come back base64, and the view resizes it with the window. Until it opens,
- * the view says what is starting; when opening fails it shows the error with a retry.
+ * the view says what is starting; when opening fails it shows the error with a retry. With `keep`,
+ * the xterm and its session outlive the view: the next view with that key shows them at once.
  */
 export function TerminalView({
   connect,
   onExit,
   onOutput,
+  onFirstPaint,
   startingLabel,
   awaitOutput = false,
+  keep,
   onFailed,
   onRetry,
 }: {
@@ -44,10 +113,14 @@ export function TerminalView({
   onExit?: (code: number | null) => void
   /** Called after each chunk of output, with the session it came from and the chunk, base64. */
   onOutput?: (session: TerminalSession, data: string) => void
+  /** Called once, when xterm has rendered the first output this view received. */
+  onFirstPaint?: () => void
   /** What is starting, shown until the terminal opens: "Starting zsh in canto · main". */
   startingLabel?: string
   /** Keep saying what is starting until the terminal's first output (an agent's TUI paints late), then fade to it. */
   awaitOutput?: boolean
+  /** Keeps the xterm under this key when the view leaves, and shows the kept one when a view comes back. */
+  keep?: string
   onFailed?: (error: unknown) => void
   onRetry?: () => void
 }) {
@@ -58,33 +131,42 @@ export function TerminalView({
   const [attempt, setAttempt] = useState(0)
   const [painted, setPainted] = useState(!awaitOutput)
   const [veilGone, setVeilGone] = useState(!awaitOutput)
-  const latest = useRef({ connect, onExit, onOutput, onFailed })
-  latest.current = { connect, onExit, onOutput, onFailed }
+  const latest = useRef({ connect, onExit, onOutput, onFirstPaint, onFailed })
+  latest.current = { connect, onExit, onOutput, onFirstPaint, onFailed }
 
   useEffect(() => {
     const element = host.current
     if (element === null) return
     let stopped = false
-    let unlisten: (() => void) | undefined
-    const terminal = new Terminal({ theme: appTheme(), fontFamily: token('--font-mono', 'Menlo, monospace'), fontSize: 12.5, lineHeight: 1.2, cursorBlink: true, allowProposedApi: false })
-    const fit = new FitAddon()
-    terminal.loadAddon(fit)
-    terminal.open(element)
-    fit.fit()
-
-    let terminalId: string | null = null
-    let opened = false
     let patience: ReturnType<typeof setTimeout> | undefined
-    const input = terminal.onData((data) => {
-      if (terminalId !== null) void api.writeTerminal(terminalId, data).catch(setError)
-    })
-    const resized = terminal.onResize(({ cols, rows }) => {
-      if (terminalId !== null) void api.resizeTerminal(terminalId, cols, rows).catch(() => {})
-    })
+    const known = keep === undefined ? undefined : keptTerminals.get(keep)
+    const screen = known === undefined ? createScreen() : (known as Screen)
+    if (keep !== undefined) keptTerminals.set(keep, screen)
+    element.appendChild(screen.mount)
+    const { terminal, fit } = screen
+    if (terminal.element === undefined) terminal.open(screen.mount)
     // A hidden view (a terminal no pane shows) measures zero; fitting then would shrink the terminal to
     // nothing. While a side panel slides the size changes every frame, so it fits once when it stops.
     const refit = () => {
       if (element.clientWidth > 0 && element.clientHeight > 0) fit.fit()
+    }
+    refit()
+
+    let firstOutput = true
+    screen.sinks = {
+      output: (session, data) => {
+        setPainted(true)
+        if (firstOutput) {
+          firstOutput = false
+          const rendered = terminal.onRender(() => {
+            rendered.dispose()
+            if (!stopped) latest.current.onFirstPaint?.()
+          })
+        }
+        latest.current.onOutput?.(session, data)
+      },
+      exit: (code) => latest.current.onExit?.(code),
+      error: setError,
     }
     const observer = new ResizeObserver(() => {
       if (!panelsMoving()) refit()
@@ -92,47 +174,45 @@ export function TerminalView({
     observer.observe(element)
     const stopSettled = onPanelsSettled(refit)
 
-    latest.current
-      .connect(terminal.cols, terminal.rows)
-      .then(async (session) => {
-        if (stopped) return
-        terminalId = session.id
-        opened = true
-        setPhase('open')
-        // A reattached terminal may stay quiet until something changes: the veil never outlasts a few seconds.
-        if (awaitOutput) patience = setTimeout(() => setPainted(true), 3000)
-        const stop = await api.onTerminalData(
-          session.id,
-          (data) => {
-            terminal.write(base64ToBytes(data))
-            setPainted(true)
-            latest.current.onOutput?.(session, data)
-          },
-          (code) => latest.current.onExit?.(code),
-        )
-        if (stopped) stop()
-        else unlisten = stop
-        terminal.focus()
-      })
-      .catch((caught: unknown) => {
-        if (stopped) return
-        setError(caught)
-        if (opened) return
-        setPhase('failed')
-        latest.current.onFailed?.(caught)
-      })
+    if (screen.session !== null) {
+      // A kept screen still showing its session: it is already drawn, so there is nothing to wait for.
+      void api.resizeTerminal(screen.session.id, terminal.cols, terminal.rows).catch(() => {})
+      setPhase('open')
+      setPainted(true)
+      terminal.focus()
+    } else {
+      let opened = false
+      latest.current
+        .connect(terminal.cols, terminal.rows)
+        .then(async (session) => {
+          if (stopped) return
+          opened = true
+          setPhase('open')
+          // A reattached terminal may stay quiet until something changes: the veil never outlasts a few seconds.
+          if (awaitOutput) patience = setTimeout(() => setPainted(true), 3000)
+          await listen(screen, session)
+          if (!stopped) terminal.focus()
+        })
+        .catch((caught: unknown) => {
+          if (stopped) return
+          setError(caught)
+          if (opened) return
+          setPhase('failed')
+          latest.current.onFailed?.(caught)
+        })
+    }
 
     return () => {
       stopped = true
       if (patience !== undefined) clearTimeout(patience)
-      unlisten?.()
       observer.disconnect()
       stopSettled()
-      input.dispose()
-      resized.dispose()
-      terminal.dispose()
+      screen.sinks = null
+      if (keep === undefined) screen.dispose()
+      else screen.mount.remove()
     }
-  }, [attempt])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt, keep])
 
   // Once the first output is in, the skeleton fades for a moment and then leaves.
   useEffect(() => {

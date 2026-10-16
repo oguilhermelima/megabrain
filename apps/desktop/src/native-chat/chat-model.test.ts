@@ -16,6 +16,7 @@ import {
   rowStatus,
   shouldInterrupt,
   withModel,
+  withSwitchResult,
   workingStatus,
   type FollowState,
 } from '@/native-chat/chat-model'
@@ -425,5 +426,76 @@ describe('formatElapsed', () => {
 
   test('a start in the future reads as zero', () => {
     expect(formatElapsed(-5_000)).toBe('0s')
+  })
+})
+
+describe('the chat state after a switch', () => {
+  // The real chat the person saw: its last lines are idle (13), starting (14) and idle (15).
+  const talked: NativeChat = { ...chat, state: 'idle', mode: 'terminal', agentSessionId: 'session-1', createdAt: '2026-10-15T00:00:00Z' }
+  const reply: TranscriptEvent = { id: 'a1', at: '2026-10-16T15:40:00Z', kind: 'assistant', text: 'done' }
+  const inTerminal = () => applyLine(applyLine(followState(talked), line('12', { event: reply })), stateLine('13', 'idle'))
+  // The mode call answers with the record as it was when the agent was told to start.
+  const switched: NativeChat = { ...talked, mode: 'chat', state: 'starting' }
+
+  test('the mode answer arriving after the follow saw idle leaves the chat idle, not reconnecting', () => {
+    const followed = [stateLine('14', 'starting'), stateLine('15', 'idle')].reduce(applyLine, inTerminal())
+    const state = withSwitchResult(followed, switched)
+    expect(state.chat?.state).toBe('idle')
+    expect(state.chat?.mode).toBe('chat')
+    expect(workingStatus(state)).toBeNull()
+  })
+
+  test('the mode answer arriving before the follow lines ends idle once they land', () => {
+    const answered = withSwitchResult(inTerminal(), switched)
+    expect(answered.chat?.mode).toBe('chat')
+    const state = [stateLine('14', 'starting'), stateLine('15', 'idle')].reduce(applyLine, answered)
+    expect(state.chat?.state).toBe('idle')
+    expect(workingStatus(state)).toBeNull()
+  })
+
+  test('the mode answer in the middle of the sequence still ends idle', () => {
+    const answered = withSwitchResult(applyLine(inTerminal(), stateLine('14', 'starting')), switched)
+    const state = applyLine(answered, stateLine('15', 'idle'))
+    expect(workingStatus(state)).toBeNull()
+  })
+
+  test('a follow restarted after the switch takes the start-of-follow state at its own cursor', () => {
+    const followed = [stateLine('14', 'starting'), stateLine('15', 'idle')].reduce(applyLine, inTerminal())
+    const stale = { ...followed, chat: { ...switched } }
+    const resumed = applyLine(applyLine(stale, line('15', { chat: { ...talked, mode: 'chat' } })), stateLine('15', 'idle'))
+    expect(workingStatus(resumed)).toBeNull()
+  })
+
+  test('an app restart replays the history and ends idle', () => {
+    const history = [line('0', { chat: { ...talked, mode: 'chat' } }), line('12', { event: reply }), stateLine('13', 'idle'), stateLine('14', 'starting'), stateLine('15', 'idle'), stateLine('15', 'idle')]
+    const state = history.reduce(applyLine, followState(null))
+    expect(state.chat?.state).toBe('idle')
+    expect(workingStatus(state)).toBeNull()
+  })
+
+  test('before any follow line the mode answer is taken whole', () => {
+    expect(withSwitchResult(followState(null), switched).chat).toEqual(switched)
+  })
+})
+
+describe('images in sent messages', () => {
+  const image = { path: '/state/attachments/shot.png' }
+
+  test('a message just sent shows its images at once', () => {
+    const state = queueOutgoing(followState({ ...chat, state: 'idle' }), { id: 'out-1', text: 'look', sentAt: '2026-10-16T12:00:00Z', images: [image] })
+    expect(liveTail(state)[0]?.event.images).toEqual([image])
+  })
+
+  test('a message without images carries none', () => {
+    const state = queueOutgoing(followState({ ...chat, state: 'idle' }), { id: 'out-1', text: 'look', sentAt: '2026-10-16T12:00:00Z' })
+    expect(liveTail(state)[0]?.event.images).toBeUndefined()
+  })
+
+  test('the stored user event keeps the images the daemon recorded', () => {
+    const sent: TranscriptEvent = { id: 'u1', at: '2026-10-16T12:00:01Z', kind: 'user', text: 'look', images: [image] }
+    const queued = queueOutgoing(followState({ ...chat, state: 'idle' }), { id: 'out-1', text: 'look', sentAt: '2026-10-16T12:00:00Z', images: [image] })
+    const state = applyLine(queued, line('1', { event: sent }))
+    expect(state.outgoing).toEqual([])
+    expect(state.events.at(-1)?.images).toEqual([image])
   })
 })

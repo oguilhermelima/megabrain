@@ -352,6 +352,7 @@ export function createMockApi(): DesktopApi {
       return mockSessionHistory.filter((session) => agent === undefined || session.agent === agent)
     },
     followChat: async (chatId, since, onLine) => followMockChat(chatId, since, onLine),
+    logSwitchTrace: async () => {},
     openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),
     writeTerminal: async () => {},
     resizeTerminal: async () => {},

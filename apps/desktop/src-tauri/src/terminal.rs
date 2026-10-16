@@ -87,6 +87,7 @@ pub fn tmux_create_argv(
     server: &str,
     session: &str,
     cwd: &str,
+    size: Option<(u16, u16)>,
     command: Option<&[String]>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -96,9 +97,12 @@ pub fn tmux_create_argv(
         "-d".into(),
         "-s".into(),
         session.into(),
-        "-c".into(),
-        cwd.into(),
     ];
+    // Created at the view's size, the agent's TUI paints once instead of again when the attach resizes it.
+    if let Some((cols, rows)) = size {
+        args.extend(["-x".into(), cols.to_string(), "-y".into(), rows.to_string()]);
+    }
+    args.extend(["-c".into(), cwd.into()]);
     if let Some(command) = command {
         args.extend(command.iter().cloned());
     }
@@ -314,7 +318,7 @@ impl TerminalManager {
                     Some(value) => split_tmux_target(value)?,
                     None => {
                         let session = format!("{APP_SESSION_PREFIX}{id}");
-                        create_tmux_session(cli_path, &session, &cwd, options.command.as_deref())?;
+                        create_tmux_session(cli_path, &session, &cwd, (options.cols, options.rows), options.command.as_deref())?;
                         created_session = Some(session.clone());
                         (Some(TMUX_SERVER.to_string()), session)
                     }
@@ -658,10 +662,11 @@ fn create_tmux_session(
     cli_path: &str,
     session: &str,
     cwd: &Path,
+    size: (u16, u16),
     command: Option<&[String]>,
 ) -> Result<(), String> {
     let cwd = cwd.to_string_lossy();
-    let args = tmux_create_argv(tmux_server_name(), session, &cwd, command);
+    let args = tmux_create_argv(tmux_server_name(), session, &cwd, Some(size), command);
     let tmux = find_on_path("tmux", cli_path)
         .ok_or_else(|| "tmux was not found on the login PATH".to_string())?;
     let output = Command::new(tmux)

@@ -1,5 +1,5 @@
 import type { LiveRow } from '@/chat/conversation-model'
-import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatStateEvent, type NativeChat, type ProjectSession, type TranscriptEvent } from '@/api/schema'
+import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatStateEvent, type NativeChat, type ProjectSession, type TranscriptEvent, type TranscriptImage } from '@/api/schema'
 
 // Pure logic for native chats: folding the lines of megabrain chat events into what the view shows,
 // which approval waits for an answer, when the conversation may move to the terminal, and where
@@ -20,6 +20,8 @@ export interface Outgoing {
   id: string
   text: string
   sentAt: string
+  /** The images it carries, shown in the bubble before the chat echoes them. */
+  images?: TranscriptImage[]
   order?: number
 }
 
@@ -128,7 +130,7 @@ export function dropOutgoing(state: FollowState, id: string): FollowState {
 export function liveTail(state: FollowState): LiveRow[] {
   const rows: { order: number; item: LiveRow }[] = [
     ...state.drafts.map((draft) => ({ order: draft.order, item: { event: { id: `draft-${draft.messageId}`, at: null, kind: draft.stream, text: draft.text, messageId: draft.messageId }, streaming: true } })),
-    ...state.outgoing.map((message) => ({ order: message.order ?? 0, item: { event: { id: `outgoing-${message.id}`, at: message.sentAt, kind: 'user' as const, text: message.text }, pending: true } })),
+    ...state.outgoing.map((message) => ({ order: message.order ?? 0, item: { event: { id: `outgoing-${message.id}`, at: message.sentAt, kind: 'user' as const, text: message.text, ...(message.images === undefined ? {} : { images: message.images }) }, pending: true } })),
   ]
   return rows.sort((left, right) => left.order - right.order).map((row) => row.item)
 }
@@ -247,6 +249,15 @@ export function composerContext(chat: NativeChat): { tokens: number | null; wind
   const tokens = chat.contextTokens ?? null
   const window = chat.contextWindow ?? null
   return tokens === null && window === null ? undefined : { tokens, window }
+}
+
+/**
+ * The followed record after a mode switch. The answer is a snapshot taken when the switch started, so
+ * its state (starting) can be older than what the follow has already applied (idle): the follow owns the
+ * state, the answer brings the rest. Before any follow line the answer is taken whole.
+ */
+export function withSwitchResult(state: FollowState, switched: NativeChat): FollowState {
+  return { ...state, chat: state.chat === null ? switched : { ...switched, state: state.chat.state } }
 }
 
 /** The followed record after a model switch, starting from the listed one before the first line. */

@@ -188,8 +188,10 @@ export interface DesktopApi {
   agentCommand(agent: string, options?: { resume?: string; model?: string; effort?: string }): Promise<string[]>
   /** Past sessions started in a folder, newest first, from each agent's own storage (`sessions history`). */
   sessionHistory(cwd: string, agent?: string): Promise<HistorySession[]>
-  /** Live events from cursor on; returns a function that stops the subscription. */
-  followChat(chatId: string, since: string | null, onLine: (line: ChatEventLine) => void): Promise<() => void>
+  /** Live events from cursor on; returns a function that stops the subscription. onEnd fires once if the follow ends without being stopped. */
+  followChat(chatId: string, since: string | null, onLine: (line: ChatEventLine) => void, onEnd?: (error: string | null) => void): Promise<() => void>
+  /** Appends one chat/terminal switch timing record to <state>/logs/desktop-switch.log. */
+  logSwitchTrace(record: object): Promise<void>
   /** Embedded terminals (native Tauri commands). */
   openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; cols: number; rows: number }): Promise<TerminalSession>
   writeTerminal(terminalId: string, data: string): Promise<void>

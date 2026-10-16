@@ -3,10 +3,15 @@ import { api } from '@/api'
 import type { NativeChat } from '@/api/schema'
 import { applyLine, followState, type FollowState } from '@/native-chat/chat-model'
 import { publishChatState } from '@/native-chat/live-state'
+import { switchState } from '@/native-chat/switch-trace'
 
 // What each chat view has seen, kept for the app run: reopening a chat shows it at once and the
 // subscription resumes after the last cursor instead of replaying the whole conversation.
 const seen = new Map<string, FollowState>()
+
+// A follow that ends on its own (chatd restarted, the CLI died) comes back after this long, doubling to the cap.
+const RETRY_MS = 300
+const RETRY_CAP_MS = 5000
 
 /** Follows a native chat live while the view is open; the subscription closes when it leaves. */
 export function useFollowChat(chat: NativeChat): { state: FollowState; error: unknown; update: (change: (state: FollowState) => FollowState) => void } {
@@ -23,23 +28,46 @@ export function useFollowChat(chat: NativeChat): { state: FollowState; error: un
   useEffect(() => {
     let stopped = false
     let stop: (() => void) | undefined
-    const since = (seen.get(chat.id) ?? null)?.cursor ?? null
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let delay = RETRY_MS
+    // Every follow, the first and each one after an end, resumes after the last cursor applied and
+    // starts with the chat's current state, so the view never keeps a state the daemon has left.
+    const follow = () => {
+      const since = (seen.get(chat.id) ?? null)?.cursor ?? null
+      api
+        .followChat(
+          chat.id,
+          since,
+          (line) => {
+            if (stopped) return
+            delay = RETRY_MS
+            setError(null)
+            update((current) => applyLine(current, line))
+            if (line.event?.kind === 'state') switchState(chat.id, line.event.text)
+          },
+          (ended) => {
+            if (stopped) return
+            if (ended !== null) setError(new Error(ended))
+            stop = undefined
+            retry = setTimeout(follow, delay)
+            delay = Math.min(delay * 2, RETRY_CAP_MS)
+          },
+        )
+        .then(
+          (unsubscribe) => {
+            if (stopped) unsubscribe()
+            else stop = unsubscribe
+          },
+          (caught: unknown) => {
+            if (!stopped) setError(caught)
+          },
+        )
+    }
     setError(null)
-    api
-      .followChat(chat.id, since, (line) => {
-        if (!stopped) update((current) => applyLine(current, line))
-      })
-      .then(
-        (unsubscribe) => {
-          if (stopped) unsubscribe()
-          else stop = unsubscribe
-        },
-        (caught: unknown) => {
-          if (!stopped) setError(caught)
-        },
-      )
+    follow()
     return () => {
       stopped = true
+      if (retry !== undefined) clearTimeout(retry)
       stop?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

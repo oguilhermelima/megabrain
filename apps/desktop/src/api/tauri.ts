@@ -44,6 +44,9 @@ async function cliStream(args: string[], onLine: (line: string) => void): Promis
   return () => void invoke('cli_stream_stop', { streamId })
 }
 
+// What the stream itself says, besides the CLI's lines: why the CLI failed, and that it ended.
+const streamMarkerSchema = z.looseObject({ cursor: z.literal(''), error: z.string().optional(), end: z.literal(true).optional() }).refine((value) => value.error !== undefined || value.end === true)
+
 const appTerminalSchema = z.looseObject({ id: z.string(), sessionName: z.string(), cwd: z.string(), title: z.string(), command: z.string(), alive: z.boolean(), createdAt: z.string() })
 
 // Terminal bytes come base64 over a channel; exit arrives once with the code.
@@ -294,8 +297,21 @@ export function createTauriApi(): DesktopApi {
     agentCommand: async (agent, options = {}) =>
       (await cliJson(['agent', 'command', agent, ...(options.resume === undefined ? [] : ['--resume', options.resume]), ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort]), '--json'], agentCommandSchema)).argv,
     sessionHistory: (cwd, agent) => cliJson(['sessions', 'history', '--cwd', cwd, ...(agent === undefined ? [] : ['--agent', agent]), '--json'], sessionHistorySchema),
-    followChat: (chatId, since, onLine) =>
-      cliStream(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--follow', '--json'], (line) => onLine(chatEventLineSchema.parse(JSON.parse(line)))),
+    followChat: (chatId, since, onLine, onEnd) => {
+      // The stream's last lines may be an error and an end marker; they are not chat events.
+      let error: string | null = null
+      return cliStream(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--follow', '--json'], (text) => {
+        const value: unknown = JSON.parse(text)
+        const marker = streamMarkerSchema.safeParse(value)
+        if (marker.success && marker.data.end === true) return onEnd?.(error)
+        if (marker.success && marker.data.error !== undefined) {
+          error = marker.data.error
+          return
+        }
+        onLine(chatEventLineSchema.parse(value))
+      })
+    },
+    logSwitchTrace: async (record) => void (await invoke('switch_trace_log', { record })),
     openTerminal: async (options) => terminalSessionSchema.parse(await invoke('terminal_open', { options })),
     writeTerminal: async (terminalId, data) => void (await invoke('terminal_write', { terminalId, data })),
     resizeTerminal: async (terminalId, cols, rows) => void (await invoke('terminal_resize', { terminalId, cols, rows })),
