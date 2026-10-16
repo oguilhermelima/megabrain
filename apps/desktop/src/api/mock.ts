@@ -140,6 +140,9 @@ export function createMockApi(): DesktopApi {
     setTerminalDefault: async (name) => void (settings = { ...settings, terminal: { ...settings.terminal, default: name } }),
     projects: async (origin) => sessionsOfOrigin(withOwnership(mockProjects), origin),
     projectScripts: async (root) => scriptsFor(root),
+    portWho: async (port) => ({ port, listeners: [] }),
+    portFree: async (from) => from,
+    portKill: async () => {},
     async setProjectScripts(root, scripts) {
       const repo = scriptsFor(root).repo
       const saved = { ...savedScripts.get(repo) }

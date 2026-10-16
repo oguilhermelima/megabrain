@@ -125,7 +125,7 @@ export function RunButton() {
     setOpen(false)
     const command = commandFor(scripts, action)
     if (command === null) controls.editCommands(repo)
-    else controls.run(action, command)
+    else controls.run(action, command, action === 'run' ? scripts?.port : null)
   }
 
   const item = 'flex w-full items-center gap-3 rounded-[10px] px-3 py-1.5 text-left text-[13px] text-ink-200 hover:bg-white/[0.08] focus-visible:bg-white/[0.08] focus-visible:outline-none'

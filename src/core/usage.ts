@@ -28,6 +28,10 @@ export const USAGE_LINES = {
   "repo-scripts": "repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]",
   "repo-github": "repo github [--owner <login>] [--json]",
   "projects": "projects [--json]",
+  "port": "port who|free|kill ...",
+  "port-who": "port who <port> [--json]",
+  "port-free": "port free [--from <port>] [--json]",
+  "port-kill": "port kill <port> [--json]",
   "github": "github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state ...",
   "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
@@ -183,6 +187,7 @@ Commands:
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|scripts|github ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
+  port who|free|kill ...                Find, free and stop port listeners
   github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state ... Read, review and manage GitHub pull requests and issues
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open VS Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)

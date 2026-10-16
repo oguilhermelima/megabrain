@@ -48,6 +48,18 @@ megabrain repo github --json
 megabrain projects --json
 ```
 
+`repo scripts --json` also reports `port`: the port the run command will bind and how that was
+found (a `--port`, `-p` or `PORT=` in the command or its package script, `PORT` in `.env`,
+`config.port` in `package.json`, or the default of next, vite, astro, remix, expo, storybook, rails
+or django), or `null` when nothing says. When that port is taken, `port` names the holder, finds the
+next free one, or stops the holder's process tree, refusing processes of other users:
+
+```sh
+megabrain port who 3000 --json
+megabrain port free --from 3001 --json
+megabrain port kill 3000 --json
+```
+
 `projects` lists the main checkout first, followed by its Git worktrees, pull requests, and agent
 sessions. Each session reports its context token count when available. Claude sessions also include
 prompt-cache expiry and idle-compaction times when applicable. Removing a registry entry leaves the

@@ -3,7 +3,8 @@ import { api } from '@/api'
 import type { TerminalSession } from '@/api/schema'
 import { terminalEngine } from '@/terminal/terminal-engine'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
-import { runActionLabel, runActions, runShellCommand, type RunTab, type WorktreePanel } from '@/run-panel/run-model'
+import { Spinner, ErrorNote } from '@/components/ui'
+import { runActionLabel, runActions, runShellCommand, runTabTitle, type RunTab, type WorktreePanel } from '@/run-panel/run-model'
 import { runStatusView, type RunTone } from '@/run-panel/run-view'
 import type { RunPanelsState } from '@/run-panel/useRunPanels'
 
@@ -104,6 +105,51 @@ function EmptyState({ onEditCommands }: { onEditCommands?: () => void }) {
   )
 }
 
+/** A run that failed on a taken port offers the same choice as the dialog, in its tab. */
+function PortChoice({ worktree, tab, runs }: { worktree: string; tab: RunTab; runs: RunPanelsState }) {
+  const [busy, setBusy] = useState<'primary' | 'alternative' | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const conflict = tab.conflict
+  if (conflict === null) return null
+  const choose = (choice: 'primary' | 'alternative') => {
+    if (busy !== null) return
+    setBusy(choice)
+    setError(null)
+    runs.resolveConflict(worktree, tab, choice).then(
+      () => setBusy(null),
+      (caught: unknown) => {
+        setBusy(null)
+        setError(caught)
+      },
+    )
+  }
+  const button =
+    'h-7 shrink-0 rounded-full px-3 text-[12.5px] font-semibold transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:opacity-50 motion-reduce:transition-none'
+  return (
+    <div role="alert" className="mx-3 mb-2 grid shrink-0 gap-2 rounded-[12px] border border-bad/25 bg-bad/[0.06] px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-200">{conflict.body}</p>
+        <button type="button" onClick={() => runs.dismissConflict(worktree, tab)} aria-label="Dismiss" title="Dismiss" className={`${ghost} size-6`}>
+          <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
+      </div>
+      {error !== null && <ErrorNote error={error} />}
+      <div className="flex flex-wrap justify-end gap-1.5">
+        {conflict.alternative !== null && (
+          <button type="button" onClick={() => choose('alternative')} disabled={busy !== null} className={`${button} bg-white/[0.07] text-ink-100 hover:bg-white/[0.12]`}>
+            {busy === 'alternative' ? <Spinner /> : conflict.alternative.label}
+          </button>
+        )}
+        <button type="button" onClick={() => choose('primary')} disabled={busy !== null} className={`${button} bg-bad/[0.18] text-bad hover:bg-bad/[0.26]`}>
+          {busy === 'primary' ? <Spinner /> : conflict.primaryLabel}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * One worktree's run panel: a tab per action run there, each an embedded terminal running the
  * command through the login shell with the engine chosen in settings. Every tab stays mounted
@@ -163,11 +209,11 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
                     role="tab"
                     aria-selected={selected}
                     onClick={() => runs.select(worktree, tab.action)}
-                    title={`${runActionLabel[tab.action]} · ${view.label}`}
+                    title={`${runTabTitle(tab)} · ${view.label}`}
                     className="flex h-full items-center gap-2 rounded-l-full pr-1 pl-3 text-[12.5px] font-semibold focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
                   >
                     <span className={`size-1.5 rounded-full ${toneDot[view.tone]}`} aria-hidden="true" />
-                    {runActionLabel[tab.action]}
+                    {runTabTitle(tab)}
                     <span className="sr-only">, {view.label}</span>
                   </button>
                   <button
@@ -213,6 +259,7 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
           </button>
         </div>
       )}
+      {active !== null && active.conflict !== null && active.status.kind === 'exited' && <PortChoice key={active.generation} worktree={worktree} tab={active} runs={runs} />}
       <div className="flex min-h-0 flex-1 flex-col border-t border-white/[0.06] bg-ink-950">
         {panel.tabs.length === 0 ? (
           <EmptyState onEditCommands={onEditCommands} />
@@ -220,7 +267,7 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
           <Suspense fallback={<TerminalSkeleton label="Starting" />}>
             {panel.tabs.map((tab) => (
               <div key={`${tab.action}:${tab.generation}`} className={tab.action === panel.active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-                <TerminalView connect={connect(tab)} startingLabel={`Starting ${runActionLabel[tab.action]} in ${name}`} onExit={(code) => runs.exited(worktree, tab, code)} />
+                <TerminalView connect={connect(tab)} startingLabel={`Starting ${runTabTitle(tab)} in ${name}`} onOutput={(_session, data) => runs.output(worktree, tab, data)} onExit={(code) => runs.exited(worktree, tab, code)} />
               </div>
             ))}
           </Suspense>

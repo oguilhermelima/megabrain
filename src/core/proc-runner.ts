@@ -221,10 +221,16 @@ async function procPath(args: readonly string[], env: Readonly<Record<string, st
   const index = args.indexOf("--worktree"); if (index >= 0 && args[index + 1]) worktree = resolve(args[index + 1]!);
   const path = recordPath(env, worktree, name); const record = await readRecord(path); return record ? { path, record } : undefined;
 }
+/** Every proc record as last written, of every worktree; a running record's session may since have ended. */
+export async function readProcRecords(env: Readonly<Record<string, string | undefined>>): Promise<ProcRecord[]> {
+  const rows: ProcRecord[] = []; const dirs = await readdir(root(env), { withFileTypes: true }).catch(() => []);
+  for (const d of dirs.filter((x) => x.isDirectory())) for (const f of await readdir(join(root(env), d.name)).catch(() => [])) if (f.endsWith(".json")) { const r = await readRecord(join(root(env), d.name, f)); if (r) rows.push(r); }
+  return rows;
+}
 async function procList(args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
   const json = args.includes("--json"); if (args.some((x) => x !== "--json")) return failed("proc list accepts [--json]", 2);
-  const rows: ProcRecord[] = []; const dirs = await readdir(root(env), { withFileTypes: true }).catch(() => []);
-  for (const d of dirs.filter((x) => x.isDirectory())) for (const f of await readdir(join(root(env), d.name)).catch(() => [])) if (f.endsWith(".json")) { let r = await readRecord(join(root(env), d.name, f)); if (!r) continue; if (r.state === "running" && (await process.run("tmux", tmuxArgs(env, ["has-session", "-t", r.session]))).kind !== "ok") r = { ...r, state: "exited" }; rows.push(r); }
+  const rows: ProcRecord[] = [];
+  for (let r of await readProcRecords(env)) { if (r.state === "running" && (await process.run("tmux", tmuxArgs(env, ["has-session", "-t", r.session]))).kind !== "ok") r = { ...r, state: "exited" }; rows.push(r); }
   return ok(json ? `${JSON.stringify(rows, null, 2)}\n` : `${rows.map((r) => `${r.name}\t${r.state}\t${r.pid}\t${r.worktree}`).join("\n")}${rows.length ? "\n" : ""}`);
 }
 async function procAction(verb: string, args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {

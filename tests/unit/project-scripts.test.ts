@@ -89,7 +89,7 @@ describe("project scripts", () => {
     expect(gitWorktree.kind).toBe("ok");
     const saved = await route(["repo", "scripts", repository, "--run", "node server.js", "--json"], { environment: env, processAdapter: createProcessAdapter() });
     expect(saved.kind).toBe("ok");
-    if (saved.kind === "ok") expect(JSON.parse(saved.value)).toEqual({ repo: repository, scripts: { run: { command: "node server.js", source: "saved" }, build: null, install: null } });
+    if (saved.kind === "ok") expect(JSON.parse(saved.value)).toEqual({ repo: repository, scripts: { run: { command: "node server.js", source: "saved" }, build: null, install: null }, port: null });
     const fromWorktree = await route(["repo", "scripts", worktree, "--json"], { environment: env, processAdapter: createProcessAdapter() });
     expect(fromWorktree.kind).toBe("ok");
     if (fromWorktree.kind === "ok") expect(JSON.parse(fromWorktree.value)).toEqual(JSON.parse(saved.kind === "ok" ? saved.value : "{}"));

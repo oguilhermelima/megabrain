@@ -41,8 +41,8 @@ export function TerminalView({
 }: {
   connect: (cols: number, rows: number) => Promise<TerminalSession>
   onExit?: (code: number | null) => void
-  /** Called after each chunk of output, with the session it came from. */
-  onOutput?: (session: TerminalSession) => void
+  /** Called after each chunk of output, with the session it came from and the chunk, base64. */
+  onOutput?: (session: TerminalSession, data: string) => void
   /** What is starting, shown until the terminal opens: "Starting zsh in canto · main". */
   startingLabel?: string
   onFailed?: (error: unknown) => void
@@ -97,7 +97,7 @@ export function TerminalView({
           session.id,
           (data) => {
             terminal.write(base64ToBytes(data))
-            latest.current.onOutput?.(session)
+            latest.current.onOutput?.(session, data)
           },
           (code) => latest.current.onExit?.(code),
         )

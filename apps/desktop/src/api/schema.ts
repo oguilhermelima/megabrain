@@ -612,9 +612,51 @@ export type ReplyResult = z.infer<typeof replyResultSchema>
 
 const projectScriptSchema = z.object({ command: z.string(), source: z.enum(['saved', 'detected']) }).nullable()
 
-/** `megabrain repo scripts <root> --json`: a project's run, build and install commands, shared by its worktrees. */
+/**
+ * The port a run command binds and how that was found. `fragment` is the text in the run command
+ * that sets it; `override` is what to append to move it, {port} standing for the new one, or null.
+ */
+export const scriptPortSchema = z.object({
+  port: z.number().int(),
+  framework: z.string().nullable(),
+  source: z.enum(['command', 'script', 'env-file', 'package-json', 'default']),
+  detail: z.string(),
+  fragment: z.string().nullable(),
+  override: z.string().nullable(),
+})
+export type ScriptPort = z.infer<typeof scriptPortSchema>
+
+/** `megabrain repo scripts <root> --json`: a project's run, build and install commands, shared by its worktrees, and the run's port. */
 export const projectScriptsSchema = z.object({
   repo: z.string(),
   scripts: z.object({ run: projectScriptSchema, build: projectScriptSchema, install: projectScriptSchema }),
+  port: scriptPortSchema.nullable().optional(),
 })
 export type ProjectScripts = z.infer<typeof projectScriptsSchema>
+
+/** One process listening on a port (`megabrain port who`), and the megabrain process or app terminal it runs in, if any. */
+export const portListenerSchema = z.object({
+  pid: z.number().int(),
+  command: z.string(),
+  args: z.string(),
+  cwd: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  place: z.object({ root: z.string(), project: z.string(), branch: z.string().nullable() }).nullable(),
+  managed: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('proc'), name: z.string(), worktree: z.string() }),
+      z.object({ kind: z.literal('app-terminal'), session: z.string(), title: z.string() }),
+    ])
+    .nullable(),
+})
+export type PortListener = z.infer<typeof portListenerSchema>
+
+/** `megabrain port who <port> --json`. */
+export const portListenersSchema = z.object({ port: z.number().int(), listeners: z.array(portListenerSchema) })
+export type PortListeners = z.infer<typeof portListenersSchema>
+
+/** `megabrain port free --from <port> --json`. */
+export const portFreeSchema = z.object({ port: z.number().int() })
+
+/** `megabrain port kill <port> --json`. */
+export const portKillSchema = z.object({ port: z.number().int(), top: z.number().int(), stopped: z.array(z.number().int()), freed: z.boolean() })

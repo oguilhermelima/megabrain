@@ -1,4 +1,5 @@
 import type { ProjectScripts } from '@/api/schema'
+import type { PortConflict } from '@/run-panel/port-conflict'
 
 export type RunAction = 'run' | 'build' | 'install'
 
@@ -40,6 +41,10 @@ export interface RunTab {
   generation: number
   terminalId: string | null
   status: RunStatus
+  /** The free port the run moved to because its own was taken; null on its own port. */
+  movedTo: number | null
+  /** Its port was taken when it failed: the choice the tab offers until it runs again. */
+  conflict: PortConflict | null
 }
 
 export interface WorktreePanel {
@@ -70,9 +75,9 @@ function withTab(panels: RunPanels, worktree: string, action: RunAction, generat
   return withPanel(panels, worktree, (current) => ({ ...current, tabs: current.tabs.map((tab) => (tab.action === action && tab.generation === generation ? change(tab) : tab)) }))
 }
 
-/** Starts an action: its tab (new, or replacing the last run) becomes active and the panel opens. */
-export function startRun(panels: RunPanels, worktree: string, action: RunAction, command: string): RunPanels {
-  const tab: RunTab = { action, command, generation: ++generations, terminalId: null, status: { kind: 'starting' } }
+/** Starts an action: its tab (new, or replacing the last run) becomes active and the panel opens. `movedTo` is the free port it runs on instead of its own. */
+export function startRun(panels: RunPanels, worktree: string, action: RunAction, command: string, movedTo: number | null = null): RunPanels {
+  const tab: RunTab = { action, command, generation: ++generations, terminalId: null, status: { kind: 'starting' }, movedTo, conflict: null }
   return withPanel(panels, worktree, (panel) => ({
     open: true,
     active: action,
@@ -87,6 +92,15 @@ export function markStarted(panels: RunPanels, worktree: string, action: RunActi
 
 export function markExited(panels: RunPanels, worktree: string, action: RunAction, generation: number, code: number | null): RunPanels {
   return withTab(panels, worktree, action, generation, (tab) => ({ ...tab, status: { kind: 'exited', code } }))
+}
+
+export function setConflict(panels: RunPanels, worktree: string, action: RunAction, generation: number, conflict: PortConflict | null): RunPanels {
+  return withTab(panels, worktree, action, generation, (tab) => ({ ...tab, conflict }))
+}
+
+/** A tab's name: the action, and the port when it moved off its own. */
+export function runTabTitle(tab: RunTab): string {
+  return tab.movedTo === null ? runActionLabel[tab.action] : `${runActionLabel[tab.action]} · port ${tab.movedTo}`
 }
 
 export function isRunning(panels: RunPanels, worktree: string, action: RunAction): boolean {

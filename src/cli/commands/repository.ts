@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { realpath } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { expandRepositoryUrl, repositoryCheckout } from "../../core/project-registry.js";
 import { projectScripts, setProjectScripts, type SavedProjectScripts } from "../../core/project-scripts.js";
+import { detectScriptPort } from "../../core/script-port.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from "../../db/db.js";
 import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
@@ -72,7 +73,9 @@ export async function executeRepository(args: readonly string[], environment: En
     const scripts = Object.keys(changes).length > 0
       ? await setProjectScripts(repoPath, changes, environment)
       : await projectScripts(repoPath, environment);
-    return ok(`${JSON.stringify({ repo: repoPath, scripts }, null, 2)}\n`);
+    // The port comes from the checkout asked about, since a worktree can carry its own .env.
+    const port = detectScriptPort(existsSync(selector) ? resolve(selector) : repoPath, scripts.run?.command);
+    return ok(`${JSON.stringify({ repo: repoPath, scripts, port }, null, 2)}\n`);
   }
   const backfilled = await backfillProjectHistory(environment, process);
   if (backfilled.kind !== "ok") return backfilled;

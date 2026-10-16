@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -89,6 +89,12 @@ export interface DesktopApi {
   projectScripts(root: string): Promise<ProjectScripts>
   /** Save some of them; an empty string returns that one to detection. */
   setProjectScripts(root: string, scripts: Partial<Record<'run' | 'build' | 'install', string>>): Promise<ProjectScripts>
+  /** What listens on a TCP port (`port who`). */
+  portWho(port: number): Promise<PortListeners>
+  /** The first port from `from` up that nothing listens on (`port free`). */
+  portFree(from: number): Promise<number>
+  /** Stops the caller's own process tree holding the port (`port kill`); another user's is refused. */
+  portKill(port: number): Promise<void>
   /** Import a local git repository folder into the registry. */
   importFolder(path: string): Promise<Repository>
   /** Clone a repository and register it; `into` is the parent folder. */

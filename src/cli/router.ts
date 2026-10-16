@@ -51,6 +51,7 @@ import { executeSessions } from "./commands/sessions.js";
 import { executeProjects } from "./commands/projects.js";
 import { executeGithub } from "./commands/github.js";
 import { executeCode } from "./commands/code.js";
+import { executePort } from "./commands/port.js";
 import { runCodeServerProxy } from "../core/code-server-proxy.js";
 import { executeWorktreeHide } from "./commands/worktree-hide.js";
 import { executeCommands } from "./commands/commands.js";
@@ -139,9 +140,9 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions", "port"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
-  const statelessCommand = command === "context" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
+  const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
     const cutover = await ensureAutomaticCutover(dependencies.environment);
     if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
@@ -179,6 +180,7 @@ async function routeCommand(
   if (command === "repo") return executeRepository(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "projects") return executeProjects(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "github") return executeGithub(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "port") return executePort(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "code") return executeCode(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "sessions") return executeSessions(commandArgs, dependencies.environment);
   if (command === "agent") return executeAgent(commandArgs, dependencies.processAdapter);

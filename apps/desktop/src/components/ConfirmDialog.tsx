@@ -12,6 +12,8 @@ export interface PendingConfirm {
   /** danger (the default) for anything that ends, removes or stops something. */
   tone?: 'danger' | 'primary'
   run: () => Promise<void>
+  /** A second way forward, shown beside the primary button: "Use 3001" next to "Kill it and run". */
+  alternative?: { label: string; run: () => Promise<void> }
 }
 
 /**
@@ -28,11 +30,11 @@ function ConfirmCard({ confirm, leaving, onClose, onDone }: { confirm: PendingCo
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
-  const run = () => {
+  const run = (action: () => Promise<void> = confirm.run) => {
     if (running) return
     setRunning(true)
     setError(null)
-    confirm.run().then(
+    action().then(
       () => {
         setRunning(false)
         onDone()
@@ -44,8 +46,10 @@ function ConfirmCard({ confirm, leaving, onClose, onDone }: { confirm: PendingCo
     )
   }
 
+  const alternative = confirm.alternative
+
   return (
-    <Dialog title={confirm.title} busy={running} leaving={leaving} onCancel={onClose} onSubmit={run}>
+    <Dialog title={confirm.title} busy={running} leaving={leaving} onCancel={onClose} onSubmit={() => run()}>
       <p className="mt-2 text-[13.5px] leading-relaxed text-ink-300">{confirm.body}</p>
       {error !== null && (
         <div className="mt-4">
@@ -56,7 +60,12 @@ function ConfirmCard({ confirm, leaving, onClose, onDone }: { confirm: PendingCo
         <Button variant="ghost" onClick={onClose} disabled={running}>
           Cancel
         </Button>
-        <Button data-autofocus variant={confirm.tone === 'primary' ? 'primary' : 'danger'} onClick={run} disabled={running}>
+        {alternative !== undefined && (
+          <Button onClick={() => run(alternative.run)} disabled={running}>
+            {alternative.label}
+          </Button>
+        )}
+        <Button data-autofocus variant={confirm.tone === 'primary' ? 'primary' : 'danger'} onClick={() => run()} disabled={running}>
           {running ? <Spinner /> : confirm.action}
         </Button>
       </div>

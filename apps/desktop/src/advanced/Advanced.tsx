@@ -652,7 +652,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       : {
           root,
           panel: panelFor(runs.panels, root),
-          run: (action, command) => runs.run(root, action, command),
+          run: (action, command, port) => runs.run(root, action, command, port),
           setPanelOpen: (open) => runs.setOpen(root, open),
           editCommands: (repo) => {
             setSettingsProject(repo)

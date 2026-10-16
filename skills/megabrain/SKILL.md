@@ -58,6 +58,9 @@ megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [
 megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json] — recommended when you need the past sessions of a folder, newest first.
 megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
 megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
+megabrain port who <port> [--json] — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.
+megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
+megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.
 megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
 megabrain github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state ... — recommended when you need to read, review or manage a repository's GitHub pull requests and issues (through gh; reads are cached 60 seconds, writes never are).
 megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json] — recommended when you need a repository's pull requests, a page at a time, with labels and every state's total (checks, review and line counts come from github pr).

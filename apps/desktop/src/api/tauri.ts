@@ -5,7 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -155,6 +155,9 @@ export function createTauriApi(): DesktopApi {
     projectScripts: (root) => cliJson(['repo', 'scripts', root, '--json'], projectScriptsSchema),
     setProjectScripts: (root, scripts) =>
       cliJson(['repo', 'scripts', root, ...Object.entries(scripts).flatMap(([name, command]) => [`--${name}`, command]), '--json'], projectScriptsSchema),
+    portWho: (port) => cliJson(['port', 'who', String(port), '--json'], portListenersSchema),
+    portFree: async (from) => (await cliJson(['port', 'free', '--from', String(from), '--json'], portFreeSchema)).port,
+    portKill: async (port) => void (await cliJson(['port', 'kill', String(port), '--json'], portKillSchema)),
     importFolder: (path) => cliJson(['repo', 'add', path, '--json'], repositorySchema),
     importClone: (url, into) => cliJson(['repo', 'clone', url, '--into', into, '--json'], repositorySchema),
     githubRepositories: () => cliJson(['repo', 'github', '--json'], githubRepositorySchema.array()),
