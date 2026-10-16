@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { equaliseSplit, resizeSplit, zonePreview, type Divider, type Edge, type Panes, type Rect } from '@/panes/pane-model'
 import { sideBand, type PaneDrag } from '@/panes/usePaneDrag'
-import { columnAt, minPaneHeight, minPaneWidth, resetColumn, resizeColumn, reveal, stripEdges, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
+import { columnAt, dragOuterEdge, equaliseBetween, minPaneHeight, minPaneWidth, resetColumn, resizeBetween, reveal, stripEdges, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
 import { useStripScroll } from '@/panes/useStripScroll'
 import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
 import { PaneChromeContext, type PaneChrome } from '@/panes/pane-chrome'
@@ -175,7 +175,9 @@ export function PaneArea({
             const offset = scroll.offsetOf(column)
             return column.dividers.map((divider) => <DividerHandle key={`${divider.splitId}:${divider.index}`} divider={divider} column={column} offset={offset} panes={panes} onPanes={onPanes} />)
           })}
-          {!covered && layout.columns.length > 1 && onStrip !== null && layout.columns.map((column) => <ColumnEdge key={`edge:${column.id}`} column={column} layout={layout} root={panes.root} strip={strip} area={size} onStrip={onStrip} />)}
+          {!covered && layout.columns.length > 1 && onStrip !== null && (
+            <ColumnEdges layout={layout} root={panes.root} strip={strip} area={size} onStrip={onStrip} scroller={scroll.scroller} holdScroll={scroll.holdScroll} />
+          )}
           {layout.columns.map((column) => column.height > size.height + 1 && <ColumnScrollbar key={`bar:${column.id}`} column={column} offset={scroll.offsetOf(column)} view={size.height} />)}
         </div>
       </div>
@@ -300,27 +302,89 @@ function DividerHandle({ divider, column, offset, panes, onPanes }: { divider: D
   )
 }
 
-/** A column's right edge: drag to give it its own width (between its minimum and the area), double-click for the default. */
-function ColumnEdge({ column, layout, root, strip, area, onStrip }: { column: StripColumn; layout: StripLayout; root: Panes['root']; strip: Strip; area: { width: number; height: number }; onStrip: (change: (strip: Strip) => Strip) => void }) {
-  const start = (event: PointerEvent<HTMLDivElement>) => {
+/**
+ * The handles that size the columns. A divider between two columns trades width between them, in
+ * either direction; double-click gives them equal halves. The last column's right edge, and the first
+ * one's left edge while the strip scrolls, size that column alone, the strip scrolling with the edge;
+ * double-click for its default width. Every width stays between the minimum and the area.
+ */
+function ColumnEdges({
+  layout,
+  root,
+  strip,
+  area,
+  onStrip,
+  scroller,
+  holdScroll,
+}: {
+  layout: StripLayout
+  root: Panes['root']
+  strip: Strip
+  area: { width: number; height: number }
+  onStrip: (change: (strip: Strip) => Strip) => void
+  scroller: RefObject<HTMLDivElement | null>
+  holdScroll: (x: number) => void
+}) {
+  const columns = layout.columns
+  const first = columns[0]
+  const last = columns.at(-1)
+  // Each move sizes from the drag's start, so the edge follows the pointer without drift.
+  const press = (event: PointerEvent<HTMLDivElement>, onMove: (delta: number) => void) => {
     if (event.button !== 0) return
     event.preventDefault()
-    // Each move sizes the column from the drag's start, so the edge follows the pointer without drift.
-    const startStrip = strip
     const origin = event.clientX
-    const startWidth = column.width
-    track('col-resize', (move) => onStrip(() => resizeColumn(startStrip, root, column.id, startWidth + move.clientX - origin, area)))
+    track('col-resize', (move) => onMove(move.clientX - origin))
   }
-  const last = layout.columns.at(-1)?.id === column.id
+  const outer = (column: StripColumn, side: 'left' | 'right') => (event: PointerEvent<HTMLDivElement>) => {
+    const startStrip = strip
+    const start = { width: column.width, scroll: scroller.current?.scrollLeft ?? 0 }
+    press(event, (delta) => {
+      const next = dragOuterEdge(startStrip, root, column.id, side, start, delta, area)
+      onStrip(() => next.strip)
+      holdScroll(next.scroll)
+    })
+  }
+  return (
+    <>
+      {columns.slice(0, -1).map((column, index) => {
+        const next = columns[index + 1]
+        if (next === undefined) return null
+        const widths = { left: column.width, right: next.width }
+        return (
+          <EdgeHandle
+            key={`edge:${column.id}`}
+            label="Resize columns"
+            title="Drag to resize the columns · double-click to share their width equally"
+            left={column.x + column.width - 4}
+            onPointerDown={(event) => {
+              const startStrip = strip
+              press(event, (delta) => onStrip(() => resizeBetween(startStrip, root, column.id, widths, delta, area)))
+            }}
+            onDoubleClick={() => onStrip((current) => equaliseBetween(current, root, column.id, widths, area))}
+          />
+        )
+      })}
+      {last !== undefined && (
+        <EdgeHandle key="edge:end" label="Resize last column" title="Drag to resize the column · double-click for its default width" left={last.x + last.width - 8} onPointerDown={outer(last, 'right')} onDoubleClick={() => onStrip((current) => resetColumn(current, last.id))} />
+      )}
+      {/* Past the sidebar's own handle, which reaches a few pixels into the area. */}
+      {first !== undefined && layout.overflowX && (
+        <EdgeHandle key="edge:start" label="Resize first column" title="Drag to resize the column · double-click for its default width" left={first.x + 4} onPointerDown={outer(first, 'left')} onDoubleClick={() => onStrip((current) => resetColumn(current, first.id))} />
+      )}
+    </>
+  )
+}
+
+function EdgeHandle({ label, title, left, onPointerDown, onDoubleClick }: { label: string; title: string; left: number; onPointerDown: (event: PointerEvent<HTMLDivElement>) => void; onDoubleClick: () => void }) {
   return (
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize column"
-      title="Drag to resize the column · double-click for its default width"
-      style={{ left: column.x + column.width - (last ? 8 : 4), top: 0, width: 8, height: '100%' }}
-      onPointerDown={start}
-      onDoubleClick={() => onStrip((current) => resetColumn(current, column.id))}
+      aria-label={label}
+      title={title}
+      style={{ left, top: 0, width: 8, height: '100%' }}
+      onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
       className="absolute z-40 cursor-col-resize transition-colors hover:bg-accent/30"
     />
   )

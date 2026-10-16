@@ -17,6 +17,9 @@ import {
   stripColumns,
   stripEdges,
   columnAt,
+  dragOuterEdge,
+  equaliseBetween,
+  resizeBetween,
   stripLayout,
   visibleColumns,
 } from '@/panes/strip'
@@ -191,13 +194,14 @@ describe('widths, and fit or scroll', () => {
     expect(visibleColumns(3, 0)).toBe(1)
   })
 
-  test('on a wide area the columns share it by their saved ratios, and a hand-set width keeps its share', () => {
+  test('on a wide area a hand-set width keeps its share, and the columns not set by hand share what is left', () => {
     const root = presetTree(leaves(4), 'row', 'g')
     const first = columnOfPane(root, 'p-i1') ?? ''
     const strip = resizeColumn(emptyStrip, root, first, 800, { width: 2000, height: 982 })
     const layout = stripLayout(root, strip, { width: 2000, height: 982 })
     expect(layout.columns[0]?.width).toBe(800)
-    expect(layout.columns.slice(1).map((column) => column.width)).toEqual([500, 500, 500])
+    expect(layout.columns.slice(1).map((column) => column.width)).toEqual([400, 400, 400])
+    expect(layout.overflowX).toBe(false)
   })
 
   test('a stack taller than the area scrolls its column, every pane at least the minimum height', () => {
@@ -220,7 +224,7 @@ describe('widths, and fit or scroll', () => {
     const root = presetTree(leaves(4), 'row', 'g')
     const first = columnOfPane(root, 'p-i1') ?? ''
     const wide = resizeColumn(emptyStrip, root, first, 900, laptop)
-    expect(stripLayout(root, wide, laptop).columns.map((column) => column.width)).toEqual([900, 504, 504, 504])
+    expect(stripLayout(root, wide, laptop).columns.map((column) => column.width)).toEqual([900, 372, 372, 372])
     const narrow = resizeColumn(emptyStrip, root, first, 10, laptop)
     expect(stripLayout(root, narrow, laptop).columns[0]?.width).toBe(minPaneWidth)
     const huge = resizeColumn(emptyStrip, root, first, 5000, laptop)
@@ -240,6 +244,86 @@ describe('widths, and fit or scroll', () => {
     const strip = resizeColumn({ widths: { gone: 0.4 }, scroll: 0 }, root, first, 900, laptop)
     expect(Object.keys(strip.widths)).toEqual([first])
     expect(stripLayout(root, resetColumn(strip, first), laptop).columns[0]?.width).toBe(504)
+  })
+})
+
+describe('resizing any column of a split', () => {
+  // Four columns on the laptop: three fit at the comfortable width, so each is 504 and the strip 2016 wide.
+  const root = presetTree(leaves(4), 'row', 'g')
+  const ids = stripColumns(root).map((column) => column.id)
+  const [first = '', , third = '', last = ''] = ids
+  const widths = (strip: { widths: Readonly<Record<string, number>>; scroll: number }, area = laptop) => stripLayout(root, strip, area).columns.map((column) => Math.round(column.width * 1000) / 1000)
+  const allSet = { widths: Object.fromEntries(ids.map((id) => [id, 504 / laptop.width])), scroll: 0 }
+
+  test('the divider left of the last column grows it when dragged left and shrinks it when dragged right', () => {
+    const grown = resizeBetween(emptyStrip, root, third, { left: 504, right: 504 }, -200, laptop)
+    expect(widths(grown)).toEqual([504, 504, 304, 704])
+    const shrunk = resizeBetween(emptyStrip, root, third, { left: 504, right: 504 }, 200, laptop)
+    expect(widths(shrunk)).toEqual([504, 504, 704, 304])
+  })
+
+  test('both neighbours of a dragged divider are set by hand, and the fit rule never overwrites them', () => {
+    const grown = resizeBetween(emptyStrip, root, third, { left: 504, right: 504 }, -200, laptop)
+    expect(Object.keys(grown.widths).sort()).toEqual([third, last].sort())
+    // A wider window refits: the set columns keep their share of the area, the other two share the rest.
+    const wide = { width: 2000, height: 982 }
+    const [a = 0, b = 0, c = 0, d = 0] = stripLayout(root, grown, wide).columns.map((column) => column.width)
+    expect(c).toBeCloseTo((304 / 1512) * 2000, 6)
+    expect(d).toBeCloseTo((704 / 1512) * 2000, 6)
+    expect(a).toBeCloseTo((2000 - c - d) / 2, 6)
+    expect(b).toBeCloseTo(a, 6)
+    expect(stripLayout(root, grown, wide).overflowX).toBe(false)
+    // Back on the laptop the drag's widths are exactly what they were.
+    expect(widths(grown)).toEqual([504, 504, 304, 704])
+  })
+
+  test('a divider keeps both neighbours at least the minimum width and at most the area', () => {
+    expect(widths(resizeBetween(emptyStrip, root, third, { left: 504, right: 504 }, -5000, laptop))).toEqual([504, 504, minPaneWidth, 1008 - minPaneWidth])
+    expect(widths(resizeBetween(emptyStrip, root, third, { left: 504, right: 504 }, 5000, laptop))).toEqual([504, 504, 1008 - minPaneWidth, minPaneWidth])
+    const big = resizeBetween(emptyStrip, root, third, { left: 1400, right: 504 }, 500, laptop)
+    expect(widths(big).slice(2)).toEqual([1512, 392])
+  })
+
+  test('a column not set by hand never goes under the minimum, however wide the set ones are', () => {
+    const strip = resizeColumn(emptyStrip, root, first, 5000, laptop)
+    expect(widths(strip)).toEqual([1512, minPaneWidth, minPaneWidth, minPaneWidth])
+  })
+
+  test('double-clicking a divider gives its two neighbours equal shares of their width', () => {
+    const grown = resizeBetween(emptyStrip, root, third, { left: 504, right: 504 }, -200, laptop)
+    expect(widths(equaliseBetween(grown, root, third, { left: 304, right: 704 }, laptop))).toEqual([504, 504, 504, 504])
+    expect(widths(equaliseBetween(emptyStrip, root, first, { left: 900, right: 300 }, laptop)).slice(0, 2)).toEqual([600, 600])
+  })
+
+  test('the outer right edge of the last column grows it, and the strip scrolls so the edge stays in view', () => {
+    // Scrolled to the end, columns not set by hand give up their room first, so the strip keeps its width.
+    const fit = dragOuterEdge(emptyStrip, root, last, 'right', { width: 504, scroll: 504 }, 200, laptop)
+    expect(widths(fit.strip)[3]).toBe(704)
+    expect(stripLayout(root, fit.strip, laptop).width).toBeCloseTo(2016, 6)
+    expect(fit.scroll).toBeCloseTo(504, 6)
+    // Every column set by hand: the strip grows and scrolls with the edge.
+    const grown = dragOuterEdge(allSet, root, last, 'right', { width: 504, scroll: 504 }, 200, laptop)
+    expect(widths(grown.strip)).toEqual([504, 504, 504, 704])
+    expect(stripLayout(root, grown.strip, laptop).width).toBe(2216)
+    expect(grown.scroll).toBe(704)
+    // Dragged back, it shrinks and the scroll returns.
+    const back = dragOuterEdge(allSet, root, last, 'right', { width: 504, scroll: 504 }, -100, laptop)
+    expect(widths(back.strip)[3]).toBe(404)
+    expect(back.scroll).toBe(404)
+  })
+
+  test('the outer left edge of the first column grows it leftwards, the columns right of it staying put on screen', () => {
+    const grown = dragOuterEdge(allSet, root, first, 'left', { width: 504, scroll: 504 }, -200, laptop)
+    const layout = stripLayout(root, grown.strip, laptop)
+    expect(widths(grown.strip)).toEqual([704, 504, 504, 504])
+    expect(grown.scroll).toBe(704)
+    expect((layout.columns[1]?.x ?? 0) - grown.scroll).toBe(0)
+  })
+
+  test('an outer edge keeps the column between the minimum and the area', () => {
+    expect(widths(dragOuterEdge(allSet, root, last, 'right', { width: 504, scroll: 504 }, 5000, laptop).strip)[3]).toBe(1512)
+    expect(widths(dragOuterEdge(allSet, root, last, 'right', { width: 504, scroll: 504 }, -5000, laptop).strip)[3]).toBe(minPaneWidth)
+    expect(widths(dragOuterEdge(allSet, root, first, 'left', { width: 504, scroll: 0 }, 5000, laptop).strip)[0]).toBe(minPaneWidth)
   })
 })
 

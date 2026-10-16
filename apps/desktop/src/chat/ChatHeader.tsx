@@ -50,12 +50,15 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
     return () => window.removeEventListener('keydown', onKey, true)
   }, [focused])
 
+  // No native tooltip while the bar drags its pane: one shown as the press under it turns into a drag
+  // can stay floating over the panes, and the title and metadata already show on the bar.
+  const tip = (text: string) => (chrome === null ? text : undefined)
   const identity = (
     <>
       {agent !== null && <AgentIcon agent={agent} activity={activity} size={stacked ? 20 : 22} className="shrink-0 text-ink-300" />}
       <div className="min-w-0 flex-1">
-        <h1 title={title} className={`truncate ${stacked ? 'text-[14px]' : 'text-[15px]'} leading-5 font-semibold tracking-[-0.01em] text-ink-100`}>{title}</h1>
-        <p title={metaTitle ?? meta} className="truncate text-[12px] leading-4 text-ink-400">{meta}</p>
+        <h1 title={tip(title)} className={`truncate ${stacked ? 'text-[14px]' : 'text-[15px]'} leading-5 font-semibold tracking-[-0.01em] text-ink-100`}>{title}</h1>
+        <p title={tip(metaTitle ?? meta)} className="truncate text-[12px] leading-4 text-ink-400">{meta}</p>
       </div>
     </>
   )
@@ -80,7 +83,7 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
     return (
       <header ref={header} data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
         {agent !== null && <AgentIcon agent={agent} activity={activity} size={16} className="shrink-0 text-ink-300" />}
-        <h1 title={`${title}\n${metaTitle ?? meta}`} className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
+        <h1 className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
           {title}
         </h1>
         {actions}

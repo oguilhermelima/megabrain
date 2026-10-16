@@ -44,6 +44,8 @@ export interface StripScroll {
   offsetOf: (column: StripColumn) => number
   /** Scrolls the strip to `x`, with the panel motion. */
   scrollTo: (x: number) => void
+  /** Puts the strip at `x` at once, and again once the next layout is drawn (a resize that widens the strip needs the room first). */
+  holdScroll: (x: number) => void
 }
 
 export function useStripScroll({
@@ -228,8 +230,23 @@ export function useStripScroll({
     scroller.current?.dispatchEvent(new Event('scroll'))
   }, [columnScroll])
 
+  // A scroll asked for while resizing lands once the strip it needs is drawn.
+  const held = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    const element = scroller.current
+    if (held.current === null || element === null) return
+    element.scrollLeft = held.current
+    held.current = null
+  }, [layout])
+  const holdScroll = (x: number) => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null
+    held.current = x
+    if (scroller.current !== null) scroller.current.scrollLeft = x
+  }
+
   const scrolls = layout.overflowX || (layout.columns[0]?.height ?? 0) > size.height + 1
   useEffect(() => onOverflow?.(scrolls), [scrolls, onOverflow])
 
-  return { area, scroller, size, layout, offsetOf, scrollTo: (x) => move({ x }, true) }
+  return { area, scroller, size, layout, offsetOf, scrollTo: (x) => move({ x }, true), holdScroll }
 }

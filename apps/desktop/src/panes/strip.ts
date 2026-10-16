@@ -83,21 +83,34 @@ export function visibleColumns(count: number, areaWidth: number): number {
 }
 
 /**
- * Every column's place in pixels. A column takes its own width (a share of the area the person set
- * by hand), else its share of the root row spread over the columns that fit (visibleColumns): on a
- * wide area every column shows, on a narrow one the rest scroll. Never under the minimum its panes
- * need. A root that is not a row is one column exactly as wide as the area, so it never scrolls sideways.
+ * Every column's place in pixels. A column the person sized by hand takes its own width (a share of
+ * the area), which nothing else ever changes. The rest share what the hand-set ones leave of the
+ * strip's default width (as many columns as fit at the comfortable width fill the area, see
+ * visibleColumns), by their shares of the root row: on a wide area every column shows, on a narrow one
+ * the rest scroll. Never under the minimum its panes need. A root that is not a row is one column
+ * exactly as wide as the area, so it never scrolls sideways.
  */
 export function stripLayout(root: PaneNode, strip: Strip, area: Area): StripLayout {
   const strips = root.type === 'split' && root.direction === 'row'
-  const columns = stripColumns(root)
-  const visible = visibleColumns(columns.length, area.width)
+  const columns = stripColumns(root).map((column) => ({ ...column, minimum: minimumOf(column.node), own: strip.widths[column.id] }))
+  // The default share, in area widths; and the strip's default width, in pixels.
+  const fraction = columns.length / visibleColumns(columns.length, area.width)
+  const target = fraction * area.width
+  let setWidth = 0
+  let freeShare = 0
+  let freeCount = 0
+  for (const { own, minimum, share } of columns) {
+    if (own === undefined) {
+      freeShare += share
+      freeCount += 1
+    } else setWidth += Math.max(own * area.width, minimum.width)
+  }
+  const left = Math.max(0, target - setWidth)
   let x = 0
-  const placed = columns.map(({ id, node, share }): StripColumn => {
-    const minimum = minimumOf(node)
-    const own = strip.widths[id]
-    const fraction = columns.length === 1 ? 1 : (own ?? (share * columns.length) / visible)
-    const width = strips ? Math.max(fraction * area.width, minimum.width) : area.width
+  const placed = columns.map(({ id, node, share, minimum, own }): StripColumn => {
+    // With nothing set by hand it is exactly the default share, free of the rounding the general sum adds.
+    const free = freeCount === columns.length ? share * fraction * area.width : freeShare > epsilon ? (left * share) / freeShare : left / Math.max(1, freeCount)
+    const width = !strips || columns.length === 1 ? area.width : Math.max(own === undefined ? free : own * area.width, minimum.width)
     const height = Math.max(area.height, minimum.height)
     const { panes, dividers } = paneRects(node)
     const column = { id, node, x, width, height, panes: panes.map((pane) => ({ ...pane, rect: { x: pane.rect.x * width, y: pane.rect.y * height, width: pane.rect.width * width, height: pane.rect.height * height } })), dividers }
@@ -107,20 +120,65 @@ export function stripLayout(root: PaneNode, strip: Strip, area: Area): StripLayo
   return { columns: placed, width: x, overflowX: x > area.width + epsilon, overflowY: placed.some((column) => column.height > area.height + epsilon) }
 }
 
-/** Column `columnId` set to `width` pixels, kept between its minimum and the area's width. Widths of columns that are gone are dropped. */
-export function resizeColumn(strip: Strip, root: PaneNode, columnId: string, width: number, area: Area): Strip {
-  const columns = stripColumns(root)
-  const column = columns.find((candidate) => candidate.id === columnId)
-  if (column === undefined || area.width <= 0) return strip
-  const minimum = minimumOf(column.node).width
-  const clamped = Math.max(minimum, Math.min(area.width, width))
+/** The widths kept for the columns still in `root`, with `set` (column id to pixels) written over them as shares of the area. */
+function withWidths(strip: Strip, root: PaneNode, set: Readonly<Record<string, number>>, area: Area): Strip {
   const widths: Record<string, number> = {}
-  for (const { id } of columns) {
+  for (const { id } of stripColumns(root)) {
+    const width = set[id]
     const kept = strip.widths[id]
-    if (id === columnId) widths[id] = clamped / area.width
+    if (width !== undefined) widths[id] = width / area.width
     else if (kept !== undefined) widths[id] = kept
   }
   return { ...strip, widths }
+}
+
+/** Column `columnId` set to `width` pixels, kept between its minimum and the area's width. Widths of columns that are gone are dropped. */
+export function resizeColumn(strip: Strip, root: PaneNode, columnId: string, width: number, area: Area): Strip {
+  const column = stripColumns(root).find((candidate) => candidate.id === columnId)
+  if (column === undefined || area.width <= 0) return strip
+  const minimum = minimumOf(column.node).width
+  return withWidths(strip, root, { [columnId]: Math.max(minimum, Math.min(area.width, width)) }, area)
+}
+
+/**
+ * The divider right of column `leftId` dragged by `delta` pixels from where the drag started, when the
+ * two columns beside it were `start` wide: one grows by what the other gives up, each kept between its
+ * minimum and the area's width, and both count as set by hand from then on.
+ */
+export function resizeBetween(strip: Strip, root: PaneNode, leftId: string, start: { left: number; right: number }, delta: number, area: Area): Strip {
+  const columns = stripColumns(root)
+  const index = columns.findIndex((column) => column.id === leftId)
+  const left = columns[index]
+  const right = columns[index + 1]
+  if (left === undefined || right === undefined || area.width <= 0) return strip
+  const total = start.left + start.right
+  const lowest = Math.max(minimumOf(left.node).width, total - area.width)
+  const highest = Math.min(area.width, total - minimumOf(right.node).width)
+  if (lowest > highest) return strip
+  const width = Math.max(lowest, Math.min(highest, start.left + delta))
+  return withWidths(strip, root, { [left.id]: width, [right.id]: total - width }, area)
+}
+
+/** The two columns beside the divider right of `leftId`, `current` wide, given equal halves of their width. */
+export function equaliseBetween(strip: Strip, root: PaneNode, leftId: string, current: { left: number; right: number }, area: Area): Strip {
+  return resizeBetween(strip, root, leftId, current, (current.right - current.left) / 2, area)
+}
+
+/**
+ * The outer edge of a column dragged by `delta` pixels from where the drag started (`start`: the
+ * column's width and the strip's scroll): the right edge of the last column, the left edge of the
+ * first. The column takes its new width by hand, and the scroll follows: the right edge stays in view
+ * however far it goes, and growing leftwards scrolls by what the column gained, so the columns right
+ * of it stay where they were on screen.
+ */
+export function dragOuterEdge(strip: Strip, root: PaneNode, columnId: string, side: 'left' | 'right', start: { width: number; scroll: number }, delta: number, area: Area): { strip: Strip; scroll: number } {
+  const next = resizeColumn(strip, root, columnId, side === 'right' ? start.width + delta : start.width - delta, area)
+  const layout = stripLayout(root, next, area)
+  const column = layout.columns.find((candidate) => candidate.id === columnId)
+  if (column === undefined) return { strip, scroll: start.scroll }
+  const most = Math.max(0, layout.width - area.width)
+  const scroll = side === 'right' ? reveal(column.x + column.width, 0, start.scroll, area.width, layout.width) : Math.max(0, Math.min(most, start.scroll + column.width - start.width))
+  return { strip: next, scroll }
 }
 
 /** Column `columnId` goes back to the default width. */
