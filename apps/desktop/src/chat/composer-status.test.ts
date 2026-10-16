@@ -331,6 +331,14 @@ describe('registry names, windows and the current flag', () => {
     expect(displayName('claude-unknown-9', models)).toBe('Unknown 9')
   })
 
+  test('a registry name that is only a version reads with its family from the id', () => {
+    const grok = registry('grok', ['grok-4.7', 'grok-4.7-build-fast'], { 'grok-4.7': { name: '4.7' }, 'grok-4.7-build-fast': { name: '4.7 Build Fast' } })
+    expect(displayName('grok-4.7', grok)).toBe('Grok 4.7')
+    expect(displayName('grok-4.7-build-fast', grok)).toBe('Grok 4.7 Build Fast')
+    const legacy = registry('claude', ['claude-3-7-sonnet-20250219'], { 'claude-3-7-sonnet-20250219': { name: '3.7 Sonnet' } })
+    expect(displayName('claude-3-7-sonnet-20250219', legacy)).toBe('Sonnet 3.7')
+  })
+
   test('the registry current flag decides the groups when it is there', () => {
     const grouped = groupModels(models)
     expect(grouped.current.map((model) => model.model)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5'])

@@ -1,4 +1,6 @@
 import type { ChainStep, Condition, Rule, RuleValues, StepPatch, TimeCondition, UsageCondition } from '@/api/schema'
+import { displayName, groupModels } from '@/chat/composer-status'
+import type { PickGroup, PickOption } from '@/components/multi-select-model'
 import type { ModelInfo } from '@/settings/settings-model'
 
 export type { Rule }
@@ -10,7 +12,7 @@ export type { Rule }
 
 export type Join = 'any' | 'all'
 
-/** One condition as the chips edit it: every list empty means the field is not constrained. */
+/** One condition as the builder edits it: every list empty means the field is not constrained. */
 export interface ConditionDraft {
   parentAgent: string[]
   parentModel: string[]
@@ -46,11 +48,12 @@ const groupItems = (rule: { all: Rule[] } | { any: Rule[] }): Rule[] => ('any' i
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
 
-function modelLabel(model: string, agents: string[], models: ModelInfo[]): string {
+function modelLabel(model: string, models: ModelInfo[]): string {
   const known = models.find((item) => item.model === model)
-  const agent = known?.agent ?? (agents.length === 1 ? agents[0] : undefined)
-  const name = known?.name ?? model
-  return agent === undefined || known === undefined ? name : `${capitalize(agent)} ${name}`
+  if (known === undefined) return model
+  const name = displayName(model, [known])
+  // "Claude Opus 5.5", but "Grok 4.7" rather than "Grok Grok 4.7".
+  return name.toLowerCase().startsWith(known.agent.toLowerCase()) ? name : `${capitalize(known.agent)} ${name}`
 }
 
 function usageText({ provider, window, below, above }: UsageCondition): string {
@@ -77,7 +80,7 @@ function conditionPhrase(condition: Condition, models: ModelInfo[]): string {
   const parentModels = values(condition.parentModel)
   const efforts = values(condition.parentEffort)
   const parts: string[] = []
-  const who = parentModels.length > 0 ? parentModels.map((model) => modelLabel(model, agents, models)).join(' or ') : agents.length > 0 ? agents.map(capitalize).join(' or ') : efforts.length > 0 ? 'any agent' : ''
+  const who = parentModels.length > 0 ? parentModels.map((model) => modelLabel(model, models)).join(' or ') : agents.length > 0 ? agents.map(capitalize).join(' or ') : efforts.length > 0 ? 'any agent' : ''
   if (who !== '') parts.push(`${parentPrefix}${who}${efforts.length > 0 ? ` (${efforts.join(', ')})` : ''}`)
   const repo = values(condition.repo)
   if (repo.length > 0) parts.push(`on repo ${repo.join(' or ')}`)
@@ -131,7 +134,7 @@ export function emptyCondition(): ConditionDraft {
   return { parentAgent: [], parentModel: [], parentEffort: [], repo: [], branch: [], label: [], usage: null, time: null }
 }
 
-/** A Condition the chips can edit: only the fields the app knows, each of the right shape. */
+/** A Condition the builder can edit: only the fields the app knows, each of the right shape. */
 function editableCondition(rule: Rule): rule is Condition {
   if (!isRecord(rule) || 'not' in rule || isGroup(rule)) return false
   return Object.entries(rule).every(([key, value]) => {
@@ -200,6 +203,28 @@ export function ruleFromBuilder(builder: RuleBuilder): Rule {
 /** The registry's models for the chosen agents, or every model when no agent is chosen. */
 export function modelsForAgents(models: ModelInfo[], agents: string[]): ModelInfo[] {
   return agents.length === 0 ? models : models.filter((model) => agents.includes(model.agent))
+}
+
+const modelOption = (model: ModelInfo): PickOption => ({ value: model.model, label: displayName(model.model, [model]), detail: model.model })
+
+/**
+ * The model dropdown: a group per agent (the chosen ones, else every one) in registry order, its
+ * current models first and the older ones folded away, as the composer's model picker groups them.
+ * A rule matches a model by id whatever the agent, so an id two agents list shows once, under the first.
+ */
+export function modelGroups(models: ModelInfo[], agents: string[]): PickGroup[] {
+  const order = [...new Set(models.map((model) => model.agent))].filter((agent) => agents.length === 0 || agents.includes(agent))
+  const listed = new Set<string>()
+  const once = (model: ModelInfo) => {
+    if (listed.has(model.model)) return false
+    listed.add(model.model)
+    return true
+  }
+  return order.flatMap((agent) => {
+    const { current, older } = groupModels(models.filter((model) => model.agent === agent))
+    const group = { label: agent, options: current.filter(once).map(modelOption), older: older.filter(once).map(modelOption) }
+    return group.options.length + group.older.length === 0 ? [] : [group]
+  })
 }
 
 /** The effort levels of the chosen models (or of the chosen agents' models), in registry order. */

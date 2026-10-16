@@ -164,8 +164,9 @@ export function findModel(models: Models, id: string | null): Models[number] | u
 export function displayName(id: string, models: Models): string {
   const entry = findModel(models, id)
   const name = entry?.name
-  // The CLI fills a missing name with the id itself, which is no name at all.
-  return name === undefined || name === '' || name === entry?.model ? modelName(id) : name
+  // The CLI fills a missing name with the id itself, which is no name at all, and some agents name a
+  // model by its version alone ("4.7" for grok-4.7, "3.7 Sonnet"), which drops the family.
+  return name === undefined || name === '' || name === entry?.model || /^\d/.test(name) ? modelName(id) : name
 }
 
 /**

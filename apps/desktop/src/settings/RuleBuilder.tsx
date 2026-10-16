@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import type { TimeCondition, UsageCondition } from '@/api/schema'
-import { Segmented } from '@/components/ui'
+import { ContextMenu, type OpenMenu } from '@/components/ContextMenu'
+import { MultiSelect } from '@/components/MultiSelect'
 import {
   builderFromRule,
   effortsFor,
   emptyCondition,
+  modelGroups,
   modelsForAgents,
   parseRuleJson,
   ruleFromBuilder,
@@ -20,13 +22,46 @@ import {
 import type { ModelInfo } from '@/settings/settings-model'
 import { field, ghostIcon, quiet } from '@/settings/settings-ui'
 
-// The rule editor: groups joined by Any of / All of, each group a condition drawn as rows of chips, or
+// The rule editor: groups joined by Any of / All of, each group a condition drawn as rows of dropdowns, or
 // one more level of conditions; deeper rules are shown read-only and edited in the JSON view.
 
 const joinOptions: { value: Join; label: string }[] = [
   { value: 'any', label: 'Any of' },
   { value: 'all', label: 'All of' },
 ]
+
+const joinWord = (join: Join) => (join === 'any' ? 'or' : 'and')
+
+/** Any of / All of as a small two-way toggle. */
+function JoinToggle({ value, onChange, label }: { value: Join; onChange: (join: Join) => void; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="inline-flex shrink-0 gap-0.5 rounded-[9px] bg-white/[0.06] p-[3px]">
+      {joinOptions.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={option.value === value}
+          onClick={() => onChange(option.value)}
+          className={`h-6 rounded-[6px] px-2.5 text-[12.5px] transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 motion-reduce:transition-none ${option.value === value ? 'bg-white/[0.15] font-medium text-ink-100 shadow-[0_1px_3px_rgba(0,0,0,0.35)]' : 'text-ink-400 hover:text-ink-200'}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** "or" or "and" between two groups, on a rule across the column. */
+function JoinDivider({ join }: { join: Join }) {
+  return (
+    <div aria-hidden="true" className="flex items-center gap-2 py-0.5">
+      <span className="h-px flex-1 bg-white/[0.06]" />
+      <span className="text-[11px] font-semibold tracking-[0.06em] text-ink-500 uppercase">{joinWord(join)}</span>
+      <span className="h-px flex-1 bg-white/[0.06]" />
+    </div>
+  )
+}
 
 type ConditionKey = 'parent' | 'repo' | 'branch' | 'label' | 'usage' | 'time'
 const conditionLabels: Record<ConditionKey, string> = { parent: 'Parent', repo: 'Repo', branch: 'Branch', label: 'Label', usage: 'Usage', time: 'Time' }
@@ -48,8 +83,6 @@ function cleared(draft: ConditionDraft, key: ConditionKey): ConditionDraft {
   return { ...draft, [key]: [] }
 }
 
-const toggle = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value])
-
 export function Cross() {
   return (
     <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
@@ -58,54 +91,25 @@ export function Cross() {
   )
 }
 
-/** A pill that is on or off. */
-export function Chip({ on, onClick, children, label }: { on: boolean; onClick: () => void; children: ReactNode; label?: string }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      aria-label={label}
-      onClick={onClick}
-      className={`h-6 rounded-full border px-2.5 text-[12px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
-        on ? 'border-accent/50 bg-accent/20 text-ink-100' : 'border-white/[0.08] bg-white/[0.03] text-ink-400 hover:border-white/[0.16] hover:text-ink-200'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
+/** One field of a condition: its label in a fixed column, its controls, and a remove button. */
 function Row({ label, onRemove, children }: { label: string; onRemove: () => void; children: ReactNode }) {
   return (
-    <div className="flex items-start gap-2">
-      <span className="mt-1 w-14 shrink-0 text-[11.5px] font-semibold tracking-[0.03em] text-ink-500 uppercase">{label}</span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
-      <button type="button" aria-label={`Remove ${label.toLowerCase()} condition`} title="Remove condition" className={`${ghostIcon} size-6`} onClick={onRemove}>
+    <div className="grid grid-cols-[56px_minmax(0,1fr)_auto] items-start gap-3">
+      <span className="pt-1.5 text-[13px] leading-5 font-medium text-ink-400">{label}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+      <button type="button" aria-label={`Remove ${label.toLowerCase()} condition`} title="Remove condition" className={`${ghostIcon} mt-0.5`} onClick={onRemove}>
         <Cross />
       </button>
     </div>
   )
 }
 
-function ChipSet({ options, chosen, onChange, empty }: { options: { value: string; label: string }[]; chosen: string[]; onChange: (next: string[]) => void; empty: string }) {
-  // A chosen value missing from the options (an older model, a typo in chains.json) still shows, so it can be turned off.
-  const all = [...options, ...chosen.filter((value) => !options.some((option) => option.value === value)).map((value) => ({ value, label: value }))]
-  if (all.length === 0) return <span className="text-[12px] text-ink-500">{empty}</span>
-  return (
-    <>
-      {all.map((option) => (
-        <Chip key={option.value} on={chosen.includes(option.value)} onClick={() => onChange(toggle(chosen, option.value))}>
-          {option.label}
-        </Chip>
-      ))}
-    </>
-  )
-}
-
-const small = `${field} h-7 px-2 text-[12.5px]`
+/** A control in a condition row: the settings field at the app's value size. */
+const control = `${field} text-[14px]`
+const inlineLabel = 'flex items-center gap-1.5 text-[13px] text-ink-400'
 
 function GlobInput({ value, onChange, placeholder, label }: { value: string[]; onChange: (next: string[]) => void; placeholder: string; label: string }) {
-  return <input aria-label={label} value={value.join(',')} onChange={(event) => onChange(event.target.value.split(','))} placeholder={placeholder} className={`${small} w-full`} />
+  return <input aria-label={label} value={value.join(',')} onChange={(event) => onChange(event.target.value.split(','))} placeholder={placeholder} className={`${control} w-full max-w-[420px]`} />
 }
 
 function percentValue(text: string): number | undefined {
@@ -123,24 +127,24 @@ function UsageEditor({ usage, providers, onChange }: { usage: UsageCondition; pr
   }
   return (
     <>
-      <select aria-label="Usage provider" value={usage.provider} onChange={(event) => onChange({ ...usage, provider: event.target.value })} className={small}>
+      <select aria-label="Usage provider" value={usage.provider} onChange={(event) => onChange({ ...usage, provider: event.target.value })} className={`${control} w-28`}>
         {choices.map((provider) => (
           <option key={provider} value={provider}>
             {provider}
           </option>
         ))}
       </select>
-      <select aria-label="Usage window" value={usage.window} onChange={(event) => onChange({ ...usage, window: event.target.value === 'weekly' ? 'weekly' : '5h' })} className={small}>
+      <select aria-label="Usage window" value={usage.window} onChange={(event) => onChange({ ...usage, window: event.target.value === 'weekly' ? 'weekly' : '5h' })} className={`${control} w-24`}>
         <option value="5h">5h</option>
         <option value="weekly">weekly</option>
       </select>
-      <label className="flex items-center gap-1 text-[12px] text-ink-400">
+      <label className={inlineLabel}>
         below
-        <input aria-label="Usage below percent" inputMode="numeric" value={usage.below?.toString() ?? ''} onChange={(event) => bound('below', event.target.value)} placeholder="—" className={`${small} w-12`} />%
+        <input aria-label="Usage below percent" inputMode="numeric" value={usage.below?.toString() ?? ''} onChange={(event) => bound('below', event.target.value)} placeholder="—" className={`${control} w-14 text-center`} />%
       </label>
-      <label className="flex items-center gap-1 text-[12px] text-ink-400">
+      <label className={inlineLabel}>
         above
-        <input aria-label="Usage above percent" inputMode="numeric" value={usage.above?.toString() ?? ''} onChange={(event) => bound('above', event.target.value)} placeholder="—" className={`${small} w-12`} />%
+        <input aria-label="Usage above percent" inputMode="numeric" value={usage.above?.toString() ?? ''} onChange={(event) => bound('above', event.target.value)} placeholder="—" className={`${control} w-14 text-center`} />%
       </label>
     </>
   )
@@ -154,38 +158,38 @@ function TimeEditor({ time, onChange }: { time: TimeCondition; onChange: (next: 
   const days = time.days ?? []
   return (
     <>
-      {weekDays.map((day) => (
-        <Chip
-          key={day}
-          on={days.includes(day)}
-          onClick={() => {
-            const next = toggle(days, day).sort((left, right) => weekDays.indexOf(left as (typeof weekDays)[number]) - weekDays.indexOf(right as (typeof weekDays)[number]))
-            const { days: _days, ...rest } = time
-            onChange(next.length === 0 ? rest : { ...rest, days: next })
-          }}
-        >
-          {day.charAt(0).toUpperCase() + day.slice(1)}
-        </Chip>
-      ))}
-      <label className="flex items-center gap-1 text-[12px] text-ink-400">
+      <MultiSelect
+        label="Days"
+        groups={[{ options: weekDays.map((day) => ({ value: day, label: day.charAt(0).toUpperCase() + day.slice(1) })) }]}
+        chosen={days}
+        plural="days"
+        any="Every day"
+        className={`${control} w-36`}
+        onChange={(chosen) => {
+          const next = [...chosen].sort((left, right) => weekDays.indexOf(left as (typeof weekDays)[number]) - weekDays.indexOf(right as (typeof weekDays)[number]))
+          const { days: _days, ...rest } = time
+          onChange(next.length === 0 ? rest : { ...rest, days: next })
+        }}
+      />
+      <label className={inlineLabel}>
         from
-        <input aria-label="From time" type="time" value={time.from ?? ''} onChange={(event) => set('from', event.target.value)} className={small} />
+        <input aria-label="From time" type="time" value={time.from ?? ''} onChange={(event) => set('from', event.target.value)} className={control} />
       </label>
-      <label className="flex items-center gap-1 text-[12px] text-ink-400">
+      <label className={inlineLabel}>
         to
-        <input aria-label="To time" type="time" value={time.to ?? ''} onChange={(event) => set('to', event.target.value)} className={small} />
+        <input aria-label="To time" type="time" value={time.to ?? ''} onChange={(event) => set('to', event.target.value)} className={control} />
       </label>
     </>
   )
 }
 
-/** One condition: a row of chips per constrained field, and an Add menu for the rest. */
+/** One condition: a row per constrained field, and an Add menu for the rest. */
 export function ConditionEditor({ draft, models, providers, onChange }: { draft: ConditionDraft; models: ModelInfo[]; providers: string[]; onChange: (next: ConditionDraft) => void }) {
   const [opened, setOpened] = useState<Set<ConditionKey>>(new Set())
+  const [menu, setMenu] = useState<OpenMenu | null>(null)
   const shown = new Set([...usedKeys(draft), ...opened])
   const hidden = (Object.keys(conditionLabels) as ConditionKey[]).filter((key) => !shown.has(key))
   const agents = [...new Set([...models.map((model) => model.agent), ...draft.parentAgent])]
-  const modelOptions = modelsForAgents(models, draft.parentAgent).map((model) => ({ value: model.model, label: model.name ?? model.model }))
   const efforts = effortsFor(models, draft.parentAgent, draft.parentModel)
   const remove = (key: ConditionKey) => {
     setOpened((current) => new Set([...current].filter((item) => item !== key)))
@@ -199,31 +203,34 @@ export function ConditionEditor({ draft, models, providers, onChange }: { draft:
 
   return (
     <div className="grid gap-2">
-      {shown.size === 0 && <p className="text-[12px] text-ink-500">No condition: always matches. Add one below.</p>}
+      {shown.size === 0 && <p className="py-1 text-[13px] text-ink-500">No condition: always matches.</p>}
       {shown.has('parent') && (
         <Row label="Parent" onRemove={() => remove('parent')}>
-          <div className="grid w-full gap-1.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <ChipSet
-                options={agents.map((agent) => ({ value: agent, label: agent }))}
-                chosen={draft.parentAgent}
-                empty="No agents in the registry"
-                onChange={(parentAgent) => {
-                  // Models of agents no longer chosen go with them.
-                  const kept = parentAgent.length === 0 ? draft.parentModel : draft.parentModel.filter((model) => modelsForAgents(models, parentAgent).some((item) => item.model === model) || !models.some((item) => item.model === model))
-                  onChange({ ...draft, parentAgent, parentModel: kept })
-                }}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11.5px] text-ink-500">model</span>
-              <ChipSet options={modelOptions} chosen={draft.parentModel} empty="any" onChange={(parentModel) => onChange({ ...draft, parentModel })} />
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11.5px] text-ink-500">effort</span>
-              <ChipSet options={efforts.map((effort) => ({ value: effort, label: effort }))} chosen={draft.parentEffort} empty="any" onChange={(parentEffort) => onChange({ ...draft, parentEffort })} />
-            </div>
-          </div>
+          <MultiSelect
+            label="Agent"
+            groups={[{ options: agents.map((agent) => ({ value: agent, label: agent })) }]}
+            chosen={draft.parentAgent}
+            plural="agents"
+            any="Any agent"
+            empty="No agents in the registry."
+            className={`${control} w-36`}
+            onChange={(parentAgent) => {
+              // Models of agents no longer chosen go with them.
+              const kept = parentAgent.length === 0 ? draft.parentModel : draft.parentModel.filter((model) => modelsForAgents(models, parentAgent).some((item) => item.model === model) || !models.some((item) => item.model === model))
+              onChange({ ...draft, parentAgent, parentModel: kept })
+            }}
+          />
+          <MultiSelect label="Model" groups={modelGroups(models, draft.parentAgent)} chosen={draft.parentModel} plural="models" any="Any model" empty="No models in the registry." className={`${control} w-56`} onChange={(parentModel) => onChange({ ...draft, parentModel })} />
+          <MultiSelect
+            label="Effort"
+            groups={[{ options: efforts.map((effort) => ({ value: effort, label: effort })) }]}
+            chosen={draft.parentEffort}
+            plural="levels"
+            any="Any effort"
+            empty="The chosen models take no effort level."
+            className={`${control} w-36`}
+            onChange={(parentEffort) => onChange({ ...draft, parentEffort })}
+          />
         </Row>
       )}
       {shown.has('repo') && (
@@ -252,25 +259,30 @@ export function ConditionEditor({ draft, models, providers, onChange }: { draft:
         </Row>
       )}
       {hidden.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11.5px] text-ink-500">Add</span>
-          {hidden.map((key) => (
-            <button key={key} type="button" className={`${quiet} h-6 px-2.5 text-[12px]`} onClick={() => add(key)}>
-              + {conditionLabels[key]}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={menu !== null}
+          className={`${quiet} -ml-2 justify-self-start text-[13px]`}
+          onClick={(event) => {
+            const { left, top, right, bottom } = event.currentTarget.getBoundingClientRect()
+            setMenu({ anchor: { left, top, right, bottom }, gap: 4, sections: [hidden.map((key) => ({ label: conditionLabels[key], onSelect: () => add(key) }))] })
+          }}
+        >
+          + Add field
+        </button>
       )}
+      <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   )
 }
 
 function GroupCard({ title, onRemove, children }: { title: ReactNode; onRemove: () => void; children: ReactNode }) {
   return (
-    <div className="grid gap-2 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] font-semibold text-ink-300">{title}</span>
-        <button type="button" aria-label="Remove group" title="Remove group" className={`${ghostIcon} size-6 hover:text-bad`} onClick={onRemove}>
+    <div className="grid gap-3 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-3">
+      <div className="flex min-h-7 items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-200">{title}</span>
+        <button type="button" aria-label="Remove group" title="Remove group" className={`${ghostIcon} hover:text-bad`} onClick={onRemove}>
           <Cross />
         </button>
       </div>
@@ -278,8 +290,6 @@ function GroupCard({ title, onRemove, children }: { title: ReactNode; onRemove: 
     </div>
   )
 }
-
-const joinWord = (join: Join) => (join === 'any' ? 'or' : 'and')
 
 function GroupEditor({ group, index, models, providers, onChange, onRemove, onEditJson }: { group: BuilderGroup; index: number; models: ModelInfo[]; providers: string[]; onChange: (next: BuilderGroup) => void; onRemove: () => void; onEditJson: () => void }) {
   if (group.kind === 'condition')
@@ -291,9 +301,9 @@ function GroupEditor({ group, index, models, providers, onChange, onRemove, onEd
   if (group.kind === 'raw')
     return (
       <GroupCard title={`Group ${index + 1} (read-only)`} onRemove={onRemove}>
-        <p className="text-[12.5px] text-ink-300">{ruleSummary(group.rule, models)}</p>
-        <pre className="max-h-32 overflow-auto rounded-[8px] bg-black/20 p-2 font-mono text-[11.5px] text-ink-400">{JSON.stringify(group.rule, null, 2)}</pre>
-        <p className="text-[12px] text-ink-500">
+        <p className="text-[13px] text-ink-300">{ruleSummary(group.rule, models)}</p>
+        <pre className="max-h-32 overflow-auto rounded-[8px] bg-black/20 p-2 font-mono text-[12px] text-ink-400">{JSON.stringify(group.rule, null, 2)}</pre>
+        <p className="text-[13px] text-ink-500">
           Nested deeper than the builder shows.{' '}
           <button type="button" className="font-semibold text-ink-300 underline-offset-2 hover:underline" onClick={onEditJson}>
             Edit JSON
@@ -304,31 +314,28 @@ function GroupEditor({ group, index, models, providers, onChange, onRemove, onEd
   return (
     <GroupCard
       title={
-        <span className="flex items-center gap-2">
+        <>
           Group {index + 1}
-          <select aria-label="Group join" value={group.join} onChange={(event) => onChange({ ...group, join: event.target.value === 'any' ? 'any' : 'all' })} className={`${field} h-6 px-1.5 text-[12px]`}>
-            <option value="any">any of</option>
-            <option value="all">all of</option>
-          </select>
-        </span>
+          <JoinToggle label="Group join" value={group.join} onChange={(join) => onChange({ ...group, join })} />
+        </>
       }
       onRemove={onRemove}
     >
       {group.conditions.map((condition, position) => (
-        <div key={position} className="grid gap-1">
-          {position > 0 && <span className="text-[11px] font-semibold text-ink-500 uppercase">{joinWord(group.join)}</span>}
-          <div className="flex items-start gap-2 rounded-[10px] bg-white/[0.03] p-2">
+        <div key={position} className="grid gap-2">
+          {position > 0 && <JoinDivider join={group.join} />}
+          <div className="flex items-start gap-2 rounded-[10px] bg-white/[0.03] p-3">
             <div className="min-w-0 flex-1">
               <ConditionEditor draft={condition} models={models} providers={providers} onChange={(next) => onChange({ ...group, conditions: group.conditions.map((item, at) => (at === position ? next : item)) })} />
             </div>
-            <button type="button" aria-label="Remove condition" title="Remove condition" className={`${ghostIcon} size-6`} onClick={() => onChange({ ...group, conditions: group.conditions.filter((_, at) => at !== position) })}>
+            <button type="button" aria-label="Remove condition" title="Remove condition" className={ghostIcon} onClick={() => onChange({ ...group, conditions: group.conditions.filter((_, at) => at !== position) })}>
               <Cross />
             </button>
           </div>
         </div>
       ))}
-      <button type="button" className={`${quiet} h-6 justify-self-start px-2.5 text-[12px]`} onClick={() => onChange({ ...group, conditions: [...group.conditions, emptyCondition()] })}>
-        + Condition in this group
+      <button type="button" className={`${quiet} -ml-2 justify-self-start text-[13px]`} onClick={() => onChange({ ...group, conditions: [...group.conditions, emptyCondition()] })}>
+        + Add condition to this group
       </button>
     </GroupCard>
   )
@@ -368,26 +375,26 @@ export function RuleEditor({
   const shownIssues = json === null ? issues : [...jsonIssues, ...issues.filter((issue) => !jsonIssues.some((local) => local.path === issue.path))]
 
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className={`grid ${compact ? 'gap-2' : 'gap-3'}`}>
+      <div className="flex min-h-7 flex-wrap items-center justify-between gap-2">
         {json === null ? (
           <div className="flex items-center gap-2">
-            <Segmented value={builder.join} options={joinOptions} onChange={(join) => onChange({ ...builder, join })} />
-            {!compact && <span className="text-[12px] text-ink-500">the groups below</span>}
+            <JoinToggle label="Rule join" value={builder.join} onChange={(join) => onChange({ ...builder, join })} />
+            {!compact && <span className="text-[13px] text-ink-500">the conditions below</span>}
           </div>
         ) : (
-          <span className="text-[12px] text-ink-400">Rule as JSON; it applies as soon as it is valid.</span>
+          <span className="text-[13px] text-ink-400">Rule as JSON; it applies as soon as it is valid.</span>
         )}
-        <button type="button" className={quiet} aria-pressed={json !== null} onClick={() => (json === null ? openJson() : setJson(null))}>
+        <button type="button" className={`${quiet} text-[13px]`} aria-pressed={json !== null} onClick={() => (json === null ? openJson() : setJson(null))}>
           {json === null ? 'Edit JSON' : 'Back to builder'}
         </button>
       </div>
       {json === null ? (
         <>
-          {builder.groups.length === 0 && <p className="text-[12.5px] text-ink-400">No groups: the rule always matches.</p>}
+          {builder.groups.length === 0 && <p className="text-[13px] text-ink-400">No conditions: the rule always matches.</p>}
           {builder.groups.map((group, index) => (
-            <div key={index} className="grid gap-1">
-              {index > 0 && <span className="px-1 text-[11px] font-semibold text-ink-500 uppercase">{joinWord(builder.join)}</span>}
+            <div key={index} className="grid gap-2">
+              {index > 0 && <JoinDivider join={builder.join} />}
               <GroupEditor
                 group={group}
                 index={index}
@@ -399,24 +406,24 @@ export function RuleEditor({
               />
             </div>
           ))}
-          <div className="flex flex-wrap gap-1.5">
-            <button type="button" className={`${quiet} border border-white/[0.1] bg-white/[0.04]`} onClick={() => onChange({ ...builder, groups: [...builder.groups, { kind: 'condition', condition: emptyCondition() }] })}>
-              Add condition
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={`${quiet} border border-white/[0.1] bg-white/[0.04] text-[13px]`} onClick={() => onChange({ ...builder, groups: [...builder.groups, { kind: 'condition', condition: emptyCondition() }] })}>
+              + Add condition
             </button>
             <button
               type="button"
-              className={`${quiet} border border-white/[0.1] bg-white/[0.04]`}
+              className={`${quiet} border border-white/[0.1] bg-white/[0.04] text-[13px]`}
               onClick={() => onChange({ ...builder, groups: [...builder.groups, { kind: 'nested', join: builder.join === 'any' ? 'all' : 'any', conditions: [emptyCondition(), emptyCondition()] }] })}
             >
-              Add group
+              + Add group
             </button>
           </div>
         </>
       ) : (
-        <textarea aria-label="Rule JSON" value={json} spellCheck={false} onChange={(event) => editJson(event.target.value)} rows={10} className={`${field} h-auto py-2 font-mono text-[12px] leading-5`} />
+        <textarea aria-label="Rule JSON" value={json} spellCheck={false} onChange={(event) => editJson(event.target.value)} rows={10} className={`${field} h-auto py-2 font-mono text-[12.5px] leading-5`} />
       )}
       {shownIssues.length > 0 && (
-        <ul className="grid gap-0.5 text-[12px] text-bad">
+        <ul className="grid gap-1 text-[13px] text-bad">
           {shownIssues.map((issue) => (
             <li key={`${issue.path}:${issue.message}`}>
               <span className="font-mono">{issue.path}</span>: {issue.message}

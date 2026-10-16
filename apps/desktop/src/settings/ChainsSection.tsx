@@ -10,6 +10,8 @@ import { withoutStep, withStep, type ModelInfo } from '@/settings/settings-model
 import { StepList } from '@/settings/StepList'
 import { field, quiet, SettingsGroup } from '@/settings/settings-ui'
 
+const sectionHeading = 'text-[12px] font-semibold tracking-[0.04em] text-ink-400 uppercase'
+
 const priorityValue = (text: string): number | undefined => {
   const parsed = Number(text)
   return text.trim() === '' || !Number.isFinite(parsed) || parsed === 0 ? undefined : parsed
@@ -75,14 +77,14 @@ function ChainEditor({ chain, models, providers, onSave, onCancel }: { chain: Ch
   }
 
   return (
-    <div className="grid gap-4 px-4 py-3">
-      <label className="flex items-center gap-2 text-[12.5px] text-ink-400">
+    <div className="grid gap-5 px-4 py-4">
+      <label className="flex flex-wrap items-center gap-3 text-[13px] font-medium text-ink-400">
         Priority
-        <input aria-label="Priority" inputMode="numeric" value={priority} onChange={(event) => setPriority(event.target.value)} placeholder="0" className={`${field} w-20`} />
-        <span className="text-[12px] text-ink-500">When several chains match, the highest wins.</span>
+        <input aria-label="Priority" inputMode="numeric" value={priority} onChange={(event) => setPriority(event.target.value)} placeholder="0" className={`${field} w-20 text-[14px]`} />
+        <span className="font-normal text-ink-500">When several chains match, the highest wins.</span>
       </label>
       <section className="grid gap-2">
-        <h4 className="text-[12px] font-semibold text-ink-300">When</h4>
+        <h4 className={sectionHeading}>When</h4>
         <RuleEditor
           builder={builder}
           models={models}
@@ -95,7 +97,7 @@ function ChainEditor({ chain, models, providers, onSave, onCancel }: { chain: Ch
         />
       </section>
       <section className="grid gap-2">
-        <h4 className="text-[12px] font-semibold text-ink-300">Steps</h4>
+        <h4 className={sectionHeading}>Steps</h4>
         <StepList
           steps={steps}
           models={models}
@@ -107,7 +109,7 @@ function ChainEditor({ chain, models, providers, onSave, onCancel }: { chain: Ch
         />
       </section>
       {otherIssues.length > 0 && (
-        <ul className="grid gap-0.5 text-[12px] text-bad">
+        <ul className="grid gap-1 text-[13px] text-bad">
           {otherIssues.map((issue) => (
             <li key={`${issue.path}:${issue.message}`}>
               <span className="font-mono">{issue.path}</span>: {issue.message}
@@ -116,7 +118,7 @@ function ChainEditor({ chain, models, providers, onSave, onCancel }: { chain: Ch
         </ul>
       )}
       <div className="flex items-center justify-end gap-2">
-        {checking && <span className="mr-auto text-[12px] text-ink-500">Checking…</span>}
+        {checking && <span className="mr-auto text-[13px] text-ink-500">Checking…</span>}
         <Button variant="ghost" className="h-8 px-4 text-[13px]" onClick={onCancel}>
           Cancel
         </Button>

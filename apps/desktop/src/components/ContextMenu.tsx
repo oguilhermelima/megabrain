@@ -8,7 +8,8 @@ import { usePresence } from '@/lib/usePresence'
 /** One row of a menu as it shows. */
 export interface MenuRow {
   label: string
-  icon: MenuIcon
+  /** Left out in a menu of plain words. */
+  icon?: MenuIcon
   /** Keys as `mod+shift+alt+<key>`; shown right-aligned in the platform's notation (see shortcutLabel). */
   shortcut?: string
   disabled?: boolean
@@ -176,9 +177,11 @@ function MenuCard({ menu, leaving, onClose }: { menu: OpenMenu; leaving: boolean
               }}
               className={`flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40 ${row.danger === true ? 'text-bad hover:bg-bad/10 focus:bg-bad/10' : 'text-ink-200 hover:bg-white/[0.08] focus:bg-white/[0.08]'}`}
             >
-              <span className={row.danger === true ? undefined : 'text-ink-400'}>
-                <MenuIconGlyph icon={row.icon} />
-              </span>
+              {row.icon !== undefined && (
+                <span className={row.danger === true ? undefined : 'text-ink-400'}>
+                  <MenuIconGlyph icon={row.icon} />
+                </span>
+              )}
               <span className="min-w-0 flex-1 truncate">{row.label}</span>
               {row.shortcut !== undefined && <span className="ml-4 shrink-0 text-[12px] text-ink-400 tabular-nums">{shortcutLabel(row.shortcut, isMac)}</span>}
             </button>

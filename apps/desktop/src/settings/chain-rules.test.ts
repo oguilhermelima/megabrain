@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import type { ChainStep } from '@/api/schema'
 import {
   builderFromRule,
+  effortsFor,
   emptyCondition,
+  modelGroups,
   moveStepTo,
   parseRuleJson,
   ruleFromBuilder,
@@ -193,5 +195,69 @@ describe('step editing', () => {
     expect(moveStepTo(steps, 2, 0).map((step) => step.agent)).toEqual(['c', 'a', 'b'])
     expect(moveStepTo(steps, 1, 1)).toBe(steps)
     expect(moveStepTo(steps, 0, 9)).toBe(steps)
+  })
+})
+
+describe('condition dropdowns', () => {
+  const registry: ModelInfo[] = [
+    { agent: 'claude', model: 'claude-opus-5-5', name: 'Opus 5.5', current: true, reasoning: { levels: ['low', 'medium', 'high', 'max'] } },
+    { agent: 'claude', model: 'claude-opus-4-8', name: 'Opus 4.8', current: false, reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'claude', model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', current: true, reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'codex', model: 'gpt-5.5', name: 'GPT-5.5', reasoning: { levels: ['low', 'medium'] } },
+    { agent: 'codex', model: 'gpt-6-luna', name: 'GPT-6 Luna', reasoning: { levels: ['medium', 'high', 'xhigh'] } },
+  ]
+
+  test('models group by agent in registry order, current first and older folded', () => {
+    expect(modelGroups(registry, [])).toEqual([
+      {
+        label: 'claude',
+        options: [
+          { value: 'claude-opus-5-5', label: 'Opus 5.5', detail: 'claude-opus-5-5' },
+          { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', detail: 'claude-sonnet-5-5' },
+        ],
+        older: [{ value: 'claude-opus-4-8', label: 'Opus 4.8', detail: 'claude-opus-4-8' }],
+      },
+      // No current flag: the newest version of the family is current.
+      { label: 'codex', options: [{ value: 'gpt-6-luna', label: 'GPT-6 Luna', detail: 'gpt-6-luna' }], older: [{ value: 'gpt-5.5', label: 'GPT-5.5', detail: 'gpt-5.5' }] },
+    ])
+  })
+
+  test('chosen agents keep only their groups', () => {
+    expect(modelGroups(registry, ['codex']).map((group) => group.label)).toEqual(['codex'])
+    expect(modelGroups(registry, ['grok'])).toEqual([])
+  })
+
+  test('effort lists the levels of the chosen models, else of the chosen agents', () => {
+    expect(effortsFor(registry, [], ['claude-sonnet-5-5'])).toEqual(['low', 'medium', 'high'])
+    expect(effortsFor(registry, [], ['claude-sonnet-5-5', 'gpt-6-luna'])).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(effortsFor(registry, ['codex'], [])).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(effortsFor(registry, [], [])).toEqual(['low', 'medium', 'high', 'max', 'xhigh'])
+  })
+
+  test('an id two agents list shows once, under the first agent', () => {
+    const shared: ModelInfo[] = [
+      { agent: 'agy', model: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', current: false, reasoning: { levels: [] } },
+      { agent: 'agy', model: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash High', current: true, reasoning: { levels: ['high'] } },
+      { agent: 'claude', model: 'claude-sonnet-4-6', current: false, reasoning: { levels: ['low', 'high'] } },
+      { agent: 'claude', model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', current: true, reasoning: { levels: ['low', 'high'] } },
+    ]
+    const ids = modelGroups(shared, []).flatMap((group) => [...group.options, ...(group.older ?? [])].map((option) => option.value))
+    expect(ids).toEqual(['gemini-3.8-flash-high', 'claude-sonnet-4-6', 'claude-sonnet-5-5'])
+    // Chosen alone, an agent still lists the shared id.
+    expect(modelGroups(shared, ['claude'])[0]?.older).toEqual([{ value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', detail: 'claude-sonnet-4-6' }])
+  })
+
+  test('every model reads as family and version, the id beside it', () => {
+    const named: ModelInfo[] = [
+      { agent: 'grok', model: 'grok-4.7', name: '4.7', current: true, reasoning: { levels: [] } },
+      { agent: 'claude', model: 'claude-opus-5-5', reasoning: { levels: [] } },
+      { agent: 'codex', model: 'gpt-6-luna', name: 'gpt-6-luna', reasoning: { levels: [] } },
+    ]
+    expect(modelGroups(named, []).map((group) => group.options[0])).toEqual([
+      { value: 'grok-4.7', label: 'Grok 4.7', detail: 'grok-4.7' },
+      { value: 'claude-opus-5-5', label: 'Opus 5.5', detail: 'claude-opus-5-5' },
+      { value: 'gpt-6-luna', label: 'GPT-6 Luna', detail: 'gpt-6-luna' },
+    ])
+    expect(ruleSummary({ parentModel: ['grok-4.7', 'claude-opus-5-5'] }, named)).toBe('When the parent is Grok 4.7 or Claude Opus 5.5, on any repo')
   })
 })
