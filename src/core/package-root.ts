@@ -31,12 +31,15 @@ function packageAbove(moduleUrl: string): string | undefined {
 // A compiled binary carries its modules in a virtual filesystem, so its assets sit next to the
 // real executable instead: bin/megabrain + share/megabrain in a tarball or Linux package, and
 // Contents/MacOS/megabrain + Contents/Resources/megabrain in a macOS app bundle. The executable
-// is resolved first because agents reach it through a symlink on PATH.
+// is resolved first because agents reach it through a symlink on PATH. The desktop app's staged
+// sidecar (binaries/megabrain-cli-<triple>) and its development copy (target/<profile>/megabrain-cli)
+// keep the assets beside the executable instead: binaries/share/megabrain and target/<profile>/megabrain.
 function assetCandidates(executablePath: string): string[] {
   let executable = executablePath;
   try { executable = realpathSync(executablePath); } catch { /* keep the given path */ }
   const parent = dirname(dirname(executable));
-  return [join(parent, "share/megabrain"), join(parent, "Resources/megabrain")];
+  const beside = dirname(executable);
+  return [join(parent, "share/megabrain"), join(parent, "Resources/megabrain"), join(beside, "share/megabrain"), join(beside, "megabrain")];
 }
 
 export function resolvePackageRoot(moduleUrl: string, override?: string, executablePath: string = process.execPath): string {

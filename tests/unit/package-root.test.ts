@@ -38,6 +38,26 @@ describe("package root resolution", () => {
     expect(packageRootModule.resolvePackageRoot("file:///missing/module.js", override)).toBe(override);
   });
 
+  test("finds assets in share/megabrain beside a staged sidecar", () => {
+    expect(packageRootModule).toBeDefined();
+    if (packageRootModule === undefined) return;
+    const binaries = realpathSync(mkdtempSync("/tmp/megabrain-staged-sidecar-"));
+    mkdirSync(join(binaries, "share/megabrain"), { recursive: true });
+    writeFileSync(join(binaries, "share/megabrain/package.json"), JSON.stringify({ name: "megabrain" }));
+    writeFileSync(join(binaries, "megabrain-cli-aarch64-apple-darwin"), "binary");
+    expect(packageRootModule.resolvePackageRoot("file:///$bunfs/root/megabrain", undefined, join(binaries, "megabrain-cli-aarch64-apple-darwin"))).toBe(join(binaries, "share/megabrain"));
+  });
+
+  test("finds assets in a megabrain folder beside a development sidecar", () => {
+    expect(packageRootModule).toBeDefined();
+    if (packageRootModule === undefined) return;
+    const profile = realpathSync(mkdtempSync("/tmp/megabrain-dev-sidecar-"));
+    mkdirSync(join(profile, "megabrain"), { recursive: true });
+    writeFileSync(join(profile, "megabrain/package.json"), JSON.stringify({ name: "megabrain" }));
+    writeFileSync(join(profile, "megabrain-cli"), "binary");
+    expect(packageRootModule.resolvePackageRoot("file:///$bunfs/root/megabrain", undefined, join(profile, "megabrain-cli"))).toBe(join(profile, "megabrain"));
+  });
+
   test("reports the package name and module URL when no root exists", () => {
     expect(packageRootModule).toBeDefined();
     if (packageRootModule === undefined) return;

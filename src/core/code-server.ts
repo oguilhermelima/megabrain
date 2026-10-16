@@ -395,7 +395,7 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
         "--user-data-dir", profile,
         "--extensions-dir", join(profile, "extensions"),
         canonicalRoot,
-      ], { cwd: canonicalRoot }), "code-server");
+      ], { cwd: canonicalRoot, env: { XDG_CONFIG_HOME: join(profile, "config") } }), "code-server");
       let proxyPid: number | undefined;
       try {
         const port = await reservePort(id, canonicalRoot);

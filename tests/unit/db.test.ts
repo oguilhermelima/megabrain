@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
-import { latestSchemaVersion, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
+import { latestSchemaVersion, openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
 import { getDispatch, insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
@@ -195,6 +195,23 @@ describe("SQLite database", () => {
     });
   });
 
+  test("a schema newer than this binary names the backups folder and how to recover", async () => {
+    await withStateDirectory(async (directory) => {
+      const handle = database(directory);
+      handle.close();
+      const raw = rawDatabase(directory);
+      raw.exec("PRAGMA user_version = 77");
+      raw.close();
+      const newer = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
+      expect(newer.kind).toBe("failed");
+      if (newer.kind === "failed") {
+        expect(newer.error).toContain(join(directory, "backups"));
+        expect(newer.error).toMatch(/restore/i);
+        expect(newer.error).toContain(`v${latestSchemaVersion}`);
+      }
+    });
+  });
+
   test("open, pragma and migration errors return a step-specific failure", async () => {
     await withStateDirectory(async (directory) => {
       const file = join(directory, "megabrain.db");
@@ -232,6 +249,82 @@ describe("SQLite database", () => {
       expect(backups).toHaveLength(1);
       expect(backups[0]).toMatch(/megabrain-.*-v0\.db/);
     });
+  });
+
+  function legacyDatabase(directory: string): void {
+    const raw = rawDatabase(directory);
+    raw.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+    raw.exec("INSERT INTO schema_migrations VALUES (0, 'baseline')");
+    raw.close();
+  }
+
+  test("a migration backup is named for the migrating binary and recorded in the database", async () => {
+    await withStateDirectory(async (directory) => {
+      legacyDatabase(directory);
+      const migrated = openDatabase({ MEGABRAIN_STATE_DIR: directory }, { executablePath: "/opt/mb/megabrain", version: "9.8.7" });
+      expect(migrated.kind).toBe("ok");
+      if (migrated.kind !== "ok") return;
+      try {
+        const backups = await readdir(join(directory, "backups"));
+        expect(backups).toHaveLength(1);
+        expect(backups[0]).toMatch(/^megabrain-.*-b9\.8\.7-v0\.db$/);
+        const rows = migrated.value.db.query<Record<string, unknown>>("SELECT * FROM migration_backups").all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ backup_path: join(directory, "backups", backups[0] ?? ""), from_version: 0, to_version: latestSchemaVersion, binary_version: "9.8.7", binary_path: "/opt/mb/megabrain" });
+      } finally { migrated.value.close(); }
+    });
+  });
+
+  test("a binary facing a newer schema names the backup to restore and the binary that migrated it", async () => {
+    await withStateDirectory(async (directory) => {
+      legacyDatabase(directory);
+      const migrated = openDatabase({ MEGABRAIN_STATE_DIR: directory }, { executablePath: "/opt/mb/megabrain", version: "9.8.7" });
+      if (migrated.kind === "ok") migrated.value.close();
+      const raw = rawDatabase(directory);
+      raw.exec("DELETE FROM schema_migrations WHERE version > 0");
+      raw.exec(`PRAGMA user_version = ${latestSchemaVersion + 1}`);
+      raw.exec(`UPDATE migration_backups SET from_version = ${latestSchemaVersion}, to_version = ${latestSchemaVersion + 1}`);
+      raw.close();
+      const newer = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: directory });
+      expect(newer.kind).toBe("failed");
+      if (newer.kind !== "failed") return;
+      const backups = await readdir(join(directory, "backups"));
+      expect(newer.error).toContain(join(directory, "backups", backups[0] ?? "missing"));
+      expect(newer.error).toContain("9.8.7");
+      expect(newer.error).toContain("/opt/mb/megabrain");
+    });
+  });
+
+  test("a source run or development sidecar refuses to migrate the default state without consent", async () => {
+    for (const executablePath of ["/usr/local/bin/bun", "/work/app/src-tauri/target/debug/megabrain-cli"]) {
+      await withStateDirectory(async (directory) => {
+        await mkdir(join(directory, ".megabrain"), { recursive: true });
+        legacyDatabase(join(directory, ".megabrain"));
+        const refused = openDatabase({ HOME: directory }, { executablePath, version: "1.0.0", allowMigration: false });
+        expect(refused.kind).toBe("failed");
+        if (refused.kind === "failed") expect(refused.error).toContain("MEGABRAIN_ALLOW_MIGRATION=1");
+        expect((await readdir(join(directory, ".megabrain", "backups")).catch(() => [])).length).toBe(0);
+      });
+    }
+  });
+
+  test("consent, an explicit state directory, or an installed or packaged binary migrates normally", async () => {
+    const cases = [
+      { executablePath: "/usr/local/bin/bun", allowMigration: true, explicit: false },
+      { executablePath: "/usr/local/bin/bun", allowMigration: false, explicit: true },
+      { executablePath: "/home/u/.local/lib/node_modules/megabrain/.build/megabrain", allowMigration: false, explicit: false },
+      { executablePath: "/Applications/Megabrain.app/Contents/MacOS/megabrain-cli", allowMigration: false, explicit: false },
+    ];
+    for (const item of cases) {
+      await withStateDirectory(async (directory) => {
+        const state = item.explicit ? directory : join(directory, ".megabrain");
+        if (!item.explicit) await mkdir(state, { recursive: true });
+        legacyDatabase(state);
+        const result = openDatabase(item.explicit ? { MEGABRAIN_STATE_DIR: state } : { HOME: directory }, { executablePath: item.executablePath, version: "1.0.0", allowMigration: item.allowMigration });
+        expect(result.kind).toBe("ok");
+        if (result.kind === "ok") result.value.close();
+      });
+    }
   });
 
   test("backup rotation retains only the newest seven files", async () => {

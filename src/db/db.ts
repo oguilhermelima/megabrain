@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import packageJson from "../../package.json" with { type: "json" };
 import nativeSessionsMigration from "./schema/001-native-sessions.sql" with { type: "text" };
 import dispatchCoreMigration from "./schema/002-dispatch-core.sql" with { type: "text" };
 import stateFacadeMigration from "./schema/003-waiters-outbox-detail.sql" with { type: "text" };
@@ -179,10 +180,10 @@ function quoteSqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function backupToDirectory(db: DatabaseAdapter, stateDirectory: string, version: number): Result<string> {
+function backupToDirectory(db: DatabaseAdapter, stateDirectory: string, version: number, binaryVersion?: string): Result<string> {
   const backupDirectory = resolve(stateDirectory, "backups");
   const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
-  const path = resolve(backupDirectory, `megabrain-${timestamp}-v${version}.db`);
+  const path = resolve(backupDirectory, `megabrain-${timestamp}${binaryVersion === undefined ? "" : `-b${binaryVersion}`}-v${version}.db`);
   try {
     mkdirSync(backupDirectory, { recursive: true });
     db.exec(`VACUUM INTO ${quoteSqlString(path)}`);
@@ -257,7 +258,42 @@ export function inspectDatabase(environment: StateEnvironment): Result<DatabaseI
   }
 }
 
-function migrate(db: DatabaseAdapter, path: string): void {
+export interface BuildIdentity {
+  readonly executablePath: string;
+  readonly version: string;
+  /** Consent to migrate the default state from a build that is not the installed one. */
+  readonly allowMigration?: boolean;
+}
+
+function defaultBuild(): BuildIdentity {
+  return { executablePath: process.execPath, version: packageJson.version, allowMigration: process.env.MEGABRAIN_ALLOW_MIGRATION === "1" };
+}
+
+// WHY: the installed binary and a packaged app own the default state and upgrade it. A run from
+// source and an unpackaged sidecar (a development or test build) do not, and a schema they raise
+// locks out the installed binary, which cannot downgrade.
+function unownedBuildKind(executablePath: string): string | undefined {
+  const name = basename(executablePath);
+  if (name === "bun" || name === "node") return "source run";
+  if (name.startsWith("megabrain-cli") && !executablePath.includes(".app/Contents/MacOS/")) return "development sidecar";
+  return undefined;
+}
+
+function newerSchemaMessage(db: DatabaseAdapter, path: string, found: string, kind: string): string {
+  const backups = resolve(dirname(path), "backups");
+  let recorded: { backup_path: string; binary_version: string; binary_path: string } | null = null;
+  try {
+    recorded = db.query<{ backup_path: string; binary_version: string; binary_path: string }>(
+      "SELECT backup_path, binary_version, binary_path FROM migration_backups WHERE from_version <= ? ORDER BY id DESC LIMIT 1",
+    ).get(latestSchemaVersion);
+  } catch { /* a database no binary recorded a backup for */ }
+  const base = `database ${kind} ${found} is newer than this binary supports (${latestSchemaVersion})`;
+  if (recorded === null) return `${base}; upgrade megabrain, or restore the newest megabrain-*-v${latestSchemaVersion}.db backup in ${backups} over ${path} while no megabrain process runs`;
+  return `${base}; it was migrated by megabrain ${recorded.binary_version} (${recorded.binary_path}). Upgrade megabrain to ${recorded.binary_version} or newer, or restore ${recorded.backup_path} over ${path} while no megabrain process runs`;
+}
+
+function migrate(db: DatabaseAdapter, path: string, build: BuildIdentity, defaultState: boolean): void {
+  let recordedBackup: { path: string; from: number } | undefined;
   try {
     const migrationTable = db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
     if (migrationTable !== null) {
@@ -266,8 +302,13 @@ function migrate(db: DatabaseAdapter, path: string): void {
       const pending = migrations.some((migration) => !appliedVersions.has(migration.version));
       if (pending && applied.length > 0) {
         const version = Math.max(...applied.map((row) => row.version));
-        const backup = backupToDirectory(db, dirname(path), version);
+        const kind = unownedBuildKind(build.executablePath);
+        if (defaultState && kind !== undefined && build.allowMigration !== true) {
+          throw new Error(`this ${kind} (${build.executablePath}) would migrate ${path} from schema ${version} to ${latestSchemaVersion}, which locks out the installed megabrain; set MEGABRAIN_ALLOW_MIGRATION=1 to allow it, or point MEGABRAIN_STATE_DIR at a scratch directory`);
+        }
+        const backup = backupToDirectory(db, dirname(path), version, build.version);
         if (backup.kind !== "ok") throw new Error(backup.error);
+        recordedBackup = { path: backup.value, from: version };
       }
     }
     const appliedBefore = new Set(migrationTable === null ? [] : db.query<{ version: number }>("SELECT version FROM schema_migrations").all().map((row) => row.version));
@@ -287,6 +328,10 @@ function migrate(db: DatabaseAdapter, path: string): void {
         const violations = db.query<{ table: string; rowid: number; parent: string; fkid: number }>("PRAGMA foreign_key_check").all();
         if (violations.length > 0) throw new Error(`foreign_key_check found ${violations.length} violation(s)`);
       }
+      if (recordedBackup !== undefined) {
+        db.exec("CREATE TABLE IF NOT EXISTS migration_backups (id INTEGER PRIMARY KEY AUTOINCREMENT, backup_path TEXT NOT NULL, from_version INTEGER NOT NULL, to_version INTEGER NOT NULL, binary_version TEXT NOT NULL, binary_path TEXT NOT NULL, created_at TEXT NOT NULL)");
+        db.run("INSERT INTO migration_backups (backup_path, from_version, to_version, binary_version, binary_path, created_at) VALUES (?, ?, ?, ?, ?, ?)", [recordedBackup.path, recordedBackup.from, latestSchemaVersion, build.version, build.executablePath, new Date().toISOString()]);
+      }
       db.exec(`PRAGMA user_version = ${latestSchemaVersion}`);
       db.run("COMMIT");
       if (foreignKeysOff) db.exec("PRAGMA foreign_keys = ON");
@@ -300,7 +345,7 @@ function migrate(db: DatabaseAdapter, path: string): void {
   }
 }
 
-function configureConnection(db: DatabaseAdapter): void {
+function configureConnection(db: DatabaseAdapter, path: string): void {
   try { db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`); }
   catch (cause: unknown) { failAt("pragma busy_timeout", cause); }
   const journalDeadline = Date.now() + busySeconds() * 1000;
@@ -331,16 +376,16 @@ function configureConnection(db: DatabaseAdapter): void {
 
   try {
     const actual = pragmaNumber(db, "user_version");
-    if (actual > latestSchemaVersion) throw new Error(`database user_version ${actual} is newer than this binary supports (${latestSchemaVersion}); upgrade megabrain`);
+    if (actual > latestSchemaVersion) throw new Error(newerSchemaMessage(db, path, String(actual), "user_version"));
     const hasMigrationTable = db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get() !== null;
     if (hasMigrationTable) {
       const applied = db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version ?? 0;
-      if (applied > latestSchemaVersion) throw new Error(`database migration version ${applied} is newer than this binary supports (${latestSchemaVersion}); upgrade megabrain`);
+      if (applied > latestSchemaVersion) throw new Error(newerSchemaMessage(db, path, String(applied), "migration version"));
     }
   } catch (cause: unknown) { failAt("version guard user_version", cause); }
 }
 
-export function openDatabase(environment: StateEnvironment): Result<DatabaseHandle> {
+export function openDatabase(environment: StateEnvironment, build: BuildIdentity = defaultBuild()): Result<DatabaseHandle> {
   let configuredStateDirectory: string;
   try {
     const configured = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
@@ -364,8 +409,8 @@ export function openDatabase(environment: StateEnvironment): Result<DatabaseHand
   }
 
   try {
-    configureConnection(db);
-    migrate(db, path);
+    configureConnection(db, path);
+    migrate(db, path, build, environment.MEGABRAIN_STATE_DIR === undefined || environment.MEGABRAIN_STATE_DIR === "");
     secureDatabaseFiles(path);
     const handle: DatabaseHandle = { path, db, close: () => db?.close() };
     try {
