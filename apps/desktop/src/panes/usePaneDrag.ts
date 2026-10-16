@@ -59,9 +59,15 @@ export function usePaneDrag(onDrop: (source: DragSource, target: DropTarget) => 
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onCancel)
       window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('blur', onCancel)
       setState(null)
     }
     const onMove = (move: globalThis.PointerEvent) => {
+      // A release outside the window never sends pointerup; the next move without the button ends the drag, so its label does not stay behind.
+      if (move.buttons === 0) {
+        stop()
+        return
+      }
       if (!moving && Math.hypot(move.clientX - startX, move.clientY - startY) < threshold) return
       moving = true
       setState({ source, x: move.clientX, y: move.clientY, target: targetAt(move.clientX, move.clientY) })
@@ -84,6 +90,7 @@ export function usePaneDrag(onDrop: (source: DragSource, target: DropTarget) => 
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onCancel)
     window.addEventListener('keydown', onKey, true)
+    window.addEventListener('blur', onCancel)
   })
   return { state, start }
 }

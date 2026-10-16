@@ -175,9 +175,48 @@ export function revealPane(layout: StripLayout, paneId: string, view: { scroll: 
   return null
 }
 
-/** A click at `fraction` of the minimap's width centres the view there. */
-export function minimapScroll(fraction: number, contentWidth: number, viewWidth: number): number {
-  return Math.max(0, Math.min(Math.max(0, contentWidth - viewWidth), fraction * contentWidth - viewWidth / 2))
+/** Where a column arrow points: the column that shows it on hover, and the scroll one column further. */
+export interface EdgeArrow {
+  columnId: string
+  scroll: number
+}
+
+/** The arrows and shadows at the strip's visible edges; each side is null when nothing lies beyond it. */
+export interface StripEdges {
+  left: EdgeArrow | null
+  right: EdgeArrow | null
+}
+
+/**
+ * What lies past each visible edge of a strip scrolled to `scroll` in a view `view` wide. A side has
+ * an arrow when the strip goes on past it: the column at that edge shows it on hover, and a click
+ * brings the next column in, or the edge column itself when only part of it shows.
+ */
+export function stripEdges(layout: StripLayout, scroll: number, view: number): StripEdges {
+  const tolerance = 1
+  const columns = layout.columns
+  const end = scroll + view
+  let left: EdgeArrow | null = null
+  let right: EdgeArrow | null = null
+  if (view > 0 && scroll > tolerance) {
+    const index = columns.findIndex((column) => column.x + column.width > scroll + tolerance)
+    const edge = columns[index]
+    const target = edge !== undefined && edge.x < scroll - tolerance ? edge : columns[index - 1]
+    if (edge !== undefined && target !== undefined) left = { columnId: edge.id, scroll: reveal(target.x, target.width, scroll, view, layout.width) }
+  }
+  if (view > 0 && end < layout.width - tolerance) {
+    let index = columns.length - 1
+    while (index >= 0 && (columns[index]?.x ?? 0) >= end - tolerance) index -= 1
+    const edge = columns[index]
+    const target = edge !== undefined && edge.x + edge.width > end + tolerance ? edge : columns[index + 1]
+    if (edge !== undefined && target !== undefined) right = { columnId: edge.id, scroll: reveal(target.x, target.width, scroll, view, layout.width) }
+  }
+  return { left, right }
+}
+
+/** The column under the strip coordinate `x`, or null past either end. */
+export function columnAt(layout: StripLayout, x: number): string | null {
+  return layout.columns.find((column) => x >= column.x && x < column.x + column.width)?.id ?? null
 }
 
 /**

@@ -130,14 +130,14 @@ export function LayoutGlyph({ row, width, height, onCell, swapWith = null, dragg
   )
 }
 
-/** How many member marks a row shows before +N. */
-const maxMarks = 4
+/** How many slots the row's marks take at most, a +N included, so the title keeps the room. */
+const maxMarks = 3
 const hoverDelayMs = 350
 const leaveDelayMs = 160
 
 /**
- * A split group's row: its layout glyph, its members' marks (each focuses that pane), its name or the
- * members' titles, and its strongest state. A click shows the split; hovering shows every member.
+ * A split group's row: its members' marks (each focuses that pane), its name or the members' titles,
+ * and its strongest state; the layout in miniature lives in the hover, so the title gets the width. A click shows the split; hovering shows every member.
  * Dragging the row joins the row it is dropped on into the group; dragging a mark takes that member
  * out, or into another row. `end` is the row's … button, drawn by the sidebar.
  */
@@ -223,9 +223,6 @@ export function GroupRowView({ row, indent, onMenu, end, drag }: { row: GroupRow
           row.active ? 'bg-row-selected text-ink-100' : row.state === 'ended' ? 'text-ink-400 hover:bg-row-hover hover:text-ink-200' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'
         }`}
       >
-        <button type="button" onClick={() => splits.focusGroup(row.id)} aria-current={row.active ? 'true' : undefined} aria-label={`Show split ${row.title}`} className="flex shrink-0 items-center rounded-[4px] focus-visible:outline-2 focus-visible:outline-accent">
-          <LayoutGlyph row={row} width={16} height={12} />
-        </button>
         <span className="flex shrink-0 items-center gap-0.5 rounded-[8px] bg-white/[0.05] px-1 py-0.5">
           {marks.shown.map((member) => (
             <button
@@ -242,7 +239,7 @@ export function GroupRowView({ row, indent, onMenu, end, drag }: { row: GroupRow
           ))}
           {marks.more > 0 && <span className="px-0.5 text-[10.5px] font-medium text-ink-400 tabular-nums">+{marks.more}</span>}
         </span>
-        <button type="button" onClick={() => splits.focusGroup(row.id)} title={`${row.title}\n${row.members.length} panes`} className="min-w-0 flex-1 truncate text-left focus-visible:outline-2 focus-visible:outline-accent">
+        <button type="button" onClick={() => splits.focusGroup(row.id)} aria-current={row.active ? 'true' : undefined} aria-label={`Show split ${row.title}`} className="min-w-0 flex-1 truncate text-left focus-visible:outline-2 focus-visible:outline-accent">
           {row.title}
         </button>
         <span className="w-[30px] shrink-0 group-focus-within:invisible group-hover:invisible group-data-[menu-open]:invisible" />

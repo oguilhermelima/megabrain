@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { equaliseSplit, resizeSplit, zonePreview, type Divider, type Panes, type Rect } from '@/panes/pane-model'
 import type { PaneDrag } from '@/panes/usePaneDrag'
-import { minimapScroll, minPaneHeight, minPaneWidth, resetColumn, resizeColumn, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
+import { columnAt, minPaneHeight, minPaneWidth, resetColumn, resizeColumn, reveal, stripEdges, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
 import { useStripScroll } from '@/panes/useStripScroll'
 import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
 import { PaneChromeContext, type PaneChrome } from '@/panes/pane-chrome'
@@ -110,6 +110,14 @@ export function PaneArea({
   const slots: { item: string; pane: (typeof rects)[number] | null }[] = [...rects.map((pane) => ({ item: pane.item, pane })), ...background.map((item) => ({ item, pane: null }))]
   // React keeps a keyed child only among the same siblings, so every slot renders here in one stable order.
   slots.sort((left, right) => (left.item < right.item ? -1 : left.item > right.item ? 1 : 0))
+  const contents = new Map(slots.map(({ item }) => [item, render(item)]))
+  // A column goes by its focused pane's title, else its first pane's.
+  const titles = Object.fromEntries(
+    layout.columns.map((column) => {
+      const named = column.panes.find((pane) => pane.id === panes.focused) ?? column.panes[0]
+      return [column.id, named === undefined ? '' : (contents.get(named.item)?.title ?? '')]
+    }),
+  )
 
   return (
     <div ref={scroll.area} className="relative min-h-0 flex-1">
@@ -117,7 +125,7 @@ export function PaneArea({
       <div ref={scroll.scroller} className="absolute inset-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="relative h-full" style={{ width: Math.max(layout.width, size.width) }}>
           {slots.map(({ item, pane }) => {
-            const content = render(item)
+            const content = contents.get(item) ?? render(item)
             const focused = pane !== null && split && pane.id === panes.focused
             if (pane === null) quiet.delete(item)
             const joined = pane !== null && windowRow?.join.paneId === pane.id ? windowRow : null
@@ -160,7 +168,7 @@ export function PaneArea({
           {layout.columns.map((column) => column.height > size.height + 1 && <ColumnScrollbar key={`bar:${column.id}`} column={column} offset={scroll.offsetOf(column)} view={size.height} />)}
         </div>
       </div>
-      {layout.overflowX && <Minimap layout={layout} focused={panes.focused} scroller={scroll.scroller} view={size.width} onScroll={scroll.scrollTo} />}
+      {layout.overflowX && <StripNav layout={layout} focused={panes.focused} titles={titles} area={scroll.area} scroller={scroll.scroller} view={size.width} onScroll={scroll.scrollTo} />}
       {dragging !== null && (
         <div style={{ left: dragging.x + 12, top: dragging.y + 12 }} className="pointer-events-none fixed z-50 max-w-64 truncate rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
           {dragging.source.label}
@@ -186,7 +194,6 @@ function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string;
   return (
     <div
       onPointerDown={onDrag}
-      title={`${title}\nDrag to move this pane`}
       style={{ paddingLeft: inset ?? 12, transition: 'height var(--motion-panel) var(--motion-ease-panel), padding var(--motion-panel) var(--motion-ease-panel)' }}
       className={`flex ${inset === null ? 'h-7' : 'h-[44px]'} shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-1 select-none active:cursor-grabbing ${focused ? 'bg-white/[0.04] text-ink-200' : 'text-ink-400'}`}
     >
@@ -301,13 +308,8 @@ function ColumnScrollbar({ column, offset, view }: { column: StripColumn; offset
   )
 }
 
-const minimapWidth = 132
-
-/**
- * The strip in small along the top edge, thin enough to stay above the pane headers' controls and
- * taller under the pointer: its columns, the focused one lit, and the window on them. A click centres the view there.
- */
-function Minimap({ layout, focused, scroller, view, onScroll }: { layout: StripLayout; focused: string; scroller: RefObject<HTMLDivElement | null>; view: number; onScroll: (x: number) => void }) {
+/** How far the strip is scrolled sideways, following every scroll. */
+function useScrollLeft(scroller: RefObject<HTMLDivElement | null>): number {
   const [left, setLeft] = useState(0)
   useEffect(() => {
     const element = scroller.current
@@ -317,29 +319,114 @@ function Minimap({ layout, focused, scroller, view, onScroll }: { layout: StripL
     element.addEventListener('scroll', follow, { passive: true })
     return () => element.removeEventListener('scroll', follow)
   }, [scroller])
-  const scale = minimapWidth / layout.width
+  return left
+}
+
+/** The column under the pointer while it is over the area, by its place in the strip. */
+function useHoveredColumn(area: RefObject<HTMLDivElement | null>, scroller: RefObject<HTMLDivElement | null>, layout: StripLayout): string | null {
+  const [hovered, setHovered] = useState<string | null>(null)
+  const latest = useRef(layout)
+  latest.current = layout
+  useEffect(() => {
+    const element = area.current
+    if (element === null) return
+    const onMove = (event: globalThis.PointerEvent) => {
+      const bounds = element.getBoundingClientRect()
+      setHovered(columnAt(latest.current, event.clientX - bounds.left + (scroller.current?.scrollLeft ?? 0)))
+    }
+    const onLeave = () => setHovered(null)
+    element.addEventListener('pointermove', onMove, { passive: true })
+    element.addEventListener('pointerleave', onLeave)
+    return () => {
+      element.removeEventListener('pointermove', onMove)
+      element.removeEventListener('pointerleave', onLeave)
+    }
+  }, [area, scroller])
+  return hovered
+}
+
+function Chevron({ side }: { side: 'left' | 'right' }) {
   return (
-    <button
-      type="button"
-      aria-label="Scroll the columns"
-      title="Columns · click to scroll there, or swipe sideways"
-      onClick={(event) => {
-        const bounds = event.currentTarget.getBoundingClientRect()
-        onScroll(minimapScroll((event.clientX - bounds.left) / bounds.width, layout.width, view))
-      }}
-      style={{ width: minimapWidth, transition: 'height var(--motion-enter) var(--motion-ease-out), opacity var(--motion-enter) var(--motion-ease-out)' }}
-      className="absolute top-px left-1/2 z-[45] h-1.5 -translate-x-1/2 opacity-60 hover:h-3 hover:opacity-100 focus-visible:h-3 focus-visible:opacity-100"
-    >
-      <span className="relative block size-full">
-        {layout.columns.map((column) => (
-          <span
-            key={column.id}
-            style={{ left: column.x * scale, width: Math.max(1, column.width * scale - 1.5) }}
-            className={`absolute inset-y-0 rounded-[2px] ${column.panes.some((pane) => pane.id === focused) ? 'bg-accent/80' : 'bg-white/25'}`}
-          />
-        ))}
-        <span style={{ left: left * scale, width: view * scale }} className="absolute inset-y-0 rounded-[2px] bg-white/30 ring-1 ring-white/70" />
-      </span>
-    </button>
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={side === 'left' ? 'M10 3.5 5.5 8l4.5 4.5' : 'm6 3.5 4.5 4.5L6 12.5'} />
+    </svg>
+  )
+}
+
+/**
+ * Ways through a strip wider than the area. A shadow on each edge with columns past it; hovering
+ * the column at such an edge shows a round arrow there that brings one more column in. Along the top,
+ * one segment per column: the focused one lit, the ones in view brighter, its title on hover, and a
+ * click scrolls it into view.
+ */
+function StripNav({
+  layout,
+  focused,
+  titles,
+  area,
+  scroller,
+  view,
+  onScroll,
+}: {
+  layout: StripLayout
+  focused: string
+  titles: Readonly<Record<string, string>>
+  area: RefObject<HTMLDivElement | null>
+  scroller: RefObject<HTMLDivElement | null>
+  view: number
+  onScroll: (x: number) => void
+}) {
+  const left = useScrollLeft(scroller)
+  const hovered = useHoveredColumn(area, scroller, layout)
+  const edges = stripEdges(layout, left, view)
+  const arrow = (side: 'left' | 'right') => {
+    const edge = edges[side]
+    if (edge === null) return null
+    const shown = hovered === edge.columnId
+    const name = side === 'left' ? 'Previous column' : 'Next column'
+    return (
+      <button
+        type="button"
+        data-strip-arrow={side}
+        aria-label={name}
+        tabIndex={-1}
+        onClick={() => onScroll(edge.scroll)}
+        style={{ transitionDelay: shown ? '150ms' : '0ms' }}
+        className={`absolute top-1/2 z-[46] grid size-8 -translate-y-1/2 place-items-center rounded-full border border-white/[0.12] bg-ink-850/90 text-ink-200 shadow-lg backdrop-blur transition-opacity duration-150 hover:bg-ink-800 hover:text-ink-100 ${side === 'left' ? 'left-2' : 'right-2'} ${shown ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+      >
+        <Chevron side={side} />
+      </button>
+    )
+  }
+  return (
+    <>
+      {edges.left !== null && <span aria-hidden="true" data-strip-shadow="left" className="pointer-events-none absolute inset-y-0 left-0 z-[41] w-6 bg-gradient-to-r from-black/35 to-transparent" />}
+      {edges.right !== null && <span aria-hidden="true" data-strip-shadow="right" className="pointer-events-none absolute inset-y-0 right-0 z-[41] w-6 bg-gradient-to-l from-black/35 to-transparent" />}
+      {arrow('left')}
+      {arrow('right')}
+      <div role="group" aria-label="Columns" className="absolute top-0 left-1/2 z-[45] flex -translate-x-1/2 gap-[3px]">
+        {layout.columns.map((column, index) => {
+          const lit = column.panes.some((pane) => pane.id === focused)
+          const visible = Math.min(column.x + column.width, left + view) - Math.max(column.x, left) > column.width / 2
+          const title = titles[column.id] ?? ''
+          return (
+            <button
+              key={column.id}
+              type="button"
+              aria-label={`Show column ${index + 1}: ${title}`}
+              onClick={() => onScroll(reveal(column.x, column.width, left, view, layout.width))}
+              className="group/segment relative flex h-3 w-7 items-start pt-px focus-visible:outline-none"
+            >
+              <span
+                className={`block h-1 w-full rounded-full transition-[height,background-color] duration-[var(--motion-enter)] group-hover/segment:h-1.5 group-focus-visible/segment:h-1.5 ${lit ? 'bg-accent/90' : visible ? 'bg-white/45 group-hover/segment:bg-white/70' : 'bg-white/[0.18] group-hover/segment:bg-white/50'}`}
+              />
+              <span className="pointer-events-none absolute top-full left-1/2 mt-1 max-w-56 -translate-x-1/2 truncate rounded-[8px] border border-white/[0.1] bg-ink-850 px-2 py-0.5 text-[11.5px] whitespace-nowrap text-ink-200 opacity-0 shadow-lg transition-opacity duration-100 group-hover/segment:opacity-100 group-hover/segment:delay-150 group-focus-visible/segment:opacity-100">
+                {title}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </>
   )
 }

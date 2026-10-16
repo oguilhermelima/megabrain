@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { ActionBar, PaneViewBody, useWorktreeChanges } from '@/chat/ActionBar'
-import { changedFileCount, paneViewKey, segments, shownView, type PaneView } from '@/chat/action-bar-model'
+import { changedFileCount, headerMode, paneViewKey, segments, shownView, type PaneView } from '@/chat/action-bar-model'
 import { usePaneView } from '@/chat/pane-view-context'
 import { useWindowRowInset } from '@/panes/window-row'
 import { usePaneChrome, type PaneChrome } from '@/panes/pane-chrome'
@@ -14,12 +14,15 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
  * bar's true centre, Agent, Code, PR and Diff, each shown in the pane under the bar; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
  * below the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) it shrinks to the lights' 44px band, centred on their line, and leaves
  * room at its left for them and the show-sidebar button; only the left side is inset, so the action bar keeps the true centre. In a split it is also the pane's
- * header (panes/pane-chrome): its empty space drags the pane instead of the window, and × at its right end, shown on hover, closes the pane.
+ * header (panes/pane-chrome): its empty space drags the pane instead of the window, and × at its right end, shown on hover, closes the pane. Narrower than 640px
+ * (action-bar-model's headerMode) it stacks: the mark, title and × on the first row, the action bar and the view's controls on the second.
  */
 export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, actions }: { agent: string | null; activity?: AgentActivity; title: string; meta: string; metaTitle?: string; actions?: ReactNode }) {
   const pane = usePaneView()
   const changes = useWorktreeChanges(pane?.facts ?? null)
   const header = useRef<HTMLElement>(null)
+  const mode = headerMode(usePaneWidth(header, pane === null))
+  const stacked = mode === 'stacked'
   const inset = useWindowRowInset()
   const chrome = usePaneChrome()
   useLayoutEffect(() => chrome?.claim(), [chrome])
@@ -47,9 +50,9 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
 
   const identity = (
     <>
-      {agent !== null && <AgentIcon agent={agent} activity={activity} size={22} className="shrink-0 text-ink-300" />}
+      {agent !== null && <AgentIcon agent={agent} activity={activity} size={stacked ? 20 : 22} className="shrink-0 text-ink-300" />}
       <div className="min-w-0 flex-1">
-        <h1 title={title} className="truncate text-[15px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">{title}</h1>
+        <h1 title={title} className={`truncate ${stacked ? 'text-[14px]' : 'text-[15px]'} leading-5 font-semibold tracking-[-0.01em] text-ink-100`}>{title}</h1>
         <p title={metaTitle ?? meta} className="truncate text-[12px] leading-4 text-ink-400">{meta}</p>
       </div>
     </>
@@ -64,7 +67,6 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
           if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, [role="tab"], [role="button"], [role="tablist"]') !== null) return
           chrome.onDrag(event)
         }
-  const paneTitle = chrome === null ? undefined : `${chrome.title}\nDrag to move this pane`
   const close = chrome === null ? null : <PaneClose chrome={chrome} />
 
   // In the window row: 4px above and below the 36px title make the 44px band; the padding slides between the two with the sidebar.
@@ -73,7 +75,7 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
 
   if (pane === null || available === null) {
     return (
-      <header {...region} onPointerDown={grab} title={paneTitle} style={{ ...slide, paddingLeft: inset ?? 24 }} className={`@container/header group/pane flex shrink-0 items-center gap-3 border-b border-white/[0.06] ${chrome === null ? 'pr-6' : 'cursor-grab pr-3 active:cursor-grabbing'} ${band}`}>
+      <header ref={header} {...region} onPointerDown={grab} style={{ ...slide, paddingLeft: inset ?? 24 }} className={`@container/header group/pane flex shrink-0 items-center gap-3 border-b border-white/[0.06] ${chrome === null ? 'pr-6' : 'cursor-grab pr-3 active:cursor-grabbing'} ${band}`}>
         {identity}
         {actions}
         <RunButton />
@@ -85,19 +87,43 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
 
   const shown = shownView(pane.view, available)
 
+  const body = shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} header={header} />
+
+  // Stacked, the first row gives the title the width and the second carries every control; the Agent
+  // view shows a chat glyph there, the agent's own mark being right above it.
+  if (stacked) {
+    return (
+      <>
+        <header ref={header} {...region} onPointerDown={grab} style={slide} className={`group/pane shrink-0 border-b border-white/[0.06] ${chrome === null ? 'px-4' : 'cursor-grab pr-2 pl-4 active:cursor-grabbing'} ${inset === null ? 'pt-2.5 pb-2' : 'py-1'}`}>
+          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 16 }} className="flex h-9 min-w-0 items-center gap-2.5">
+            {identity}
+            {close}
+          </div>
+          <div {...region} className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
+            <ActionBar agent={null} segments={available} shown={shown} onSelect={select} />
+            <div {...region} className="flex min-w-0 items-center justify-end gap-2">
+              {shown === 'agent' && actions}
+              <RunButton />
+              <RunPanelToggle />
+            </div>
+          </div>
+        </header>
+        {body}
+      </>
+    )
+  }
+
   // Equal side columns put the bar in the bar's true centre; each side truncates or clips inside its own half.
-  // In a narrow pane the right side keeps its own width and the title gives way instead, so nothing overlaps.
   return (
     <>
       <header
         ref={header}
         {...region}
         onPointerDown={grab}
-        title={paneTitle}
         style={slide}
         className={`@container/header group/pane shrink-0 border-b border-white/[0.06] ${chrome === null ? 'px-6' : 'cursor-grab pr-3 pl-6 active:cursor-grabbing'} ${band}`}
       >
-        <div {...region} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 @max-[640px]/header:grid-cols-[minmax(0,1fr)_auto_auto]">
+        <div {...region} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
           <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-3">
             {identity}
           </div>
@@ -110,9 +136,30 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
           </div>
         </div>
       </header>
-      {shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} header={header} />}
+      {body}
     </>
   )
+}
+
+/**
+ * The width of the pane holding the element (the element's own outside a pane), read before paint
+ * and on every resize; null until it mounts. `shape` changes when another element takes the ref.
+ * The pane, not the bar: a pane's left border would make a 640px pane's bar read 639. offsetWidth,
+ * not the bounding box: a pane rising into view is scaled while it animates, and the bounding box
+ * would read that smaller width.
+ */
+function usePaneWidth(ref: RefObject<HTMLElement | null>, shape: unknown): number | null {
+  const [width, setWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current?.closest<HTMLElement>('[data-pane-id]') ?? ref.current
+    if (element === null) return
+    const measure = () => setWidth(element.offsetWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [ref, shape])
+  return width
 }
 
 /** A split pane's close button at the bar's right end: shown while the pointer is over the bar or the button has focus. */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Project } from '@/api/schema'
-import { changedFileCount, chooseView, initialView, paneViewKey, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
+import { changedFileCount, chooseView, headerMode, initialView, paneViewKey, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
 
 const project: Project = {
   name: 'canto',
@@ -121,5 +121,20 @@ describe('view keys', () => {
   })
   test('a pane without focus never takes them', () => {
     expect(paneViewKey(key('2'), { focused: false, inEditor: false })).toBeNull()
+  })
+})
+
+describe('header mode', () => {
+  test('a pane under 640 px stacks the top bar into two rows; 640 and wider keep one', () => {
+    expect(headerMode(420)).toBe('stacked')
+    expect(headerMode(500)).toBe('stacked')
+    expect(headerMode(639)).toBe('stacked')
+    expect(headerMode(640)).toBe('row')
+    expect(headerMode(900)).toBe('row')
+  })
+
+  test('before the bar is measured it keeps one row', () => {
+    expect(headerMode(null)).toBe('row')
+    expect(headerMode(0)).toBe('row')
   })
 })

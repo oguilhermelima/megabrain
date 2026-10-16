@@ -8,7 +8,6 @@ import {
   horizontalWheel,
   minPaneHeight,
   minPaneWidth,
-  minimapScroll,
   navigate,
   readStrip,
   resetColumn,
@@ -16,6 +15,8 @@ import {
   reveal,
   revealPane,
   stripColumns,
+  stripEdges,
+  columnAt,
   stripLayout,
 } from '@/panes/strip'
 
@@ -260,13 +261,7 @@ describe('scrolling a pane into view', () => {
   })
 })
 
-describe('minimap and wheel', () => {
-  test('a click on the minimap centres the view there, inside the content', () => {
-    expect(minimapScroll(0.5, 2016, 1512)).toBe(252)
-    expect(minimapScroll(1, 2016, 1512)).toBe(504)
-    expect(minimapScroll(0, 2016, 1512)).toBe(0)
-  })
-
+describe('wheel', () => {
   test('shift with a vertical wheel scrolls the strip sideways; a sideways swipe is left to the platform', () => {
     expect(horizontalWheel({ deltaX: 0, deltaY: 40, shiftKey: true })).toBe(40)
     expect(horizontalWheel({ deltaX: 0, deltaY: -40, shiftKey: true })).toBe(-40)
@@ -284,5 +279,54 @@ describe('reading a stored strip', () => {
     expect(readStrip(undefined)).toEqual(emptyStrip)
     expect(readStrip('x')).toEqual(emptyStrip)
     expect(readStrip({ widths: { a: -1, b: 'wide', c: Number.NaN, d: 0.3 }, scroll: -5 })).toEqual({ widths: { d: 0.3 }, scroll: 0 })
+  })
+})
+
+describe('edge arrows', () => {
+  // Four columns of a third each in a 1512 px area: 504 px columns, 2016 px of strip.
+  const four = () => stripLayout(presetTree(leaves(4), 'row', 'g'), emptyStrip, laptop)
+  const ids = (layout: ReturnType<typeof four>) => layout.columns.map((column) => column.id)
+
+  test('scrolled to the start: only a right arrow, on the last column in view, bringing the fourth in', () => {
+    const layout = four()
+    const [, , third] = ids(layout)
+    expect(stripEdges(layout, 0, 1512)).toEqual({ left: null, right: { columnId: third ?? '', scroll: 504 } })
+  })
+
+  test('scrolled to the end: only a left arrow, on the first column in view, bringing the first back', () => {
+    const layout = four()
+    const [, second] = ids(layout)
+    expect(stripEdges(layout, 504, 1512)).toEqual({ left: { columnId: second ?? '', scroll: 0 }, right: null })
+  })
+
+  test('half a column cut at each edge: each arrow first completes the column it sits on', () => {
+    const layout = four()
+    const [first, , , fourth] = ids(layout)
+    expect(stripEdges(layout, 250, 1512)).toEqual({ left: { columnId: first ?? '', scroll: 0 }, right: { columnId: fourth ?? '', scroll: 504 } })
+  })
+
+  test('narrow panes: in a 900 px view of 280 px columns a right arrow moves by one column', () => {
+    const layout = stripLayout(presetTree(leaves(4), 'row', 'g'), emptyStrip, { width: 900, height: 600 })
+    const [first, second, third, fourth] = layout.columns
+    expect(layout.columns.map((column) => column.width)).toEqual([300, 300, 300, 300])
+    expect(stripEdges(layout, 0, 900)).toEqual({ left: null, right: { columnId: third?.id ?? '', scroll: 300 } })
+    expect(stripEdges(layout, 300, 900)).toEqual({ left: { columnId: second?.id ?? '', scroll: 0 }, right: null })
+    expect(first?.id).not.toBe(fourth?.id)
+  })
+
+  test('everything fits, or nothing is measured yet: no arrows', () => {
+    expect(stripEdges(stripLayout(presetTree(leaves(3), 'row', 'g'), emptyStrip, laptop), 0, 1512)).toEqual({ left: null, right: null })
+    expect(stripEdges(stripLayout(presetTree(leaves(1), 'row', 'g'), emptyStrip, laptop), 0, 1512)).toEqual({ left: null, right: null })
+    expect(stripEdges(four(), 0, 0)).toEqual({ left: null, right: null })
+  })
+
+  test('the column under a strip coordinate, none past the ends', () => {
+    const layout = four()
+    const [first, second, , fourth] = ids(layout)
+    expect(columnAt(layout, 0)).toBe(first ?? null)
+    expect(columnAt(layout, 504)).toBe(second ?? null)
+    expect(columnAt(layout, 2015)).toBe(fourth ?? null)
+    expect(columnAt(layout, 2016)).toBeNull()
+    expect(columnAt(layout, -1)).toBeNull()
   })
 })

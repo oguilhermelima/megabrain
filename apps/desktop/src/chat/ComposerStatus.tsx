@@ -311,10 +311,11 @@ function ContextGauge({ meter }: { meter: ContextMeter }) {
       tabIndex={0}
       title={meter.title}
       aria-label={meter.title}
-      className="flex h-8 shrink-0 items-center gap-2 rounded-full px-2.5 text-[12.5px] outline-none transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
+      className="flex h-8 shrink-0 items-center gap-2 rounded-full px-2.5 text-[12.5px] outline-none @max-[560px]/composer:px-2 transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
     >
       {meter.fraction !== null && <Ring fraction={meter.fraction} tone={meter.tone} />}
-      <span className={`tabular-nums ${meter.tone === 'normal' ? 'text-ink-300' : toneText[meter.tone]}`}>{meter.text}</span>
+      {/* In a narrow pane the ring alone stands for it, the figures in the tooltip, so the toolbar keeps one row. */}
+      <span className={`tabular-nums ${meter.tone === 'normal' ? 'text-ink-300' : toneText[meter.tone]} ${meter.fraction === null ? '' : '@max-[560px]/composer:hidden'}`}>{meter.text}</span>
     </span>
   )
 }

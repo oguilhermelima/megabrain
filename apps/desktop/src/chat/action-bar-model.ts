@@ -86,3 +86,14 @@ export function viewForKey(event: { key: string; metaKey: boolean; shiftKey: boo
 export function paneViewKey(event: Parameters<typeof viewForKey>[0], where: { focused: boolean; inEditor: boolean }): PaneView | null {
   return where.focused && !where.inEditor ? viewForKey(event) : null
 }
+
+/** Below this width, in pixels, a chat's top bar stacks into two rows. */
+export const stackedHeaderBelow = 640
+
+/** One row: identity, the action bar centred, the view's controls. Stacked: identity and close, then the bar and the controls. */
+export type HeaderMode = 'row' | 'stacked'
+
+/** The top bar's layout for its width; unmeasured (null or zero) keeps the one row. */
+export function headerMode(width: number | null): HeaderMode {
+  return width !== null && width > 0 && width < stackedHeaderBelow ? 'stacked' : 'row'
+}
