@@ -72,7 +72,7 @@ const backoffFile = (state: string) => join(state, "usage-backoff-claude.json");
 const cacheFile = (state: string) => join(state, "usage-limits-claude.json");
 const now = () => Math.floor(Date.now() / 1000);
 
-// The shared cache only counts as fresh for a minute; ageing the snapshot forces the next read to ask.
+// The shared cache only counts as fresh for five minutes; ageing the snapshot forces the next read to ask.
 function ageSnapshot(state: string, seconds: number): number {
   const snapshot = json(cacheFile(state));
   const fetchedAt = (snapshot.fetchedAt as number) - seconds;
@@ -104,7 +104,7 @@ describe("claude usage through rate limits", () => {
   test("a 429 returns the last good snapshot as stale, with its age and the reason", async () => {
     await withState(async (state) => {
       await seed(state);
-      const fetchedAt = ageSnapshot(state, 120);
+      const fetchedAt = ageSnapshot(state, 400);
       const reading = await readLimit(
         "claude",
         "weekly",
@@ -143,7 +143,7 @@ describe("claude usage through rate limits", () => {
   test("other transient failures keep the snapshot too", async () => {
     await withState(async (state) => {
       await seed(state);
-      ageSnapshot(state, 120);
+      ageSnapshot(state, 400);
       expect(
         await readLimit(
           "claude",
@@ -171,7 +171,7 @@ describe("claude usage through rate limits", () => {
   test("Retry-After sets when the next live call may happen, and nothing is asked before it", async () => {
     await withState(async (state) => {
       await seed(state);
-      ageSnapshot(state, 120);
+      ageSnapshot(state, 400);
       await readLimit(
         "claude",
         "5h",
@@ -201,12 +201,11 @@ describe("claude usage through rate limits", () => {
     });
   });
 
-  test("without Retry-After the wait doubles from 60 seconds to a 15 minute cap, and a success resets it", async () => {
+  test("without Retry-After the wait is five minutes each time, and a success resets the count", async () => {
     await withState(async (state) => {
       await seed(state);
-      ageSnapshot(state, 120);
-      const waits: number[] = [];
-      for (let attempt = 0; attempt < 7; attempt += 1) {
+      ageSnapshot(state, 400);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         await readLimit(
           "claude",
           "5h",
@@ -215,15 +214,12 @@ describe("claude usage through rate limits", () => {
           provider(() => ({ status: 429 })),
           state,
         );
-        waits.push(
+        expect(
           Math.round((json(backoffFile(state)).retryAt as number) - now()),
-        );
+        ).toBeGreaterThanOrEqual(299);
         elapse(state);
       }
-      expect(waits.map((wait) => Math.round(wait / 5) * 5)).toEqual([
-        60, 120, 240, 480, 900, 900, 900,
-      ]);
-      expect(json(backoffFile(state)).failures).toBe(7);
+      expect(json(backoffFile(state)).failures).toBe(3);
       expect(
         await readLimit(
           "claude",
@@ -238,34 +234,20 @@ describe("claude usage through rate limits", () => {
         failures: 0,
         retryAt: 0,
       });
-      await readLimit(
-        "claude",
-        "5h",
-        config,
-        {},
-        provider(() => ({ status: 429 })),
-        state,
-      );
-      expect(
-        Math.round((json(backoffFile(state)).retryAt as number) - now()),
-      ).toBeLessThanOrEqual(61);
     });
   });
 
   test("two concurrent callers share one live request", async () => {
     await withState(async (state) => {
       await seed(state);
-      ageSnapshot(state, 120);
+      ageSnapshot(state, 400);
       const slow = provider(() => ({ status: 200 }), 50);
       const [first, second] = await Promise.all([
         readLimit("claude", "5h", config, {}, slow, state),
         readLimit("claude", "weekly", config, {}, slow, state),
       ]);
       expect(slow.curlCalls).toBe(1);
-      expect([first.status, second.status].sort()).toEqual([
-        "current",
-        "stale",
-      ]);
+      expect([first.status, second.status]).toEqual(["current", "current"]);
     });
   });
 
@@ -293,7 +275,7 @@ describe("claude usage through rate limits", () => {
   test("every live request is logged with its time", async () => {
     await withState(async (state) => {
       await seed(state);
-      ageSnapshot(state, 120);
+      ageSnapshot(state, 400);
       await readLimit(
         "claude",
         "5h",

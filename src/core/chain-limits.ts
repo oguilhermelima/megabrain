@@ -211,10 +211,14 @@ function limitTimeout(config: ChainConfig, environment: ChainLimitEnvironment): 
   return config.usageLimits?.timeoutSeconds ?? 5;
 }
 
-function limitTtl(config: ChainConfig, environment: ChainLimitEnvironment): number {
+const DEFAULT_TTL_SECONDS = 60;
+// Claude 429-blacklists faster pollers of oauth/usage; Superset and Claude Code both hold to five minutes.
+const CLAUDE_TTL_SECONDS = 300;
+
+function limitTtl(agent: LimitAgent, config: ChainConfig, environment: ChainLimitEnvironment): number {
   const override = environment.MEGABRAIN_CHAIN_LIMIT_TTL_SECONDS;
   if (override !== undefined && override.length > 0) return Number(override);
-  return config.usageLimits?.cacheTtlSeconds ?? 60;
+  return config.usageLimits?.cacheTtlSeconds ?? (agent === "claude" ? CLAUDE_TTL_SECONDS : DEFAULT_TTL_SECONDS);
 }
 
 function cachePath(stateDir: string, agent: LimitAgent): string {
@@ -227,7 +231,7 @@ function readCache(agent: Exclude<LimitAgent, "codex">, window: LimitWindowName,
   let parsed: unknown;
   try { parsed = JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
   if (!isObject(parsed) || parsed.provider !== agent || typeof parsed.fetchedAt !== "number" || !Array.isArray(parsed.windows)) return undefined;
-  const ttl = limitTtl(config, environment);
+  const ttl = limitTtl(agent, config, environment);
   if (!(parsed.fetchedAt <= now && now - parsed.fetchedAt < ttl)) return undefined;
   // `source` describes where the reading originated, not how this invocation obtained it.
   const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "live", model);
@@ -296,7 +300,25 @@ async function claudeCredentials(processAdapter: ProcessAdapter): Promise<{ kind
   } catch { return { kind: "no-token" }; }
 }
 
-async function fetchClaudeUsage(window: LimitWindowName, processAdapter: ProcessAdapter, timeoutSeconds: number, environment: ChainLimitEnvironment): Promise<LimitReading> {
+// The installed Claude Code version, asked once a day: it is what Claude Code itself sends as its User-Agent.
+async function claudeUserAgent(processAdapter: ProcessAdapter, stateDir: string): Promise<string[]> {
+  const path = resolve(stateDir, "claude-version.json");
+  const today = new Date().toISOString().slice(0, 10);
+  let version: string | undefined;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (isObject(parsed) && parsed.day === today && typeof parsed.version === "string") version = parsed.version;
+  } catch { /* no cached version */ }
+  if (version === undefined) {
+    const result = await processAdapter.run("claude", ["--version"]);
+    version = result.kind === "ok" ? /^\d+\.\d+\.\d+\S*/.exec(result.value.stdout.trim())?.[0] : undefined;
+    if (version === undefined) return [];
+    writeStateFile(path, { day: today, version }, stateDir);
+  }
+  return ["-H", `User-Agent: claude-code/${version}`];
+}
+
+async function fetchClaudeUsage(window: LimitWindowName, processAdapter: ProcessAdapter, timeoutSeconds: number, environment: ChainLimitEnvironment, stateDir: string): Promise<LimitReading> {
   const credentials = await claudeCredentials(processAdapter);
   if (credentials.kind === "missing") return unknownReading("claude", window, "Keychain item is missing");
   if (credentials.kind === "no-token") return unknownReading("claude", window, "Keychain credential has no access token");
@@ -309,7 +331,8 @@ async function fetchClaudeUsage(window: LimitWindowName, processAdapter: Process
   }
   const url = environment.MEGABRAIN_CHAIN_CLAUDE_USAGE_URL ?? "https://api.anthropic.com/api/oauth/usage";
   const timeout = String(timeoutSeconds);
-  const result = await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, "-H", `Authorization: Bearer ${credentials.token}`, "-H", "anthropic-beta: oauth-2025-04-20", "-H", "anthropic-version: 2023-06-01", "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}\nMEGABRAIN_RETRY_AFTER:%header{retry-after}", url]);
+  const userAgent = await claudeUserAgent(processAdapter, stateDir);
+  const result = await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, ...userAgent, "-H", `Authorization: Bearer ${credentials.token}`, "-H", "anthropic-beta: oauth-2025-04-20", "-H", "anthropic-version: 2023-06-01", "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}\nMEGABRAIN_RETRY_AFTER:%header{retry-after}", url]);
   const parsed = parseCurlResult(result);
   if (parsed.kind === "timeout") return transientReading("claude", window, "request timed out");
   if (parsed.kind === "network-failed") return transientReading("claude", window, "network request failed");
@@ -435,11 +458,19 @@ export async function readLimit(agent: LimitAgent, window: LimitWindowName, conf
   if (!liveProviders.includes(agent)) return unknownReading(agent, window, "live provider is not enabled");
   const cached = readCache(agent, window, config, environment, stateDir, now, model);
   if (cached !== undefined) return cached;
-  const claim = claimLiveCall(agent, stateDir, now);
+  let claim = claimLiveCall(agent, stateDir, now);
+  // Someone else is already asking: wait for their answer instead of asking too.
+  const deadline = Date.now() + (limitTimeout(config, environment) + 1) * 1000;
+  while (claim.kind === "blocked" && claim.retryAt === undefined && Date.now() < deadline) {
+    await new Promise((done) => setTimeout(done, 50));
+    const waited = readCache(agent, window, config, environment, stateDir, Math.floor(Date.now() / 1000), model);
+    if (waited !== undefined) return waited;
+    claim = claimLiveCall(agent, stateDir, Math.floor(Date.now() / 1000));
+  }
   if (claim.kind === "blocked") return staleReading(agent, window, stateDir, model, claim.reason, claim.retryAt) ?? unknownReading(agent, window, claim.reason);
   const timeoutSeconds = limitTimeout(config, environment);
   const reading = agent === "claude"
-    ? await fetchClaudeUsage(window, processAdapter, timeoutSeconds, environment)
+    ? await fetchClaudeUsage(window, processAdapter, timeoutSeconds, environment, stateDir)
     : agent === "grok"
       ? await fetchGrokUsage(window, processAdapter, timeoutSeconds, environment)
       : await fetchAgyUsage(window, processAdapter, model);
@@ -460,6 +491,9 @@ export async function readLimit(agent: LimitAgent, window: LimitWindowName, conf
 // doubling to 15 minutes.
 const BACKOFF_FIRST_SECONDS = 60;
 const BACKOFF_CAP_SECONDS = 900;
+// Claude Code's own rule for oauth/usage: Retry-After, else five minutes, never over an hour.
+const CLAUDE_RETRY_DEFAULT_SECONDS = 300;
+const CLAUDE_RETRY_CAP_SECONDS = 3600;
 const CLAIM_SECONDS = 35;
 const CALL_LOG_LIMIT = 100;
 const LOCK_STALE_SECONDS = 10;
@@ -525,7 +559,9 @@ function settleLiveCall(agent: LimitAgent, stateDir: string, settlement: Settlem
     const state = readBackoff(stateDir, agent);
     if (settlement.kind === "failure") {
       const failures = state.failures + 1;
-      const wait = settlement.retryAfterSeconds ?? Math.min(BACKOFF_CAP_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** (failures - 1));
+      const wait = agent === "claude"
+        ? Math.min(CLAUDE_RETRY_CAP_SECONDS, settlement.retryAfterSeconds ?? CLAUDE_RETRY_DEFAULT_SECONDS)
+        : settlement.retryAfterSeconds ?? Math.min(BACKOFF_CAP_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** (failures - 1));
       const retryAt = now + Math.max(1, wait);
       writeStateFile(backoffPath(stateDir, agent), { ...state, failures, retryAt, claimUntil: 0, reason: settlement.reason }, stateDir);
       return retryAt;
