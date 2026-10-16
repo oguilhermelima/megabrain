@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useState, type KeyboardEvent } from 'react'
+import { lazy, Suspense, useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { activityOf } from '@/components/agent-activity'
 import { api } from '@/api'
 import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
@@ -36,10 +36,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
   const [switching, setSwitching] = useState(false)
+  // The view being switched to shows at once; the chat record catches up when the switch lands.
+  const [target, setTarget] = useState<NativeChat['mode'] | null>(null)
+  const opening = useRef<Promise<{ command: string[] | null }> | null>(null)
   const [startFresh, setStartFresh] = useState(false)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
   const toggle = modeToggle(chat)
-  const inTerminal = chat.mode === 'terminal'
+  const mode = target ?? chat.mode
+  const inTerminal = mode === 'terminal'
   const [actionError, setActionError] = useState<unknown>(null)
   const title = chat.title ?? 'New chat'
   const pending = pendingApproval(state)
@@ -101,35 +105,47 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
 
   const switchMode = async () => {
     if (!toggle.enabled || switching) return
+    const to = toggle.target
     setSwitching(true)
+    setTarget(to)
+    setExited(undefined)
+    const closing = to === 'chat' ? handedOver.get(chat.id) : undefined
+    if (to === 'chat') handedOver.delete(chat.id)
+    // The terminal opens as soon as the agent has let go of the session, not after the chat record has come back too.
+    const moved = (async () => {
+      // One writer at a time: the terminal's TUI goes before the chat's agent process starts.
+      if (closing !== undefined) await api.closeTerminal(closing.id)
+      return api.setChatMode(chat.id, to)
+    })()
+    opening.current = to === 'terminal' ? moved : null
     try {
-      if (toggle.target === 'chat') {
-        const terminal = handedOver.get(chat.id)
-        handedOver.delete(chat.id)
-        if (terminal !== undefined) await api.closeTerminal(terminal.id)
-      }
-      const result = await api.setChatMode(chat.id, toggle.target)
+      const result = await moved
       if (result.terminal !== null) handedOver.set(chat.id, result.terminal)
-      setExited(undefined)
       update((current) => ({ ...current, chat: result.chat }))
       setActionError(null)
       announceAction()
     } catch (caught) {
       setActionError(caught)
     } finally {
+      opening.current = null
+      setTarget(null)
       setSwitching(false)
     }
   }
 
   // The terminal megabrain handed over, else one running the agent's own TUI on this conversation
-  // with the engine chosen in settings.
+  // with the engine chosen in settings. The command comes with the switch's answer, in parallel with the engine lookup.
   const connectTerminal = async (cols: number, rows: number): Promise<TerminalSession> => {
     const known = handedOver.get(chat.id)
     if (known !== undefined) {
       await api.resizeTerminal(known.id, cols, rows).catch(() => {})
       return known
     }
-    const [command, engine] = await Promise.all([api.chatTerminalCommand(chat.id), terminalEngine()])
+    const switched = opening.current
+    const [command, engine] = await Promise.all([
+      (switched === null ? Promise.resolve(null) : switched.then((result) => result.command)).then((value) => value ?? api.chatTerminalCommand(chat.id)),
+      terminalEngine(),
+    ])
     const terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, cols, rows })
     handedOver.set(chat.id, terminal)
     return terminal
@@ -152,7 +168,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
         title={title}
         meta={[chat.agent, chat.model, folder(chat.cwd)].filter(Boolean).join(' · ')}
         metaTitle={chat.cwd}
-        actions={<ViewSwitch view={chat.mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={() => void switchMode()} />}
+        actions={<ViewSwitch view={mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={() => void switchMode()} />}
       />
       {(error !== null || actionError !== null) && (
         <div className="mx-8 mt-3 space-y-2">
@@ -175,8 +191,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               The terminal exited{exited === null ? '' : ` with code ${exited}`}. Switch back to Chat to continue here.
             </p>
           )}
-          <Suspense fallback={<TerminalSkeleton label={`Opening ${chat.agent} in its terminal`} />}>
-            <TerminalView key={chat.id} connect={connectTerminal} onExit={(code) => setExited(code)} startingLabel={`Opening ${chat.agent} in its terminal`} />
+          <Suspense fallback={<TerminalSkeleton label={`Opening ${chat.agent} in the terminal`} />}>
+            <TerminalView key={chat.id} connect={connectTerminal} onExit={(code) => setExited(code)} startingLabel={`Opening ${chat.agent} in the terminal`} awaitOutput />
           </Suspense>
         </>
       ) : (

@@ -393,6 +393,26 @@ describe('workingStatus', () => {
     expect(workingStatus(state)).toEqual({ label: 'Starting claude…', since: started })
   })
 
+  test('a starting state never carries the timestamp of an earlier turn', () => {
+    const state = applyLine(working([]), stateLine('2', 'starting'))
+    expect(state.turnStartedAt).toBeNull()
+    expect(workingStatus({ ...state, chat: { ...chat, state: 'starting', createdAt: '2026-10-14T08:00:00Z' } })?.since).toBe('2026-10-14T08:00:00Z')
+  })
+
+  test('a start older than the newest event is ignored, so a chat made yesterday shows no hours', () => {
+    const created = { ...chat, state: 'starting' as const, createdAt: '2026-10-15T00:00:00Z' }
+    const reply: TranscriptEvent = { id: 'a1', at: '2026-10-16T12:00:00Z', kind: 'assistant', text: 'done' }
+    const state = applyLine(followState({ ...created, state: 'idle' }), line('1', { event: reply }))
+    expect(workingStatus(applyLine(state, stateLine('2', 'starting')))?.since ?? null).toBeNull()
+  })
+
+  test('a chat that already talked reconnects quietly, with no clock', () => {
+    const talked = { ...chat, state: 'idle' as const, agentSessionId: 'session-1', createdAt: '2026-10-15T00:00:00Z' }
+    const reply: TranscriptEvent = { id: 'a1', at: '2026-10-16T12:00:00Z', kind: 'assistant', text: 'done' }
+    const state = applyLine(applyLine(followState(talked), line('1', { event: reply })), stateLine('2', 'starting'))
+    expect(workingStatus(state)).toEqual({ label: 'Reconnecting…', since: null })
+  })
+
   test('a message just sent reads as Thinking before the agent reports working', () => {
     const state = queueOutgoing(followState({ ...chat, state: 'idle' }), { id: 'out-1', text: 'teste', sentAt: started })
     expect(workingStatus(state)).toEqual({ label: 'Thinking', since: started })

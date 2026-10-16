@@ -20,17 +20,20 @@ export type Chat = {
   createdAt: string;
   lastActivityAt: string | null;
   error?: string | null;
+  /** When the chat last moved to its terminal: the agent's own log is imported from here on the way back. */
+  terminalSince?: string;
 };
 
 export type ChatApproval = { id: string; tool: string; input: string; reason: string | null; decisions: Array<"allow" | "allow-session" | "deny"> };
 /** `state` is stored; `delta` is a chunk of the message `messageId` and goes to followers only. */
-export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; tool?: { name: string; input?: string; status?: "ok" | "error" } };
+export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; tool?: { name: string; input?: string; status?: "ok" | "error" } };
 export type ChatLine = { cursor: string; chat?: Chat; event?: ChatEvent; approval?: ChatApproval };
 
 function safeId(id: string): boolean { return /^[a-f\d-]{36}$/i.test(id); }
 
 export class ChatStore {
   readonly chatsDir: string;
+  private readonly counts = new Map<string, number>();
   constructor(readonly stateDir: string) { this.chatsDir = join(stateDir, "chats"); }
 
   async initialize(): Promise<void> { await mkdir(this.chatsDir, { recursive: true, mode: 0o700 }); await chmod(this.chatsDir, 0o700); }
@@ -67,12 +70,17 @@ export class ChatStore {
 
   async append(id: string, event: ChatEvent, approval?: ChatApproval): Promise<ChatLine> {
     const file = this.eventsPath(id);
-    const events = await this.events(id);
-    const line: ChatLine = { cursor: String(events.length + 1), event, ...(approval ? { approval } : {}) };
+    // chatd is the only writer, so the count read once stays true; rereading the whole file per append made a long chat's switch cost seconds.
+    const count = this.counts.get(id) ?? (await this.events(id)).length;
+    const line: ChatLine = { cursor: String(count + 1), event, ...(approval ? { approval } : {}) };
     await appendFile(file, `${JSON.stringify(line)}\n`, { mode: 0o600 });
     await chmod(file, 0o600);
+    this.counts.set(id, count + 1);
     return line;
   }
+
+  /** Drops what is cached for a chat whose files were deleted. */
+  forget(id: string): void { this.counts.delete(id); }
 
   async events(id: string, since = 0): Promise<ChatLine[]> {
     let content: string;

@@ -145,7 +145,7 @@ export interface DesktopApi {
   /** Switches the model, and optionally the reasoning effort, for the chat's next turns. */
   setChatModel(chatId: string, model: string, effort?: string): Promise<void>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
-  setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null }>
+  setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
   chatTerminalCommand(chatId: string): Promise<string[]>
   /** The argv that starts an agent's own interactive TUI, prompts skipped (`agent command`), or resumes one of its sessions; rejects when its CLI is not installed. */

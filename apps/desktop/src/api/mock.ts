@@ -238,6 +238,7 @@ export function createMockApi(): DesktopApi {
     setChatMode: async (chatId, mode) => ({
       chat: { ...mockNativeChat, id: chatId, mode },
       terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: mockNativeChat.cwd, title: 'claude', tmuxSession: null } : null,
+      command: mode === 'terminal' ? ['claude', '--resume', mockNativeChat.agentSessionId ?? ''] : null,
     }),
     chatTerminalCommand: async () => ['claude', '--resume', mockNativeChat.agentSessionId ?? ''],
     agentCommand: async (agent, options = {}) => {

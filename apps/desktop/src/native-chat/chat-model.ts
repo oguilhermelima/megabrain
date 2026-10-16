@@ -73,7 +73,7 @@ function applyState(state: FollowState, event: ChatStateEvent): FollowState {
   const parsed = nativeChatStateSchema.safeParse(event.text)
   if (!parsed.success) return state
   const value = parsed.data
-  const next: FollowState = { ...state, turnStartedAt: turnEnded(value) ? null : (event.turnStartedAt ?? state.turnStartedAt) }
+  const next: FollowState = { ...state, turnStartedAt: turnEnded(value) || value === 'starting' ? null : (event.turnStartedAt ?? state.turnStartedAt) }
   if (state.chat !== null) next.chat = { ...state.chat, state: value }
   // A turn that ended took its unfinished messages with it.
   if (turnEnded(value)) next.drafts = []
@@ -139,12 +139,25 @@ export interface WorkingStatus {
   since: string | null
 }
 
+const newestEventAt = (state: FollowState): string | null => state.events.reduce<string | null>((newest, event) => (event.at !== null && (newest === null || event.at > newest) ? event.at : newest), null)
+
+/**
+ * A chat coming back up. One that already talked reconnects quietly, with no clock; a new one counts from its
+ * creation. A start older than the newest event belongs to an earlier life of the chat and is ignored.
+ */
+function startingStatus(state: FollowState, chat: NativeChat): WorkingStatus {
+  const newest = newestEventAt(state)
+  if (chat.agentSessionId !== null && newest !== null) return { label: 'Reconnecting…', since: null }
+  const since = state.turnStartedAt ?? chat.createdAt
+  return { label: `Starting ${chat.agent}…`, since: newest !== null && since < newest ? null : since }
+}
+
 /** The working indicator for the followed chat, or null when nothing is running. */
 export function workingStatus(state: FollowState): WorkingStatus | null {
   const chat = state.chat
   if (chat === null) return null
   const sentAt = state.outgoing[0]?.sentAt ?? null
-  if (chat.state === 'starting') return { label: `Starting ${chat.agent}…`, since: state.turnStartedAt ?? chat.createdAt }
+  if (chat.state === 'starting') return startingStatus(state, chat)
   if (chat.state === 'waiting-approval') return { label: 'Waiting for approval', since: state.turnStartedAt ?? sentAt }
   if (chat.state !== 'working') return sentAt === null ? null : { label: 'Thinking', since: sentAt }
   const since = state.turnStartedAt ?? sentAt

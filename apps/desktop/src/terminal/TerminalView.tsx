@@ -36,6 +36,7 @@ export function TerminalView({
   onExit,
   onOutput,
   startingLabel,
+  awaitOutput = false,
   onFailed,
   onRetry,
 }: {
@@ -45,6 +46,8 @@ export function TerminalView({
   onOutput?: (session: TerminalSession, data: string) => void
   /** What is starting, shown until the terminal opens: "Starting zsh in canto · main". */
   startingLabel?: string
+  /** Keep saying what is starting until the terminal's first output (an agent's TUI paints late), then fade to it. */
+  awaitOutput?: boolean
   onFailed?: (error: unknown) => void
   onRetry?: () => void
 }) {
@@ -53,6 +56,8 @@ export function TerminalView({
   const [phase, setPhase] = useState<'starting' | 'open' | 'failed'>('starting')
   // Each retry opens the view again from scratch.
   const [attempt, setAttempt] = useState(0)
+  const [painted, setPainted] = useState(!awaitOutput)
+  const [veilGone, setVeilGone] = useState(!awaitOutput)
   const latest = useRef({ connect, onExit, onOutput, onFailed })
   latest.current = { connect, onExit, onOutput, onFailed }
 
@@ -69,6 +74,7 @@ export function TerminalView({
 
     let terminalId: string | null = null
     let opened = false
+    let patience: ReturnType<typeof setTimeout> | undefined
     const input = terminal.onData((data) => {
       if (terminalId !== null) void api.writeTerminal(terminalId, data).catch(setError)
     })
@@ -93,10 +99,13 @@ export function TerminalView({
         terminalId = session.id
         opened = true
         setPhase('open')
+        // A reattached terminal may stay quiet until something changes: the veil never outlasts a few seconds.
+        if (awaitOutput) patience = setTimeout(() => setPainted(true), 3000)
         const stop = await api.onTerminalData(
           session.id,
           (data) => {
             terminal.write(base64ToBytes(data))
+            setPainted(true)
             latest.current.onOutput?.(session, data)
           },
           (code) => latest.current.onExit?.(code),
@@ -115,6 +124,7 @@ export function TerminalView({
 
     return () => {
       stopped = true
+      if (patience !== undefined) clearTimeout(patience)
       unlisten?.()
       observer.disconnect()
       stopSettled()
@@ -124,8 +134,17 @@ export function TerminalView({
     }
   }, [attempt])
 
+  // Once the first output is in, the skeleton fades for a moment and then leaves.
+  useEffect(() => {
+    if (!painted || veilGone) return
+    const timer = setTimeout(() => setVeilGone(true), 220)
+    return () => clearTimeout(timer)
+  }, [painted, veilGone])
+
   const retry = () => {
     setError(null)
+    setPainted(!awaitOutput)
+    setVeilGone(!awaitOutput)
     setPhase('starting')
     onRetry?.()
     setAttempt((current) => current + 1)
@@ -143,8 +162,8 @@ export function TerminalView({
           )}
         </div>
       )}
-      {phase === 'starting' && (
-        <div className="absolute inset-0 flex flex-col bg-ink-950">
+      {(phase === 'starting' || !veilGone) && (
+        <div className={`absolute inset-0 flex flex-col bg-ink-950 transition-opacity duration-200 motion-reduce:transition-none ${phase !== 'starting' && painted ? 'pointer-events-none opacity-0' : 'opacity-100'}`}>
           <TerminalSkeleton label={startingLabel} />
         </div>
       )}

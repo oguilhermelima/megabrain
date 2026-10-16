@@ -4,9 +4,11 @@ import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
+import { readSessionTurns } from "./session-log.js";
 import { selfInvocation } from "../core/self-invocation.js";
 
 type Part = MessagePart;
@@ -547,10 +549,11 @@ export class ChatDaemon {
     this.interruptedEvents.delete(id);
     this.outputSeen.delete(id);
     await rm(this.store.dir(id), { recursive: true, force: true });
+    this.store.forget(id);
     return { removed: id };
   }
 
-  private async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null }> {
+  private async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> {
     const chat = await this.requireChat(id);
     if (mode !== "chat" && mode !== "terminal") throw new Error("mode must be chat or terminal");
     if (mode === "terminal" && chat.state !== "idle") throw new Error(`cannot switch to terminal while chat is ${chat.state}; wait until it is idle`);
@@ -559,14 +562,28 @@ export class ChatDaemon {
       if (child) { child.kill("SIGTERM"); this.children.delete(id); }
       chat.mode = "terminal";
       chat.state = "idle";
+      chat.terminalSince = new Date().toISOString();
     } else if (chat.mode === "terminal") {
+      await this.importTerminalTurns(chat);
       chat.mode = "chat";
       chat.state = "starting";
       await this.save(chat);
       void this.runAgent(chat).catch((error) => this.fail(id, error));
     }
     await this.save(chat);
-    return { chat, terminal: null };
+    // The terminal's command rides along, so opening it costs no second round trip.
+    return { chat, terminal: null, command: chat.mode === "terminal" && chat.agentSessionId ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
+  }
+
+  /** Turns typed in the terminal live only in the agent's log; they join the chat, once each, before the agent respawns. */
+  private async importTerminalTurns(chat: Chat): Promise<void> {
+    const known = new Set((await this.store.events(chat.id)).flatMap((line) => line.event?.sourceId === undefined ? [] : [line.event.sourceId]));
+    const since = chat.terminalSince ?? "";
+    for (const turn of await readSessionTurns(chat, this.environment.HOME ?? homedir())) {
+      if (turn.at <= since || known.has(turn.sourceId)) continue;
+      const { kind, text: value, at, tool, messageId, sourceId } = turn;
+      await this.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), sourceId });
+    }
   }
 
   private async terminalCommand(id: string): Promise<string[]> {
