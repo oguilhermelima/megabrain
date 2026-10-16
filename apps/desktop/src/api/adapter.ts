@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -52,6 +52,10 @@ export interface DesktopApi {
   removeProject(path: string): Promise<void>
   /** Remove a worktree and its branch; refused when the branch has unmerged commits. */
   removeWorktree(path: string): Promise<void>
+  /** The stack a branch is in, with review, checks and behind counts (`stack show --branch --json`); needs gh. */
+  stackShow(repo: string, branch: string): Promise<StackShow>
+  /** Rebase and push, open pull requests for, or merge the stack a branch is in (`stack sync|pr|merge --branch`). */
+  stackRun(repo: string, branch: string, verb: 'sync' | 'pr' | 'merge', options?: { draft?: boolean }): Promise<void>
   /** Slash commands an agent offers in a folder. */
   slashCommands(agent: string, cwd: string): Promise<SlashCommand[]>
   /** Messages waiting to reach a megabrain chat. */
@@ -168,8 +172,11 @@ export interface DesktopApi {
 
 /** Worktree creation (`worktree create`); kept apart from DesktopApi so its adapters live in worktree-create.ts. */
 export interface WorktreeApi {
-  /** Creates a worktree on a new branch from a base ref; rejects with megabrain's error, as when the branch exists. */
-  createWorktree(repo: string, branch: string, base: string): Promise<{ path: string; branch: string }>
+  /**
+   * Creates a worktree on a new branch from a base ref; rejects with megabrain's error, as when the
+   * branch exists. `stacked` records the base, another worktree's branch, as the new branch's parent.
+   */
+  createWorktree(repo: string, branch: string, base: string, stacked?: boolean): Promise<{ path: string; branch: string }>
 }
 
 /** What the app's `api` offers. */

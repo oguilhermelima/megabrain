@@ -10,19 +10,20 @@ const field =
 
 /**
  * A new worktree for a project: the branch to create and the ref it starts from. The base suggests
- * the branches the project's worktrees have checked out and takes any typed ref. Create closes the
- * dialog at once; the sidebar shows the worktree as pending until megabrain lists it.
+ * the branches the project's worktrees have checked out and takes any typed ref. Opened on a branch
+ * (`base` set) it stacks the new one on it and asks only for the name. Create closes the dialog at
+ * once; the sidebar shows the worktree as pending until megabrain lists it.
  */
-export function NewWorktreeDialog({ project, taken, onCreate, onClose }: { project: Project | null; taken: readonly string[]; onCreate: (project: Project, branch: string, base: string) => void; onClose: () => void }) {
-  const { shown, leaving } = usePresence(project)
+export function NewWorktreeDialog({ request, taken, onCreate, onClose }: { request: { project: Project; base?: string } | null; taken: readonly string[]; onCreate: (project: Project, branch: string, base: string) => void; onClose: () => void }) {
+  const { shown, leaving } = usePresence(request)
   if (shown === null) return null
-  return <NewWorktreeCard key={shown.path} project={shown} taken={taken} leaving={leaving} onCreate={(branch, base) => onCreate(shown, branch, base)} onClose={onClose} />
+  return <NewWorktreeCard key={`${shown.project.path}\n${shown.base ?? ''}`} project={shown.project} stackOn={shown.base ?? null} taken={taken} leaving={leaving} onCreate={(branch, base) => onCreate(shown.project, branch, base)} onClose={onClose} />
 }
 
-function NewWorktreeCard({ project, taken, leaving, onCreate, onClose }: { project: Project; taken: readonly string[]; leaving: boolean; onCreate: (branch: string, base: string) => void; onClose: () => void }) {
+function NewWorktreeCard({ project, stackOn, taken, leaving, onCreate, onClose }: { project: Project; stackOn: string | null; taken: readonly string[]; leaving: boolean; onCreate: (branch: string, base: string) => void; onClose: () => void }) {
   const bases = baseSuggestions(project)
   const [branch, setBranch] = useState('')
-  const [base, setBase] = useState(bases.initial)
+  const [base, setBase] = useState(stackOn ?? bases.initial)
   const [tried, setTried] = useState(false)
   const listId = useId()
   const branchId = useId()
@@ -40,7 +41,7 @@ function NewWorktreeCard({ project, taken, leaving, onCreate, onClose }: { proje
   }
 
   return (
-    <Dialog title={`New worktree in ${project.name}`} busy={false} leaving={leaving} onCancel={onClose} onSubmit={submit}>
+    <Dialog title={stackOn === null ? `New worktree in ${project.name}` : `New branch on ${stackOn}`} busy={false} leaving={leaving} onCancel={onClose} onSubmit={submit}>
       <div className="mt-4 space-y-4">
         <label htmlFor={branchId} className="block text-[12.5px] font-medium text-ink-300">
           Branch
@@ -63,26 +64,32 @@ function NewWorktreeCard({ project, taken, leaving, onCreate, onClose }: { proje
             {shownError}
           </p>
         )}
-        <label htmlFor={baseId} className="block text-[12.5px] font-medium text-ink-300">
-          From
-          <input
-            id={baseId}
-            list={listId}
-            value={base}
-            onChange={(event) => setBase(event.target.value)}
-            placeholder="main"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            aria-invalid={tried && baseError !== null}
-            className={field}
-          />
-          <datalist id={listId}>
-            {bases.suggestions.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        </label>
+        {stackOn !== null ? (
+          <p className="text-[12.5px] leading-relaxed text-ink-400">
+            Stacked on <span className="font-mono text-ink-300">{stackOn}</span>: it starts from that branch, and its pull request targets it.
+          </p>
+        ) : (
+          <label htmlFor={baseId} className="block text-[12.5px] font-medium text-ink-300">
+            From
+            <input
+              id={baseId}
+              list={listId}
+              value={base}
+              onChange={(event) => setBase(event.target.value)}
+              placeholder="main"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-invalid={tried && baseError !== null}
+              className={field}
+            />
+            <datalist id={listId}>
+              {bases.suggestions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </label>
+        )}
         {tried && baseError !== null && (
           <p role="alert" className="-mt-2.5 text-[12px] text-bad">
             {baseError}

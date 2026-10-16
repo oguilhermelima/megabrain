@@ -3,7 +3,7 @@ import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
 import { groupChats, worktreeRepositories } from '@/advanced/model'
-import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, type PendingWorktree } from '@/advanced/new-worktree-model'
+import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { Sidebar, readFilters, writeFilters, type SidebarDrag } from '@/advanced/Sidebar'
 import { filterProjects, partitionHidden, type SidebarFilters } from '@/advanced/sidebar-model'
@@ -336,13 +336,14 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     else showTerminal({ kind: 'terminal', engine: null, cwd, firstInput: null, id: newTerminalId(), title: 'Terminal' }, launcher)
   }
   const openWorktreeTerminal = useStableCallback((cwd: string) => openTerminal(cwd, null))
-  const runCreation = (creation: Pick<PendingWorktree, 'id' | 'repo' | 'branch' | 'base'>) =>
-    api.createWorktree(creation.repo, creation.branch, creation.base).then(
+  const runCreation = (creation: Pick<PendingWorktree, 'id' | 'repo' | 'branch' | 'base' | 'stacked'>) =>
+    api.createWorktree(creation.repo, creation.branch, creation.base, creation.stacked).then(
       (created) => setCreations((current) => creationSucceeded(current, creation.id, created.path)),
       (caught: unknown) => setCreations((current) => creationFailed(current, creation.id, caught)),
     )
   const createWorktree = useStableCallback((project: Project, branch: string, base: string) => {
-    const creation = { id: crypto.randomUUID(), repo: project.path, branch, base }
+    // A base that another worktree has checked out records it as the parent, so the stack is found.
+    const creation = { id: crypto.randomUUID(), repo: project.path, branch, base, stacked: stacksOn(project, base) }
     const next = startCreation(creations, creation)
     if (next === null) return
     setCreations(next)

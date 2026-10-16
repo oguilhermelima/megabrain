@@ -887,7 +887,11 @@ first runs a plain `git push -u origin <branch>` for each stack branch (never fo
 has diverged it stops and asks you to run `stack sync --yes`.
 
 `stack create` creates a registered worktree from the parent branch and records the parent in the
-worktree registry. Commands use the current repository; pass `--repo <path>` when running from
+worktree registry. Without `--branch`, the other verbs act on the single chain that starts on the
+default branch. `--branch <member>` selects the stack that branch belongs to instead: up its recorded
+parents to the first branch that is not a registered worktree, then down while each branch has one
+child. `show` lists other children as `forks`; `pr`, `sync` and `merge` refuse a forked stack and name
+the fork point. Commands use the current repository; pass `--repo <path>` when running from
 another directory. The provider comes from the `origin` URL. Pass `--provider github` or
 `--provider gitlab` to override it.
 

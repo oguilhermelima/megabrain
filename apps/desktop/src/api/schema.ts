@@ -350,6 +350,18 @@ export const projectWorktreeSchema = z.looseObject({
   sessions: z.array(projectSessionSchema),
 })
 
+// `megabrain stack show --branch <member> --json`: the member's stack with what the projects list
+// lacks per branch — review decision, checks and how far its parent moved on. Read in stacks.ts.
+export const stackShowSchema = z.looseObject({
+  branches: z.array(
+    z.looseObject({
+      branch: z.string(),
+      behindParent: z.number().nullable().optional(),
+      pullRequest: z.looseObject({ number: z.number(), reviewDecision: z.string().nullable().optional(), statusCheckRollup: z.array(z.unknown()).nullable().optional() }).nullable().optional(),
+    }),
+  ),
+})
+
 // `megabrain projects --json`: every registered project with its main checkout first, then its
 // worktrees, and the agent sessions in each.
 export const projectsSchema = z.array(
@@ -584,6 +596,7 @@ export type GithubIssueList = z.infer<typeof githubIssueListSchema>
 export type GithubDetail = z.infer<typeof githubDetailSchema>
 export type GithubPullRequestFile = z.infer<typeof githubPullRequestFileSchema>
 export type Project = z.infer<typeof projectsSchema>[number]
+export type StackShow = z.infer<typeof stackShowSchema>
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>
 export type HistorySession = z.infer<typeof historySessionSchema>

@@ -10,7 +10,7 @@ type Provider = "github" | "gitlab";
 type Worktree = ReturnType<typeof listWorktrees>[number];
 type GitHubPull = { number: number; headRefName: string; baseRefName: string; url?: string; state?: string; reviewDecision?: string; statusCheckRollup?: unknown[] };
 type GitHubStack = { number: number; pull_requests: Array<{ number: number; head?: { ref?: string } }> };
-type StackData = { repo: string; slug: string; defaultBranch: string; branches: Worktree[] };
+type StackData = { repo: string; slug: string; defaultBranch: string; branches: Worktree[]; forks: Fork[] };
 type GitLabMR = { iid: number; source_branch: string; target_branch: string; state: string; web_url?: string; detailed_merge_status?: string; head_pipeline?: { status?: string } };
 
 async function run(process: ProcessAdapter, command: string, args: readonly string[], cwd?: string) {
@@ -82,7 +82,10 @@ async function defaultBranch(process: ProcessAdapter, repo: string): Promise<str
   return current.kind === "ok" ? current.value.stdout.trim() : "main";
 }
 
-function orderedBranches(rows: Worktree[], base: string): Worktree[] {
+type Fork = { branch: string; parent: string };
+type StackSelection = { branches: Worktree[]; forks: Fork[] };
+
+function orderedBranches(rows: readonly Worktree[], base: string): Worktree[] {
   const byParent = new Map<string, Worktree[]>();
   for (const row of rows.filter((item) => item.finishedAt === null && item.parentBranch !== null && item.parentBranch !== undefined)) {
     const children = byParent.get(row.parentBranch!) ?? [];
@@ -102,30 +105,69 @@ function orderedBranches(rows: Worktree[], base: string): Worktree[] {
   return result;
 }
 
-function parseOptions(args: readonly string[]): Result<{ action: string; values: string[]; yes: boolean; draft: boolean; json: boolean; repo?: string; provider?: Provider }> {
+/**
+ * The stack a member branch belongs to: up its parents while they are active registered worktrees
+ * (never past the default branch), then down while each branch has a single child. Children off the
+ * chain are reported as forks. Without a member, the single chain from the default branch.
+ */
+export function selectStack(rows: readonly Worktree[], defaultBranch: string, member?: string): Result<StackSelection> {
+  if (member === undefined) return ok({ branches: orderedBranches(rows, defaultBranch), forks: [] });
+  const active = rows.filter((item) => item.finishedAt === null);
+  const byBranch = new Map(active.map((item) => [item.branch, item]));
+  const start = byBranch.get(member);
+  if (start === undefined || member === defaultBranch) return failed(`${member} is not a registered stack branch`);
+  const childrenOf = (branch: string) => active.filter((item) => item.parentBranch === branch && item.branch !== branch && item.branch !== defaultBranch);
+  const chain = [start];
+  const seen = new Set([member]);
+  for (let parent = start.parentBranch; parent !== null && parent !== undefined && parent !== defaultBranch && !seen.has(parent);) {
+    const row = byBranch.get(parent);
+    if (row === undefined) break;
+    chain.unshift(row);
+    seen.add(parent);
+    parent = row.parentBranch;
+  }
+  for (let children = childrenOf(member).filter((item) => !seen.has(item.branch)); children.length === 1; children = childrenOf(chain.at(-1)!.branch).filter((item) => !seen.has(item.branch))) {
+    chain.push(children[0]!);
+    seen.add(children[0]!.branch);
+  }
+  const forks = chain.flatMap((node) => childrenOf(node.branch).filter((item) => !seen.has(item.branch)).map((item) => ({ branch: item.branch, parent: node.branch })));
+  return ok({ branches: chain, forks });
+}
+
+/** pr, sync and merge act on one straight line of branches; a fork has no single order to follow. */
+export function linearStack(selection: StackSelection): Result<StackSelection> {
+  const fork = selection.forks[0];
+  if (fork === undefined) return ok(selection);
+  const siblings = selection.forks.filter((item) => item.parent === fork.parent).map((item) => item.branch);
+  return failed(`the stack forks at ${fork.parent} (${siblings.join(", ")} branch off it as well); pr, sync and merge need a stack without forks`);
+}
+
+function parseOptions(args: readonly string[]): Result<{ action: string; values: string[]; yes: boolean; draft: boolean; json: boolean; repo?: string; branch?: string; provider?: Provider }> {
   const values: string[] = [];
   let yes = false;
   let draft = false;
   let json = false;
   let repo: string | undefined;
+  let branch: string | undefined;
   let provider: Provider | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--yes") yes = true;
     else if (arg === "--draft") draft = true;
     else if (arg === "--json") json = true;
-    else if (arg === "--repo" || arg === "--provider") {
+    else if (arg === "--repo" || arg === "--provider" || arg === "--branch") {
       const value = args[++i];
       if (!value) return failed(`${arg} requires a value`, 2);
       if (arg === "--repo") repo = value;
+      else if (arg === "--branch") branch = value;
       else if (value === "github" || value === "gitlab") provider = value;
       else return failed("--provider must be github or gitlab", 2);
     } else values.push(arg);
   }
-  return ok({ action: values.shift() ?? "show", values, yes, draft, json, ...(repo ? { repo } : {}), ...(provider ? { provider } : {}) });
+  return ok({ action: values.shift() ?? "show", values, yes, draft, json, ...(repo ? { repo } : {}), ...(branch ? { branch } : {}), ...(provider ? { provider } : {}) });
 }
 
-async function dataFor(process: ProcessAdapter, environment: Environment, repoOption?: string): Promise<Result<StackData>> {
+async function dataFor(process: ProcessAdapter, environment: Environment, repoOption?: string, member?: string, linear = false): Promise<Result<StackData>> {
   const cwdRepo = repoOption === undefined ? await repoFromCwd(process, environment.PWD ?? ".") : ok(resolve(repoOption));
   if (cwdRepo.kind !== "ok") return cwdRepo;
   const repo = cwdRepo.value;
@@ -134,8 +176,12 @@ async function dataFor(process: ProcessAdapter, environment: Environment, repoOp
   const opened = openDatabase(environment);
   if (opened.kind !== "ok") return failed(opened.error);
   try {
-    const branches = orderedBranches(listWorktrees(opened.value.db, repo), await defaultBranch(process, repo));
-    return ok({ repo, slug: slug.value, defaultBranch: await defaultBranch(process, repo), branches });
+    const base = await defaultBranch(process, repo);
+    const selected = selectStack(listWorktrees(opened.value.db, repo), base, member);
+    if (selected.kind !== "ok") return selected;
+    const usable = linear ? linearStack(selected.value) : selected;
+    if (usable.kind !== "ok") return usable;
+    return ok({ repo, slug: slug.value, defaultBranch: base, ...usable.value });
   } finally { opened.value.close(); }
 }
 
@@ -199,7 +245,7 @@ async function gitLabShow(process: ProcessAdapter, data: StackData, json: boolea
     : await gitLabDependenciesAvailable(process, data, firstMR);
   const mergeTrains = project?.merge_trains_enabled ?? "unknown";
   const dependencies = dependenciesAvailable ? "available" : "unavailable on this project or account";
-  if (json) return ok(output({ provider: "gitlab", defaultBranch: data.defaultBranch, mergeTrains, mergeRequestDependencies: dependencies, branches: entries }));
+  if (json) return ok(output({ provider: "gitlab", defaultBranch: data.defaultBranch, mergeTrains, mergeRequestDependencies: dependencies, branches: entries, forks: data.forks }));
   const rows = await Promise.all(entries.map(async (entry) => {
     const mr = entry.mergeRequest;
     const behind = await git(process, data.repo, ["rev-list", "--count", `${entry.branch}..${entry.parent ?? data.defaultBranch}`]);
@@ -302,8 +348,8 @@ async function createNativeStack(process: ProcessAdapter, data: StackData, pulls
   return result.kind === "ok" ? ok(null) : failed(`GitHub could not create the native pull request stack: ${result.error}`);
 }
 
-async function show(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, json: boolean, override?: Provider): Promise<Result<string>> {
-  const data = await dataFor(process, environment, repoOption);
+async function show(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, member: string | undefined, json: boolean, override?: Provider): Promise<Result<string>> {
+  const data = await dataFor(process, environment, repoOption, member);
   if (data.kind !== "ok") return data;
   const provider = await detectProvider(process, data.value.repo, override);
   if (provider.kind !== "ok") return provider;
@@ -325,7 +371,7 @@ async function show(process: ProcessAdapter, environment: Environment, repoOptio
   }
   const extensions = await gh(process, data.value.repo, ["extension", "list"]);
   const ghStackInstalled = extensions.kind === "ok" && /github\/gh-stack/.test(extensions.value.stdout);
-  if (json) return ok(output({ provider: provider.value, nativeStacks: capability.available, ghStackInstalled, defaultBranch: data.value.defaultBranch, branches: entries }));
+  if (json) return ok(output({ provider: provider.value, nativeStacks: capability.available, ghStackInstalled, defaultBranch: data.value.defaultBranch, branches: entries, forks: data.value.forks }));
   const rows = entries.map((entry) => {
     const pull = entry.pullRequest;
     return [String(entry.index), entry.branch, entry.parent ?? data.value.defaultBranch, pull === null ? "-" : `#${pull.number} ${(pull.state ?? "").toLowerCase()}`.trim(),
@@ -346,8 +392,8 @@ async function pushBranches(process: ProcessAdapter, data: StackData): Promise<R
   return ok(null);
 }
 
-async function pr(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, draft: boolean, json: boolean, override?: Provider): Promise<Result<string>> {
-  const data = await dataFor(process, environment, repoOption);
+async function pr(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, member: string | undefined, draft: boolean, json: boolean, override?: Provider): Promise<Result<string>> {
+  const data = await dataFor(process, environment, repoOption, member, true);
   if (data.kind !== "ok") return data;
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const provider = await detectProvider(process, data.value.repo, override);
@@ -377,8 +423,8 @@ async function plan(process: ProcessAdapter, data: StackData, action: string, ye
   return ok(text);
 }
 
-async function sync(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, yes: boolean, override?: Provider): Promise<Result<string>> {
-  const data = await dataFor(process, environment, repoOption);
+async function sync(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, member: string | undefined, yes: boolean, override?: Provider): Promise<Result<string>> {
+  const data = await dataFor(process, environment, repoOption, member, true);
   if (data.kind !== "ok") return data;
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const shown = await plan(process, data.value, "rebase and push", yes);
@@ -487,8 +533,8 @@ async function mergeGitLab(process: ProcessAdapter, environment: Environment, da
   return ok(project.merge_trains_enabled ? "Merge requests were added bottom-up to the GitLab merge train and completed.\n" : "Merge requests completed bottom-up.\n");
 }
 
-async function merge(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, yes: boolean, override?: Provider): Promise<Result<string>> {
-  const data = await dataFor(process, environment, repoOption);
+async function merge(process: ProcessAdapter, environment: Environment, repoOption: string | undefined, member: string | undefined, yes: boolean, override?: Provider): Promise<Result<string>> {
+  const data = await dataFor(process, environment, repoOption, member, true);
   if (data.kind !== "ok") return data;
   if (data.value.branches.length === 0) return failed("no registered stack branches were found");
   const shown = await plan(process, data.value, "merge", yes);
@@ -546,7 +592,7 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
 export async function executeStack(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseOptions(args);
   if (parsed.kind !== "ok") return parsed;
-  const { action, values, yes, draft, json, repo: repoOption, provider } = parsed.value;
+  const { action, values, yes, draft, json, repo: repoOption, branch: member, provider } = parsed.value;
   if (action === "create") {
     const branch = values[0];
     let parent: string | undefined;
@@ -565,9 +611,9 @@ export async function executeStack(args: readonly string[], environment: Environ
     } finally { opened.value.close(); }
     return created;
   }
-  if (action === "show") return show(process, environment, repoOption, json, provider);
-  if (action === "pr") return pr(process, environment, repoOption, draft, json, provider);
-  if (action === "sync") return sync(process, environment, repoOption, yes, provider);
-  if (action === "merge") return merge(process, environment, repoOption, yes, provider);
+  if (action === "show") return show(process, environment, repoOption, member, json, provider);
+  if (action === "pr") return pr(process, environment, repoOption, member, draft, json, provider);
+  if (action === "sync") return sync(process, environment, repoOption, member, yes, provider);
+  if (action === "merge") return merge(process, environment, repoOption, member, yes, provider);
   return failed(`unknown stack action: ${action}`, 2);
 }

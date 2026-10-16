@@ -1,54 +1,14 @@
-import type { Project, ProjectSession, ProjectWorktree, Worktree } from '@/api/schema'
-import { buildStackModel, flattenStack } from '@/advanced/stack-model'
+import type { Project, ProjectSession, ProjectWorktree } from '@/api/schema'
+import { flattenTree, worktreeTree } from '@/advanced/stacks'
 
 export interface ProjectWorktreeRow {
   worktree: ProjectWorktree
   depth: number
 }
 
-function toStackWorktree(worktree: ProjectWorktree, project: Project): Worktree {
-  return {
-    path: worktree.path,
-    branch: worktree.branch ?? `detached:${worktree.path}`,
-    parent: worktree.parent,
-    pullRequest: worktree.pullRequest,
-    repository: { name: project.name, path: project.path },
-  }
-}
-
-/** Moves the primary worktree (and its stack subtree, if any) to the front, keeping the rest in place. */
-function primaryFirst(rows: ProjectWorktreeRow[]): ProjectWorktreeRow[] {
-  const index = rows.findIndex((row) => row.worktree.primary)
-  if (index <= 0) return rows
-  const baseDepth = rows[index]?.depth ?? 0
-  let end = index + 1
-  while (end < rows.length && (rows[end]?.depth ?? 0) > baseDepth) end++
-  const block = rows.slice(index, end)
-  const remainder = [...rows.slice(0, index), ...rows.slice(end)]
-  return [...block, ...remainder]
-}
-
-/**
- * Worktree rows for one project, nested by stack (parent branch) as `stack-model.ts` already does
- * for dispatches, with the primary checkout first.
- */
+/** Worktree rows for one project, the primary checkout first and stacked branches under their parent (see stacks.ts). */
 export function projectWorktreeRows(project: Project): ProjectWorktreeRow[] {
-  const byPath = new Map(project.worktrees.map((worktree) => [worktree.path, worktree]))
-  const converted = project.worktrees.map((worktree) => toStackWorktree(worktree, project))
-  const { stacks, standalone } = buildStackModel(converted)
-  const rows: ProjectWorktreeRow[] = []
-  for (const stack of stacks) {
-    for (const node of flattenStack(stack.root)) {
-      if (node.worktreePath === null) continue
-      const worktree = byPath.get(node.worktreePath)
-      if (worktree !== undefined) rows.push({ worktree, depth: node.depth })
-    }
-  }
-  for (const converted2 of standalone) {
-    const worktree = byPath.get(converted2.path)
-    if (worktree !== undefined) rows.push({ worktree, depth: 0 })
-  }
-  return primaryFirst(rows)
+  return flattenTree(worktreeTree(project)).map(({ node, depth }) => ({ worktree: node.worktree, depth }))
 }
 
 /** Live sessions before ended ones; within each group, most recently active first. */

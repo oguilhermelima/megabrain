@@ -34,8 +34,15 @@ export function baseSuggestions(project: Pick<Project, 'worktrees'>): { initial:
   return { initial: primary?.branch ?? '', suggestions }
 }
 
-export function createWorktreeArgs(repo: string, branch: string, base: string): string[] {
-  return ['worktree', 'create', '--repo', repo, '--branch', branch, '--from', base, '--json']
+/** True when the base is the branch of another worktree of the project: the new one stacks on it. */
+export function stacksOn(project: Pick<Project, 'worktrees'>, base: string): boolean {
+  const name = base.trim()
+  return name !== '' && project.worktrees.some((worktree) => !worktree.primary && worktree.branch === name)
+}
+
+/** `stacked` records the base as the new branch's parent, so megabrain's stack commands find it. */
+export function createWorktreeArgs(repo: string, branch: string, base: string, stacked = false): string[] {
+  return ['worktree', 'create', '--repo', repo, '--branch', branch, '--from', base, ...(stacked ? ['--parent', `branch:${base}`] : []), '--json']
 }
 
 export interface PendingWorktree {
@@ -44,6 +51,8 @@ export interface PendingWorktree {
   repo: string
   branch: string
   base: string
+  /** The base is another worktree's branch, recorded as the new branch's parent. */
+  stacked?: boolean
   /** creating: megabrain runs; created: it answered with the path, the projects list does not show it yet. */
   status: 'creating' | 'created' | 'failed'
   path: string | null
@@ -53,7 +62,7 @@ export interface PendingWorktree {
 const update = (list: PendingWorktree[], id: string, change: (item: PendingWorktree) => PendingWorktree) => list.map((item) => (item.id === id ? change(item) : item))
 
 /** null while the same branch is still being created in that project. A failed one is replaced. */
-export function startCreation(list: PendingWorktree[], input: { id: string; repo: string; branch: string; base: string }): PendingWorktree[] | null {
+export function startCreation(list: PendingWorktree[], input: { id: string; repo: string; branch: string; base: string; stacked?: boolean }): PendingWorktree[] | null {
   const same = (item: PendingWorktree) => item.repo === input.repo && item.branch === input.branch
   if (list.some((item) => same(item) && item.status !== 'failed')) return null
   return [...list.filter((item) => !same(item)), { ...input, status: 'creating', path: null, error: null }]

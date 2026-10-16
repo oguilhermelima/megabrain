@@ -16,8 +16,8 @@ const lastLine = (text: string): string => text.trim().split('\n').at(-1) ?? ''
 
 export function tauriWorktreeApi(): WorktreeApi {
   return {
-    async createWorktree(repo, branch, base) {
-      const output = await invoke<CliOutput>('run_cli', { args: createWorktreeArgs(repo, branch, base) })
+    async createWorktree(repo, branch, base, stacked) {
+      const output = await invoke<CliOutput>('run_cli', { args: createWorktreeArgs(repo, branch, base, stacked) })
       if (output.code !== 0 || output.stdout.trim() === '') throw new CliError(lastLine(output.stderr) || lastLine(output.stdout) || `megabrain worktree create exited ${output.code}`, output.code)
       const parsed = createdWorktreeSchema.safeParse(JSON.parse(output.stdout))
       if (!parsed.success) throw new CliError(`megabrain worktree create answered in an unexpected shape: ${parsed.error.message}`, output.code)

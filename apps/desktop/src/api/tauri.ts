@@ -5,7 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -119,6 +119,10 @@ export function createTauriApi(): DesktopApi {
       void (await cliText('project' in target ? ['repo', hidden ? 'hide' : 'unhide', target.project] : ['worktree', hidden ? 'hide' : 'unhide', target.worktree])),
     removeProject: async (path) => void (await cliText(['repo', 'remove', path])),
     removeWorktree: async (path) => void (await cliText(['worktree', 'finish', path, '--delete-branch'])),
+    stackShow: (repo, branch) => cliJson(['stack', 'show', '--repo', repo, '--branch', branch, '--json'], stackShowSchema),
+    // sync and merge refuse without --yes; the app asked (merge) or the menu item is the ask (sync).
+    stackRun: async (repo, branch, verb, options) =>
+      void (await cliText(['stack', verb, '--repo', repo, '--branch', branch, ...(verb === 'pr' ? [] : ['--yes']), ...(options?.draft === true ? ['--draft'] : [])])),
     slashCommands: (agent, cwd) => cliJson(['commands', '--agent', agent, '--cwd', cwd, '--json'], slashCommandSchema.array()),
     queued: (dispatchId) => cliJson(['orchestrate', 'queue', dispatchId, '--operator', '--json'], queuedMessageSchema.array()),
     unqueue: async (itemId) => {

@@ -13,12 +13,13 @@ describe('projectWorktreeRows', () => {
     expect(rows[0]?.worktree.branch).toBe('main')
   })
 
-  test('nests a stacked worktree under its parent', () => {
+  test('nests a stacked worktree under its parent; the primary checkout is a base, not a stack member', () => {
     const rows = projectWorktreeRows(megabrain)
     const panel = rows.find((row) => row.worktree.branch === 'feat/desktop-panel')
     const columns = rows.find((row) => row.worktree.branch === 'feat/desktop-panel-columns')
-    expect(panel?.depth).toBe(1)
-    expect(columns?.depth).toBe(2)
+    expect(panel?.depth).toBe(0)
+    expect(columns?.depth).toBe(1)
+    expect(rows.indexOf(columns as never)).toBe(rows.indexOf(panel as never) + 1)
   })
 
   test('includes a detached worktree with no session', () => {

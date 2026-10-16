@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { NativeChat, Project, ProjectSession, ProjectWorktree } from '@/api/schema'
-import { projectWorktreeRows, relativeAge } from '@/advanced/projects-model'
+import { relativeAge } from '@/advanced/projects-model'
+import { memberStatus, memberStatusLabel, stackActions, stackChain, visibleTree, worktreeTree, type MemberStatus, type StackAction, type StackDetail, type StackPlace, type WorktreeNode } from '@/advanced/stacks'
+import { useStackDetails, type StackDetails } from '@/advanced/useStackDetails'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { dropTarget, type Placement } from '@/advanced/project-order'
 import { createFolder, deleteFolder, folderOf, isFolderId, layoutDropTarget, moveEntry, moveToFolder, renameFolder, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
@@ -469,9 +471,48 @@ function NewChatButton({ label, onClick }: { label: string; onClick: () => void 
   )
 }
 
+// The colour of a stack member's status word; plain open and draft stay quiet beside the PR number.
+const memberTone: Record<MemberStatus, string> = {
+  draft: 'text-ink-400',
+  open: 'text-ink-400',
+  approved: 'text-ok',
+  'changes-requested': 'text-warn',
+  merged: 'text-ink-400',
+  closed: 'text-ink-400',
+  'checks-failing': 'text-bad',
+}
+
+/** A stack member's place, its pull request's word and a quiet mark when its parent moved on. */
+function StackMarks({ place, status, needsSync, busy }: { place: StackPlace; status: MemberStatus | null; needsSync: boolean; busy: string | null }) {
+  if (busy !== null) {
+    return (
+      <span role="status" className="flex shrink-0 items-center gap-1.5 text-[11px] text-ink-400">
+        {busy}
+        <Spinner />
+      </span>
+    )
+  }
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-[11px] leading-4 tabular-nums">
+      {needsSync && (
+        <span title="Its parent has commits this branch lacks; Sync stack rebases it" aria-label="needs sync" className="text-ink-400">
+          ↻
+        </span>
+      )}
+      {status !== null && status !== 'open' && status !== 'draft' && <span className={memberTone[status]}>{memberStatusLabel[status]}</span>}
+      <span title={`Branch ${place.position} of ${place.total} in this stack${place.forked ? '; the stack forks' : ''}`} className="text-ink-400">
+        {place.position}/{place.total}
+      </span>
+    </span>
+  )
+}
+
 function WorktreeRow({
   worktree,
-  depth,
+  place,
+  detail,
+  busy,
+  fold,
   selectedSessionId,
   onSelectSession,
   menuItems,
@@ -494,7 +535,14 @@ function WorktreeRow({
   /** Closing, ordering and dragging the rows; the same object while nothing about them changes. */
   rows: ItemRows
   worktree: ProjectWorktree
-  depth: number
+  /** Its place in a stack; null outside one. */
+  place: StackPlace | null
+  /** What `stack show` adds for this branch, once read. */
+  detail: StackDetail | undefined
+  /** A stack action running from this row ("syncing"), or null. */
+  busy: string | null
+  /** Folds the branches stacked on this one; null without any. */
+  fold: { open: boolean; toggle: () => void } | null
   /** Terminals the app opened in this worktree. */
   terminals: AppTerminal[]
   terminalRows: TerminalRows
@@ -557,9 +605,22 @@ function WorktreeRow({
   const name = worktree.branch === null ? `Detached HEAD at ${worktree.head ?? ''}` : worktree.branch
   const prState = worktreePullRequestState(worktree.pullRequest)
   const prColor = prState === null ? null : stateColors[prState]
+  const member = memberStatus(worktree.pullRequest, detail)
   return (
-    <div style={{ paddingLeft: `${depth * 10}px` }} className="space-y-0.5">
-      <div onContextMenu={(event) => onMenu(event, menuItems)} className="group flex h-8 items-center gap-2 rounded-[12px] pr-1.5 pl-[15px] transition-colors hover:bg-row-hover">
+    <div className="space-y-0.5">
+      <div onContextMenu={(event) => onMenu(event, menuItems)} className="group relative flex h-8 items-center gap-2 rounded-[12px] pr-1.5 pl-[15px] transition-colors hover:bg-row-hover">
+        {fold !== null && (
+          <button
+            type="button"
+            onClick={fold.toggle}
+            aria-expanded={fold.open}
+            aria-label={`${fold.open ? 'Fold' : 'Unfold'} the branches stacked on ${name}`}
+            title={`${fold.open ? 'Fold' : 'Unfold'} the branches stacked on this one`}
+            className="absolute top-1/2 left-0 flex size-4 -translate-y-1/2 items-center justify-center rounded-full text-ink-400 hover:text-ink-100"
+          >
+            <Chevron open={fold.open} />
+          </button>
+        )}
         <span style={prColor === null ? undefined : { color: prColor }} className={`shrink-0 ${running ? 'text-ink-300' : 'text-ink-400'}`}>
           <BranchIcon />
         </span>
@@ -570,6 +631,7 @@ function WorktreeRow({
         {worktree.pullRequest !== null && prState !== null && prColor !== null && (
           <PullRequestNumber pullRequest={worktree.pullRequest} color={prColor} title={pullRequestTitle(worktree.pullRequest, prState)} onOpen={onPullRequest} />
         )}
+        {place !== null && <StackMarks place={place} status={member.status} needsSync={member.needsSync} busy={busy} />}
         <RowActions gap="2">
           <NewChatButton label={`New chat in ${name}`} onClick={() => onNewChat(worktree.path)} />
           <CodeButton label={`Open ${name} in Code`} onClick={onCode} />
@@ -665,7 +727,12 @@ const ProjectSection = memo(function ProjectSection({
   creations,
   creationRows,
   onNewWorktree,
+  listed,
+  stacks,
 }: {
+  /** The project as megabrain lists it, hidden and filtered worktrees included, so stack positions count every branch. */
+  listed: Project
+  stacks: StackRows
   onDragRow: RowDragger
   itemRows: ItemRows
   /** Worktrees being created in this project. */
@@ -719,7 +786,61 @@ const ProjectSection = memo(function ProjectSection({
       </section>
     )
   }
-  const rows = projectWorktreeRows(project)
+  const shownPaths = new Set(project.worktrees.map((worktree) => worktree.path))
+  const tree = worktreeTree(listed)
+  const nodes = visibleTree(tree, (worktree) => shownPaths.has(worktree.path))
+  const details = stacks.details[project.path]
+  // A stack nests under its base: a line runs from each parent's branch icon down to its last child's,
+  // with a tick into each child; a parent folds the branches stacked on it.
+  const renderNodes = (list: WorktreeNode[]): ReactNode =>
+    list.map((node, index) => {
+      const { worktree } = node
+      const foldKey = `stack:${worktree.path}`
+      const open = !stacks.folded.has(foldKey)
+      const last = index === list.length - 1
+      return (
+        <div key={worktree.path} className="relative">
+          {node.place !== null && node.place.position > 1 && (
+            <>
+              <span aria-hidden="true" className={`pointer-events-none absolute -top-1 left-[8px] w-px bg-white/[0.14] ${last ? 'h-5' : 'bottom-0'}`} />
+              <span aria-hidden="true" className="pointer-events-none absolute top-4 left-[8px] h-px w-[6px] bg-white/[0.14]" />
+            </>
+          )}
+          <div className="relative">
+            {node.children.length > 0 && open && <span aria-hidden="true" className="pointer-events-none absolute top-[26px] bottom-0 left-[22px] w-px bg-white/[0.14]" />}
+            <WorktreeRow
+              worktree={worktree}
+              place={node.place}
+              detail={worktree.branch === null ? undefined : details?.[worktree.branch]}
+              busy={stacks.busy[worktree.path] ?? null}
+              fold={node.children.length === 0 ? null : { open, toggle: () => stacks.fold(foldKey) }}
+              selectedSessionId={selectedSessionId}
+              onSelectSession={onSelectSession}
+              menuItems={actions.worktree(project, node, tree)}
+              chatItems={actions.chat}
+              sessionItems={actions.session}
+              onMenu={onMenu}
+              onCode={() => actions.code(codeTargetFor(project, worktree))}
+              onPullRequest={githubRepository(project.remote) === null || worktree.pullRequest === null ? null : () => onGithub(project, 'prs', worktree.pullRequest?.number)}
+              now={now}
+              chats={chats[worktree.path] ?? noChats}
+              selectedChatId={selectedChatId}
+              onSelectChat={onSelectChat}
+              onNewChat={onNewChat}
+              terminals={terminals[worktree.path] ?? noTerminals}
+              terminalRows={terminalRows}
+              onDrag={onDragRow}
+              rows={itemRows}
+            />
+          </div>
+          {node.children.length > 0 && (
+            <Collapse open={open}>
+              <div className="relative space-y-1 pt-1 pl-[14px]">{renderNodes(node.children)}</div>
+            </Collapse>
+          )}
+        </div>
+      )
+    })
   const running = project.worktrees.reduce((count, worktree) => count + worktree.sessions.filter(live).length, 0)
   return (
     <section data-entry-key={project.path} className={`relative ${dragging ? 'opacity-50' : ''}`}>
@@ -759,30 +880,7 @@ const ProjectSection = memo(function ProjectSection({
       </div>
       <Collapse open={!collapsed}>
         <div className="space-y-1 pt-1">
-          {rows.map(({ worktree, depth }) => (
-            <WorktreeRow
-              key={worktree.path}
-              worktree={worktree}
-              depth={depth}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={onSelectSession}
-              menuItems={actions.worktree(project, worktree)}
-              chatItems={actions.chat}
-              sessionItems={actions.session}
-              onMenu={onMenu}
-              onCode={() => actions.code(codeTargetFor(project, worktree))}
-              onPullRequest={githubRepository(project.remote) === null || worktree.pullRequest === null ? null : () => onGithub(project, 'prs', worktree.pullRequest?.number)}
-              now={now}
-              chats={chats[worktree.path] ?? noChats}
-              selectedChatId={selectedChatId}
-              onSelectChat={onSelectChat}
-              onNewChat={onNewChat}
-              terminals={terminals[worktree.path] ?? noTerminals}
-              terminalRows={terminalRows}
-              onDrag={onDragRow}
-              rows={itemRows}
-            />
-          ))}
+          {renderNodes(nodes)}
           {creations.map((creation) => (
             <PendingWorktreeRow key={creation.id} creation={creation} rows={creationRows} />
           ))}
@@ -935,10 +1033,20 @@ interface ItemRows {
   start: (event: PointerEvent<HTMLElement>, worktreePath: string, key: string, shown: string[]) => void
 }
 
+/** What the stacked rows need: details read from `stack show`, folds, and actions running; one object per change. */
+interface StackRows {
+  details: StackDetails
+  folded: ReadonlySet<string>
+  fold: (key: string) => void
+  /** A running stack action's word by worktree path. */
+  busy: Record<string, string>
+}
+
 interface RowActions {
   code: (target: CodeTarget) => void
   project: (project: Project) => MenuItem[]
-  worktree: (project: Project, worktree: ProjectWorktree) => MenuItem[]
+  /** `tree` is the project's whole worktree tree, which a stack action reads its chain from. */
+  worktree: (project: Project, node: WorktreeNode, tree: WorktreeNode[]) => MenuItem[]
   chat: (chat: NativeChat) => MenuItem[]
   session: (session: ProjectSession) => MenuItem[]
 }
@@ -976,7 +1084,7 @@ function HiddenSection({ hidden, onShow }: { hidden: HiddenPartition; onShow: (t
 }
 
 // Every project the person works on, main checkout first with its worktrees and their stacks
-// (see stack-model.ts), and the agent sessions running in each. Each project and worktree has a
+// (see stacks.ts), and the agent sessions running in each. Each project and worktree has a
 // menu (right click or …) to hide it, remove it or open its code; hidden ones wait at the bottom.
 export const Sidebar = memo(function Sidebar({
   loaded,
@@ -1056,8 +1164,9 @@ export const Sidebar = memo(function Sidebar({
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
   const [menu, setMenu] = useState<OpenMenu | null>(null)
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
-  const [newWorktreeFor, setNewWorktreeFor] = useState<Project | null>(null)
-  const openNewWorktree = useStableCallback((project: Project) => setNewWorktreeFor(project))
+  // The new worktree dialog: from the project's +, or on a branch to stack on it.
+  const [newWorktreeFor, setNewWorktreeFor] = useState<{ project: Project; base?: string } | null>(null)
+  const openNewWorktree = useStableCallback((project: Project) => setNewWorktreeFor({ project }))
   const retryCreation = useStableCallback(onRetryCreation)
   const dismissCreation = useStableCallback(onDismissCreation)
   const creationRows = useMemo<CreationRows>(() => ({ retry: retryCreation, dismiss: dismissCreation }), [retryCreation, dismissCreation])
@@ -1221,6 +1330,70 @@ export const Sidebar = memo(function Sidebar({
     onCloseRow(row).catch(setActionError)
   })
 
+  // Stacks: review, checks and behind counts read in the background, folds kept with the other
+  // collapses, and one running action per row shown on it until megabrain answers.
+  const { details: stackDetails, forget: forgetStack } = useStackDetails(partition.visible)
+  const [stackBusy, setStackBusy] = useState<Record<string, string>>({})
+  const runStack = useStableCallback((project: Project, worktree: ProjectWorktree, verb: 'sync' | 'pr' | 'merge', word: string, draft: boolean = false): Promise<void> => {
+    const branch = worktree.branch
+    if (branch === null) return Promise.resolve()
+    setActionError(null)
+    setStackBusy((current) => ({ ...current, [worktree.path]: word }))
+    const done = () => {
+      forgetStack(project.path)
+      setStackBusy((current) => {
+        const next = { ...current }
+        delete next[worktree.path]
+        return next
+      })
+    }
+    return api.stackRun(project.path, branch, verb, { draft }).then(done, (caught: unknown) => {
+      done()
+      throw caught
+    })
+  })
+  const stackItem = useStableCallback((project: Project, worktree: ProjectWorktree, action: StackAction): MenuItem => {
+    const branch = worktree.branch ?? ''
+    const chainOf = () => stackChain(worktreeTree(projects.find((item) => item.path === project.path) ?? project), worktree.path)
+    switch (action.kind) {
+      case 'new-stacked':
+        return { label: 'New stacked branch…', onSelect: () => setNewWorktreeFor({ project, base: branch }) }
+      case 'sync':
+        return {
+          label: 'Sync stack…',
+          onSelect: () => {
+            const names = chainOf()?.members.flatMap((member) => (member.branch === null ? [] : [member.branch])) ?? [branch]
+            setConfirm({
+              title: 'Sync this stack?',
+              body: `Each branch is rebased on its parent and pushed with --force-with-lease, bottom-up: ${names.join(', then ')}. A conflict stops the sync and names the files.`,
+              action: 'Sync stack',
+              tone: 'primary',
+              run: () => runStack(project, worktree, 'sync', 'syncing'),
+            })
+          },
+        }
+      case 'pr':
+        return {
+          label: action.draft ? 'Open draft PRs for stack' : 'Open PRs for stack',
+          onSelect: () => void runStack(project, worktree, 'pr', 'opening PRs', action.draft).catch(setActionError),
+        }
+      case 'merge':
+        return {
+          label: 'Merge stack…',
+          danger: true,
+          onSelect: () =>
+            setConfirm({
+              title: 'Merge this stack?',
+              body: `The pull requests merge bottom-up, in this order: ${action.pullRequests.map((pull) => `#${pull.number} ${pull.branch}`).join(', then ')}. megabrain refuses when a branch has commits that are not pushed.`,
+              action: 'Merge stack',
+              run: () => runStack(project, worktree, 'merge', 'merging'),
+            }),
+        }
+      case 'show-github':
+        return { label: 'Show on GitHub', onSelect: () => onGithub(project, 'prs', worktree.pullRequest?.number) }
+    }
+  })
+
   const actions = useMemo<RowActions>(() => ({
     code: onCode,
     project: (project) => [
@@ -1240,12 +1413,14 @@ export const Sidebar = memo(function Sidebar({
           }),
       },
     ],
-    worktree: (project, worktree) => {
+    worktree: (project, node, tree) => {
+      const { worktree } = node
       const name = worktreeName(worktree)
       const items: MenuItem[] = [
         { label: 'New terminal', onSelect: () => onNewTerminal(worktree.path) },
         { label: 'Open Code', onSelect: () => onCode(codeTargetFor(project, worktree)) },
         { label: 'Quick view', onSelect: () => onQuickView(codeTargetFor(project, worktree)) },
+        ...stackActions(project, tree, node).map((action) => stackItem(project, worktree, action)),
         { label: 'Hide', onSelect: () => setHidden({ worktree: worktree.path }, true) },
       ]
       // The main checkout is the project itself; it is removed with the project, not as a worktree.
@@ -1287,7 +1462,7 @@ export const Sidebar = memo(function Sidebar({
       if (!ownership(session).owned) return []
       return [{ label: 'Release from megabrain…', danger: true, onSelect: () => closeRow({ kind: 'session', session }) }]
     },
-  }), [onCode, onQuickView, setHidden, onNewTerminal, closeRow, moveItems])
+  }), [onCode, onQuickView, setHidden, onNewTerminal, closeRow, moveItems, stackItem])
 
   const [renamingTerminal, setRenamingTerminal] = useState<string | null>(null)
   const terminalRows = useMemo<TerminalRows>(() => ({
@@ -1360,6 +1535,8 @@ export const Sidebar = memo(function Sidebar({
     [closeRow, rowOrder, rowDrag, rowDragStart],
   )
 
+  const stackRows = useMemo<StackRows>(() => ({ details: stackDetails, folded: collapsed, fold: toggle, busy: stackBusy }), [stackDetails, collapsed, toggle, stackBusy])
+  const listedByPath = new Map(projects.map((project) => [project.path, project]))
   const shownByPath = new Map(visible.map((project) => [project.path, project]))
   const foldersById = new Map(layout.folders.map((folder) => [folder.id, folder]))
   const renderProject = (project: Project) => (
@@ -1390,6 +1567,8 @@ export const Sidebar = memo(function Sidebar({
       creations={creationsByProject[project.path] ?? noCreations}
       creationRows={creationRows}
       onNewWorktree={openNewWorktree}
+      listed={listedByPath.get(project.path) ?? project}
+      stacks={stackRows}
     />
   )
 
@@ -1504,8 +1683,8 @@ export const Sidebar = memo(function Sidebar({
       <RowMenu menu={menu} onClose={closeMenu} />
       <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
       <NewWorktreeDialog
-        project={newWorktreeFor}
-        taken={creations.filter((item) => item.repo === newWorktreeFor?.path && item.status !== 'failed').map((item) => item.branch)}
+        request={newWorktreeFor}
+        taken={creations.filter((item) => item.repo === newWorktreeFor?.project.path && item.status !== 'failed').map((item) => item.branch)}
         onCreate={(project, branch, base) => {
           setNewWorktreeFor(null)
           // The pending row shows under the project, so a folded project opens.

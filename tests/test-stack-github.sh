@@ -156,3 +156,22 @@ json="$(run stack show --json)"
 case "$json" in '{'*) ;; *) fail 'stack show --json did not print JSON' ;; esac
 contains "$json" '"branches"'
 printf 'GitHub stack show is a table by default and JSON behind --json\n'
+
+# Scenario: --branch selects one of two stacks that start on main, and show marks a fork.
+run stack create other/base --on main --repo "$work/repo" >/dev/null
+run stack create other/left --on other/base --repo "$work/repo" >/dev/null
+run stack create other/right --on other/base --repo "$work/repo" >/dev/null
+if run stack show --json >"$work/ambiguous.out" 2>&1; then contains "$(cat "$work/ambiguous.out")" '"branches": []'; fi
+selected="$(run stack show --branch stack/child --json)"
+contains "$selected" '"branch": "stack/base"'
+contains "$selected" '"branch": "stack/child"'
+not_contains "$selected" 'other/'
+forked="$(run stack show --branch other/left --json)"
+contains "$forked" '"branch": "other/left"'
+contains "$forked" '"forks"'
+contains "$forked" 'other/right'
+: >"$GH_LOG"
+if run stack sync --yes --branch other/left >"$work/fork.out" 2>&1; then fail 'stack sync accepted a forked stack'; fi
+contains "$(cat "$work/fork.out")" 'forks at other/base'
+[ ! -s "$GH_LOG" ] || not_contains "$(cat "$GH_LOG")" 'pr '
+printf 'GitHub stack --branch selects a stack by member and refuses forks for mutation\n'

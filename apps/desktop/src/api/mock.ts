@@ -113,6 +113,24 @@ export function createMockApi(): DesktopApi {
     setHidden: async () => {},
     removeProject: async () => {},
     removeWorktree: async () => {},
+    stackShow: async (repo, branch) => {
+      await wait(400)
+      const worktrees = mockProjects.find((project) => project.path === repo)?.worktrees ?? []
+      const byBranch = new Map(worktrees.flatMap((worktree) => (worktree.branch === null ? [] : [[worktree.branch, worktree] as const])))
+      const line: string[] = []
+      for (let current = byBranch.get(branch); current !== undefined && current.branch !== null && !current.primary && !line.includes(current.branch); current = current.parent === null ? undefined : byBranch.get(current.parent)) line.unshift(current.branch)
+      // The preview's tip is two commits behind its parent, with its checks failing.
+      return {
+        branches: line.map((name, index) => ({
+          branch: name,
+          behindParent: index === line.length - 1 && index > 0 ? 2 : 0,
+          pullRequest: byBranch.get(name)?.pullRequest === null ? null : { number: byBranch.get(name)?.pullRequest?.number ?? 0, reviewDecision: index === 0 ? 'APPROVED' : null, statusCheckRollup: [{ conclusion: index === line.length - 1 && index > 0 ? 'FAILURE' : 'SUCCESS' }] },
+        })),
+      }
+    },
+    stackRun: async () => {
+      await wait(1200)
+    },
     slashCommands: async (agent) =>
       agent === 'codex'
         ? [{ name: 'model', description: 'Choose the model and reasoning effort', source: 'builtin' }, { name: 'review', description: 'Review my current changes', source: 'builtin' }, { name: 'ship', description: 'Ship the current branch', source: 'user', argumentHint: '[pr]' }]

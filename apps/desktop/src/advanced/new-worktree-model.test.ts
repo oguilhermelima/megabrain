@@ -5,6 +5,7 @@ import {
   baseSuggestions,
   branchNameError,
   createWorktreeArgs,
+  stacksOn,
   creationFailed,
   creationSucceeded,
   creationsIn,
@@ -62,6 +63,26 @@ describe('baseSuggestions', () => {
 describe('createWorktreeArgs', () => {
   test('the CLI call the adapter makes', () => {
     expect(createWorktreeArgs('/work/canto', 'feat/x', 'main')).toEqual(['worktree', 'create', '--repo', '/work/canto', '--branch', 'feat/x', '--from', 'main', '--json'])
+  })
+
+  test('a branch stacked on another worktree records that worktree as its parent', () => {
+    expect(createWorktreeArgs('/work/canto', 'feat/y', 'feat/x', true)).toEqual(['worktree', 'create', '--repo', '/work/canto', '--branch', 'feat/y', '--from', 'feat/x', '--parent', 'branch:feat/x', '--json'])
+  })
+})
+
+describe('stacksOn', () => {
+  const tree = (branch: string | null, primary = false): ProjectWorktree => ({ path: `/wt/${branch ?? 'detached'}`, branch, head: null, primary, parent: null, pullRequest: null, sessions: [] })
+  const repo = { worktrees: [tree('main', true), tree('feat/x'), tree(null)] }
+
+  test('a base that another worktree has checked out makes a stack on it', () => {
+    expect(stacksOn(repo, 'feat/x')).toBe(true)
+    expect(stacksOn(repo, ' feat/x ')).toBe(true)
+  })
+
+  test('the primary branch, any other ref and an empty base do not', () => {
+    expect(stacksOn(repo, 'main')).toBe(false)
+    expect(stacksOn(repo, 'origin/feat/x')).toBe(false)
+    expect(stacksOn(repo, '')).toBe(false)
   })
 })
 

@@ -58,6 +58,7 @@ export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, o
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatHeader
         agent={chat.agent ?? ''}
+        activity={state === 'working' ? 'working' : state === 'needs-you' ? 'waiting' : 'idle'}
         title={chatName(chat)}
         meta={[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
       />

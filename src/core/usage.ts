@@ -43,7 +43,7 @@ export const USAGE_LINES = {
   "github-issue-state": "github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]",
   "github-pr-state": "github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json]",
   "code": "code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]",
-  "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
+  "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json] | --app [--server <tmux -L name>] [--json]",
   "terminal-open": "terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]",

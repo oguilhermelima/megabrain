@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
+import { activityOf } from '@/components/agent-activity'
 import { ConversationAgent } from '@/components/agent-icons'
 import { api } from '@/api'
 import type { MessagePart, ProjectSession } from '@/api/schema'
@@ -42,6 +43,7 @@ export function SessionView({
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatHeader
         agent={session.agent}
+        activity={activityOf(session.status)}
         title={session.title}
         meta={[session.agent, folder(worktreePath), started].filter(Boolean).join(' · ')}
         metaTitle={worktreePath}

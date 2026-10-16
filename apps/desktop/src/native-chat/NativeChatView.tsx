@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useMemo, useState, type KeyboardEvent } from 'react'
+import { activityOf } from '@/components/agent-activity'
 import { api } from '@/api'
 import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
@@ -143,6 +144,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatHeader
         agent={chat.agent}
+        activity={activityOf(chat.state)}
         title={title}
         meta={[chat.agent, chat.model, folder(chat.cwd)].filter(Boolean).join(' · ')}
         metaTitle={chat.cwd}
