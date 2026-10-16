@@ -1,8 +1,8 @@
 import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { Project, ProjectScripts } from '@/api/schema'
-import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
+import type { GithubDetail, Project, ProjectScripts } from '@/api/schema'
+import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -19,6 +19,18 @@ export function createMockApi(): DesktopApi {
   }
   let settings = mockSettings
   let sidebarFolders: unknown = { version: 1, folders: [], order: [] }
+  // What the GitHub writes changed: added comments and new states, by kind and number.
+  const githubComments = new Map<string, GithubDetail['comments']>()
+  const githubStates = new Map<string, string>()
+  const githubComment = (kind: 'pr' | 'issue', number: number, body: string) => {
+    const key = `${kind}:${number}`
+    const added = { author: { login: 'operator', name: 'Operator', isBot: false }, body, createdAt: new Date().toISOString(), url: `https://github.com/operator/megabrain/issues/${number}#mock-${Date.now()}` }
+    githubComments.set(key, [...(githubComments.get(key) ?? []), added])
+  }
+  const githubEdited = (kind: 'pr' | 'issue', detail: GithubDetail): GithubDetail => {
+    const key = `${kind}:${detail.number}`
+    return { ...detail, state: githubStates.get(key) ?? detail.state, comments: [...detail.comments, ...(githubComments.get(key) ?? [])] }
+  }
   // Sessions released from megabrain's tmux server (`session release`).
   const released = new Set<string>()
   const withOwnership = (projects: Project[]): Project[] =>
@@ -151,11 +163,37 @@ export function createMockApi(): DesktopApi {
     },
     githubPullRequest: async (_root, number) => {
       await wait(300)
-      return mockGithubDetail('pr', number)
+      return githubEdited('pr', mockGithubDetail('pr', number))
     },
     githubIssue: async (_root, number) => {
       await wait(300)
-      return mockGithubDetail('issue', number)
+      return githubEdited('issue', mockGithubDetail('issue', number))
+    },
+    prFiles: async (_root, number) => {
+      await wait(350)
+      return mockPullRequestFiles(number)
+    },
+    submitReview: async (_root, number, review) => {
+      await wait(500)
+      if (number === 109) throw new CliError('gh: Can not approve your own pull request (HTTP 422)', 1)
+      const comments = review.comments ?? []
+      const verdict = review.event === 'approve' ? 'Approved' : review.event === 'request-changes' ? 'Requested changes' : 'Reviewed'
+      const lines = comments.map((comment) => `- ${comment.path}:${comment.line} — ${comment.body}`)
+      githubComment('pr', number, [`**${verdict}**`, review.body, ...lines].filter((line) => line !== '').join('\n\n'))
+    },
+    addComment: async (_root, number, body) => {
+      await wait(400)
+      // A number is a pull request or an issue; GitHub shares one sequence between them.
+      githubComment(mockGithubPullRequests.items.some((item) => item.number === number) ? 'pr' : 'issue', number, body)
+    },
+    setIssueState: async (_root, number, state) => {
+      await wait(400)
+      githubStates.set(`issue:${number}`, state)
+    },
+    setPrState: async (_root, number, action) => {
+      await wait(600)
+      if (action === 'merge' && number === 111) throw new CliError('gh: Pull request is not mergeable: the base branch policy prohibits the merge.', 1)
+      githubStates.set(`pr:${number}`, action === 'merge' ? 'merged' : action === 'close' ? 'closed' : 'open')
     },
     pickFolder: async () => '/Users/operator/Workspaces/new-project',
     codeTree: async () => mockCodeTree,

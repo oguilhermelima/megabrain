@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { settingsSchema, githubDetailSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, projectsSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, projectsSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
 const json = (name: string): unknown => JSON.parse(readFileSync(join(captured, name), 'utf8'))
@@ -45,6 +45,7 @@ describe('captured CLI payloads parse with the schemas', () => {
     expect(githubIssueListSchema.safeParse(mockGithubIssues).error).toBeUndefined()
     expect(githubDetailSchema.safeParse(mockGithubDetail('pr', 112)).error).toBeUndefined()
     expect(githubDetailSchema.safeParse(mockGithubDetail('issue', 118)).error).toBeUndefined()
+    expect(githubPullRequestFileSchema.array().safeParse(mockPullRequestFiles(112)).error).toBeUndefined()
   })
   test('install --json events', () => {
     const events = lines('install-failed.ndjson')

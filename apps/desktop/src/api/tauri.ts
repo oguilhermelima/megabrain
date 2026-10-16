@@ -5,7 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -53,6 +53,9 @@ async function terminalListen(terminalId: string, onData: (base64: string) => vo
   await invoke('terminal_listen', { terminalId, onEvent: channel })
   return () => void invoke('terminal_unlisten', { terminalId })
 }
+
+// `github pr-files` answers with the list, or with an object that holds it under `files`.
+const pullRequestFilesSchema = z.union([githubPullRequestFileSchema.array(), z.looseObject({ files: githubPullRequestFileSchema.array() }).transform((value) => value.files)])
 
 let streams = 0
 
@@ -159,6 +162,20 @@ export function createTauriApi(): DesktopApi {
     githubIssues: (root, state, limit, after) => cliJson(['github', 'issues', root, '--state', state, '--limit', String(limit), ...(after === null ? [] : ['--after', after]), '--json'], githubIssueListSchema),
     githubPullRequest: (root, number) => cliJson(['github', 'pr', root, String(number), '--json'], githubDetailSchema),
     githubIssue: (root, number) => cliJson(['github', 'issue', root, String(number), '--json'], githubDetailSchema),
+    prFiles: (root, number) => cliJson(['github', 'pr-files', root, String(number), '--json'], pullRequestFilesSchema),
+    submitReview: async (root, number, review) => {
+      const comments = review.comments ?? []
+      await cliText(['github', 'review', root, String(number), '--event', review.event, '--body', review.body, ...(comments.length === 0 ? [] : ['--comments', JSON.stringify(comments)]), '--json'])
+    },
+    addComment: async (root, number, body) => {
+      await cliText(['github', 'comment', root, String(number), '--body', body, '--json'])
+    },
+    setIssueState: async (root, number, state, reason) => {
+      await cliText(['github', 'issue-state', root, String(number), state, ...(reason === undefined ? [] : ['--reason', reason]), '--json'])
+    },
+    setPrState: async (root, number, action, options) => {
+      await cliText(['github', 'pr-state', root, String(number), action, ...(options?.method === undefined ? [] : ['--method', options.method]), '--json'])
+    },
     pickFolder: async () => {
       const selected = await open({ directory: true, multiple: false })
       return selected ?? null

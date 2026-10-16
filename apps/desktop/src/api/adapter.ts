@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -103,6 +103,16 @@ export interface DesktopApi {
   githubPullRequest(root: string, number: number): Promise<GithubDetail>
   /** One issue's body and comments (`github issue`). */
   githubIssue(root: string, number: number): Promise<GithubDetail>
+  /** The files a pull request changes, with their patches (`github pr-files`). */
+  prFiles(root: string, number: number): Promise<GithubPullRequestFile[]>
+  /** Submits a review with its inline comments (`github review`); rejects with gh's message. */
+  submitReview(root: string, number: number, review: GithubReview): Promise<void>
+  /** Adds a comment to a pull request's or an issue's conversation (`github comment`). */
+  addComment(root: string, number: number, body: string): Promise<void>
+  /** Closes or reopens an issue (`github issue-state`). */
+  setIssueState(root: string, number: number, state: 'open' | 'closed', reason?: 'completed' | 'not planned'): Promise<void>
+  /** Merges, closes or reopens a pull request (`github pr-state`). */
+  setPrState(root: string, number: number, action: 'merge' | 'close' | 'reopen', options?: { method?: GithubMergeMethod }): Promise<void>
   /** Ask the person for a folder with the native picker; null when cancelled. */
   pickFolder(): Promise<string | null>
   /** A chat's conversation; pass the last cursor to get only newer events. */

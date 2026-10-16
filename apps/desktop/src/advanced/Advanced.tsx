@@ -19,6 +19,7 @@ import { SessionView } from '@/chat/SessionView'
 import type { CodeGoto } from '@/code/CodeFrame'
 import { closeCode, codeTargetForRoot, emptyCodeMode, enterCode, isToggleChatsKey, leaveCode, type CodeModeState, type CodeTarget } from '@/code/code-mode-model'
 import type { GithubKind } from '@/github/useGithubCounts'
+import { githubItemId, parseGithubItemId } from '@/github/review-model'
 import { ImportProject } from '@/import/ImportProject'
 import { PaneSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
@@ -53,6 +54,7 @@ const CodeFrame = lazy(() => import('@/code/CodeFrame').then((module) => ({ defa
 const CodeRail = lazy(() => import('@/code/CodeRail').then((module) => ({ default: module.CodeRail })))
 const QuickView = lazy(() => import('@/code/QuickView').then((module) => ({ default: module.QuickView })))
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
+const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
 function Loading() {
@@ -460,6 +462,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setQuick(null)
     setGithubPage({ path: project.path, kind, focus: focus ?? null })
   })
+  // A pull request or issue maximised from its page takes the focused pane, like any other item.
+  const maximiseGithub = (root: string, kind: 'pr' | 'issue', number: number) => showItem(itemKey('github', githubItemId(kind, number, root)))
 
   const toggleCode = () => {
     if (codeMode.active !== null) setCodeMode(leaveCode)
@@ -488,6 +492,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return terminals.find((entry) => entry.id === parsed.id)?.cwd ?? null
       case 'launcher':
         return launcherRoots[item] ?? null
+      case 'github':
+        return parseGithubItemId(parsed.id)?.root ?? null
     }
   }
 
@@ -533,6 +539,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return keepsPane(terminals, parsed.id)
       case 'launcher':
         return true
+      case 'github':
+        return parseGithubItemId(parsed.id) !== null
     }
   }
 
@@ -604,6 +612,18 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             />
           ),
         }
+      case 'github': {
+        const target = parseGithubItemId(parsed.id)
+        if (target === null) return gone('GitHub')
+        return {
+          title: `${target.kind === 'pr' ? 'Pull request' : 'Issue'} #${target.number}`,
+          node: (
+            <Suspense fallback={<Loading />}>
+              <GithubItemView root={target.root} kind={target.kind} number={target.number} />
+            </Suspense>
+          ),
+        }
+      }
     }
   }
   // Every terminal stays mounted, shown or not, so it keeps running and reports its exit; a restored
@@ -722,6 +742,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         focus={githubPage.focus}
         onKind={(kind) => setGithubPage({ path: githubPage.path, kind, focus: null })}
         onClose={() => setGithubPage(null)}
+        onMaximise={(kind, number) => maximiseGithub(githubPage.path, kind, number)}
       />
     ) : null
 

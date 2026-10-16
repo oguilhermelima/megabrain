@@ -156,3 +156,19 @@ export function CloseIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function MaximiseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />
+    </Svg>
+  )
+}
+
+export function ChevronIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="m6 4 4 4-4 4" />
+    </Svg>
+  )
+}

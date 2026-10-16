@@ -1,12 +1,5 @@
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { javascript } from '@codemirror/lang-javascript'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { python } from '@codemirror/lang-python'
-import { rust } from '@codemirror/lang-rust'
-import { StreamLanguage, syntaxHighlighting } from '@codemirror/language'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
+import { syntaxHighlighting } from '@codemirror/language'
+import { languageExtension } from '@/code/languages'
 import { MergeView } from '@codemirror/merge'
 import { EditorState, type Extension } from '@codemirror/state'
 import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark'
@@ -31,30 +24,6 @@ const readOnlyExtensions: Extension[] = [EditorState.readOnly.of(true), EditorVi
 
 const syntaxColors: Extension = syntaxHighlighting(oneDarkHighlightStyle)
 
-function languageExtension(language: string): Extension {
-  switch (language) {
-    case 'typescript':
-      return javascript({ typescript: true, jsx: true })
-    case 'javascript':
-      return javascript({ jsx: true })
-    case 'json':
-      return json()
-    case 'markdown':
-      return markdown()
-    case 'rust':
-      return rust()
-    case 'css':
-      return css()
-    case 'html':
-      return html()
-    case 'python':
-      return python()
-    case 'shell':
-      return StreamLanguage.define(shell)
-    default:
-      return []
-  }
-}
 
 /** A read-only CodeMirror editor with syntax highlighting and line numbers. */
 export function CodeEditor({ text, language }: { text: string; language: string }) {
@@ -67,7 +36,7 @@ export function CodeEditor({ text, language }: { text: string; language: string 
     const previousScrollTop = viewRef.current?.scrollDOM.scrollTop ?? 0
     viewRef.current?.destroy()
     const view = new EditorView({
-      state: EditorState.create({ doc: text, extensions: [basicSetup, languageExtension(language), darkTheme, syntaxColors, ...readOnlyExtensions] }),
+      state: EditorState.create({ doc: text, extensions: [basicSetup, languageExtension(language) ?? [], darkTheme, syntaxColors, ...readOnlyExtensions] }),
       parent: container,
     })
     view.scrollDOM.scrollTop = previousScrollTop
@@ -91,7 +60,7 @@ export function CodeDiffEditor({ original, modified, language }: { original: str
     if (!container) return
     const previousScrollTop = viewRef.current?.a.scrollDOM.scrollTop ?? 0
     viewRef.current?.destroy()
-    const extensions = [languageExtension(language), darkTheme, syntaxColors, lineNumbers(), ...readOnlyExtensions]
+    const extensions = [languageExtension(language) ?? [], darkTheme, syntaxColors, lineNumbers(), ...readOnlyExtensions]
     const view = new MergeView({
       a: { doc: original, extensions },
       b: { doc: modified, extensions },

@@ -273,7 +273,37 @@ export const githubDetailSchema = z.looseObject({
   checks: z.array(githubCheckSchema).optional(),
   additions: z.number().optional(),
   deletions: z.number().optional(),
+  /** A pull request's branch and the one it merges into, when the CLI reports them. */
+  headRefName: z.string().optional(),
+  baseRefName: z.string().optional(),
 })
+
+// `megabrain github pr-files <repo> <number> --json`: the files a pull request changes, each with
+// gh's unified patch (null when GitHub sends none, as for a binary or a very large file).
+export const githubPullRequestFileSchema = z.looseObject({
+  path: z.string(),
+  previousPath: z.string().optional(),
+  status: z.enum(['added', 'modified', 'removed', 'renamed']),
+  additions: z.number(),
+  deletions: z.number(),
+  patch: z.string().nullable(),
+})
+
+/** The review `megabrain github review` submits: a verdict, its summary and the inline comments on the diff. */
+export type GithubReviewEvent = 'approve' | 'request-changes' | 'comment'
+export interface GithubReviewComment {
+  path: string
+  line: number
+  /** LEFT comments on the old side of the diff (a removed line), RIGHT on the new side. */
+  side: 'LEFT' | 'RIGHT'
+  body: string
+}
+export interface GithubReview {
+  event: GithubReviewEvent
+  body: string
+  comments?: GithubReviewComment[]
+}
+export type GithubMergeMethod = 'merge' | 'squash' | 'rebase'
 
 // One agent session found in a worktree, started by megabrain or by hand.
 export const projectSessionSchema = z.looseObject({
@@ -552,6 +582,7 @@ export type GithubIssue = z.infer<typeof githubIssueSchema>
 export type GithubPullRequestList = z.infer<typeof githubPullRequestListSchema>
 export type GithubIssueList = z.infer<typeof githubIssueListSchema>
 export type GithubDetail = z.infer<typeof githubDetailSchema>
+export type GithubPullRequestFile = z.infer<typeof githubPullRequestFileSchema>
 export type Project = z.infer<typeof projectsSchema>[number]
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>

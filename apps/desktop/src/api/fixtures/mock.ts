@@ -1,4 +1,4 @@
-import type { Settings, GithubDetail, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { Settings, GithubDetail, GithubPullRequestFile, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -536,7 +536,7 @@ export const mockGithubDetail = (kind: 'pr' | 'issue', number: number): GithubDe
     number,
     title: item?.title ?? `#${number}`,
     state: item?.state ?? 'open',
-    ...(kind === 'pr' ? { isDraft: pull?.isDraft ?? false, reviewDecision: pull?.reviewDecision ?? null, checks: pull?.checks ?? [], additions: pull?.additions ?? 0, deletions: pull?.deletions ?? 0 } : {}),
+    ...(kind === 'pr' ? { isDraft: pull?.isDraft ?? false, reviewDecision: pull?.reviewDecision ?? null, checks: pull?.checks ?? [], additions: pull?.additions ?? 0, deletions: pull?.deletions ?? 0, headRefName: pull?.headRefName ?? 'feature', baseRefName: pull?.baseRefName ?? 'main' } : {}),
     url: item?.url ?? githubRef.url,
     author: item?.author ?? null,
     createdAt: item?.createdAt ?? null,
@@ -567,3 +567,57 @@ export const mockGithubDetail = (kind: 'pr' | 'issue', number: number): GithubDe
           ],
   }
 }
+
+/** The files of a mock pull request: one edit, one new file, one rename, one removal and a binary. */
+export const mockPullRequestFiles = (number: number): GithubPullRequestFile[] => [
+  {
+    path: 'apps/desktop/src/github/github-requests.ts',
+    status: 'modified',
+    additions: 4,
+    deletions: 2,
+    patch: [
+      '@@ -1,9 +1,11 @@',
+      " import { api } from '@/api'",
+      "-import type { GithubIssueList, GithubPullRequestList } from '@/api/schema'",
+      "+import type { GithubIssueList, GithubPullRequestFile, GithubPullRequestList } from '@/api/schema'",
+      " import { listRequestKey, pageSize, shareInFlight } from '@/github/github-model'",
+      ' ',
+      '-const share = shareInFlight()',
+      '+// One gh call per key while it runs.',
+      '+const share = shareInFlight()',
+      ' ',
+      " export type PullRequestState = 'open' | 'closed' | 'merged' | 'all'",
+      `+export const pullRequest = ${number}`,
+      " export type IssueState = 'open' | 'closed' | 'all'",
+      '@@ -14,5 +16,5 @@ export function pullRequestPage(root: string, state: PullRequestState, after: string | null)',
+      ' ',
+      ' export function issuePage(root: string, state: IssueState, after: string | null): Promise<GithubIssueList> {',
+      '-  return share(listRequestKey(\'issues\', root, state, pageSize, after), () => api.githubIssues(root, state, pageSize, after))',
+      '+  return share(listRequestKey(\'issues\', root, state, pageSize, after), () => api.githubIssues(root, state, pageSize, after)) // shared',
+      ' }',
+    ].join('\n'),
+  },
+  {
+    path: 'apps/desktop/src/github/review-notes.md',
+    status: 'added',
+    additions: 5,
+    deletions: 0,
+    patch: ['@@ -0,0 +1,5 @@', '+# Review notes', '+', '+- Inline comments stay **pending** until the review is submitted.', '+- Merge asks first.', '+- Errors show gh\'s own message.'].join('\n'),
+  },
+  {
+    path: 'src/cli/commands/github-review.ts',
+    previousPath: 'src/cli/commands/review.ts',
+    status: 'renamed',
+    additions: 1,
+    deletions: 1,
+    patch: ['@@ -3,3 +3,3 @@ export async function review(args: string[]) {', '   const event = flag(args, "--event")', '-  return run("gh", ["pr", "review", ...args])', '+  return run("gh", ["pr", "review", "--json", ...args])', ' }'].join('\n'),
+  },
+  {
+    path: 'docs/old-review.md',
+    status: 'removed',
+    additions: 0,
+    deletions: 2,
+    patch: ['@@ -1,2 +0,0 @@', '-# Old review', '-Superseded.'].join('\n'),
+  },
+  { path: 'apps/desktop/icons/review.png', status: 'modified', additions: 0, deletions: 0, patch: null },
+]

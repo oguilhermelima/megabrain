@@ -1,6 +1,7 @@
 // The main area as a layout tree of panes, like tmux: a split lays its children out in a row or a
-// column by size, and each pane shows one item (a chat, a session, a native chat, a terminal or a
-// launcher), never one item in two panes. Every operation is pure and returns a normalised tree.
+// column by size, and each pane shows one item (a chat, a session, a native chat, a terminal, a
+// launcher or a maximised pull request or issue), never one item in two panes. Every operation is
+// pure and returns a normalised tree.
 
 export type Edge = 'left' | 'right' | 'top' | 'bottom'
 export type Zone = Edge | 'center'
@@ -31,8 +32,8 @@ export interface Panes {
   focused: string
 }
 
-export type ItemKind = 'dispatch' | 'session' | 'native' | 'terminal' | 'launcher'
-const itemKinds: readonly string[] = ['dispatch', 'session', 'native', 'terminal', 'launcher']
+export type ItemKind = 'dispatch' | 'session' | 'native' | 'terminal' | 'launcher' | 'github'
+const itemKinds: readonly string[] = ['dispatch', 'session', 'native', 'terminal', 'launcher', 'github']
 
 /** An item key is its kind and its id; the id may hold colons (agent session ids do). */
 export function itemKey(kind: ItemKind, id: string): string {
