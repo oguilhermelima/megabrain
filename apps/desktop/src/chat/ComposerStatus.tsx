@@ -12,33 +12,26 @@ import {
   effortName,
   findModel,
   formatTokens,
-  providerUsage,
-  readingAge,
-  staleNote,
-  resetDistance,
   menuGroups,
   modelHint,
   modelWindows,
   pickerLabel,
   switchNeedsConfirm,
   switchTarget,
-  type AgentLimit,
   type ContextMeter,
-  type ProviderUsage,
   type LimitTone,
 } from '@/chat/composer-status'
 import { ringOffset } from '@/chat/composer-look'
 import { AgentIcon } from '@/components/agent-icons'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { appSettings } from '@/lib/app-settings'
-import { agentLabel } from '@/native-chat/empty-chat'
 import { isStale } from '@/lib/shared-read'
 
-const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
-const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
+export const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
+export const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
 
 /** The settings, whether they are older than a fresh read would be, and whether the last read failed. */
-function useSettings(): { settings: Settings | null; stale: boolean; failed: boolean } {
+export function useSettings(): { settings: Settings | null; stale: boolean; failed: boolean } {
   const store = appSettings()
   const subscribe = useCallback(
     (notify: () => void) => {
@@ -236,21 +229,11 @@ function ModelMenu({
   )
 }
 
-const windowNames: Record<string, string> = { '5h': '5-hour', weekly: 'Weekly' }
-
-const resetClock = (at: Date) => at.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
-
-/** The limit in words, with the exact reset time, for a tooltip. */
-function limitTitle(agent: string, limit: AgentLimit): string {
-  const when = limit.resetsAt === null ? 'reset time unknown' : `resets ${resetClock(limit.resetsAt)}`
-  return `${agent} ${windowNames[limit.window] ?? limit.window} limit: ${Math.round(limit.usedPercent)}% used, ${when}`
-}
-
 const ringRadius = 6
 const ringCircumference = 2 * Math.PI * ringRadius
 
 /** A ring filled to a share: an arc on a faint track from twelve o'clock, still, coloured by tone. */
-function Ring({ fraction, tone }: { fraction: number; tone: LimitTone }) {
+export function Ring({ fraction, tone }: { fraction: number; tone: LimitTone }) {
   return (
     <svg viewBox="0 0 16 16" className={`size-4 shrink-0 ${toneText[tone]}`} aria-hidden="true">
       <circle cx="8" cy="8" r={ringRadius} fill="none" strokeWidth="2.25" className="stroke-white/[0.13]" />
@@ -292,7 +275,7 @@ function ContextGauge({ meter }: { meter: ContextMeter }) {
 }
 
 // Placeholders the size of the controls they stand for, so nothing moves when the settings arrive.
-const shimmer = 'animate-pulse rounded-full bg-white/[0.08] motion-reduce:animate-none'
+export const shimmer = 'animate-pulse rounded-full bg-white/[0.08] motion-reduce:animate-none'
 
 function PickerSkeleton() {
   return (
@@ -404,115 +387,5 @@ export function ComposerStatus({
       )}
       <ConfirmDialog confirm={asking} onClose={() => setAsking(null)} />
     </div>
-  )
-}
-
-/** A limit as a ring and its share, coloured by tone: the compact readout a split and the sidebar show. */
-function RingShare({ limit }: { limit: AgentLimit }) {
-  return (
-    <>
-      <Ring fraction={limit.usedPercent / 100} tone={limit.tone} />
-      <span className={`tabular-nums ${limit.tone === 'normal' ? 'text-ink-300' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
-    </>
-  )
-}
-
-/**
- * The sidebar's foot: the same compact readout as a split's, a mark, ring and share per provider with
- * a reading, from the one settings store. A click opens every window of each provider with its bar,
- * share, reset time in both forms and how old the reading is. Nothing shows until a provider has one.
- */
-export function SidebarUsage({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { settings, stale, failed } = useSettings()
-  const [open, setOpen] = useState<Open>(null)
-  const menu = usePresence(open)
-  const close = useRef(() => setOpen(null)).current
-  const trigger = useRef<HTMLButtonElement>(null)
-  const usage = settings === null ? [] : providerUsage(settings.limits.readings)
-  const frame = 'shrink-0 border-t border-white/[0.07] px-2.5 py-2'
-  if (settings === null)
-    return (
-      <div data-sidebar-usage="" aria-busy={!failed} className={`${frame} flex h-12 items-center pl-5 text-[12px] text-ink-500`}>
-        {failed ? 'Usage unavailable; retrying' : <span aria-hidden="true" className={`h-2.5 w-24 ${shimmer}`} />}
-      </div>
-    )
-  if (usage.length === 0) return null
-  const retrying = stale || failed ? (failed ? 'Last known usage; retrying' : 'Last known usage; refreshing') : null
-  return (
-    <div data-sidebar-usage="" className={frame}>
-      <button
-        ref={trigger}
-        type="button"
-        title={retrying ?? 'Usage limits'}
-        aria-label={`Usage limits: ${usage.map((item) => `${agentLabel(item.agent)} ${Math.round(item.highest.usedPercent)}%`).join(', ')}`}
-        aria-haspopup="dialog"
-        aria-expanded={open !== null}
-        onMouseDown={(event) => {
-          // Lets a second click close the open popover.
-          event.preventDefault()
-          event.stopPropagation()
-        }}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect()
-          const anchor = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
-          setOpen((current) => (current === null ? anchor : null))
-        }}
-        className={`flex h-8 w-full items-center gap-3 rounded-[12px] px-2.5 text-[12px] whitespace-nowrap text-ink-300 transition-colors hover:bg-row-hover focus-visible:outline-2 focus-visible:outline-accent aria-expanded:bg-row-hover ${retrying === null ? '' : 'opacity-60'}`}
-      >
-        {usage.map((item) => (
-          <span key={item.agent} className="flex items-center gap-1.5">
-            <AgentIcon agent={item.agent} size={13} className="text-ink-400" />
-            <RingShare limit={item.highest} />
-          </span>
-        ))}
-      </button>
-      {menu.shown !== null && (
-        <Popover role="dialog" focus="button" className="max-h-[calc(100vh-16px)] w-[288px] overflow-y-auto p-2" anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
-          <p className={`${heading} pt-1`}>Usage limits</p>
-          {usage.map((item) => (
-            <ProviderLimits key={item.agent} usage={item} />
-          ))}
-          {retrying !== null && <p className="px-2 pb-1 text-[12px] text-ink-500">{retrying}</p>}
-          <div className="mt-1 border-t border-white/[0.06] pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(null)
-                onOpenSettings()
-              }}
-              className="flex h-8 w-full items-center rounded-[10px] px-2 text-left text-[12.5px] text-ink-300 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:outline-none"
-            >
-              Usage in Settings
-            </button>
-          </div>
-        </Popover>
-      )}
-    </div>
-  )
-}
-
-/** One provider in the usage details: its mark and name, how old its reading is, then a row per window. */
-function ProviderLimits({ usage }: { usage: ProviderUsage }) {
-  const age = readingAge(usage.fetchedAt)
-  const note = staleNote(usage.stale)
-  return (
-    <section data-provider-limits={usage.agent} className="px-2 pt-1 pb-2">
-      <div className="flex h-6 items-center gap-2">
-        <AgentIcon agent={usage.agent} size={13} className="text-ink-300" />
-        <h3 className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ink-100">{agentLabel(usage.agent)}</h3>
-        {age !== null && <span className="shrink-0 text-[11.5px] text-ink-500">{`updated ${age}`}</span>}
-      </div>
-      {note !== null && <p className="pt-0.5 text-[11.5px] text-warn">{note}</p>}
-      {usage.limits.map((limit) => (
-        <div key={limit.window} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 pt-1.5" title={limitTitle(usage.agent, limit)}>
-          <span className="min-w-0 truncate text-[12.5px] font-medium text-ink-200">{windowNames[limit.window] ?? limit.window}</span>
-          <span className={`text-[12.5px] font-semibold tabular-nums ${limit.tone === 'normal' ? 'text-ink-100' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
-          <span className="col-span-2 mt-1 block h-1.5 overflow-hidden rounded-full bg-white/[0.12]">
-            <span className={`block h-full rounded-full ${toneBar[limit.tone]}`} style={{ width: `${Math.max(3, Math.round(limit.usedPercent))}%` }} />
-          </span>
-          <span className="col-span-2 truncate pt-1 text-[11.5px] text-ink-400">{limit.resetsAt === null ? 'Reset time unknown' : `Resets ${resetClock(limit.resetsAt)} · ${resetDistance(limit.resetsAt)}`}</span>
-        </div>
-      ))}
-    </section>
   )
 }

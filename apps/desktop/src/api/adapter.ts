@@ -253,6 +253,9 @@ export interface DesktopApi {
   /** What the sidebar folded and its row order, as `settings get sidebar-state` prints them. */
   sidebarState(): Promise<unknown>
   setSidebarState(json: string): Promise<void>
+  /** The order and hidden providers of the sidebar's usage readout (`settings get usage-order`); advanced/usage-order.ts reads the shape. */
+  usageOrder(): Promise<unknown>
+  setUsageOrder(json: string): Promise<void>
   /** The shortcut keys the person changed (`settings get shortcuts`); lib/shortcuts.ts reads the shape. */
   shortcuts(): Promise<unknown>
   setShortcuts(json: string): Promise<void>

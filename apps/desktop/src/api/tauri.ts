@@ -368,6 +368,8 @@ export function createTauriApi(): DesktopApi {
     setHiddenSessions: async (json) => void (await cliText(['settings', 'set', 'hidden-sessions', json])),
     sidebarState: () => cliJson(['settings', 'get', 'sidebar-state'], z.unknown()),
     setSidebarState: async (json) => void (await cliText(['settings', 'set', 'sidebar-state', json])),
+    usageOrder: () => cliJson(['settings', 'get', 'usage-order'], z.unknown()),
+    setUsageOrder: async (json) => void (await cliText(['settings', 'set', 'usage-order', json])),
     shortcuts: () => cliJson(['settings', 'get', 'shortcuts'], z.unknown()),
     setShortcuts: async (json) => void (await cliText(['settings', 'set', 'shortcuts', json])),
   }

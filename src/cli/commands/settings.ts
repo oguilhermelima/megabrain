@@ -131,6 +131,17 @@ function parseSidebarState(raw: string): Result<SidebarState> {
   return ok({ version: 1, collapsed: value.collapsed, rows });
 }
 
+type UsageOrder = { version: 1; order: string[]; hidden: string[] };
+const emptyUsageOrder: UsageOrder = { version: 1, order: [], hidden: [] };
+
+function parseUsageOrder(raw: string): Result<UsageOrder> {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return failed("usage-order: not valid JSON", 2); }
+  if (!isRecord(value) || !hasOnlyKeys(value, ["version", "order", "hidden"]) || value.version !== 1) return failed("usage-order: expected { version: 1, order, hidden }", 2);
+  if (!isStringList(value.order) || !isStringList(value.hidden)) return failed("usage-order: order and hidden must be lists of strings", 2);
+  return ok({ version: 1, order: value.order, hidden: value.hidden });
+}
+
 interface DesktopFile {
   file: string;
   empty: object;
@@ -155,6 +166,7 @@ const desktopSettings = {
   "shortcuts": desktopFileOf("shortcut-settings.json", parseShortcutOverrides, emptyShortcutOverrides, (value) => `shortcut overrides: ${Object.keys(value.bindings).length}`),
   "hidden-sessions": desktopFileOf("hidden-sessions.json", parseHiddenSessions, emptyHiddenSessions, (value) => `hidden sessions: ${Object.keys(value.sessions).length}`),
   "sidebar-state": desktopFileOf("sidebar-state.json", parseSidebarState, emptySidebarState, (value) => `sidebar state: ${value.collapsed.length} collapsed, ${Object.keys(value.rows).length} ordered worktrees`),
+  "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
 } as const;
 
 type DesktopSetting = keyof typeof desktopSettings;
@@ -298,7 +310,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

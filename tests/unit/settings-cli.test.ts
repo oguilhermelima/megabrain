@@ -341,6 +341,45 @@ describe("settings sidebar-state", () => {
   });
 });
 
+describe("settings usage-order", () => {
+  const order = { version: 1, order: ["grok", "claude", "codex"], hidden: ["agy"] };
+
+  async function read(env: ReturnType<typeof sandbox>): Promise<unknown> {
+    const result = await run(["settings", "get", "usage-order"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(result.error);
+    return JSON.parse(result.value) as unknown;
+  }
+
+  test("reads no order and nothing hidden before anything was saved", async () => {
+    expect(await read(sandbox())).toEqual({ version: 1, order: [], hidden: [] });
+  });
+
+  test("stores the order and hidden providers as a private state-dir file and reads them back", async () => {
+    const env = sandbox();
+    const result = await run(["settings", "set", "usage-order", JSON.stringify(order)], env);
+    expect(result).toEqual({ kind: "ok", value: "usage order: 3 ordered, 1 hidden\n" });
+    expect(await read(env)).toEqual(order);
+    expect(statSync(join(env.state, "usage-order.json")).mode & 0o777).toBe(0o600);
+  });
+
+  test("refuses anything else and keeps the saved order", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "usage-order", JSON.stringify(order)], env)).kind).toBe("ok");
+    for (const value of [
+      "nope",
+      JSON.stringify({ version: 2, order: [], hidden: [] }),
+      JSON.stringify({ version: 1, order: [1], hidden: [] }),
+      JSON.stringify({ version: 1, order: [], hidden: {} }),
+      JSON.stringify({ version: 1, order: [] }),
+      JSON.stringify({ version: 1, order: [], hidden: [], more: 1 }),
+    ]) {
+      expect((await run(["settings", "set", "usage-order", value], env)).kind).toBe("failed");
+    }
+    expect(await read(env)).toEqual(order);
+  });
+});
+
 describe("chain save", () => {
   test("creates and replaces a chain without an editor", async () => {
     const env = sandbox();

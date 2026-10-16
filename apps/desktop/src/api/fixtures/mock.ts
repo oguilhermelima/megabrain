@@ -410,8 +410,11 @@ export const mockSettings: Settings = {
       { provider: 'claude', window: 'weekly', status: 'current', usedPercent: 88, resetsAt: '1792087200', fetchedAt: 1792064494, reason: 'claude weekly window at 88 percent' },
       { provider: 'codex', window: '5h', status: 'current', usedPercent: 17, resetsAt: '1792082310', fetchedAt: 1792064494, reason: 'codex 5h window at 17.0 percent' },
       { provider: 'codex', window: 'weekly', status: 'current', usedPercent: 66, resetsAt: '1792489191', fetchedAt: 1792064494, reason: 'codex weekly window at 66.0 percent' },
-      { provider: 'grok', window: '5h', status: 'unknown', usedPercent: null, resetsAt: null, fetchedAt: null, reason: 'grok 5h window unknown (live provider is not enabled)' },
-      { provider: 'grok', window: 'weekly', status: 'unknown', usedPercent: null, resetsAt: null, fetchedAt: null, reason: 'grok weekly window unknown (live provider is not enabled)' },
+      // The last good agy readings, kept while its provider answers 429.
+      { provider: 'agy', window: '5h', status: 'stale', usedPercent: 0, resetsAt: '1792082310', fetchedAt: 1792063894, reason: 'agy usage request failed: HTTP 429', retryAt: Math.floor(Date.now() / 1000) + 240 },
+      { provider: 'agy', window: 'weekly', status: 'stale', usedPercent: 41, resetsAt: '1792489191', fetchedAt: 1792063894, reason: 'agy usage request failed: HTTP 429', retryAt: Math.floor(Date.now() / 1000) + 240 },
+      { provider: 'grok', window: '5h', status: 'current', usedPercent: 12, resetsAt: '1792082310', fetchedAt: 1792064494, reason: 'grok 5h window at 12 percent' },
+      { provider: 'grok', window: 'weekly', status: 'unknown', usedPercent: null, resetsAt: null, fetchedAt: null, reason: 'grok weekly window unknown' },
     ],
   },
   chains: [
