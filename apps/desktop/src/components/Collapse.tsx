@@ -47,9 +47,11 @@ export function Collapse({ open, className = '', children }: { open: boolean; cl
         if (!open) setMounted(false)
       }}
       style={{ gridTemplateRows: expanded ? '1fr' : '0fr', opacity: expanded ? 1 : 0 }}
-      className="grid transition-[grid-template-rows,opacity] duration-[180ms] ease-out motion-reduce:transition-none"
+      // One column as wide as the container: an auto track would grow to the content's unwrapped width
+      // once overflow-hidden lifts, pushing every row's trailing badge and time past the sidebar's edge.
+      className="grid grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-[180ms] ease-out motion-reduce:transition-none"
     >
-      <div className={`min-h-0 ${moving || !expanded ? 'overflow-hidden' : ''} ${className}`}>{children}</div>
+      <div className={`min-h-0 min-w-0 ${moving || !expanded ? 'overflow-hidden' : ''} ${className}`}>{children}</div>
     </div>
   )
 }
