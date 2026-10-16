@@ -1,7 +1,7 @@
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, findChild as sharedFindChild, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { resolveStateDirectory } from "../../core/state.js";
+import { resolveChildStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
 import { hasCallerIdentity } from "../../core/context.js";
 import { usageText } from "../../core/usage.js";
@@ -54,7 +54,7 @@ export async function executeChildAck(args: readonly string[], environment: Queu
   if (args[0] === "-h" || args[0] === "--help") return ok(usage);
   const parsed = parseArgs(args, environment);
   if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(environment);
+  const root = resolveChildStateDirectory(environment);
   const child = await findChild(root, environment, processAdapter);
   if (child.kind !== "ok") return child;
   const consumer = parsed.value.consumer ?? environment.MEGABRAIN_CONSUMER_ID ?? (child.value.session.tmuxSession && child.value.session.tmuxPane

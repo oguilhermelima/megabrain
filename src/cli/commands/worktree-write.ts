@@ -664,6 +664,22 @@ function finishRefusal(
     stderr: "megabrain: " + message + "\n",
   };
 }
+const pause = (milliseconds: number) => new Promise<void>((done) => setTimeout(done, milliseconds));
+const pathExists = (path: string) => lstat(path).then(() => true, () => false);
+
+// WHY: the host remover (Orca's cascade) deletes the folder on its own schedule and can answer
+// with a failure after it already did, so the folder, not the exit code, says whether the
+// removal happened. Returns whether the folder is gone within the settle window.
+async function folderGone(path: string, environment: Environment): Promise<boolean> {
+  const configured = Number(environment.MEGABRAIN_FINISH_SETTLE_MS);
+  const deadline = Date.now() + (Number.isFinite(configured) && configured >= 0 ? configured : 4000);
+  while (await pathExists(path)) {
+    if (Date.now() >= deadline) return false;
+    await pause(100);
+  }
+  return true;
+}
+
 export async function removeFinishWorktree(
   process: ProcessAdapter,
   repo: string,
@@ -851,7 +867,9 @@ export async function executeWorktreeCreate(
     path,
     "-b",
     branch,
-    base,
+    // WHY: the sha resolved above, never the ref name, so the worktree starts exactly where
+    // baseCommit says and a ref that moves meanwhile cannot change the base.
+    resolvedBase.value.commit,
   ]);
   if (added.kind !== "ok") {
     const removed = await removeCreatedBranch(
@@ -968,6 +986,7 @@ export async function executeWorktreeCreate(
     reused: false,
     base,
     baseCommit: resolvedBase.value.commit,
+    resolvedSha: resolvedBase.value.commit,
     baseSource: resolvedBase.value.source,
     parent,
     links,
@@ -1099,8 +1118,10 @@ export async function executeWorktreeFinish(
     value.force,
     workspace.value,
   );
-  if (removed.kind !== "ok") {
-    const reason = removalReason(removed.error);
+  const gone = await folderGone(path, environment);
+  if (gone) await run(process, "git", ["-C", repo.value, "worktree", "prune"]);
+  if (!gone) {
+    const reason = removed.kind === "ok" ? "the folder is still present after the host reported success" : removalReason(removed.error);
     const message = "could not remove worktree " + path + ": " + reason;
     return value.json
       ? {
@@ -1114,23 +1135,23 @@ export async function executeWorktreeFinish(
             baseWarning,
             error: reason,
           }),
-          exitCode: removed.exitCode,
+          exitCode: removed.kind === "ok" ? 1 : removed.exitCode,
           stderr: warning + "megabrain: " + message + "\n",
         }
-      : failed(message, removed.exitCode);
+      : failed(message, removed.kind === "ok" ? 1 : removed.exitCode);
   }
   let branchDeleted: boolean | undefined;
   let branchOutput = "";
   if (value.deleteBranch && branch) {
     const exists = await localBranchExists(process, repo.value, branch);
     if (exists.kind === "ok" && exists.value) {
-      const deleted = await run(process, "git", [
-        "-C",
-        repo.value,
-        "branch",
-        "-D",
-        branch,
-      ]);
+      const deleteBranch = () => run(process, "git", ["-C", repo.value, "branch", "-D", branch]);
+      let deleted = await deleteBranch();
+      if (deleted.kind !== "ok" && /used by worktree|checked out/.test(deleted.error)) {
+        // git still lists the removed folder until it is pruned.
+        await run(process, "git", ["-C", repo.value, "worktree", "prune"]);
+        deleted = await deleteBranch();
+      }
       if (deleted.kind === "ok") {
         branchDeleted = true;
         branchOutput = deleted.value.stdout.trim();

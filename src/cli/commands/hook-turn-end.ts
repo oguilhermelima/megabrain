@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
 import { classifyQueueMail } from "../../core/queue-write.js";
-import { resolveStateDirectory } from "../../core/state.js";
+import { resolveChildStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
 import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
@@ -574,7 +574,7 @@ export async function executeHookTurnEnd(
       return finish(defaultText);
     }
 
-    const root = resolveStateDirectory(environment);
+    const root = resolveChildStateDirectory(environment);
     const session = await computeSessionId(environment, processAdapter);
     if (session === undefined) return finish(defaultText);
 

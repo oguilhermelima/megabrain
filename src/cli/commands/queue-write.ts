@@ -5,7 +5,7 @@ import { readdir, realpath } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { resolveStateDirectory } from "../../core/state.js";
+import { resolveChildStateDirectory } from "../../core/state.js";
 import { childMessageUsage, classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../core/queue-write.js";
 import { asOperator, hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type CallerIdentity } from "../../core/context.js";
 import { getTmux } from "../../hosts/tmux.js";
@@ -430,7 +430,7 @@ export async function executeQueueWrite(type: "received" | "ask" | "done", args:
   if (args[0] === "-h" || args[0] === "--help") return ok(childMessageUsage(type));
   const parsed = parseChildMessage(type, args);
   if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(environment);
+  const root = resolveChildStateDirectory(environment);
   const child = await findChild(root, environment, processAdapter);
   if ("kind" in child) return child;
   const append = await appendMessage(root, child.dispatch, "child", type, parsed.value, child.session.id, environment, processAdapter);

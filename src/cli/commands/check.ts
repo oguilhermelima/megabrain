@@ -1,7 +1,7 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
-import { resolveStateDirectory } from "../../core/state.js";
+import { resolveChildStateDirectory } from "../../core/state.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
@@ -114,7 +114,7 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   if (!Number.isInteger(pollInterval) || pollInterval < 0) return failed("--poll-interval must be a non-negative number of seconds", 2);
   if (waitMode !== "poll") return failed("--wait-mode must be poll", 2);
   if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);
-  const root = resolveStateDirectory(environment);
+  const root = resolveChildStateDirectory(environment);
   const dispatch = await dispatchId(environment, root, processAdapter);
   if (dispatch === undefined) return failed(`no managed dispatch belongs to superset/${environment.SUPERSET_TERMINAL_ID ?? "unknown"}`);
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });

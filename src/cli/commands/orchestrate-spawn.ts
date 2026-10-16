@@ -743,6 +743,12 @@ async function initialMeta(id: string, options: SpawnOptions, worktree: SpawnWor
   };
 }
 
+// A session that was killed must not stay in the registry, or lists show it as live.
+function forgetTmuxSession(root: string, session: string): void {
+  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind === "ok") deleteTmuxSession(database.value, session);
+}
+
 async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: SpawnPlan, process: ProcessAdapter, dependencies: SpawnDependencies, terminalId: string, session: string | null, pane: string | null, sessionOwned: boolean): Promise<readonly string[]> {
   if (plan.cleanup.kind !== "required") return [];
   const failures: string[] = [];
@@ -750,6 +756,7 @@ async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: 
     const call = sessionOwned ? `tmux kill-session --target ${session}` : `tmux kill-pane --target ${pane ?? ""}`;
     const result = sessionOwned ? await getTmux().killSession(session, process) : pane === null ? undefined : await getTmux().killPane(pane, process);
     if (result !== undefined && result.kind !== "ok") failures.push(`${call}: ${result.error}`);
+    if (sessionOwned && result?.kind === "ok") forgetTmuxSession(root, session);
   }
   if (plan.cleanup.runtime === "host") {
     const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -824,6 +831,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   if (result.kind !== "ok" && trace.sessionCreatedBySpawn && !trace.sessionCleanupAttempted && trace.tmuxSession !== undefined) {
     const cleanup = await getTmux().killSession(trace.tmuxSession, process);
     trace.sessionCleanupAttempted = true;
+    if (cleanup.kind === "ok") forgetTmuxSession(resolveStateDirectory(environment), trace.tmuxSession);
     if (cleanup.kind !== "ok") {
       const primary = result.kind === "failed" ? result.error : result.reason;
       result = failed(`${primary}; cleanup failed: tmux kill-session --target ${trace.tmuxSession}: ${resultError(cleanup, "could not kill tmux session")}`, result.kind === "failed" ? result.exitCode : undefined);
@@ -1152,14 +1160,14 @@ async function runSpawn(args: readonly string[], environment: SpawnEnvironment, 
         // megabrain_tmux_send_agent (see the WHY comment on sendTmuxPair).
         const terminalHost = parentContext.host === "orca" || parentContext.host === "superset" ? `MEGABRAIN_TERMINAL_HOST=${shellQuote(parentContext.host)} ` : "";
         const terminalParent = parentContext.host === "orca" && parentContext.terminalId !== null ? `MEGABRAIN_TERMINAL_PARENT_ID=${shellQuote(parentContext.terminalId)} ` : "";
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} ${terminalHost}${terminalParent}MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${launch}`, "Enter", environment, process, true);
+        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} ${terminalHost}${terminalParent}MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${launch}`, "Enter", environment, process, true);
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
         const host = getHost(childHost);
         const identityVariable = host?.terminalIdentityVariable;
-        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")} MEGABRAIN_TERMINAL_HOST=${shellQuote(childHost ?? "")} MEGABRAIN_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_NO_TMUX=1 ${command}` });
+        const call = identityVariable === undefined ? undefined : host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: `cd ${shellQuote(worktree.path)} && env -u TMUX -u TMUX_PANE ${CALLER_IDENTITY_ENV_VARS.map((name) => `-u ${name}`).join(" ")} MEGABRAIN_TERMINAL_HOST=${shellQuote(childHost ?? "")} MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_STATE_DIR=${shellQuote(root)} ${identityVariable}=${shellQuote(terminalId)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_NO_TMUX=1 ${command}` });
         const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host command could not be built"), "host command could not be built"));
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }

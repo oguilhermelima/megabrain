@@ -124,7 +124,7 @@ describe("CLI router", () => {
     });
     expect(calls).toContainEqual({
       command: "git",
-      args: ["-C", ".", "worktree", "add", expect.any(String), "-b", "feat/spawn", "release/next"],
+      args: ["-C", ".", "worktree", "add", expect.any(String), "-b", "feat/spawn", "commit"],
     });
   });
 
@@ -138,7 +138,7 @@ describe("CLI router", () => {
     });
     expect(calls).toContainEqual({
       command: "git",
-      args: ["-C", ".", "worktree", "add", `${shared}/operator-name`, "-b", "feat/spawn", "main"],
+      args: ["-C", ".", "worktree", "add", `${shared}/operator-name`, "-b", "feat/spawn", "commit"],
     });
   });
 

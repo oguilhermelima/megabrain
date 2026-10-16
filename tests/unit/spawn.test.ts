@@ -602,6 +602,7 @@ describe("executeSpawn", () => {
       expect(text).toContain("env -u TMUX -u TMUX_PANE");
       expect(text).toContain("MEGABRAIN_NO_TMUX=1");
       expect(text).toContain(`MEGABRAIN_STATE_DIR='${root}'`);
+      expect(text).toContain(`MEGABRAIN_DISPATCH_STATE_DIR='${root}'`);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1165,7 +1166,7 @@ describe("executeSpawn", () => {
     try {
       expect(fixture.result.kind).toBe("ok");
       expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "rev-parse", "--verify", "release/next^{commit}"] });
-      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/feat-spawn`, "-b", "feat/spawn", "release/next"] });
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/feat-spawn`, "-b", "feat/spawn", "commit"] });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -1175,7 +1176,7 @@ describe("executeSpawn", () => {
     const fixture = await creationFixture({ name: "operator-name" });
     try {
       expect(fixture.result.kind).toBe("ok");
-      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/operator-name`, "-b", "feat/spawn", "main"] });
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/operator-name`, "-b", "feat/spawn", "commit"] });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -1186,7 +1187,7 @@ describe("executeSpawn", () => {
     try {
       expect(fixture.result.kind).toBe("ok");
       expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "rev-parse", "--verify", "release/next^{commit}"] });
-      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/operator-name`, "-b", "feat/spawn", "release/next"] });
+      expect(fixture.calls).toContainEqual({ command: "git", args: ["-C", fixture.repo, "worktree", "add", `${fixture.shared}/operator-name`, "-b", "feat/spawn", "commit"] });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
