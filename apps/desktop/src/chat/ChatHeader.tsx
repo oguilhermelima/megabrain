@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { ActionBar, PaneViewBody, useWorktreeChanges } from '@/chat/ActionBar'
 import { changedFileCount, headerMode, paneViewKey, segments, shownView, type PaneView } from '@/chat/action-bar-model'
-import { headerText } from '@/chat/header-model'
+import { headerTitle } from '@/chat/header-model'
 import { usePaneView } from '@/chat/pane-view-context'
 import { useWindowRowInset } from '@/panes/window-row'
 import { usePaneChrome, type PaneChrome } from '@/panes/pane-chrome'
@@ -11,7 +11,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
 
 /**
- * The top bar every chat view and the launcher share: the agent's mark, live while it works (none on the launcher), the title on one line and the branch under it (header-model),
+ * The top bar every chat view and the launcher share: the agent's mark, live while it works (none on the launcher), the title on one line (header-model), centred on the controls' line,
  * then the Run button and the run panel's toggle once anything ran on the right. An item with a worktree (a launcher once it has one) also gets the action bar in the
  * bar's true centre, Agent, Code, PR and Diff, each shown in the pane under the bar; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
  * below the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) it shrinks to the lights' 44px band, centred on their line, and leaves
@@ -51,18 +51,17 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
     return () => window.removeEventListener('keydown', onKey, true)
   }, [focused])
 
-  const text = headerText({ title, branch: pane?.facts.branch ?? null, slim: chrome?.slim === true })
+  const text = headerTitle(title)
 
   // No native tooltip while the bar drags its pane: one shown as the press under it turns into a drag
-  // can stay floating over the panes, and the title and branch already show on the bar.
+  // can stay floating over the panes.
   const tip = (value: string) => (chrome === null ? value : undefined)
   const identity = (
     <>
       {agent !== null && <AgentIcon agent={agent} activity={activity} size={18} className="shrink-0 text-ink-300" />}
       {/* At least 36px tall whatever the controls beside it, so the window row's 44px band holds. */}
       <div className="flex min-h-9 min-w-0 flex-1 flex-col justify-center">
-        <h1 title={tip(text.title)} className="truncate text-[13px] leading-[18px] font-medium text-ink-100">{text.title}</h1>
-        {text.branch !== null && <p title={tip(pane?.facts.root ?? text.branch)} className="truncate text-[11px] leading-[14px] text-ink-400">{text.branch}</p>}
+        <h1 title={tip(text)} className="truncate text-[13px] leading-[18px] font-medium text-ink-100">{text}</h1>
       </div>
     </>
   )
@@ -88,7 +87,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
       <header ref={header} data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
         {agent !== null && <AgentIcon agent={agent} activity={activity} size={16} className="shrink-0 text-ink-300" />}
         <h1 className="min-w-0 flex-1 truncate text-[13px] leading-5 font-medium text-ink-100">
-          {text.title}
+          {text}
         </h1>
         {actions}
         {close}
@@ -137,6 +136,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
   }
 
   // Equal side columns put the bar in the bar's true centre; each side truncates or clips inside its own half.
+  // The title's side keeps 12px of its own beside the grid's 12px gap, so the title ends at least 24px before the action bar.
   return (
     <>
       <header
@@ -147,7 +147,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
         className={`@container/header group/pane shrink-0 border-b border-white/[0.06] ${chrome === null ? 'px-6' : 'cursor-grab pr-3 pl-6 active:cursor-grabbing'} ${band}`}
       >
         <div {...region} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
-          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-2">
+          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-2 pr-3">
             {identity}
           </div>
           <ActionBar agent={agent} segments={available} shown={shown} onSelect={select} />
