@@ -20,7 +20,7 @@ const CODE_SERVER_PORT_COUNT = 8000;
 export type CodeServerAsset = Readonly<{ name: string; url: string; sha256: string }>;
 export type CodeServerInfo = Readonly<{ root: string; url: string; port: number; pid: number; codeServerPid: number }>;
 
-// The side bar is on the left with the activity bar on top of it, above the explorer. The web
+// The side bar is on the right with the activity bar on top of it, above the explorer. The web
 // workbench then forces its title bar visible (it moves the account and manage buttons there) and
 // ignores window.customTitleBarVisibility and window.titleBarStyle, so the desktop app's frame crops
 // that bar off instead (titleBarCrop in apps/desktop/src/code/CodeFrame.tsx); the workbench lays out
@@ -36,7 +36,7 @@ export const CODE_ENFORCED_SETTINGS = {
   "window.menuBarVisibility": "hidden",
   "window.commandCenter": false,
   "workbench.layoutControl.enabled": false,
-  "workbench.sideBar.location": "left",
+  "workbench.sideBar.location": "right",
   "workbench.secondarySideBar.defaultVisibility": "hidden",
   "workbench.startupEditor": "none",
   "workbench.tips.enabled": false,

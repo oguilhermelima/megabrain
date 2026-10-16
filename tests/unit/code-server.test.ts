@@ -76,13 +76,13 @@ describe("code server", () => {
     expect(selectCodeServerAsset("win32", "x64")).toBeUndefined();
   });
 
-  test("puts the activity bar on top of a left side bar and keeps the title bar it forces at its fixed height", () => {
+  test("puts the activity bar on top of a right side bar and keeps the title bar it forces at its fixed height", () => {
     expect(CODE_ENFORCED_SETTINGS).toMatchObject({
       "window.commandCenter": false,
       "workbench.layoutControl.enabled": false,
       "window.menuBarVisibility": "hidden",
       "workbench.activityBar.location": "top",
-      "workbench.sideBar.location": "left",
+      "workbench.sideBar.location": "right",
     });
   });
 
@@ -92,13 +92,13 @@ describe("code server", () => {
     const profile = join(state, "code-server", "data", createHash("sha256").update(path).digest("hex").slice(0, 20));
     mkdirSync(join(profile, "User"), { recursive: true });
     writeFileSync(join(profile, "User", "settings.json"), `${JSON.stringify({
-      "workbench.sideBar.location": "right",
+      "workbench.sideBar.location": "left",
       "workbench.activityBar.location": "default",
       "editor.fontSize": 15,
     })}\n`);
     await createCodeServerManager(env, createProcessAdapter(), fakes().dependencies).open(path);
     expect(JSON.parse(readFileSync(join(profile, "User", "settings.json"), "utf8"))).toMatchObject({
-      "workbench.sideBar.location": "left",
+      "workbench.sideBar.location": "right",
       "workbench.activityBar.location": "top",
       "editor.fontSize": 15,
     });
@@ -118,13 +118,13 @@ describe("code server", () => {
     delete record.configVersion;
     writeFileSync(recordPath, `${JSON.stringify(record)}\n`);
     const settingsPath = join(state, "code-server", "data", id, "User", "settings.json");
-    writeFileSync(settingsPath, `${JSON.stringify({ "workbench.activityBar.location": "default", "workbench.sideBar.location": "right" })}\n`);
+    writeFileSync(settingsPath, `${JSON.stringify({ "workbench.activityBar.location": "default", "workbench.sideBar.location": "left" })}\n`);
     const second = await manager.open(path);
     expect(fake.alive.has(first.pid)).toBe(false);
     expect(fake.alive.has(first.codeServerPid)).toBe(false);
     expect(fake.started).toHaveLength(4);
     expect(second.codeServerPid).not.toBe(first.codeServerPid);
-    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({ "workbench.activityBar.location": "top", "workbench.sideBar.location": "left" });
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({ "workbench.activityBar.location": "top", "workbench.sideBar.location": "right" });
     expect(JSON.parse(readFileSync(recordPath, "utf8"))).toMatchObject({ configVersion: CODE_CONFIG_VERSION });
   });
 
@@ -145,7 +145,7 @@ describe("code server", () => {
 
   test("the configuration version covers the enforced settings, the bridge and the workbench CSS", () => {
     expect(CODE_CONFIG_VERSION).toBe(codeConfigVersion(CODE_ENFORCED_SETTINGS, BRIDGE_EXTENSION, CODE_WORKBENCH_CSS));
-    expect(codeConfigVersion({ ...CODE_ENFORCED_SETTINGS, "workbench.sideBar.location": "right" }, BRIDGE_EXTENSION, CODE_WORKBENCH_CSS)).not.toBe(CODE_CONFIG_VERSION);
+    expect(codeConfigVersion({ ...CODE_ENFORCED_SETTINGS, "workbench.sideBar.location": "left" }, BRIDGE_EXTENSION, CODE_WORKBENCH_CSS)).not.toBe(CODE_CONFIG_VERSION);
     expect(codeConfigVersion(CODE_ENFORCED_SETTINGS, `${BRIDGE_EXTENSION}\n`, CODE_WORKBENCH_CSS)).not.toBe(CODE_CONFIG_VERSION);
     expect(codeConfigVersion(CODE_ENFORCED_SETTINGS, BRIDGE_EXTENSION, `${CODE_WORKBENCH_CSS}\n`)).not.toBe(CODE_CONFIG_VERSION);
   });
@@ -202,7 +202,7 @@ describe("code server", () => {
       "workbench.colorTheme": "megabrain-dark",
       "workbench.preferredDarkColorTheme": "megabrain-dark",
       "window.autoDetectColorScheme": false,
-      "workbench.sideBar.location": "left",
+      "workbench.sideBar.location": "right",
       "editor.minimap.enabled": false,
     });
     expect(readFileSync(join(profile, "extensions", "megabrain.megabrain-bridge-1.0.0", "package.json"), "utf8")).toContain("megabrain-bridge");
