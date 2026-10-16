@@ -30,7 +30,11 @@ const subagentId = (event: TranscriptEvent, kind: 'tool-call' | 'tool-result'): 
  * subagent is not among the events are dropped. `before` is the event ahead of these, when they continue a
  * conversation, so thinking at their start is timed as it would be in the whole of it.
  */
-export function buildConversationItems(events: TranscriptEvent[], before: TranscriptEvent | null = null): ConversationItem[] {
+/** Older chats stored a system line for every model or effort change; the composer shows the current pick, so they stay hidden. */
+const isModelNotice = (event: TranscriptEvent) => event.kind === 'system' && event.text.startsWith('Model set to ')
+
+export function buildConversationItems(all: TranscriptEvent[], before: TranscriptEvent | null = null): ConversationItem[] {
+  const events = all.filter((event) => !isModelNotice(event))
   const started = new Set(events.flatMap((event) => subagentId(event, 'tool-call') ?? []))
   if (started.size === 0 && !events.some((event) => event.parentId !== undefined || subagentId(event, 'tool-result') !== null)) return pairTools(events, new Map(), new Map(), before)
   const steps = new Map<string, TranscriptEvent[]>()

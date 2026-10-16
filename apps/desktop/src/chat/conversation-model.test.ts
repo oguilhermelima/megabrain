@@ -10,6 +10,16 @@ function event(id: string, fields: Partial<TranscriptEvent> = {}): TranscriptEve
 }
 
 describe('buildConversationItems', () => {
+  test('hides the model-change notices older chats stored', () => {
+    const items = buildConversationItems([
+      event('a', { kind: 'assistant', text: 'hi' }),
+      event('s1', { kind: 'system', text: 'Model set to claude-opus-5-5[1m] (high)' }),
+      event('s2', { kind: 'system', text: 'Interrupted' }),
+    ])
+    expect(JSON.stringify(items)).not.toContain('Model set to')
+    expect(JSON.stringify(items)).toContain('Interrupted')
+  })
+
   test('pairs a tool-call with the tool-result right after it', () => {
     const items = buildConversationItems([
       event('c1', { kind: 'tool-call', text: 'ls', tool: { name: 'shell', input: 'ls' } }),

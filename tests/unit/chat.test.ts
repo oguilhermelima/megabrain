@@ -197,6 +197,10 @@ rl.on("line", (line) => {
     expect((await call(["chat", "send", chat.id, "--parts", JSON.stringify([{ type: "text", text: "next turn" }])], env)).kind).toBe("ok");
     const requests = readFileSync(env.capture, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: Record<string, unknown> });
     expect(requests.find((request) => request.method === "turn/start")?.params).toMatchObject({ model: "gpt-5.6-luna", effort: "low" });
+    const stored = await call(["chat", "events", chat.id, "--json"], env);
+    expect(stored.kind === "ok" && stored.value.includes("Model set to")).toBe(false);
+    const listed = await call(["chat", "list", "--json"], env);
+    expect(listed.kind === "ok" && JSON.parse(listed.value)).toContainEqual(expect.objectContaining({ id: chat.id, model: "gpt-5.6-luna", effort: "low" }));
   });
 
   test("starts a chat with its effort in one call: Codex's first turn and Claude's argv carry it", async () => {

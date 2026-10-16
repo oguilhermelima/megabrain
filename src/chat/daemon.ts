@@ -857,7 +857,7 @@ export class ChatDaemon {
       await this.save(chat);
       void this.runAgent(chat).catch((error) => this.fail(id, error));
     } else await this.save(chat);
-    await this.publish(chat, event("system", `Model set to ${model}${effort ? ` (${effort})` : ""}`));
+    this.publishLive(id, this.stateEvent(chat));
     return chat;
   }
 
