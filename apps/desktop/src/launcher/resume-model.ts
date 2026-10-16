@@ -8,11 +8,14 @@ export const resumePageSize = 8
 
 const activity = (session: HistorySession) => session.lastActivityAt ?? session.startedAt ?? ''
 
-/** The selected agent's sessions (the terminal tile shows every agent's) whose title or id start matches the search, newest first. */
-export function resumeRows(sessions: readonly HistorySession[], tile: LaunchTileId, query: string): HistorySession[] {
+/** Which sessions Resume lists: one agent's, or every agent's under All agents (and under the terminal, when no agent is installed). */
+export type ResumeFilter = LaunchTileId | 'all'
+
+/** The filter's sessions whose title or id start matches the search, newest first. */
+export function resumeRows(sessions: readonly HistorySession[], filter: ResumeFilter, query: string): HistorySession[] {
   const needle = query.trim().toLowerCase()
   return sessions
-    .filter((session) => tile === 'terminal' || session.agent === tile)
+    .filter((session) => filter === 'all' || filter === 'terminal' || session.agent === filter)
     .filter((session) => needle === '' || session.title.toLowerCase().includes(needle) || session.id.toLowerCase().startsWith(needle))
     .sort((left, right) => activity(right).localeCompare(activity(left)))
 }

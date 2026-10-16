@@ -23,6 +23,10 @@ const history: HistorySession[] = [
 ]
 
 describe('resumeRows', () => {
+  test('All agents shows every agent, newest first', () => {
+    expect(resumeRows(history, 'all', '').map((row) => row.id)).toEqual(['c-new', 'x-new', 'g-1', 'a-1', 'c-old'])
+  })
+
   test('an agent tile shows only that agent, newest first', () => {
     expect(resumeRows(history, 'claude', '').map((row) => row.id)).toEqual(['c-new', 'c-old'])
     expect(resumeRows(history, 'grok', '').map((row) => row.id)).toEqual(['g-1'])

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type KeyboardEvent } from 'react'
 import { api } from '@/api'
 import type { HistorySession, MessagePart, NativeChat } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
@@ -7,6 +7,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { StartingCard } from '@/components/StartingCard'
 import { ErrorNote } from '@/components/ui'
 import { chatCalls, initialTile, launchPlan, launchTiles, launchWorktree, type LaunchTile, type LaunchTileId } from '@/launcher/launch-model'
+import { moveInColumn } from '@/launcher/launcher-keys'
 import { resumeLaunch } from '@/launcher/resume-model'
 import { ResumeList } from '@/launcher/ResumeList'
 import { usePendingActions } from '@/lib/usePendingActions'
@@ -68,10 +69,11 @@ const folder = (path: string) => path.split('/').at(-1) ?? path
 const startKey = 'start'
 
 /**
- * The center screen's launcher: the worktree it starts in, a tile per agent plus the Terminal tile, the
- * chats' composer and the worktree's past chats. Enter starts the selected agent with the message;
- * clicking the selected agent again starts it empty; clicking a past chat resumes it. The Terminal
- * tile is not a mode: it opens a terminal in the worktree at once.
+ * The center screen's launcher, as lists: a New terminal row that opens a terminal in the worktree at
+ * once, then two columns, the agents to start and the worktree's past chats to resume, over the
+ * chats' composer. The selected agent drives the composer and the Resume filter. Enter in the
+ * composer starts the selected agent with the message; the selected agent's row starts it empty;
+ * a past chat resumes. Arrow keys move within a column and Tab between them.
  */
 export function Launcher({
   worktrees,
@@ -112,9 +114,21 @@ export function Launcher({
   // With no agent installed the selection falls back to the terminal, which takes no message.
   const ready = cwd !== null && current?.enabled === true && tile !== 'terminal' && !starting
 
+  const [allAgents, setAllAgents] = useState(false)
+  const agents = tiles.filter((item) => item.id !== 'terminal')
+  // The agent column keeps one tabbable row: the selected agent, else the first one enabled.
+  const tabbableAgent = agents.some((item) => item.id === tile && item.enabled) ? null : (agents.find((item) => item.enabled)?.id ?? null)
+
   const pick = (next: LaunchTileId) => {
     setChosenTile(next)
     if (next !== tile) setModel(null)
+  }
+
+  // The arrow keys move the selection with the focus, as in any radio group.
+  const agentKey = (event: KeyboardEvent<HTMLElement>) => {
+    const next = moveInColumn(event)?.dataset.agent
+    const found = agents.find((item) => item.id === next)
+    if (found !== undefined) pick(found.id)
   }
 
   const launch = async (parts: MessagePart[]): Promise<Notice> => {
@@ -177,35 +191,61 @@ export function Launcher({
           )
         }
       />
-      <div className="mx-8 min-h-0 flex-1 overflow-y-auto">
+      <div className="@container mx-8 flex min-h-0 flex-1 flex-col overflow-y-auto">
         {start !== undefined ? (
           <div className="pt-6">
             <StartingCard entry={start} icon={tile === 'terminal' ? undefined : <AgentIcon agent={tile} size={20} activity="working" />} onRetry={() => void actions.retry(startKey)} onDismiss={() => actions.dismiss(startKey)} />
           </div>
         ) : (
           <>
-            <section className="flex flex-col gap-6 pt-6">
-              <div role="radiogroup" aria-label="Start" className="grid grid-cols-5 gap-3">
-                {tiles.map((item) => (
-                  <Tile
-                    key={item.id}
-                    tile={item}
-                    selected={item.id === tile && item.id !== 'terminal'}
-                    busy={starting}
-                    onSelect={() => {
-                      if (item.id === 'terminal') {
-                        if (cwd === null) return
-                        remember(worktreeKey, cwd)
-                        onTerminal(cwd)
-                      } else if (item.id === tile) launchEmpty()
-                      else pick(item.id)
-                    }}
-                  />
-                ))}
+            <button
+              type="button"
+              disabled={cwd === null || starting}
+              title="Open a new terminal here (⌘T)"
+              onClick={() => {
+                if (cwd === null) return
+                remember(worktreeKey, cwd)
+                onTerminal(cwd)
+              }}
+              className="mt-6 grid shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-row-hover focus-visible:bg-row-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <TerminalIcon size={20} />
+              <span className="min-w-0">
+                <span className="block text-[13.5px] font-medium text-ink-100">New terminal</span>
+                <span className="block truncate text-[12px] text-ink-500" title={cwd ?? undefined}>
+                  Login shell · {worktree?.label ?? (cwd === null ? 'no worktree' : folder(cwd))}
+                </span>
+              </span>
+              <kbd className="font-sans text-[12px] text-ink-500">⌘T</kbd>
+            </button>
+            {error !== null && (
+              <div className="mt-2">
+                <ErrorNote error={error} />
               </div>
-              {error !== null && <ErrorNote error={error} />}
-            </section>
-            <ResumeList cwd={cwd} tile={tile} tiles={tiles} disabled={starting} onResume={resume} />
+            )}
+            <div aria-hidden="true" className="my-4 h-px shrink-0 bg-white/[0.06]" />
+            <div className="grid flex-1 grid-cols-1 content-start gap-x-8 gap-y-6 pb-4 @2xl:min-h-0 @2xl:content-stretch @2xl:grid-cols-2 @2xl:grid-rows-[minmax(0,1fr)]">
+              <section aria-label="Start an agent" className="flex min-h-0 flex-col" onKeyDown={agentKey}>
+                <h2 className="flex h-8 items-center text-[13px] font-semibold text-ink-400">Start an agent</h2>
+                <div role="radiogroup" aria-label="Agent" className="mt-2 grid min-h-0 content-start gap-0.5 overflow-y-auto">
+                  {agents.map((item) => (
+                    <AgentRow
+                      key={item.id}
+                      tile={item}
+                      selected={item.id === tile}
+                      tabbable={item.id === (tabbableAgent ?? tile)}
+                      busy={starting}
+                      detail={item.id === tile && model !== null ? [model.model, model.effort].filter((part) => part !== null).join(' · ') : 'Default model'}
+                      onSelect={() => {
+                        if (item.id === tile) launchEmpty()
+                        else pick(item.id)
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
+              <ResumeList cwd={cwd} filter={allAgents ? 'all' : tile} agent={tile === 'terminal' ? null : tile} tiles={tiles} disabled={starting} onFilter={(next) => setAllAgents(next === 'all')} onResume={resume} />
+            </div>
           </>
         )}
       </div>
@@ -224,26 +264,31 @@ export function Launcher({
 
 function placeholder(tile: LaunchTileId, current: LaunchTile | undefined): string {
   if (current !== undefined && !current.enabled) return current.hint ?? `${current.label} is not available`
-  if (tile === 'terminal') return 'Install an agent to start a chat here; the Terminal tile opens a shell.'
+  if (tile === 'terminal') return 'Install an agent to start a chat here; New terminal opens a shell.'
   if (tile === 'grok' || tile === 'agy') return `What should ${current?.label ?? tile} do? It is typed into its terminal for you to send…`
   return `What should ${current?.label ?? tile} do? Enter starts it…`
 }
 
-function Tile({ tile, selected, busy, onSelect }: { tile: LaunchTile; selected: boolean; busy: boolean; onSelect: () => void }) {
-  const opensNow = tile.id === 'terminal'
+function AgentRow({ tile, selected, tabbable, busy, detail, onSelect }: { tile: LaunchTile; selected: boolean; tabbable: boolean; busy: boolean; detail: string; onSelect: () => void }) {
   return (
     <button
       type="button"
-      role={opensNow ? undefined : 'radio'}
-      aria-checked={opensNow ? undefined : selected}
+      role="radio"
+      aria-checked={selected}
+      data-column-item
+      data-agent={tile.id}
+      tabIndex={tabbable ? 0 : -1}
       disabled={!tile.enabled || busy}
-      title={tile.hint ?? (opensNow ? 'Open a new terminal here (⌘T)' : selected ? `Open ${tile.label} now` : tile.label)}
+      title={tile.hint ?? (selected ? `Open ${tile.label} now` : tile.label)}
       onClick={onSelect}
-      className="flex h-24 flex-col items-center justify-center gap-2.5 rounded-[22px] border border-white/[0.08] bg-ink-900 text-[13.5px] font-medium text-ink-300 transition-colors hover:bg-ink-850 hover:text-ink-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-ink-900 aria-checked:border-accent/60 aria-checked:bg-accent/[0.08] aria-checked:text-ink-100"
+      className="group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[12px] px-3 py-2 text-left transition-colors hover:bg-row-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent aria-checked:bg-accent/[0.08] aria-checked:hover:bg-accent/[0.12]"
     >
-      {tile.id === 'terminal' ? <TerminalIcon size={22} /> : <AgentIcon agent={tile.id} size={22} />}
-      <span>{tile.label}</span>
-      {tile.hint !== null && <span className="sr-only">{tile.hint}</span>}
+      <AgentIcon agent={tile.id} size={20} />
+      <span className="min-w-0">
+        <span className="block text-[13.5px] font-medium text-ink-200 group-aria-checked:text-ink-100">{tile.label}</span>
+        <span className="block truncate text-[12px] text-ink-500">{tile.hint ?? detail}</span>
+      </span>
+      {selected && <span className="text-[12px] text-ink-500">↵</span>}
     </button>
   )
 }
