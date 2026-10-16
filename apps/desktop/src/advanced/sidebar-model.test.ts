@@ -129,29 +129,31 @@ describe('sessionTimer', () => {
     ...overrides,
   })
 
-  test('shows the compaction when it comes first', () => {
-    expect(sessionTimer(session({ idleCompactAt: at(13), cacheExpiresAt: at(19) }), now)).toEqual({ kind: 'compact', text: 'compacts in 13m', level: 'normal' })
+  test('shows the compaction as a clock when it comes first', () => {
+    expect(sessionTimer(session({ idleCompactAt: at(13), cacheExpiresAt: at(19) }), now)).toEqual({ kind: 'compact', text: '13m', label: 'Compacts in 13 minutes', tone: 'yellow' })
   })
 
   test('shows the cache when it comes first or compaction is unknown', () => {
-    expect(sessionTimer(session({ idleCompactAt: at(30), cacheExpiresAt: at(19) }), now)).toEqual({ kind: 'cache', text: 'cache 19m', level: 'normal' })
-    expect(sessionTimer(session({ cacheExpiresAt: at(19) }), now)).toEqual({ kind: 'cache', text: 'cache 19m', level: 'normal' })
+    expect(sessionTimer(session({ idleCompactAt: at(30), cacheExpiresAt: at(19) }), now)).toEqual({ kind: 'cache', text: '19m', label: 'Prompt cache expires in 19 minutes', tone: 'yellow' })
+    expect(sessionTimer(session({ cacheExpiresAt: at(19) }), now)).toEqual({ kind: 'cache', text: '19m', label: 'Prompt cache expires in 19 minutes', tone: 'yellow' })
   })
 
   test('moves on to the cache once compaction has passed', () => {
-    expect(sessionTimer(session({ idleCompactAt: at(-1), cacheExpiresAt: at(5) }), now)).toEqual({ kind: 'cache', text: 'cache 5m', level: 'amber' })
+    expect(sessionTimer(session({ idleCompactAt: at(-1), cacheExpiresAt: at(5) }), now)).toEqual({ kind: 'cache', text: '5m', label: 'Prompt cache expires in 5 minutes', tone: 'red' })
   })
 
-  test('is amber under 10 minutes and red under 2', () => {
-    expect(sessionTimer(session({ cacheExpiresAt: at(10) }), now)?.level).toBe('normal')
-    expect(sessionTimer(session({ cacheExpiresAt: at(9.9) }), now)?.level).toBe('amber')
-    expect(sessionTimer(session({ cacheExpiresAt: at(2) }), now)?.level).toBe('amber')
-    expect(sessionTimer(session({ cacheExpiresAt: at(1.9) }), now)?.level).toBe('red')
+  test('is green above 30 minutes, yellow from 10 to 30, red under 10', () => {
+    expect(sessionTimer(session({ idleCompactAt: at(47) }), now)?.tone).toBe('green')
+    expect(sessionTimer(session({ idleCompactAt: at(30.1) }), now)?.tone).toBe('green')
+    expect(sessionTimer(session({ idleCompactAt: at(30) }), now)?.tone).toBe('yellow')
+    expect(sessionTimer(session({ idleCompactAt: at(10) }), now)?.tone).toBe('yellow')
+    expect(sessionTimer(session({ idleCompactAt: at(9.9) }), now)?.tone).toBe('red')
+    expect(sessionTimer(session({ idleCompactAt: at(0.5) }), now)?.tone).toBe('red')
   })
 
-  test('rounds the minutes up so the last minute still reads 1m', () => {
-    expect(sessionTimer(session({ cacheExpiresAt: at(0.5) }), now)?.text).toBe('cache 1m')
-    expect(sessionTimer(session({ idleCompactAt: at(12.2) }), now)?.text).toBe('compacts in 13m')
+  test('rounds the minutes up so the last minute still reads 1m, in the singular', () => {
+    expect(sessionTimer(session({ cacheExpiresAt: at(0.5) }), now)).toMatchObject({ text: '1m', label: 'Prompt cache expires in 1 minute' })
+    expect(sessionTimer(session({ idleCompactAt: at(12.2) }), now)).toMatchObject({ text: '13m', label: 'Compacts in 13 minutes' })
   })
 
   test('shows nothing once both times have passed', () => {

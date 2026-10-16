@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../adapters/proc.js";
 import type { Result } from "./result.js";
@@ -205,7 +205,7 @@ function limitTimeout(config: ChainConfig, environment: ChainLimitEnvironment): 
 function limitTtl(config: ChainConfig, environment: ChainLimitEnvironment): number {
   const override = environment.MEGABRAIN_CHAIN_LIMIT_TTL_SECONDS;
   if (override !== undefined && override.length > 0) return Number(override);
-  return config.usageLimits?.cacheTtlSeconds ?? 30;
+  return config.usageLimits?.cacheTtlSeconds ?? 60;
 }
 
 function cachePath(stateDir: string, agent: LimitAgent): string {
@@ -220,18 +220,23 @@ function readCache(agent: Exclude<LimitAgent, "codex">, window: LimitWindowName,
   if (!isObject(parsed) || parsed.provider !== agent || typeof parsed.fetchedAt !== "number" || !Array.isArray(parsed.windows)) return undefined;
   const ttl = limitTtl(config, environment);
   if (!(parsed.fetchedAt <= now && now - parsed.fetchedAt < ttl)) return undefined;
-  const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "cache", model);
+  // `source` describes where the reading originated, not how this invocation obtained it.
+  const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "live", model);
   return reading.status === "current" ? reading : undefined;
 }
 
 function writeCache(agent: LimitAgent, result: LimitResult, stateDir: string): void {
+  let temporaryDirectory: string | undefined;
   try {
     mkdirSync(stateDir, { recursive: true });
     const path = cachePath(stateDir, agent);
-    const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(temp, JSON.stringify(result));
+    temporaryDirectory = mkdtempSync(resolve(stateDir, ".usage-limits-"));
+    const temp = resolve(temporaryDirectory, "reading.json");
+    writeFileSync(temp, JSON.stringify(result), { mode: 0o600 });
     renameSync(temp, path);
+    chmodSync(path, 0o600);
   } catch { /* the cache is an optimization; a write failure just costs a re-fetch */ }
+  finally { if (temporaryDirectory !== undefined) rmSync(temporaryDirectory, { recursive: true, force: true }); }
 }
 
 type CurlOutcome =

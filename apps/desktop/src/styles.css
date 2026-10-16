@@ -20,6 +20,9 @@
   --color-ok: #34d399;
   --color-warn: #fbbf24;
   --color-bad: #fb7185;
+  /* Sidebar rows: hover and selection are a faint lift of the glass, never a coloured block. */
+  --color-row-hover: rgb(255 255 255 / 0.05);
+  --color-row-selected: rgb(255 255 255 / 0.09);
   --radius-card: 24px;
   --radius-panel: 32px;
 }
@@ -28,6 +31,17 @@ html,
 body,
 #root {
   height: 100%;
+}
+
+/* The window never scrolls or bounces like a web page: only the panels inside it scroll, and
+   reaching the end of one moves nothing else. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+* {
+  overscroll-behavior: none;
 }
 
 body {
@@ -58,6 +72,28 @@ html.native body {
   background: transparent;
 }
 
+/* Rows scrolled up under the sidebar's header fade out at the list's top edge. A blur there would
+   need a backdrop-filter inside the glass's own, which paints the glass a second time, darker. */
+.sidebar-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+}
+
+/* The sidebar list: a thin scrollbar that shows only while the pointer is over the list. The
+   gutter is kept so rows do not shift when the list starts to scroll. */
+.sidebar-scroll {
+  scrollbar-gutter: stable;
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.16);
+}
+
 @keyframes orb-spin {
   to {
     transform: rotate(360deg);
@@ -68,6 +104,10 @@ html.native body {
   background: conic-gradient(from 0deg, #8e9cff, #c084fc, #34d399, #8e9cff);
   box-shadow: 0 0 12px rgba(142, 156, 255, 0.7);
   animation: orb-spin 4s linear infinite;
+}
+/* The orb as megabrain's logo: the same mark, held still because it is not reporting work. */
+.orb.still {
+  animation: none;
 }
 .orb.idle {
   background: conic-gradient(from 0deg, #4c4c55, #8a8a94, #4c4c55);

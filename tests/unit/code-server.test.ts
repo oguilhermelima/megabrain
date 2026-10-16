@@ -132,7 +132,7 @@ describe("code server", () => {
     const settingsPath = join(profile, "User", "settings.json");
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       "security.workspace.trust.enabled": false,
-      "workbench.activityBar.location": "hidden",
+      "workbench.activityBar.location": "top",
       "workbench.statusBar.visible": false,
       "workbench.colorTheme": "megabrain-dark",
       "workbench.preferredDarkColorTheme": "megabrain-dark",
@@ -145,8 +145,18 @@ describe("code server", () => {
     expect(bridge).toContain("outline.removeView");
     expect(bridge).toContain("timeline.removeView");
     writeFileSync(join(profile, "extensions", "extensions.json"), "[]\n");
+    writeFileSync(settingsPath, `${JSON.stringify({
+      "workbench.colorTheme": "Default Light Modern",
+      "workbench.activityBar.location": "hidden",
+      "security.workspace.trust.enabled": true,
+    })}\n`);
     await manager.stop(path);
     await manager.open(path);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
+      "workbench.colorTheme": "Default Light Modern",
+      "workbench.activityBar.location": "top",
+      "security.workspace.trust.enabled": false,
+    });
     expect(JSON.parse(readFileSync(join(profile, "extensions", "extensions.json"), "utf8"))).toContainEqual(expect.objectContaining({
       identifier: { id: "megabrain.megabrain-bridge" },
       version: "1.0.0",

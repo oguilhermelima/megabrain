@@ -73,7 +73,7 @@ const provider: TmuxProvider = {
     const result = await process.run("tmux", ["has-session", "-t", session]);
     if (result.kind === "ok") return ok(true);
     const detail = result.kind === "failed" ? result.error : "";
-    return /can't find session|session not found|no such session/i.test(detail)
+    return /can't find session|session not found|no such session|no server running|error connecting to/i.test(detail)
       ? ok(false)
       : unavailable(`existence of session ${session}`);
   },

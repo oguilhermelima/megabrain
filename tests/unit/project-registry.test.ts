@@ -100,6 +100,59 @@ describe("project registry", () => {
     expect(aboveMin?.idleCompactAt).toBeNull();
   });
 
+  test("projects report the latest Claude model and infer its actual context window", async () => {
+    const path = await repository("session-models");
+    const directory = join(home, ".claude", "sessions");
+    const transcript = join(home, ".claude", "projects", path.replace(/[^a-zA-Z0-9]/g, "-"));
+    mkdirSync(directory, { recursive: true });
+    mkdirSync(transcript, { recursive: true });
+    const now = new Date().toISOString();
+    const sessions = [
+      { id: "usage-proof", model: "claude-sonnet-5-5", usage: { input_tokens: 210001 } },
+      { id: "marker-proof", model: "claude-opus-5-5[1m]", usage: { input_tokens: 1000 } },
+      { id: "settings-proof", model: "claude-haiku-5-5", usage: { input_tokens: 1000 } },
+    ];
+    for (const [index, session] of sessions.entries()) {
+      const pid = process.pid + index;
+      writeFileSync(join(directory, `${pid}.json`), JSON.stringify({ pid, sessionId: session.id, cwd: path, startedAt: now, updatedAt: now, status: "working" }));
+      writeFileSync(join(transcript, `${session.id}.jsonl`), `${JSON.stringify({ type: "assistant", message: { model: session.model, usage: session.usage } })}\n`);
+    }
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "claude-haiku-5-5[1m]" }));
+    await cli("repo", "add", path);
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; model: string | null; contextWindow: number | null }> }> }>>(await cli("projects", "--json"))[0];
+    const actual = project?.worktrees[0]?.sessions;
+    expect(actual?.find((session) => session.sessionId === "claude:usage-proof")).toMatchObject({ model: "claude-sonnet-5-5", contextWindow: 1000000 });
+    expect(actual?.find((session) => session.sessionId === "claude:marker-proof")).toMatchObject({ model: "claude-opus-5-5[1m]", contextWindow: 1000000 });
+    expect(actual?.find((session) => session.sessionId === "claude:settings-proof")).toMatchObject({ model: "claude-haiku-5-5", contextWindow: 1000000 });
+  });
+
+  test("Claude context tokens restart at the latest compact boundary and its size proves the window", async () => {
+    const path = await repository("compact-boundary");
+    const directory = join(home, ".claude", "sessions");
+    const transcript = join(home, ".claude", "projects", path.replace(/[^a-zA-Z0-9]/g, "-"));
+    mkdirSync(directory, { recursive: true });
+    mkdirSync(transcript, { recursive: true });
+    const now = new Date().toISOString();
+    const assistant = (input: number) => ({ type: "assistant", message: { model: "claude-opus-5-5", usage: { input_tokens: input } } });
+    const boundary = (postTokens?: number) => ({ type: "system", subtype: "compact_boundary", compactMetadata: { trigger: "manual", preTokens: 700000, ...(postTokens === undefined ? {} : { postTokens }) } });
+    const sessions = [
+      { id: "recorded", lines: [assistant(700000), boundary(15000)] },
+      { id: "unrecorded", lines: [assistant(700000), boundary()] },
+      { id: "after", lines: [assistant(700000), boundary(15000), assistant(20000)] },
+    ];
+    for (const [index, session] of sessions.entries()) {
+      const pid = process.pid + index;
+      writeFileSync(join(directory, `${pid}.json`), JSON.stringify({ pid, sessionId: session.id, cwd: path, startedAt: now, updatedAt: now, status: "idle" }));
+      writeFileSync(join(transcript, `${session.id}.jsonl`), `${session.lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+    }
+    await cli("repo", "add", path);
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; contextTokens: number; contextWindow: number | null }> }> }>>(await cli("projects", "--json"))[0];
+    const actual = project?.worktrees[0]?.sessions;
+    expect(actual?.find((session) => session.sessionId === "claude:recorded")).toMatchObject({ contextTokens: 15000, contextWindow: 1000000 });
+    expect(actual?.find((session) => session.sessionId === "claude:unrecorded")).toMatchObject({ contextTokens: 0, contextWindow: 1000000 });
+    expect(actual?.find((session) => session.sessionId === "claude:after")).toMatchObject({ contextTokens: 20000, contextWindow: 1000000 });
+  });
+
   test("repo add refuses a non-repository and remove leaves files intact", async () => {
     const folder = join(root, "folder");
     mkdirSync(folder);
@@ -284,9 +337,14 @@ describe("project registry", () => {
   test("project pull requests stay fresh for 60 seconds and keep the last good result after refresh failure", async () => {
     const path = await repository("pull-request-cache");
     await cli("repo", "add", path);
+    const initialCache = guardedOpenDatabase(env);
+    if (initialCache.kind !== "ok") throw new Error(initialCache.error);
+    try { initialCache.value.db.run("INSERT INTO repository_pull_requests (repository_path, value_json, fetched_at) VALUES (?, ?, ?) ON CONFLICT(repository_path) DO UPDATE SET value_json = excluded.value_json, fetched_at = excluded.fetched_at", [path, JSON.stringify([{ headRefName: "main", number: 42, state: "OPEN", url: "https://example.test/42" }]), Date.now() - 60_001]); }
+    finally { initialCache.value.close(); }
     const process = createProcessAdapter();
     let ghCalls = 0;
     let failGh = false;
+    const scheduled: string[][] = [];
     const adapter: ProcessAdapter = {
       run: async (command, args, options) => {
         if (command === "gh" && args[0] === "pr" && args[1] === "list") {
@@ -296,12 +354,17 @@ describe("project registry", () => {
         }
         return process.run(command, args, options);
       },
-      startDetached: process.startDetached,
+      startDetached: async (command, args) => { scheduled.push([command, ...args]); return ok({ pid: 987653 }); },
       invocationCount: process.invocationCount,
     };
     const list = async () => route(["projects", "--json"], { environment: env, processAdapter: adapter });
     const first = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
     expect(first?.worktrees[0]?.pullRequest?.number).toBe(42);
+    expect(ghCalls).toBe(0);
+    expect(scheduled).toHaveLength(1);
+    const refresh = await route(["projects", "--refresh-pull-requests", path], { environment: env, processAdapter: adapter });
+    expect(refresh.kind).toBe("ok");
+    expect(ghCalls).toBe(1);
     const second = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
     expect(second?.worktrees[0]?.pullRequest?.number).toBe(42);
     expect(ghCalls).toBe(1);
@@ -313,7 +376,65 @@ describe("project registry", () => {
     failGh = true;
     const stale = json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0];
     expect(stale?.worktrees[0]?.pullRequest?.number).toBe(42);
+    expect(scheduled).toHaveLength(2);
+    expect(ghCalls).toBe(1);
+    const failedRefresh = await route(["projects", "--refresh-pull-requests", path], { environment: env, processAdapter: adapter });
+    expect(failedRefresh.kind).toBe("ok");
     expect(ghCalls).toBe(2);
+    expect(json<Array<{ worktrees: Array<{ pullRequest: { number: number } | null }> }>>(await list())[0]?.worktrees[0]?.pullRequest?.number).toBe(42);
+    expect(scheduled).toHaveLength(2);
+  });
+
+  test("stale pull request cache is returned without waiting for gh", async () => {
+    const path = await repository("pull-request-stale-cache");
+    await cli("repo", "add", path);
+    const opened = guardedOpenDatabase(env);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    try { opened.value.db.run("INSERT INTO repository_pull_requests (repository_path, value_json, fetched_at) VALUES (?, ?, ?) ON CONFLICT(repository_path) DO UPDATE SET value_json = excluded.value_json, fetched_at = excluded.fetched_at", [path, JSON.stringify([{ headRefName: "main", number: 73, state: "OPEN", url: "https://example.test/73", title: "Cached", isDraft: false }]), Date.now() - 60_001]); }
+    finally { opened.value.close(); }
+    const process = createProcessAdapter();
+    const calls: string[] = [];
+    const adapter: ProcessAdapter = {
+      run: async (command, args, options) => {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (command === "gh") throw new Error("gh must not run in the projects process");
+        return process.run(command, args, options);
+      },
+      startDetached: async (command, args) => { calls.push(`detached ${command} ${args.join(" ")}`); return ok({ pid: 987654 }); },
+      invocationCount: process.invocationCount,
+    };
+    const project = json<Array<{ worktrees: Array<{ pullRequest: Record<string, unknown> | null }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
+    expect(project?.worktrees[0]?.pullRequest).toEqual({ number: 73, state: "OPEN", url: "https://example.test/73", title: "Cached", isDraft: false });
+    expect(calls.some((call) => call.startsWith("gh "))).toBe(false);
+    expect(calls.some((call) => call.startsWith("detached "))).toBe(true);
+  });
+
+  test("projects reuses unchanged worktree and session data and invalidates changed inputs", async () => {
+    const path = await repository("derived-cache");
+    await cli("repo", "add", path);
+    const sessions = join(home, ".claude", "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const startedAt = new Date().toISOString();
+    const sessionFile = join(sessions, "900004.json");
+    writeFileSync(sessionFile, JSON.stringify({ pid: 900004, sessionId: "cached-session", cwd: path, startedAt, name: "Initial", nameSource: "user", status: "idle", updatedAt: startedAt }));
+    const callCounts = new Map<string, number>();
+    const real = createProcessAdapter();
+    const adapter: ProcessAdapter = {
+      run: async (command, args, options) => {
+        if (command === "git" && args.includes("worktree")) callCounts.set("worktree", (callCounts.get("worktree") ?? 0) + 1);
+        return real.run(command, args, options);
+      },
+      startDetached: real.startDetached,
+      invocationCount: real.invocationCount,
+    };
+    const first = (await route(["projects", "--json"], { environment: env, processAdapter: adapter }));
+    const second = (await route(["projects", "--json"], { environment: env, processAdapter: adapter }));
+    expect(second).toEqual(first);
+    expect(callCounts.get("worktree")).toBe(2);
+    writeFileSync(sessionFile, JSON.stringify({ pid: 900004, sessionId: "cached-session", cwd: path, startedAt, name: "Changed", nameSource: "user", status: "idle", updatedAt: startedAt }));
+    const third = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
+    expect(third?.worktrees[0]?.sessions[0]?.title).toBe("Changed");
+    expect(callCounts.get("worktree")).toBe(3);
   });
 
   test("project pull requests carry the title and draft flag gh reports", async () => {
@@ -321,6 +442,7 @@ describe("project registry", () => {
     await cli("repo", "add", path);
     const process = createProcessAdapter();
     const asked: string[][] = [];
+    const scheduled: string[][] = [];
     const adapter: ProcessAdapter = {
       run: async (command, args, options) => {
         if (command === "gh" && args[0] === "pr" && args[1] === "list") {
@@ -329,9 +451,14 @@ describe("project registry", () => {
         }
         return process.run(command, args, options);
       },
-      startDetached: process.startDetached,
+      startDetached: async (command, args) => { scheduled.push([command, ...args]); return ok({ pid: 987655 }); },
       invocationCount: process.invocationCount,
     };
+    const initial = json<Array<{ worktrees: Array<{ pullRequest: Record<string, unknown> | null }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
+    expect(initial?.worktrees[0]?.pullRequest).toBeNull();
+    expect(asked).toHaveLength(0);
+    expect(scheduled).toHaveLength(1);
+    await route(["projects", "--refresh-pull-requests", path], { environment: env, processAdapter: adapter });
     const project = json<Array<{ worktrees: Array<{ pullRequest: Record<string, unknown> | null }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
     expect(asked[0]?.at(-1)).toBe("headRefName,number,state,url,title,isDraft");
     expect(project?.worktrees[0]?.pullRequest).toEqual({ number: 7, state: "OPEN", url: "https://example.test/7", title: "Add the pull request page", isDraft: true });
@@ -375,11 +502,16 @@ describe("project registry", () => {
       startDetached: process.startDetached,
       invocationCount: process.invocationCount,
     };
+    const scheduled: string[][] = [];
+    adapter.startDetached = async (command, args) => { scheduled.push([command, ...args]); return ok({ pid: 987656 }); };
     const list = async () => route(["projects", "--json"], { environment: env, processAdapter: adapter });
     const first = json<Array<{ worktrees: Array<{ pullRequest: null }> }>>(await list())[0];
     expect(first?.worktrees[0]?.pullRequest).toBeNull();
+    expect(ghCalls).toBe(0);
+    await route(["projects", "--refresh-pull-requests", path], { environment: env, processAdapter: adapter });
     const second = json<Array<{ worktrees: Array<{ pullRequest: null }> }>>(await list())[0];
     expect(second?.worktrees[0]?.pullRequest).toBeNull();
     expect(ghCalls).toBe(1);
+    expect(scheduled).toHaveLength(1);
   });
 });

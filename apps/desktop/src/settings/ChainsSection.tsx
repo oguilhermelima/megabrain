@@ -1,7 +1,17 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Chain, ChainStep } from '@/api/schema'
-import { Button, Card, ErrorNote } from '@/components/ui'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { Button, ErrorNote } from '@/components/ui'
 import { conditionText, emptyChain, moveStep, stepText, withoutStep, withStep, type ModelInfo } from '@/settings/settings-model'
+import { field, ghostIcon, quiet, SettingsGroup } from '@/settings/settings-ui'
+
+function Glyph({ children }: { children: ReactNode }) {
+  return (
+    <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {children}
+    </svg>
+  )
+}
 
 function StepEditor({ models, onAdd }: { models: ModelInfo[]; onAdd: (step: ChainStep) => void }) {
   const agents = [...new Set(models.map((model) => model.agent))]
@@ -24,14 +34,14 @@ function StepEditor({ models, onAdd }: { models: ModelInfo[]; onAdd: (step: Chai
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <select value={agent} onChange={(event) => changeAgent(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[13px] text-ink-100">
+      <select aria-label="Agent" value={agent} onChange={(event) => changeAgent(event.target.value)} className={field}>
         {agents.map((item) => (
           <option key={item} value={item}>
             {item}
           </option>
         ))}
       </select>
-      <select value={model} onChange={(event) => changeModel(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[13px] text-ink-100">
+      <select aria-label="Model" value={model} onChange={(event) => changeModel(event.target.value)} className={`${field} max-w-56`}>
         {agentModels.map((item) => (
           <option key={item.model} value={item.model}>
             {item.model}
@@ -39,7 +49,7 @@ function StepEditor({ models, onAdd }: { models: ModelInfo[]; onAdd: (step: Chai
         ))}
       </select>
       {levels.length > 0 && (
-        <select value={effort} onChange={(event) => setEffort(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[13px] text-ink-100">
+        <select aria-label="Effort" value={effort} onChange={(event) => setEffort(event.target.value)} className={field}>
           {levels.map((level) => (
             <option key={level} value={level}>
               {level}
@@ -47,46 +57,56 @@ function StepEditor({ models, onAdd }: { models: ModelInfo[]; onAdd: (step: Chai
           ))}
         </select>
       )}
-      <Button
-        variant="secondary"
+      <button
+        type="button"
+        className={`${quiet} border border-white/[0.1] bg-white/[0.04]`}
         onClick={() => {
           if (agent === '' || model === '') return
           onAdd({ agent, model, effort: effort === '' ? undefined : effort })
         }}
       >
         Add step
-      </Button>
+      </button>
     </div>
   )
 }
 
 function ChainEditor({ chain, models, onChange, onSave, onCancel }: { chain: Chain; models: ModelInfo[]; onChange: (chain: Chain) => void; onSave: () => void; onCancel: () => void }) {
   return (
-    <div className="grid gap-3">
-      <ol className="grid gap-2">
-        {chain.steps.map((step, index) => (
-          <li key={`${step.agent}-${step.model}-${index}`} className="flex items-center justify-between gap-2 rounded-xl bg-white/[0.05] px-3 py-2">
-            <span className="text-[13px] text-ink-100">{stepText(step)}</span>
-            <span className="flex gap-1">
-              <Button variant="ghost" className="h-7 px-2" disabled={index === 0} onClick={() => onChange({ ...chain, steps: moveStep(chain.steps, index, -1) })}>
-                ↑
-              </Button>
-              <Button variant="ghost" className="h-7 px-2" disabled={index === chain.steps.length - 1} onClick={() => onChange({ ...chain, steps: moveStep(chain.steps, index, 1) })}>
-                ↓
-              </Button>
-              <Button variant="ghost" className="h-7 px-2" onClick={() => onChange({ ...chain, steps: withoutStep(chain.steps, index) })}>
-                Remove
-              </Button>
-            </span>
-          </li>
-        ))}
-      </ol>
+    <div className="grid gap-3 px-4 py-3">
+      {chain.steps.length === 0 ? (
+        <p className="text-[12.5px] text-ink-400">No steps yet. Add the first agent below.</p>
+      ) : (
+        <ol className="grid gap-1">
+          {chain.steps.map((step, index) => (
+            <li key={`${step.agent}-${step.model}-${index}`} className="flex items-center gap-2 rounded-[10px] bg-white/[0.04] py-1 pr-1 pl-3">
+              <span className="w-4 shrink-0 text-[12px] text-ink-500 tabular-nums">{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-ink-100">{stepText(step)}</span>
+              <button type="button" aria-label="Move up" title="Move up" className={ghostIcon} disabled={index === 0} onClick={() => onChange({ ...chain, steps: moveStep(chain.steps, index, -1) })}>
+                <Glyph>
+                  <path d="m4 10 4-4 4 4" />
+                </Glyph>
+              </button>
+              <button type="button" aria-label="Move down" title="Move down" className={ghostIcon} disabled={index === chain.steps.length - 1} onClick={() => onChange({ ...chain, steps: moveStep(chain.steps, index, 1) })}>
+                <Glyph>
+                  <path d="m4 6 4 4 4-4" />
+                </Glyph>
+              </button>
+              <button type="button" aria-label="Remove" title="Remove" className={`${ghostIcon} hover:text-bad`} onClick={() => onChange({ ...chain, steps: withoutStep(chain.steps, index) })}>
+                <Glyph>
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </Glyph>
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
       <StepEditor models={models} onAdd={(step) => onChange({ ...chain, steps: withStep(chain.steps, step) })} />
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" className="h-8 px-4 text-[13px]" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="primary" onClick={onSave}>
+        <Button variant="primary" className="h-8 px-4 text-[13px]" onClick={onSave}>
           Save
         </Button>
       </div>
@@ -113,76 +133,97 @@ export function ChainsSection({
   const [creatingParent, setCreatingParent] = useState('')
 
   return (
-    <div className="grid gap-3">
+    <>
+      {confirmDelete !== null && (
+        <ConfirmDialog
+          confirm={{
+            title: `Delete ${confirmDelete}?`,
+            body: 'The chain is removed for good; a dispatch that names it no longer finds it.',
+            action: 'Delete chain',
+            run: async () => onDelete(confirmDelete),
+          }}
+          onClose={() => setConfirmDelete(null)}
+        />
+      )}
       {chains.map((chain) => (
-        <Card key={chain.name} title={chain.name}>
-          <p className="text-[12.5px] text-ink-400">{conditionText(chain.when)}</p>
+        <SettingsGroup
+          key={chain.name}
+          title={chain.name}
+          aside={
+            editing?.name === chain.name ? undefined : (
+              <span className="flex gap-1">
+                <button type="button" className={quiet} onClick={() => setEditing(chain)}>
+                  Edit
+                </button>
+                <button type="button" className={`${quiet} hover:text-bad`} onClick={() => setConfirmDelete(chain.name)}>
+                  Delete
+                </button>
+              </span>
+            )
+          }
+        >
+          <p className="px-4 pt-3 text-[12.5px] text-ink-400">{conditionText(chain.when)}</p>
           {editing?.name === chain.name ? (
-            <div className="mt-3">
-              <ChainEditor chain={editing} models={models} onChange={setEditing} onSave={() => { onSave(editing); setEditing(null) }} onCancel={() => setEditing(null)} />
-            </div>
+            <ChainEditor
+              chain={editing}
+              models={models}
+              onChange={setEditing}
+              onSave={() => {
+                onSave(editing)
+                setEditing(null)
+              }}
+              onCancel={() => setEditing(null)}
+            />
           ) : (
-            <>
-              <ol className="mt-3 flex flex-wrap gap-2">
-                {chain.steps.map((step, index) => (
-                  <li key={`${step.agent}-${index}`} className="rounded-full bg-white/[0.06] px-3 py-1 text-[12.5px] text-ink-200">
-                    {stepText(step)}
-                  </li>
-                ))}
-              </ol>
-              <div className="mt-3 flex justify-end gap-2">
-                {confirmDelete === chain.name ? (
-                  <>
-                    <Button variant="ghost" onClick={() => setConfirmDelete(null)}>
-                      Keep it
-                    </Button>
-                    <Button variant="danger" onClick={() => { onDelete(chain.name); setConfirmDelete(null) }}>
-                      Delete for good
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button variant="secondary" onClick={() => setEditing(chain)}>
-                      Edit
-                    </Button>
-                    <Button variant="danger" onClick={() => setConfirmDelete(chain.name)}>
-                      Delete
-                    </Button>
-                  </>
-                )}
-              </div>
-            </>
+            <ol className="flex flex-wrap items-center gap-1.5 px-4 pt-2 pb-3">
+              {chain.steps.map((step, index) => (
+                <li key={`${step.agent}-${index}`} className="flex items-center gap-1.5">
+                  {index > 0 && (
+                    <svg viewBox="0 0 16 16" className="size-3 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m6 4 4 4-4 4" />
+                    </svg>
+                  )}
+                  <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[12px] text-ink-200">{stepText(step)}</span>
+                </li>
+              ))}
+            </ol>
           )}
-        </Card>
+        </SettingsGroup>
       ))}
-      <Card title="New chain">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={creatingName}
-            onChange={(event) => setCreatingName(event.target.value)}
-            placeholder="Name"
-            className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[13px] text-ink-100"
-          />
-          <input
-            value={creatingParent}
-            onChange={(event) => setCreatingParent(event.target.value)}
-            placeholder="Parent agent (optional)"
-            className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[13px] text-ink-100"
-          />
-          <Button
-            variant="secondary"
-            disabled={creatingName.trim() === ''}
-            onClick={() => {
-              setEditing(emptyChain(creatingName.trim(), creatingParent.trim()))
-              setCreatingName('')
-              setCreatingParent('')
+      {editing !== null && !chains.some((chain) => chain.name === editing.name) && (
+        <SettingsGroup title={editing.name}>
+          <p className="px-4 pt-3 text-[12.5px] text-ink-400">{conditionText(editing.when)}</p>
+          <ChainEditor
+            chain={editing}
+            models={models}
+            onChange={setEditing}
+            onSave={() => {
+              onSave(editing)
+              setEditing(null)
             }}
-          >
+            onCancel={() => setEditing(null)}
+          />
+        </SettingsGroup>
+      )}
+      <SettingsGroup title="New chain">
+        <form
+          className="flex flex-wrap items-center gap-2 px-4 py-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (creatingName.trim() === '') return
+            setEditing(emptyChain(creatingName.trim(), creatingParent.trim()))
+            setCreatingName('')
+            setCreatingParent('')
+          }}
+        >
+          <input aria-label="Chain name" value={creatingName} onChange={(event) => setCreatingName(event.target.value)} placeholder="Name" className={`${field} flex-1`} />
+          <input aria-label="Parent agent" value={creatingParent} onChange={(event) => setCreatingParent(event.target.value)} placeholder="Parent agent (optional)" className={`${field} flex-1`} />
+          <button type="submit" disabled={creatingName.trim() === ''} className={`${quiet} border border-white/[0.1] bg-white/[0.04]`}>
             Create
-          </Button>
-        </div>
-      </Card>
+          </button>
+        </form>
+      </SettingsGroup>
       {error !== null && <ErrorNote error={error} />}
-    </div>
+    </>
   )
 }

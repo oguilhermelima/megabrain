@@ -1,4 +1,4 @@
-import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
+import { classifyMarkers, doubleQuote, launchArgv, shellArgument, type Agent, type AgentFlags, type AgentMarker } from "./types.js";
 import { ok } from "../core/result.js";
 
 const markers: readonly AgentMarker[] = [
@@ -9,6 +9,14 @@ const markers: readonly AgentMarker[] = [
   { status: "blocked", first: /Hook error:/, second: /socket connection was closed unexpectedly/, reason: "terminal shows a socket connection transport error" },
 ];
 
+export const codexFlags: AgentFlags = {
+  executable: "codex",
+  permission: ["--dangerously-bypass-approvals-and-sandbox"],
+  model: (value, quote) => ["-c", `model=${quote(value)}`],
+  effort: (value, quote) => ["-c", `model_reasoning_effort=${quote(value)}`],
+  resume: (id, quote) => ({ lead: ["resume", quote(id)], trail: [] }),
+};
+
 export const codex: Agent = {
   id: "codex",
   matchesDescriptor: (descriptor) => descriptor === "codex" || /^codex_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
@@ -16,8 +24,10 @@ export const codex: Agent = {
   contextSource: "codex-rollout",
   compactCommand: "/compact",
   initialPromptFlag: "--",
+  flags: codexFlags,
   commandLine: ({ model, effort, browser, agentArgs }) => {
-    const parts = ["codex", "--dangerously-bypass-hook-trust", "--dangerously-bypass-approvals-and-sandbox"];
+    const [executable, ...permission] = launchArgv(codexFlags, null, null, doubleQuote);
+    const parts = [executable ?? "codex", "--dangerously-bypass-hook-trust", ...permission];
     // Codex's own startup update check can pop an "Update available!" modal (default option
     // runs a remote installer) over an already-idle composer, after readiness has been
     // confirmed and right as the prompt's Enter is about to land. Disable it at launch.
@@ -26,8 +36,7 @@ export const codex: Agent = {
     // trailing Enter is absorbed into the paste instead of submitting it (measured against real
     // codex 0.155.1 in tmux).
     parts.push("-c", "disable_paste_burst=true");
-    if (model !== null) parts.push("-c", `model=${doubleQuote(model)}`);
-    if (effort !== null) parts.push("-c", `model_reasoning_effort=${doubleQuote(effort)}`);
+    parts.push(...launchArgv(codexFlags, model, effort, doubleQuote).slice(1 + codexFlags.permission.length));
     parts.push("-c", `mcp_servers.playwright.enabled=${browser}`);
     parts.push(...agentArgs.map(shellArgument));
     return { kind: "ok", value: parts.join(" ") };

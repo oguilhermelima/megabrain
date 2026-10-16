@@ -64,6 +64,24 @@ async function statusJson(env: Record<string, string>, adapter: ProcessAdapter):
 }
 
 describe("megabrain status --json", () => {
+  test("reuses machine resource samples for ten seconds", async () => {
+    const env = environment();
+    const sampled: string[] = [];
+    const adapter: ProcessAdapter = {
+      async run(command, args) {
+        if (["vm_stat", "sysctl", "cat", "getconf"].includes(command)) sampled.push(command === "cat" ? `${command} ${args[0]}` : command);
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return sampled.length; },
+    };
+    await statusJson(env, adapter);
+    const firstSample = [...sampled];
+    await statusJson(env, adapter);
+    expect(firstSample.length).toBeGreaterThan(0);
+    expect(sampled).toEqual(firstSample);
+  });
+
   test("reports every section the panel reads", async () => {
     const env = environment();
     seed(env);

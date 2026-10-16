@@ -1,12 +1,19 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
+import { TranscriptSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
-import { buildConversationItems, mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
-import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
+import { deriveConversation, type DerivedConversation } from '@/chat/conversation-derive'
+import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
+import { toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
 import { MarkdownText } from '@/chat/markdown'
+import { NoticeCard } from '@/chat/NoticeCard'
+import { collapseNotices, type NoticeDisplayItem } from '@/chat/notice-model'
+import { UserMessageBody } from '@/chat/MessageImages'
 import { LinkedText, PathLinksContext, type PathLinks } from '@/chat/path-links'
 import { firstPath } from '@/code/chat-paths'
+import { reuse } from '@/lib/reuse'
 
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 /** Opens a file under a chat's worktree in Code mode, at a line when one was named. */
@@ -15,8 +22,8 @@ export type OpenPath = (root: string, path: string, line: number | null) => void
 function UserMessage({ event }: { event: TranscriptEvent }) {
   return (
     <li className="flex justify-end">
-      <div className="max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100">
-        <MarkdownText text={event.text} />
+      <div className="min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100">
+        <UserMessageBody text={event.text} images={event.images} />
       </div>
     </li>
   )
@@ -28,6 +35,14 @@ function AssistantMessage({ event }: { event: TranscriptEvent }) {
       <MarkdownText text={event.text} />
     </li>
   )
+}
+
+/** Renders an approval event in place; a native chat provides it, other views show the event as text. */
+export const ApprovalRendererContext = createContext<((event: TranscriptEvent) => ReactNode) | null>(null)
+
+function ApprovalMessage({ event }: { event: TranscriptEvent }) {
+  const render = useContext(ApprovalRendererContext)
+  return render === null ? <SystemMessage event={event} /> : <li>{render(event)}</li>
 }
 
 function SystemMessage({ event }: { event: TranscriptEvent }) {
@@ -174,7 +189,9 @@ function ToolGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 
   )
 }
 
-function Item({ item, onOpenChat }: { item: ConversationItem | DisplayItem; onOpenChat: OpenChat | undefined }) {
+// Memoised: a settled row keeps its item object across polls (see conversation-derive.ts).
+const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem | NoticeDisplayItem; onOpenChat: OpenChat | undefined }) {
+  if (item.type === 'notice') return <NoticeCard card={item} onOpenChat={onOpenChat} />
   if (item.type === 'tool-group') return <ToolGroup group={item} onOpenChat={onOpenChat} />
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
@@ -182,8 +199,15 @@ function Item({ item, onOpenChat }: { item: ConversationItem | DisplayItem; onOp
   if (event.kind === 'user') return <UserMessage event={event} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} />
+  if (event.kind === 'approval') return <ApprovalMessage event={event} />
   return <SystemMessage event={event} />
-}
+})
+
+const itemKey = (item: NoticeDisplayItem | undefined) => (item === undefined ? '' : item.type === 'message' ? item.event.id : item.id)
+// Rows are measured once shown; the estimate only places rows not yet seen.
+const estimatedRowHeight = 48
+const rowGap = 12
+const listPadding = 20
 
 export function Conversation({
   target,
@@ -201,14 +225,8 @@ export function Conversation({
 }) {
   const [transcript, setTranscript] = useState<Transcript | null>(null)
   const [error, setError] = useState<unknown>(null)
-  const [pinned, setPinned] = useState(true)
   const key = 'dispatchId' in target ? target.dispatchId : target.sessionId
-  const list = useRef<HTMLOListElement>(null)
   const cursorRef = useRef<string | null>(null)
-  const links = useMemo<PathLinks | null>(
-    () => (root === null || root === '' || onOpenPath === undefined ? null : { root, open: (path, line) => onOpenPath(root, path, line) }),
-    [root, onOpenPath],
-  )
 
   useEffect(() => {
     let stopped = false
@@ -221,7 +239,13 @@ export function Conversation({
         const next = await api.transcript(target, cursorRef.current ?? undefined)
         if (stopped) return
         cursorRef.current = next.cursor
-        setTranscript((previous) => (previous === null ? next : { ...next, events: mergeEvents(previous.events, next.events) }))
+        // A poll with nothing new keeps the same transcript, so nothing renders.
+        setTranscript((previous) => {
+          if (previous === null) return next
+          const events = mergeEvents(previous.events, next.events)
+          if (events.length > previous.events.length) return { ...next, events }
+          return reuse(previous, { ...next, events: previous.events })
+        })
         setError(null)
       } catch (caught) {
         if (!stopped) setError(caught)
@@ -236,10 +260,65 @@ export function Conversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, live])
 
+  if (error !== null) return <div className="mx-8 my-5"><ErrorNote error={error} /></div>
+  if (transcript === null) {
+    return <TranscriptSkeleton />
+  }
+  return <ConversationList events={transcript.events} onOpenChat={onOpenChat} root={root} onOpenPath={onOpenPath} />
+}
+
+/**
+ * The rows of a conversation, virtualised and pinned to the newest while the person has not scrolled
+ * up. Fed by Conversation's poll for sessions and dispatches, and by a native chat's live follow.
+ */
+export function ConversationList({
+  events,
+  onOpenChat,
+  root = null,
+  onOpenPath,
+}: {
+  events: TranscriptEvent[]
+  onOpenChat?: OpenChat
+  root?: string | null
+  onOpenPath?: OpenPath
+}) {
+  const [pinned, setPinned] = useState(true)
+  const list = useRef<HTMLDivElement>(null)
+  const links = useMemo<PathLinks | null>(
+    () => (root === null || root === '' || onOpenPath === undefined ? null : { root, open: (path, line) => onOpenPath(root, path, line) }),
+    [root, onOpenPath],
+  )
+
+  // Only the new events are derived on each poll; the settled rows are kept.
+  const derived = useRef<DerivedConversation | null>(null)
+  const collapsed = useRef<NoticeDisplayItem[]>([])
+  const items = useMemo(() => {
+    const next = deriveConversation(derived.current, events)
+    derived.current = next
+    collapsed.current = collapseNotices(next.display, collapsed.current)
+    return collapsed.current
+  }, [events])
+
+  // Only the rows near the viewport are in the DOM; each is measured as it renders.
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => list.current,
+    estimateSize: () => estimatedRowHeight,
+    getItemKey: (index) => itemKey(items[index]),
+    gap: rowGap,
+    paddingStart: listPadding,
+    paddingEnd: listPadding,
+    overscan: 6,
+  })
+
+  const scrollToLatest = () => {
+    if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' })
+  }
+
   useEffect(() => {
-    const element = list.current
-    if (element !== null && pinned) element.scrollTop = element.scrollHeight
-  }, [transcript, pinned])
+    if (pinned) scrollToLatest()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, pinned])
 
   const onScroll = () => {
     const element = list.current
@@ -247,35 +326,33 @@ export function Conversation({
     setPinned(element.scrollHeight - element.scrollTop - element.clientHeight < 40)
   }
 
-  if (error !== null) return <div className="mx-8 my-5"><ErrorNote error={error} /></div>
-  if (transcript === null) {
-    return (
-      <div className="mx-8 my-5 flex items-center gap-2 text-[13px] text-ink-400">
-        <Spinner />
-        Reading…
-      </div>
-    )
-  }
-  if (transcript.events.length === 0) {
+  if (events.length === 0) {
     return <div className="mx-8 my-5 text-[13px] text-ink-400">Nothing here yet.</div>
   }
 
-  const items = groupToolRuns(buildConversationItems(transcript.events))
   return (
     <PathLinksContext.Provider value={links}>
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ol ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 space-y-3 overflow-y-auto pt-5 pb-5 select-text">
-          {items.map((item) => (
-            <Item key={item.type === 'tool-group' ? item.id : item.event.id} item={item} onOpenChat={onOpenChat} />
-          ))}
-        </ol>
+        <div ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 overflow-y-auto select-text">
+          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((row) => {
+              const item = items[row.index]
+              if (item === undefined) return null
+              // Each row is a one-item list, so the message components keep rendering an <li>.
+              return (
+                <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${row.start}px)` }}>
+                  <Item item={item} onOpenChat={onOpenChat} />
+                </ol>
+              )
+            })}
+          </div>
+        </div>
         {!pinned && (
           <button
             type="button"
             onClick={() => {
               setPinned(true)
-              const element = list.current
-              if (element !== null) element.scrollTop = element.scrollHeight
+              scrollToLatest()
             }}
             className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/90 px-4 py-1.5 text-[12.5px] font-semibold text-ink-100 shadow-lg"
           >

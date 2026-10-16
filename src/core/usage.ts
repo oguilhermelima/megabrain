@@ -7,8 +7,12 @@ export const USAGE_LINES = {
   "db-migrate": "db migrate [--dry-run] [--json]",
   "db-show": "db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json]",
   "context": "context [--json]",
+  "sessions-history": "sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json]",
+  "agent-command": "agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json",
   // The caller must opt into operator authority on the command itself.
   "send": "send --session <agent:id> --text <text> --operator [--json]",
+  "session-own": "session own <agent:id> [--json]",
+  "session-release": "session release <agent:id> [--json]",
   "worktree": "worktree create|pr|finish|list|adopt|prune|hide|unhide ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
@@ -16,11 +20,12 @@ export const USAGE_LINES = {
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
   "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
-  "repo": "repo list|add|clone|remove|hide|unhide|github ...",
+  "repo": "repo list|add|clone|remove|hide|unhide|scripts|github ...",
   "repo-list": "repo list [--json]",
   "repo-add": "repo add <path> [--json]",
   "repo-clone": "repo clone <url> --into <dir> [--json]",
   "repo-remove": "repo remove <name|path> [--json]",
+  "repo-scripts": "repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]",
   "repo-github": "repo github [--owner <login>] [--json]",
   "projects": "projects [--json]",
   "github": "github prs|issues|pr|issue ...",
@@ -31,11 +36,11 @@ export const USAGE_LINES = {
   "code": "code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]",
   "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
-  "terminal-list": "terminal list [--worktree <path>] [--json]",
+  "terminal-list": "terminal list [--worktree <path>] [--json] | --app [--server <tmux -L name>] [--json]",
   "terminal-open": "terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]",
   "terminal-default": "terminal default [<name>|auto|none|--clear]",
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
-  "terminal-close": "terminal close <selector> [--json]",
+  "terminal-close": "terminal close <selector> [--json] | --app <id> [--server <tmux -L name>] [--json]",
   "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]",
   "orchestrate-policy": "orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--operator] [--json]",
   "orchestrate-adopt": "orchestrate adopt <dispatch-id-or-suffix> [--force] [--json]",
@@ -53,7 +58,8 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json]",
+  "settings": "settings [--json] | set terminal-engine native|tmux",
+  "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
   "proc": "proc start|run|list|status|stop|restart|logs ...",
@@ -170,7 +176,7 @@ Commands:
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
-  repo list|add|clone|remove|github ... Manage the local project registry
+  repo list|add|clone|remove|scripts|github ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
   github prs|issues|pr|issue ...        Read a repository's GitHub pull requests and issues
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open VS Code for a project
@@ -202,6 +208,7 @@ Commands:
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
   settings [--json]                    Read all settings shown in the desktop app
+  settings set terminal-engine ...     Choose the embedded terminal engine
   resources [--json|--all]               Measure machine and open-dispatch resources
   proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
   chain list|limits|add|save|edit|delete|run ...  Manage ordered child-agent chains

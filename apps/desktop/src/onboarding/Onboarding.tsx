@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '@/api'
 import type { PathLink } from '@/api/adapter'
 import type { DoctorReport, InstallPlan } from '@/api/schema'
-import { Badge, Button, Card, Check, ErrorNote, Mono, Segmented, Spinner, doctorTone } from '@/components/ui'
+import { RowsSkeleton } from '@/components/Skeleton'
+import { Badge, Button, Card, Check, ErrorNote, Logo, Mono, Segmented, Spinner, doctorTone } from '@/components/ui'
 import { emptyProgress, groupModules, initialSelection, installArgs, moduleRetryArgs, reduceInstall, removals, type InstallProgress, type Selection } from '@/onboarding/model'
 
 const steps = ['Command line', 'Environment', 'Choose', 'Install', 'Health'] as const
@@ -31,7 +32,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
     <div className="flex h-full">
       <aside className="glass flex w-64 shrink-0 flex-col border-r border-white/[0.06] px-5 pt-12 pb-6">
         <div className="mb-8 flex items-center gap-2.5">
-          <img src="/icon.png" alt="" className="size-7 rounded-2xl" />
+          <Logo className="size-7" />
           <div>
             <div className="text-[14px] font-semibold text-ink-100">megabrain</div>
             <div className="text-[11px] text-ink-400">Setup{plan === null ? '' : ` · v${plan.version}`}</div>
@@ -98,10 +99,16 @@ function Heading({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+/** What is being read, over the card it fills. */
 function Loading({ what }: { what: string }) {
   return (
-    <div className="flex items-center gap-2 text-ink-400">
-      <Spinner /> {what}…
+    <div className="max-w-3xl space-y-3">
+      <p className="flex items-center gap-2 text-[13px] text-ink-400">
+        <Spinner /> {what}…
+      </p>
+      <div className="rounded-[24px] border border-white/[0.08] bg-ink-900 p-2">
+        <RowsSkeleton count={4} label={what} />
+      </div>
     </div>
   )
 }

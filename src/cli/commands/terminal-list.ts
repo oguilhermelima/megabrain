@@ -3,6 +3,7 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { listTerminals, stateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { tmuxPanePids } from "./terminal-tmux.js";
+import { executeAppTerminalList } from "./terminal-app.js";
 import { formatTerminalList, processStatus, type HostTerminal, type TerminalRecord } from "../../core/terminal-list.js";
 import { getHost } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
@@ -84,6 +85,7 @@ async function selector(process: ProcessAdapter, value: string): Promise<Result<
 }
 
 export async function executeTerminalList(args: readonly string[], environment: TerminalListEnvironment, process: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("--app")) return executeAppTerminalList(args.filter((arg) => arg !== "--app"), environment, process);
   let worktree: string | undefined;
   let json = false;
   for (let index = 0; index < args.length; index += 1) {

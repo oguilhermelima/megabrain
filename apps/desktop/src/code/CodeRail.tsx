@@ -1,6 +1,7 @@
 import { useCallback, useState, type MouseEvent } from 'react'
 import type { Project } from '@/api/schema'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
+import { Logo } from '@/components/ui'
 import { lightsRow } from '@/advanced/chrome'
 import { CodeSwitcher } from '@/code/CodeSwitcher'
 import { railEntries, type CodeModeState, type CodeTarget } from '@/code/code-mode-model'
@@ -73,7 +74,7 @@ export function CodeRail({
     <nav aria-label="Code mode" className="glass flex w-[96px] shrink-0 flex-col items-center border-r border-white/[0.06] pb-3">
       <div data-tauri-drag-region className={`${lightsRow} w-full shrink-0`} />
       <button type="button" onClick={onChats} aria-label="Back to chats" title="Back to chats (⌘⇧E)" tabIndex={-1} className="mb-2 shrink-0 rounded-full">
-        <span className="orb block size-6" aria-hidden="true" />
+        <Logo className="size-6" />
       </button>
       <button type="button" onClick={onChats} aria-label="Back to chats" title="Back to chats (⌘⇧E)" className={railButton}>
         <ChatListIcon />

@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { readAdmissionPolicy, resourceHistoryEnabled, stateDatabase } from "../../adapters/state-db.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { detectTerminal, OPENERS, type Platform } from "../../core/terminal-openers.js";
@@ -13,6 +16,25 @@ function platform(): Platform {
   return process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux";
 }
 
+function terminalEngineFile(environment: Environment): string {
+  return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"), "terminal-settings.json");
+}
+
+async function readTerminalEngine(environment: Environment): Promise<"native" | "tmux"> {
+  try {
+    const value = JSON.parse(await readFile(terminalEngineFile(environment), "utf8")) as { terminalEngine?: unknown };
+    return value.terminalEngine === "tmux" ? "tmux" : "native";
+  } catch { return "native"; }
+}
+
+async function writeTerminalEngine(environment: Environment, engine: "native" | "tmux"): Promise<void> {
+  const file = terminalEngineFile(environment);
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify({ terminalEngine: engine })}\n`, { mode: 0o600 });
+  await rename(temporary, file);
+}
+
 function summary(value: SettingsValue): string {
   const providers = value.limits.enabledProviders.length === 0 ? "none" : value.limits.enabledProviders.join(", ");
   return [
@@ -23,10 +45,12 @@ function summary(value: SettingsValue): string {
     `live usage providers: ${providers}`,
     `chains: ${value.chains.length}; models: ${value.models.length}`,
     `terminal default: ${value.terminal.default ?? "unset"}; detected: ${value.terminal.detected ?? "none"}`,
+    `terminal engine: ${value.terminalEngine}`,
   ].join("\n") + "\n";
 }
 
 type SettingsValue = {
+  terminalEngine: "native" | "tmux";
   supervisor: { running: boolean; pid: number | null };
   resources: {
     historyEnabled: boolean;
@@ -38,7 +62,7 @@ type SettingsValue = {
     readings: Awaited<ReturnType<typeof readLimitRows>>;
   };
   chains: Array<Record<string, unknown> & { name: string }>;
-  models: Array<{ agent: string; model: string; reasoning: { levels: string[] } }>;
+  models: Array<{ agent: string; model: string; name: string; contextWindows: number[]; current: boolean; reasoning: { levels: string[] } }>;
   terminal: { default: string | null; detected: string | null; available: string[] };
 };
 
@@ -54,11 +78,12 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const registry = modelRegistry(environment);
   if (registry.kind !== "ok") return registry;
 
-  const [historyEnabled, storedPolicy, configuredDefault, readings] = await Promise.all([
+  const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine] = await Promise.all([
     resourceHistoryEnabled(environment),
     readAdmissionPolicy(environment),
     storedDefault(environment),
     readLimitRows(environment, validated.value, processAdapter),
+    readTerminalEngine(environment),
   ]);
   const settingsPolicy = storedPolicy === undefined ? null : {
     maxAgents: storedPolicy.maxAgents ?? null,
@@ -69,6 +94,9 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const models = registry.value.map((model) => ({
     agent: model.agent,
     model: model.model,
+    name: typeof model.name === "string" ? model.name : model.model,
+    contextWindows: Array.isArray(model.contextWindows) ? model.contextWindows.filter((window): window is number => typeof window === "number") : [],
+    current: model.current === true,
     reasoning: { levels: [...(model.reasoning?.levels ?? [])] },
   }));
   const watcher = supervisorWatcher(database.value);
@@ -76,6 +104,7 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const defaultNotice = validated.value.usageLimits?.notice;
   const enabledProviders = [...(validated.value.usageLimits?.liveProviders ?? [])];
   return ok({
+    terminalEngine,
     supervisor: { running: watcher.running, pid: watcher.pid },
     resources: { historyEnabled, policy: settingsPolicy },
     limits: {
@@ -94,6 +123,11 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
 }
 
 export async function executeSettings(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args[0] === "set") {
+    if (args.length !== 3 || args[1] !== "terminal-engine" || (args[2] !== "native" && args[2] !== "tmux")) return failed("Usage: megabrain settings set terminal-engine native|tmux", 2);
+    await writeTerminalEngine(environment, args[2]);
+    return ok(`terminal engine: ${args[2]}\n`);
+  }
   let asJson = false;
   for (const arg of args) {
     if (arg === "--json") asJson = true;

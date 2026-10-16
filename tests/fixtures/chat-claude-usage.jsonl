@@ -1,0 +1,2 @@
+{"type":"assistant","messageUsage":{"input_tokens":2,"cache_creation_input_tokens":47020,"cache_read_input_tokens":28707,"output_tokens":1}}
+{"type":"result","usage":{"input_tokens":2,"cache_creation_input_tokens":47020,"cache_read_input_tokens":28707,"output_tokens":4},"modelUsage":{"model":{"contextWindow":1000000}}}

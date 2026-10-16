@@ -1,4 +1,9 @@
 const CLAUDE_PLACEHOLDER = /\[Pasted text #\d+(?: \+(\d+) lines)?\]/g;
+// Claude turns a pasted image path into a chip and keeps collapsing the rest of the paste, so the
+// composer can hold chips, one placeholder and plain text together (tests/fixtures/composer/claude-image-*).
+const CLAUDE_IMAGE_CHIP = /\[Image #\d+\]/gu;
+const IMAGE_PATH = /\S+\.(?:png|jpe?g|gif|webp|heic|heif|bmp|tiff?)/giu;
+const CLAUDE_WHOLE_PLACEHOLDER = /^\[Pasted text #\d+(?: \+(\d+) lines)?\]$/u;
 const CODEX_PLACEHOLDER = /\[Pasted Content (\d+) chars\]/g;
 // Codex collapses a paste past 1000 characters. Below that it types the text inline, and in a pane
 // too short to show it all it scrolls the composer and marks its first line with an arrow.
@@ -99,6 +104,18 @@ export function composerReadback(agent: string, screen: string): Readonly<{ regi
   };
 }
 
+// Every image path in the text became one chip; what is left of the composer is the rest of the
+// text, inline or as the single placeholder whose line count covers it.
+function claudeHoldsImageText(region: string, text: string): boolean {
+  const chips = region.match(CLAUDE_IMAGE_CHIP)?.length ?? 0;
+  if (chips === 0 || (text.match(IMAGE_PATH)?.length ?? 0) !== chips) return false;
+  const rest = text.replace(IMAGE_PATH, "");
+  const remaining = region.replace(CLAUDE_IMAGE_CHIP, "");
+  if (withoutWhitespace(remaining) === withoutWhitespace(rest)) return true;
+  const placeholder = CLAUDE_WHOLE_PLACEHOLDER.exec(remaining.trim());
+  return placeholder !== null && Number(placeholder[1] ?? 0) === newlineCount(rest);
+}
+
 // Proves the complete composer payload. Inline text must match in full; collapsed agent paste
 // placeholders are accepted only when the placeholder is the entire composer payload.
 export function composerExactlyHoldsText(agent: string, screen: string, text: string): boolean {
@@ -106,6 +123,7 @@ export function composerExactlyHoldsText(agent: string, screen: string, text: st
   const region = composerRegion(agent, screen);
   if (region === undefined) return false;
   if (withoutWhitespace(region) === withoutWhitespace(text)) return true;
+  if (agent === "claude" && claudeHoldsImageText(region, text)) return true;
   const placeholder = agent === "claude" ? /^\[Pasted text #\d+(?: \+\d+ lines)?\]$/u
     : agent === "codex" ? /^\[Pasted Content \d+ chars\]$/u
       : agent === "grok" ? /^\[Pasted: \d+ lines?\]$/u

@@ -1,15 +1,23 @@
+mod app_terminals;
 pub mod cli;
 pub mod code;
+mod cli_stream;
+#[cfg(test)]
+mod cli_stream_tests;
 mod attachment;
 pub mod path_link;
 mod pill;
+mod process_tree;
+mod terminal;
 mod tray;
+#[cfg(test)]
+mod terminal_tests;
 
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use tauri::{Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri::{ipc::Channel, Emitter, Manager, RunEvent, State, WindowEvent};
 
 /// Where the bundled CLI and its assets are, and the PATH it runs with.
 struct Cli {
@@ -63,6 +71,95 @@ async fn run_cli(cli: State<'_, Cli>, args: Vec<String>) -> Result<CliOutput, St
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn cli_stream(cli: State<'_, Cli>, streams: State<'_, cli_stream::CliStreams>, args: Vec<String>, on_line: Channel<String>) -> Result<String, String> {
+    streams.start(cli.command(&args), on_line)
+}
+
+#[tauri::command]
+fn cli_stream_stop(streams: State<'_, cli_stream::CliStreams>, stream_id: String) {
+    streams.stop(&stream_id);
+}
+
+// Tauri runs a plain command on the main thread, where it queues behind every other window event.
+// Opening spawns processes and closing waits on them, so both run on the blocking pool instead.
+#[tauri::command]
+async fn terminal_open(
+    app: tauri::AppHandle,
+    cli: State<'_, Cli>,
+    options: terminal::TerminalOpenOptions,
+) -> Result<terminal::TerminalSession, String> {
+    let path = cli.path.clone();
+    tauri::async_runtime::spawn_blocking(move || app.state::<terminal::TerminalManager>().open(&path, options))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn terminal_write(
+    terminals: State<'_, terminal::TerminalManager>,
+    terminal_id: String,
+    data: String,
+) -> Result<(), String> {
+    terminals.write(&terminal_id, &data)
+}
+
+#[tauri::command]
+fn terminal_resize(
+    terminals: State<'_, terminal::TerminalManager>,
+    terminal_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    terminals.resize(&terminal_id, cols, rows)
+}
+
+/// Closing kills the terminal for good: its process, or its tmux session. A terminal the app does not
+/// hold open (one it listed after a restart) is killed through the CLI when `kill` is set.
+#[tauri::command]
+async fn terminal_close(
+    app: tauri::AppHandle,
+    cli: State<'_, Cli>,
+    terminal_id: String,
+    kill: Option<bool>,
+) -> Result<(), String> {
+    let mut command = cli.command(&["terminal".into(), "close".into(), "--app".into(), terminal_id.clone()]);
+    tauri::async_runtime::spawn_blocking(move || {
+        let terminals = app.state::<terminal::TerminalManager>();
+        if terminals.has(&terminal_id) {
+            return terminals.close(&terminal_id);
+        }
+        if kill != Some(true) {
+            return Ok(());
+        }
+        let output = command.output().map_err(|error| format!("could not run megabrain: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn terminal_listen(
+    terminals: State<'_, terminal::TerminalManager>,
+    terminal_id: String,
+    on_event: Channel<terminal::TerminalEvent>,
+) -> Result<(), String> {
+    terminals.listen(&terminal_id, on_event)
+}
+
+#[tauri::command]
+fn terminal_unlisten(
+    terminals: State<'_, terminal::TerminalManager>,
+    terminal_id: String,
+) -> Result<(), String> {
+    terminals.unlisten(&terminal_id)
 }
 
 /// Runs the CLI and forwards each stdout line as a `cli-line` event tagged with `id`, for commands
@@ -206,6 +303,8 @@ pub fn run() {
             let current = std::env::var("PATH").unwrap_or_default();
             let path = cli::merge_path(cli::login_path().as_deref(), &current);
             app.manage(Cli { executable, root, path });
+            app.manage(cli_stream::CliStreams::default());
+            app.manage(terminal::TerminalManager::default());
             tray::create(app.handle())?;
             pill::setup(app.handle())?;
             Ok(())
@@ -227,6 +326,7 @@ pub fn run() {
         .on_window_event(|window, event| match event {
             // Closing the main window keeps megabrain in the pill and the tray; Quit ends it.
             WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+                window.app_handle().state::<cli_stream::CliStreams>().stop_all();
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -239,6 +339,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             run_cli,
             stream_cli,
+            cli_stream,
+            cli_stream_stop,
+            terminal_open,
+            terminal_write,
+            terminal_resize,
+            terminal_close,
+            terminal_listen,
+            terminal_unlisten,
             path_link_state,
             link_cli,
             set_tray_summary,
@@ -254,8 +362,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");
     app.run(|handle, event| {
+        if matches!(&event, RunEvent::Exit) {
+            handle.state::<cli_stream::CliStreams>().stop_all();
+            handle.state::<terminal::TerminalManager>().close_all();
+        }
         #[cfg(target_os = "macos")]
-        if let RunEvent::Reopen { .. } = event {
+        if let RunEvent::Reopen { .. } = &event {
             show_main(handle);
         }
         #[cfg(not(target_os = "macos"))]

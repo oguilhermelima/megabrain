@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { mockStatus, mockWorktrees } from '@/api/fixtures/mock'
-import type { Dispatch } from '@/api/schema'
-import { chatState, groupChats, neighbour, pillSummary } from '@/advanced/model'
+import type { Dispatch, Project } from '@/api/schema'
+import { chatState, groupChats, pillSummary, worktreeRepositories } from '@/advanced/model'
 
 function chat(id: string, fields: Partial<Dispatch> = {}): Dispatch {
   return {
@@ -75,19 +75,6 @@ describe('groupChats', () => {
   })
 })
 
-describe('neighbour', () => {
-  const ids = ['a', 'b', 'c']
-  test('moves to the next and previous chat and wraps around', () => {
-    expect(neighbour(ids, 'b', 1)).toBe('c')
-    expect(neighbour(ids, 'c', 1)).toBe('a')
-    expect(neighbour(ids, 'a', -1)).toBe('c')
-  })
-  test('starts at the first chat when nothing is selected', () => {
-    expect(neighbour(ids, null, 1)).toBe('a')
-    expect(neighbour([], null, 1)).toBeNull()
-  })
-})
-
 describe('pillSummary', () => {
   test('counts chats at work and chats that need you', () => {
     const summary = pillSummary([
@@ -98,5 +85,31 @@ describe('pillSummary', () => {
       chat('e', { state: 'running', supervision: { lastCheck: null, finding: { cause: 'usage-limit' } } }),
     ])
     expect(summary).toEqual({ working: 2, needsYou: 1, queued: 1 })
+  })
+})
+
+describe('worktreeRepositories', () => {
+  const project = (name: string, path: string, worktrees: string[]): Project => ({
+    name,
+    path,
+    remote: null,
+    source: 'megabrain',
+    missing: false,
+    worktrees: worktrees.map((worktree, index) => ({ path: worktree, branch: `b${index}`, head: null, primary: index === 0, parent: null, pullRequest: null, sessions: [] })),
+  })
+
+  test('names every worktree of a project after its main checkout folder, as worktree list does', () => {
+    const listed = worktreeRepositories([project('Canto', '/Users/o/canto-space', ['/Users/o/canto-space', '/w/fix-seek']), project('juntin', '/Users/o/juntin', ['/Users/o/juntin'])])
+    expect(listed).toEqual([
+      { path: '/Users/o/canto-space', repository: { name: 'canto-space' } },
+      { path: '/w/fix-seek', repository: { name: 'canto-space' } },
+      { path: '/Users/o/juntin', repository: { name: 'juntin' } },
+    ])
+  })
+
+  test('groups chats the same way the worktree list did', () => {
+    const fromProjects = worktreeRepositories([project('c', '/Users/o/canto', ['/Users/o/canto', '/w/docs', '/w/fix-seek', '/w/feat-tv'])])
+    const grouped = groupChats([chat('a', { worktreePath: '/w/docs' }), chat('b', { worktreePath: '/w/feat-tv' })], fromProjects)
+    expect(grouped.repositories.map((repository) => repository.name)).toEqual(['canto'])
   })
 })

@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { placeMenu, type AnchorRect } from '@/advanced/menu-placement'
-import { Button, ErrorNote, Spinner } from '@/components/ui'
 
 export interface MenuItem {
   label: string
@@ -72,71 +71,5 @@ export function RowMenu({ menu, onClose }: { menu: OpenMenu; onClose: () => void
       ))}
     </div>,
     document.body,
-  )
-}
-
-export interface PendingConfirm {
-  title: string
-  body: string
-  action: string
-  run: () => Promise<void>
-}
-
-/** Asks before a removal and shows megabrain's own error text when it refuses. */
-export function ConfirmDialog({ confirm, onClose, onDone }: { confirm: PendingConfirm; onClose: () => void; onDone: () => void }) {
-  const [running, setRunning] = useState(false)
-  const [error, setError] = useState<unknown>(null)
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, running])
-
-  const run = () => {
-    setRunning(true)
-    setError(null)
-    confirm.run().then(
-      () => {
-        setRunning(false)
-        onDone()
-      },
-      (caught: unknown) => {
-        setRunning(false)
-        setError(caught)
-      },
-    )
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-ink-950/70 px-4 backdrop-blur-sm"
-      role="alertdialog"
-      aria-modal="true"
-      aria-label={confirm.title}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !running) onClose()
-      }}
-    >
-      <div className="glass w-full max-w-md rounded-[28px] border border-white/[0.1] p-6 shadow-2xl">
-        <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-ink-100">{confirm.title}</h2>
-        <p className="mt-2 text-[13.5px] leading-relaxed text-ink-300">{confirm.body}</p>
-        {error !== null && (
-          <div className="mt-4">
-            <ErrorNote error={error} />
-          </div>
-        )}
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={running}>
-            Cancel
-          </Button>
-          <Button variant="danger" onClick={run} disabled={running}>
-            {running ? <Spinner /> : confirm.action}
-          </Button>
-        </div>
-      </div>
-    </div>
   )
 }

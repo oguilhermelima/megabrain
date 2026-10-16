@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { expandRepositoryUrl, repositoryCheckout } from "../../core/project-registry.js";
+import { projectScripts, setProjectScripts, type SavedProjectScripts } from "../../core/project-scripts.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from "../../db/db.js";
 import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
@@ -42,10 +43,37 @@ async function addRepository(path: string, source: "megabrain" | "import", envir
 export async function executeRepository(args: readonly string[], environment: Environment, process = createProcessAdapter()): Promise<Result<string>> {
   const [verb, ...rest] = args;
   if (args.includes("-h") || args.includes("--help")) {
-    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "github" ? "repo-github" : "repo";
+    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "scripts" ? "repo-scripts" : verb === "github" ? "repo-github" : "repo";
     return ok(usageText(key));
   }
   const json = rest.includes("--json");
+  if (verb === "scripts") {
+    const selector = rest.find((argument) => !argument.startsWith("-"));
+    if (selector === undefined) return failed("Usage: megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]", 2);
+    let checkout = await repositoryCheckout(selector, process);
+    let repoPath: string | undefined = checkout.kind === "ok" ? checkout.value.path : undefined;
+    if (repoPath === undefined) {
+      const records = databaseRead(environment, listRepositories);
+      if (records.kind !== "ok") return records;
+      const matches = records.value.filter((record) => record.name === selector || record.path === selector);
+      if (matches.length > 1) return failed(`repository name is ambiguous: ${selector}; use a path`);
+      repoPath = matches[0]?.path;
+    }
+    if (repoPath === undefined) return failed(`repository not found: ${selector}`);
+    const changes: SavedProjectScripts = {};
+    for (const name of ["run", "build", "install"] as const) {
+      const index = rest.indexOf(`--${name}`);
+      if (index >= 0) {
+        const value = rest[index + 1];
+        if (value === undefined || value === "--json" || value.startsWith("--")) return failed(`--${name} requires a command (use an empty string to clear it)`, 2);
+        changes[name] = value;
+      }
+    }
+    const scripts = Object.keys(changes).length > 0
+      ? await setProjectScripts(repoPath, changes, environment)
+      : await projectScripts(repoPath, environment);
+    return ok(`${JSON.stringify({ repo: repoPath, scripts }, null, 2)}\n`);
+  }
   const backfilled = await backfillProjectHistory(environment, process);
   if (backfilled.kind !== "ok") return backfilled;
   if (verb === "list") {

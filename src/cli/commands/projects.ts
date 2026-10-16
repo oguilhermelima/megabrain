@@ -1,6 +1,8 @@
-import { open as openFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { open as openFile, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -12,14 +14,22 @@ import { listWorktrees } from "../../db/queries/worktrees.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
 import { readContextMeter } from "../../core/context-meter.js";
 import { listHiddenItems } from "../../db/queries/hidden-items.js";
+import { readOwnedSessions, sessionOwnerFields, type OwnedSessions } from "../../core/session-ownership.js";
+import { ChatStore } from "../../chat/store.js";
+import { readProcessTable, sessionOrigin, type ProcessTable, type SessionOrigin } from "../../core/session-origin.js";
+import { loadModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
+import { resolveStateDirectory } from "../../core/state.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
-type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; contextTokens?: number | null; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
+type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: SessionOrigin; tmuxServer?: string; tmuxSession?: string; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
 type GitWorktree = Readonly<{ path: string; branch: string | null; head: string | null; primary: boolean; parent: string | null }>;
 type Project = Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; missing: boolean; worktrees: readonly (GitWorktree & { pullRequest: PullRequestSummary | null; sessions: readonly ProjectSession[] })[] }>;
 type Dispatch = ReturnType<typeof listDispatches>[number];
-type RawSession = Readonly<{ agent: ProjectSession["agent"]; id: string; cwd: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; processId?: number }>;
+export type RawSession = Readonly<{ agent: ProjectSession["agent"]; id: string; cwd: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; processId?: number; model?: string | null; contextWindow?: number | null }>;
+
+type ClaudeLogDetails = Readonly<{ model: string | null; contextWindow: number | null; contextTokens: number | null }>;
+const claudeLogCache = new Map<string, Readonly<{ signature: string; value: ClaudeLogDetails }>>();
 
 // title and isDraft are null for a value cached before they were read; the cache keeps gh's own JSON.
 type PullRequestSummary = Readonly<{ number: number; state: string; url: string; title: string | null; isDraft: boolean | null }>;
@@ -27,6 +37,52 @@ type PullRequestSummary = Readonly<{ number: number; state: string; url: string;
 const HISTORY_MARKER = "project-registry-backfilled";
 const DAY = 86_400_000;
 const PULL_REQUEST_CACHE_TTL = 60_000;
+const PROJECT_CACHE_FILE = "projects-derived-cache.json";
+type ProjectCache = {
+  version: 1;
+  worktrees: Record<string, { headMtimeMs: number; indexMtimeMs: number; configMtimeMs: number; primary: boolean; parent: string | null }>;
+  sessions: Record<string, { path: string; size: number; mtimeMs: number; title: string | null }>;
+};
+
+function emptyProjectCache(): ProjectCache { return { version: 1, worktrees: {}, sessions: {} }; }
+
+async function readProjectCache(environment: Environment): Promise<ProjectCache> {
+  try {
+    const value: unknown = JSON.parse(await readFile(join(resolveStateDirectory(environment), PROJECT_CACHE_FILE), "utf8"));
+    if (typeof value !== "object" || value === null || (value as { version?: unknown }).version !== 1) return emptyProjectCache();
+    const cache = value as Partial<ProjectCache>;
+    return { version: 1, worktrees: cache.worktrees ?? {}, sessions: cache.sessions ?? {} };
+  } catch { return emptyProjectCache(); }
+}
+
+async function writeProjectCache(environment: Environment, cache: ProjectCache): Promise<void> {
+  const directory = resolveStateDirectory(environment);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const path = join(directory, PROJECT_CACHE_FILE);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(cache)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+  } catch { await unlink(temporary).catch(() => undefined); }
+}
+
+function logCacheKey(path: string, size: number, mtimeMs: number): string {
+  return createHash("sha256").update(`${path}\0${size}\0${mtimeMs}`).digest("hex");
+}
+
+async function cachedClaudeTitle(cache: ProjectCache, home: string, cwd: string, sessionId: string): Promise<string | undefined> {
+  const path = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
+  try {
+    const info = await stat(path);
+    const key = logCacheKey(path, info.size, info.mtimeMs);
+    const saved = cache.sessions[key];
+    if (saved !== undefined) return saved.title ?? undefined;
+    const title = await claudeTitle(home, cwd, sessionId);
+    for (const [oldKey, entry] of Object.entries(cache.sessions)) if (entry.path === path) delete cache.sessions[oldKey];
+    cache.sessions[key] = { path, size: info.size, mtimeMs: info.mtimeMs, title: title ?? null };
+    return title;
+  } catch { return claudeTitle(home, cwd, sessionId); }
+}
 
 function processIsAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -34,22 +90,22 @@ function processIsAlive(pid: number): boolean {
   catch (cause: unknown) { return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EPERM"; }
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
+export function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
-function stringField(value: Record<string, unknown>, ...keys: string[]): string | undefined {
+export function stringField(value: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) if (typeof value[key] === "string" && value[key] !== "") return value[key] as string;
   return undefined;
 }
 
-function iso(value: unknown): string | null {
+export function iso(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) return new Date(value).toISOString();
   if (typeof value === "string" && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   return null;
 }
 
-function userTitle(value: unknown): string | undefined {
+export function userTitle(value: unknown): string | undefined {
   if (typeof value === "string") return value.replace(/\s+/g, " ").trim().slice(0, 80) || undefined;
   if (Array.isArray(value)) {
     const text = value.filter((part) => typeof part === "object" && part !== null && ["text", "input_text", "output_text"].includes(String((part as Record<string, unknown>).type)))
@@ -59,7 +115,7 @@ function userTitle(value: unknown): string | undefined {
   return undefined;
 }
 
-async function claudeTitle(home: string, cwd: string, sessionId: string): Promise<string | undefined> {
+export async function claudeTitle(home: string, cwd: string, sessionId: string): Promise<string | undefined> {
   const project = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
   let file: FileHandle | undefined;
   try {
@@ -101,7 +157,80 @@ async function claudeTitle(home: string, cwd: string, sessionId: string): Promis
   return undefined;
 }
 
-async function codexSessionTitles(home: string): Promise<Map<string, string>> {
+async function claudeModelSettings(home: string, cwd: string): Promise<{ readonly paths: string[]; readonly models: string[] }> {
+  const globalSettings = join(home, ".claude", "settings.json");
+  const projectSettings = join(cwd, ".claude");
+  const files = await readdir(projectSettings).catch(() => []);
+  const paths = [globalSettings, ...files.filter((name) => /^settings.*\.json$/.test(name)).map((name) => join(projectSettings, name))];
+  const models: string[] = [];
+  for (const path of paths) {
+    try {
+      const settings = record(JSON.parse(await readFile(path, "utf8")) as unknown);
+      if (typeof settings?.model === "string") models.push(settings.model);
+    } catch { /* Missing or invalid settings do not provide model evidence. */ }
+  }
+  return { paths, models };
+}
+
+async function claudeLogDetails(home: string, cwd: string, sessionId: string, registry: ModelRegistry): Promise<ClaudeLogDetails> {
+  const path = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
+  const settings = await claudeModelSettings(home, cwd);
+  let logStat: { size: number; mtimeMs: number };
+  try { logStat = await stat(path); } catch { return { model: null, contextWindow: null, contextTokens: null }; }
+  const signatures = await Promise.all(settings.paths.map(async (settingPath) => {
+    try { const info = await stat(settingPath); return `${info.size}:${info.mtimeMs}`; } catch { return "missing"; }
+  }));
+  const signature = `${logStat.size}:${logStat.mtimeMs}|${signatures.join("|")}`;
+  const cached = claudeLogCache.get(path);
+  if (cached?.signature === signature) return cached.value;
+
+  let latestModel: string | null = null;
+  let latestUsage: number | null = null;
+  let provedLong = false;
+  let boundarySeen = false;
+  let handle: FileHandle | undefined;
+  try {
+    handle = await openFile(path, "r");
+    const start = Math.max(0, logStat.size - 512 * 1024);
+    const buffer = Buffer.alloc(logStat.size - start);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+    for (const line of buffer.subarray(0, bytesRead).toString("utf8").split("\n").reverse()) {
+      try {
+        const entry = record(JSON.parse(line) as unknown);
+        if (!boundarySeen && entry?.type === "system" && entry.subtype === "compact_boundary") {
+          boundarySeen = true;
+          // Usage recorded before the latest compact boundary describes the old context.
+          const meta = record(entry.compactMetadata);
+          if (typeof meta?.preTokens === "number" && meta.preTokens > 200000) provedLong = true;
+          if (latestUsage === null) latestUsage = typeof meta?.postTokens === "number" && Number.isSafeInteger(meta.postTokens) && meta.postTokens >= 0 ? meta.postTokens : 0;
+        }
+        if (entry?.type !== "assistant" || entry.isSidechain === true) continue;
+        const message = record(entry.message);
+        if (latestModel === null && typeof message?.model === "string" && message.model !== "") latestModel = message.model;
+        const usage = record(message?.usage);
+        if (latestUsage === null && usage !== undefined) {
+          const values = [usage.input_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens].map((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : value === undefined ? 0 : Number.NaN);
+          if (values.every(Number.isFinite)) latestUsage = values.reduce((sum, value) => sum + value, 0);
+        }
+        if (latestModel !== null && boundarySeen) break;
+      } catch { /* Ignore partial lines and malformed entries. */ }
+    }
+  } catch { /* Transcript details are optional for a project session. */ }
+  finally { await handle?.close().catch(() => undefined); }
+
+  const settingsLong = settings.models.some((model) => /\[1m\]/i.test(model));
+  const modelEntry = latestModel === null ? undefined : registry.models.find((entry) => entry.agent === "claude" && entry.model === latestModel?.replace(/\[1m\]$/i, ""));
+  const supported = Array.isArray(modelEntry?.contextWindows) ? modelEntry.contextWindows.filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0) : [];
+  const defaultWindow = supported[0] ?? contextWindowOf(registry, "claude", latestModel?.replace(/\[1m\]$/i, "") ?? "");
+  const contextWindow = provedLong || latestUsage !== null && latestUsage > 200000 || latestModel !== null && /\[1m\]/i.test(latestModel) || settingsLong
+    ? 1000000 : defaultWindow ?? null;
+  const value = { model: latestModel, contextWindow, contextTokens: latestUsage };
+  if (claudeLogCache.size >= 512) claudeLogCache.delete(claudeLogCache.keys().next().value as string);
+  claudeLogCache.set(path, { signature, value });
+  return value;
+}
+
+export async function codexSessionTitles(home: string): Promise<Map<string, string>> {
   const titles = new Map<string, string>();
   let contents: string;
   try { contents = await readFile(join(home, ".codex", "session_index.jsonl"), "utf8"); }
@@ -117,7 +246,7 @@ async function codexSessionTitles(home: string): Promise<Map<string, string>> {
   return titles;
 }
 
-async function claudeSessions(home: string): Promise<RawSession[]> {
+async function claudeSessions(home: string, cache: ProjectCache): Promise<RawSession[]> {
   const directory = join(home, ".claude", "sessions");
   let names: string[];
   try { names = await readdir(directory); } catch { return []; }
@@ -138,7 +267,7 @@ async function claudeSessions(home: string): Promise<RawSession[]> {
       const lastActivityAt = iso(value.updatedAt) ?? iso(value.statusUpdatedAt) ?? startedAt;
       if (status === "ended" && (lastActivityAt === null || now - Date.parse(lastActivityAt) > DAY)) return undefined;
       const explicitTitle = (value.nameSource === "user" || value.nameSource === "auto") ? userTitle(value.name) : undefined;
-      const title = explicitTitle ?? await claudeTitle(home, cwd, id) ?? "Claude";
+      const title = explicitTitle ?? await cachedClaudeTitle(cache, home, cwd, id) ?? "Claude";
       return { agent: "claude", id, cwd: resolve(cwd), title: title.slice(0, 80), status, startedAt, lastActivityAt, processId: pid };
     } catch { return undefined; }
   }));
@@ -166,7 +295,7 @@ async function grokLogActivity(home: string, cwd: string, sessionId: string): Pr
   return null;
 }
 
-async function grokUserTitle(home: string, cwd: string, sessionId: string): Promise<string | undefined> {
+export async function grokUserTitle(home: string, cwd: string, sessionId: string): Promise<string | undefined> {
   const path = join(home, ".grok", "sessions", encodeURIComponent(cwd), sessionId, "updates.jsonl");
   let file;
   try {
@@ -233,18 +362,14 @@ async function codexRolloutPaths(home: string, processAdapter: ProcessAdapter): 
   })();
 }
 
-async function codexSessions(home: string, processAdapter: ProcessAdapter, titles: ReadonlyMap<string, string>): Promise<RawSession[]> {
+async function codexSessions(home: string, processAdapter: ProcessAdapter, titles: ReadonlyMap<string, string>, table: ProcessTable): Promise<RawSession[]> {
   const paths = await codexRolloutPaths(home, processAdapter);
   const cutoff = Date.now() - DAY;
   const eligible: Array<{ path: string; modified: number }> = [];
   await Promise.all(paths.map(async (path) => {
     try { const info = await stat(path); if (info.mtimeMs >= cutoff) eligible.push({ path, modified: info.mtimeMs }); } catch { /* A rollout may be rotated while listing. */ }
   }));
-  const ps = await processAdapter.run("ps", ["-axo", "pid=,command="]);
-  const codexPids = ps.kind === "ok" ? ps.value.stdout.split("\n").flatMap((line) => {
-    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-    return match !== null && /(?:^|\/)codex(?:\s|$)|Codex\.app/.test(match[2] ?? "") ? [match[1] as string] : [];
-  }) : [];
+  const codexPids = [...table].filter(([, entry]) => /(?:^|\/)codex(?:\s|$)|Codex\.app/.test(entry.command)).map(([pid]) => String(pid));
   const cwdByPid = new Map<number, string>();
   if (codexPids.length > 0) {
     const cwd = await processAdapter.run("lsof", ["-a", "-p", codexPids.join(","), "-d", "cwd", "-Fn"]);
@@ -260,7 +385,17 @@ async function codexSessions(home: string, processAdapter: ProcessAdapter, title
     try {
       const file = await import("node:fs/promises").then(({ open }) => open(path, "r"));
       let head: string;
-      try { const buffer = Buffer.alloc(256 * 1024); const { bytesRead } = await file.read(buffer, 0, buffer.length, 0); head = buffer.subarray(0, bytesRead).toString("utf8"); }
+      let tail: string;
+      try {
+        const info = await file.stat();
+        const headBuffer = Buffer.alloc(Math.min(info.size, 256 * 1024));
+        const headRead = await file.read(headBuffer, 0, headBuffer.length, 0);
+        head = headBuffer.subarray(0, headRead.bytesRead).toString("utf8");
+        const tailStart = Math.max(0, info.size - 512 * 1024);
+        const tailBuffer = Buffer.alloc(info.size - tailStart);
+        const tailRead = await file.read(tailBuffer, 0, tailBuffer.length, tailStart);
+        tail = tailBuffer.subarray(0, tailRead.bytesRead).toString("utf8");
+      }
       finally { await file.close(); }
       for (const line of head.split("\n")) {
         const value = record(JSON.parse(line) as unknown);
@@ -272,7 +407,8 @@ async function codexSessions(home: string, processAdapter: ProcessAdapter, title
           const pid = [...cwdByPid.entries()].find(([, processCwd]) => processCwd === resolve(cwd))?.[0];
           const startedAt = iso(payload?.timestamp) ?? iso(value.timestamp);
           const firstUserMessage = codexUserTitle(head);
-          return { agent: "codex", id, cwd: resolve(cwd), title: titles.get(id) ?? firstUserMessage ?? "Codex", status: pid === undefined ? "ended" : "working", startedAt, lastActivityAt: new Date(modified).toISOString(), ...(pid === undefined ? {} : { processId: pid }) };
+          const details = codexModelDetails(tail);
+          return { agent: "codex", id, cwd: resolve(cwd), title: titles.get(id) ?? firstUserMessage ?? "Codex", status: pid === undefined ? "ended" : "working", startedAt, lastActivityAt: new Date(modified).toISOString(), model: details.model, contextWindow: details.contextWindow, ...(pid === undefined ? {} : { processId: pid }) };
         }
       }
     } catch { /* Ignore malformed or unavailable rollout headers. */ }
@@ -281,7 +417,32 @@ async function codexSessions(home: string, processAdapter: ProcessAdapter, title
   return found.filter((value): value is RawSession => value !== undefined);
 }
 
-function codexUserTitle(contents: string): string | undefined {
+function codexModelDetails(tail: string): Readonly<{ model: string | null; contextWindow: number | null }> {
+  let model: string | null = null;
+  let contextWindow: number | null = null;
+  for (const line of tail.split("\n").reverse()) {
+    try {
+      const entry = record(JSON.parse(line) as unknown);
+      if (entry === undefined) continue;
+      const payload = record(entry.payload);
+      const info = record(payload?.info);
+      const details = payload?.type === "turn_context" ? payload : info;
+      if (details === undefined) continue;
+      if (model === null) {
+        const candidate = stringField(details, "model", "model_slug", "model_name");
+        if (candidate !== undefined) model = candidate;
+      }
+      if (contextWindow === null) {
+        const candidate = details.model_context_window;
+        if (typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate > 0) contextWindow = candidate;
+      }
+      if (model !== null && contextWindow !== null) break;
+    } catch { /* Ignore partial and malformed rollout lines. */ }
+  }
+  return { model, contextWindow };
+}
+
+export function codexUserTitle(contents: string): string | undefined {
   for (const line of contents.split("\n")) {
     try {
       const entry = record(JSON.parse(line) as unknown);
@@ -294,12 +455,16 @@ function codexUserTitle(contents: string): string | undefined {
   return undefined;
 }
 
-async function sessionsForMachine(home: string, processAdapter: ProcessAdapter): Promise<RawSession[]> {
-  const [claude, grok, codexTitles] = await Promise.all([claudeSessions(home), grokSessions(home), codexSessionTitles(home)]);
-  const codex = await codexSessions(home, processAdapter, codexTitles);
+export async function sessionsForMachine(home: string, processAdapter: ProcessAdapter, table?: ProcessTable, cache: ProjectCache = emptyProjectCache()): Promise<RawSession[]> {
+  const [claude, grok, codexTitles] = await Promise.all([claudeSessions(home, cache), grokSessions(home), codexSessionTitles(home)]);
+  const codex = await codexSessions(home, processAdapter, codexTitles, table ?? await readProcessTable(processAdapter));
   const unique = new Map<string, RawSession>();
   for (const session of [...claude, ...grok, ...codex]) unique.set(`${session.agent}:${session.id}`, session);
   return [...unique.values()];
+}
+
+export async function findMachineSession(home: string, processAdapter: ProcessAdapter, agent: string, id: string): Promise<RawSession | undefined> {
+  return (await sessionsForMachine(home, processAdapter)).find((session) => session.agent === agent && session.id === id);
 }
 
 function dispatchForSession(session: RawSession, worktree: string, dispatches: readonly Dispatch[]): Dispatch | null {
@@ -313,7 +478,9 @@ function dispatchForSession(session: RawSession, worktree: string, dispatches: r
   return timed[0]?.dispatch ?? null;
 }
 
-function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[]): ProjectSession[] {
+type OriginContext = Readonly<{ owned: OwnedSessions; nativeChats: ReadonlySet<string>; table: ProcessTable; filter: "megabrain" | "all" }>;
+
+function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], context: OriginContext): ProjectSession[] {
   const now = Date.now();
   const sessions = found.filter((session) => session.cwd === resolve(path)).map((session): ProjectSession => {
     const dispatch = dispatchForSession(session, path, dispatches);
@@ -326,8 +493,12 @@ function projectSessions(path: string, found: readonly RawSession[], dispatches:
       startedAt: session.startedAt,
       lastActivityAt: session.lastActivityAt,
       dispatchId: dispatch?.dispatchId ?? null,
+      model: session.model ?? null,
+      contextWindow: session.contextWindow ?? null,
+      ...sessionOwnerFields(context.owned, `${session.agent}:${session.id}`),
+      origin: sessionOrigin({ key: `${session.agent}:${session.id}`, processId: session.processId, dispatchPid: typeof dispatch?.agentPid === "number" ? dispatch.agentPid : null, owned: context.owned, nativeChats: context.nativeChats, table: context.table }),
     };
-  });
+  }).filter((session) => context.filter === "all" || session.origin === "megabrain");
   const live = sessions.filter((session) => session.status !== "ended");
   const ended = sessions.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= DAY)
     .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5);
@@ -356,6 +527,33 @@ function parseWorktrees(output: string, mainPath: string, parentByBranch: Readon
     || left.path.localeCompare(right.path));
 }
 
+async function repositoryParents(repositoryPath: string): Promise<Map<string, string>> {
+  let contents: string;
+  try { contents = await readFile(join(repositoryPath, ".git", "config"), "utf8"); }
+  catch { return new Map(); }
+  const parents = new Map<string, string>();
+  let branch: string | undefined;
+  for (const line of contents.split(/\r?\n/)) {
+    const section = /^\s*\[branch\s+"((?:\\.|[^"])*)"\]\s*$/.exec(line);
+    if (section?.[1] !== undefined) { branch = section[1].replace(/\\(.)/g, "$1"); continue; }
+    if (/^\s*\[/.test(line)) { branch = undefined; continue; }
+    if (branch === undefined) continue;
+    const parent = /^\s*megabrain-parent\s*=\s*(.*?)\s*$/.exec(line)?.[1];
+    if (parent !== undefined && parent !== "") parents.set(branch, parent.replace(/^"(.*)"$/, "$1").replace(/\\(.)/g, "$1"));
+  }
+  return parents;
+}
+
+async function worktreeMetadataSignature(path: string, configMtimeMs: number): Promise<{ headMtimeMs: number; indexMtimeMs: number; configMtimeMs: number } | undefined> {
+  let gitDirectory: string;
+  try {
+    const gitEntry = await readFile(join(path, ".git"), "utf8").catch(() => "");
+    gitDirectory = gitEntry.startsWith("gitdir: ") ? resolve(path, gitEntry.slice(8).trim()) : join(path, ".git");
+    const [head, index] = await Promise.all([stat(join(gitDirectory, "HEAD")), stat(join(gitDirectory, "index"))]);
+    return { headMtimeMs: head.mtimeMs, indexMtimeMs: index.mtimeMs, configMtimeMs };
+  } catch { return undefined; }
+}
+
 function pullRequestMap(value: unknown): Map<string, PullRequestSummary> {
   if (!Array.isArray(value)) return new Map();
   return new Map(value.flatMap((item) => {
@@ -373,23 +571,74 @@ function cachedPullRequestMap(value: string | undefined): Map<string, PullReques
   } catch { return undefined; }
 }
 
-async function repositoryPullRequests(repository: RepositoryRecord, database: DatabaseAdapter, processAdapter: ProcessAdapter): Promise<Map<string, PullRequestSummary>> {
+async function repositoryPullRequests(repository: RepositoryRecord, database: DatabaseAdapter, processAdapter: ProcessAdapter, environment: Environment): Promise<Map<string, PullRequestSummary>> {
   const cached = getRepositoryPullRequests(database, repository.path);
   const stale = cachedPullRequestMap(cached?.value);
   const now = Date.now();
   if (stale !== undefined && cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < PULL_REQUEST_CACHE_TTL) return stale;
-  const refreshed = await processAdapter.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url,title,isDraft"], { cwd: repository.path, timeoutMs: 2_000 });
-  if (refreshed.kind === "ok") {
-    try {
-      const parsed: unknown = JSON.parse(refreshed.value.stdout);
-      if (Array.isArray(parsed)) {
-        saveRepositoryPullRequests(database, repository.path, JSON.stringify(parsed), now);
-        return pullRequestMap(parsed);
-      }
-    } catch { /* Keep the last known good result on malformed output. */ }
-  }
-  saveRepositoryPullRequests(database, repository.path, stale === undefined || cached === undefined ? "[]" : cached.value, now);
+  await schedulePullRequestRefresh(repository, processAdapter, environment);
   return stale ?? new Map();
+}
+
+const PULL_REQUEST_REFRESH_ARGUMENT = "--refresh-pull-requests";
+
+function refreshLockPath(repositoryPath: string, environment: Environment): string {
+  const digest = createHash("sha256").update(repositoryPath).digest("hex");
+  return join(resolveStateDirectory(environment), "locks", `projects-pr-${digest}.lock`);
+}
+
+async function acquireRefreshLock(path: string): Promise<boolean> {
+  await mkdir(join(path, ".."), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const lock = await openFile(path, "wx", 0o600);
+      await lock.writeFile(String(process.pid));
+      await lock.close();
+      return true;
+    } catch (cause: unknown) {
+      if (typeof cause !== "object" || cause === null || !("code" in cause) || cause.code !== "EEXIST") return false;
+      const owner = Number((await readFile(path, "utf8").catch(() => "")).trim());
+      if (processIsAlive(owner)) return false;
+      const info = await stat(path).catch(() => undefined);
+      if (!Number.isFinite(owner) && info !== undefined && Date.now() - info.mtimeMs < PULL_REQUEST_CACHE_TTL) return false;
+      await unlink(path).catch(() => undefined);
+    }
+  }
+  return false;
+}
+
+async function schedulePullRequestRefresh(repository: RepositoryRecord, processAdapter: ProcessAdapter, environment: Environment): Promise<void> {
+  const lock = refreshLockPath(repository.path, environment);
+  try {
+    const owner = Number((await readFile(lock, "utf8")).trim());
+    if (processIsAlive(owner)) return;
+    const info = await stat(lock);
+    if (!Number.isFinite(owner) && Date.now() - info.mtimeMs < PULL_REQUEST_CACHE_TTL) return;
+    await unlink(lock).catch(() => undefined);
+  } catch { /* No refresh is active. */ }
+  await processAdapter.startDetached(process.execPath, ["projects", PULL_REQUEST_REFRESH_ARGUMENT, repository.path], {
+    env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), ...(environment.HOME === undefined ? {} : { HOME: environment.HOME }) },
+  });
+}
+
+async function refreshRepositoryPullRequests(repositoryPath: string, environment: Environment, processAdapter: ProcessAdapter): Promise<void> {
+  const lock = refreshLockPath(repositoryPath, environment);
+  if (!(await acquireRefreshLock(lock).catch(() => false))) return;
+  const opened = openDatabase(environment);
+  if (opened.kind !== "ok") { await unlink(lock).catch(() => undefined); return; }
+  try {
+    const cached = getRepositoryPullRequests(opened.value.db, repositoryPath);
+    const refreshed = await processAdapter.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url,title,isDraft"], { cwd: repositoryPath, timeoutMs: 2_000 });
+    let value: string | undefined;
+    if (refreshed.kind === "ok") try {
+      const parsed: unknown = JSON.parse(refreshed.value.stdout);
+      if (Array.isArray(parsed)) value = JSON.stringify(parsed);
+    } catch { /* Keep the last known good result on malformed output. */ }
+    saveRepositoryPullRequests(opened.value.db, repositoryPath, value ?? cached?.value ?? "[]", Date.now());
+  } finally {
+    opened.value.close();
+    await unlink(lock).catch(() => undefined);
+  }
 }
 
 async function claudeIdleEnabled(home: string, cwd: string): Promise<boolean> {
@@ -406,15 +655,24 @@ async function claudeIdleEnabled(home: string, cwd: string): Promise<boolean> {
 async function timedSessions(sessions: readonly ProjectSession[], home: string, cwd: string, environment: Environment): Promise<ProjectSession[]> {
   const minimumValue = Number(environment.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS ?? 200000);
   const minimum = Number.isSafeInteger(minimumValue) && minimumValue >= 0 ? minimumValue : 200000;
+  const loadedRegistry = loadModelRegistry(environment);
+  const registry = loadedRegistry.kind === "loaded" ? loadedRegistry.registry : { version: 1 as const, models: [] };
   const measured = await Promise.all(sessions.map(async (session) => {
     const sessionId = session.sessionId.slice(session.agent.length + 1);
+    const claudeDetails = session.agent === "claude" ? await claudeLogDetails(home, cwd, sessionId, registry) : undefined;
+    const model = claudeDetails?.model ?? session.model;
+    const contextWindow = claudeDetails?.contextWindow ?? session.contextWindow;
     const meter = await readContextMeter({
       agent: session.agent,
       agentSessionId: sessionId,
       agentCwd: cwd,
+      ...(contextWindow === null ? {} : { contextWindow }),
       ...(session.agent === "claude" ? { agentTranscriptPath: join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`) } : {}),
     }, home);
-    return { session, contextTokens: meter.status === "known" ? meter.usedTokens : null };
+    return {
+      session: { ...session, model, contextWindow },
+      contextTokens: claudeDetails?.contextTokens ?? (meter.status === "known" ? meter.usedTokens : null),
+    };
   }));
   const needsIdleSetting = measured.some(({ session, contextTokens }) => session.agent === "claude" && session.status !== "working" && session.lastActivityAt !== null && contextTokens !== null && contextTokens >= minimum);
   const idleEnabled = needsIdleSetting ? await claudeIdleEnabled(home, cwd) : false;
@@ -431,25 +689,30 @@ async function timedSessions(sessions: readonly ProjectSession[], home: string, 
   });
 }
 
-async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment): Promise<Project> {
-  const checkout = await repositoryCheckout(repository.path, processAdapter);
-  if (checkout.kind !== "ok") return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
-  const [worktreesResult, parentsResult, pulls] = await Promise.all([
+async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment, cache: ProjectCache, context: OriginContext): Promise<Project> {
+  const checkoutPath = await realpath(repository.path).catch(() => undefined);
+  if (checkoutPath === undefined) return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
+  const [worktreesResult, parents, pulls] = await Promise.all([
     processAdapter.run("git", ["-C", repository.path, "worktree", "list", "--porcelain"]),
-    processAdapter.run("git", ["-C", repository.path, "config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]),
-    repositoryPullRequests(repository, database, processAdapter),
+    repositoryParents(repository.path),
+    repositoryPullRequests(repository, database, processAdapter, environment),
   ]);
   if (worktreesResult.kind !== "ok") return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
-  const parents = new Map<string, string>();
-  if (parentsResult.kind === "ok") for (const line of parentsResult.value.stdout.split("\n")) {
-    const match = /^branch\.(.*)\.megabrain-parent\s+(.+)$/.exec(line);
-    if (match?.[1] !== undefined && match[2] !== undefined) parents.set(match[1], match[2]);
-  }
-  const worktrees = await Promise.all(parseWorktrees(worktreesResult.value.stdout, repository.path, parents).map(async (worktree) => ({
+  const parsedWorktrees = parseWorktrees(worktreesResult.value.stdout, checkoutPath, parents);
+  const configMtimeMs = (await stat(join(repository.path, ".git", "config")).catch(() => undefined))?.mtimeMs ?? -1;
+  const worktrees = await Promise.all(parsedWorktrees.map(async (worktree) => {
+    const signature = await worktreeMetadataSignature(worktree.path, configMtimeMs);
+    const cached = cache.worktrees[worktree.path];
+    const derived = signature !== undefined && cached?.headMtimeMs === signature.headMtimeMs && cached.indexMtimeMs === signature.indexMtimeMs && cached.configMtimeMs === signature.configMtimeMs ? cached : undefined;
+    const parent = derived?.parent ?? worktree.parent;
+    if (signature !== undefined) cache.worktrees[worktree.path] = { ...signature, primary: derived?.primary ?? worktree.primary, parent };
+    return {
     ...worktree,
+    primary: derived?.primary ?? worktree.primary,
+    parent,
     pullRequest: worktree.branch === null ? null : pulls.get(worktree.branch) ?? null,
-    sessions: await timedSessions(projectSessions(worktree.path, found, dispatches), home, worktree.path, environment),
-  })));
+    sessions: await timedSessions(projectSessions(worktree.path, found, dispatches, context), home, worktree.path, environment),
+  }; }));
   return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: false, worktrees };
 }
 
@@ -475,8 +738,21 @@ export async function backfillProjectHistory(environment: Environment, processAd
 }
 
 export async function executeProjects(args: readonly string[], environment: Environment, processAdapter = createProcessAdapter()): Promise<Result<string>> {
-  if (args.includes("-h") || args.includes("--help")) return ok("Usage: megabrain projects [--json]\n");
-  if (args.some((argument) => argument !== "--json")) return failed("Usage: megabrain projects [--json]", 2);
+  const usage = "Usage: megabrain projects [--json] [--origin megabrain|all]";
+  if (args[0] === PULL_REQUEST_REFRESH_ARGUMENT && args.length === 2) {
+    await refreshRepositoryPullRequests(args[1] as string, environment, processAdapter);
+    return ok("");
+  }
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usage}\n`);
+  let filter: "megabrain" | "all" = "all";
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--json") continue;
+    const value = argument === "--origin" ? args[index + 1] : argument?.startsWith("--origin=") ? argument.slice(9) : undefined;
+    if (value !== "megabrain" && value !== "all") return failed(usage, 2);
+    filter = value;
+    if (argument === "--origin") index += 1;
+  }
   const backfilled = await backfillProjectHistory(environment, processAdapter);
   if (backfilled.kind !== "ok") return backfilled;
   const opened = openDatabase(environment);
@@ -485,12 +761,18 @@ export async function executeProjects(args: readonly string[], environment: Envi
     const repositories = listRepositories(opened.value.db);
     const dispatches = listDispatches(opened.value.db, { includeArchived: true });
     const home = environment.HOME ?? process.env.HOME ?? "";
-    const found = await sessionsForMachine(home, processAdapter);
+    const cache = await readProjectCache(environment);
+    const table = await readProcessTable(processAdapter);
+    const found = await sessionsForMachine(home, processAdapter, table, cache);
+    const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
+    const nativeChats = new Set((existsSync(join(stateDir, "chats")) ? await new ChatStore(stateDir).list().catch(() => []) : []).flatMap((chat) => chat.agentSessionId === null ? [] : [`${chat.agent}:${chat.agentSessionId}`]));
+    const context: OriginContext = { owned: readOwnedSessions(stateDir), nativeChats, table, filter };
     const hiddenItems = new Set(listHiddenItems(opened.value.db).map((item) => `${item.kind}:${item.path}`));
     const projects = await Promise.all(repositories.map(async (repository) => {
-      const project = await repositoryProject(repository, found, dispatches, processAdapter, opened.value.db, home, environment);
+      const project = await repositoryProject(repository, found, dispatches, processAdapter, opened.value.db, home, environment, cache, context);
       return { ...project, hidden: hiddenItems.has(`repo:${repository.path}`), worktrees: project.worktrees.map((tree) => ({ ...tree, hidden: hiddenItems.has(`worktree:${tree.path}`) })) };
     }));
+    await writeProjectCache(environment, cache);
     return ok(`${JSON.stringify(projects, null, 2)}\n`);
   } finally { opened.value.close(); }
 }

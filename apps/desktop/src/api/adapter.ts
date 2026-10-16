@@ -1,4 +1,5 @@
-import type { GithubDetail, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { ProjectsOrigin } from '@/api/projects-origin'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -39,6 +40,8 @@ export interface DesktopApi {
   readChat(dispatchId: string, lines: number): Promise<ChatRead>
   /** Sends a message into a chat, as the operator (`orchestrate reply --operator`). */
   reply(dispatchId: string, text: string): Promise<ReplyResult>
+  /** The last message a chat's child sent, in full (`db show`); null when it sent none. */
+  readDispatchMessage(dispatchId: string): Promise<string | null>
   pillGeometry(): Promise<PillGeometry>
   setPillExpanded(expanded: boolean): Promise<void>
   onPillExpanded(listener: (expanded: boolean) => void): () => void
@@ -59,6 +62,8 @@ export interface DesktopApi {
   saveAttachment(base64: string, extension: string): Promise<string>
   /** Send a message to any agent session, as the operator. */
   sendToSession(sessionId: string, text: string): Promise<SendResult>
+  /** Forget ownership and kill megabrain's tmux session for it (`session release`). */
+  releaseSession(sessionId: string): Promise<void>
   /** A local VS Code for a worktree or repository; started on demand and reused. */
   openCodeServer(root: string): Promise<CodeServer>
   stopCodeServer(root: string): Promise<void>
@@ -78,8 +83,12 @@ export interface DesktopApi {
   refreshModels(agent: string): Promise<void>
   /** null clears the default. */
   setTerminalDefault(name: string | null): Promise<void>
-  /** Every registered project, its worktrees and the agent sessions in them. */
-  projects(): Promise<Project[]>
+  /** Every registered project, its worktrees and the agent sessions of that origin in them. */
+  projects(origin: ProjectsOrigin): Promise<Project[]>
+  /** A project's run, build and install commands (`repo scripts`); a worktree path reads its repository's. */
+  projectScripts(root: string): Promise<ProjectScripts>
+  /** Save some of them; an empty string returns that one to detection. */
+  setProjectScripts(root: string, scripts: Partial<Record<'run' | 'build' | 'install', string>>): Promise<ProjectScripts>
   /** Import a local git repository folder into the registry. */
   importFolder(path: string): Promise<Repository>
   /** Clone a repository and register it; `into` is the parent folder. */
@@ -103,7 +112,49 @@ export interface DesktopApi {
   codeRead(root: string, path: string): Promise<CodeFile>
   codeChanges(root: string): Promise<CodeChange[]>
   codeDiff(root: string, path: string): Promise<CodeDiff>
+  /** Native chats (megabrain chat ...). */
+  chats(): Promise<NativeChat[]>
+  startChat(options: { agent: string; model?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
+  sendChat(chatId: string, parts: MessagePart[]): Promise<void>
+  interruptChat(chatId: string): Promise<void>
+  answerApproval(chatId: string, approvalId: string, decision: 'allow' | 'allow-session' | 'deny'): Promise<void>
+  stopChat(chatId: string): Promise<void>
+  /** Switches the model, and optionally the reasoning effort, for the chat's next turns. */
+  setChatModel(chatId: string, model: string, effort?: string): Promise<void>
+  /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
+  setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null }>
+  /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
+  chatTerminalCommand(chatId: string): Promise<string[]>
+  /** The argv that starts an agent's own interactive TUI, prompts skipped (`agent command`), or resumes one of its sessions; rejects when its CLI is not installed. */
+  agentCommand(agent: string, options?: { resume?: string; model?: string; effort?: string }): Promise<string[]>
+  /** Past sessions started in a folder, newest first, from each agent's own storage (`sessions history`). */
+  sessionHistory(cwd: string, agent?: string): Promise<HistorySession[]>
+  /** Live events from cursor on; returns a function that stops the subscription. */
+  followChat(chatId: string, since: string | null, onLine: (line: ChatEventLine) => void): Promise<() => void>
+  /** Embedded terminals (native Tauri commands). */
+  openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; cols: number; rows: number }): Promise<TerminalSession>
+  writeTerminal(terminalId: string, data: string): Promise<void>
+  resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void>
+  /** Closing kills the terminal for good. `kill` also reaches a terminal the app lists but does not hold open. */
+  closeTerminal(terminalId: string, options?: { kill?: boolean }): Promise<void>
+  /** The terminals the app left running on its tmux server, for a layout to bring back after a restart. */
+  listAppTerminals(): Promise<AppTerminalListing[]>
+  /** Bytes from the terminal, base64; returns a function that stops listening. */
+  onTerminalData(terminalId: string, onData: (base64: string) => void, onExit: (code: number | null) => void): Promise<() => void>
+  setTerminalEngine(engine: TerminalEngine): Promise<void>
 }
+
+/** Worktree creation (`worktree create`); kept apart from DesktopApi so its adapters live in worktree-create.ts. */
+export interface WorktreeApi {
+  /** Creates a worktree on a new branch from a base ref; rejects with megabrain's error, as when the branch exists. */
+  createWorktree(repo: string, branch: string, base: string): Promise<{ path: string; branch: string }>
+}
+
+/** What the app's `api` offers. */
+export type AppApi = DesktopApi & WorktreeApi
+
+/** One tmux terminal the app opened: `id` is what `closeTerminal` takes, `sessionName` what a reopen attaches to. */
+export type AppTerminalListing = { id: string; sessionName: string; cwd: string; title: string; command: string; alive: boolean; createdAt: string }
 
 export class CliError extends Error {
   constructor(

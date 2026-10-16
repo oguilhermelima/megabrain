@@ -3,7 +3,7 @@ import { listDeliveryChannels, listDispatchEntries, readAdmissionPolicy, resourc
 import { decorateDispatchRecord, parseDispatchRecord, type DecoratedDispatch } from "../../core/dispatch.js";
 import { listProcQueue } from "../../core/proc-queue.js";
 import { executeProc } from "../../core/proc-runner.js";
-import { readMachineResources } from "../../core/resources.js";
+import { readCachedMachineResources } from "../../core/resources.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { recommendationFor, type SupervisionFinding } from "../../core/supervise.js";
@@ -57,7 +57,7 @@ async function collectStatus(environment: Environment, process: ProcessAdapter):
   const channels = listDeliveryChannels(database.value);
   const [context, machine, processes, history, admission] = await Promise.all([
     executeContext(["--json"], environment, process),
-    readMachineResources(process),
+    readCachedMachineResources(stateEnvironment, process),
     executeProc(["list", "--json"], stateEnvironment, process),
     resourceHistoryEnabled(stateEnvironment),
     readAdmissionPolicy(stateEnvironment),

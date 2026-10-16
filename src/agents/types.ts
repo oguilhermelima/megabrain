@@ -11,6 +11,18 @@ export type AgentCommandOptions = Readonly<{
   readonly agentArgs: readonly string[];
 }>;
 
+// How an agent's CLI spells the flags every launch needs; spawn and the interactive TUI share it.
+// `quote` wraps a value for a shell line (spawn) or leaves it raw for an argv.
+export type Quote = (value: string) => string;
+export type AgentFlags = Readonly<{
+  readonly executable: string;
+  readonly permission: readonly string[];
+  readonly model: (value: string, quote: Quote) => readonly string[];
+  readonly effort: ((value: string, quote: Quote) => readonly string[]) | null;
+  // How the agent's CLI resumes a session by id; `lead` goes right after the executable (a subcommand).
+  readonly resume: (id: string, quote: Quote) => Readonly<{ lead: readonly string[]; trail: readonly string[] }>;
+}>;
+
 export type AgentMarker = Readonly<{
   readonly status: Exclude<Liveness, "unknown" | "missing">;
   readonly first: RegExp;
@@ -27,6 +39,7 @@ export type Agent = Readonly<{
   readonly firstRunDialog?: RegExp;
   // Key that answers the first-run dialog; Enter when absent.
   readonly firstRunDialogKey?: string;
+  readonly flags?: AgentFlags;
   readonly commandLine?: (options: AgentCommandOptions) => Result<string>;
   // What precedes the initial interactive prompt on the command line, when the agent takes one.
   readonly initialPromptFlag?: string;
@@ -51,6 +64,22 @@ export function classifyMarkers(markers: readonly AgentMarker[], output: string)
 
 export function unavailableLiveness(agent: string): Result<LivenessResult> {
   return unknown(`${LIVENESS_UNAVAILABLE}: ${agent} has no liveness markers`);
+}
+
+export function launchArgv(flags: AgentFlags, model: string | null, effort: string | null, quote: Quote, resume: string | null = null): string[] {
+  const resumed = resume === null ? null : flags.resume(resume, quote);
+  return [
+    flags.executable,
+    ...(resumed?.lead ?? []),
+    ...flags.permission,
+    ...(model === null ? [] : flags.model(model, quote)),
+    ...(effort === null || flags.effort === null ? [] : flags.effort(effort, quote)),
+    ...(resumed?.trail ?? []),
+  ];
+}
+
+export function rawValue(value: string): string {
+  return value;
 }
 
 export function doubleQuote(value: string): string {

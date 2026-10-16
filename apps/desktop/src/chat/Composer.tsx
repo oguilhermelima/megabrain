@@ -1,12 +1,24 @@
-import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '@/api'
-import type { SlashCommand } from '@/api/schema'
+import type { MessagePart, SlashCommand } from '@/api/schema'
 import { Spinner } from '@/components/ui'
 import { native } from '@/lib/surface'
-import { appendAttachmentPaths, attachmentKind, filterSlashCommands, insertSlashCommand, slashQuery } from '@/chat/composer-model'
+import type { AnchorRect } from '@/advanced/menu-placement'
+import { attachmentKind, insertSlashCommand, skillInvocation, slashQuery } from '@/chat/composer-model'
+import { commandSections } from '@/chat/command-menu'
+import { CommandMenu, handleMenuKey, useRecentCommands } from '@/chat/CommandMenu'
+import { deleteRange, draftLength, draftText, insertText, insertToken, messagePartsFromText, moveToken, tokenAfter, tokenBefore, tokenIds, tokenOffset, toMessageParts, type Draft } from '@/chat/composer-parts'
+import { pickerLabel, sessionCommand, withContextWindow } from '@/chat/composer-status'
+import { ComposerLimits, ComposerStatus, type ModelPick } from '@/chat/ComposerStatus'
+import { composerBanner, sendState, type Banner, type Notice } from '@/chat/composer-look'
+import { Lightbox, type LightboxImage } from '@/chat/Lightbox'
+import { SkillMenu } from '@/chat/SkillMenu'
+import { caretRect, offsetAtPoint, readDraft, relabel, renderDraft, selectionOffsets, setCaret, tokenAt, type TokenView } from '@/chat/rich-input'
 import { initialQueueState, queueReducer, type QueueAction, type QueueState } from '@/chat/queue-model'
 
-export type Notice = { tone: 'ok' | 'bad'; text: string }
+export type { Notice } from '@/chat/composer-look'
 
 // Slash commands per agent and folder, read once per app run.
 const commandCache = new Map<string, Promise<SlashCommand[]>>()
@@ -68,6 +80,13 @@ function fromPath(path: string): Attachment | null {
   return { id: `a${attachmentSequence}`, kind: accepted.kind, name, source: 'path', path }
 }
 
+/** What a thumbnail shows: the object URL of a pasted or picked image, or a local file through the asset protocol. */
+function previewOf(attachment: Attachment): string | null {
+  if (attachment.kind !== 'image') return null
+  if (attachment.source === 'file') return attachment.preview
+  return native ? convertFileSrc(attachment.path) : null
+}
+
 function base64Of(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -89,8 +108,11 @@ function releasePreview(attachment: Attachment) {
   if (attachment.source === 'file' && attachment.preview !== null) URL.revokeObjectURL(attachment.preview)
 }
 
-/** Files dropped on the app window. The native webview takes drops itself and hands over paths. */
-function useWindowDrop(onPaths: (paths: string[]) => void, enabled: boolean) {
+/**
+ * Files dropped on the app window. The native webview takes drops itself and hands over paths, with
+ * where they were dropped in CSS pixels.
+ */
+function useWindowDrop(onPaths: (paths: string[], x: number, y: number) => void, enabled: boolean) {
   const handler = useRef(onPaths)
   handler.current = onPaths
   useEffect(() => {
@@ -100,7 +122,7 @@ function useWindowDrop(onPaths: (paths: string[]) => void, enabled: boolean) {
     void import('@tauri-apps/api/webview').then(({ getCurrentWebview }) =>
       getCurrentWebview()
         .onDragDropEvent((event) => {
-          if (event.payload.type === 'drop') handler.current(event.payload.paths)
+          if (event.payload.type === 'drop') handler.current(event.payload.paths, event.payload.position.x / window.devicePixelRatio, event.payload.position.y / window.devicePixelRatio)
         })
         .then((stop) => {
           if (stopped) stop()
@@ -112,28 +134,6 @@ function useWindowDrop(onPaths: (paths: string[]) => void, enabled: boolean) {
       unlisten?.()
     }
   }, [enabled])
-}
-
-function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRemove: () => void }) {
-  const preview = attachment.source === 'file' ? attachment.preview : null
-  return (
-    <li className="group relative flex h-14 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] pr-7 pl-1">
-      {preview !== null ? (
-        <img src={preview} alt={attachment.name} className="size-12 rounded-lg object-cover" />
-      ) : (
-        <span className="grid size-12 place-items-center rounded-lg bg-white/[0.06] text-[11px] font-semibold text-ink-300 uppercase">{attachment.kind === 'pdf' ? 'PDF' : 'IMG'}</span>
-      )}
-      <span title={attachment.name} className="max-w-36 truncate text-[12px] text-ink-300">{attachment.name}</span>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${attachment.name}`}
-        className="absolute top-1 right-1 grid size-5 place-items-center rounded-full text-[12px] text-ink-400 hover:bg-white/[0.1] hover:text-ink-100"
-      >
-        ×
-      </button>
-    </li>
-  )
 }
 
 /** A dispatch chat's queue: read now, then every 2 seconds while anything waits; unqueue on Esc. */
@@ -218,8 +218,8 @@ function recognitionConstructor(): RecognitionConstructor | null {
   return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null
 }
 
-/** Dictation into the composer: the transcript is written after what was already typed. */
-function useDictation(read: () => string, write: (text: string) => void, onError: (message: string) => void) {
+/** Dictation into the composer: `begin` runs as listening starts, then `write` gets the transcript so far. */
+function useDictation(begin: () => void, write: (spoken: string) => void, onError: (message: string) => void) {
   const Constructor = recognitionConstructor()
   const [listening, setListening] = useState(false)
   const recognition = useRef<Recognition | null>(null)
@@ -230,16 +230,12 @@ function useDictation(read: () => string, write: (text: string) => void, onError
       recognition.current.stop()
       return
     }
-    const before = read().trimEnd()
-    const prefix = before === '' ? '' : `${before} `
+    begin()
     const next = new Constructor()
     next.continuous = true
     next.interimResults = true
     next.lang = navigator.language
-    next.onresult = (event) => {
-      const spoken = Array.from(event.results, (result) => result[0].transcript).join('')
-      write(prefix + spoken.trimStart())
-    }
+    next.onresult = (event) => write(Array.from(event.results, (result) => result[0].transcript).join(''))
     next.onerror = (event) => {
       if (event.error !== 'aborted' && event.error !== 'no-speech') onError(`Dictation stopped: ${event.error}.`)
     }
@@ -260,39 +256,69 @@ function useDictation(read: () => string, write: (text: string) => void, onError
   return { supported: Constructor !== null, listening, toggle }
 }
 
-function SlashMenu({ commands, active, onPick, onHover }: { commands: SlashCommand[]; active: number; onPick: (command: SlashCommand) => void; onHover: (index: number) => void }) {
-  const list = useRef<HTMLUListElement>(null)
-  useEffect(() => {
-    list.current?.children[active]?.scrollIntoView({ block: 'nearest' })
-  }, [active])
-  return (
-    <ul ref={list} role="listbox" className="absolute right-0 bottom-full left-0 mb-2 max-h-72 overflow-y-auto rounded-2xl border border-white/10 bg-ink-900/95 p-1.5 shadow-2xl backdrop-blur">
-      {commands.map((command, index) => (
-        <li key={`${command.source}:${command.name}`} role="option" aria-selected={index === active}>
-          <button
-            type="button"
-            onMouseDown={(event) => {
-              event.preventDefault()
-              onPick(command)
-            }}
-            onMouseEnter={() => onHover(index)}
-            className={`flex w-full items-baseline gap-2 rounded-xl px-3 py-1.5 text-left text-[13px] ${index === active ? 'bg-white/[0.1]' : ''}`}
-          >
-            <span className="shrink-0 font-mono font-semibold text-ink-100">/{command.name}</span>
-            {command.argumentHint !== undefined && command.argumentHint !== null && <span className="shrink-0 font-mono text-[12px] text-ink-400">{command.argumentHint}</span>}
-            <span className="min-w-0 flex-1 truncate text-ink-400">{command.description ?? ''}</span>
-            <span className="shrink-0 text-[11px] text-ink-400 uppercase">{command.source}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+/** An image chip's picture, floating above the chip while the pointer is on it. */
+function ChipPreview({ attachment, left, top }: { attachment: Attachment | undefined; left: number; top: number }) {
+  const src = attachment === undefined ? null : previewOf(attachment)
+  if (attachment === undefined || src === null) return null
+  return createPortal(
+    <div style={{ left, top: top - 6 }} className="pointer-events-none fixed z-[100] -translate-y-full rounded-xl border border-white/[0.12] bg-ink-900 p-1 shadow-2xl">
+      <img src={src} alt={attachment.name} className="block max-h-40 max-w-64 rounded-lg object-contain" />
+      <p className="max-w-64 truncate px-1 pt-1 text-[11px] text-ink-400">{attachment.name}</p>
+    </div>,
+    document.body,
   )
+}
+
+/** A notice attached to the composer's top edge: an icon, the message, Retry when a send failed, and a close. */
+function NoticeBanner({ banner, onRetry, onDismiss }: { banner: Banner; onRetry: () => void; onDismiss: () => void }) {
+  const bad = banner.tone === 'bad'
+  return (
+    <div
+      role={banner.role}
+      className={`mx-4 flex min-w-0 items-center gap-2 rounded-t-[14px] border border-b-0 py-1 pr-1 pl-3 text-[12.5px] ${bad ? 'border-bad/25 bg-bad/[0.08] text-bad' : 'border-white/[0.08] bg-white/[0.03] text-ink-300'}`}
+    >
+      <svg viewBox="0 0 16 16" className={`size-3.5 shrink-0 ${bad ? 'text-bad' : 'text-ok'}`} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.25" />
+        {bad ? <path d="M8 4.75v3.75M8 11.1v.15" /> : <path d="m5.5 8.2 1.75 1.75L10.6 6.4" />}
+      </svg>
+      <span className="min-w-0 flex-1 truncate py-1 select-text" title={banner.text}>
+        {banner.text}
+      </span>
+      {banner.action === 'retry' && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="h-6 shrink-0 rounded-full px-2.5 text-[12px] font-semibold text-ink-100 transition-colors duration-100 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
+        >
+          Retry
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        title="Dismiss"
+        className="grid size-6 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
+      >
+        <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+          <path d="m4.5 4.5 7 7m0-7-7 7" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
+/** A draft's slash-command query: only a message of plain text can start with a command. */
+function draftSlashQuery(draft: Draft): string | null {
+  return draft.some((part) => part.type === 'token') ? null : slashQuery(draftText(draft))
 }
 
 /**
  * The message box both chat views share: rounded, pinned to the bottom of the window, growing with
- * its text up to about 40% of the height. Enter sends, Shift+Enter starts a new line; typing / at
- * the start lists the agent's slash commands.
+ * its text up to about 40% of the height. Images and PDFs sit inside the text as labelled chips where
+ * they were pasted, dropped or picked; hovering an image's chip shows it, and a chip can be dragged to
+ * another place. Enter sends, Shift+Enter
+ * starts a new line; typing / at the start lists the agent's slash commands.
  */
 export function Composer({
   placeholder,
@@ -300,6 +326,9 @@ export function Composer({
   agent,
   cwd,
   dispatchId,
+  context,
+  model = null,
+  onModelChange,
   onSend,
 }: {
   placeholder: string
@@ -308,183 +337,546 @@ export function Composer({
   cwd: string | null
   /** Set for megabrain chats: shows what still waits in the queue, and Esc takes it back. */
   dispatchId?: string
-  /** Sends the message; resolves to the notice to show, and clears the box when the notice is ok. */
-  onSend: (text: string) => Promise<Notice>
+  /** The chat's context when known: tokens used and the model's window. */
+  context?: { tokens?: number | null; window?: number | null }
+  /** The chat's model when known. */
+  model?: string | null
+  /** Set for native chats, which switch model and effort themselves; without it, picking a model sends /model <model> through onSend. */
+  onModelChange?: (model: string, effort: string | undefined) => Promise<void>
+  /** Sends the message as text and image parts in order; resolves to the notice to show, and clears the box when it is ok. */
+  onSend: (parts: MessagePart[]) => Promise<Notice>
 }) {
-  const [text, setText] = useState('')
+  const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  // Whether the notice reports a send that failed, which the banner offers to retry.
+  const [failedSend, setFailedSend] = useState(false)
+  const show = (next: Notice | null, fromSend = false) => {
+    setNotice(next)
+    setFailedSend(fromSend)
+  }
   const [active, setActive] = useState(0)
   const [menuClosed, setMenuClosed] = useState(false)
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  const box = useRef<HTMLTextAreaElement>(null)
+  const [dropCaret, setDropCaret] = useState<{ left: number; top: number; height: number } | null>(null)
+  const [preview, setPreview] = useState<{ images: LightboxImage[]; start: number } | null>(null)
+  const [skillAnchor, setSkillAnchor] = useState<AnchorRect | null>(null)
+  const [hover, setHover] = useState<{ id: string; left: number; top: number } | null>(null)
+  const editor = useRef<HTMLDivElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLDivElement>(null)
   const picker = useRef<HTMLInputElement>(null)
+  // Every attachment added since the last send, by token id. Kept when a token is deleted, so an
+  // undo that brings the token back still finds it; released when the message goes or the box closes.
+  const attachments = useRef(new Map<string, Attachment>())
+  // The last selection inside the box, for what the buttons insert while focus is on them.
+  const caret = useRef<[number, number]>([0, 0])
   const commands = useSlashCommands(agent, cwd)
-  const textRef = useRef(text)
-  textRef.current = text
-  const dictation = useDictation(
-    () => textRef.current,
-    (value) => change(value),
-    (message) => setNotice({ tone: 'bad', text: message }),
-  )
+  const [recent, rememberCommand] = useRecentCommands(agent)
   const [sentCount, setSentCount] = useState(0)
   const [queue, queueDispatch] = useChatQueue(dispatchId, sentCount)
 
-  // A message taken back from the queue lands in the composer for editing.
+  const kindOf = (id: string) => attachments.current.get(id)?.kind ?? 'image'
+
+  const view = (id: string): TokenView => {
+    const attachment = attachments.current.get(id)
+    return attachment === undefined ? { kind: 'image', name: 'missing' } : { kind: attachment.kind, name: attachment.name }
+  }
+
+  /** The draft as the box holds it right now; state can trail the DOM by a render. */
+  const current = (): Draft => (editor.current === null ? draft : readDraft(editor.current))
+
+  const changed = (next: Draft) => {
+    if (editor.current !== null) relabel(editor.current, next, kindOf)
+    setDraft(next)
+    setActive(0)
+    queueDispatch({ type: 'typed' })
+    if (draftSlashQuery(next) === null) setMenuClosed(false)
+  }
+
+  /** Shows a draft the composer built itself and puts the caret at `offset`. */
+  const apply = (next: Draft, offset: number) => {
+    const element = editor.current
+    if (element !== null) {
+      renderDraft(element, next, view)
+      element.focus()
+      setCaret(element, offset)
+    }
+    caret.current = [offset, offset]
+    changed(next)
+  }
+
+  const selection = (): [number, number] => (editor.current === null ? null : selectionOffsets(editor.current)) ?? caret.current
+
+  const insertAt = (text: string, [start, end]: [number, number] = selection()) => apply(insertText(deleteRange(current(), start, end), start, text), start + text.length)
+
+  useEffect(() => {
+    const onSelection = () => {
+      const element = editor.current
+      const offsets = element === null ? null : selectionOffsets(element)
+      if (offsets !== null) caret.current = offsets
+    }
+    document.addEventListener('selectionchange', onSelection)
+    return () => document.removeEventListener('selectionchange', onSelection)
+  }, [])
+
+  // Dictation writes at the caret where it started, replacing what it wrote before as it hears more.
+  const dictationBase = useRef<{ draft: Draft; offset: number } | null>(null)
+  const dictation = useDictation(
+    () => {
+      dictationBase.current = { draft: current(), offset: selection()[1] }
+    },
+    (spoken) => {
+      const base = dictationBase.current
+      if (base === null) return
+      const before = draftText(base.draft).slice(0, base.offset)
+      const words = spoken.trimStart()
+      const text = before === '' || /\s$/.test(before) ? words : ` ${words}`
+      apply(insertText(base.draft, base.offset, text), base.offset + text.length)
+    },
+    (message) => show({ tone: 'bad', text: message }),
+  )
+
+  // A message taken back from the queue lands in the composer for editing, its image paths as tokens.
   const restored = queue.restored
   useEffect(() => {
     if (restored === null) return
-    setText(restored.text)
-    box.current?.focus()
+    const next = messagePartsFromText(restored.text).flatMap((part): Draft => {
+      if (part.type === 'text') return [part]
+      const attachment = fromPath(part.path)
+      if (attachment === null) return [{ type: 'text', text: part.path }]
+      attachments.current.set(attachment.id, attachment)
+      return [{ type: 'token', id: attachment.id }]
+    })
+    apply(next, draftLength(next))
+    // Only a newly restored message runs this; apply reads the latest refs.
   }, [restored])
 
-  const query = slashQuery(text)
-  const matches = query === null || menuClosed ? [] : filterSlashCommands(commands, query)
-  const menuOpen = matches.length > 0
-
+  // The slash menu opens while the message is a command word being typed; a second slash means a path.
+  const query = draftSlashQuery(draft)
+  const menuOpen = query !== null && !menuClosed && commands.length > 0 && !query.includes('/')
+  const sections = menuOpen ? commandSections(commands, query, recent) : []
+  const matches = sections.flatMap((section) => section.items)
+  const activeMatch = Math.min(active, Math.max(0, matches.length - 1))
+  // Measured once as it opens: a command word never wraps, so the box keeps its size while it is typed.
+  const [menuAnchor, setMenuAnchor] = useState<AnchorRect | null>(null)
   useLayoutEffect(() => {
-    const element = box.current
-    if (element === null) return
-    element.style.height = 'auto'
-    element.style.height = `${Math.min(element.scrollHeight, Math.round(window.innerHeight * 0.4))}px`
-  }, [text])
-
-  const change = (value: string) => {
-    setText(value)
-    setActive(0)
-    queueDispatch({ type: 'typed' })
-    if (slashQuery(value) === null) setMenuClosed(false)
-  }
+    if (!menuOpen) {
+      setMenuAnchor(null)
+      return
+    }
+    const rect = box.current?.getBoundingClientRect()
+    if (rect !== undefined) setMenuAnchor((open) => open ?? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
+  }, [menuOpen])
+  const closeMenu = useCallback(() => setMenuClosed(true), [])
 
   const pick = (command: SlashCommand) => {
-    change(insertSlashCommand(command.name))
-    box.current?.focus()
+    rememberCommand(command)
+    const text = insertSlashCommand(command.name)
+    apply([{ type: 'text', text }], text.length)
   }
 
-  const attach = (added: (Attachment | null)[]) => {
+  /** Puts attachments into the text where the caret or the drop is, one token each. */
+  const attach = (added: (Attachment | null)[], [start, end]: [number, number] = selection()) => {
     const accepted = added.filter((item): item is Attachment => item !== null)
-    if (accepted.length < added.length) setNotice({ tone: 'bad', text: 'Only images and PDFs can be attached.' })
-    if (accepted.length > 0) setAttachments((current) => [...current, ...accepted])
+    if (accepted.length < added.length) show({ tone: 'bad', text: 'Only images and PDFs can be attached.' })
+    if (accepted.length === 0) return
+    let next = deleteRange(current(), start, end)
+    let offset = start
+    for (const attachment of accepted) {
+      attachments.current.set(attachment.id, attachment)
+      next = insertToken(next, offset, attachment.id)
+      offset += 1
+    }
+    apply(next, offset)
   }
 
-  const remove = (id: string) =>
-    setAttachments((current) => {
-      const gone = current.find((item) => item.id === id)
-      if (gone !== undefined) releasePreview(gone)
-      return current.filter((item) => item.id !== id)
-    })
+  useWindowDrop((paths, x, y) => {
+    const at = editor.current === null ? null : offsetAtPoint(editor.current, x, y)
+    attach(paths.map(fromPath), at === null ? undefined : [at, at])
+  }, !disabled)
 
-  useWindowDrop((paths) => attach(paths.map(fromPath)), !disabled)
+  useEffect(
+    () => () => {
+      attachments.current.forEach(releasePreview)
+    },
+    [],
+  )
 
-  // Object URLs for thumbnails live until the chip is removed or the composer goes away.
-  const attachmentsRef = useRef(attachments)
-  attachmentsRef.current = attachments
-  useEffect(() => () => attachmentsRef.current.forEach(releasePreview), [])
-
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(event.clipboardData.files)
-    if (files.length === 0) return
+  const onPaste = (event: ClipboardEvent<HTMLDivElement>) => {
     event.preventDefault()
-    attach(files.map(fromFile))
+    const files = Array.from(event.clipboardData.files)
+    if (files.length > 0) {
+      attach(files.map(fromFile))
+      return
+    }
+    const text = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n')
+    if (text !== '') insertAt(text)
+  }
+
+  const removeToken = (id: string) => {
+    setHover(null)
+    const draftNow = current()
+    const offset = tokenOffset(draftNow, id)
+    if (offset !== null) apply(deleteRange(draftNow, offset, offset + 1), offset)
+  }
+
+  // A chip moves with pointer events rather than a native drag: in the app's webview a native drag
+  // is taken by the window's own file drop, so it never reached the box as a move.
+  const drag = useRef<{ id: string; x: number; y: number; moving: boolean } | null>(null)
+  const justDragged = useRef(false)
+
+  const onClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (justDragged.current) return
+    const element = editor.current
+    const token = element === null ? null : tokenAt(event.target, element)
+    const id = token?.dataset.token
+    if (id === undefined) return
+    if (event.target instanceof HTMLElement && event.target.closest('[data-remove]') !== null) {
+      removeToken(id)
+      return
+    }
+    // The message's images in order, opened at the one clicked.
+    const images = tokenIds(current()).flatMap((tokenId) => {
+      const attachment = attachments.current.get(tokenId)
+      const src = attachment === undefined ? null : previewOf(attachment)
+      return attachment === undefined || src === null ? [] : [{ id: tokenId, src, name: attachment.name }]
+    })
+    const start = images.findIndex((image) => image.id === id)
+    if (start >= 0) setPreview({ images, start })
+  }
+
+  const showDropCaret = (offset: number | null) => {
+    const element = editor.current
+    const box = frame.current
+    const rect = element === null || offset === null ? null : caretRect(element, offset)
+    if (rect === null || box === null) {
+      setDropCaret(null)
+      return
+    }
+    const origin = box.getBoundingClientRect()
+    setDropCaret({ left: rect.left - origin.left, top: rect.top - origin.top, height: rect.height })
+  }
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    const element = editor.current
+    if (event.button !== 0 || disabled || element === null || !(event.target instanceof HTMLElement) || event.target.closest('[data-remove]') !== null) return
+    const id = tokenAt(event.target, element)?.dataset.token
+    if (id === undefined) return
+    // No caret, selection or native drag starts from a chip.
+    event.preventDefault()
+    drag.current = { id, x: event.clientX, y: event.clientY, moving: false }
+  }
+
+  const dragging = (id: string, on: boolean) => {
+    const chip = editor.current?.querySelector<HTMLElement>(`[data-token="${id}"]`)
+    if (chip === null || chip === undefined) return
+    if (on) chip.dataset.dragging = ''
+    else delete chip.dataset.dragging
+  }
+
+  const pointer = useRef({ move: (_event: globalThis.PointerEvent) => {}, end: (_event: globalThis.PointerEvent | null) => {} })
+  pointer.current.move = (event) => {
+    const state = drag.current
+    if (state === null) return
+    if (!state.moving) {
+      if (Math.hypot(event.clientX - state.x, event.clientY - state.y) < 4) return
+      state.moving = true
+      setHover(null)
+      dragging(state.id, true)
+    }
+    showDropCaret(editor.current === null ? null : offsetAtPoint(editor.current, event.clientX, event.clientY))
+  }
+  pointer.current.end = (event) => {
+    const state = drag.current
+    drag.current = null
+    if (state === null || !state.moving) return
+    dragging(state.id, false)
+    setDropCaret(null)
+    // The click that ends a drag does not open the image.
+    justDragged.current = true
+    setTimeout(() => {
+      justDragged.current = false
+    }, 0)
+    const element = editor.current
+    const at = event === null || element === null ? null : offsetAtPoint(element, event.clientX, event.clientY)
+    if (at === null) return
+    const next = moveToken(current(), state.id, at)
+    apply(next, (tokenOffset(next, state.id) ?? 0) + 1)
+  }
+  useEffect(() => {
+    const move = (event: globalThis.PointerEvent) => pointer.current.move(event)
+    const up = (event: globalThis.PointerEvent) => pointer.current.end(event)
+    const cancel = () => pointer.current.end(null)
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || drag.current?.moving !== true) return
+      event.preventDefault()
+      event.stopPropagation()
+      cancel()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('blur', cancel)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('blur', cancel)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [])
+
+  /** The image under the pointer shows above its chip. */
+  const onHover = (event: PointerEvent<HTMLDivElement>) => {
+    const element = editor.current
+    const chip = element === null || drag.current !== null ? null : tokenAt(event.target, element)
+    const id = chip?.dataset.token
+    if (chip === null || chip === undefined || id === undefined) {
+      if (hover !== null) setHover(null)
+      return
+    }
+    if (hover?.id === id) return
+    const box = chip.getBoundingClientRect()
+    setHover({ id, left: box.left, top: box.top })
+  }
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    showDropCaret(editor.current === null ? null : offsetAtPoint(editor.current, event.clientX, event.clientY))
+  }
+
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (!(event.relatedTarget instanceof Node) || frame.current?.contains(event.relatedTarget) !== true) setDropCaret(null)
   }
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    setDropCaret(null)
+    const element = editor.current
+    const at = element === null ? null : offsetAtPoint(element, event.clientX, event.clientY)
     const files = Array.from(event.dataTransfer.files)
     if (files.length === 0) return
     event.preventDefault()
-    attach(files.map(fromFile))
+    attach(files.map(fromFile), at === null ? undefined : [at, at])
   }
 
+  const closePreview = useCallback(() => setPreview(null), [])
+  const closeSkills = useCallback(() => setSkillAnchor(null), [])
+  const hasSkills = commands.some((command) => command.source === 'skill' || command.source === 'plugin')
+
+  /** A picked skill goes in at the caret, apart from a word right before it. */
+  const pickSkill = (command: SlashCommand) => {
+    setSkillAnchor(null)
+    rememberCommand(command)
+    const at = caret.current
+    const before = draftText(current()).slice(0, at[0])
+    const text = skillInvocation(agent ?? '', command.name)
+    insertAt(before === '' || /\s$/.test(before) ? text : ` ${text}`, at)
+  }
+
+  // The last switch made here: the effort, which the chat record does not carry, and for a session
+  // switched by command the model, shown until the session reports a model of its own.
+  const [chosen, setChosen] = useState<{ model: string; effort: string | undefined; base: string | null; byCommand: boolean } | null>(null)
+  const sameModel = (left: string, right: string) => withContextWindow(left, 'standard') === withContextWindow(right, 'standard')
+  const overridden = chosen !== null && chosen.byCommand && chosen.base === model
+  const shownModel = overridden ? chosen.model : model
+  const shownEffort = chosen !== null && shownModel !== null && sameModel(chosen.model, shownModel) ? chosen.effort : undefined
+  // The session's own window belongs to the model it reported, not to one switched to since.
+  const shownContext = overridden ? { tokens: context?.tokens, window: null } : context
+
+  const pickModel = ({ model: picked, window, effort, name }: ModelPick) => {
+    const label = pickerLabel(name, window, effort)
+    if (onModelChange !== undefined) {
+      onModelChange(picked, effort).then(
+        () => {
+          setChosen({ model: picked, effort, base: model, byCommand: false })
+          show({ tone: 'ok', text: `Switched to ${label}.` })
+        },
+        (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
+      )
+      return
+    }
+    // Only the agent itself switches a session it runs: /model, or /effort when only the effort
+    // changes, goes as a message of its own, through the same path as a reply, and leaves the draft alone.
+    const command = sessionCommand(agent, shownModel, { model: picked, window, effort })
+    if (command === null) return
+    onSend([{ type: 'text', text: command }]).then(
+      (result) => {
+        if (result.tone === 'ok') setChosen({ model: picked, effort, base: model, byCommand: picked !== model })
+        show(result.tone === 'ok' ? { tone: 'ok', text: `Switching to ${label}: sent ${command}.` } : result)
+        setSentCount((count) => count + 1)
+      },
+      (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
+    )
+  }
+
+  const sendable = draft.some((part) => part.type === 'token') || draftText(draft).trim() !== ''
+
   const send = () => {
-    const message = text.trim()
-    if ((message === '' && attachments.length === 0) || sending || disabled) return
-    const sent = attachments
+    const message = current().filter((part) => part.type === 'text' || attachments.current.has(part.id))
+    const ids = tokenIds(message)
+    if ((ids.length === 0 && draftText(message).trim() === '') || sending || disabled) return
     setSending(true)
-    setNotice(null)
-    Promise.all(sent.map(attachmentPath))
-      .then((paths) => onSend(appendAttachmentPaths(message, paths)))
+    show(null)
+    Promise.all(
+      ids.map(async (id) => {
+        const attachment = attachments.current.get(id)
+        if (attachment === undefined) throw new Error('An attachment went missing; attach it again.')
+        return [id, { kind: attachment.kind, path: await attachmentPath(attachment) }] as const
+      }),
+    )
+      .then((saved) => {
+        const paths = new Map(saved)
+        return onSend(
+          toMessageParts(message, (id) => {
+            const found = paths.get(id)
+            if (found === undefined) throw new Error('An attachment went missing; attach it again.')
+            return found
+          }),
+        )
+      })
       .then(
         (result) => {
-          setNotice(result)
+          show(result, result.tone === 'bad')
           setSentCount((count) => count + 1)
           if (result.tone === 'ok') {
-            change('')
-            sent.forEach(releasePreview)
-            setAttachments((current) => current.filter((item) => !sent.includes(item)))
+            apply([], 0)
+            attachments.current.forEach(releasePreview)
+            attachments.current.clear()
           }
         },
-        (error: unknown) => setNotice({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
+        (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }, true),
       )
       .finally(() => setSending(false))
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing) return
-    if (menuOpen) {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault()
-        const step = event.key === 'ArrowDown' ? 1 : -1
-        setActive((current) => (current + step + matches.length) % matches.length)
-        return
-      }
-      if (event.key === 'Enter' || event.key === 'Tab') {
-        const command = matches[Math.min(active, matches.length - 1)]
-        if (command !== undefined) {
-          event.preventDefault()
-          pick(command)
-          return
-        }
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setMenuClosed(true)
-        return
-      }
-    }
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (
+      menuOpen &&
+      handleMenuKey(event, matches.length, activeMatch, {
+        move: setActive,
+        pick: () => {
+          const item = matches[activeMatch]
+          if (item !== undefined) pick(item.command)
+        },
+        close: closeMenu,
+      })
+    )
+      return
+    if (event.key === 'Enter') {
       event.preventDefault()
-      send()
+      if (event.shiftKey) insertAt('\n')
+      else send()
+      return
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      const [start, end] = selection()
+      const draftNow = current()
+      const id = start !== end ? null : event.key === 'Backspace' ? tokenBefore(draftNow, start) : tokenAfter(draftNow, start)
+      if (id !== null) {
+        event.preventDefault()
+        removeToken(id)
+      }
       return
     }
     if (event.key === 'Escape' && dispatchId !== undefined) {
       event.preventDefault()
-      queueDispatch({ type: 'escape', text })
+      queueDispatch({ type: 'escape', text: draftText(current()) })
     }
   }
 
+  const ghost =
+    'grid size-8 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
+  const button = sendState({ sendable, sending, disabled })
+  const banner = composerBanner(notice, { failedSend, sendable })
+
   return (
-    <footer className="shrink-0 px-6 pt-2 pb-4">
-      {notice !== null && <p className={`mb-1.5 px-3 text-[12.5px] ${notice.tone === 'ok' ? 'text-ok' : 'text-bad'}`}>{notice.text}</p>}
-      {dispatchId !== undefined && <QueuePills state={queue} empty={text.trim() === ''} />}
+    <footer className="shrink-0 px-6 pt-2 pb-3">
+      {preview !== null && <Lightbox images={preview.images} start={preview.start} onClose={closePreview} />}
+      {hover !== null && <ChipPreview attachment={attachments.current.get(hover.id)} left={hover.left} top={hover.top} />}
+      {dispatchId !== undefined && <QueuePills state={queue} empty={!sendable} />}
       <div className="relative">
-        {menuOpen && <SlashMenu commands={matches} active={Math.min(active, matches.length - 1)} onPick={pick} onHover={setActive} />}
+        {menuOpen && menuAnchor !== null && (
+          <CommandMenu
+            anchor={menuAnchor}
+            label="Commands"
+            sections={sections}
+            active={activeMatch}
+            query={query}
+            width={Math.min(720, menuAnchor.right - menuAnchor.left)}
+            inside={box}
+            onActive={setActive}
+            onPick={pick}
+            onClose={closeMenu}
+          />
+        )}
+        {banner !== null && <NoticeBanner banner={banner} onRetry={send} onDismiss={() => show(null)} />}
         <div
-          onDragOver={(event) => {
-            if (event.dataTransfer.types.includes('Files')) event.preventDefault()
-          }}
-          onDrop={onDrop}
-          className="rounded-2xl border border-white/15 bg-white/[0.05] p-2 focus-within:border-white/25"
+          ref={box}
+          className="rounded-[20px] border border-white/[0.1] bg-ink-900 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] transition-[border-color,box-shadow] duration-150 focus-within:border-white/[0.18] focus-within:ring-2 focus-within:ring-accent/20 motion-reduce:transition-none"
         >
-          {attachments.length > 0 && (
-            <ul className="mb-2 flex flex-wrap gap-2">
-              {attachments.map((attachment) => (
-                <AttachmentChip key={attachment.id} attachment={attachment} onRemove={() => remove(attachment.id)} />
-              ))}
-            </ul>
-          )}
-          <div className="flex items-end gap-2">
-            <button
-              type="button"
-              onClick={() => picker.current?.click()}
-              disabled={disabled}
-              aria-label="Attach images or PDFs"
-              title="Attach images or PDFs"
-              className="grid size-9 shrink-0 place-items-center rounded-xl text-ink-400 hover:bg-white/[0.08] hover:text-ink-100 disabled:opacity-40"
-            >
-              <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <div ref={frame} className="relative min-w-0 px-4 pt-3">
+            {draft.length === 0 && <span className="pointer-events-none absolute top-3 right-4 left-4 truncate text-[14.5px] leading-6 text-ink-400">{placeholder}</span>}
+            <div
+              ref={editor}
+              role="textbox"
+              aria-multiline="true"
+              aria-label="Message"
+              aria-disabled={disabled}
+              aria-placeholder={placeholder}
+              contentEditable={disabled ? false : 'plaintext-only'}
+              onInput={(event) => changed(readDraft(event.currentTarget))}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+              onClick={onClick}
+              onPointerDown={onPointerDown}
+              onPointerMove={onHover}
+              onPointerLeave={() => setHover(null)}
+              onDragStart={(event) => event.preventDefault()}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+              onDragEnd={() => setDropCaret(null)}
+              className="max-h-[40vh] min-h-12 overflow-y-auto text-[14.5px] leading-6 break-words whitespace-pre-wrap text-ink-100 outline-none"
+            />
+            {dropCaret !== null && <span className="pointer-events-none absolute w-0.5 rounded-full bg-accent" style={{ left: dropCaret.left - 1, top: dropCaret.top, height: dropCaret.height }} />}
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5 px-2.5 pt-1.5 pb-2.5">
+            <button type="button" onClick={() => picker.current?.click()} disabled={disabled} aria-label="Attach images or PDFs" title="Attach images or PDFs" className={ghost}>
+              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="m21.4 11.6-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8" />
               </svg>
             </button>
+            {/* The tooltip sits on a wrapper: a disabled button gets no pointer events to show one. */}
+            <span title={hasSkills ? 'Use a skill' : `${agent ?? 'This agent'} has no skills here`} className="shrink-0">
+              <button
+                type="button"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setSkillAnchor((open) => (open === null ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null))
+                }}
+                onMouseDown={(event) => {
+                  // Keeps the caret in the box and lets a second click close the open menu.
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                disabled={disabled || !hasSkills}
+                aria-label="Skills"
+                aria-expanded={skillAnchor !== null}
+                className={`${ghost} aria-expanded:bg-white/[0.08] aria-expanded:text-ink-100`}
+              >
+                <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+                </svg>
+              </button>
+            </span>
+            {skillAnchor !== null && <SkillMenu anchor={skillAnchor} commands={commands} recent={recent} onPick={pickSkill} onClose={closeSkills} />}
             <input
               ref={picker}
               type="file"
@@ -496,46 +888,49 @@ export function Composer({
                 event.target.value = ''
               }}
             />
-            <textarea
-              ref={box}
-              rows={1}
-              value={text}
-              onChange={(event) => change(event.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={onPaste}
-              disabled={disabled}
-              placeholder={placeholder}
-              aria-label="Message"
-              className="max-h-[40vh] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-2 py-1.5 text-[14.5px] leading-6 text-ink-100 outline-none placeholder:text-ink-400"
-            />
-            {dictation.supported && (
+            <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-white/[0.08]" />
+            <ComposerStatus agent={agent} context={shownContext} model={shownModel} effort={shownEffort} canSetEffort={onModelChange !== undefined} onPickModel={pickModel} />
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {dictation.supported && (
+                <button
+                  type="button"
+                  onClick={dictation.toggle}
+                  disabled={disabled}
+                  aria-pressed={dictation.listening}
+                  aria-label={dictation.listening ? 'Stop dictation' : 'Dictate'}
+                  title={dictation.listening ? 'Stop dictation' : 'Dictate'}
+                  className={dictation.listening ? `${ghost} bg-bad/[0.15] text-bad hover:bg-bad/[0.2] hover:text-bad` : ghost}
+                >
+                  <svg viewBox="0 0 24 24" className={`size-4 ${dictation.listening ? 'animate-pulse motion-reduce:animate-none' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="9" y="3" width="6" height="11" rx="3" />
+                    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                  </svg>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={dictation.toggle}
-                disabled={disabled}
-                aria-pressed={dictation.listening}
-                aria-label={dictation.listening ? 'Stop dictation' : 'Dictate'}
-                title={dictation.listening ? 'Stop dictation' : 'Dictate'}
-                className={`grid size-9 shrink-0 place-items-center rounded-xl disabled:opacity-40 ${dictation.listening ? 'bg-bad/[0.15] text-bad' : 'text-ink-400 hover:bg-white/[0.08] hover:text-ink-100'}`}
+                onClick={send}
+                disabled={button !== 'ready'}
+                aria-label={button === 'sending' ? 'Sending' : 'Send'}
+                aria-busy={button === 'sending'}
+                title={button === 'ready' ? 'Send (Enter)' : undefined}
+                className={`grid size-8 shrink-0 place-items-center rounded-full transition-colors duration-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:transition-none ${
+                  button === 'ready' ? 'bg-accent text-accent-ink hover:bg-accent/90' : button === 'sending' ? 'bg-white/[0.1] text-ink-200' : 'bg-white/[0.07] text-ink-500'
+                }`}
               >
-                <svg viewBox="0 0 24 24" className={`size-[18px] ${dictation.listening ? 'animate-pulse' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-                </svg>
+                {button === 'sending' ? (
+                  <Spinner />
+                ) : (
+                  <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M8 13V3.5M3.5 8 8 3.5 12.5 8" />
+                  </svg>
+                )}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={send}
-              disabled={(text.trim() === '' && attachments.length === 0) || sending || disabled}
-              aria-label="Send"
-              className="grid size-9 shrink-0 place-items-center rounded-xl bg-accent text-accent-ink disabled:opacity-40"
-            >
-              {sending ? <Spinner /> : '↑'}
-            </button>
+            </div>
           </div>
         </div>
       </div>
+      <ComposerLimits agent={agent} />
     </footer>
   )
 }

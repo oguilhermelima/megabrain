@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { QueuedMessage, SlashCommand } from '@/api/schema'
-import { appendAttachmentPaths, attachmentKind, filterSlashCommands, insertSlashCommand, slashQuery } from '@/chat/composer-model'
+import { attachmentKind, filterSlashCommands, groupSkills, insertSlashCommand, skillInvocation, slashQuery } from '@/chat/composer-model'
 import { initialQueueState, queueReducer, type QueueState } from '@/chat/queue-model'
 
 function command(name: string, fields: Partial<SlashCommand> = {}): SlashCommand {
@@ -56,24 +56,6 @@ describe('filterSlashCommands', () => {
 describe('insertSlashCommand', () => {
   test('inserts the command followed by a space', () => {
     expect(insertSlashCommand('compact')).toBe('/compact ')
-  })
-})
-
-describe('appendAttachmentPaths', () => {
-  test('puts each path on its own line after the text', () => {
-    expect(appendAttachmentPaths('look at this', ['/a/one.png', '/a/two.pdf'])).toBe('look at this\n/a/one.png\n/a/two.pdf')
-  })
-
-  test('trims trailing whitespace before appending', () => {
-    expect(appendAttachmentPaths('look  \n\n', ['/a/one.png'])).toBe('look\n/a/one.png')
-  })
-
-  test('with no text the message is only the paths', () => {
-    expect(appendAttachmentPaths('', ['/a/one.png'])).toBe('/a/one.png')
-  })
-
-  test('with no paths the text is unchanged apart from trimming', () => {
-    expect(appendAttachmentPaths(' hi ', [])).toBe('hi')
   })
 })
 
@@ -140,5 +122,50 @@ describe('queueReducer', () => {
   test('typing clears the hint', () => {
     const next = queueReducer(state({ hint: 'something' }), { type: 'typed' })
     expect(next.hint).toBeNull()
+  })
+})
+
+describe('groupSkills', () => {
+  const commands = [
+    command('compact', { description: 'Clear history but keep a summary' }),
+    command('deploy', { description: 'Deploy this project', source: 'project' }),
+    command('notes', { description: 'Personal notes', source: 'user' }),
+    command('megabrain', { description: 'Delegate work to other agents', source: 'skill' }),
+    command('docx', { description: 'Write Word documents', source: 'skill' }),
+    command('caveman', { description: 'Terse replies', source: 'plugin' }),
+    command('review-pr', { description: 'Review the current branch', source: 'plugin' }),
+  ]
+
+  test('lists only skills and plugin skills, skills first, each group by name', () => {
+    expect(groupSkills(commands, '').map((group) => [group.source, group.items.map((item) => item.name)])).toEqual([
+      ['skill', ['docx', 'megabrain']],
+      ['plugin', ['caveman', 'review-pr']],
+    ])
+  })
+
+  test('each group has a label', () => {
+    expect(groupSkills(commands, '').map((group) => group.label)).toEqual(['Skills', 'Plugins'])
+  })
+
+  test('the search matches names and descriptions, best match first, and drops empty groups', () => {
+    expect(groupSkills(commands, 'review').map((group) => [group.source, group.items.map((item) => item.name)])).toEqual([['plugin', ['review-pr']]])
+    expect(groupSkills(commands, 'agents').map((group) => group.items.map((item) => item.name))).toEqual([['megabrain']])
+    expect(groupSkills(commands, 'MEGA').map((group) => group.items.map((item) => item.name))).toEqual([['megabrain']])
+  })
+
+  test('no skills, or nothing matching, is no groups', () => {
+    expect(groupSkills([command('compact')], '')).toEqual([])
+    expect(groupSkills(commands, 'zzz')).toEqual([])
+  })
+})
+
+describe('skillInvocation', () => {
+  test('Claude and the others take a slash command and a space for the argument', () => {
+    expect(skillInvocation('claude', 'megabrain')).toBe('/megabrain ')
+    expect(skillInvocation('grok', 'megabrain')).toBe('/megabrain ')
+  })
+
+  test('Codex mentions a skill with a dollar sign', () => {
+    expect(skillInvocation('codex', 'megabrain')).toBe('$megabrain ')
   })
 })

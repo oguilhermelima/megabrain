@@ -95,12 +95,18 @@ export function addModel(
   return { kind: "ok", value: { ...registry, models: [...registry.models, entry] } };
 }
 
+// The shipped models.json is the single metadata table. Context-window values come from the
+// installed Claude model listing and ~/.codex/models_cache.json; unknown windows stay empty.
 export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry): ModelRegistry {
   let models = [...registry.models];
   for (const templateModel of template.models) {
     const index = models.findIndex((entry) => entry.agent === templateModel.agent && entry.model === templateModel.model);
     if (index < 0) models.push(templateModel);
-    else if (models[index].provenance.kind !== "curated") models[index] = { ...models[index], reasoning: templateModel.reasoning, status: templateModel.status, contextWindow: templateModel.contextWindow };
+    else if (models[index].provenance.kind !== "curated") models[index] = {
+      ...models[index], reasoning: templateModel.reasoning, status: templateModel.status,
+      contextWindow: templateModel.contextWindow, name: templateModel.name,
+      contextWindows: templateModel.contextWindows, current: templateModel.current,
+    };
   }
   return { ...registry, models };
 }

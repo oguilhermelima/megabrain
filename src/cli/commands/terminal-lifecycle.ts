@@ -9,6 +9,7 @@ import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../cor
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
+import { executeAppTerminalClose } from "./terminal-app.js";
 import { closeTmuxTerminal, createTmuxTerminal, splitTmuxTerminalId } from "./terminal-tmux.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -367,6 +368,7 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
   let timeout = 30;
   let terminal: string | undefined;
   if (rest.includes("-h") || rest.includes("--help")) return ok(help(operation ?? ""));
+  if (operation === "close" && rest.includes("--app")) return executeAppTerminalClose(rest.filter((arg) => arg !== "--app"), env, process);
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === "--json") json = true;

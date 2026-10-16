@@ -110,3 +110,40 @@ describe("composerHoldsText for agy", () => {
     expect(composerExactlyHoldsText("agy", fixture("agy-short-inline"), "short single line probe")).toBe(false);
   });
 });
+
+// Claude Code 2.1.301 turns a pasted image path into an [Image #N] chip and collapses a multi-line
+// paste into a placeholder, so the composer holds a mix (tests/fixtures/composer/claude-image-*).
+describe("composerExactlyHoldsText with pasted images", () => {
+  const holds = (name: string, text: string): boolean => composerExactlyHoldsText("claude", fixture(name), text);
+
+  test("accepts an image chip followed by a collapsed paste that accounts for the rest", () => {
+    expect(holds("claude-image-chip-then-pasted-text", "/tmp/shot.png\n\nPrimeiro paragrafo.\n\nSegundo paragrafo.")).toBe(true);
+    expect(holds("claude-image-chip-then-pasted-5-lines", "/tmp/shot.png\nl1\nl2\nl3\nl4\nl5")).toBe(true);
+  });
+
+  test("accepts an image chip followed by plain text, and a chip alone", () => {
+    expect(holds("claude-image-chip-then-inline", "/tmp/shot.png texto curto na mesma linha")).toBe(true);
+    expect(holds("claude-image-chip-only", "/tmp/shot.png")).toBe(true);
+  });
+
+  test("still accepts a paste Claude kept whole, with the path inside it", () => {
+    expect(holds("claude-pasted-path-and-text", "/tmp/shot.png\nPrimeiro paragrafo curto sobre o assunto.\n\nSegundo paragrafo com outro assunto.")).toBe(true);
+    expect(holds("claude-path-and-text-inline", "/tmp/shot.png\nso uma linha de texto")).toBe(true);
+  });
+
+  test("rejects a collapsed paste whose line count does not account for the text", () => {
+    expect(holds("claude-image-chip-then-pasted-text", "/tmp/shot.png\n\nPrimeiro paragrafo.\n\nSegundo.\n\nTerceiro.")).toBe(false);
+  });
+
+  test("rejects a chip when the text names no image", () => {
+    expect(holds("claude-image-chip-then-inline", "texto curto na mesma linha")).toBe(false);
+  });
+
+  test("rejects inline text that differs from what was sent", () => {
+    expect(holds("claude-image-chip-then-inline", "/tmp/shot.png outro texto")).toBe(false);
+  });
+
+  test("rejects a paste that did not land", () => {
+    expect(holds("claude-idle", "/tmp/shot.png\n\nPrimeiro paragrafo.\n\nSegundo paragrafo.")).toBe(false);
+  });
+});

@@ -238,4 +238,29 @@ describe("executeWorktreeList", () => {
 
     expect(paths(result)).toEqual([repoUnderRoot, inside]);
   });
+
+  test("preserves JSON when optional host tools are not installed", async () => {
+    const fixture = await createFixture();
+    const repoUnderRoot = join(fixture.shared, "repo");
+    const inside = join(repoUnderRoot, "inside");
+    await mkdir(join(repoUnderRoot, ".git"), { recursive: true });
+    await mkdir(inside);
+    const calls: string[] = [];
+    const process = processFor((command, args) => {
+      calls.push(command);
+      if (command !== "git") return failed(`${command} unavailable`);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (path === repoUnderRoot && gitArgs[0] === "worktree") return output(gitWorktrees(repoUnderRoot, inside));
+      if (path === repoUnderRoot && gitArgs[0] === "config") return failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "" }, process);
+
+    expect(result.kind).toBe("ok");
+    expect(paths(result)).toEqual([repoUnderRoot, inside]);
+    expect(calls).not.toContain("superset");
+    expect(calls).not.toContain("orca");
+    expect(calls).not.toContain("gh");
+  });
 });

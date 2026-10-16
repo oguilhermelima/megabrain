@@ -18,9 +18,9 @@ const CODE_SERVER_PORT_COUNT = 8000;
 export type CodeServerAsset = Readonly<{ name: string; url: string; sha256: string }>;
 export type CodeServerInfo = Readonly<{ root: string; url: string; port: number; pid: number; codeServerPid: number }>;
 
-export const CODE_MANAGED_SETTINGS = {
+export const CODE_ENFORCED_SETTINGS = {
   "security.workspace.trust.enabled": false,
-  "workbench.activityBar.location": "hidden",
+  "workbench.activityBar.location": "top",
   "workbench.statusBar.visible": false,
   "window.menuBarVisibility": "hidden",
   "window.customTitleBarVisibility": "never",
@@ -35,12 +35,15 @@ export const CODE_MANAGED_SETTINGS = {
   "workbench.editor.empty.hint": "hidden",
   "telemetry.telemetryLevel": "off",
   "update.mode": "none",
-  "editor.fontFamily": "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace",
-  "editor.minimap.enabled": false,
-  "workbench.colorTheme": "megabrain-dark",
-  "workbench.preferredDarkColorTheme": "megabrain-dark",
   "window.autoDetectColorScheme": false,
   "explorer.openEditors.visible": 0,
+} as const;
+
+export const CODE_DEFAULT_SETTINGS = {
+  "workbench.colorTheme": "megabrain-dark",
+  "workbench.preferredDarkColorTheme": "megabrain-dark",
+  "editor.fontFamily": "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace",
+  "editor.minimap.enabled": false,
 } as const;
 
 export function codeServerProxyInvocation(execPath: string, argv: readonly string[], socketPath: string, port: number): { command: string; args: string[] } {
@@ -478,7 +481,10 @@ async function writeManagedSettings(path: string): Promise<void> {
     if (!(typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT")) throw new Error(`could not read code-server settings: ${String(cause)}`);
   }
   const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ ...existing, ...CODE_MANAGED_SETTINGS }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  // Enforced settings protect the embedded workspace; defaults seed a new profile while leaving
+  // choices made in VS Code (including its color theme) intact on every later start.
+  const defaults = Object.fromEntries(Object.entries(CODE_DEFAULT_SETTINGS).filter(([key]) => !(key in existing)));
+  await writeFile(temporary, `${JSON.stringify({ ...existing, ...defaults, ...CODE_ENFORCED_SETTINGS }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   await rename(temporary, path);
   await chmod(path, 0o600);
 }

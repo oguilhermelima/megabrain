@@ -19,6 +19,8 @@ export type ClaudePeerTarget = Readonly<{
   token?: string;
   version: string;
   transcript: string;
+  cwd?: string;
+  title?: string;
 }>;
 
 export type ClaudePeerResolution =
@@ -70,8 +72,34 @@ export async function resolveClaudePeer(home: string, pid: number, sessionId: st
   }
   const transcript = await findTranscript(home, sessionId);
   if (transcript === undefined) return { kind: "unresolved", reason: "Claude session transcript was not found" };
+  let cwd: string | undefined;
+  let title: string | undefined;
+  const transcriptFile = await open(transcript, "r").catch(() => undefined);
+  if (transcriptFile !== undefined) {
+    try {
+      const size = (await transcriptFile.stat()).size;
+      const headSize = Math.min(size, 256 * 1024);
+      const tailSize = Math.min(size, 1024 * 1024);
+      const head = Buffer.alloc(headSize);
+      const tail = Buffer.alloc(tailSize);
+      await transcriptFile.read(head, 0, headSize, 0);
+      await transcriptFile.read(tail, 0, tailSize, Math.max(0, size - tailSize));
+      for (const line of head.toString("utf8").split("\n")) {
+        try {
+          const entry = JSON.parse(line) as Record<string, unknown>;
+          if (typeof entry.cwd === "string") { cwd = entry.cwd; break; }
+        } catch { /* Ignore partial transcript lines. */ }
+      }
+      for (const line of tail.toString("utf8").split("\n")) {
+        try {
+          const entry = JSON.parse(line) as Record<string, unknown>;
+          if (entry.type === "ai-title" && typeof entry.aiTitle === "string") title = entry.aiTitle;
+        } catch { /* Ignore partial transcript lines. */ }
+      }
+    } finally { await transcriptFile.close(); }
+  }
   const token = await peerToken(sessions, session.pid);
-  return { kind: "ok", value: { pid: session.pid, sessionId, socketPath, version, transcript, ...(token === undefined ? {} : { token }) } };
+  return { kind: "ok", value: { pid: session.pid, sessionId, socketPath, version, transcript, ...(token === undefined ? {} : { token }), ...(cwd === undefined ? {} : { cwd }), ...(title === undefined ? {} : { title }) } };
 }
 
 // Claude's permission-mode parity: a session holds a peer message for review when from-mode names a

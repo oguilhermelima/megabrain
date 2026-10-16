@@ -119,8 +119,12 @@ export function parseFilters(raw: string | null): SidebarFilters {
 export interface SessionTimer {
   /** compact: Claude compacts the idle session on its own; cache: the prompt cache expires. */
   kind: 'compact' | 'cache'
+  /** The time left, short: "47m". */
   text: string
-  level: 'normal' | 'amber' | 'red'
+  /** The same in words, for screen readers and the tooltip. */
+  label: string
+  /** green above 30 minutes left, yellow from 10 to 30, red under 10. */
+  tone: 'green' | 'yellow' | 'red'
 }
 
 /**
@@ -142,6 +146,7 @@ export function sessionTimer(session: ProjectSession, now: number): SessionTimer
   if (at === null) return null
   const left = at - now
   const minutes = Math.ceil(left / 60_000)
-  const level = left < 2 * 60_000 ? 'red' : left < 10 * 60_000 ? 'amber' : 'normal'
-  return compactFirst ? { kind: 'compact', text: `compacts in ${minutes}m`, level } : { kind: 'cache', text: `cache ${minutes}m`, level }
+  const tone = left > 30 * 60_000 ? 'green' : left >= 10 * 60_000 ? 'yellow' : 'red'
+  const inWords = `in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  return { kind: compactFirst ? 'compact' : 'cache', text: `${minutes}m`, label: compactFirst ? `Compacts ${inWords}` : `Prompt cache expires ${inWords}`, tone }
 }

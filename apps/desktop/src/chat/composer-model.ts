@@ -33,12 +33,29 @@ export function insertSlashCommand(name: string): string {
   return `/${name} `
 }
 
-/**
- * The message with each attachment's path on its own line after the text: Claude Code and Codex
- * take an image or a PDF from a terminal as its path.
- */
-export function appendAttachmentPaths(text: string, paths: string[]): string {
-  return [text.trim(), ...paths].filter((line) => line !== '').join('\n')
+export type SkillSource = 'skill' | 'plugin'
+export interface SkillGroup {
+  source: SkillSource
+  label: string
+  items: SlashCommand[]
+}
+
+const skillGroups: { source: SkillSource; label: string }[] = [
+  { source: 'skill', label: 'Skills' },
+  { source: 'plugin', label: 'Plugins' },
+]
+
+/** The agent's skills, personal and project ones first and then the plugins', matching a search. */
+export function groupSkills(commands: SlashCommand[], query: string): SkillGroup[] {
+  const matches = filterSlashCommands(commands, query.trim())
+  return skillGroups
+    .map((group) => ({ ...group, items: matches.filter((command) => command.source === group.source) }))
+    .filter((group) => group.items.length > 0)
+}
+
+/** How a skill is called in the composer: Codex mentions it with $, the others take it as a slash command. */
+export function skillInvocation(agent: string, name: string): string {
+  return agent === 'codex' ? `$${name} ` : insertSlashCommand(name)
 }
 
 export interface AttachmentKind {

@@ -3,6 +3,7 @@ import { type ProcessAdapter } from "../adapters/proc.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { ROOT_USAGE } from "../core/usage.js";
 import { executeContext, type Environment } from "./commands/context.js";
+import { executeAgent } from "./commands/agent.js";
 import { executeCheck } from "./commands/check.js";
 import { executeModel } from "./commands/model.js";
 import { executeWeb } from "./commands/web.js";
@@ -46,13 +47,17 @@ import { executeResources } from "./commands/resources.js";
 import { executeSettings } from "./commands/settings.js";
 import { executeProc } from "../core/proc-runner.js";
 import { executeRepository } from "./commands/repository.js";
+import { executeSessions } from "./commands/sessions.js";
 import { executeProjects } from "./commands/projects.js";
 import { executeGithub } from "./commands/github.js";
 import { executeCode } from "./commands/code.js";
 import { runCodeServerProxy } from "../core/code-server-proxy.js";
 import { executeWorktreeHide } from "./commands/worktree-hide.js";
 import { executeCommands } from "./commands/commands.js";
+import { executeSession } from "./commands/session.js";
 import { executeSend } from "./commands/send.js";
+import { executeChat } from "./commands/chat.js";
+import { runChatd } from "../chat/daemon.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -108,6 +113,7 @@ function isSettingsWrite(args: readonly string[]): boolean {
   if (command === "supervise") return args.length === 0 || args.length === 1 && args[0] === "--stop";
   if (command === "chain") return verb === "save" || verb === "delete" || verb === "limits" && rest.some((arg) => ["--enable", "--disable", "--notice-on", "--notice-off", "--notice-interval"].includes(arg));
   if (command === "model") return verb === "refresh";
+  if (command === "settings") return verb === "set";
   if (command === "terminal") return verb === "default" && rest.length > 0;
   return false;
 }
@@ -117,6 +123,12 @@ async function routeCommand(
   dependencies: RouterDependencies,
 ): Promise<Result<string>> {
   const [command, ...commandArgs] = args;
+  if (command === "__chatd") {
+    const stateDir = dependencies.environment.MEGABRAIN_CHATD_STATE_DIR;
+    if (!stateDir) return failed("chatd requires MEGABRAIN_CHATD_STATE_DIR", 2);
+    await runChatd(stateDir);
+    return ok("");
+  }
   if (command === "__code-server-proxy") return runCodeServerProxy(commandArgs, dependencies.environment);
   if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__supervise-worker") return executeSupervisorWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
@@ -127,9 +139,9 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "commands"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
-  const statelessCommand = command === "context" || command === "web" || command === "tv" || command === "tmux";
+  const statelessCommand = command === "context" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
     const cutover = await ensureAutomaticCutover(dependencies.environment);
     if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
@@ -160,12 +172,16 @@ async function routeCommand(
   if (command === "status") return executeStatus(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "resources") return executeResources(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "settings") return executeSettings(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "chat") return executeChat(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "session") return executeSession(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "send") return executeSend(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "proc") return executeProc(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "repo") return executeRepository(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "projects") return executeProjects(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "github") return executeGithub(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "code") return executeCode(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "sessions") return executeSessions(commandArgs, dependencies.environment);
+  if (command === "agent") return executeAgent(commandArgs, dependencies.processAdapter);
   if (command === "commands") return executeCommands(commandArgs, dependencies.environment);
   if (command === "model") {
     return executeModel(commandArgs, dependencies.environment, dependencies.processAdapter);

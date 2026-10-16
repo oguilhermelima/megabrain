@@ -36,10 +36,14 @@ outlives the terminal it was typed in.
 The project registry is stored in megabrain's SQLite state. It adds a repository when megabrain
 works in it, backfills repositories from megabrain's own dispatch and worktree history on first
 use, or imports one when you ask. It does not read repository lists from Orca.
+`repo scripts` detects Run, Build, and Install commands from the project files and stores
+overrides in a private JSON file under the state directory. Worktree paths share the main
+checkout's saved commands; pass an empty value such as `--run ''` to return a command to detection.
 
 ```sh
 megabrain repo add ~/code/api
 megabrain repo clone owner/project --into ~/code
+megabrain repo scripts api --run 'pnpm run dev' --build 'pnpm run build' --json
 megabrain repo github --json
 megabrain projects --json
 ```
@@ -71,6 +75,20 @@ The desktop command palette can read the slash commands available in a folder:
 
 ```sh
 megabrain commands --agent claude --cwd ~/code/api --json
+```
+
+Print the command line that starts an agent's own TUI, permission prompts skipped, for a terminal to run:
+
+```sh
+megabrain agent command claude --model claude-opus-5-5 --effort high --json
+```
+
+List the past sessions started in a folder, newest first, and print the command that resumes one
+(`messageCount` is `null` when an agent's log does not say; the scan is cached in the state dir):
+
+```sh
+megabrain sessions history --cwd ~/code/api --agent claude --limit 20 --json
+megabrain agent command claude --resume <id> --json
 ```
 
 Open a registered project or worktree in the full VS Code editor inside the desktop app:
@@ -214,10 +232,27 @@ the installed CLI's message strings; unrecognized errors remain unknown.
 ## Desktop settings
 
 `megabrain settings [--json]` reads the desktop Settings window's values in one call: supervisor,
-resource history and policy, usage-limit providers/notices/readings, chains, models, and terminal
-defaults and detection. Without `--json` it prints a short summary. The window writes through the
-existing `resources`, `supervise`, `chain limits`, `chain save|delete`, `model refresh`, and
-`terminal default` commands, then reads settings again.
+resource history and policy, usage-limit providers/notices/readings, chains, models, terminal engine,
+and terminal defaults and detection. Without `--json` it prints a short summary. Set the embedded
+terminal engine with `megabrain settings set terminal-engine native|tmux`.
+
+## Native chats
+
+The desktop app can keep Claude and Codex chats running in a local daemon, even after the app
+closes. Start a chat in a project folder, send text or local image parts, and follow its transcript:
+
+```sh
+megabrain chat start --agent claude --cwd ~/code/api --model claude-haiku-5-5 --json
+megabrain chat send <id> --parts '[{"type":"text","text":"Explain this project"}]'
+megabrain chat events <id> --follow --json
+```
+
+Chats run without permission prompts. Add `--approvals` to `chat start` to be asked instead.
+
+`chat list --json` returns saved chats. Use `chat interrupt <id>` to stop the current turn,
+`chat approve <id> <approvalId> --decision allow|allow-session|deny` to answer a permission request,
+and `chat mode <id> terminal --json` to hand an idle chat to the app's terminal. The app gets the
+agent's resume arguments from `chat terminal-command <id> --json`.
 
 ## Chains: choosing who does the work
 
@@ -350,6 +385,8 @@ megabrain orchestrate list --all --json          # include foreign and unknown o
 megabrain orchestrate adopt <id> [--force] --json # take ownership of a dispatch
 megabrain orchestrate reply <dispatch-id-or-suffix> --text "..."   # answer a question
 megabrain send --session codex:<thread-id> --text "..." --operator # message any available agent session
+megabrain session own claude:<session-id> [--json]   # resume a session that runs elsewhere under megabrain's tmux server (-L megabrain-app); send --operator then delivers there
+megabrain session release claude:<session-id> [--json]  # forget ownership and kill that tmux session
 megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--close] # mark it consumed and optionally release the terminal
 megabrain orchestrate read <dispatch-id-or-suffix> # what the agent actually did
 megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] --json # ordered chat, thinking and tool events

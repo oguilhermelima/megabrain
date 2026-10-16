@@ -1,6 +1,10 @@
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { resolveStateDirectory } from "./state.js";
 
 export type MachineResources = Readonly<{
   totalMemoryBytes: number; availableMemoryBytes: number; pressure: "normal" | "elevated" | "critical" | "unknown";
@@ -82,6 +86,80 @@ export async function readMachineResources(process: ProcessAdapter, platform = p
     return { ...parseLinuxMachineResources(mem.value.stdout, load.value.stdout, pressure.kind === "ok" ? pressure.value.stdout : ""), cpuCount: Number(cpu.kind === "ok" ? cpu.value.stdout.trim() : 0) };
   }
   return undefined;
+}
+
+const MACHINE_RESOURCE_CACHE_FILE = "machine-resource-cache.json";
+const MACHINE_RESOURCE_CACHE_TTL_MS = 10_000;
+
+type MachineResourceCache = Readonly<{ sampledAt: number; resources: MachineResources | null }>;
+
+async function cachedMachineSample(path: string): Promise<MachineResourceCache | undefined> {
+  try {
+    const value: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (typeof value !== "object" || value === null) return undefined;
+    const cache = value as Partial<MachineResourceCache>;
+    if (typeof cache.sampledAt !== "number" || !Number.isFinite(cache.sampledAt) || !(cache.resources === null || (typeof cache.resources === "object" && cache.resources !== null))) return undefined;
+    if (cache.resources !== null) {
+      const resources = cache.resources as Partial<MachineResources>;
+      if (![resources.totalMemoryBytes, resources.availableMemoryBytes, resources.swapUsedBytes, resources.loadAverage1, resources.loadAverage5, resources.cpuCount].every((number) => typeof number === "number" && Number.isFinite(number))
+        || !["normal", "elevated", "critical", "unknown"].includes(String(resources.pressure))) return undefined;
+    }
+    return cache as MachineResourceCache;
+  } catch { return undefined; }
+}
+
+function sampleIsRecent(sample: MachineResourceCache | undefined, now: number): sample is MachineResourceCache {
+  return sample !== undefined && sample.sampledAt <= now && now - sample.sampledAt < MACHINE_RESOURCE_CACHE_TTL_MS;
+}
+
+async function saveMachineSample(path: string, resources: MachineResources | undefined): Promise<void> {
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify({ sampledAt: Date.now(), resources: resources ?? null })}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+  } catch { await unlink(temporary).catch(() => undefined); }
+}
+
+/** Reuses a recent status sample, coordinating concurrent CLI processes with a private state lock. */
+export async function readCachedMachineResources(environment: Readonly<{ MEGABRAIN_STATE_DIR?: string; HOME?: string }>, process: ProcessAdapter, platform = processPlatform()): Promise<MachineResources | undefined> {
+  const directory = resolveStateDirectory(environment);
+  const path = join(directory, MACHINE_RESOURCE_CACHE_FILE);
+  const lockPath = join(directory, "machine-resource-cache.lock");
+  let cached = await cachedMachineSample(path);
+  if (sampleIsRecent(cached, Date.now())) return cached.resources ?? undefined;
+  await mkdir(directory, { recursive: true, mode: 0o700 }).catch(() => undefined);
+  let lock: FileHandle;
+  try { lock = await open(lockPath, "wx", 0o600); }
+  catch (cause: unknown) {
+    if (typeof cause !== "object" || cause === null || !("code" in cause) || cause.code !== "EEXIST") return readMachineResources(process, platform);
+    // Another status process is sampling. Wait for its atomic cache write, without duplicating work.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      cached = await cachedMachineSample(path);
+      if (sampleIsRecent(cached, Date.now())) return cached.resources ?? undefined;
+      const lockInfo = await stat(lockPath).catch(() => undefined);
+      if (lockInfo === undefined) return readCachedMachineResources(environment, process, platform);
+      if (Date.now() - lockInfo.mtimeMs >= MACHINE_RESOURCE_CACHE_TTL_MS) {
+        const owner = Number((await readFile(lockPath, "utf8").catch(() => "")).trim());
+        let alive = false;
+        if (Number.isSafeInteger(owner) && owner > 0) {
+          try { globalThis.process.kill(owner, 0); alive = true; }
+          catch (cause: unknown) { alive = typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EPERM"; }
+        }
+        if (alive) return undefined;
+        await unlink(lockPath).catch(() => undefined);
+        return readCachedMachineResources(environment, process, platform);
+      }
+    }
+    return undefined;
+  }
+  await lock.writeFile(String(globalThis.process.pid));
+  await lock.close();
+  try {
+    const resources = await readMachineResources(process, platform);
+    await saveMachineSample(path, resources);
+    return resources;
+  } finally { await unlink(lockPath).catch(() => undefined); }
 }
 
 const DOCKER_TIMEOUT_MS = 3000;

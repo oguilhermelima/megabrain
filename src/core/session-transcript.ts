@@ -8,7 +8,15 @@ export type TranscriptSource = TranscriptAgent | "terminal";
 export type TranscriptKind = "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system";
 export type TranscriptTool = Readonly<{ name: string; input?: string; status?: "ok" | "error" }>;
 export type TranscriptOrigin = Readonly<{ kind: "parent" | "child"; label: string; dispatchId: string | null; sessionId: string | null }>;
-export type TranscriptEvent = Readonly<{ id: string; at: string | null; kind: TranscriptKind; text: string; tool?: TranscriptTool; origin?: TranscriptOrigin }>;
+export type TranscriptNotice = Readonly<{
+  kind: "finished" | "ask" | "stuck" | "failed" | "limit" | "other";
+  agent: TranscriptAgent | null;
+  label: string | null;
+  dispatchId: string | null;
+  summary: string;
+}>;
+export type TranscriptImage = Readonly<{ path: string }> | Readonly<{ dataUrl: string }>;
+export type TranscriptEvent = Readonly<{ id: string; at: string | null; kind: TranscriptKind; text: string; tool?: TranscriptTool; origin?: TranscriptOrigin; notice?: TranscriptNotice; images?: readonly TranscriptImage[] }>;
 export type SessionTranscript = Readonly<{
   dispatchId: string | null;
   sessionId: string | null;
@@ -121,6 +129,66 @@ function tagValue(text: string, tag: string): string | undefined {
   return new RegExp(`<${escaped}>([\\s\\S]*?)</${escaped}>`, "i").exec(text)?.[1]?.trim();
 }
 
+// Claude Code's own text around a cross-session envelope (measured on 2.1.299): a lead line, the
+// envelope, a "This came from another Claude session" paragraph and an optional reply instruction.
+const PEER_LEAD = /Another Claude session sent a message(?: while you were working)?:\s*$/;
+const PEER_TAIL = /^\s*This came from another Claude session[\s\S]*?permission laundering\.(?:\s*After completing your current task[^\n]*)?/;
+
+function stripPeerWrapper(text: string, envelope: string): string {
+  const at = text.indexOf(envelope);
+  if (at < 0) return text;
+  const before = text.slice(0, at).replace(PEER_LEAD, "");
+  const after = text.slice(at + envelope.length).replace(PEER_TAIL, "");
+  return before + after;
+}
+
+const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+const IMAGE_SOURCE_LINE = /^[ \t]*\[Image: source: ([^\]\n]+)\][ \t]*\r?\n?/gm;
+
+// Claude writes a pasted image as an "[Image: source: <path>]" line (the "[Image #N]" marker stays in
+// the text) and an attached one as an image content block.
+function pullImages(text: string, images: TranscriptImage[]): string {
+  return text.replace(IMAGE_SOURCE_LINE, (_, path: string) => { images.push({ path: path.trim() }); return ""; });
+}
+
+function imageBlock(part: JsonRecord): TranscriptImage | undefined {
+  const source = record(part.source);
+  if (source === undefined) return undefined;
+  const data = string(source.data);
+  if (data !== undefined) {
+    if (Math.floor(data.length * 3 / 4) > MAX_INLINE_IMAGE_BYTES) return undefined;
+    return { dataUrl: `data:${string(source.media_type) ?? "image/png"};base64,${data}` };
+  }
+  const path = string(source.path);
+  return path === undefined ? undefined : { path };
+}
+
+function withImages(events: Omit<TranscriptEvent, "id">[], images: readonly TranscriptImage[], at: unknown): Omit<TranscriptEvent, "id">[] {
+  if (images.length === 0) return events;
+  const index = events.findIndex(({ kind }) => kind === "user");
+  if (index < 0) return [...events, { ...event(at, "user", ""), images }];
+  return events.map((item, position) => position === index ? { ...item, images } : item);
+}
+
+const NOTICE_HEADER = /^\S+\s+(claude|codex|grok|agy)\s+·\s+(.+?)\s+(finished|has a question|is stuck|hit its limit|failed)\s*$/u;
+const NOTICE_KINDS = { finished: "finished", "has a question": "ask", "is stuck": "stuck", "hit its limit": "limit", failed: "failed" } as const;
+
+// Reads the envelope megabrain writes: header line, one-sentence summary, details pointer.
+function parseNotice(body: string): TranscriptNotice {
+  const lines = body.trim().split(/\r?\n/);
+  const header = NOTICE_HEADER.exec(lines[0] ?? "");
+  const dispatchId = /details:\s*megabrain orchestrate watch ([a-z0-9]+)\b/i.exec(body)?.[1] ?? null;
+  const summary = lines.slice(1).find((line) => line.trim() !== "" && !/^→/.test(line.trim()))?.trim() ?? "";
+  if (header === null) return { kind: "other", agent: null, label: null, dispatchId, summary };
+  return {
+    kind: NOTICE_KINDS[header[3] as keyof typeof NOTICE_KINDS],
+    agent: header[1] as TranscriptAgent,
+    label: header[2] ?? null,
+    dispatchId,
+    summary,
+  };
+}
+
 function claudeUserText(text: string, at: unknown): Omit<TranscriptEvent, "id">[] {
   const events: Omit<TranscriptEvent, "id">[] = [];
   const withoutInjected = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
@@ -153,8 +221,11 @@ function claudeUserText(text: string, at: unknown): Omit<TranscriptEvent, "id">[
     const dispatchDetail = name?.toLowerCase() === "megabrain"
       ? /details:\s*megabrain orchestrate watch [a-z0-9]{8}\b/i.exec(peer[2] ?? "")?.[0]
       : undefined;
-    if (firstLine !== "") events.push(event(at, "system", `Message from ${name ?? "another session"}: ${firstLine}${dispatchDetail === undefined ? "" : `\n${dispatchDetail}`}`));
-    remaining = remaining.replace(peer[0], "");
+    if (firstLine !== "") {
+      const base = event(at, "system", `Message from ${name ?? "another session"}: ${firstLine}${dispatchDetail === undefined ? "" : `\n${dispatchDetail}`}`);
+      events.push(name?.toLowerCase() === "megabrain" ? { ...base, notice: parseNotice(peer[2] ?? "") } : base);
+    }
+    remaining = stripPeerWrapper(remaining, peer[0]);
   }
   const command = tagValue(remaining, "command-name");
   const args = tagValue(remaining, "command-args");
@@ -176,14 +247,21 @@ function claudeLine(value: JsonRecord): Omit<TranscriptEvent, "id">[] {
   const role = string(message?.role) ?? type;
   if (role === "user") {
     const content = message?.content;
-    if (typeof content === "string") return claudeUserText(content, value.timestamp);
+    if (typeof content === "string") {
+      const images: TranscriptImage[] = [];
+      return withImages(claudeUserText(pullImages(content, images), value.timestamp), images, value.timestamp);
+    }
     if (Array.isArray(content)) {
       const events: Omit<TranscriptEvent, "id">[] = [];
+      const images: TranscriptImage[] = [];
       for (const partValue of content) {
         const part = record(partValue);
         if (part === undefined) continue;
-        if (string(part.type) === "text") events.push(...claudeUserText(string(part.text) ?? "", value.timestamp));
-        else if (string(part.type) === "task-notification") {
+        if (string(part.type) === "text") events.push(...claudeUserText(pullImages(string(part.text) ?? "", images), value.timestamp));
+        else if (string(part.type) === "image") {
+          const image = imageBlock(part);
+          if (image !== undefined) images.push(image);
+        } else if (string(part.type) === "task-notification") {
           const summary = string(part.summary) ?? "Background command";
           const status = string(part.status) ?? "completed";
           const exitCode = typeof part.exitCode === "number" ? String(part.exitCode) : undefined;
@@ -192,7 +270,7 @@ function claudeLine(value: JsonRecord): Omit<TranscriptEvent, "id">[] {
         }
         else events.push(...contentEvents([part], role, value.timestamp));
       }
-      return events;
+      return withImages(events, images, value.timestamp);
     }
   }
   return contentEvents(message?.content, role, value.timestamp);

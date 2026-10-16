@@ -1,4 +1,4 @@
-import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
+import { classifyMarkers, doubleQuote, launchArgv, shellArgument, type Agent, type AgentFlags, type AgentMarker } from "./types.js";
 import { ok } from "../core/result.js";
 
 // Measured against real grok 1.0.50 in tmux. The composer is a bordered box whose "❯" row is the
@@ -13,6 +13,14 @@ const markers: readonly AgentMarker[] = [
 
 const trustDialog = /Do you trust the contents of this directory\?[\s\S]*Yes, proceed[ \t]+y\b[\s\S]*No, quit[ \t]+n\b/;
 
+export const grokFlags: AgentFlags = {
+  executable: "grok",
+  permission: ["--always-approve"],
+  model: (value, quote) => ["-m", quote(value)],
+  effort: (value, quote) => ["--reasoning-effort", quote(value)],
+  resume: (id, quote) => ({ lead: [], trail: ["--resume", quote(id)] }),
+};
+
 export const grok: Agent = {
   id: "grok",
   matchesDescriptor: (descriptor) => descriptor === "grok" || descriptor === "grok-build" || /^grok_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
@@ -21,10 +29,9 @@ export const grok: Agent = {
   firstRunDialog: trustDialog,
   firstRunDialogKey: "y",
   initialPromptFlag: "--",
+  flags: grokFlags,
   commandLine: ({ model, effort, agentArgs }) => {
-    const parts = ["grok", "--always-approve"];
-    if (model !== null) parts.push("-m", doubleQuote(model));
-    if (effort !== null) parts.push("--reasoning-effort", doubleQuote(effort));
+    const parts = launchArgv(grokFlags, model, effort, doubleQuote);
     parts.push(...agentArgs.map(shellArgument));
     return { kind: "ok", value: parts.join(" ") };
   },

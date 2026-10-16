@@ -1,16 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
-import type { ChatRead, Dispatch } from '@/api/schema'
+import type { ChatRead, Dispatch, MessagePart } from '@/api/schema'
 import { chatState } from '@/advanced/model'
-import { StateChip, chatName } from '@/advanced/parts'
+import { chatName } from '@/advanced/parts'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
+import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Mono } from '@/components/ui'
 import { Composer, type Notice } from '@/chat/Composer'
+import { messagePartsToText } from '@/chat/composer-parts'
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-export function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
+// Memoised: a status poll that left this chat unchanged keeps the same chat object (see reuse.ts).
+export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
   const [read, setRead] = useState<ChatRead | null>(null)
   const [readError, setReadError] = useState<unknown>(null)
   const pane = useRef<HTMLPreElement>(null)
@@ -42,8 +45,8 @@ export function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: D
     if (element !== null) element.scrollTop = element.scrollHeight
   }, [read?.text])
 
-  const send = async (text: string): Promise<Notice> => {
-    await api.reply(chat.dispatchId, text)
+  const send = async (parts: MessagePart[]): Promise<Notice> => {
+    await api.reply(chat.dispatchId, messagePartsToText(parts))
     return { tone: 'ok', text: 'Sent.' }
   }
 
@@ -55,7 +58,6 @@ export function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: D
         agent={chat.agent ?? ''}
         title={chatName(chat)}
         meta={[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
-        status={<StateChip state={state} />}
       />
       {finding !== null && (
         <div className="mx-8 mt-3 rounded-[20px] border border-warn/25 bg-warn/[0.08] px-5 py-3.5 text-[13.5px]">
@@ -85,12 +87,17 @@ export function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: D
           <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} root={chat.worktreePath ?? null} onOpenPath={onOpenPath} />
         </div>
       )}
+      {tab === 'terminal' && read === null && readError === null && (
+        <div className="mx-8 my-5 rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4">
+          <TextSkeleton lines={6} />
+        </div>
+      )}
       <pre
-        hidden={tab !== 'terminal'}
+        hidden={tab !== 'terminal' || read === null}
         ref={pane}
         className="mx-8 my-5 min-h-0 flex-1 overflow-auto rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4 font-mono text-[12.5px] leading-[1.65] whitespace-pre text-ink-300 select-text"
       >
-        {read === null ? (readError === null ? 'Reading…' : '') : read.text || '(no output yet)'}
+        {read?.text || '(no output yet)'}
       </pre>
       {readError !== null && (
         <div className="mx-8 -mt-2 mb-3">
@@ -103,8 +110,9 @@ export function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: D
         agent={chat.agent ?? null}
         cwd={chat.worktreePath ?? null}
         dispatchId={chat.dispatchId}
+        model={chat.model ?? null}
         onSend={send}
       />
     </div>
   )
-}
+})

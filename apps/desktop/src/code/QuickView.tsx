@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/api'
 import type { CodeChange, CodeEntry } from '@/api/schema'
-import { Button, ErrorNote, Spinner, type Tone } from '@/components/ui'
+import { CodeSkeleton, TreeSkeleton } from '@/components/Skeleton'
+import { Button, ErrorNote, type Tone } from '@/components/ui'
 import { buildTree, languageForPath, matchingPaths, statusLetter } from '@/code/code-model'
 import { CodeDiffEditor, CodeEditor } from '@/code/editor'
 import { FileTree } from '@/code/file-tree'
+import { quickViewPolicy } from '@/lib/poll-model'
+import { reuse } from '@/lib/reuse'
+import { usePoll } from '@/lib/usePoll'
 
 type Tab = 'files' | 'changes'
 
@@ -61,25 +65,16 @@ export function QuickView({ root, title, onClose }: { root: string; title: strin
     }
   }, [root])
 
-  useEffect(() => {
-    let cancelled = false
-    const tick = () => {
-      api
-        .codeChanges(root)
-        .then((next) => {
-          if (!cancelled) setChanges(next)
-        })
-        .catch(() => {
-          // A transient poll failure keeps the last known changes rather than clearing the list.
-        })
-    }
-    tick()
-    const id = setInterval(tick, 3000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [root])
+  // Mounted only while Quick view shows; paused while the window is hidden.
+  usePoll(
+    quickViewPolicy,
+    async (current) => {
+      // A failed read keeps the last known changes rather than clearing the list.
+      const next = await api.codeChanges(root)
+      if (current()) setChanges((previous) => reuse(previous, next))
+    },
+    [root],
+  )
 
   const selectedStatus = selection ? changes.find((change) => change.path === selection.path)?.status ?? null : null
 
@@ -188,9 +183,7 @@ export function QuickView({ root, title, onClose }: { root: string; title: strin
                     <ErrorNote error={treeError} />
                   </div>
                 ) : entries === null ? (
-                  <div className="flex items-center gap-2 p-3 text-[13px] text-ink-400">
-                    <Spinner /> Loading files…
-                  </div>
+                  <TreeSkeleton />
                 ) : tree.length === 0 ? (
                   <p className="p-3 text-[13px] text-ink-500">No files.</p>
                 ) : (
@@ -257,11 +250,7 @@ function renderFileState(fileState: FileState | null) {
   if (fileState === null) return <div className="flex h-full items-center justify-center text-[13px] text-ink-500">Select a file to view it.</div>
   switch (fileState.kind) {
     case 'loading':
-      return (
-        <div className="flex h-full items-center justify-center gap-2 text-[13px] text-ink-400">
-          <Spinner /> Loading…
-        </div>
-      )
+      return <CodeSkeleton />
     case 'error':
       return (
         <div className="p-6">

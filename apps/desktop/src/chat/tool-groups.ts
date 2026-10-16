@@ -11,6 +11,9 @@ export type DisplayItem = MessageItem | { type: 'tool-group'; id: string; items:
 
 const isThinking = (item: ConversationItem): item is MessageItem => item.type === 'message' && item.event.kind === 'thinking' && item.event.origin === undefined
 
+/** A message that ends any run before it: nothing after it can change how what came before groups. */
+export const closesRun = (item: ConversationItem): item is MessageItem => item.type === 'message' && !isThinking(item)
+
 export function groupToolRuns(items: ConversationItem[]): DisplayItem[] {
   const display: DisplayItem[] = []
   let run: ConversationItem[] | null = null

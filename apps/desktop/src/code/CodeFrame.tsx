@@ -65,14 +65,14 @@ export function CodeFrame({ target, visible, goto }: { target: CodeTarget; visib
   }, [root, goto, loaded])
 
   return (
-    <div hidden={!visible} className="absolute inset-0 bg-ink-950">
+    <div hidden={!visible} className="absolute inset-0 bg-transparent">
       {url !== null && (
         <iframe
           title={`VS Code for ${title}`}
           src={url}
           onLoad={() => setLoaded(true)}
           style={{ transitionDuration: `${frameFadeMs}ms` }}
-          className={`size-full border-0 bg-ink-950 transition-opacity ${revealed ? 'opacity-100' : 'opacity-0'}`}
+          className={`size-full border-0 bg-transparent transition-opacity ${revealed ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
       {error !== null ? (

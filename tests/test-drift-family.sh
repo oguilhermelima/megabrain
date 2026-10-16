@@ -55,7 +55,7 @@ printf '%s\n' '{"chains":{},"defaultSteps":[],"usageLimits":{"liveProviders":["c
 # (src/cli/commands/chain.ts) rewrites the same defaults into the chain file on read, which
 # `chain list` exercises for free.
 MEGABRAIN_STATE_DIR="$chain_state" MEGABRAIN_CHAIN_FILE="$chain_file" "$root/.build/megabrain" chain list --json >/dev/null
-assert_equal "$(jq -r '.usageLimits.cacheTtlSeconds' "$chain_file")" 30
+assert_equal "$(jq -r '.usageLimits.cacheTtlSeconds' "$chain_file")" 60
 assert_equal "$(jq -r '.usageLimits.timeoutSeconds' "$chain_file")" 5
 assert_equal "$(jq -r '.usageLimits.notice.intervalSeconds' "$chain_file")" 3600
 assert_equal "$(jq -r '.usageLimits.notice.enabled' "$chain_file")" true

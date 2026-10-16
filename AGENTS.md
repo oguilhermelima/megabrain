@@ -18,14 +18,17 @@
 - Run megabrain worktree hide|unhide <path>. — recommended when you need to hide or restore a worktree in the project list.
 - Run megabrain worktree adopt <path|branch> [--json]. — recommended when you need to register an existing worktree missing from one orchestrator.
 - Run megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]. — recommended when you need to review or remove old worktrees safely.
-- Run megabrain repo list|add|clone|remove|hide|unhide|github .... — recommended when you need to manage megabrain's local project registry.
+- Run megabrain repo list|add|clone|remove|hide|unhide|scripts|github .... — recommended when you need to manage megabrain's local project registry.
+- Run megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]. — recommended when you need to view or set a project's Run, Build and Install commands.
 - Run megabrain repo list [--json]. — recommended when you need to list registered repositories.
 - Run megabrain repo add <path> [--json]. — recommended when you need to import a local Git checkout.
 - Run megabrain repo clone <url> --into <dir> [--json]. — recommended when you need to clone and register a GitHub repository.
 - Run megabrain repo remove <name|path> [--json]. — recommended when you need to remove a repository from the registry without deleting files.
 - Run megabrain repo hide|unhide <name|path>. — recommended when you need to hide or restore a repository in the project list.
+- Run megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json. — recommended when you need the argv that starts, or resumes a past session in, an agent's interactive TUI with permission prompts skipped.
 - Run megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json]. — recommended when you need the slash commands an agent offers in a folder.
 - Run megabrain repo github [--owner <login>] [--json]. — recommended when you need to browse repositories available through GitHub CLI.
+- Run megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json]. — recommended when you need the past sessions of a folder, newest first, to resume with agent command --resume.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
 - Run megabrain github prs|issues|pr|issue .... — recommended when you need to read a repository's GitHub pull requests and issues.
 - Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's pull requests a page at a time, with labels and every state's total.
@@ -34,11 +37,11 @@
 - Run megabrain github issue <repo name|path> <number> [--json]. — recommended when you need one issue's description and comments.
 - Run megabrain code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]. — recommended when you need the full VS Code editor for a registered project or worktree inside the desktop app.
 - Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]. — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
-- Run megabrain terminal list [--worktree <path>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
+- Run megabrain terminal list [--worktree <path>] [--json] | --app [--server <tmux -L name>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
 - Run megabrain terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]. — recommended when you need to open a native terminal window attached to an existing tmux session, or print the attach command.
 - Run megabrain terminal default [<name>|auto|none|--clear]. — recommended when you need to show, set or clear the default native terminal.
 - Run megabrain terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]. — recommended when you need to restart a managed terminal after its command or server needs a fresh run.
-- Run megabrain terminal close <selector> [--json]. — recommended when you need to close a managed terminal and remove its local record.
+- Run megabrain terminal close <selector> [--json] | --app <id> [--server <tmux -L name>] [--json]. — recommended when you need to close a managed terminal and remove its local record.
 - Run megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]. — recommended when you need to start a child agent with context limits or a bounded loop.
 - Run megabrain orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--operator] [--json]. — recommended when you need to change context policies on an active dispatch.
 - Run megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]. — recommended when you need to find active, archived, orphaned, or uncertain dispatches.
@@ -52,6 +55,8 @@
 - Run megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--operator] [--json]. — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
 - Run megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--limit <n>] [--json]. — recommended when you need the ordered chat events from an agent's session log.
 - Run megabrain send --session <agent:id> --text <text> --operator [--json]. — recommended when you need to message any available agent session as the operator.
+- Run megabrain session own <agent:id> [--json]. — recommended when you need megabrain to take over a Claude or Codex session that runs in another terminal: it resumes the same session id in a tmux session on tmux -L megabrain-app, and send --operator then delivers there.
+- Run megabrain session release <agent:id> [--json]. — recommended when you need megabrain to stop owning a session and kill its tmux session.
 - Run megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--operator] [--json]. — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
 - Run megabrain orchestrate reply <dispatch-id-or-suffix> --text <answer> [--supersede] [--operator] [--json]. — recommended when you need to send an answer to a child that has asked a question.
 - Run megabrain orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]. — recommended when you need to interrupt a working child while keeping its pane and dispatch open.
@@ -59,7 +64,10 @@
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain status [--json]. — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
-- Run megabrain settings [--json]. — recommended when you need one read of the settings shown in the desktop app.
+- Run megabrain settings [--json] | set terminal-engine native|tmux. — recommended when you need to read desktop settings or choose the embedded terminal engine.
+- Run megabrain settings set terminal-engine native|tmux. — choose the engine used for embedded terminals.
+- Run megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json. — recommended when you need to start or control a persistent Claude or Codex chat.
+- Use megabrain chat model <id> <model> [--effort <level>] [--json] to change the model for an idle chat.
 - Run megabrain resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off. — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 - Run megabrain proc start|run|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.
 - Run megabrain proc start --name <n> [--worktree <path>] [--cwd <dir>] [--port <p>] [--env K=V] [--terminal name|auto|none] [--shell <string>] [--admission wait|fail] [--needs docker] [--slot container-suite] [--json] -- <command and arguments>. — recommended when you need to start a command in a managed tmux session.

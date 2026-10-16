@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { Checkbox } from '@/components/Checkbox'
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'neutral' | 'accent'
 
@@ -75,16 +76,9 @@ export function ErrorNote({ error }: { error: unknown }) {
 
 export function Check({ checked, disabled, onChange, children }: { checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
   return (
-    <label className={`flex items-start gap-3 rounded-2xl px-3 py-2.5 ${disabled ? 'opacity-50' : 'cursor-pointer hover:bg-ink-850'}`}>
-      <input
-        type="checkbox"
-        className="mt-0.5 size-[18px] accent-[#8e9cff]"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span className="min-w-0 flex-1">{children}</span>
-    </label>
+    <Checkbox checked={checked} disabled={disabled} onChange={onChange} className={`rounded-2xl px-3 py-2.5 ${disabled === true ? '' : 'hover:bg-ink-850'}`}>
+      {children}
+    </Checkbox>
   )
 }
 
@@ -112,4 +106,9 @@ export function doctorTone(status: string): Tone {
   if (status === 'ok') return 'ok'
   if (status === 'misconfigured') return 'warn'
   return 'neutral'
+}
+
+/** megabrain's logo: the orb from the app icon, still. */
+export function Logo({ className = '' }: { className?: string }) {
+  return <span aria-hidden="true" className={`orb still block shrink-0 ${className}`} />
 }

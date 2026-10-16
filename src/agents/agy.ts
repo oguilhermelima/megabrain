@@ -1,4 +1,4 @@
-import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
+import { classifyMarkers, doubleQuote, launchArgv, shellArgument, type Agent, type AgentFlags, type AgentMarker } from "./types.js";
 import { ok } from "../core/result.js";
 
 // The composer box renders a bare "> " at the bottom whether Antigravity CLI is idle or
@@ -12,15 +12,24 @@ const markers: readonly AgentMarker[] = [
 
 const trustDialog = /^[ \t]*Do you trust the contents of this project\?[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*Antigravity CLI requires permission to read, edit, and execute files here\.[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*> Yes, I trust this folder[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*No, exit[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*↑\/↓ Navigate · enter Confirm[ \t]*$/m;
 
+export const agyFlags: AgentFlags = {
+  executable: "agy",
+  permission: ["--dangerously-skip-permissions"],
+  model: (value, quote) => ["--model", quote(value)],
+  effort: (value, quote) => ["--effort", quote(value)],
+  resume: (id, quote) => ({ lead: [], trail: ["--conversation", quote(id)] }),
+};
+
 export const agy: Agent = {
   id: "agy",
   matchesDescriptor: (descriptor) => descriptor === "agy" || /^agy_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
   firstRunDialog: trustDialog,
   initialPromptFlag: "-i",
+  flags: agyFlags,
   commandLine: ({ model, agentArgs }) => {
-    const parts = ["agy", "--dangerously-skip-permissions"];
-    if (model !== null) parts.push("--model", doubleQuote(model));
+    // Spawn has never passed an effort to agy; only the interactive TUI does.
+    const parts = launchArgv(agyFlags, model, null, doubleQuote);
     parts.push(...agentArgs.map(shellArgument));
     return { kind: "ok", value: parts.join(" ") };
   },

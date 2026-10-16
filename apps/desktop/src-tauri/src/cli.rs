@@ -40,7 +40,16 @@ const IDENTITY_ENV: &[&str] = &[
 
 pub fn cli_command(executable: &Path, root: &Path, path: &str, args: &[&str]) -> Command {
     let mut command = Command::new(executable);
-    command.args(args).env("MEGABRAIN_ROOT", root).env("PATH", path).stdin(Stdio::null());
+    command
+        .args(args)
+        .env("MEGABRAIN_ROOT", root)
+        .env("PATH", path)
+        .stdin(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     for key in IDENTITY_ENV {
         command.env_remove(key);
     }
@@ -68,7 +77,10 @@ pub fn merge_path(login: Option<&str>, current: &str) -> String {
 /// A GUI app gets a bare PATH (on macOS /usr/bin:/bin:/usr/sbin:/sbin), so tmux, git and the agents
 /// would all look missing. Ask the person's login shell for theirs; give up after a few seconds.
 pub fn login_path() -> Option<String> {
-    let shell = std::env::var("SHELL").ok().filter(|shell| !shell.is_empty()).unwrap_or_else(|| "/bin/sh".into());
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.is_empty())
+        .unwrap_or_else(|| "/bin/sh".into());
     let script = format!("printf '%s%s%s' '{PATH_START}' \"$PATH\" '{PATH_END}'");
     let mut child = Command::new(shell)
         .args(["-ilc", &script])

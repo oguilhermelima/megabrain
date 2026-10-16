@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Button, Card, Check, ErrorNote } from '@/components/ui'
-import { policyFromForm, policyToForm, type PolicyForm } from '@/settings/settings-model'
 import type { AdmissionPolicy, Settings } from '@/api/schema'
+import { Button, ErrorNote, Segmented } from '@/components/ui'
+import { policyFromForm, policyToForm, type PolicyForm } from '@/settings/settings-model'
+import { field, SettingRow, SettingsGroup, Switch } from '@/settings/settings-ui'
 
 export function LimitsSection({
   policy,
@@ -32,47 +33,47 @@ export function LimitsSection({
     }
   }
 
+  const number = `${field} w-24 text-right tabular-nums`
+
   return (
-    <div className="grid gap-4">
-      <Card title="Max chats">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-1 text-[12.5px] text-ink-400">
-            Max agents at once
-            <input value={form.maxAgents} onChange={(event) => set('maxAgents')(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1.5 text-ink-100" />
-          </label>
-          <label className="grid gap-1 text-[12.5px] text-ink-400">
-            Min free memory (MiB)
-            <input value={form.minAvailableMib} onChange={(event) => set('minAvailableMib')(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1.5 text-ink-100" />
-          </label>
-          <label className="grid gap-1 text-[12.5px] text-ink-400">
-            Max memory pressure
-            <select value={form.maxPressure} onChange={(event) => set('maxPressure')(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1.5 text-ink-100">
-              <option value="">Any</option>
-              <option value="normal">Normal</option>
-              <option value="elevated">Elevated</option>
-            </select>
-          </label>
-          <label className="grid gap-1 text-[12.5px] text-ink-400">
-            Max container suites
-            <input value={form.maxContainerSuites} onChange={(event) => set('maxContainerSuites')(event.target.value)} className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1.5 text-ink-100" />
-          </label>
-        </div>
-        {formError !== null && <div className="mt-3"><ErrorNote error={formError} /></div>}
-        {error !== null && <div className="mt-3"><ErrorNote error={error} /></div>}
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="secondary" onClick={onOff}>
+    <>
+      <SettingsGroup title="Admission">
+        <SettingRow label="Max agents at once" description="New agents wait while this many are running. Empty: no limit." htmlFor="limit-agents">
+          <input id="limit-agents" inputMode="numeric" placeholder="Any" value={form.maxAgents} onChange={(event) => set('maxAgents')(event.target.value)} className={number} />
+        </SettingRow>
+        <SettingRow label="Min free memory" description="In MiB. Agents wait while less is available." htmlFor="limit-memory">
+          <input id="limit-memory" inputMode="numeric" placeholder="Any" value={form.minAvailableMib} onChange={(event) => set('minAvailableMib')(event.target.value)} className={number} />
+        </SettingRow>
+        <SettingRow label="Max memory pressure" description="The highest pressure at which a new agent may start.">
+          <Segmented
+            value={form.maxPressure}
+            options={[
+              { value: '', label: 'Any' },
+              { value: 'normal', label: 'Normal' },
+              { value: 'elevated', label: 'Elevated' },
+            ]}
+            onChange={(value) => set('maxPressure')(value)}
+          />
+        </SettingRow>
+        <SettingRow label="Max container suites" description="Container test suites allowed to run at once." htmlFor="limit-suites">
+          <input id="limit-suites" inputMode="numeric" placeholder="Any" value={form.maxContainerSuites} onChange={(event) => set('maxContainerSuites')(event.target.value)} className={number} />
+        </SettingRow>
+        <div className="flex items-center justify-end gap-2 px-4 py-3">
+          <Button variant="ghost" className="h-8 px-4 text-[13px]" onClick={onOff}>
             Turn off
           </Button>
-          <Button variant="primary" onClick={save}>
+          <Button variant="primary" className="h-8 px-4 text-[13px]" onClick={save}>
             Save
           </Button>
         </div>
-      </Card>
-      <Card title="Resource history">
-        <Check checked={historyEnabled} onChange={onToggleHistory}>
-          <span className="text-[13px] text-ink-200">Record machine load, memory and dispatch counts over time.</span>
-        </Check>
-      </Card>
-    </div>
+      </SettingsGroup>
+      {formError !== null && <ErrorNote error={formError} />}
+      <SettingsGroup title="History">
+        <SettingRow label="Resource history" description="Record machine load, memory and dispatch counts over time.">
+          <Switch label="Resource history" checked={historyEnabled} onChange={onToggleHistory} />
+        </SettingRow>
+      </SettingsGroup>
+      {error !== null && <ErrorNote error={error} />}
+    </>
   )
 }

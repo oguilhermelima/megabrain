@@ -49,10 +49,13 @@ megabrain repo list [--json] — recommended when you need to list registered re
 megabrain repo add <path> [--json] — recommended when you need to import a local Git checkout.
 megabrain repo clone <url> --into <dir> [--json] — recommended when you need to clone and register a repository.
 megabrain repo remove <name|path> [--json] — recommended when you need to remove a registry entry without deleting its files.
+megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json] — recommended when you need to view or set a project's Run, Build and Install commands.
 megabrain repo hide <name|path> — recommended when you need to hide a repository from the project list.
 megabrain repo unhide <name|path> — recommended when you need to restore a hidden repository.
 megabrain worktree hide <path> — recommended when you need to hide a worktree from the project list.
 megabrain worktree unhide <path> — recommended when you need to restore a hidden worktree.
+megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json — recommended when you need the argv that starts, or resumes a past session in, an agent's interactive TUI.
+megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json] — recommended when you need the past sessions of a folder, newest first.
 megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
 megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
 megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
@@ -141,11 +144,24 @@ megabrain orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeo
 megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--operator] [--json] — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
 megabrain orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] [--operator] [--json] | --session <agent:id> [--since <cursor>] [--limit <n>] [--json] — recommended when you need ordered user, assistant, thinking and tool events from an agent session log.
 megabrain send --session <agent:id> --text <text> --operator [--json] — recommended when you need to message any available agent session as the operator.
+megabrain session own <agent:id> [--json] — recommended when you need megabrain to take over a Claude or Codex session that runs in another terminal, by resuming it on tmux -L megabrain-app.
+megabrain session release <agent:id> [--json] — recommended when you need megabrain to stop owning a session and kill its tmux session.
 megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--operator] [--json] — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
 megabrain supervise [--status|--stop] — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 megabrain status [--json] — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
 megabrain settings [--json] — recommended when you need one read of the settings shown in the desktop app.
+megabrain settings [--json] | set terminal-engine native|tmux — recommended when you need to read desktop settings or choose the embedded terminal engine.
+megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json — recommended when you need to start or control a persistent Claude or Codex chat.
+megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json — start a persistent native chat in a project folder.
+megabrain chat send <id> --parts <json> — send ordered text and local image parts to a chat.
+megabrain chat interrupt <id> — interrupt the current turn.
+megabrain chat approve <id> <approvalId> --decision allow|allow-session|deny — answer a tool approval request.
+megabrain chat stop <id> — stop the chat process while keeping its saved transcript.
+megabrain chat events <id> [--since <cursor>] [--follow] --json — read or follow a chat's cursor-based transcript.
+megabrain chat model <id> <model> [--effort <level>] [--json] — choose the model and reasoning effort for a chat.
+megabrain chat mode <id> chat|terminal --json — hand an idle chat to the terminal or resume it in chat mode.
+megabrain chat terminal-command <id> --json — return the argv for resuming a chat in the terminal.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 megabrain proc start|run|list|status|stop|restart|logs ... — recommended when you need to run and inspect managed processes.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.

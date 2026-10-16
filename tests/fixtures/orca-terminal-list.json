@@ -1,0 +1,26 @@
+{
+  "id": "redacted-request-id",
+  "ok": true,
+  "result": {
+    "terminals": [
+      {
+        "handle": "term_5de39f63-41df-4423-8e47-4ae031b5cba4",
+        "ptyId": "4c9f3f65-3f0e-49a4-9be5-140780763333::/Users/operator/Workspaces/Canto@@f6d2d529",
+        "worktreePath": "/Users/operator/Workspaces/Canto",
+        "title": "✳ Seis mudanças visuais paralelas",
+        "connected": true,
+        "writable": true,
+        "agentIdentity": "claude"
+      },
+      {
+        "handle": "term_7e088f11-db15-4448-acdf-3c704e1fe749",
+        "ptyId": "640",
+        "worktreePath": "/Users/operator/Workspaces/Worktrees/feat-web-community-redesign",
+        "title": "✳ feat/web-community-redesign",
+        "connected": true,
+        "writable": true,
+        "agentIdentity": "claude"
+      }
+    ]
+  }
+}

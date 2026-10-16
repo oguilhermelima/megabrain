@@ -158,4 +158,17 @@ describe("context window", () => {
     expect(contextWindowOf(shipped, "claude", "claude-haiku-4-5-20251001")).toBe(200000);
     expect(contextWindowOf(shipped, "claude", "claude-opus-4-1-20250805")).toBeUndefined();
   });
+
+  test("the shipped models expose names, supported context windows and current generations", () => {
+    const shipped = parseModelRegistry(readFileSync(new URL("../../.megabrain/models.json", import.meta.url), "utf8"));
+    if (shipped === undefined) throw new Error("shipped registry does not parse");
+    for (const id of ["claude-haiku-5-5", "claude-fable-5-5"]) {
+      const entry = shipped.models.find((model) => model.agent === "claude" && model.model === id);
+      expect(entry).toMatchObject({ name: expect.any(String), contextWindows: [200000, 1000000], current: true });
+      expect(entry?.reasoning.levels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    }
+    expect(shipped.models.find((model) => model.agent === "claude" && model.model === "claude-opus-5-5")).toMatchObject({ name: "Opus 5.5", contextWindows: [200000, 1000000], current: true });
+    expect(shipped.models.find((model) => model.agent === "claude" && model.model === "claude-haiku-4-5-20251001")).toMatchObject({ contextWindows: [200000], current: false });
+    expect(shipped.models.filter((model) => model.agent === "codex").every((model) => Array.isArray(model.contextWindows) && model.contextWindows.length > 0)).toBe(true);
+  });
 });

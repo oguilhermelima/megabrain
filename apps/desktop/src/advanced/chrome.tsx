@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
-// The window chrome that used to be a top bar, now two rows at the top of the sidebar. Row 1 is the
-// band of the macOS traffic lights; row 2, under it, holds the logo, the wordmark and the view switch.
+// The window chrome that used to be a top bar, now one row at the top of the sidebar: the band of
+// the macOS traffic lights. The Projects header sits under it, sticky at the top of the list.
 // tauri.conf.json sets trafficLightPosition { x: 18, y: 19 }, and its y is not the lights' top edge:
 // in a real window the lights' centres measured about 22pt from the window top (centre = y + 3).
 // Row 1 is 44px tall so its centre line is 22px, the lights' own; the collapse button sits on it at
@@ -9,8 +9,6 @@ import type { ReactNode } from 'react'
 // inset leaves that same 8pt before the expand button's icon when the sidebar is hidden. These are
 // measured, not documented by macOS: confirm them in the real window after any change, and change
 // these numbers together.
-
-export type Mode = 'sidebar' | 'columns'
 
 /** The traffic lights' band: everything in it is vertically centred on the lights. */
 export const lightsRow = 'h-[44px]'
@@ -27,26 +25,6 @@ export function SidebarToggleIcon() {
   )
 }
 
-export function ListIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-      <path d="M5.5 4h8M5.5 8h8M5.5 12h8" />
-      <circle cx="2.6" cy="4" r="0.6" fill="currentColor" />
-      <circle cx="2.6" cy="8" r="0.6" fill="currentColor" />
-      <circle cx="2.6" cy="12" r="0.6" fill="currentColor" />
-    </svg>
-  )
-}
-
-export function ColumnsIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
-      <path d="M6 2.5v11M10 2.5v11" />
-    </svg>
-  )
-}
-
 export function SettingsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -56,9 +34,17 @@ export function SettingsIcon() {
   )
 }
 
+export function CodeIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />
+    </svg>
+  )
+}
+
 export function PlusIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
       <path d="M8 3v10M3 8h10" />
     </svg>
   )
@@ -81,36 +67,13 @@ export function IconButton({ label, title, onClick, pressed, compact, children }
   )
 }
 
-function ViewSwitch({ mode, onChange }: { mode: Mode; onChange: (mode: Mode) => void }) {
+/** Top of the sidebar: the lights' row, with the button that hides the sidebar at its right. */
+export function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
   return (
-    <div className="flex gap-0.5 rounded-full border border-white/10 bg-white/[0.05] p-0.5" role="group" aria-label="View">
-      <IconButton label="Sidebar view" compact pressed={mode === 'sidebar'} onClick={() => onChange('sidebar')}>
-        <ListIcon />
+    <div data-tauri-drag-region className={`flex ${lightsRow} shrink-0 items-center justify-end pr-2.5`}>
+      <IconButton label="Hide sidebar" title="Hide sidebar (⌘B)" compact onClick={onCollapse}>
+        <SidebarToggleIcon />
       </IconButton>
-      <IconButton label="Columns view" compact pressed={mode === 'columns'} onClick={() => onChange('columns')}>
-        <ColumnsIcon />
-      </IconButton>
-    </div>
-  )
-}
-
-/** Top of the sidebar: the lights' row with the button that hides the sidebar, then the logo and the two views. */
-export function SidebarHeader({ mode, onMode, onHome, onCollapse }: { mode: Mode; onMode: (mode: Mode) => void; onHome: () => void; onCollapse: () => void }) {
-  return (
-    <div className="shrink-0">
-      <div data-tauri-drag-region className={`flex ${lightsRow} items-center justify-end pr-2.5`}>
-        <IconButton label="Hide sidebar" title="Hide sidebar (⌘B)" compact onClick={onCollapse}>
-          <SidebarToggleIcon />
-        </IconButton>
-      </div>
-      <div data-tauri-drag-region className="flex items-center gap-2 px-2.5 pb-2">
-        <button type="button" onClick={onHome} title="Overview" className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-2 pl-1 hover:bg-white/[0.06]">
-          <span className="orb size-4 shrink-0" />
-          <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">megabrain</span>
-        </button>
-        <span data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
-        <ViewSwitch mode={mode} onChange={onMode} />
-      </div>
     </div>
   )
 }

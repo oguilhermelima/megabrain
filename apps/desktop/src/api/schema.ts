@@ -137,6 +137,8 @@ export const usageReadingSchema = z.looseObject({
   reason: z.string(),
 })
 export const settingsSchema = z.looseObject({
+  /** Engine for embedded terminals; absent means native. */
+  terminalEngine: z.enum(['native', 'tmux']).optional(),
   supervisor: z.looseObject({ running: z.boolean(), pid: z.number().nullable() }),
   resources: z.looseObject({
     historyEnabled: z.boolean(),
@@ -157,7 +159,19 @@ export const settingsSchema = z.looseObject({
     readings: z.array(usageReadingSchema),
   }),
   chains: z.array(chainSchema),
-  models: z.array(z.looseObject({ agent: z.string(), model: z.string(), reasoning: z.looseObject({ levels: z.array(z.string()) }) })),
+  models: z.array(
+    z.looseObject({
+      agent: z.string(),
+      model: z.string(),
+      reasoning: z.looseObject({ levels: z.array(z.string()) }),
+      /** How people say the model, for example Opus 5.5; absent from an older CLI. */
+      name: z.string().optional(),
+      /** Token windows the model supports, the default first; absent from an older CLI. */
+      contextWindows: z.array(z.number()).optional(),
+      /** True for the newest generation of its family; absent from an older CLI. */
+      current: z.boolean().optional(),
+    }),
+  ),
   terminal: z.looseObject({ default: z.string().nullable(), detected: z.string().nullable(), available: z.array(z.string()) }),
 })
 
@@ -279,6 +293,17 @@ export const projectSessionSchema = z.looseObject({
   /** When the agent compacts an idle session on its own (Claude 2.1.299+: last activity + about
    * 54 minutes, only above its idle-compaction token minimum and while idleCompaction is on). */
   idleCompactAt: z.string().nullable().optional(),
+  /** The model the session runs, Claude's with [1m] when it has the 1M window; absent from an older CLI. */
+  model: z.string().nullable().optional(),
+  /** The context window the session really has; absent from an older CLI. */
+  contextWindow: z.number().nullable().optional(),
+  /** megabrain when megabrain started the session or runs it in a terminal of its own; absent from an older CLI. */
+  origin: z.enum(['megabrain', 'external']).optional(),
+  /** megabrain when it resumed the session in its own tmux session (`session own`); absent from an older CLI. */
+  owner: z.enum(['megabrain', 'external']).optional(),
+  /** When owned: the tmux server (`tmux -L`) and session the agent runs in. */
+  tmuxServer: z.string().nullable().optional(),
+  tmuxSession: z.string().nullable().optional(),
 })
 
 export const projectWorktreeSchema = z.looseObject({
@@ -324,16 +349,32 @@ export const worktreeListSchema = z.array(
 // the agent's own session log as ordered events. `cursor` is opaque; passing it back as --since
 // returns only newer events. `source` "terminal" means no session log was readable and the events
 // are the pane scrollback as one system event.
+export const transcriptImageSchema = z.union([z.object({ path: z.string() }), z.object({ dataUrl: z.string() })])
+
 export const transcriptEventSchema = z.looseObject({
   id: z.string(),
   at: z.string().nullable(),
-  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system']),
+  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval']),
   text: z.string(),
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
+  /** On a user event: the images it carried, a local file or inline; the text keeps an [Image #N] marker where each was. */
+  images: z.array(transcriptImageSchema).optional(),
   // Set when the event is a message relayed between chats: a parent's brief or reply inside the
   // child's log ("parent"), or a child's notice or question inside the parent's log ("child").
   origin: z
     .looseObject({ kind: z.enum(['parent', 'child']), label: z.string(), dispatchId: z.string().nullable(), sessionId: z.string().nullable() })
+    .optional(),
+  // Set on a system event built from a megabrain notice (finished, has a question, is stuck, ...);
+  // the text stays the notice line as before. dispatchId is the full id or its 8-character suffix.
+  // A kind or agent this app does not know reads as "other" and no agent rather than failing the transcript.
+  notice: z
+    .looseObject({
+      kind: z.enum(['finished', 'ask', 'stuck', 'failed', 'limit', 'other']).catch('other'),
+      agent: z.enum(['claude', 'codex', 'grok', 'agy']).nullable().catch(null),
+      label: z.string().nullable(),
+      dispatchId: z.string().nullable(),
+      summary: z.string(),
+    })
     .optional(),
 })
 
@@ -357,6 +398,72 @@ export const queuedMessageSchema = z.looseObject({
   createdAt: z.string(),
   state: z.string(),
   text: z.string(),
+})
+
+// Native chats: conversations megabrain itself owns through each agent's protocol (Claude
+// stream-json, Codex app-server), kept alive by megabrain chatd while the app is closed.
+export const nativeChatStateSchema = z.enum(['starting', 'idle', 'working', 'waiting-approval', 'stopped', 'error'])
+export const nativeChatSchema = z.looseObject({
+  id: z.string(),
+  agent: z.string(),
+  model: z.string().nullable(),
+  cwd: z.string(),
+  title: z.string().nullable(),
+  state: nativeChatStateSchema,
+  /** Who drives the conversation now: the protocol (chat) or the agent's own TUI (terminal). */
+  mode: z.enum(['chat', 'terminal']),
+  /** The agent's own session or thread id, for resume. */
+  agentSessionId: z.string().nullable(),
+  createdAt: z.string(),
+  lastActivityAt: z.string().nullable(),
+  error: z.string().nullable().optional(),
+  /** Tokens in the conversation's current context and the model's window, when the agent reports them. */
+  contextTokens: z.number().nullable().optional(),
+  contextWindow: z.number().nullable().optional(),
+})
+// A pending approval inside a native chat; it arrives as a transcript event of kind "approval".
+export const chatApprovalSchema = z.looseObject({
+  id: z.string(),
+  tool: z.string(),
+  input: z.string(),
+  reason: z.string().nullable().optional(),
+  decisions: z.array(z.enum(['allow', 'allow-session', 'deny'])),
+})
+// One line of megabrain chat events <id> --since <cursor> --follow --json.
+export const chatEventLineSchema = z.looseObject({
+  cursor: z.string(),
+  chat: nativeChatSchema.optional(),
+  event: z.lazy(() => transcriptEventSchema).optional(),
+  approval: chatApprovalSchema.optional(),
+})
+// A part of a message: text and images in order, so an image can sit in the middle of the text.
+export const messagePartSchema = z.discriminatedUnion('type', [
+  z.looseObject({ type: z.literal('text'), text: z.string() }),
+  z.looseObject({ type: z.literal('image'), path: z.string() }),
+])
+// `agent command --json`: the command line that starts an agent's own TUI.
+export const agentCommandSchema = z.looseObject({ agent: z.string(), argv: z.array(z.string()).min(1) })
+// `sessions history --cwd <path> --json`: past sessions started in a folder, newest first, read from
+// each agent's own storage; messageCount is null when the log does not say.
+export const historySessionSchema = z.looseObject({
+  agent: z.enum(['claude', 'codex', 'grok', 'agy']),
+  id: z.string(),
+  title: z.string(),
+  startedAt: z.string().nullable(),
+  lastActivityAt: z.string().nullable(),
+  messageCount: z.number().nullable(),
+})
+export const sessionHistorySchema = z.array(historySessionSchema)
+// Embedded terminals: the native engine is a PTY the app owns (dies with the app); tmux attaches
+// a PTY to a session on megabrain's own tmux server (survives the app).
+export const terminalEngineSchema = z.enum(['native', 'tmux'])
+export const terminalSessionSchema = z.looseObject({
+  id: z.string(),
+  engine: terminalEngineSchema,
+  cwd: z.string(),
+  title: z.string(),
+  /** tmux engine only: the session on megabrain's tmux server. */
+  tmuxSession: z.string().nullable(),
 })
 
 export const sendResultSchema = z.looseObject({ delivered: z.boolean(), channel: z.string(), detail: z.string().optional() })
@@ -391,6 +498,12 @@ export const chatReadSchema = z.looseObject({ dispatchId: z.string(), source: z.
 
 export const replyResultSchema = z.looseObject({ dispatchId: z.string(), status: z.string(), nudge: z.string() })
 
+// `megabrain db show <dispatch-id-or-suffix> --json`: the dispatch record with its message history,
+// oldest first; `from` is "child" for what the child sent (received, ask, done, stalled, ...).
+export const dispatchMessagesSchema = z.looseObject({
+  messages: z.array(z.looseObject({ from: z.string(), type: z.string(), text: z.string() })),
+})
+
 export type InstallPlan = z.infer<typeof installPlanSchema>
 export type PlanModule = InstallPlan['modules'][number]
 export type InstallEvent = z.infer<typeof installEventSchema>
@@ -421,15 +534,32 @@ export type GithubDetail = z.infer<typeof githubDetailSchema>
 export type Project = z.infer<typeof projectsSchema>[number]
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>
 export type ProjectSession = z.infer<typeof projectSessionSchema>
+export type HistorySession = z.infer<typeof historySessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
 export type SendResult = z.infer<typeof sendResultSchema>
+export type NativeChat = z.infer<typeof nativeChatSchema>
+export type ChatApproval = z.infer<typeof chatApprovalSchema>
+export type ChatEventLine = z.infer<typeof chatEventLineSchema>
+export type MessagePart = z.infer<typeof messagePartSchema>
+export type TerminalEngine = z.infer<typeof terminalEngineSchema>
+export type TerminalSession = z.infer<typeof terminalSessionSchema>
 export type SlashCommand = z.infer<typeof slashCommandSchema>
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>
 export type CodeServer = z.infer<typeof codeServerSchema>
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
+export type TranscriptImage = z.infer<typeof transcriptImageSchema>
 export type CodeEntry = z.infer<typeof codeEntrySchema>
 export type CodeFile = z.infer<typeof codeFileSchema>
 export type CodeChange = z.infer<typeof codeChangeSchema>
 export type CodeDiff = z.infer<typeof codeDiffSchema>
 export type ChatRead = z.infer<typeof chatReadSchema>
 export type ReplyResult = z.infer<typeof replyResultSchema>
+
+const projectScriptSchema = z.object({ command: z.string(), source: z.enum(['saved', 'detected']) }).nullable()
+
+/** `megabrain repo scripts <root> --json`: a project's run, build and install commands, shared by its worktrees. */
+export const projectScriptsSchema = z.object({
+  repo: z.string(),
+  scripts: z.object({ run: projectScriptSchema, build: projectScriptSchema, install: projectScriptSchema }),
+})
+export type ProjectScripts = z.infer<typeof projectScriptsSchema>

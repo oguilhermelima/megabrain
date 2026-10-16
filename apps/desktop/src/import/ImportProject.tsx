@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/api'
 import type { GithubRepository, Project } from '@/api/schema'
+import { RowsSkeleton } from '@/components/Skeleton'
 import { Button, ErrorNote, Segmented, Spinner } from '@/components/ui'
 import { defaultDestination, parseGithubSource } from '@/import/import-model'
 
@@ -97,6 +98,7 @@ function GithubTab({ projects, onImported }: { projects: Project[]; onImported: 
         className="w-full rounded-full border border-white/15 bg-white/[0.05] px-4 py-2 text-[14px] text-ink-100 outline-none placeholder:text-ink-400"
       />
       {repositoriesError !== null && <ErrorNote error={repositoriesError} />}
+      {repositories === null && repositoriesError === null && query !== '' && !query.includes('/') && <RowsSkeleton count={3} label="Reading your GitHub repositories" />}
       {repositories !== null && query !== '' && filtered.length > 0 && (
         <ul className="max-h-40 space-y-1 overflow-y-auto">
           {filtered.map((repository) => (

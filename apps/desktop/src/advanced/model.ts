@@ -1,4 +1,4 @@
-import type { Dispatch, Worktree } from '@/api/schema'
+import type { Dispatch, Project } from '@/api/schema'
 
 export type ChatState = 'needs-you' | 'working' | 'queued' | 'ended'
 
@@ -25,14 +25,25 @@ export interface RepositoryGroup {
 
 const folder = (path: string): string => path.replace(/\/+$/, '').split('/').at(-1) ?? path
 
-function repositoryName(chat: Dispatch, worktrees: Worktree[]): string {
+/** Which repository a worktree belongs to: what `groupChats` needs from `worktree list`. */
+export interface WorktreeRepository {
+  path: string
+  repository?: { name: string }
+}
+
+/** Every listed worktree with its repository named after the main checkout's folder, as `worktree list` names it. */
+export function worktreeRepositories(projects: Project[]): WorktreeRepository[] {
+  return projects.flatMap((project) => project.worktrees.map((worktree) => ({ path: worktree.path, repository: { name: folder(project.path) } })))
+}
+
+function repositoryName(chat: Dispatch, worktrees: WorktreeRepository[]): string {
   const path = chat.worktreePath ?? null
   if (path === null || path === '') return 'Other'
   return worktrees.find((worktree) => worktree.path === path)?.repository?.name ?? folder(path)
 }
 
 /** Open chats by repository and worktree, both sorted by name; ended ones apart, newest first. */
-export function groupChats(chats: Dispatch[], worktrees: Worktree[]): { repositories: RepositoryGroup[]; ended: Dispatch[] } {
+export function groupChats(chats: Dispatch[], worktrees: WorktreeRepository[]): { repositories: RepositoryGroup[]; ended: Dispatch[] } {
   const repositories = new Map<string, Map<string, WorktreeGroup>>()
   const endedChats: Dispatch[] = []
   for (const chat of [...chats].sort((left, right) => left.createdAt.localeCompare(right.createdAt))) {
@@ -54,14 +65,6 @@ export function groupChats(chats: Dispatch[], worktrees: Worktree[]): { reposito
       .map(([name, groups]) => ({ name, worktrees: [...groups.values()].sort((left, right) => (left.path ?? '').localeCompare(right.path ?? '')) })),
     ended: endedChats.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
   }
-}
-
-/** The chat before or after the selected one, wrapping around; the first when none is selected. */
-export function neighbour(ids: string[], selected: string | null, step: 1 | -1): string | null {
-  if (ids.length === 0) return null
-  const index = selected === null ? -1 : ids.indexOf(selected)
-  if (index === -1) return ids[0] ?? null
-  return ids[(index + step + ids.length) % ids.length] ?? null
 }
 
 export function pillSummary(chats: Dispatch[]): { working: number; needsYou: number; queued: number } {

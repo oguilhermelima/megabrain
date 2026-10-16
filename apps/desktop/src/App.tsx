@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/api'
-import { Spinner } from '@/components/ui'
+import { AppSkeleton } from '@/components/Skeleton'
 import { Advanced } from '@/advanced/Advanced'
 import { Onboarding } from '@/onboarding/Onboarding'
 
@@ -16,12 +16,7 @@ export function App() {
     )
   }, [])
 
-  if (screen === 'loading')
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner />
-      </div>
-    )
+  if (screen === 'loading') return <AppSkeleton />
   if (screen === 'setup') return <Onboarding onFinish={() => setScreen('home')} />
   return <Advanced onSetup={() => setScreen('setup')} />
 }

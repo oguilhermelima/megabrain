@@ -41,7 +41,7 @@ export function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
     if (config.usageLimits !== undefined && record(config.usageLimits) === undefined) return ok(config);
     const usage = record(config.usageLimits) ?? {};
     const notice = record(usage.notice) ?? {};
-    const normalized: ChainConfig = { ...config, usageLimits: { liveProviders: [], cacheTtlSeconds: 30, timeoutSeconds: 5, ...usage, notice: { enabled: false, intervalSeconds: 3600, ...notice } } };
+    const normalized: ChainConfig = { ...config, usageLimits: { liveProviders: [], cacheTtlSeconds: 60, timeoutSeconds: 5, ...usage, notice: { enabled: false, intervalSeconds: 3600, ...notice } } };
     if (JSON.stringify(normalized) !== JSON.stringify(value)) writeFileSync(path, JSON.stringify(normalized, null, 2) + "\n");
     return ok(normalized);
   } catch { return error(`chain file is not valid JSON: ${path}`); }
@@ -86,7 +86,7 @@ export function validateConfig(config: ChainConfig, environment: ChainEnvironmen
   return preserveStderr(ok(config), registryNotice);
 }
 type ChainWrite = { readonly name: string; readonly definition?: Record<string, unknown>; readonly changed?: boolean };
-export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<{ agent: string; model: string; reasoning?: { separateAxis?: boolean; levels?: readonly string[] } }>> {
+export function modelRegistry(environment: ChainEnvironment): Result<ReadonlyArray<Model>> {
   const { template } = modelRegistryPaths(environment);
   if (!existsSync(template)) return ok([]);
   const loaded = loadModelRegistry(environment);

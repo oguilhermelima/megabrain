@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { route } from "../../src/cli/router.js";
-import { failed } from "../../src/core/result.js";
+import { failed, ok } from "../../src/core/result.js";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -23,6 +23,9 @@ function sandbox(): { readonly home: string; readonly state: string; readonly ro
     models: [{
       agent: "codex",
       model: "model-known",
+      name: "Known model",
+      contextWindows: [272000],
+      current: true,
       reasoning: { separateAxis: true, levels: ["low", "high"] },
       provenance: { kind: "curated", method: "manual curation", obtainedAt: "2026-10-15T00:00:00.000Z" },
     }],
@@ -30,8 +33,16 @@ function sandbox(): { readonly home: string; readonly state: string; readonly ro
   return { home, state, root };
 }
 
+let claudeUsageRequests = 0;
 const processAdapter: ProcessAdapter = {
-  async run(command) { return failed(`${command} unavailable`); },
+  async run(command) {
+    if (command === "security") return ok({ stdout: JSON.stringify({ claudeAiOauth: { accessToken: "token", expiresAt: 9999999999 } }), stderr: "", exitCode: 0 });
+    if (command === "curl") {
+      claudeUsageRequests += 1;
+      return ok({ stdout: `${JSON.stringify({ five_hour: { utilization: 30, resets_at: "2030-01-01T00:00:00Z" }, seven_day: { utilization: 40, resets_at: "2030-01-02T00:00:00Z" } })}\nMEGABRAIN_HTTP_STATUS:200`, stderr: "", exitCode: 0 });
+    }
+    return failed(`${command} unavailable`);
+  },
   async startDetached() { return failed("not used in settings tests"); },
   invocationCount() { return 0; },
 };
@@ -56,7 +67,8 @@ describe("megabrain settings", () => {
     const value = await settings(env);
 
     // Keep these field names aligned with apps/desktop/src/api/schema.ts.
-    expect(Object.keys(value).sort()).toEqual(["chains", "limits", "models", "resources", "supervisor", "terminal"]);
+    expect(Object.keys(value).sort()).toEqual(["chains", "limits", "models", "resources", "supervisor", "terminal", "terminalEngine"]);
+    expect(value.terminalEngine).toBe("native");
     expect(Object.keys(value.supervisor as object).sort()).toEqual(["pid", "running"]);
     expect(Object.keys(value.resources as object).sort()).toEqual(["historyEnabled", "policy"]);
     expect(Object.keys(value.limits as object).sort()).toEqual(["enabledProviders", "notice", "readings"]);
@@ -70,7 +82,7 @@ describe("megabrain settings", () => {
     expect(Object.keys(firstReading ?? {}).sort()).toContain("resetsAt");
     expect(Object.keys(firstReading ?? {}).sort()).toContain("fetchedAt");
     expect(Object.keys(firstReading ?? {}).sort()).toContain("reason");
-    expect(value.models).toEqual([{ agent: "codex", model: "model-known", reasoning: { levels: ["low", "high"] } }]);
+    expect(value.models).toEqual([{ agent: "codex", model: "model-known", name: "Known model", contextWindows: [272000], current: true, reasoning: { levels: ["low", "high"] } }]);
     expect(value.resources).toEqual({ historyEnabled: false, policy: null });
     expect(value.limits).toMatchObject({ enabledProviders: [], notice: { enabled: false, intervalSeconds: 3600 } });
     const limits = await run(["chain", "limits", "--json"], env);
@@ -78,6 +90,18 @@ describe("megabrain settings", () => {
     if (limits.kind === "ok") expect(value.limits && (value.limits as { readings: unknown[] }).readings).toEqual(JSON.parse(limits.value));
     expect(value.chains).toEqual([]);
     expect(value.supervisor).toEqual({ running: false, pid: null });
+  });
+
+  test("settings and chain limits reuse one live Claude reading for 60 seconds", async () => {
+    const env = sandbox();
+    claudeUsageRequests = 0;
+    writeFileSync(join(env.state, "chains.json"), JSON.stringify({ chains: {}, defaultSteps: [], usageLimits: { liveProviders: ["claude"] } }));
+    const first = await settings(env);
+    const second = await settings(env);
+    const limits = await run(["chain", "limits", "--json"], env);
+    expect(second.limits).toEqual(first.limits);
+    expect(limits.kind).toBe("ok");
+    expect(claudeUsageRequests).toBe(1);
   });
 
   test("reflects resource, usage, chain, and terminal writes on the next read", async () => {
@@ -99,6 +123,16 @@ describe("megabrain settings", () => {
     });
     expect(value.chains).toEqual([{ name: "desktop", when: { parentAgent: "codex" }, steps: [{ agent: "codex", model: "model-known", effort: "high" }] }]);
     expect(value.terminal).toMatchObject({ default: "kitty" });
+  });
+
+  test("persists the terminal engine as state-dir JSON and reads it back", async () => {
+    const env = sandbox();
+    expect((await settings(env)).terminalEngine).toBe("native");
+    expect((await run(["settings", "set", "terminal-engine", "tmux"], env)).kind).toBe("ok");
+    expect((await settings(env)).terminalEngine).toBe("tmux");
+    expect((await run(["settings", "set", "terminal-engine", "native"], env)).kind).toBe("ok");
+    expect((await settings(env)).terminalEngine).toBe("native");
+    expect((await run(["settings", "set", "terminal-engine", "unknown"], env)).kind).toBe("failed");
   });
 
   test("uses null for each unset policy field and can clear policy and terminal default", async () => {

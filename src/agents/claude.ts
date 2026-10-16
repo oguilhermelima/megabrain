@@ -1,4 +1,4 @@
-import { classifyMarkers, doubleQuote, shellArgument, type Agent, type AgentMarker } from "./types.js";
+import { classifyMarkers, doubleQuote, launchArgv, shellArgument, type Agent, type AgentFlags, type AgentMarker } from "./types.js";
 import { failed, ok } from "../core/result.js";
 
 const markers: readonly AgentMarker[] = [
@@ -9,6 +9,14 @@ const markers: readonly AgentMarker[] = [
   { status: "blocked", first: /API Error:/, second: /authentication/, reason: "terminal shows an authentication error" },
 ];
 
+export const claudeFlags: AgentFlags = {
+  executable: "claude",
+  permission: ["--dangerously-skip-permissions"],
+  model: (value, quote) => ["--model", quote(value)],
+  effort: (value, quote) => ["--effort", quote(value)],
+  resume: (id, quote) => ({ lead: [], trail: ["--resume", quote(id)] }),
+};
+
 export const claude: Agent = {
   id: "claude",
   matchesDescriptor: (descriptor) => descriptor === "claude" || /^claude-code_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
@@ -16,14 +24,13 @@ export const claude: Agent = {
   contextSource: "claude-transcript",
   compactCommand: "/compact",
   initialPromptFlag: "--",
+  flags: claudeFlags,
   commandLine: ({ model, effort, agentArgs }) => {
     // Every Claude child runs in bypass; peer delivery depends on it, so no flag may change the mode.
     if (agentArgs.some((arg) => arg === "--permission-mode" || arg.startsWith("--permission-mode="))) {
       return failed("a Claude child always runs with --dangerously-skip-permissions; --permission-mode cannot be passed through --agent-arg", 2);
     }
-    const parts = ["claude", "--dangerously-skip-permissions"];
-    if (model !== null) parts.push("--model", doubleQuote(model));
-    if (effort !== null) parts.push("--effort", doubleQuote(effort));
+    const parts = launchArgv(claudeFlags, model, effort, doubleQuote);
     parts.push(...agentArgs.map(shellArgument));
     return { kind: "ok", value: parts.join(" ") };
   },

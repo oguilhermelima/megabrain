@@ -1,4 +1,4 @@
-import type { Settings, GithubDetail, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { Settings, GithubDetail, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -207,6 +207,13 @@ export const mockChatRead: ChatRead = {
   ].join('\n'),
 }
 
+export const mockDispatchReport = [
+  'The new scrubber replaces the seek bar on tvOS, and the old bar stays behind a flag.',
+  '',
+  'Technical detail: SeekScrubber renders in the player overlay; the legacy bar is behind player.legacySeekBar. Gates: typecheck ok, unit 214 pass / 0 fail.',
+  'git log: 4f2a1c90 feat(tv): add the seek scrubber; 9b3e7d12 test(tv): pin scrubber seeking',
+].join('\n')
+
 const at = (minute: number) => `2026-10-14T21:${String(minute).padStart(2, '0')}:00.000Z`
 
 export const mockTranscript: Transcript = {
@@ -217,12 +224,21 @@ export const mockTranscript: Transcript = {
   cursor: 'mock-12',
   events: [
     { id: 'e0', at: at(2), kind: 'user', text: '[megabrain dispatch: fix/player-seek]\nRun megabrain received before work.', origin: { kind: 'parent', label: 'Claude 5f1c2a7e', dispatchId: null, sessionId: 'claude:5f1c2a7e-0d6b-4b8e-9c55-1e2f3a4b5c6d' } },
-    { id: 'e1', at: at(3), kind: 'user', text: 'Fix seeking in the TV player: seeking forward 10s resets the playback rate, and seeking back past 0 crashes. Tests first.' },
+    { id: 'e1', at: at(3), kind: 'user', text: 'Fix seeking in the TV player: seeking forward 10s resets the playback rate, and seeking back past 0 crashes. Tests first.\n\nThe bar after seeking [Image #54] and the crash log [Image #55]\n\nRepro notes in `/Users/operator/Workspaces/canto/apps/tv/src/player/very/long/path/to/the/seek-controller.test.ts`.', images: [{ dataUrl: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='200'%3E%3Crect width='320' height='200' fill='%23243447'/%3E%3Crect x='24' y='150' width='272' height='6' rx='3' fill='%23ffffff40'/%3E%3Crect x='24' y='150' width='120' height='6' rx='3' fill='%2360a5fa'/%3E%3C/svg%3E" }, { path: '/var/folders/x1/T/orca-paste-1792108380783-crash.png' }] },
     { id: 'e2', at: at(3), kind: 'thinking', text: 'The rate reset probably comes from recreating the AVPlayerItem on seek. I should look at usePlayerSeek and the tvOS adapter before writing tests.' },
     { id: 'e3', at: at(4), kind: 'tool-call', text: 'rg -n "seekBy|setRate" apps/tv/player', tool: { name: 'shell', input: 'rg -n "seekBy|setRate" apps/tv/player' } },
     { id: 'e4', at: at(4), kind: 'tool-result', text: 'apps/tv/player/use-player-seek.ts:41:  player.replaceCurrentItem(item)\napps/tv/player/use-player-seek.ts:58:  player.setRate(1)', tool: { name: 'shell', status: 'ok' } },
     { id: 'e5', at: at(5), kind: 'assistant', text: '**Cause:** seeking replaces the current item, which resets the rate to 1.\n\nPlan:\n1. a test that keeps the rate across a forward seek;\n2. a test that clamps a backward seek at `0`.\n\n| case | before | after |\n| --- | --- | --- |\n| +10s | rate 1 | rate kept |\n| -10s at 3s | crash | 0 |' },
     { id: 'e5b', at: at(6), kind: 'user', text: '✅ codex · feat/seek-bar finished — the scrubber is in — details: megabrain orchestrate watch 7a1c9e03', origin: { kind: 'child', label: 'feat/seek-bar', dispatchId: 'dispatch-20261014205812000-41022-7a1c9e03', sessionId: null } },
+    // megabrain notices, one of each kind; the two stuck ones for one dispatch collapse into one card.
+    { id: 'n1', at: at(6), kind: 'system', text: 'Message from megabrain: ⚠️ claude · feat/web-community-redesign is stuck\ndetails: megabrain orchestrate watch 77aa01ce', notice: { kind: 'stuck', agent: 'claude', label: 'feat/web-community-redesign', dispatchId: '77aa01ce', summary: 'claude · feat/web-community-redesign is stuck' }, origin: { kind: 'child', label: 'feat/web-community-redesign', dispatchId: 'dispatch-20261014211800000-41200-77aa01ce', sessionId: null } },
+    { id: 'n2', at: at(6), kind: 'system', text: 'Message from megabrain: ⚠️ claude · feat/web-community-redesign is stuck\ndetails: megabrain orchestrate watch 77aa01ce', notice: { kind: 'stuck', agent: 'claude', label: 'feat/web-community-redesign', dispatchId: '77aa01ce', summary: 'claude · feat/web-community-redesign is still stuck' }, origin: { kind: 'child', label: 'feat/web-community-redesign', dispatchId: 'dispatch-20261014211800000-41200-77aa01ce', sessionId: null } },
+    { id: 'n3', at: at(6), kind: 'system', text: 'Message from megabrain: ✅ codex · docs/status-command finished — the status page is documented\ndetails: megabrain orchestrate watch 0c88e4d2', notice: { kind: 'finished', agent: 'codex', label: 'docs/status-command', dispatchId: '0c88e4d2', summary: 'The status page is documented.' }, origin: { kind: 'child', label: 'docs/status-command', dispatchId: 'dispatch-20261014212930000-41502-0c88e4d2', sessionId: null } },
+    { id: 'n4', at: at(6), kind: 'system', text: 'Message from megabrain: ❓ claude · feat/desktop-panel-columns has a question — keep three columns on a narrow window?\ndetails: megabrain orchestrate watch 3c4d5e6f', notice: { kind: 'ask', agent: 'claude', label: 'feat/desktop-panel-columns', dispatchId: '3c4d5e6f', summary: 'Keep three columns on a narrow window, or fold to two?' }, origin: { kind: 'child', label: 'feat/desktop-panel-columns', dispatchId: 'dispatch-20261014212200000-41250-3c4d5e6f', sessionId: null } },
+    { id: 'n5', at: at(6), kind: 'system', text: 'Message from megabrain: ⚠️ codex · fix/queue-cancel-owner is stuck — usage limit\ndetails: megabrain orchestrate watch b2d40f71', notice: { kind: 'limit', agent: 'codex', label: 'fix/queue-cancel-owner', dispatchId: 'b2d40f71', summary: 'codex hit its usage limit; it resets at 23:00.' }, origin: { kind: 'child', label: 'fix/queue-cancel-owner', dispatchId: 'dispatch-20261014211504000-41388-b2d40f71', sessionId: null } },
+    { id: 'n6', at: at(6), kind: 'system', text: 'Message from megabrain: ❌ agy · chore/agy-trust-probe failed\ndetails: megabrain orchestrate watch 1f0e0d0c', notice: { kind: 'failed', agent: 'agy', label: 'chore/agy-trust-probe', dispatchId: '1f0e0d0c', summary: 'The trust probe failed before it started.' }, origin: { kind: 'child', label: 'chore/agy-trust-probe', dispatchId: 'dispatch-20261014190000000-40000-1f0e0d0c', sessionId: null } },
+    { id: 'n7', at: at(6), kind: 'system', text: 'Message from megabrain: ⚠️ claude · feat/desktop-panel is stuck\ndetails: megabrain orchestrate watch 7a1c9e03', notice: { kind: 'stuck', agent: 'codex', label: 'feat/desktop-panel', dispatchId: '7a1c9e03', summary: 'codex · feat/desktop-panel is stuck' }, origin: { kind: 'child', label: 'feat/desktop-panel', dispatchId: 'dispatch-20261014205812000-41022-7a1c9e03', sessionId: null } },
+    { id: 'n8', at: at(6), kind: 'system', text: 'Message from megabrain: ℹ️ the supervisor restarted', notice: { kind: 'other', agent: null, label: null, dispatchId: null, summary: 'The supervisor restarted after an update.' } },
     { id: 'e6', at: at(7), kind: 'tool-call', text: 'apply_patch apps/tv/player/use-player-seek.test.ts', tool: { name: 'apply_patch', input: '*** Add File: apps/tv/player/use-player-seek.test.ts' } },
     { id: 'e7', at: at(7), kind: 'tool-result', text: 'Success. Updated 1 file.', tool: { name: 'apply_patch', status: 'ok' } },
     { id: 'e8', at: at(9), kind: 'tool-call', text: 'bun test apps/tv/player', tool: { name: 'shell', input: 'bun test apps/tv/player' } },
@@ -290,6 +306,26 @@ const ago = (minutes: number) => new Date(Date.parse('2026-10-15T12:00:00.000Z')
 const root = '/Users/operator/Workspaces'
 const tree = '/Users/operator/Workspaces/Worktrees'
 
+// `sessions history --cwd <canto> --json`: more Claude chats than one page holds, and one that the
+// sidebar already lists (Desktop app as an agent IDE).
+const past = (agent: HistorySession['agent'], id: string, title: string, minutes: number, messageCount: number | null): HistorySession => ({ agent, id, title, startedAt: ago(minutes + 45), lastActivityAt: ago(minutes), messageCount })
+export const mockSessionHistory: HistorySession[] = [
+  past('claude', '5f1c2a7e-0d6b-4b8e-9c55-1e2f3a4b5c6d', 'Desktop app as an agent IDE', 0, 212),
+  past('codex', '019a7c2e-1111-7000-8000-00000000000a', 'Queue cancel keeps the owner', 25, 38),
+  past('claude', '7a000001-0000-4000-8000-000000000001', 'Audit Instagram paint on the home rails', 70, 64),
+  past('grok', '0b1c2d3e-0000-4000-8000-000000000005', 'Probe the leader socket', 1900, null),
+  past('claude', '7a000001-0000-4000-8000-000000000002', 'Native taste onboarding: first screen', 180, 41),
+  past('agy', 'agy-3f2e1d0c', 'Seek bar polish on tvOS', 260, null),
+  past('claude', '7a000001-0000-4000-8000-000000000003', 'Why the TV focus ring jumps', 400, 17),
+  past('codex', '019a7c2e-1111-7000-8000-00000000000b', 'Rename the player hooks', 520, 90),
+  past('claude', '7a000001-0000-4000-8000-000000000004', 'Migrate the icon sizes to the scale', 900, 133),
+  past('claude', '7a000001-0000-4000-8000-000000000005', 'Drizzle journal check fails on CI', 1500, 22),
+  past('claude', '7a000001-0000-4000-8000-000000000006', 'Community redesign, web', 2600, 75),
+  past('claude', '7a000001-0000-4000-8000-000000000007', 'Profile header spacing', 4300, 9),
+  past('claude', '7a000001-0000-4000-8000-000000000008', 'Release notes for 0.9', 7000, 12),
+  past('claude', '7a000001-0000-4000-8000-000000000009', 'Search screen empty state', 9800, null),
+].sort((left, right) => (right.lastActivityAt ?? '').localeCompare(left.lastActivityAt ?? ''))
+
 export const mockProjects: Project[] = [
   {
     name: 'stack',
@@ -299,7 +335,7 @@ export const mockProjects: Project[] = [
     missing: false,
     worktrees: [
       { path: `${root}/local/stack`, branch: 'main', head: 'a1b2c3d', primary: true, parent: null, pullRequest: null, sessions: [
-        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000001', title: 'Monitoring backups', status: 'working', startedAt: ago(840), lastActivityAt: ago(1), dispatchId: null },
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000001', title: 'Monitoring backups', status: 'working', startedAt: ago(840), lastActivityAt: ago(1), dispatchId: null, origin: 'external' },
       ] },
     ],
   },
@@ -311,13 +347,13 @@ export const mockProjects: Project[] = [
     missing: false,
     worktrees: [
       { path: `${root}/canto`, branch: 'main', head: 'f00ba12', primary: true, parent: null, pullRequest: null, sessions: [
-        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000002', title: 'Six visual changes on home', status: 'idle', startedAt: ago(90), lastActivityAt: ago(41), dispatchId: null, contextTokens: 412000, cacheExpiresAt: ago(41 - 60), idleCompactAt: ago(41 - 54) },
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000002', title: 'Six visual changes on home', status: 'idle', startedAt: ago(90), lastActivityAt: ago(41), dispatchId: null, origin: 'megabrain', contextTokens: 412000, cacheExpiresAt: ago(41 - 60), idleCompactAt: ago(41 - 54) },
       ] },
       { path: `${tree}/fix-player-seek`, branch: 'fix/player-seek', head: 'c0ffee1', primary: false, parent: 'main', pullRequest: { number: 412, state: 'OPEN', url: 'https://github.com/operator/canto/pull/412' }, sessions: [
-        { agent: 'codex', sessionId: 'codex:019a7c2e-55b1-7e20-a3c4-8d9e0f1a2b3c', title: 'fix/player-seek', status: 'waiting', startedAt: ago(60), lastActivityAt: ago(3), dispatchId: 'dispatch-20261014210344000-41100-5d2e8c19' },
+        { agent: 'codex', sessionId: 'codex:019a7c2e-55b1-7e20-a3c4-8d9e0f1a2b3c', title: 'fix/player-seek', status: 'waiting', startedAt: ago(60), lastActivityAt: ago(3), dispatchId: 'dispatch-20261014210344000-41100-5d2e8c19', origin: 'megabrain' },
       ] },
       { path: `${tree}/feat-extension`, branch: 'feat/extension', head: 'beef123', primary: false, parent: 'main', pullRequest: null, sessions: [
-        { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7000-8000-000000000003', title: 'feat/extension', status: 'idle', startedAt: ago(30), lastActivityAt: ago(0), dispatchId: null },
+        { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7000-8000-000000000003', title: 'feat/extension', status: 'idle', startedAt: ago(30), lastActivityAt: ago(0), dispatchId: null, origin: 'external' },
       ] },
       { path: `${tree}/canto-detached`, hidden: true, branch: null, head: '0fcc0b0', primary: false, parent: null, pullRequest: null, sessions: [] },
     ],
@@ -330,16 +366,16 @@ export const mockProjects: Project[] = [
     missing: false,
     worktrees: [
       { path: `${root}/megabrain`, branch: 'main', head: '82d09a0', primary: true, parent: null, pullRequest: null, sessions: [
-        { agent: 'claude', sessionId: 'claude:5f1c2a7e-0d6b-4b8e-9c55-1e2f3a4b5c6d', title: 'Desktop app as an agent IDE', status: 'working', startedAt: ago(600), lastActivityAt: ago(0), dispatchId: null },
+        { agent: 'claude', sessionId: 'claude:5f1c2a7e-0d6b-4b8e-9c55-1e2f3a4b5c6d', title: 'Desktop app as an agent IDE', status: 'working', startedAt: ago(600), lastActivityAt: ago(0), dispatchId: null, origin: 'megabrain', owner: 'megabrain', tmuxServer: 'megabrain-app', tmuxSession: 'mb-claude-5f1c2a7e' },
       ] },
       { path: `${tree}/feat-desktop-panel`, branch: 'feat/desktop-panel', head: '1111111', primary: false, parent: 'main', pullRequest: { number: 83, state: 'OPEN', url: 'https://github.com/operator/megabrain/pull/83' }, sessions: [
-        { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7e20-a3c4-8d9e0f1a2b3c', title: 'feat/desktop-panel', status: 'working', startedAt: ago(40), lastActivityAt: ago(1), dispatchId: 'dispatch-20261014205812000-41022-7a1c9e03' },
+        { agent: 'codex', sessionId: 'codex:019a7c2e-0000-7e20-a3c4-8d9e0f1a2b3c', title: 'feat/desktop-panel', status: 'working', startedAt: ago(40), lastActivityAt: ago(1), dispatchId: 'dispatch-20261014205812000-41022-7a1c9e03', origin: 'megabrain' },
       ] },
       { path: `${tree}/feat-desktop-panel-columns`, branch: 'feat/desktop-panel-columns', head: '2222222', primary: false, parent: 'feat/desktop-panel', pullRequest: { number: 84, state: 'OPEN', url: 'https://github.com/operator/megabrain/pull/84' }, sessions: [
-        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000004', title: 'feat/desktop-panel-columns', status: 'working', startedAt: ago(20), lastActivityAt: ago(0), dispatchId: 'dispatch-20261014212200000-41250-3c4d5e6f' },
+        { agent: 'claude', sessionId: 'claude:0b1c2d3e-0000-4000-8000-000000000004', title: 'feat/desktop-panel-columns', status: 'working', startedAt: ago(20), lastActivityAt: ago(0), dispatchId: 'dispatch-20261014212200000-41250-3c4d5e6f', origin: 'megabrain' },
       ] },
       { path: `${tree}/chore-old-probe`, branch: 'chore/old-probe', head: '3333333', primary: false, parent: 'main', pullRequest: { number: 81, state: 'MERGED', url: 'https://github.com/operator/megabrain/pull/81' }, sessions: [
-        { agent: 'grok', sessionId: 'grok:0b1c2d3e-0000-4000-8000-000000000005', title: 'probe the leader socket', status: 'ended', startedAt: ago(2000), lastActivityAt: ago(1900), dispatchId: null },
+        { agent: 'grok', sessionId: 'grok:0b1c2d3e-0000-4000-8000-000000000005', title: 'probe the leader socket', status: 'ended', startedAt: ago(2000), lastActivityAt: ago(1900), dispatchId: null, origin: 'megabrain' },
       ] },
     ],
   },

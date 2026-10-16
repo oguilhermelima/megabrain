@@ -3,6 +3,7 @@ import { api } from '@/api'
 import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, Project } from '@/api/schema'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
+import { DetailSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
 import {
   checkSummary,
@@ -25,6 +26,7 @@ import { CloseIcon, CommentIcon, IssueIcon, LinkIcon, MilestoneIcon, PullRequest
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, CheckGlyph, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, checkStateTone, checkTitle } from '@/github/parts'
 import type { GithubKind } from '@/github/useGithubCounts'
+import { reuse } from '@/lib/reuse'
 
 // A repository's pull requests or issues, read through `megabrain github … --json`: tabs with every
 // state's total, one light page of the tab at a time (the next one loads on scroll), search and
@@ -87,7 +89,7 @@ function useListing(root: string, request: ListRequest) {
       try {
         const next = await readPage(root, { kind, state } as ListRequest, after)
         if (current.current !== key) return
-        setListing((loaded) => joined(loaded, next, how))
+        setListing((loaded) => reuse(loaded, joined(loaded, next, how)))
         setError(null)
       } catch (cause: unknown) {
         if (current.current === key) setError(cause)
@@ -487,9 +489,7 @@ function DetailPane({ project, kind, number, pullRequest, issue, onClose }: { pr
         {detail?.checks !== undefined && <ChecksList checks={detail.checks} />}
         {error !== null && <ErrorNote error={error} />}
         {detail === null && error === null && (
-          <div className="flex items-center gap-2 py-6 text-[13px] text-ink-400">
-            <Spinner /> Reading the description and comments…
-          </div>
+          <DetailSkeleton />
         )}
         {detail !== null && (
           <>

@@ -1,9 +1,12 @@
-import { realpath, readFile, readdir } from "node:fs/promises";
+import { access, chmod, mkdir, realpath, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase } from "../../db/db.js";
 import { listWorktrees as listRegisteredWorktrees } from "../../db/queries/worktrees.js";
+import { getRepositoryPullRequests, listRepositories, saveRepositoryPullRequests } from "../../db/queries/repositories.js";
 import { formatWorktreeList, parseGitWorktrees, parseParentConfig, parsePullRequests, parseWorkspacePaths, type GitWorktree, type ParentConfig, type WorktreeListEntry } from "../../core/worktree-list.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { usageText } from "../../core/usage.js";
@@ -102,6 +105,43 @@ async function batchJson(process: ProcessAdapter, command: string, args: readonl
   return result.kind === "ok" ? jsonValue(result.value.stdout) : undefined;
 }
 
+async function available(command: string, environment: WorktreeListEnvironment): Promise<boolean> {
+  const paths = (environment.PATH ?? process.env.PATH ?? "").split(":");
+  for (const directory of paths) {
+    if (directory === "") continue;
+    try { await access(join(directory, command), constants.X_OK); return true; } catch { /* Try the next PATH entry. */ }
+  }
+  return false;
+}
+
+function pullRequestValue(value: string | undefined): unknown {
+  if (value === undefined) return undefined;
+  try { return JSON.parse(value) as unknown; } catch { return undefined; }
+}
+
+type PullRequestCache = { version: 1; repositories: Record<string, { fetchedAt: number; value: unknown }> };
+
+async function readPullRequestCache(stateDirectory: string): Promise<PullRequestCache> {
+  try {
+    const value: unknown = JSON.parse(await readFile(join(stateDirectory, "worktree-pull-requests.json"), "utf8"));
+    if (typeof value !== "object" || value === null || (value as Record<string, unknown>).version !== 1 || typeof (value as Record<string, unknown>).repositories !== "object") {
+      return { version: 1, repositories: {} };
+    }
+    return value as PullRequestCache;
+  } catch { return { version: 1, repositories: {} }; }
+}
+
+async function writePullRequestCache(stateDirectory: string, cache: PullRequestCache): Promise<void> {
+  const path = join(stateDirectory, "worktree-pull-requests.json");
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify(cache)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temporary, path);
+    await chmod(path, 0o600);
+  } catch { /* The read remains useful when the state directory is read-only. */ }
+}
+
 function parentFromOrca(value: unknown): Map<string, string> {
   const parents = new Map<string, string>();
   const records = Array.isArray(value) ? value : typeof value === "object" && value !== null ? ((value as Record<string, unknown>).result ?? value) : [];
@@ -132,24 +172,82 @@ export async function executeWorktreeList(args: readonly string[], environment: 
     filter = selectedRepository.common;
   }
   const repos = selectedRepository === undefined ? await repositories(root.value, process) : [selectedRepository];
-  const gitRecords: GitWorktree[] = [];
-  const parents: ParentConfig[] = [];
+  const gitResults = await Promise.all(repos.filter((repository) => filter === undefined || repository.common === filter).map(async (repository) => {
+    const [output, config] = await Promise.all([
+      runGit(process, repository.path, ["worktree", "list", "--porcelain"]),
+      runGit(process, repository.path, ["config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]),
+    ]);
+    return {
+      gitRecords: output === undefined ? [] : parseGitWorktrees(output, repository.common),
+      parents: config === undefined ? [] : parseParentConfig(config, repository.common),
+    };
+  }));
+  const gitRecords = gitResults.flatMap((result) => result.gitRecords);
+  const parents = gitResults.flatMap((result) => result.parents);
+  const tools = await Promise.all(["superset", "orca", "gh"].map(async (command) => [command, await available(command, environment)] as const));
+  const installed = new Map(tools);
+  const [workspaceData, orcaData] = await Promise.all([
+    installed.get("superset") ? batchJson(process, "superset", ["workspaces", "list", "--json"]) : Promise.resolve(undefined),
+    installed.get("orca") ? batchJson(process, "orca", ["worktree", "list", "--json"]) : Promise.resolve(undefined),
+  ]);
+  const workspaces = parseWorkspacePaths(workspaceData);
+  const orcaParents = parentFromOrca(orcaData);
+  const stateDirectory = environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? globalThis.process.cwd(), ".megabrain");
+  const prCache = await readPullRequestCache(stateDirectory);
+  let prCacheChanged = false;
+  const pullRequests = new Map<string, ReturnType<typeof parsePullRequests> extends Map<string, infer T> ? T : never>();
+  const now = Date.now();
+  const uncached: Repository[] = [];
   for (const repository of repos) {
-    if (filter !== undefined && repository.common !== filter) continue;
-    const output = await runGit(process, repository.path, ["worktree", "list", "--porcelain"]);
-    if (output !== undefined) gitRecords.push(...parseGitWorktrees(output, repository.common));
-    const config = await runGit(process, repository.path, ["config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]);
-    if (config !== undefined) parents.push(...parseParentConfig(config, repository.common));
+    const cached = prCache.repositories[repository.path];
+    if (cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < 60_000) {
+      for (const [branch, pull] of parsePullRequests(cached.value)) pullRequests.set(branch, pull);
+    } else uncached.push(repository);
   }
-  const workspaces = parseWorkspacePaths(await batchJson(process, "superset", ["workspaces", "list", "--json"]));
-  const orcaParents = parentFromOrca(await batchJson(process, "orca", ["worktree", "list", "--json"]));
-  const pullRequests = parsePullRequests(await batchJson(process, "gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"]));
   const registry = openDatabase(environment);
   const registered = new Map<string, ReturnType<typeof listRegisteredWorktrees>[number]>();
+  const repositoryRecords = new Map<string, ReturnType<typeof listRepositories>[number]>();
+  let refresh = uncached;
   if (registry.kind === "ok") {
-    try { for (const item of listRegisteredWorktrees(registry.value.db)) registered.set(item.path, item); }
+    try {
+      for (const item of listRegisteredWorktrees(registry.value.db)) registered.set(item.path, item);
+      for (const item of listRepositories(registry.value.db)) repositoryRecords.set(item.path, item);
+      refresh = [];
+      for (const repository of uncached) {
+        const record = repositoryRecords.get(repository.path);
+        const cached = record === undefined ? undefined : getRepositoryPullRequests(registry.value.db, record.path);
+        if (cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < 60_000) {
+          for (const [branch, pull] of parsePullRequests(pullRequestValue(cached.value))) pullRequests.set(branch, pull);
+          const value = pullRequestValue(cached.value);
+          if (value !== undefined) prCache.repositories[repository.path] = { fetchedAt: cached.fetchedAt, value };
+        } else refresh.push(repository);
+      }
+      if (installed.get("gh") && refresh.length > 0) {
+        const values = await Promise.all(refresh.map(async (repository) => {
+          const result = await process.run("gh", ["pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"], { cwd: repository.path, timeoutMs: 2_000 });
+          return { repository, result };
+        }));
+        for (const { repository, result } of values) {
+          const parsed = result.kind === "ok" ? pullRequestValue(result.value.stdout) : undefined;
+          const previous = prCache.repositories[repository.path]?.value;
+          const usable = Array.isArray(parsed) ? parsed : previous ?? [];
+          for (const [branch, pull] of parsePullRequests(usable)) pullRequests.set(branch, pull);
+          prCache.repositories[repository.path] = { fetchedAt: now, value: usable };
+          prCacheChanged = true;
+          const record = repositoryRecords.get(repository.path);
+          if (record !== undefined) saveRepositoryPullRequests(registry.value.db, record.path, JSON.stringify(usable), now);
+        }
+      }
+    }
     finally { registry.value.close(); }
+  } else if (installed.get("gh")) {
+    const values = await Promise.all(refresh.map(async (repository) => ({ repository, value: await batchJson(process, "gh", ["-C", repository.path, "pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,number,state,url"]) })));
+    for (const { repository, value } of values) {
+      for (const [branch, pull] of parsePullRequests(value)) pullRequests.set(branch, pull);
+      if (Array.isArray(value)) { prCache.repositories[repository.path] = { fetchedAt: now, value }; prCacheChanged = true; }
+    }
   }
+  if (prCacheChanged) await writePullRequestCache(stateDirectory, prCache);
   const entries: WorktreeListEntry[] = [];
   for (const record of gitRecords) {
     const path = await canonical(record.path);

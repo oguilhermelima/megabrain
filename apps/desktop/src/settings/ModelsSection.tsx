@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Button, Card, ErrorNote, Spinner } from '@/components/ui'
 import type { Settings } from '@/api/schema'
+import { ErrorNote, Spinner } from '@/components/ui'
+import { quiet, SettingsGroup } from '@/settings/settings-ui'
 
 function groupModelsByAgent(models: Settings['models']): { agent: string; models: Settings['models'] }[] {
   const order: string[] = []
@@ -15,19 +16,7 @@ function groupModelsByAgent(models: Settings['models']): { agent: string; models
   return order.map((agent) => ({ agent, models: byAgent.get(agent) ?? [] }))
 }
 
-export function ModelsSection({
-  models,
-  terminal,
-  error,
-  onRefresh,
-  onSetTerminal,
-}: {
-  models: Settings['models']
-  terminal: Settings['terminal']
-  error: unknown
-  onRefresh: (agent: string) => Promise<void>
-  onSetTerminal: (name: string | null) => void
-}) {
+export function ModelsSection({ models, error, onRefresh }: { models: Settings['models']; error: unknown; onRefresh: (agent: string) => Promise<void> }) {
   const [refreshing, setRefreshing] = useState<string | null>(null)
   const grouped = groupModelsByAgent(models)
 
@@ -41,42 +30,39 @@ export function ModelsSection({
   }
 
   return (
-    <div className="grid gap-4">
+    <>
+      {grouped.length === 0 && <p className="px-1 text-[13px] text-ink-400">No models registered yet.</p>}
       {grouped.map((group) => (
-        <Card
+        <SettingsGroup
           key={group.agent}
           title={group.agent}
           aside={
-            <Button variant="ghost" className="h-7 px-3 text-[12px]" disabled={refreshing === group.agent} onClick={() => void refresh(group.agent)}>
-              {refreshing === group.agent ? <Spinner /> : 'Refresh'}
-            </Button>
+            <button type="button" className={quiet} disabled={refreshing === group.agent} onClick={() => void refresh(group.agent)}>
+              {refreshing === group.agent ? <Spinner /> : (
+                <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M13 8a5 5 0 1 1-1.5-3.6" />
+                  <path d="M13 2.5v3h-3" />
+                </svg>
+              )}
+              Refresh
+            </button>
           }
         >
-          <ul className="grid gap-1.5">
-            {group.models.map((model) => (
-              <li key={model.model} className="flex items-baseline justify-between text-[13px]">
-                <span className="text-ink-100">{model.model}</span>
-                <span className="text-ink-400">{model.reasoning.levels.join(', ')}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ))}
-      <Card title="Default terminal">
-        <select
-          value={terminal.default ?? ''}
-          onChange={(event) => onSetTerminal(event.target.value === '' ? null : event.target.value)}
-          className="rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[13px] text-ink-100"
-        >
-          <option value="">Automatic ({terminal.detected ?? 'none detected'})</option>
-          {terminal.available.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
+          {group.models.map((model) => (
+            <div key={model.model} className="flex min-h-11 items-center justify-between gap-4 px-4 py-2.5">
+              <span className="min-w-0 truncate font-mono text-[12.5px] text-ink-100 select-text">{model.model}</span>
+              <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                {model.reasoning.levels.map((level) => (
+                  <span key={level} className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[11.5px] text-ink-300">
+                    {level}
+                  </span>
+                ))}
+              </span>
+            </div>
           ))}
-        </select>
-      </Card>
+        </SettingsGroup>
+      ))}
       {error !== null && <ErrorNote error={error} />}
-    </div>
+    </>
   )
 }

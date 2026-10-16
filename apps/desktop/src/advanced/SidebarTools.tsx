@@ -7,7 +7,7 @@ import { AgentIcon } from '@/components/agent-icons'
 
 export function SearchIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
       <circle cx="7" cy="7" r="4.5" />
       <path d="m10.4 10.4 3.1 3.1" />
     </svg>
@@ -41,7 +41,7 @@ export function HeaderButton({ label, on, expanded, keepFocus, onClick, children
       aria-label={label}
       title={label}
       aria-expanded={expanded}
-      className={`relative flex size-7 items-center justify-center rounded-full transition-colors ${on === true ? 'bg-accent/[0.22] text-ink-100' : 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'}`}
+      className={`relative flex size-7 items-center justify-center rounded-full transition-colors ${on === true ? 'bg-accent/[0.18] text-ink-100' : 'text-ink-400 hover:bg-white/[0.08] hover:text-ink-100'}`}
     >
       {children}
     </button>

@@ -1,10 +1,11 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { z } from 'zod'
+import { z } from 'zod'
+import { projectsArgs } from '@/api/projects-origin'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { githubDetailSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -29,6 +30,28 @@ async function cliText(args: string[]): Promise<string> {
   const output = await invoke<CliOutput>('run_cli', { args })
   if (output.code !== 0) throw new CliError(firstLine(output.stderr) || firstLine(output.stdout) || `megabrain ${args[0]} exited ${output.code}`, output.code)
   return output.stdout
+}
+
+// A long-lived CLI process whose stdout lines arrive as they are printed (native command
+// cli_stream, owned by src-tauri); the returned function kills it.
+async function cliStream(args: string[], onLine: (line: string) => void): Promise<() => void> {
+  const channel = new Channel<string>()
+  channel.onmessage = onLine
+  const streamId = await invoke<string>('cli_stream', { args, onLine: channel })
+  return () => void invoke('cli_stream_stop', { streamId })
+}
+
+const appTerminalSchema = z.looseObject({ id: z.string(), sessionName: z.string(), cwd: z.string(), title: z.string(), command: z.string(), alive: z.boolean(), createdAt: z.string() })
+
+// Terminal bytes come base64 over a channel; exit arrives once with the code.
+async function terminalListen(terminalId: string, onData: (base64: string) => void, onExit: (code: number | null) => void): Promise<() => void> {
+  const channel = new Channel<{ data?: string; exit?: number | null }>()
+  channel.onmessage = (message) => {
+    if (message.data !== undefined) onData(message.data)
+    if ('exit' in message) onExit(message.exit ?? null)
+  }
+  await invoke('terminal_listen', { terminalId, onEvent: channel })
+  return () => void invoke('terminal_unlisten', { terminalId })
 }
 
 let streams = 0
@@ -65,6 +88,10 @@ export function createTauriApi(): DesktopApi {
     worktrees: () => cliJson(['worktree', 'list', '--json'], worktreeListSchema),
     readChat: (dispatchId, lines) => cliJson(['orchestrate', 'read', dispatchId, '--lines', String(lines), '--operator', '--json'], chatReadSchema),
     reply: (dispatchId, text) => cliJson(['orchestrate', 'reply', dispatchId, '--text', text, '--operator', '--json'], replyResultSchema),
+    readDispatchMessage: async (dispatchId) => {
+      const record = await cliJson(['db', 'show', dispatchId, '--json'], dispatchMessagesSchema)
+      return record.messages.filter((message) => message.from === 'child').at(-1)?.text ?? null
+    },
     pillGeometry: () => invoke<PillGeometry>('pill_geometry'),
     setPillExpanded: (expanded) => invoke('set_pill_expanded', { expanded }),
     onPillExpanded(listener) {
@@ -97,6 +124,7 @@ export function createTauriApi(): DesktopApi {
     },
     saveAttachment: (base64, extension) => invoke<string>('save_attachment', { base64, extension }),
     sendToSession: (sessionId, text) => cliJson(['send', '--session', sessionId, '--text', text, '--operator', '--json'], sendResultSchema),
+    releaseSession: async (sessionId) => void (await cliText(['session', 'release', sessionId, '--json'])),
     openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
     stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),
     openInCode: (root, path, line) =>
@@ -120,7 +148,10 @@ export function createTauriApi(): DesktopApi {
     deleteChain: async (name) => void (await cliText(['chain', 'delete', name, '--json'])),
     refreshModels: async (agent) => void (await cliText(['model', 'refresh', agent])),
     setTerminalDefault: async (name) => void (await cliText(['terminal', 'default', name ?? '--clear'])),
-    projects: () => cliJson(['projects', '--json'], projectsSchema),
+    projects: (origin) => cliJson(projectsArgs(origin), projectsSchema),
+    projectScripts: (root) => cliJson(['repo', 'scripts', root, '--json'], projectScriptsSchema),
+    setProjectScripts: (root, scripts) =>
+      cliJson(['repo', 'scripts', root, ...Object.entries(scripts).flatMap(([name, command]) => [`--${name}`, command]), '--json'], projectScriptsSchema),
     importFolder: (path) => cliJson(['repo', 'add', path, '--json'], repositorySchema),
     importClone: (url, into) => cliJson(['repo', 'clone', url, '--into', into, '--json'], repositorySchema),
     githubRepositories: () => cliJson(['repo', 'github', '--json'], githubRepositorySchema.array()),
@@ -136,5 +167,28 @@ export function createTauriApi(): DesktopApi {
     codeRead: async (root, path) => codeFileSchema.parse(await invoke('code_read', { root, path })),
     codeChanges: async (root) => codeChangeSchema.array().parse(await invoke('code_changes', { root })),
     codeDiff: async (root, path) => codeDiffSchema.parse(await invoke('code_diff', { root, path })),
+    chats: () => cliJson(['chat', 'list', '--json'], nativeChatSchema.array()),
+    startChat: ({ agent, model, cwd, parts }) =>
+      cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
+    sendChat: async (chatId, parts) => void (await cliText(['chat', 'send', chatId, '--parts', JSON.stringify(parts)])),
+    interruptChat: async (chatId) => void (await cliText(['chat', 'interrupt', chatId])),
+    answerApproval: async (chatId, approvalId, decision) => void (await cliText(['chat', 'approve', chatId, approvalId, '--decision', decision])),
+    stopChat: async (chatId) => void (await cliText(['chat', 'stop', chatId])),
+    setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),
+    setChatMode: (chatId, mode) =>
+      cliJson(['chat', 'mode', chatId, mode, '--json'], z.looseObject({ chat: nativeChatSchema, terminal: terminalSessionSchema.nullable() })),
+    chatTerminalCommand: (chatId) => cliJson(['chat', 'terminal-command', chatId, '--json'], z.array(z.string())),
+    agentCommand: async (agent, options = {}) =>
+      (await cliJson(['agent', 'command', agent, ...(options.resume === undefined ? [] : ['--resume', options.resume]), ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort]), '--json'], agentCommandSchema)).argv,
+    sessionHistory: (cwd, agent) => cliJson(['sessions', 'history', '--cwd', cwd, ...(agent === undefined ? [] : ['--agent', agent]), '--json'], sessionHistorySchema),
+    followChat: (chatId, since, onLine) =>
+      cliStream(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--follow', '--json'], (line) => onLine(chatEventLineSchema.parse(JSON.parse(line)))),
+    openTerminal: async (options) => terminalSessionSchema.parse(await invoke('terminal_open', { options })),
+    writeTerminal: async (terminalId, data) => void (await invoke('terminal_write', { terminalId, data })),
+    resizeTerminal: async (terminalId, cols, rows) => void (await invoke('terminal_resize', { terminalId, cols, rows })),
+    closeTerminal: async (terminalId, options) => void (await invoke('terminal_close', { terminalId, kill: options?.kill ?? false })),
+    listAppTerminals: () => cliJson(['terminal', 'list', '--app', '--json'], z.array(appTerminalSchema)),
+    onTerminalData: (terminalId, onData, onExit) => terminalListen(terminalId, onData, onExit),
+    setTerminalEngine: async (engine) => void (await cliText(['settings', 'set', 'terminal-engine', engine])),
   }
 }

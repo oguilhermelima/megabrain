@@ -1,5 +1,8 @@
-import type { DesktopApi, PathLink } from '@/api/adapter'
-import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { mockNativeChat, mockChatLines } from '@/api/fixtures/chat'
+import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
+import { sessionsOfOrigin } from '@/api/projects-origin'
+import type { Project, ProjectScripts } from '@/api/schema'
+import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -15,6 +18,32 @@ export function createMockApi(): DesktopApi {
     resolvesTo: '/Users/operator/Workspaces/megabrain/.build/megabrain',
   }
   let settings = mockSettings
+  // Sessions released from megabrain's tmux server (`session release`).
+  const released = new Set<string>()
+  const withOwnership = (projects: Project[]): Project[] =>
+    projects.map((project) => ({
+      ...project,
+      worktrees: project.worktrees.map((worktree) => ({
+        ...worktree,
+        sessions: worktree.sessions.map((session) => (released.has(session.sessionId) ? { ...session, owner: 'external' as const, tmuxServer: null, tmuxSession: null } : session)),
+      })),
+    }))
+  const ownedSession = (sessionId: string) =>
+    withOwnership(mockProjects).some((project) => project.worktrees.some((worktree) => worktree.sessions.some((session) => session.sessionId === sessionId && session.owner === 'megabrain')))
+  // Saved commands per repository; anything unsaved falls back to what a package.json would give.
+  const savedScripts = new Map<string, Partial<Record<'run' | 'build' | 'install', string>>>()
+  const detectedScripts = { run: 'bun run dev', build: 'bun run build', install: null }
+  const scriptsFor = (root: string): ProjectScripts => {
+    const repo = mockProjects.find((project) => project.path === root || project.worktrees.some((worktree) => worktree.path === root))?.path ?? root
+    const saved = savedScripts.get(repo) ?? {}
+    const pick = (name: 'run' | 'build' | 'install') => {
+      const command = saved[name]
+      if (command !== undefined) return { command, source: 'saved' as const }
+      const detected = detectedScripts[name]
+      return detected === null ? null : { command: detected, source: 'detected' as const }
+    }
+    return { repo, scripts: { run: pick('run'), build: pick('build'), install: pick('install') } }
+  }
   return {
     kind: 'mock',
     status: async () => {
@@ -54,6 +83,10 @@ export function createMockApi(): DesktopApi {
       await wait(300)
       return { dispatchId, status: 'queued', nudge: 'typed' }
     },
+    readDispatchMessage: async () => {
+      await wait(200)
+      return mockDispatchReport
+    },
     pillGeometry: async () => ({ notchWidth: 200, barHeight: 37 }),
     setPillExpanded: async (expanded) => {
       for (const listener of pillListeners) listener(expanded)
@@ -74,7 +107,8 @@ export function createMockApi(): DesktopApi {
     queued: async (dispatchId) => [{ id: 'delivery-mock-1', dispatch: dispatchId, type: 'reply', createdAt: new Date().toISOString(), state: 'outstanding', text: 'Use the new scrubber, and keep the old bar behind a flag.' }],
     unqueue: async () => 'Use the new scrubber, and keep the old bar behind a flag.',
     saveAttachment: async (_base64, extension) => `/Users/operator/.megabrain/attachments/mock.${extension}`,
-    sendToSession: async () => ({ delivered: true, channel: 'claude-peer' }),
+    sendToSession: async (sessionId) => ({ delivered: true, channel: ownedSession(sessionId) ? 'tmux' : 'claude-peer' }),
+    releaseSession: async (sessionId) => void released.add(sessionId),
     openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     stopCodeServer: async () => {},
     openInCode: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
@@ -91,7 +125,18 @@ export function createMockApi(): DesktopApi {
     deleteChain: async (name) => void (settings = { ...settings, chains: settings.chains.filter((item) => item.name !== name) }),
     refreshModels: async () => {},
     setTerminalDefault: async (name) => void (settings = { ...settings, terminal: { ...settings.terminal, default: name } }),
-    projects: async () => mockProjects,
+    projects: async (origin) => sessionsOfOrigin(withOwnership(mockProjects), origin),
+    projectScripts: async (root) => scriptsFor(root),
+    async setProjectScripts(root, scripts) {
+      const repo = scriptsFor(root).repo
+      const saved = { ...savedScripts.get(repo) }
+      for (const [name, command] of Object.entries(scripts) as ['run' | 'build' | 'install', string][]) {
+        if (command === '') delete saved[name]
+        else saved[name] = command
+      }
+      savedScripts.set(repo, saved)
+      return scriptsFor(root)
+    },
     importFolder: async (path) => mockImported(path, null),
     importClone: async (url, into) => mockImported(`${into}/${url.split('/').at(-1) ?? 'repo'}`, url),
     githubRepositories: async () => mockGithubRepositories,
@@ -119,5 +164,46 @@ export function createMockApi(): DesktopApi {
     },
     codeChanges: async () => mockCodeChanges,
     codeDiff: async (_root, path) => ({ ...mockCodeDiff, path }),
+    chats: async () => [mockNativeChat],
+    startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
+    sendChat: async () => {},
+    interruptChat: async () => {},
+    answerApproval: async () => {},
+    stopChat: async () => {},
+    setChatModel: async () => {},
+    setChatMode: async (chatId, mode) => ({
+      chat: { ...mockNativeChat, id: chatId, mode },
+      terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: mockNativeChat.cwd, title: 'claude', tmuxSession: null } : null,
+    }),
+    chatTerminalCommand: async () => ['claude', '--resume', mockNativeChat.agentSessionId ?? ''],
+    agentCommand: async (agent, options = {}) => {
+      if (!mockInstallPlan.agents.some((entry) => entry.agent === agent && entry.installed)) throw new CliError(`${agent} is not installed`, 1)
+      const resume = options.resume === undefined ? [] : agent === 'codex' ? ['resume', options.resume] : ['--resume', options.resume]
+      return [agent, ...resume, ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort])]
+    },
+    sessionHistory: async (_cwd, agent) => {
+      await wait(500)
+      return mockSessionHistory.filter((session) => agent === undefined || session.agent === agent)
+    },
+    followChat: async (_chatId, _since, onLine) => {
+      let index = 0
+      const timer = setInterval(() => {
+        const line = mockChatLines[index]
+        if (line === undefined) return clearInterval(timer)
+        onLine(line)
+        index += 1
+      }, 400)
+      return () => clearInterval(timer)
+    },
+    openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),
+    writeTerminal: async () => {},
+    resizeTerminal: async () => {},
+    closeTerminal: async () => {},
+    listAppTerminals: async () => [],
+    onTerminalData: async (_terminalId, onData) => {
+      onData(btoa('mock terminal\r\n$ '))
+      return () => {}
+    },
+    setTerminalEngine: async () => {},
   }
 }

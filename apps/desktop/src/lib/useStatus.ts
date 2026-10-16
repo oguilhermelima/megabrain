@@ -1,40 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { Status } from '@/api/schema'
+import { statusPolicy } from '@/lib/poll-model'
+import { reuse } from '@/lib/reuse'
 import { traySummary } from '@/lib/tray'
+import { usePoll } from '@/lib/usePoll'
 
-const visibleMs = 2_000
-const hiddenMs = 15_000
-
-/** Polls `megabrain status --json`: every `everyMs` while the window shows, every 15 s otherwise. */
-export function useStatus(everyMs = visibleMs): { status: Status | null; error: unknown } {
+/** Polls `megabrain status --json`: every `visibleMs` while the window shows, every 30 s otherwise. */
+export function useStatus(visibleMs = statusPolicy.visibleMs): { status: Status | null; error: unknown } {
   const [status, setStatus] = useState<Status | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const last = useRef<Status | null>(null)
+  const policy = useMemo(() => ({ ...statusPolicy, visibleMs }), [visibleMs])
 
-  useEffect(() => {
-    let stopped = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const tick = async () => {
+  usePoll(
+    policy,
+    async (current) => {
       try {
         const next = await api.status()
-        if (stopped) return
-        setStatus(next)
+        if (!current()) return
         setError(null)
-        const summary = traySummary(next)
+        // An unchanged answer keeps the same object: nothing renders and the tray is already right.
+        const merged = reuse(last.current, next)
+        if (merged === last.current) return
+        last.current = merged
+        setStatus(merged)
+        const summary = traySummary(merged)
         await api.setTraySummary(summary.findings, summary.lines)
       } catch (caught) {
-        if (!stopped) setError(caught)
+        if (current()) setError(caught)
       }
-      if (stopped) return
-      const visible = await api.windowVisible().catch(() => true)
-      timer = setTimeout(tick, visible ? everyMs : hiddenMs)
-    }
-    void tick()
-    return () => {
-      stopped = true
-      clearTimeout(timer)
-    }
-  }, [everyMs])
+    },
+    [],
+  )
 
   return { status, error }
 }
