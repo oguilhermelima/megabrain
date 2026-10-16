@@ -8,6 +8,7 @@ import { usageText } from "../../core/usage.js";
 import { createTmuxSession, getTmux } from "../../hosts/tmux.js";
 import { appHost, appTarget, readAppPanes, readProcessTable } from "../../core/session-origin.js";
 import { findMachineSession } from "./projects.js";
+import { readConversations, removeConversation, setConversationAlias, upsertConversation } from "../../core/conversations.js";
 import { join } from "node:path";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -42,6 +43,19 @@ async function waitForComposer(agent: string, pane: string, process: ProcessAdap
   }
 }
 
+// The registry is what the app lists: an owned session is its own entry unless a chat already owns it.
+function recordOwnedConversation(stateDir: string, key: string, cwd: string, tmux: string): void {
+  if (readConversations(stateDir).conversations[key] !== undefined) { setConversationAlias(stateDir, key, { tmux }); return; }
+  upsertConversation(stateDir, key, { owner: "app-terminal", cwd, aliases: { chatId: null, tmux, pid: null, dispatchId: null }, createdAt: new Date().toISOString(), hidden: false });
+}
+
+function releaseOwnedConversation(stateDir: string, key: string): void {
+  const entry = readConversations(stateDir).conversations[key];
+  if (entry === undefined) return;
+  if (entry.owner === "app-terminal") removeConversation(stateDir, key);
+  else setConversationAlias(stateDir, key, { tmux: null });
+}
+
 async function own(target: Readonly<{ agent: string; id: string; key: string; json: boolean }>, environment: Environment, process: ProcessAdapter, options: SessionOptions): Promise<Result<string>> {
   if (target.agent !== "claude" && target.agent !== "codex") return failed(`megabrain cannot take ownership of a ${target.agent} session`, 2);
   const agent: OwnableAgent = target.agent;
@@ -64,6 +78,7 @@ async function own(target: Readonly<{ agent: string; id: string; key: string; js
   }
   const stateDir = stateDirectory(environment);
   writeOwnedSessions(stateDir, { ...readOwnedSessions(stateDir), [target.key]: { tmuxServer: OWNED_TMUX_SERVER, tmuxSession: name, command, cwd: found.cwd, ownedAt: new Date().toISOString() } });
+  recordOwnedConversation(stateDir, target.key, found.cwd, `${OWNED_TMUX_SERVER}:${name}`);
   const report = { session: target.key, owner: "megabrain", tmuxServer: OWNED_TMUX_SERVER, tmuxSession: name, command };
   return ok(target.json ? `${JSON.stringify(report, null, 2)}\n` : `owned: ${target.key}\ntmux: -L ${OWNED_TMUX_SERVER} ${name}\n`);
 }
@@ -75,6 +90,7 @@ async function release(target: Readonly<{ key: string; json: boolean }>, environ
   if (entry === undefined) return releaseAppSession(target, environment, process);
   const { [target.key]: _released, ...remaining } = owned;
   writeOwnedSessions(stateDir, remaining);
+  releaseOwnedConversation(stateDir, target.key);
   await getTmux().killSession(entry.tmuxSession, ownedTmuxProcess(process));
   return ok(target.json ? `${JSON.stringify({ session: target.key, owner: "external" }, null, 2)}\n` : `released: ${target.key}\n`);
 }

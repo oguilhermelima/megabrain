@@ -137,27 +137,34 @@ async function grokHistory(home: string, cwd: string, cache: Cache): Promise<His
   return files.flatMap((file) => file.parsed === null ? [] : [{ agent: "grok" as const, id: file.parsed.id, title: file.parsed.title ?? "Grok", startedAt: file.parsed.startedAt, lastActivityAt: file.parsed.lastActivityAt ?? new Date(file.mtimeMs).toISOString(), messageCount: file.parsed.messageCount }]);
 }
 
+export type AgyConversation = Readonly<{ workspace: string; title: string | null; first: number; last: number }>;
+
 // agy keeps no per-folder tree; its prompt log tags every line with the workspace and conversation.
-async function agyHistory(home: string, cwd: string): Promise<HistorySession[]> {
+export async function agyConversationIndex(home: string): Promise<Map<string, AgyConversation>> {
+  const conversations = new Map<string, { workspace: string; title: string | null; first: number; last: number }>();
   let contents: string;
-  try { contents = await readFile(join(home, ".gemini", "antigravity-cli", "history.jsonl"), "utf8"); } catch { return []; }
-  const conversations = new Map<string, { title: string | null; first: number; last: number }>();
+  try { contents = await readFile(join(home, ".gemini", "antigravity-cli", "history.jsonl"), "utf8"); } catch { return conversations; }
   for (const line of contents.split("\n")) {
     try {
       const entry = record(JSON.parse(line) as unknown);
       const id = stringField(entry ?? {}, "conversationId");
       const workspace = stringField(entry ?? {}, "workspace");
       const stamp = iso(entry?.timestamp);
-      if (entry === undefined || id === undefined || workspace === undefined || stamp === null || resolve(workspace) !== cwd) continue;
+      if (entry === undefined || id === undefined || workspace === undefined || stamp === null) continue;
       const at = Date.parse(stamp);
-      const known = conversations.get(id) ?? { title: null, first: at, last: at };
+      const known = conversations.get(id) ?? { workspace: resolve(workspace), title: null, first: at, last: at };
       if (known.title === null && entry.type !== "slash_command") known.title = userTitle(entry.display) ?? null;
       known.first = Math.min(known.first, at);
       known.last = Math.max(known.last, at);
       conversations.set(id, known);
     } catch { /* Ignore partial and non-JSON lines. */ }
   }
-  return [...conversations].map(([id, value]) => ({ agent: "agy" as const, id, title: value.title ?? "Antigravity", startedAt: new Date(value.first).toISOString(), lastActivityAt: new Date(value.last).toISOString(), messageCount: null }));
+  return conversations;
+}
+
+async function agyHistory(home: string, cwd: string): Promise<HistorySession[]> {
+  return [...await agyConversationIndex(home)].filter(([, value]) => value.workspace === cwd)
+    .map(([id, value]) => ({ agent: "agy" as const, id, title: value.title ?? "Antigravity", startedAt: new Date(value.first).toISOString(), lastActivityAt: new Date(value.last).toISOString(), messageCount: null }));
 }
 
 // Past sessions started in `cwd`, newest activity first, read from each agent's own storage.

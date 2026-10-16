@@ -8,6 +8,7 @@ import { executeSession } from "../../src/cli/commands/session.js";
 import { executeSend } from "../../src/cli/commands/send.js";
 import { ownedSessionName, resumeCommand, sessionOwnerFields, OWNED_TMUX_SERVER } from "../../src/core/session-ownership.js";
 import { composerProcess } from "./composer-tmux.js";
+import { readConversations } from "../../src/core/conversations.js";
 
 const sessionId = "0f1e2d3c-aaaa-bbbb-cccc-1234567890ab";
 const key = `claude:${sessionId}`;
@@ -168,6 +169,28 @@ describe("session own and release", () => {
     expect([...tmux.sessions]).toEqual(["someone-else"]);
     const again = await executeSession(["release", key, "--json"], environment, tmux, fast);
     expect(again.kind).toBe("failed");
+  });
+});
+
+describe("session own and release keep the conversation registry", () => {
+  test("own records the session as an app terminal with its tmux alias; release drops it", async () => {
+    const tmux = fakeTmux();
+    const state = environment.MEGABRAIN_STATE_DIR as string;
+    await executeSession(["own", key, "--json"], environment, tmux, fast);
+    expect(readConversations(state).conversations[key]).toMatchObject({ owner: "app-terminal", cwd: worktree, hidden: false, aliases: { tmux: `megabrain-app:${tmuxName}` } });
+    await executeSession(["release", key, "--json"], environment, tmux, fast);
+    expect(readConversations(state).conversations[key]).toBeUndefined();
+  });
+
+  test("owning a session a chat already owns adds the alias and keeps the chat's entry", async () => {
+    const state = environment.MEGABRAIN_STATE_DIR as string;
+    const { upsertConversation } = await import("../../src/core/conversations.js");
+    upsertConversation(state, key, { owner: "app-chat", cwd: worktree, aliases: { chatId: "c1", tmux: null, pid: null, dispatchId: null }, createdAt: "2026-10-16T09:00:00.000Z", hidden: false });
+    const tmux = fakeTmux();
+    await executeSession(["own", key, "--json"], environment, tmux, fast);
+    expect(readConversations(state).conversations[key]).toMatchObject({ owner: "app-chat", aliases: { chatId: "c1", tmux: `megabrain-app:${tmuxName}` } });
+    await executeSession(["release", key, "--json"], environment, tmux, fast);
+    expect(readConversations(state).conversations[key]).toMatchObject({ owner: "app-chat", aliases: { chatId: "c1", tmux: null } });
   });
 });
 

@@ -14,9 +14,11 @@ import { listWorktrees } from "../../db/queries/worktrees.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
 import { readContextMeter } from "../../core/context-meter.js";
 import { listHiddenItems } from "../../db/queries/hidden-items.js";
-import { readOwnedSessions, sessionOwnerFields, type OwnedSessions } from "../../core/session-ownership.js";
-import { ChatStore } from "../../chat/store.js";
-import { appHost, appTarget, readAppPanes, readProcessTable, sessionOrigin, type ProcessTable, type SessionOrigin } from "../../core/session-origin.js";
+import { OWNED_TMUX_SERVER } from "../../core/session-ownership.js";
+import { promoteConversation, readConversations, sessionKey, type ConversationRegistry } from "../../core/conversations.js";
+import { agyConversationIndex, sessionHistory, type HistorySession } from "../../adapters/session-history.js";
+import { ChatStore, type Chat } from "../../chat/store.js";
+import { appHost, appTarget, readAppPanes, readProcessTable, type ProcessTable } from "../../core/session-origin.js";
 import { loadModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { readArchivedWorktrees } from "../../core/archived-worktrees.js";
@@ -25,7 +27,8 @@ import { selfInvocation } from "../../core/self-invocation.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
-type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: SessionOrigin; tmuxServer?: string; tmuxSession?: string; terminalPid?: number; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
+type ConversationOwner = "app-chat" | "app-terminal" | "dispatch" | "foreign";
+type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: "megabrain" | "external"; conversationOwner: ConversationOwner; chatId?: string | null; tmuxServer?: string; tmuxSession?: string; terminalPid?: number; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
 type GitWorktree = Readonly<{ path: string; branch: string | null; head: string | null; primary: boolean; parent: string | null }>;
 type Project = Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; missing: boolean; worktrees: readonly (GitWorktree & { pullRequest: PullRequestSummary | null; sessions: readonly ProjectSession[] })[] }>;
 type Dispatch = ReturnType<typeof listDispatches>[number];
@@ -375,15 +378,19 @@ async function codexSessions(home: string, processAdapter: ProcessAdapter, title
   await Promise.all(paths.map(async (path) => {
     try { const info = await stat(path); if (info.mtimeMs >= cutoff) eligible.push({ path, modified: info.mtimeMs }); } catch { /* A rollout may be rotated while listing. */ }
   }));
+  // A rollout is live when a codex process holds it open; the folder says nothing about which conversation runs.
   const codexPids = [...table].filter(([, entry]) => /(?:^|\/)codex(?:\s|$)|Codex\.app/.test(entry.command)).map(([pid]) => String(pid));
-  const cwdByPid = new Map<number, string>();
+  const pidByRollout = new Map<string, number>();
   if (codexPids.length > 0) {
-    const cwd = await processAdapter.run("lsof", ["-a", "-p", codexPids.join(","), "-d", "cwd", "-Fn"]);
-    if (cwd.kind === "ok") {
+    const open = await processAdapter.run("lsof", ["-p", codexPids.join(","), "-Fn"]);
+    if (open.kind === "ok") {
       let pid: number | undefined;
-      for (const line of cwd.value.stdout.split("\n")) {
+      for (const line of open.value.stdout.split("\n")) {
         if (line.startsWith("p")) pid = Number(line.slice(1));
-        else if (line.startsWith("n") && pid !== undefined) cwdByPid.set(pid, resolve(line.slice(1)));
+        else if (line.startsWith("n") && pid !== undefined) {
+          const rollout = /rollout-[^/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(line)?.[1];
+          if (rollout !== undefined) pidByRollout.set(rollout, pid);
+        }
       }
     }
   }
@@ -410,7 +417,7 @@ async function codexSessions(home: string, processAdapter: ProcessAdapter, title
           const cwd = stringField(payload ?? {}, "cwd");
           const id = stringField(payload ?? {}, "session_id", "id");
           if (cwd === undefined || id === undefined) return undefined;
-          const pid = [...cwdByPid.entries()].find(([, processCwd]) => processCwd === resolve(cwd))?.[0];
+          const pid = pidByRollout.get(id);
           const startedAt = iso(payload?.timestamp) ?? iso(value.timestamp);
           const firstUserMessage = codexUserTitle(head);
           const details = codexModelDetails(tail);
@@ -461,11 +468,27 @@ export function codexUserTitle(contents: string): string | undefined {
   return undefined;
 }
 
+// agy holds <home>/.gemini/antigravity-cli/presence/<conversation>.lock open while it runs; the prompt log names the workspace.
+async function agySessions(home: string, processAdapter: ProcessAdapter): Promise<RawSession[]> {
+  const presence = join(home, ".gemini", "antigravity-cli", "presence");
+  const locks = (await readdir(presence).catch(() => [])).flatMap((name) => /^[0-9a-f-]{36}\.lock$/i.test(name) ? [name] : []);
+  if (locks.length === 0) return [];
+  const index = await agyConversationIndex(home);
+  return (await Promise.all(locks.map(async (name): Promise<RawSession | undefined> => {
+    const id = name.slice(0, -".lock".length);
+    const known = index.get(id);
+    const holders = await processAdapter.run("lsof", ["-t", join(presence, name)]);
+    const pid = holders.kind === "ok" ? Number(holders.value.stdout.split("\n")[0]) : Number.NaN;
+    if (known === undefined || !Number.isSafeInteger(pid) || pid <= 0) return undefined;
+    return { agent: "agy", id, cwd: known.workspace, title: known.title ?? "Antigravity", status: "working", startedAt: new Date(known.first).toISOString(), lastActivityAt: new Date(known.last).toISOString(), processId: pid };
+  }))).filter((value): value is RawSession => value !== undefined);
+}
+
 export async function sessionsForMachine(home: string, processAdapter: ProcessAdapter, table?: ProcessTable, cache: ProjectCache = emptyProjectCache()): Promise<RawSession[]> {
-  const [claude, grok, codexTitles] = await Promise.all([claudeSessions(home, cache), grokSessions(home), codexSessionTitles(home)]);
+  const [claude, grok, codexTitles, agy] = await Promise.all([claudeSessions(home, cache), grokSessions(home), codexSessionTitles(home), agySessions(home, processAdapter)]);
   const codex = await codexSessions(home, processAdapter, codexTitles, table ?? await readProcessTable(processAdapter));
   const unique = new Map<string, RawSession>();
-  for (const session of [...claude, ...grok, ...codex]) unique.set(`${session.agent}:${session.id}`, session);
+  for (const session of [...claude, ...grok, ...codex, ...agy]) unique.set(`${session.agent}:${session.id}`, session);
   return [...unique.values()];
 }
 
@@ -473,42 +496,92 @@ export async function findMachineSession(home: string, processAdapter: ProcessAd
   return (await sessionsForMachine(home, processAdapter)).find((session) => session.agent === agent && session.id === id);
 }
 
-function dispatchForSession(session: RawSession, worktree: string, dispatches: readonly Dispatch[]): Dispatch | null {
-  const matches = dispatches.filter((dispatch) => dispatch.worktreePath === worktree && dispatch.agent === session.agent);
-  const exact = matches.find((dispatch) => ["agentThreadId", "agentSessionId", "grokSessionId", "codexSessionId"].some((key) => dispatch[key] === session.id));
+const DISPATCH_SESSION_KEYS = ["agentThreadId", "agentSessionId", "grokSessionId", "codexSessionId"];
+
+// A dispatch owns a session by its recorded session id, or by the session's process sitting in the agent process's tree. Never by time.
+function dispatchForSession(session: RawSession, dispatches: readonly Dispatch[], table: ProcessTable): Dispatch | null {
+  const matches = dispatches.filter((dispatch) => dispatch.agent === session.agent);
+  const exact = matches.find((dispatch) => DISPATCH_SESSION_KEYS.some((key) => dispatch[key] === session.id));
   if (exact !== undefined) return exact;
-  const started = session.startedAt === null ? Number.NaN : Date.parse(session.startedAt);
-  const timed = matches.map((dispatch) => ({ dispatch, created: typeof dispatch.createdAt === "string" ? Date.parse(dispatch.createdAt) : Number.NaN }))
-    .filter((item) => Number.isFinite(started) && Number.isFinite(item.created) && Math.abs(item.created - started) <= 10 * 60_000)
-    .sort((left, right) => Math.abs(left.created - started) - Math.abs(right.created - started));
-  return timed[0]?.dispatch ?? null;
+  const inTree = (agentPid: number): boolean => {
+    const seen = new Set<number>();
+    for (let current: number | undefined = session.processId; current !== undefined && current > 1 && !seen.has(current); current = table.get(current)?.ppid) {
+      if (current === agentPid) return true;
+      seen.add(current);
+    }
+    return false;
+  };
+  return matches.find((dispatch) => typeof dispatch.agentPid === "number" && inTree(dispatch.agentPid)) ?? null;
 }
 
-type OriginContext = Readonly<{ owned: OwnedSessions; nativeChats: ReadonlySet<string>; table: ProcessTable; appPanes: ReadonlyMap<number, string>; filter: "megabrain" | "all" }>;
+type ListContext = Readonly<{
+  registry: ConversationRegistry;
+  chats: ReadonlyMap<string, Chat>;
+  table: ProcessTable;
+  appPanes: ReadonlyMap<number, string>;
+  includeForeign: boolean;
+  home: string;
+  stateDir: string;
+}>;
 
-function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], context: OriginContext): ProjectSession[] {
-  const now = Date.now();
-  const sessions = found.filter((session) => session.cwd === resolve(path)).map((session): ProjectSession => {
-    const dispatch = dispatchForSession(session, path, dispatches);
-    const title = stringField(dispatch ?? {}, "label", "chatName") ?? session.title;
-    return {
-      agent: session.agent,
-      sessionId: `${session.agent}:${session.id}`,
-      title: title.slice(0, 80),
-      status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
-      startedAt: session.startedAt,
-      lastActivityAt: session.lastActivityAt,
-      dispatchId: dispatch?.dispatchId ?? null,
-      model: session.model ?? null,
-      contextWindow: session.contextWindow ?? null,
-      ...sessionOwnerFields(context.owned, `${session.agent}:${session.id}`, appTarget(appHost(context.table, session.processId), context.appPanes)),
-      origin: sessionOrigin({ key: `${session.agent}:${session.id}`, processId: session.processId, dispatchPid: typeof dispatch?.agentPid === "number" ? dispatch.agentPid : null, owned: context.owned, nativeChats: context.nativeChats, table: context.table }),
-    };
-  }).filter((session) => context.filter === "all" || session.origin === "megabrain");
-  const live = sessions.filter((session) => session.status !== "ended");
-  const ended = sessions.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
-    .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5);
-  return [...live, ...ended];
+const AGENT_TITLES: Readonly<Record<ProjectSession["agent"], string>> = { claude: "Claude", codex: "Codex", grok: "Grok", agy: "Antigravity" };
+const chatStatus = (chat: Chat): SessionStatus => chat.state === "working" || chat.state === "starting" ? "working" : chat.state === "waiting-approval" ? "waiting" : chat.state === "idle" ? "idle" : "ended";
+
+// The app tmux session a conversation lives in: its recorded alias, else the pane its live process runs in.
+function tmuxOf(alias: string | null, live: RawSession | undefined, context: ListContext): Pick<ProjectSession, "tmuxServer" | "tmuxSession" | "terminalPid"> {
+  const [server, session] = (alias ?? "").split(":");
+  if (server !== undefined && session !== undefined && server !== "" && session !== "") return { tmuxServer: server, tmuxSession: session };
+  const target = live === undefined ? undefined : appTarget(appHost(context.table, live.processId), context.appPanes);
+  if (target === undefined) return {};
+  return "terminalPid" in target ? { terminalPid: target.terminalPid } : { tmuxServer: OWNED_TMUX_SERVER, tmuxSession: target.tmuxSession };
+}
+
+async function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], context: ListContext): Promise<ProjectSession[]> {
+  const here = resolve(path);
+  const liveByKey = new Map(found.map((session) => [`${session.agent}:${session.id}`, session]));
+  let history: Map<string, HistorySession> | undefined;
+  const historyOf = async (key: string): Promise<HistorySession | undefined> => {
+    history ??= new Map((await sessionHistory(here, undefined, { home: context.home, stateDir: context.stateDir, limit: 1000 }).catch(() => [])).map((item) => [`${item.agent}:${item.id}`, item]));
+    return history.get(key);
+  };
+  const rows: ProjectSession[] = [];
+  for (const [key, entry] of Object.entries(context.registry.conversations)) {
+    const separator = key.indexOf(":");
+    const agent = key.slice(0, separator);
+    if (entry.hidden || resolve(entry.cwd) !== here || (agent !== "claude" && agent !== "codex" && agent !== "grok" && agent !== "agy")) continue;
+    const live = liveByKey.get(key);
+    const chat = entry.aliases.chatId === null ? undefined : context.chats.get(entry.aliases.chatId);
+    const past = live === undefined && chat === undefined ? await historyOf(key) : undefined;
+    const status: SessionStatus = live?.status ?? (chat === undefined ? "ended" : chatStatus(chat));
+    rows.push({
+      agent, sessionId: key,
+      title: (chat?.title ?? live?.title ?? past?.title ?? AGENT_TITLES[agent]).slice(0, 80),
+      status,
+      startedAt: live?.startedAt ?? chat?.createdAt ?? past?.startedAt ?? entry.createdAt,
+      lastActivityAt: live?.lastActivityAt ?? chat?.lastActivityAt ?? past?.lastActivityAt ?? entry.createdAt,
+      dispatchId: null, model: live?.model ?? chat?.model ?? null, contextWindow: live?.contextWindow ?? chat?.contextWindow ?? null,
+      owner: "megabrain", origin: "megabrain", conversationOwner: entry.owner, chatId: entry.aliases.chatId,
+      ...tmuxOf(entry.aliases.tmux, live, context),
+    });
+  }
+  if (context.includeForeign) {
+    const now = Date.now();
+    const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).map((session): ProjectSession => {
+      const dispatch = dispatchForSession(session, dispatches, context.table);
+      return {
+        agent: session.agent, sessionId: `${session.agent}:${session.id}`,
+        title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
+        status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
+        startedAt: session.startedAt, lastActivityAt: session.lastActivityAt, dispatchId: dispatch?.dispatchId ?? null,
+        model: session.model ?? null, contextWindow: session.contextWindow ?? null,
+        owner: "external", origin: "external", conversationOwner: dispatch === null ? "foreign" : "dispatch",
+      };
+    });
+    rows.push(...strangers.filter((session) => session.status !== "ended"));
+    rows.push(...strangers.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
+      .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5));
+  }
+  return rows;
 }
 
 function parseWorktrees(output: string, mainPath: string, parentByBranch: ReadonlyMap<string, string>): GitWorktree[] {
@@ -696,7 +769,24 @@ async function timedSessions(sessions: readonly ProjectSession[], home: string, 
   });
 }
 
-async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment, cache: ProjectCache, context: OriginContext): Promise<Project> {
+// A terminal conversation learns its session from the process in its own tmux pane. A dispatch worker in that pane is the dispatch's.
+function promoteTerminals(stateDir: string, registry: ConversationRegistry, found: readonly RawSession[], dispatches: readonly Dispatch[], table: ProcessTable, appPanes: ReadonlyMap<number, string>): ConversationRegistry {
+  let promoted = false;
+  for (const [key, entry] of Object.entries(registry.conversations)) {
+    const pane = key.startsWith("terminal:") ? (entry.aliases.tmux ?? "").split(":")[1] : undefined;
+    if (pane === undefined || pane === "") continue;
+    const session = found.find((candidate) => {
+      const target = appTarget(appHost(table, candidate.processId), appPanes);
+      return target !== undefined && "tmuxSession" in target && target.tmuxSession === pane && dispatchForSession(candidate, dispatches, table) === null;
+    });
+    if (session === undefined) continue;
+    promoteConversation(stateDir, key, sessionKey(session.agent, session.id));
+    promoted = true;
+  }
+  return promoted ? readConversations(stateDir) : registry;
+}
+
+async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment, cache: ProjectCache, context: ListContext): Promise<Project> {
   const checkoutPath = await realpath(repository.path).catch(() => undefined);
   if (checkoutPath === undefined) return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
   const [worktreesResult, parents, pulls] = await Promise.all([
@@ -718,7 +808,7 @@ async function repositoryProject(repository: RepositoryRecord, found: readonly R
     primary: derived?.primary ?? worktree.primary,
     parent,
     pullRequest: worktree.branch === null ? null : pulls.get(worktree.branch) ?? null,
-    sessions: await timedSessions(projectSessions(worktree.path, found, dispatches, context), home, worktree.path, environment),
+    sessions: await timedSessions(await projectSessions(worktree.path, found, dispatches, context), home, worktree.path, environment),
   }; }));
   return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: false, worktrees };
 }
@@ -745,19 +835,20 @@ export async function backfillProjectHistory(environment: Environment, processAd
 }
 
 export async function executeProjects(args: readonly string[], environment: Environment, processAdapter = createProcessAdapter()): Promise<Result<string>> {
-  const usage = "Usage: megabrain projects [--json] [--origin megabrain|all]";
+  const usage = "Usage: megabrain projects [--json] [--include-foreign] [--origin megabrain|all]";
   if (args[0] === PULL_REQUEST_REFRESH_ARGUMENT && args.length === 2) {
     await refreshRepositoryPullRequests(args[1] as string, environment, processAdapter);
     return ok("");
   }
   if (args.includes("-h") || args.includes("--help")) return ok(`${usage}\n`);
-  let filter: "megabrain" | "all" = "all";
+  let includeForeign = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") continue;
+    if (argument === "--include-foreign") { includeForeign = true; continue; }
     const value = argument === "--origin" ? args[index + 1] : argument?.startsWith("--origin=") ? argument.slice(9) : undefined;
     if (value !== "megabrain" && value !== "all") return failed(usage, 2);
-    filter = value;
+    includeForeign = value === "all";
     if (argument === "--origin") index += 1;
   }
   const backfilled = await backfillProjectHistory(environment, processAdapter);
@@ -771,11 +862,13 @@ export async function executeProjects(args: readonly string[], environment: Envi
     const cache = await readProjectCache(environment);
     const table = await readProcessTable(processAdapter);
     const found = await sessionsForMachine(home, processAdapter, table, cache);
-    const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
-    const nativeChats = new Set((existsSync(join(stateDir, "chats")) ? await new ChatStore(stateDir).list().catch(() => []) : []).flatMap((chat) => chat.agentSessionId === null ? [] : [`${chat.agent}:${chat.agentSessionId}`]));
-    // The app's tmux server is asked only when a live session runs under it.
-    const appPanes = found.some((session) => appHost(table, session.processId)?.kind === "tmux") ? await readAppPanes(processAdapter) : new Map<number, string>();
-    const context: OriginContext = { owned: readOwnedSessions(stateDir), nativeChats, table, appPanes, filter };
+    const stateDir = resolveStateDirectory(environment);
+    const chats = new Map((existsSync(join(stateDir, "chats")) ? await new ChatStore(stateDir).list().catch(() => []) : []).map((chat) => [chat.id, chat]));
+    // The app's tmux server is asked only when a live session runs under it or a terminal conversation waits for its session.
+    const registry = readConversations(stateDir);
+    const waiting = Object.keys(registry.conversations).some((key) => key.startsWith("terminal:"));
+    const appPanes = waiting || found.some((session) => appHost(table, session.processId)?.kind === "tmux") ? await readAppPanes(processAdapter) : new Map<number, string>();
+    const context: ListContext = { registry: promoteTerminals(stateDir, registry, found, dispatches, table, appPanes), chats, table, appPanes, includeForeign, home, stateDir };
     const hiddenItems = new Set(listHiddenItems(opened.value.db).map((item) => `${item.kind}:${item.path}`));
     const appearance = (await readProjectAppearance(environment)).projects;
     const archived = new Set((await readArchivedWorktrees(environment)).map((item) => `${item.repo}\0${item.branch}`));

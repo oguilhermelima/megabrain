@@ -2,6 +2,9 @@ import { scrubAgentEnvironment } from "../core/agent-env.js";
 import { randomUUID } from "node:crypto";
 import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createProcessAdapter, type ProcessAdapter } from "../adapters/proc.js";
+import { chatKey, promoteConversation, readConversations, removeConversation, sessionKey, setConversationAlias, upsertConversation, type Conversation } from "../core/conversations.js";
+import { OWNED_TMUX_SERVER, ownedTmuxProcess } from "../core/session-ownership.js";
 import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -113,6 +116,8 @@ export class ChatDaemon {
   private readonly subagents = new Map<string, Map<string, { name: string; background: boolean; ended: boolean }>>();
   /** Removed chats: late agent output must not write their record back. */
   private readonly removed = new Set<string>();
+  /** The registry key each chat was last written under, so a save only touches the file when the key changes. */
+  private readonly tracked = new Map<string, string>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private clients = 0;
   private closed = false;
@@ -126,6 +131,9 @@ export class ChatDaemon {
     if (await socketAccepts(this.stateDir, DEFAULT_CONNECT_TIMEOUT_MS)) throw new Error("chatd is already running");
     await discardStaleState(this.stateDir, { pid: true });
     await this.store.initialize();
+    // The one-time registry migration runs here, before anything is live, so it can never collect a chat chatd is using.
+    try { readConversations(this.stateDir); } catch { /* a locked registry is retried by the next write */ }
+    await this.pruneUnused();
     await this.suspendActive();
     await writeFile(chatPid(this.stateDir), `${process.pid}\n`, { mode: 0o600 });
     await chmod(chatPid(this.stateDir), 0o600);
@@ -765,6 +773,7 @@ export class ChatDaemon {
     this.outputSeen.delete(id);
     await rm(this.store.dir(id), { recursive: true, force: true });
     this.store.forget(id);
+    await this.dropConversation(id);
     return { removed: id };
   }
 
@@ -784,7 +793,7 @@ export class ChatDaemon {
       await this.save(chat);
     } else if (chat.mode === "terminal") {
       // A TUI opened without a session writes its own; adopt it so the chat resumes where the terminal left off.
-      if (chat.agentSessionId === null) chat.agentSessionId = await discoverSessionId(chat, this.environment.HOME ?? homedir(), chat.terminalSince ?? chat.createdAt);
+      if (chat.agentSessionId === null) chat.agentSessionId = await this.sessionOfTerminal(chat);
       await this.importTerminalTurns(chat);
       chat.mode = "chat";
       chat.state = "starting";
@@ -930,10 +939,69 @@ export class ChatDaemon {
       return { type: "image", path };
     }));
   }
+
+  private processes(): ProcessAdapter {
+    const base = createProcessAdapter();
+    const path = this.environment.PATH;
+    return path === undefined ? base : { ...base, run: (command, args, options) => base.run(command, args, { ...options, env: { PATH: path, ...options?.env } }) };
+  }
+
+  /** The conversation entry that belongs to this chat, wherever it is keyed. */
+  private entryOf(chatId: string): [string, Conversation] | undefined {
+    return Object.entries(readConversations(this.stateDir).conversations).find(([, entry]) => entry.aliases.chatId === chatId);
+  }
+
+  /** A chat with a turn is one conversation in the registry: keyed by its chat until the agent reports its session, then by the session. */
+  private track(chat: Chat): void {
+    if (chat.title === null && chat.agentSessionId === null && chat.mode === "chat") return;
+    try {
+      const key = chat.agentSessionId === null ? chatKey(chat.id) : sessionKey(chat.agent, chat.agentSessionId);
+      if (this.tracked.get(chat.id) === key) return;
+      const current = this.entryOf(chat.id);
+      if (current !== undefined && current[0] !== key) promoteConversation(this.stateDir, current[0], key);
+      else if (current === undefined) upsertConversation(this.stateDir, key, { owner: "app-chat", cwd: chat.cwd, aliases: { chatId: chat.id, tmux: null, pid: null, dispatchId: null }, createdAt: chat.createdAt, hidden: false });
+      this.tracked.set(chat.id, key);
+    } catch { /* the registry is a listing aid: a locked file must not fail a turn */ }
+  }
+
+  /** Removing a chat also ends the app terminal its terminal mode left on the app's tmux server, and drops its entry. */
+  private async dropConversation(chatId: string): Promise<void> {
+    this.tracked.delete(chatId);
+    const found = this.entryOf(chatId);
+    if (found === undefined) return;
+    const [key, entry] = found;
+    const [server, session] = (entry.aliases.tmux ?? "").split(":");
+    if (server === OWNED_TMUX_SERVER && session !== undefined && session !== "") await ownedTmuxProcess(this.processes()).run("tmux", ["kill-session", "-t", `=${session}`]);
+    removeConversation(this.stateDir, key);
+  }
+
+  /** Chats that never had a turn are placeholders: nothing the person made, so a restart collects them. */
+  private async pruneUnused(): Promise<void> {
+    for (const chat of await this.store.list()) {
+      if (chat.mode !== "chat" || chat.agentSessionId !== null || chat.title !== null) continue;
+      if ((await this.store.events(chat.id)).some((line) => line.event?.kind === "user")) continue;
+      await rm(this.store.dir(chat.id), { recursive: true, force: true });
+      this.store.forget(chat.id);
+    }
+  }
+
+  /** The session of the TUI running in this chat's own pane; no pane, no answer. */
+  private async sessionOfTerminal(chat: Chat): Promise<string | null> {
+    const alias = this.entryOf(chat.id)?.[1].aliases.tmux ?? null;
+    const [server, session] = (alias ?? "").split(":");
+    if (server !== OWNED_TMUX_SERVER || session === undefined || session === "") return null;
+    const processes = this.processes();
+    const panes = await ownedTmuxProcess(processes).run("tmux", ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_pid}"]);
+    const panePids = panes.kind === "ok" ? panes.value.stdout.split("\n").map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 1) : [];
+    const found = await discoverSessionId(chat, this.environment.HOME ?? homedir(), panePids, processes);
+    if (found !== null) try { promoteConversation(this.stateDir, this.entryOf(chat.id)?.[0] ?? chatKey(chat.id), sessionKey(chat.agent, found)); } catch { /* listing aid */ }
+    return found;
+  }
   /** Persists the chat and, when its state moved, publishes the new state to followers and history. */
   private async save(chat: Chat): Promise<void> {
     if (this.removed.has(chat.id)) return;
     await this.store.put(chat);
+    this.track(chat);
     if (this.publishedState.get(chat.id) === chat.state) return;
     this.publishedState.set(chat.id, chat.state);
     if (chat.state === "working") { if (!this.turnStarted.has(chat.id)) this.turnStarted.set(chat.id, new Date().toISOString()); }

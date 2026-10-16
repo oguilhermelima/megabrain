@@ -22,7 +22,7 @@ let project = "";
 let env: NodeJS.ProcessEnv;
 let children: ChildProcess[] = [];
 
-type Listed = { sessionId: string; origin?: string; owner?: string; terminalPid?: number | null; tmuxServer?: string | null; tmuxSession?: string | null };
+type Listed = { sessionId: string; origin?: string; conversationOwner?: string; owner?: string; terminalPid?: number | null; tmuxServer?: string | null; tmuxSession?: string | null };
 type Call = { command: string; args: readonly string[] };
 
 beforeEach(() => {
@@ -77,7 +77,7 @@ function registry(pid: number, entry: Record<string, unknown>): void {
 }
 
 async function listed(machine: ProcessAdapter): Promise<Map<string, Listed>> {
-  const result = await route(["projects", "--json"], { environment: env, processAdapter: machine });
+  const result = await route(["projects", "--json", "--include-foreign"], { environment: env, processAdapter: machine });
   if (result.kind !== "ok") throw new Error(result.error);
   const parsed = JSON.parse(result.value) as Array<{ worktrees: Array<{ sessions: Listed[] }> }>;
   return new Map(parsed.flatMap((entry) => entry.worktrees.flatMap((tree) => tree.sessions)).map((session) => [session.sessionId, session]));
@@ -108,16 +108,14 @@ async function scenario(): Promise<Scenario> {
 }
 
 describe("sessions the desktop app launched", () => {
-  test("a Claude TUI in a native app terminal is the app's own, tied to the terminal's process", async () => {
-    const { machine, native } = await scenario();
-    const session = (await listed(machine)).get(`claude:${CAPTURED_ID}`);
-    expect(session).toMatchObject({ origin: "megabrain", owner: "megabrain", terminalPid: native });
+  test("a Claude TUI in a native app terminal that nobody registered is not the app's conversation", async () => {
+    const { machine } = await scenario();
+    expect((await listed(machine)).get(`claude:${CAPTURED_ID}`)).toMatchObject({ origin: "external", owner: "external", conversationOwner: "foreign" });
   });
 
-  test("one in an app tmux terminal is the app's own, tied to its tmux session", async () => {
+  test("one in an app tmux terminal that nobody registered is not either", async () => {
     const { machine } = await scenario();
-    const session = (await listed(machine)).get("claude:app-tmux");
-    expect(session).toMatchObject({ origin: "megabrain", owner: "megabrain", tmuxServer: "megabrain-app", tmuxSession: "mb-app-term-7" });
+    expect((await listed(machine)).get("claude:app-tmux")).toMatchObject({ origin: "external", owner: "external", conversationOwner: "foreign" });
   });
 
   test("a session opened in a plain terminal stays external", async () => {

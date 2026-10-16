@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ChatDaemon } from "../../src/chat/daemon.js";
-import { claudeLogPath } from "../../src/chat/session-log.js";
+import { chatKey, upsertConversation } from "../../src/core/conversations.js";
 import { ChatStore, type Chat } from "../../src/chat/store.js";
 
 const directories: string[] = [];
@@ -101,16 +101,20 @@ describe("a chat with no session id yet", () => {
     expect(command[0]).toBe("claude");
   });
 
-  test("the session id the TUI wrote is recorded when switching back", async () => {
+  test("the session id of the TUI in the chat's own pane is recorded when switching back", async () => {
     const env = sandbox();
-    const daemon = await daemonWith(env, { agentSessionId: null, state: "idle" });
-    await toTerminal(daemon);
-    const path = claudeLogPath(env.root, env.cwd, "fresh-tui-session");
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, "");
-    const later = new Date(Date.now() + 5000);
-    utimesSync(path, later, later);
-    await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
-    expect((await daemon.store.get(ID))?.agentSessionId).toBe("fresh-tui-session");
+    const sleeper = Bun.spawn(["sleep", "60"]);
+    try {
+      writeFileSync(join(env.bin, "tmux"), `#!${process.execPath}\nif (process.argv.includes("list-panes")) process.stdout.write(${JSON.stringify(String(process.pid))} + "\\n");\n`);
+      chmodSync(join(env.bin, "tmux"), 0o700);
+      upsertConversation(env.state, chatKey(ID), { owner: "app-chat", cwd: env.cwd, aliases: { chatId: ID, tmux: "megabrain-app:mb-app-ccbf5391", pid: null, dispatchId: null }, createdAt: "2026-10-16T09:00:00.000Z", hidden: false });
+      const daemon = await daemonWith(env, { agentSessionId: null, state: "idle" });
+      await toTerminal(daemon);
+      const registry = join(env.root, ".claude", "sessions");
+      mkdirSync(registry, { recursive: true });
+      writeFileSync(join(registry, `${sleeper.pid}.json`), JSON.stringify({ pid: sleeper.pid, sessionId: "fresh-tui-session", cwd: env.cwd, status: "idle" }));
+      await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
+      expect((await daemon.store.get(ID))?.agentSessionId).toBe("fresh-tui-session");
+    } finally { sleeper.kill(); }
   });
 });

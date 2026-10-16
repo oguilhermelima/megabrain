@@ -1,5 +1,7 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import type { ProcessAdapter } from "../adapters/proc.js";
+import { readProcessTable } from "../core/session-origin.js";
 import type { Chat, ChatEvent } from "./store.js";
 import { claudeHandBack, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type SubagentEnd } from "./subagents.js";
 
@@ -220,31 +222,42 @@ export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agent
   return withSubagents(main, chat.agent === "claude" ? await claudeSubagentTurns(path, main) : await codexSubagentTurns(home, main));
 }
 
-/** The session a terminal TUI started on its own: the newest log in this chat's cwd written after `since`, or null. */
-export async function discoverSessionId(chat: Pick<Chat, "agent" | "cwd">, home: string, since: string): Promise<string | null> {
-  const after = Date.parse(since);
-  const newest = async (root: string, accept: (name: string) => boolean): Promise<string[]> => {
-    try {
-      const found: { name: string; at: number }[] = [];
-      for (const name of await readdir(root, { recursive: true })) {
-        if (!accept(name)) continue;
-        const at = (await stat(join(root, name))).mtimeMs;
-        if (at > after) found.push({ name, at });
-      }
-      return found.sort((a, b) => b.at - a.at).map((item) => item.name);
-    } catch { return []; }
+/**
+ * The session a terminal TUI started on its own, proved by process ancestry: the agent whose process descends from
+ * one of the chat's own pane processes. A log merely being the newest in the folder proves nothing (another agent
+ * may write there), so with no pane there is no answer.
+ */
+export async function discoverSessionId(chat: Pick<Chat, "agent" | "cwd">, home: string, panePids: readonly number[], processAdapter: ProcessAdapter): Promise<string | null> {
+  if (panePids.length === 0) return null;
+  const table = await readProcessTable(processAdapter);
+  const inPane = (pid: number): boolean => {
+    const seen = new Set<number>();
+    for (let current: number | undefined = pid; current !== undefined && current > 1 && !seen.has(current); current = table.get(current)?.ppid) {
+      if (panePids.includes(current)) return true;
+      seen.add(current);
+    }
+    return false;
   };
   if (chat.agent === "claude") {
-    const root = join(home, ".claude", "projects", chat.cwd.replace(/[^A-Za-z0-9]/g, "-"));
-    const [name] = await newest(root, (entry) => entry.endsWith(".jsonl") && !entry.includes("/"));
-    return name === undefined ? null : name.slice(0, -".jsonl".length);
+    const directory = join(home, ".claude", "sessions");
+    let names: string[];
+    try { names = await readdir(directory); } catch { return null; }
+    for (const name of names.filter((entry) => /^\d+\.json$/.test(entry))) {
+      try {
+        const entry = object(JSON.parse(await readFile(join(directory, name), "utf8")));
+        const pid = Number(name.slice(0, -".json".length));
+        if (entry.pid === pid && text(entry.cwd) === chat.cwd && text(entry.sessionId) !== "" && table.has(pid) && inPane(pid)) return text(entry.sessionId);
+      } catch { /* unreadable registry entry: try the next */ }
+    }
+    return null;
   }
-  const root = join(home, ".codex", "sessions");
-  for (const name of await newest(root, (entry) => entry.endsWith(".jsonl") && (entry.split("/").at(-1) ?? "").startsWith("rollout-"))) {
-    try {
-      const meta = object(object(JSON.parse((await readFile(join(root, name), "utf8")).split("\n")[0] ?? "")).payload);
-      if (text(meta.cwd) === chat.cwd && text(meta.id) !== "") return text(meta.id);
-    } catch { /* unreadable log: try the next */ }
+  const codexPids = [...table].filter(([pid, entry]) => /(?:^|\/)codex(?:\s|$)/.test(entry.command) && inPane(pid)).map(([pid]) => String(pid));
+  if (codexPids.length === 0) return null;
+  const open = await processAdapter.run("lsof", ["-p", codexPids.join(","), "-Fn"]);
+  if (open.kind !== "ok") return null;
+  for (const line of open.value.stdout.split("\n")) {
+    const match = /^n.*\/rollout-[^/]*?-([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/.exec(line);
+    if (match?.[1] !== undefined) return match[1];
   }
   return null;
 }

@@ -68,12 +68,12 @@ describe("project registry", () => {
     await cli("repo", "add", main);
     expect((await cli("repo", "hide", main)).kind).toBe("ok");
     expect((await cli("worktree", "hide", tree)).kind).toBe("ok");
-    let project = json<Array<{ hidden: boolean; worktrees: Array<{ path: string; hidden: boolean }> }>>(await cli("projects", "--json"))[0];
+    let project = json<Array<{ hidden: boolean; worktrees: Array<{ path: string; hidden: boolean }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project).toMatchObject({ hidden: true });
     expect(project?.worktrees.find((item) => item.path === tree)).toMatchObject({ hidden: true });
     await cli("repo", "unhide", main);
     await cli("worktree", "unhide", tree);
-    project = json<Array<{ hidden: boolean; worktrees: Array<{ path: string; hidden: boolean }> }>>(await cli("projects", "--json"))[0];
+    project = json<Array<{ hidden: boolean; worktrees: Array<{ path: string; hidden: boolean }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project).toMatchObject({ hidden: false });
     expect(project?.worktrees.find((item) => item.path === tree)).toMatchObject({ hidden: false });
   });
@@ -88,15 +88,15 @@ describe("project registry", () => {
     mkdirSync(transcript, { recursive: true });
     writeFileSync(join(transcript, "timer-session.jsonl"), `${JSON.stringify({ type: "assistant", message: { model: "claude-sonnet", usage: { input_tokens: 210000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })}\n`);
     await cli("repo", "add", path);
-    const withDefault = json<Array<{ worktrees: Array<{ sessions: Array<{ contextTokens: number; cacheExpiresAt: string; idleCompactAt: string }> }> }>>(await cli("projects", "--json"))[0]?.worktrees[0]?.sessions[0];
+    const withDefault = json<Array<{ worktrees: Array<{ sessions: Array<{ contextTokens: number; cacheExpiresAt: string; idleCompactAt: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0]?.worktrees[0]?.sessions[0];
     expect(withDefault?.contextTokens).toBe(210000);
     expect(Date.parse(withDefault?.cacheExpiresAt ?? "") - Date.parse(activity)).toBe(60 * 60 * 1000);
     expect(Date.parse(withDefault?.idleCompactAt ?? "") - Date.parse(activity)).toBe(54 * 60 * 1000);
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ idleCompaction: false }));
-    const disabled = json<Array<{ worktrees: Array<{ sessions: Array<{ idleCompactAt: string | null }> }> }>>(await cli("projects", "--json"))[0]?.worktrees[0]?.sessions[0];
+    const disabled = json<Array<{ worktrees: Array<{ sessions: Array<{ idleCompactAt: string | null }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0]?.worktrees[0]?.sessions[0];
     expect(disabled?.idleCompactAt).toBeNull();
     env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS = "220000";
-    const aboveMin = json<Array<{ worktrees: Array<{ sessions: Array<{ idleCompactAt: string | null }> }> }>>(await cli("projects", "--json"))[0]?.worktrees[0]?.sessions[0];
+    const aboveMin = json<Array<{ worktrees: Array<{ sessions: Array<{ idleCompactAt: string | null }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0]?.worktrees[0]?.sessions[0];
     expect(aboveMin?.idleCompactAt).toBeNull();
   });
 
@@ -119,7 +119,7 @@ describe("project registry", () => {
     }
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "claude-haiku-5-5[1m]" }));
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; model: string | null; contextWindow: number | null }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; model: string | null; contextWindow: number | null }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     const actual = project?.worktrees[0]?.sessions;
     expect(actual?.find((session) => session.sessionId === "claude:usage-proof")).toMatchObject({ model: "claude-sonnet-5-5", contextWindow: 1000000 });
     expect(actual?.find((session) => session.sessionId === "claude:marker-proof")).toMatchObject({ model: "claude-opus-5-5[1m]", contextWindow: 1000000 });
@@ -146,7 +146,7 @@ describe("project registry", () => {
       writeFileSync(join(transcript, `${session.id}.jsonl`), `${session.lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
     }
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; contextTokens: number; contextWindow: number | null }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; contextTokens: number; contextWindow: number | null }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     const actual = project?.worktrees[0]?.sessions;
     expect(actual?.find((session) => session.sessionId === "claude:recorded")).toMatchObject({ contextTokens: 15000, contextWindow: 1000000 });
     expect(actual?.find((session) => session.sessionId === "claude:unrecorded")).toMatchObject({ contextTokens: 0, contextWindow: 1000000 });
@@ -198,9 +198,9 @@ describe("project registry", () => {
     try {
       opened.value.db.run("INSERT INTO dispatches (id,state,worktree_path,chat_name,extra) VALUES (?,?,?,?,?)", ["dispatch-history", "done", path, "history", "{\"$present\":[\"dispatchId\",\"state\",\"worktreePath\"]}"]);
     } finally { opened.value.close(); }
-    const projects = json<Array<{ path: string }>>(await cli("projects", "--json"));
+    const projects = json<Array<{ path: string }>>(await cli("projects", "--json", "--include-foreign"));
     expect(projects.map((project) => project.path)).toContain(path);
-    expect(json<Array<{ path: string }>>(await cli("projects", "--json"))).toHaveLength(projects.length);
+    expect(json<Array<{ path: string }>>(await cli("projects", "--json", "--include-foreign"))).toHaveLength(projects.length);
   });
 
   test("projects put the main checkout first and sort branches with detached HEAD support", async () => {
@@ -212,7 +212,7 @@ describe("project registry", () => {
     await git(main, "worktree", "add", "-b", "alpha", aTree);
     await git(main, "worktree", "add", "--detach", detached);
     await cli("repo", "add", main);
-    const project = json<Array<{ worktrees: Array<{ path: string; branch: string | null; primary: boolean }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ path: string; branch: string | null; primary: boolean }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project?.worktrees.map(({ path }) => path)).toEqual([main, aTree, zTree, detached]);
     expect(project?.worktrees[0]?.primary).toBe(true);
     expect(project?.worktrees.find((tree) => tree.path === detached)?.branch).toBeNull();
@@ -222,7 +222,7 @@ describe("project registry", () => {
     const path = await repository("vanished");
     await cli("repo", "add", path);
     rmSync(path, { recursive: true, force: true });
-    const project = json<Array<{ missing: boolean; worktrees: unknown[] }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ missing: boolean; worktrees: unknown[] }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project).toMatchObject({ missing: true, worktrees: [] });
   });
 
@@ -241,7 +241,7 @@ describe("project registry", () => {
     mkdirSync(grok, { recursive: true });
     writeFileSync(join(grok, "active_sessions.json"), JSON.stringify([{ session_id: "grok-1", cwd: path, pid: process.pid, status: "busy", started_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(), title: "Grok session" }]));
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ agent: string; status: string; title: string; sessionId: string }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ agent: string; status: string; title: string; sessionId: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     const found = project?.worktrees[0]?.sessions ?? [];
     expect(found.filter((session) => session.agent === "claude")).toHaveLength(5);
     expect(found.some((session) => session.agent === "grok" && session.sessionId === "grok:grok-1")).toBe(true);
@@ -258,10 +258,10 @@ describe("project registry", () => {
     const opened = guardedOpenDatabase(env);
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", ["dispatch-1", "running", "claude", path, "Agent session", startedAt, startedAt, "{\"$present\":[\"dispatchId\",\"state\",\"agent\",\"worktreePath\",\"createdAt\"]}"]);
+      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,agent_thread_id,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?,?)", ["dispatch-1", "running", "claude", path, "Agent session", "dispatch-session-id", startedAt, startedAt, "{\"$present\":[\"dispatchId\",\"state\",\"agent\",\"worktreePath\",\"agentThreadId\",\"createdAt\"]}"]);
     } finally { opened.value.close(); }
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ dispatchId: string | null }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ dispatchId: string | null }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.dispatchId).toBe("dispatch-1");
   });
 
@@ -277,13 +277,13 @@ describe("project registry", () => {
     const opened = guardedOpenDatabase(env);
     if (opened.kind !== "ok") throw new Error(opened.error);
     try {
-      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?)", [
-        "dispatch-title", "running", "claude", path, "Título do despacho", startedAt, startedAt,
-        JSON.stringify({ label: "Título do despacho", "$present": ["dispatchId", "state", "agent", "worktreePath", "createdAt"] }),
+      opened.value.db.run("INSERT INTO dispatches (id,state,agent,worktree_path,chat_name,agent_thread_id,created_at,updated_at,extra) VALUES (?,?,?,?,?,?,?,?,?)", [
+        "dispatch-title", "running", "claude", path, "Título do despacho", "title-session", startedAt, startedAt,
+        JSON.stringify({ label: "Título do despacho", "$present": ["dispatchId", "state", "agent", "worktreePath", "agentThreadId", "createdAt"] }),
       ]);
     } finally { opened.value.close(); }
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Título do despacho");
   });
 
@@ -302,7 +302,7 @@ describe("project registry", () => {
     writeFileSync(join(sessions, "900002.json"), JSON.stringify({ pid: 900002, sessionId: "claude-user-title", cwd: path, startedAt, name: "auto-e7", nameSource: "derived", status: "idle", updatedAt: startedAt }));
     writeFileSync(join(project, "claude-user-title.jsonl"), `${userMessage}\n`);
     await cli("repo", "add", path);
-    const result = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; title: string }> }> }>>(await cli("projects", "--json"))[0];
+    const result = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string; title: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     const titles = new Map(result?.worktrees[0]?.sessions.map(({ sessionId, title }) => [sessionId, title]));
     expect(titles.get("claude:claude-ai-title")).toBe("Atualize o registro do projeto");
     expect(titles.get("claude:claude-user-title")).toBe("Primeiro pedido com espaços");
@@ -319,7 +319,7 @@ describe("project registry", () => {
     const index = (await fixture.readFile(join(import.meta.dir, "../fixtures/projects/codex-session-index.jsonl"), "utf8")).trim();
     writeFileSync(join(home, ".codex", "session_index.jsonl"), `${index.replaceAll("redacted-session-id", "codex-title-session")}\n${JSON.stringify({ id: "codex-title-session", thread_name: "Nome final do Codex", updated_at: startedAt })}\n`);
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Nome final do Codex");
   });
 
@@ -339,7 +339,7 @@ describe("project registry", () => {
     const stamp = new Date(Date.now() - 72 * hours).toISOString();
     writeFileSync(join(claude, "999998.json"), JSON.stringify({ pid: 999998, sessionId: "claude-3d", cwd: path, startedAt: stamp, name: "Claude three days", status: "idle", updatedAt: stamp }));
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ sessionId: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     const ids = (project?.worktrees[0]?.sessions ?? []).map((session) => session.sessionId).sort();
     expect(ids).toEqual(["codex:codex-3d", "codex:codex-6d"]);
   });
@@ -351,7 +351,7 @@ describe("project registry", () => {
     const startedAt = new Date().toISOString();
     writeFileSync(join(sessions, "900003.json"), JSON.stringify({ pid: 900003, sessionId: "untitled", cwd: path, startedAt, name: "slug-a1", nameSource: "derived", status: "idle", updatedAt: startedAt }));
     await cli("repo", "add", path);
-    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json"))[0];
+    const project = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await cli("projects", "--json", "--include-foreign"))[0];
     expect(project?.worktrees[0]?.sessions[0]?.title).toBe("Claude");
   });
 
@@ -448,12 +448,12 @@ describe("project registry", () => {
       startDetached: real.startDetached,
       invocationCount: real.invocationCount,
     };
-    const first = (await route(["projects", "--json"], { environment: env, processAdapter: adapter }));
-    const second = (await route(["projects", "--json"], { environment: env, processAdapter: adapter }));
+    const first = (await route(["projects", "--json", "--include-foreign"], { environment: env, processAdapter: adapter }));
+    const second = (await route(["projects", "--json", "--include-foreign"], { environment: env, processAdapter: adapter }));
     expect(second).toEqual(first);
     expect(callCounts.get("worktree")).toBe(2);
     writeFileSync(sessionFile, JSON.stringify({ pid: 900004, sessionId: "cached-session", cwd: path, startedAt, name: "Changed", nameSource: "user", status: "idle", updatedAt: startedAt }));
-    const third = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await route(["projects", "--json"], { environment: env, processAdapter: adapter }))[0];
+    const third = json<Array<{ worktrees: Array<{ sessions: Array<{ title: string }> }> }>>(await route(["projects", "--json", "--include-foreign"], { environment: env, processAdapter: adapter }))[0];
     expect(third?.worktrees[0]?.sessions[0]?.title).toBe("Changed");
     expect(callCounts.get("worktree")).toBe(3);
   });

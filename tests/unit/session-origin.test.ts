@@ -95,25 +95,29 @@ async function scenario(): Promise<ProcessAdapter> {
 }
 
 describe("session origin", () => {
-  test("each session reports where it was opened", async () => {
-    const origins = new Map((await listed(await scenario())).map((session) => [session.sessionId, session.origin]));
+  test("only a conversation megabrain recorded is its own; where a process was opened decides nothing", async () => {
+    const origins = new Map((await listed(await scenario(), "--include-foreign")).map((session) => [session.sessionId, session.origin]));
     expect(Object.fromEntries(origins)).toEqual({
-      "claude:app-terminal": "megabrain",
-      "claude:app-tmux": "megabrain",
+      "claude:app-terminal": "external",
+      "claude:app-tmux": "external",
       "claude:orca-child": "external",
       "claude:plain-terminal": "external",
-      "claude:owned-record": "megabrain",
+      "claude:owned-record": "external",
       "claude:native-chat": "megabrain",
       "claude:ended-plain": "external",
     });
   });
 
-  test("--origin megabrain lists only sessions megabrain started", async () => {
+  test("by default, and with --origin megabrain, only conversations megabrain owns are listed", async () => {
     const table = await scenario();
-    expect((await listed(table, "--origin", "megabrain")).map((session) => session.sessionId).sort())
-      .toEqual(["claude:app-terminal", "claude:app-tmux", "claude:native-chat", "claude:owned-record"]);
+    expect((await listed(table)).map((session) => session.sessionId)).toEqual(["claude:native-chat"]);
+    expect((await listed(table, "--origin", "megabrain")).map((session) => session.sessionId)).toEqual(["claude:native-chat"]);
+  });
+
+  test("--origin all and --include-foreign list every session on the machine", async () => {
+    const table = await scenario();
     expect(await listed(table, "--origin", "all")).toHaveLength(7);
-    expect(await listed(table)).toHaveLength(7);
+    expect(await listed(table, "--include-foreign")).toHaveLength(7);
   });
 
   test("--origin rejects an unknown value", async () => {
