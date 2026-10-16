@@ -326,6 +326,20 @@ describe('optimistic messages', () => {
     expect(state.events.map((item) => item.id)).toEqual(['u1'])
   })
 
+  test('a message with one image shows it once while pending and once after the echo', () => {
+    const image = { path: '/tmp/a/shot.png' }
+    const parts = [{ type: 'image' as const, path: image.path }, { type: 'text' as const, text: 'teste' }]
+    let state = queueOutgoing(followState({ ...chat, state: 'idle' }), { ...sent, images: [image], parts })
+    const pending = liveTail(state)[0]?.event
+    expect(pending?.images).toEqual([image])
+    expect(pending?.parts).toEqual(parts)
+    state = applyLine(state, line('1', { event: { id: 'u1', at: null, kind: 'user', text: 'teste', images: [image], parts } }))
+    expect(liveTail(state)).toEqual([])
+    const users = state.events.filter((item) => item.kind === 'user')
+    expect(users).toHaveLength(1)
+    expect(users[0]?.images).toEqual([image])
+  })
+
   test('the echo confirms the message with the same text, not just the oldest', () => {
     let state = followState({ ...chat, state: 'idle' })
     state = queueOutgoing(state, { id: 'out-1', text: 'first', sentAt: '2026-10-15T12:00:00Z' })

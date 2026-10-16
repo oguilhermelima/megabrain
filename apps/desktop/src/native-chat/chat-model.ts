@@ -1,5 +1,5 @@
 import type { LiveRow } from '@/chat/conversation-model'
-import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatStateEvent, type NativeChat, type ProjectSession, type TranscriptEvent, type TranscriptImage } from '@/api/schema'
+import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatStateEvent, type NativeChat, type MessagePart, type ProjectSession, type TranscriptEvent, type TranscriptImage } from '@/api/schema'
 
 // Pure logic for native chats: folding the lines of megabrain chat events into what the view shows,
 // which approval waits for an answer, when the conversation may move to the terminal, and where
@@ -22,6 +22,8 @@ export interface Outgoing {
   sentAt: string
   /** The images it carries, shown in the bubble before the chat echoes them. */
   images?: TranscriptImage[]
+  /** Its text and images in order, so the bubble places each image as the echo will. */
+  parts?: MessagePart[]
   order?: number
 }
 
@@ -130,7 +132,7 @@ export function dropOutgoing(state: FollowState, id: string): FollowState {
 export function liveTail(state: FollowState): LiveRow[] {
   const rows: { order: number; item: LiveRow }[] = [
     ...state.drafts.map((draft) => ({ order: draft.order, item: { event: { id: `draft-${draft.messageId}`, at: null, kind: draft.stream, text: draft.text, messageId: draft.messageId }, streaming: true } })),
-    ...state.outgoing.map((message) => ({ order: message.order ?? 0, item: { event: { id: `outgoing-${message.id}`, at: message.sentAt, kind: 'user' as const, text: message.text, ...(message.images === undefined ? {} : { images: message.images }) }, pending: true } })),
+    ...state.outgoing.map((message) => ({ order: message.order ?? 0, item: { event: { id: `outgoing-${message.id}`, at: message.sentAt, kind: 'user' as const, text: message.text, ...(message.images === undefined ? {} : { images: message.images }), ...(message.parts === undefined ? {} : { parts: message.parts }) }, pending: true } })),
   ]
   return rows.sort((left, right) => left.order - right.order).map((row) => row.item)
 }

@@ -34,7 +34,7 @@ function UserMessage({ event, pending = false }: { event: TranscriptEvent; pendi
   return (
     <li className="flex justify-end">
       <div onContextMenu={markMessage(event.text)} title={pending ? 'Sending…' : undefined} className={`min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100 transition-opacity ${pending ? 'opacity-70' : ''}`}>
-        <UserMessageBody text={event.text} images={event.images} />
+        <UserMessageBody text={event.text} images={event.images} parts={event.parts} />
       </div>
     </li>
   )

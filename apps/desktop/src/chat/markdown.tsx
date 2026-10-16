@@ -2,7 +2,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import type { AnchorHTMLAttributes } from 'react'
+import type { AnchorHTMLAttributes, ReactNode } from 'react'
 import { api } from '@/api'
 import { Linked } from '@/chat/path-links'
 import { openableUrl } from '@/lib/external'
@@ -98,10 +98,24 @@ const components = {
     props.type === 'checkbox' ? <input {...props} disabled className="accent-accent" /> : <input {...props} />,
 }
 
-export function MarkdownText({ text, className = '' }: { text: string; className?: string }) {
+// A sent message's image slots (user-images.ts imageSlot): a span whose data-image survives sanitizing.
+const imageSlotSchema = { ...defaultSchema, attributes: { ...defaultSchema.attributes, span: [...(defaultSchema.attributes?.span ?? []), 'dataImage'] } }
+
+/** Markdown; with `image`, each image slot in the text renders as what it returns for that image's index. */
+export function MarkdownText({ text, className = '', image }: { text: string; className?: string; image?: (index: number) => ReactNode }) {
+  const slotted =
+    image === undefined
+      ? components
+      : {
+          ...components,
+          span: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<'span'> & { node?: unknown; 'data-image'?: string }) => {
+            const index = props['data-image'] === undefined ? Number.NaN : Number(props['data-image'])
+            return Number.isInteger(index) ? image(index) : <span {...props} />
+          },
+        }
   return (
     <div className={`space-y-1.5 text-[14px] ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, defaultSchema]]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, image === undefined ? defaultSchema : imageSlotSchema]]} components={slotted}>
         {text}
       </ReactMarkdown>
     </div>

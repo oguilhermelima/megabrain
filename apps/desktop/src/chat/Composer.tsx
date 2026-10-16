@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '@/api'
@@ -851,6 +851,14 @@ export function Composer({
       .finally(() => setSending(false))
   }
 
+  /** The browser edited the box in place; a chip it brought back while that chip was already there is taken out again. */
+  const onInput = (event: FormEvent<HTMLDivElement>) => {
+    const element = event.currentTarget
+    const next = readDraft(element)
+    if (element.querySelectorAll('[data-token]').length > tokenIds(next).length) apply(next, Math.min(selection()[1], draftLength(next)))
+    else changed(next)
+  }
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing) return
     if (
@@ -928,7 +936,7 @@ export function Composer({
               aria-disabled={disabled}
               aria-placeholder={placeholder}
               contentEditable={disabled ? false : 'plaintext-only'}
-              onInput={(event) => changed(readDraft(event.currentTarget))}
+              onInput={onInput}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               onContextMenu={onContextMenu}

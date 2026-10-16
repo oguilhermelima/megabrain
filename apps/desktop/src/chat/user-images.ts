@@ -1,37 +1,40 @@
-import type { TranscriptImage } from '@/api/schema'
-
-/** A run of the message's text, or a row of its images by index into the event's images. */
-export type UserSegment = { kind: 'text'; text: string } | { kind: 'images'; images: number[] }
+import type { MessagePart, TranscriptImage } from '@/api/schema'
 
 const marker = /\[Image #\d+\]/g
 
+/** Where an image's chip goes in a message's markdown; MessageImages renders the span as the chip. */
+export function imageSlot(index: number): string {
+  return `<span data-image="${index}"></span>`
+}
+
+/** An image's chip label: numbered within its message, as the composer labels its chips. */
+export function imageLabel(index: number): string {
+  return `Image ${index + 1}`
+}
+
 /**
- * Where each image of a sent message goes. The text keeps an [Image #N] marker where each image was;
- * N counts across the whole session, so the k-th marker takes the k-th image. Markers with only
- * whitespace between them share a row, images beyond the markers go in a row above the text, and a
- * marker with no image left stays as text.
+ * A sent message as markdown with a slot for each image's chip. A native chat's event records its parts in order,
+ * so the k-th image part takes the k-th image where the composer placed it. An imported message keeps an
+ * [Image #N] marker where each image was instead; N counts across the whole session, so the k-th marker takes the
+ * k-th image, and a marker with no image left stays as text. Images with no place go before the text, in a
+ * paragraph of their own.
  */
-export function placeImages(text: string, images: readonly TranscriptImage[] | undefined): UserSegment[] {
+export function userMarkdown(text: string, images: readonly TranscriptImage[] | undefined, parts?: readonly MessagePart[]): string {
   const count = images?.length ?? 0
-  const segments: UserSegment[] = []
+  if (count === 0) return text
   let used = 0
-  let from = 0
-  for (const match of text.matchAll(marker)) {
-    if (used === count) break
-    const before = text.slice(from, match.index)
-    const last = segments.at(-1)
-    if (last?.kind === 'images' && before.trim() === '') last.images.push(used)
-    else {
-      if (before.trim() !== '') segments.push({ kind: 'text', text: before })
-      segments.push({ kind: 'images', images: [used] })
+  let body = ''
+  if (parts !== undefined && parts.some((part) => part.type === 'image')) {
+    for (const part of parts) {
+      if (part.type === 'text') body += part.text
+      else if (used < count) body += imageSlot(used++)
     }
-    used += 1
-    from = match.index + match[0].length
+  } else {
+    body = text.replace(marker, (found) => (used < count ? imageSlot(used++) : found))
   }
-  const rest = text.slice(from)
-  if (rest.trim() !== '' || segments.length === 0) segments.push({ kind: 'text', text: rest })
-  if (used < count) segments.unshift({ kind: 'images', images: Array.from({ length: count - used }, (_, offset) => used + offset) })
-  return segments
+  if (used === count) return body
+  const leading = Array.from({ length: count - used }, (_, offset) => imageSlot(used + offset)).join('')
+  return body.trim() === '' ? leading : `${leading}\n\n${body}`
 }
 
 export function imageName(image: TranscriptImage, index: number): string {

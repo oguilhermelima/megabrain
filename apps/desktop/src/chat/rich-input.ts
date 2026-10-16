@@ -1,4 +1,4 @@
-import { tokenLabels, type Draft } from '@/chat/composer-parts'
+import { oneTokenEach, tokenLabels, type Draft } from '@/chat/composer-parts'
 
 // The bridge between a Draft and the contenteditable box that shows it. The box holds text nodes
 // and one non-editable span per token; offsets count a character of text or a token as one, the
@@ -28,6 +28,9 @@ export function tokenAt(target: EventTarget | null, root: HTMLElement): HTMLElem
   return target instanceof Node ? tokenOf(target, root) : null
 }
 
+/** A chip's shell, the height of a line; a sent message shows its images in the same chip. */
+export const chipClass = 'mx-0.5 inline-flex h-[22px] items-center gap-0.5 rounded-md border border-white/[0.12] bg-white/[0.08] align-middle text-[12.5px] leading-none text-ink-200 select-none hover:border-white/25 hover:bg-white/[0.12]'
+
 /**
  * A token as a chip the height of a line: its label and a remove button. It is not draggable: the
  * composer moves it with pointer events, since a native drag in the app's webview leaves the page.
@@ -38,7 +41,7 @@ function tokenElement(id: string, view: TokenView, label: string): HTMLElement {
   token.contentEditable = 'false'
   token.draggable = false
   token.title = view.name
-  token.className = 'mx-0.5 inline-flex h-[22px] cursor-grab items-center gap-0.5 rounded-md border border-white/[0.12] bg-white/[0.08] pr-0.5 pl-1.5 align-middle text-[12.5px] leading-none text-ink-200 select-none hover:border-white/25 hover:bg-white/[0.12] data-[dragging]:opacity-40'
+  token.className = `${chipClass} cursor-grab pr-0.5 pl-1.5 data-[dragging]:opacity-40`
   const text = document.createElement('span')
   text.dataset.label = ''
   text.textContent = label
@@ -153,7 +156,7 @@ export function readDraft(root: HTMLElement): Draft {
   }
   const children = Array.from(root.childNodes)
   children.forEach((child, index) => visit(child, index === children.length - 1))
-  return draft
+  return oneTokenEach(draft)
 }
 
 /** The node a position between children sits before, or null at the very end of the box. */

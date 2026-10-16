@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { MessagePart } from '@/api/schema'
-import { deleteRange, draftLength, draftText, insertText, insertToken, isAttachmentPath, messagePartsFromText, messagePartsToText, moveToken, tokenBefore, tokenLabels, toMessageParts, type Draft } from '@/chat/composer-parts'
+import { deleteRange, draftLength, draftText, insertText, insertToken, isAttachmentPath, messagePartsFromText, messagePartsToText, moveToken, oneTokenEach, tokenBefore, tokenLabels, toMessageParts, type Draft } from '@/chat/composer-parts'
 
 const text = (value: string) => ({ type: 'text' as const, text: value })
 const token = (id: string) => ({ type: 'token' as const, id })
@@ -104,6 +104,25 @@ describe('moveToken', () => {
 
   test('reorders two tokens', () => {
     expect(moveToken([token('a'), token('b')], 'a', 2)).toEqual([token('b'), token('a')])
+  })
+})
+
+describe('oneTokenEach', () => {
+  test('a token the box shows twice counts once, where it first stands', () => {
+    expect(oneTokenEach([{ type: 'token', id: 'a1' }, { type: 'text', text: 'teste' }, { type: 'token', id: 'a1' }])).toEqual([{ type: 'token', id: 'a1' }, { type: 'text', text: 'teste' }])
+  })
+
+  test('the text around a dropped repeat joins up', () => {
+    expect(oneTokenEach([{ type: 'text', text: 'a ' }, { type: 'token', id: 'a1' }, { type: 'text', text: 'b ' }, { type: 'token', id: 'a1' }, { type: 'text', text: 'c' }])).toEqual([
+      { type: 'text', text: 'a ' },
+      { type: 'token', id: 'a1' },
+      { type: 'text', text: 'b c' },
+    ])
+  })
+
+  test('distinct tokens all stay', () => {
+    const draft: Draft = [{ type: 'token', id: 'a1' }, { type: 'token', id: 'a2' }]
+    expect(oneTokenEach(draft)).toEqual(draft)
   })
 })
 

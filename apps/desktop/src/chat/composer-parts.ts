@@ -103,6 +103,28 @@ export function tokenIds(draft: Draft): string[] {
   return draft.flatMap((part) => (part.type === 'token' ? [part.id] : []))
 }
 
+/**
+ * Each attachment at most once, where it first stands. The box can come to hold a chip twice (an undo or an edit
+ * the webview makes in place can restore a chip that is already there), and each copy would be saved and sent as
+ * an image of its own.
+ */
+export function oneTokenEach(draft: Draft): Draft {
+  const seen = new Set<string>()
+  const kept: Draft = []
+  for (const part of draft) {
+    if (part.type === 'token') {
+      if (seen.has(part.id)) continue
+      seen.add(part.id)
+      kept.push(part)
+      continue
+    }
+    const last = kept.at(-1)
+    if (last?.type === 'text') kept[kept.length - 1] = { type: 'text', text: last.text + part.text }
+    else kept.push(part)
+  }
+  return kept
+}
+
 const kindLabels = { image: 'Image', pdf: 'PDF' }
 
 /** Each token's label by its place in the draft: images as Image 1, Image 2, and PDFs counted on their own. */

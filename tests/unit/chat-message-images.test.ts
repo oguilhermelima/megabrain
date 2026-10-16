@@ -72,6 +72,28 @@ describe("images in sent messages", () => {
     await daemon.handle({ operation: "send", id: ID, parts: [{ type: "text", text: "hello" }] });
     const [sent] = await userEvents(daemon, ID);
     expect(sent !== undefined && "images" in sent).toBe(false);
+    expect(sent !== undefined && "parts" in sent).toBe(false);
+  });
+
+  test("a send records its parts in order, each image once and in its place", async () => {
+    const env = sandbox();
+    const daemon = await daemonFor(env, {});
+    await daemon.handle({ operation: "send", id: ID, parts: [{ type: "image", path: "shot.png" }, { type: "text", text: "before and after" }, { type: "image", path: env.image }] });
+    const [sent] = await userEvents(daemon, ID);
+    expect(sent?.text).toBe("before and after");
+    expect(sent?.images).toEqual([{ path: env.image }, { path: env.image }]);
+    expect(sent?.parts).toEqual([{ type: "image", path: env.image }, { type: "text", text: "before and after" }, { type: "image", path: env.image }]);
+  });
+
+  test("one image sent is one image on the stored event, also when read back", async () => {
+    const env = sandbox();
+    const daemon = await daemonFor(env, {});
+    await daemon.handle({ operation: "send", id: ID, parts: [{ type: "image", path: "shot.png" }, { type: "text", text: "once" }] });
+    const lines = readFileSync(join(env.state, "chats", ID, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { event?: { kind: string; images?: unknown[]; parts?: { type: string }[] } });
+    const users = lines.flatMap((line) => line.event?.kind === "user" ? [line.event] : []);
+    expect(users).toHaveLength(1);
+    expect(users[0]?.images).toHaveLength(1);
+    expect(users[0]?.parts?.filter((part) => part.type === "image")).toHaveLength(1);
   });
 
   test("a chat started with an image records it on its first user event", async () => {
@@ -80,5 +102,6 @@ describe("images in sent messages", () => {
     const chat = await daemon.handle({ operation: "start", agent: "claude", cwd: env.cwd, parts: [{ type: "image", path: env.image }, { type: "text", text: "look" }] }) as Chat;
     const [sent] = await userEvents(daemon, chat.id);
     expect(sent?.images).toEqual([{ path: env.image }]);
+    expect(sent?.parts).toEqual([{ type: "image", path: env.image }, { type: "text", text: "look" }]);
   });
 });

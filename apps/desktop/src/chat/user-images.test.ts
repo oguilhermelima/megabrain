@@ -1,57 +1,58 @@
 import { describe, expect, test } from 'bun:test'
-import { imageName, placeImages, thumbnail } from '@/chat/user-images'
+import { transcriptEventSchema, type MessagePart } from '@/api/schema'
+import { imageLabel, imageName, thumbnail, userMarkdown } from '@/chat/user-images'
 
 const a = { path: '/var/folders/x1/T/orca-paste-1.png' }
 const b = { path: '/Users/operator/Desktop/shot.jpg' }
 const c = { dataUrl: 'data:image/png;base64,AAAA' }
 
-describe('placeImages', () => {
-  test('text without images is one text segment', () => {
-    expect(placeImages('hello', undefined)).toEqual([{ kind: 'text', text: 'hello' }])
-    expect(placeImages('hello', [])).toEqual([{ kind: 'text', text: 'hello' }])
+const slot = (index: number) => `<span data-image="${index}"></span>`
+const slots = (markdown: string) => markdown.match(/<span data-image="\d+"><\/span>/g)?.length ?? 0
+
+describe('userMarkdown', () => {
+  test('text without images is the text as it came', () => {
+    expect(userMarkdown('hello', undefined)).toBe('hello')
+    expect(userMarkdown('hello', [])).toBe('hello')
+  })
+
+  test('recorded parts put each image inline where the composer placed it', () => {
+    const parts: MessagePart[] = [{ type: 'image', path: a.path }, { type: 'text', text: 'teste' }, { type: 'image', path: b.path }]
+    expect(userMarkdown('teste', [a, b], parts)).toBe(`${slot(0)}teste${slot(1)}`)
+  })
+
+  test('an image sent once shows once, before the echo and after a reload', () => {
+    const parts: MessagePart[] = [{ type: 'image', path: a.path }, { type: 'text', text: 'teste novmaente' }]
+    expect(slots(userMarkdown('teste novmaente', [a], parts))).toBe(1)
+    const reloaded = transcriptEventSchema.parse(JSON.parse(JSON.stringify({ id: 'u1', at: null, kind: 'user', text: 'teste novmaente', images: [a], parts })))
+    expect(slots(userMarkdown(reloaded.text, reloaded.images, reloaded.parts))).toBe(1)
+  })
+
+  test('without parts or markers the images go before the text, in their own paragraph', () => {
+    expect(userMarkdown('what changed?', [a, c])).toBe(`${slot(0)}${slot(1)}\n\nwhat changed?`)
   })
 
   test('each marker takes the next image in order, whatever its number', () => {
-    expect(placeImages('look [Image #54] then [Image #55] done', [a, b])).toEqual([
-      { kind: 'text', text: 'look ' },
-      { kind: 'images', images: [0] },
-      { kind: 'text', text: ' then ' },
-      { kind: 'images', images: [1] },
-      { kind: 'text', text: ' done' },
-    ])
+    expect(userMarkdown('look [Image #54] then [Image #55] done', [a, b])).toBe(`look ${slot(0)} then ${slot(1)} done`)
   })
 
-  test('markers separated only by whitespace share one row', () => {
-    expect(placeImages('[Image #1]\n[Image #2]\nwhat changed?', [a, b])).toEqual([
-      { kind: 'images', images: [0, 1] },
-      { kind: 'text', text: '\nwhat changed?' },
-    ])
-  })
-
-  test('without markers the images go in a row above the text', () => {
-    expect(placeImages('what changed?', [a, c])).toEqual([
-      { kind: 'images', images: [0, 1] },
-      { kind: 'text', text: 'what changed?' },
-    ])
-  })
-
-  test('images beyond the markers go in the row above', () => {
-    expect(placeImages('see [Image #3]', [a, b, c])).toEqual([
-      { kind: 'images', images: [1, 2] },
-      { kind: 'text', text: 'see ' },
-      { kind: 'images', images: [0] },
-    ])
+  test('images beyond the markers go before the text', () => {
+    expect(userMarkdown('see [Image #3]', [a, b, c])).toBe(`${slot(1)}${slot(2)}\n\nsee ${slot(0)}`)
   })
 
   test('a marker with no image left stays as text', () => {
-    expect(placeImages('[Image #1] and [Image #2]', [a])).toEqual([
-      { kind: 'images', images: [0] },
-      { kind: 'text', text: ' and [Image #2]' },
-    ])
+    expect(userMarkdown('[Image #1] and [Image #2]', [a])).toBe(`${slot(0)} and [Image #2]`)
   })
 
-  test('a message of only images has no text segment', () => {
-    expect(placeImages('[Image #9]', [a])).toEqual([{ kind: 'images', images: [0] }])
+  test('a message of only images is only its chips', () => {
+    expect(userMarkdown('[Image #9]', [a])).toBe(slot(0))
+    expect(userMarkdown('', [a], [{ type: 'image', path: a.path }])).toBe(slot(0))
+  })
+})
+
+describe('imageLabel', () => {
+  test('images are numbered within their message, as the composer labels them', () => {
+    expect(imageLabel(0)).toBe('Image 1')
+    expect(imageLabel(2)).toBe('Image 3')
   })
 })
 

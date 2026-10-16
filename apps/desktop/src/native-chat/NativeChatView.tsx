@@ -90,7 +90,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     const id = crypto.randomUUID()
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
     const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
-    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images }) }))
+    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images, parts }) }))
     try {
       await api.sendChat(chat.id, parts, { fresh: startFresh && resumable(chat.state) })
       setStartFresh(false)

@@ -514,6 +514,11 @@ export const worktreeListSchema = z.array(
 // the agent's own session log as ordered events. `cursor` is opaque; passing it back as --since
 // returns only newer events. `source` "terminal" means no session log was readable and the events
 // are the pane scrollback as one system event.
+// A part of a message: text and images in order, so an image can sit in the middle of the text.
+export const messagePartSchema = z.discriminatedUnion('type', [
+  z.looseObject({ type: z.literal('text'), text: z.string() }),
+  z.looseObject({ type: z.literal('image'), path: z.string() }),
+])
 export const transcriptImageSchema = z.union([z.object({ path: z.string() }), z.object({ dataUrl: z.string() })])
 
 export const transcriptEventSchema = z.looseObject({
@@ -526,6 +531,8 @@ export const transcriptEventSchema = z.looseObject({
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
   /** On a user event: the images it carried, a local file or inline; the text keeps an [Image #N] marker where each was. */
   images: z.array(transcriptImageSchema).optional(),
+  /** On a native chat's user event with images: its text and images in the order sent, images[k] being the k-th image part. Older events have none. */
+  parts: z.array(messagePartSchema).optional().catch(undefined),
   // Set when the event is a message relayed between chats: a parent's brief or reply inside the
   // child's log ("parent"), or a child's notice or question inside the parent's log ("child").
   origin: z
@@ -622,11 +629,6 @@ export const chatEventLineSchema = z.looseObject({
   event: chatEventSchema.optional(),
   approval: chatApprovalSchema.optional(),
 })
-// A part of a message: text and images in order, so an image can sit in the middle of the text.
-export const messagePartSchema = z.discriminatedUnion('type', [
-  z.looseObject({ type: z.literal('text'), text: z.string() }),
-  z.looseObject({ type: z.literal('image'), path: z.string() }),
-])
 // `agent command --json`: the command line that starts an agent's own TUI.
 export const agentCommandSchema = z.looseObject({ agent: z.string(), argv: z.array(z.string()).min(1) })
 // `sessions history --cwd <path> --json`: past sessions started in a folder, newest first, read from

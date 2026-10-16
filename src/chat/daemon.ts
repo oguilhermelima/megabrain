@@ -71,10 +71,13 @@ function firstText(parts: readonly Part[]): string { return parts.filter((part):
 function event(kind: ChatEvent["kind"], value: string, tool?: ChatEvent["tool"], extra: Partial<ChatEvent> = {}): ChatEvent {
   return { id: randomUUID(), at: new Date().toISOString(), kind, text: value, ...(tool === undefined ? {} : { tool }), ...extra };
 }
-/** The images a message carried, for its user event; a message of text alone carries no field. */
+/**
+ * The images a message carried, for its user event, and its parts in order so a reader can show each image where it
+ * was placed; images stays for readers that predate parts. A message of text alone carries neither field.
+ */
 function withImages(parts: readonly Part[]): Partial<ChatEvent> {
   const images = parts.flatMap((part) => part.type === "image" ? [{ path: part.path }] : []);
-  return images.length === 0 ? {} : { images };
+  return images.length === 0 ? {} : { images, parts: [...parts] };
 }
 function withMessage(messageId: string): Partial<ChatEvent> { return messageId === "" ? {} : { messageId }; }
 
