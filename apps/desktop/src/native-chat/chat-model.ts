@@ -161,6 +161,8 @@ export function liveTail(state: FollowState): LiveRow[] {
 export interface WorkingStatus {
   label: string
   since: string | null
+  /** The tool the turn is running, whose icon the indicator shows instead of the agent's mark. */
+  tool?: string
 }
 
 const newestEventAt = (state: FollowState): string | null => state.events.reduce<string | null>((newest, event) => (event.at !== null && (newest === null || event.at > newest) ? event.at : newest), null)
@@ -190,7 +192,10 @@ export function workingStatus(state: FollowState): WorkingStatus | null {
   // A subagent's steps are its own; the turn is running the call that started it.
   let last: TranscriptEvent | undefined
   for (let index = state.events.length - 1; index >= 0 && last === undefined; index--) if (state.events[index]?.parentId === undefined) last = state.events[index]
-  if (last?.kind === 'tool-call') return { label: `Running ${last.tool?.name ?? last.text}`, since }
+  if (last?.kind === 'tool-call') {
+    const tool = last.tool?.name ?? last.text
+    return { label: `Running ${tool}`, since, tool }
+  }
   return { label: 'Thinking', since }
 }
 

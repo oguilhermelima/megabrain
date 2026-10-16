@@ -9,6 +9,7 @@ import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
 import { ErrorNote } from '@/components/ui'
 import { deriveConversation, type DerivedConversation } from '@/chat/conversation-derive'
 import { mergeEvents, relayedPreview, relayedTarget, thoughtLabel, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
+import { ToolIcon } from '@/chat/ToolIcon'
 import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
@@ -103,8 +104,9 @@ function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenC
 }
 
 /**
- * What marks a row still at work: the conversation's agent mark when the view names one (see
- * ConversationAgent), megabrain's orb otherwise; settled, the same mark held still and grey.
+ * What marks the agent's own work: the conversation's agent mark when the view names one (see
+ * ConversationAgent), megabrain's orb otherwise; settled, the same mark held still and grey. Tool
+ * rows show their tool's icon instead (ToolIcon).
  */
 function WorkMark({ size, working }: { size: number; working: boolean }) {
   const agent = useContext(ConversationAgent)
@@ -143,8 +145,6 @@ function prettyInput(input: string): string {
   }
 }
 
-const toolDot: Record<ToolStatus, string> = { ok: 'bg-ok', error: 'bg-bad', running: 'bg-accent' }
-
 function ToolItem({ item }: { item: ToolRow }) {
   const [open, setOpen] = useState(false)
   const input = item.call.tool?.input
@@ -158,7 +158,7 @@ function ToolItem({ item }: { item: ToolRow }) {
     <li onContextMenu={onContextMenu} className="rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <div className="flex items-center pr-2">
         <button type="button" onClick={() => setOpen((value) => !value)} className="flex min-w-0 flex-1 items-center gap-2 px-3.5 py-2 text-left text-[13px]">
-          <span className={`size-1.5 shrink-0 rounded-full ${toolDot[item.status]} ${item.status === 'running' ? 'animate-pulse' : ''}`} />
+          <ToolIcon name={toolName(item)} status={item.status} size={13} />
           <span className="shrink-0 font-semibold text-ink-300">{toolName(item)}</span>
           <span title={summary} className="truncate font-mono text-[12.5px] text-ink-400">{summary}</span>
         </button>
@@ -201,13 +201,14 @@ function ToolGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 
         <span className="w-3 shrink-0 text-[10px]">{open ? '▾' : '▸'}</span>
         {running ? (
           <>
-            <WorkMark size={12} working />
+            <ToolIcon name={summary.tool} status="running" size={13} />
             <span className="shrink-0 font-semibold text-ink-200">Working: {summary.tool}</span>
             <span title={summary.detail} className="min-w-0 truncate font-mono text-[12.5px]">{summary.detail}</span>
             {summary.earlier > 0 && <span className="shrink-0">· {summary.earlier} earlier</span>}
           </>
         ) : (
           <>
+            <ToolIcon name={summary.counts[0]?.name ?? summary.tool} status={summary.errors > 0 ? 'error' : 'ok'} size={13} />
             <span className="shrink-0 font-semibold text-ink-300">
               Ran {summary.total} {summary.total === 1 ? 'tool' : 'tools'}:
             </span>
@@ -240,6 +241,8 @@ function Elapsed({ since, until }: { since: string | null; until: string | null 
   return <>{formatElapsed((until === null ? now : Date.parse(until)) - start)}</>
 }
 
+const subagentToolStatus: Record<SubagentState, ToolStatus> = { working: 'running', completed: 'ok', failed: 'error', stopped: 'ok' }
+
 const subagentOutcome: Record<Exclude<SubagentState, 'working'>, { label: string; tone: string }> = {
   completed: { label: 'Done', tone: 'text-ok' },
   failed: { label: 'Failed', tone: 'text-bad' },
@@ -264,7 +267,7 @@ function SubagentBlock({ item, onOpenChat }: { item: SubagentItem; onOpenChat: O
       <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex w-full min-w-0 flex-col gap-0.5 px-3.5 py-2 text-left text-[13px]">
         <span className="flex w-full min-w-0 items-center gap-2">
           <span className="w-3 shrink-0 text-[10px] text-ink-400">{open ? '▾' : '▸'}</span>
-          <WorkMark size={12} working={working} />
+          <ToolIcon name="Task" status={subagentToolStatus[summary.state]} size={13} />
           <span className="shrink-0 font-semibold text-ink-200">{summary.type}</span>
           <span title={summary.description} className="min-w-0 flex-1 truncate text-ink-300">{summary.description}</span>
           <span className="shrink-0 text-[12px] text-ink-400 tabular-nums">
@@ -307,7 +310,7 @@ function SubagentGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { ty
   return (
     <li className="max-w-[85%] space-y-1.5">
       <p className="flex items-center gap-2 px-1 text-[13px] text-ink-400">
-        <WorkMark size={12} working={summary.working > 0} />
+        <ToolIcon name="Task" status={summary.working > 0 ? 'running' : summary.failed > 0 ? 'error' : 'ok'} size={13} />
         <span className="font-semibold text-ink-300">{summary.total} subagents</span>
         <span>· {summary.working > 0 ? `${summary.working} working` : 'all finished'}</span>
         {summary.failed > 0 && <span className="font-semibold text-bad">· {summary.failed} failed</span>}

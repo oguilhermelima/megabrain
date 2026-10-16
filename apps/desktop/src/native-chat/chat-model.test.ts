@@ -443,6 +443,13 @@ describe('workingStatus', () => {
     expect(workingStatus(working([line('2', { event: call }), line('3', { event: result })]))?.label).toBe('Thinking')
   })
 
+  test('a running tool names itself so the indicator shows its icon, not the agent mark', () => {
+    const call: TranscriptEvent = { id: 'c1', at: null, kind: 'tool-call', text: 'mcp__github__get_pr', tool: { name: 'mcp__github__get_pr', input: '{}' } }
+    expect(workingStatus(working([line('2', { event: call })]))?.tool).toBe('mcp__github__get_pr')
+    expect(workingStatus(working([delta('1', 'm1', 'Here')]))?.tool).toBeUndefined()
+    expect(workingStatus(working([]))?.tool).toBeUndefined()
+  })
+
   test('Waiting for approval while an approval waits', () => {
     const state = applyLine(working([]), stateLine('2', 'waiting-approval', started))
     expect(workingStatus(state)).toEqual({ label: 'Waiting for approval', since: started })

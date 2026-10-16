@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { ToolIcon } from '@/chat/ToolIcon'
 import { AgentIcon } from '@/components/agent-icons'
 import { formatElapsed, type WorkingStatus } from '@/native-chat/chat-model'
 
-/** Under the newest message while a turn runs: the agent's mark at work, what it does and for how long. */
+/** Under the newest message while a turn runs: the agent's mark at work (a running tool's icon), what it does and for how long. */
 export function WorkingIndicator({ agent, status }: { agent: string; status: WorkingStatus }) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
@@ -13,9 +14,13 @@ export function WorkingIndicator({ agent, status }: { agent: string; status: Wor
   const waiting = status.label === 'Waiting for approval'
   return (
     <li role="status" aria-live="polite" className="motion-rise flex items-center gap-2.5 py-1 text-[13px]">
-      <span aria-hidden="true" className="contents text-ink-400">
-        <AgentIcon agent={agent} size={14} activity={waiting ? 'waiting' : 'working'} />
-      </span>
+      {status.tool === undefined ? (
+        <span aria-hidden="true" className="contents text-ink-400">
+          <AgentIcon agent={agent} size={14} activity={waiting ? 'waiting' : 'working'} />
+        </span>
+      ) : (
+        <ToolIcon name={status.tool} status="running" size={14} />
+      )}
       <span className={`font-medium ${waiting ? 'text-warn' : 'shimmer'}`}>{status.label}</span>
       {!Number.isNaN(since) && <span className="text-ink-400 tabular-nums">{formatElapsed(now - since)}</span>}
     </li>
