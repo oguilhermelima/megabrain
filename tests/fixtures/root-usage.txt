@@ -44,7 +44,7 @@ Commands:
   orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
-  settings [--json]                    Read all settings shown in the desktop app
+  settings [--json [--only <keys>]]    Read the settings shown in the desktop app, or only some keys
   settings set terminal-engine ...     Choose the embedded terminal engine
   settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
   settings get|set sidebar-state       Read or replace what the desktop sidebar folded and its row order
