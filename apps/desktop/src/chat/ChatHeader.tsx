@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { ActionBar, PaneViewBody, useWorktreeChanges } from '@/chat/ActionBar'
 import { changedFileCount, headerMode, paneViewKey, segments, shownView, type PaneView } from '@/chat/action-bar-model'
+import { headerText } from '@/chat/header-model'
 import { usePaneView } from '@/chat/pane-view-context'
 import { useWindowRowInset } from '@/panes/window-row'
 import { usePaneChrome, type PaneChrome } from '@/panes/pane-chrome'
@@ -10,7 +11,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
 
 /**
- * The top bar every chat view and the launcher share: the agent's mark, live while it works (none on the launcher), one-line title and one small metadata line,
+ * The top bar every chat view and the launcher share: the agent's mark, live while it works (none on the launcher), the title on one line and the branch under it (header-model),
  * then the Run button and the run panel's toggle once anything ran on the right. An item with a worktree (a launcher once it has one) also gets the action bar in the
  * bar's true centre, Agent, Code, PR and Diff, each shown in the pane under the bar; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
  * below the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) it shrinks to the lights' 44px band, centred on their line, and leaves
@@ -19,7 +20,7 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
  * (action-bar-model's headerMode) it stacks: the mark, title and Remove from split on the first row, the action bar and the view's controls on the second. Under a split's
  * shared bar (panes/group-bar) it is slim instead: one 36px row of the mark, the title, the view's controls and that button.
  */
-export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, actions }: { agent: string | null; activity?: AgentActivity; title: string; meta: string; metaTitle?: string; actions?: ReactNode }) {
+export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent: string | null; activity?: AgentActivity; title: string; actions?: ReactNode }) {
   const pane = usePaneView()
   const changes = useWorktreeChanges(pane?.facts ?? null)
   const header = useRef<HTMLElement>(null)
@@ -50,15 +51,17 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
     return () => window.removeEventListener('keydown', onKey, true)
   }, [focused])
 
+  const text = headerText({ title, branch: pane?.facts.branch ?? null, slim: chrome?.slim === true })
+
   // No native tooltip while the bar drags its pane: one shown as the press under it turns into a drag
-  // can stay floating over the panes, and the title and metadata already show on the bar.
-  const tip = (text: string) => (chrome === null ? text : undefined)
+  // can stay floating over the panes, and the title and branch already show on the bar.
+  const tip = (value: string) => (chrome === null ? value : undefined)
   const identity = (
     <>
       {agent !== null && <AgentIcon agent={agent} activity={activity} size={stacked ? 20 : 22} className="shrink-0 text-ink-300" />}
       <div className="min-w-0 flex-1">
-        <h1 title={tip(title)} className={`truncate ${stacked ? 'text-[14px]' : 'text-[15px]'} leading-5 font-semibold tracking-[-0.01em] text-ink-100`}>{title}</h1>
-        <p title={tip(metaTitle ?? meta)} className="truncate text-[12px] leading-4 text-ink-400">{meta}</p>
+        <h1 title={tip(text.title)} className={`truncate ${stacked ? 'text-[14px]' : 'text-[15px]'} leading-5 font-semibold tracking-[-0.01em] text-ink-100`}>{text.title}</h1>
+        {text.branch !== null && <p title={tip(pane?.facts.root ?? text.branch)} className="truncate text-[12px] leading-4 text-ink-400">{text.branch}</p>}
       </div>
     </>
   )
@@ -84,7 +87,7 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
       <header ref={header} data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
         {agent !== null && <AgentIcon agent={agent} activity={activity} size={16} className="shrink-0 text-ink-300" />}
         <h1 className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
-          {title}
+          {text.title}
         </h1>
         {actions}
         {close}

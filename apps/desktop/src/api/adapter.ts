@@ -216,6 +216,8 @@ export interface DesktopApi {
   removeChat(chatId: string): Promise<void>
   /** Switches the model, and optionally the reasoning effort, for the chat's next turns. */
   setChatModel(chatId: string, model: string, effort?: string): Promise<void>
+  /** Summarizes a native chat now, whatever the schedule (`chat summarize <id> --json`). */
+  summarizeChat(chatId: string): Promise<void>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
   setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
@@ -256,6 +258,9 @@ export interface DesktopApi {
   /** The order and hidden providers of the sidebar's usage readout (`settings get usage-order`); advanced/usage-order.ts reads the shape. */
   usageOrder(): Promise<unknown>
   setUsageOrder(json: string): Promise<void>
+  /** Who summarizes native chats and how often (`settings get chat-summaries`); settings/summaries-model.ts reads the shape. */
+  chatSummaries(): Promise<unknown>
+  setChatSummaries(json: string): Promise<void>
   /** The shortcut keys the person changed (`settings get shortcuts`); lib/shortcuts.ts reads the shape. */
   shortcuts(): Promise<unknown>
   setShortcuts(json: string): Promise<void>

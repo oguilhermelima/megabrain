@@ -29,8 +29,6 @@ const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) 
 // The terminal each chat handed over to, kept for the app run so reopening the chat reattaches to it.
 const handedOver = new Map<string, TerminalSession>()
 
-const folder = (path: string) => path.split('/').at(-1) ?? path
-
 // A suspended (or legacy stopped) chat is not over: its next message resumes the agent session.
 const ended = (state: NativeChat['state']) => state === 'error'
 const resumable = (state: NativeChat['state']) => state === 'suspended' || state === 'stopped'
@@ -226,8 +224,6 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
         agent={chat.agent}
         activity={activityOf(chat.state)}
         title={title}
-        meta={[chat.agent, chat.model, folder(chat.cwd)].filter(Boolean).join(' · ')}
-        metaTitle={chat.cwd}
         actions={<ViewSwitch view={mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={requestSwitch} />}
       />
       {(error !== null || actionError !== null) && (

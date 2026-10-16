@@ -199,8 +199,6 @@ export function Launcher({
       <ChatHeader
         agent={null}
         title={worktree?.label ?? 'No worktree yet'}
-        meta={cwd === null ? 'Add a project to start a chat' : `New chat · ${folder(cwd)}`}
-        metaTitle={cwd ?? undefined}
         actions={
           worktrees.length > 1 && (
             <label className="relative flex h-8 shrink-0 items-center rounded-[12px] px-2.5 text-[12.5px] text-ink-400 hover:bg-row-hover hover:text-ink-200">

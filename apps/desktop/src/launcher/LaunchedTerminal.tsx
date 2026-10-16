@@ -87,7 +87,7 @@ export function LaunchedTerminal({
   const agent = launch.kind === 'agent-terminal' ? launch.agent : 'terminal'
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ChatHeader agent={agent} title={terminalLabel(terminal)} meta={[agent, terminal.engine, launch.cwd].filter((part) => part !== null).join(' · ')} metaTitle={launch.cwd} />
+      <ChatHeader agent={agent} title={terminalLabel(terminal)} />
       {launch.firstInput !== null && terminal.status !== 'exited' && (
         <p className="mx-8 mt-3 text-[13px] text-ink-400">{waiting ? 'Your message goes into the terminal once it is ready.' : 'Your message is typed in the terminal. Press Enter there to send it.'}</p>
       )}

@@ -41,6 +41,12 @@ const iconPaths: Record<SectionIcon, ReactNode> = {
       <path d="M7 4.5 8.2 3.3a2.6 2.6 0 0 1 3.7 3.7L10.7 8.2M9 11.5l-1.2 1.2a2.6 2.6 0 0 1-3.7-3.7L5.3 7.8" />
     </>
   ),
+  note: (
+    <>
+      <rect x="2.5" y="1.5" width="11" height="13" rx="2" />
+      <path d="M5 5h6M5 8h6M5 11h3.5" />
+    </>
+  ),
   eye: (
     <>
       <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z" />

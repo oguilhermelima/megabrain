@@ -2,7 +2,6 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { ActionBar, useWorktreeChanges, WorktreeView } from '@/chat/ActionBar'
 import { changedFileCount, paneViewKey, segments, shownView, type PaneView, type WorktreeFacts } from '@/chat/action-bar-model'
-import { PullRequestIcon } from '@/github/icons'
 import type { GroupIdentity } from '@/panes/group-bar'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
 
@@ -20,7 +19,7 @@ export interface SharedBar {
 
 /**
  * The split area and what it shows once for all its panes. A split on one worktree gets one bar on
- * top: the worktree at its left, Agent, Code, PR and Diff in its true centre (Agent is the split
+ * top: the project and branch at its left (the pull request's number is on the action bar's PR), Agent, Code, PR and Diff in its true centre (Agent is the split
  * itself; the others lie over the whole area, the panes kept mounted beneath), and Run and the
  * run panel's toggle at its right. With the sidebar hidden it joins the window row, 44px
  * tall and inset past the lights. A split across worktrees keeps each pane's own bar. `children` is told whether a view covers them.
@@ -66,11 +65,6 @@ export function SplitFrame({ shared, inset, children }: { shared: SharedBar | nu
                 </h1>
                 {bar.shared.identity.branch !== null && <p className="truncate text-[12px] leading-4 text-ink-400">{bar.shared.identity.branch}</p>}
               </div>
-              {bar.shared.identity.pullRequest !== null && (
-                <span title={`Pull request #${bar.shared.identity.pullRequest}`} className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.07] px-2 text-[11.5px] leading-5 text-ink-300 tabular-nums">
-                  <PullRequestIcon size={12} />#{bar.shared.identity.pullRequest}
-                </span>
-              )}
             </div>
             <ActionBar agent={null} segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
             <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">

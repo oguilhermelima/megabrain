@@ -3,7 +3,6 @@ import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
 import { joinLabel } from '@/advanced/item-menus'
-import { groupChats, worktreeRepositories } from '@/advanced/model'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { Sidebar, readFilters, writeFilters, type SidebarDrag } from '@/advanced/Sidebar'
@@ -169,8 +168,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The folders and order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
   const layout = useMemo(() => reconcileLayout(savedLayout, listed.map((project) => project.path)), [savedLayout, listed])
   const projects = useMemo(() => applyOrder(listed, flattenLayout(layout)), [listed, layout])
-  // Chats are grouped by the repository of their worktree; the projects list already names it.
-  const worktrees = useMemo(() => worktreeRepositories(listed), [listed])
   // The split groups and the single pane; the main area shows one of them, each pane one item, and
   // the sidebar follows the focused one.
   const [paneLayout, setLayout] = useState<Layout>(storedLayout)
@@ -216,7 +213,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const sidebarWidth = usePanelWidth('megabrain.sidebar.width', sidebarLimits)
   const runPanelWidth = usePanelWidth('megabrain.runPanel.width', runPanelLimits)
   const runs = useRunPanels()
-  const grouped = useMemo(() => groupChats(status?.dispatches ?? [], worktrees), [status, worktrees])
   // ⌘[ and ⌘] walk the sessions the sidebar shows: hidden and filtered-out ones are skipped.
   const worktreePaths = useMemo(() => listed.flatMap((project) => project.worktrees.map((worktree) => worktree.path)), [listed])
   const chatsInWorktrees = useMemo(() => chatsByWorktree(nativeChats, worktreePaths), [nativeChats, worktreePaths])
@@ -313,6 +309,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           ? (sessionRows.find((row) => row.session.dispatchId === focusedParsed.id)?.session.sessionId ?? null)
           : null
   const nativeChatId = focusedParsed?.kind === 'native' ? focusedParsed.id : null
+  const focusedNativeChat = useMemo(() => {
+    const chat = nativeChatId === null ? undefined : nativeChats.find((entry) => entry.id === nativeChatId)
+    return chat === undefined ? null : { id: chat.id, title: chat.title ?? 'New chat' }
+  }, [nativeChatId, nativeChats])
   const focusedTerminalId = focusedParsed?.kind === 'terminal' ? focusedParsed.id : null
 
   const viewOf = (item: string): PaneView => {
@@ -712,9 +712,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // A pull request or issue maximised from its page takes the focused pane, like any other item.
   const maximiseGithub = (root: string, kind: 'pr' | 'issue', number: number) => showItem(itemKey('github', githubItemId(kind, number, root)))
 
-  const repositoryOf = (dispatchId: string) =>
-    grouped.repositories.find((repository) => repository.worktrees.some((worktree) => worktree.chats.some((item) => item.dispatchId === dispatchId)))?.name ?? null
-
   const startedLauncherRoot = (launcher: string) => (cwd: string | null) => setLauncherRoots((current) => (current[launcher] === cwd ? current : { ...current, [launcher]: cwd }))
 
   /** The worktree an item works in: its top bar runs commands there and its run panel shows. */
@@ -825,7 +822,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'dispatch': {
         const chat = status?.dispatches.find((entry) => entry.dispatchId === parsed.id)
         if (chat === undefined) return gone('Chat')
-        return { title: chat.label ?? chat.dispatchId, node: <ChatView chat={chat} repository={repositoryOf(chat.dispatchId)} onOpenChat={openRelatedChat} onOpenPath={openPath} /> }
+        return { title: chat.label ?? chat.dispatchId, node: <ChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} /> }
       }
       case 'session': {
         const found = findSession(parsed.id)
@@ -911,6 +908,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       <SettingsWindow
         key={settingsProject ?? ''}
         focusProject={settingsProject}
+        focusChat={focusedNativeChat}
         onClose={() => {
           setSettingsOpen(false)
           setSettingsProject(null)

@@ -16,8 +16,6 @@ import { Button, ErrorNote } from '@/components/ui'
 
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
 
-const folder = (path: string) => path.split('/').at(-1) ?? path
-
 export function SessionView({
   session,
   worktreePath,
@@ -38,7 +36,6 @@ export function SessionView({
   const [exited, setExited] = useState<number | null | undefined>(undefined)
 
   const ended = session.status === 'ended'
-  const started = session.startedAt === null ? null : `started ${new Date(session.startedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`
 
   const send = async (parts: MessagePart[]): Promise<Notice> => {
     const result = await api.sendToSession(session.sessionId, messagePartsToText(parts))
@@ -53,8 +50,6 @@ export function SessionView({
         agent={session.agent}
         activity={activityOf(session.status)}
         title={session.title}
-        meta={[session.agent, folder(worktreePath), started].filter(Boolean).join(' · ')}
-        metaTitle={worktreePath}
         actions={
           // Chat and terminal are both there only for a session megabrain owns.
           ownership(session).owned ? (

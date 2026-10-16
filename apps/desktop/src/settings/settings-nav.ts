@@ -4,12 +4,12 @@
 import { compareByDisplayName, displayName } from '@/advanced/appearance-model'
 import type { ProjectAppearance } from '@/api/schema'
 
-export type Section = 'usage' | 'shortcuts' | 'models' | 'chains' | 'supervisor' | 'limits' | 'terminal'
+export type Section = 'usage' | 'shortcuts' | 'models' | 'chains' | 'summaries' | 'supervisor' | 'limits' | 'terminal'
 
 /** A section, or one project's page by its repository path. */
 export type NavKey = Section | `project:${string}`
 
-export type SectionIcon = 'gauge' | 'keyboard' | 'cpu' | 'link' | 'eye' | 'sliders' | 'terminal'
+export type SectionIcon = 'gauge' | 'keyboard' | 'cpu' | 'link' | 'note' | 'eye' | 'sliders' | 'terminal'
 
 export interface SectionInfo {
   key: Section
@@ -26,6 +26,7 @@ export const settingsSections: SectionInfo[] = [
   { key: 'shortcuts', label: 'Shortcuts', description: 'The keys for the window’s actions, Orca’s where Orca has the same action.', icon: 'keyboard', group: 'General' },
   { key: 'models', label: 'Models', description: 'The models each agent can run, and their reasoning levels.', icon: 'cpu', group: 'Agents' },
   { key: 'chains', label: 'Chains', description: 'Which agent and model a dispatch tries first, and what it falls back to.', icon: 'link', group: 'Agents' },
+  { key: 'summaries', label: 'Summaries', description: 'A short summary of each chat as it goes, and the model that writes it.', icon: 'note', group: 'Agents' },
   { key: 'supervisor', label: 'Supervisor', description: 'The watcher that reports stuck, finished or dead children, and setup.', icon: 'eye', group: 'Agents' },
   { key: 'limits', label: 'Limits', description: 'When a new agent may start, by machine load, and resource history.', icon: 'sliders', group: 'System' },
   { key: 'terminal', label: 'Terminal', description: 'The terminal engine inside the app and the one opened outside it.', icon: 'terminal', group: 'System' },

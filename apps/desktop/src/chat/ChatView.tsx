@@ -12,10 +12,8 @@ import { Composer } from '@/chat/Composer'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-
 // Memoised: a status poll that left this chat unchanged keeps the same chat object (see reuse.ts).
-export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
+export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }: { chat: Dispatch; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
   const [read, setRead] = useState<ChatRead | null>(null)
   const compose = useComposeChannel()
   const [readError, setReadError] = useState<unknown>(null)
@@ -62,7 +60,6 @@ export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, o
         agent={chat.agent ?? ''}
         activity={state === 'working' ? 'working' : state === 'needs-you' ? 'waiting' : 'idle'}
         title={chatName(chat)}
-        meta={[chat.agent, chat.model, repository, `started ${time(chat.createdAt)}`, chat.owner === 'mine' ? null : 'owned by another session'].filter(Boolean).join(' · ')}
       />
       {finding !== null && (
         <div className="mx-8 mt-3 rounded-[20px] border border-warn/25 bg-warn/[0.08] px-5 py-3.5 text-[13.5px]">

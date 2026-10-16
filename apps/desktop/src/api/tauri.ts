@@ -331,6 +331,7 @@ export function createTauriApi(): DesktopApi {
     answerApproval: async (chatId, approvalId, decision) => void (await cliText(['chat', 'approve', chatId, approvalId, '--decision', decision])),
     stopChat: async (chatId) => void (await cliText(['chat', 'stop', chatId])),
     removeChat: async (chatId) => void (await cliText(['chat', 'remove', chatId, '--json'])),
+    summarizeChat: async (chatId) => void (await cliText(['chat', 'summarize', chatId, '--json'])),
     setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),
     setChatMode: (chatId, mode) =>
       cliJson(['chat', 'mode', chatId, mode, '--json'], z.looseObject({ chat: nativeChatSchema, terminal: terminalSessionSchema.nullable(), command: z.array(z.string()).nullable().default(null) })),
@@ -369,6 +370,8 @@ export function createTauriApi(): DesktopApi {
     sidebarState: () => cliJson(['settings', 'get', 'sidebar-state'], z.unknown()),
     setSidebarState: async (json) => void (await cliText(['settings', 'set', 'sidebar-state', json])),
     usageOrder: () => cliJson(['settings', 'get', 'usage-order'], z.unknown()),
+    chatSummaries: () => cliJson(['settings', 'get', 'chat-summaries'], z.unknown()),
+    setChatSummaries: async (json) => void (await cliText(['settings', 'set', 'chat-summaries', json])),
     setUsageOrder: async (json) => void (await cliText(['settings', 'set', 'usage-order', json])),
     shortcuts: () => cliJson(['settings', 'get', 'shortcuts'], z.unknown()),
     setShortcuts: async (json) => void (await cliText(['settings', 'set', 'shortcuts', json])),

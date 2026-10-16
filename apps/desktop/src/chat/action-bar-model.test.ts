@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Project } from '@/api/schema'
-import { changedFileCount, chooseView, headerMode, initialView, paneViewKey, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
+import { changedFileCount, chooseView, headerMode, initialView, paneViewKey, segmentExpanded, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
 
 const project: Project = {
   name: 'canto',
@@ -136,5 +136,26 @@ describe('header mode', () => {
   test('before the bar is measured it keeps one row', () => {
     expect(headerMode(null)).toBe('row')
     expect(headerMode(0)).toBe('row')
+  })
+})
+
+describe('segmentExpanded', () => {
+  const idle = { shown: 'agent' as const, hovered: null, focused: null }
+
+  test('only the shown view keeps its label at rest', () => {
+    expect(segmentExpanded('agent', idle)).toBe(true)
+    expect(segmentExpanded('code', idle)).toBe(false)
+    expect(segmentExpanded('diff', idle)).toBe(false)
+  })
+
+  test('the pointer grows the segment under it, and only that one', () => {
+    expect(segmentExpanded('pr', { ...idle, hovered: 'pr' })).toBe(true)
+    expect(segmentExpanded('diff', { ...idle, hovered: 'pr' })).toBe(false)
+    expect(segmentExpanded('agent', { ...idle, hovered: 'pr' })).toBe(true)
+  })
+
+  test('keyboard focus grows a segment too', () => {
+    expect(segmentExpanded('code', { ...idle, focused: 'code' })).toBe(true)
+    expect(segmentExpanded('code', { shown: 'diff', hovered: null, focused: 'code' })).toBe(true)
   })
 })

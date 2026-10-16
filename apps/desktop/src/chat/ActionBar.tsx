@@ -2,7 +2,7 @@ import { lazy, Suspense, useLayoutEffect, useState, type ReactNode, type RefObje
 import { api } from '@/api'
 import type { BranchChanges, CodeChange } from '@/api/schema'
 import { CodeIcon } from '@/advanced/chrome'
-import type { PaneView, Segment, WorktreeFacts } from '@/chat/action-bar-model'
+import { segmentExpanded, type PaneView, type Segment, type WorktreeFacts } from '@/chat/action-bar-model'
 import { AgentIcon } from '@/components/agent-icons'
 import { PaneSkeleton } from '@/components/Skeleton'
 import { PullRequestIcon } from '@/github/icons'
@@ -53,36 +53,53 @@ export function useWorktreeChanges(facts: WorktreeFacts | null): WorktreeChanges
 }
 
 /**
- * Agent, Code, PR and Diff as one segmented control. Below the header's 48rem it keeps only the
- * icons; the tooltips carry the names, counts and reasons either way.
+ * Agent, Code, PR and Diff as one segmented control of icons. The shown view keeps its name; a
+ * segment under the pointer or the keyboard's focus grows to show its own (action-bar-model's
+ * segmentExpanded), its label sliding open in a 0fr to 1fr grid column. The PR number and the Diff
+ * count stay on their icons as small counters. Only a disabled segment keeps a tooltip, for its reason.
  */
 export function ActionBar({ agent, segments, shown, onSelect }: { agent: string | null; segments: readonly Segment[]; shown: PaneView; onSelect: (view: PaneView) => void }) {
+  const [hovered, setHovered] = useState<PaneView | null>(null)
+  const [focused, setFocused] = useState<PaneView | null>(null)
   const icons: Record<PaneView, ReactNode> = {
     agent: agent === null || agent === '' ? <ChatGlyph /> : <AgentIcon agent={agent} size={14} />,
     code: <CodeIcon />,
     pr: <PullRequestIcon size={14} />,
     diff: <DiffIcon />,
   }
+  const grow = { transition: 'grid-template-columns var(--motion-enter) var(--motion-ease-out), opacity var(--motion-enter) var(--motion-ease-out)' }
   return (
-    <div role="group" aria-label="Views" className="flex shrink-0 gap-0.5 rounded-full border border-white/10 bg-white/[0.05] p-0.5">
+    <div role="group" aria-label="Views" onPointerLeave={() => setHovered(null)} className="flex shrink-0 gap-0.5 rounded-full border border-white/10 bg-white/[0.05] p-0.5">
       {segments.map((segment) => {
         const current = segment.view === shown
+        const open = segmentExpanded(segment.view, { shown, hovered, focused })
         return (
           <button
             key={segment.view}
             type="button"
-            aria-label={segment.label}
+            aria-label={segment.badge === null ? segment.label : `${segment.label} ${segment.badge}`}
             aria-pressed={current}
-            title={segment.title}
+            title={segment.enabled ? undefined : segment.title}
             disabled={!segment.enabled}
             onClick={() => onSelect(segment.view)}
-            className={`flex h-7 min-w-7 items-center justify-center gap-1.5 rounded-full px-2 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default @3xl:px-2.5 ${
+            onPointerEnter={() => setHovered(segment.view)}
+            onFocus={(event) => setFocused(event.currentTarget.matches(':focus-visible') ? segment.view : null)}
+            onBlur={() => setFocused(null)}
+            className={`flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default ${
               current ? 'bg-white/[0.14] text-ink-100' : segment.enabled ? 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100' : 'text-ink-600'
             }`}
           >
-            {icons[segment.view]}
-            <span className="hidden @3xl:inline">{segment.label}</span>
-            {segment.badge !== null && <span className="hidden rounded-full bg-white/[0.1] px-1.5 text-[10.5px] leading-4 text-ink-200 tabular-nums @3xl:inline">{segment.badge}</span>}
+            <span className="flex shrink-0 items-start">
+              {icons[segment.view]}
+              {segment.badge !== null && (
+                <span aria-hidden="true" className="-mt-1.5 -ml-1 min-w-3.5 rounded-full bg-ink-600 px-1 text-center text-[9px] leading-3.5 font-semibold text-ink-100 tabular-nums">
+                  {segment.badge}
+                </span>
+              )}
+            </span>
+            <span aria-hidden="true" style={grow} className={`grid ${open ? 'grid-cols-[1fr] opacity-100' : 'grid-cols-[0fr] opacity-0'}`}>
+              <span className="overflow-hidden pl-1.5 whitespace-nowrap">{segment.label}</span>
+            </span>
           </button>
         )
       })}

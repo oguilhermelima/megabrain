@@ -12,13 +12,14 @@ import { groupReadingsByProvider } from '@/settings/settings-model'
 import { adjacentKey, initialKey, navGroups, navKeys, projectPathOf, sectionInfo, type NavKey } from '@/settings/settings-nav'
 import { ghostIcon, SectionPage, SettingsIcon } from '@/settings/settings-ui'
 import { ShortcutsSection } from '@/settings/ShortcutsSection'
+import { SummariesSection } from '@/settings/SummariesSection'
 import { SupervisorSection } from '@/settings/SupervisorSection'
 import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
 import { UsageSection } from '@/settings/UsageCard'
 
-/** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. */
-export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null }) {
+/** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
+export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null }) {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [section, setSection] = useState<NavKey>(initialKey(focusProject, []))
   const [error, setError] = useState<unknown>(null)
@@ -179,6 +180,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
                   run={act}
                 />
               )}
+              {section === 'summaries' && <SummariesSection models={settings.models} chat={focusChat} />}
               {section === 'supervisor' && (
                 <SupervisorSection
                   running={settings.supervisor.running}

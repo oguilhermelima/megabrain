@@ -97,3 +97,11 @@ export type HeaderMode = 'row' | 'stacked'
 export function headerMode(width: number | null): HeaderMode {
   return width !== null && width > 0 && width < stackedHeaderBelow ? 'stacked' : 'row'
 }
+
+/**
+ * Whether a segment shows its label: the bar is icons only, but the shown view keeps its name and
+ * a segment under the pointer or the keyboard's focus grows to show its own.
+ */
+export function segmentExpanded(view: PaneView, { shown, hovered, focused }: { shown: PaneView; hovered: PaneView | null; focused: PaneView | null }): boolean {
+  return view === shown || view === hovered || view === focused
+}

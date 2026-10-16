@@ -5,7 +5,7 @@ import type { CodeTarget } from '@/code/code-pane-model'
 export function CodePane({ target }: { target: CodeTarget }) {
   return (
     <>
-      <ChatHeader agent={null} title={target.title} meta={target.root} />
+      <ChatHeader agent={null} title={target.title} />
       <div className="min-h-0 flex-1" />
     </>
   )
