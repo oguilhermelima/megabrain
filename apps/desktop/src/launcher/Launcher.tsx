@@ -180,7 +180,7 @@ export function Launcher({
       <div className="mx-8 min-h-0 flex-1 overflow-y-auto">
         {start !== undefined ? (
           <div className="pt-6">
-            <StartingCard entry={start} icon={tile === 'terminal' ? undefined : <AgentIcon agent={tile} size={20} />} onRetry={() => void actions.retry(startKey)} onDismiss={() => actions.dismiss(startKey)} />
+            <StartingCard entry={start} icon={tile === 'terminal' ? undefined : <AgentIcon agent={tile} size={20} activity="working" />} onRetry={() => void actions.retry(startKey)} onDismiss={() => actions.dismiss(startKey)} />
           </div>
         ) : (
           <>

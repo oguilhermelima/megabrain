@@ -191,5 +191,7 @@ export function createTauriApi(): DesktopApi {
     listAppTerminals: () => cliJson(['terminal', 'list', '--app', '--json'], z.array(appTerminalSchema)),
     onTerminalData: (terminalId, onData, onExit) => terminalListen(terminalId, onData, onExit),
     setTerminalEngine: async (engine) => void (await cliText(['settings', 'set', 'terminal-engine', engine])),
+    sidebarFolders: () => cliJson(['settings', 'get', 'sidebar-folders'], z.unknown()),
+    setSidebarFolders: async (json) => void (await cliText(['settings', 'set', 'sidebar-folders', json])),
   }
 }

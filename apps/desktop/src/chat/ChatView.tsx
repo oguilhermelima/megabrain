@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
+import { ConversationAgent } from '@/components/agent-icons'
 import { api } from '@/api'
 import type { ChatRead, Dispatch, MessagePart } from '@/api/schema'
 import { chatState } from '@/advanced/model'
@@ -85,7 +86,9 @@ export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, o
       </div>
       {tab === 'conversation' && (
         <div className="flex min-h-0 flex-1 flex-col">
-          <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} root={chat.worktreePath ?? null} onOpenPath={onOpenPath} />
+          <ConversationAgent.Provider value={chat.agent ?? null}>
+            <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} root={chat.worktreePath ?? null} onOpenPath={onOpenPath} />
+          </ConversationAgent.Provider>
         </div>
       )}
       {tab === 'terminal' && read === null && readError === null && (

@@ -144,6 +144,10 @@ export interface DesktopApi {
   /** Bytes from the terminal, base64; returns a function that stops listening. */
   onTerminalData(terminalId: string, onData: (base64: string) => void, onExit: (code: number | null) => void): Promise<() => void>
   setTerminalEngine(engine: TerminalEngine): Promise<void>
+  /** The sidebar's folders as saved (`settings get sidebar-folders`); advanced/sidebar-folders.ts reads the shape. */
+  sidebarFolders(): Promise<unknown>
+  /** Replaces the saved sidebar folders with this JSON (`settings set sidebar-folders`). */
+  setSidebarFolders(json: string): Promise<void>
 }
 
 /** Worktree creation (`worktree create`); kept apart from DesktopApi so its adapters live in worktree-create.ts. */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -146,6 +146,69 @@ describe("megabrain settings", () => {
     expect((await run(["terminal", "default", "--clear"], env)).kind).toBe("ok");
     expect((await settings(env)).resources).toEqual({ historyEnabled: false, policy: null });
     expect((await settings(env)).terminal).toMatchObject({ default: null });
+  });
+});
+
+describe("settings sidebar-folders", () => {
+  const layout = { version: 1, folders: [{ id: "work", name: "Work", collapsed: true, projects: ["/repo/a", "/repo/b"] }], order: ["work", "/repo/c"] };
+
+  async function read(env: ReturnType<typeof sandbox>): Promise<unknown> {
+    const result = await run(["settings", "get", "sidebar-folders"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(result.error);
+    return JSON.parse(result.value) as unknown;
+  }
+
+  test("reads an empty layout before anything was saved", async () => {
+    expect(await read(sandbox())).toEqual({ version: 1, folders: [], order: [] });
+  });
+
+  test("stores the layout as a private state-dir file and reads it back", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "sidebar-folders", JSON.stringify(layout)], env)).kind).toBe("ok");
+    expect(await read(env)).toEqual(layout);
+    const file = join(env.state, "sidebar-settings.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(layout);
+  });
+
+  test("replaces the whole layout on each write", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "sidebar-folders", JSON.stringify(layout)], env)).kind).toBe("ok");
+    const next = { version: 1, folders: [], order: ["/repo/a"] };
+    expect((await run(["settings", "set", "sidebar-folders", JSON.stringify(next)], env)).kind).toBe("ok");
+    expect(await read(env)).toEqual(next);
+  });
+
+  test("refuses anything that is not a layout and keeps the saved one", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "sidebar-folders", JSON.stringify(layout)], env)).kind).toBe("ok");
+    const refused = [
+      "not json",
+      JSON.stringify([]),
+      JSON.stringify({ version: 2, folders: [], order: [] }),
+      JSON.stringify({ version: 1, folders: [{ id: "a", name: "A", collapsed: false }], order: [] }),
+      JSON.stringify({ version: 1, folders: [{ id: "a", name: "", collapsed: false, projects: [] }], order: [] }),
+      JSON.stringify({ version: 1, folders: [{ id: "/a", name: "A", collapsed: false, projects: [] }], order: [] }),
+      JSON.stringify({ version: 1, folders: [{ id: "a", name: "A", collapsed: false, projects: [] }, { id: "a", name: "B", collapsed: false, projects: [] }], order: [] }),
+      JSON.stringify({ version: 1, folders: [{ id: "a", name: "A", collapsed: "no", projects: [] }], order: [] }),
+      JSON.stringify({ version: 1, folders: [{ id: "a", name: "A", collapsed: false, projects: [3] }], order: [] }),
+      JSON.stringify({ version: 1, folders: [], order: [7] }),
+      JSON.stringify({ version: 1, folders: [], order: [], extra: true }),
+    ];
+    for (const value of refused) {
+      const result = await run(["settings", "set", "sidebar-folders", value], env);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error.split(/\r?\n/)).toHaveLength(1);
+    }
+    expect((await run(["settings", "set", "sidebar-folders"], env)).kind).toBe("failed");
+    expect(await read(env)).toEqual(layout);
+  });
+
+  test("reads an empty layout when the saved file is damaged", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "sidebar-settings.json"), "{broken");
+    expect(await read(env)).toEqual({ version: 1, folders: [], order: [] });
   });
 });
 

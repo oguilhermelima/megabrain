@@ -80,7 +80,7 @@ export function CodeRail({
         <ChatListIcon />
       </button>
       <div className="my-3 h-px w-8 shrink-0 bg-white/[0.08]" />
-      <ul className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto">
+      <ul className="sidebar-scroll flex min-h-0 w-full flex-1 flex-col items-center gap-1">
         {railEntries(state, projects).map((entry) => (
           <li key={entry.root} className="group relative w-full px-2">
             {entry.active && <span aria-hidden="true" className="absolute top-2 bottom-2 left-0 w-[3px] rounded-r-full bg-accent" />}

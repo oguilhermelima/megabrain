@@ -3,7 +3,8 @@ import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, 
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
 import { TranscriptSkeleton } from '@/components/Skeleton'
-import { ErrorNote, Spinner } from '@/components/ui'
+import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
+import { ErrorNote } from '@/components/ui'
 import { deriveConversation, type DerivedConversation } from '@/chat/conversation-derive'
 import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
 import { toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
@@ -86,6 +87,20 @@ function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenC
   )
 }
 
+/**
+ * What marks a row still at work: the conversation's agent mark when the view names one (see
+ * ConversationAgent), megabrain's orb otherwise; settled, the same mark held still and grey.
+ */
+function WorkMark({ size, working }: { size: number; working: boolean }) {
+  const agent = useContext(ConversationAgent)
+  if (agent === null) return <span aria-hidden="true" style={{ width: size, height: size }} className={`orb shrink-0 ${working ? '' : 'idle'}`} />
+  return (
+    <span aria-hidden="true" className="contents text-ink-400">
+      <AgentIcon agent={agent} size={size} activity={working ? 'working' : 'idle'} />
+    </span>
+  )
+}
+
 /** Collapsed to its first line; while it streams the header reads Thinking… with a shimmer. */
 function ThinkingMessage({ event, streaming = false }: { event: TranscriptEvent; streaming?: boolean }) {
   const [open, setOpen] = useState(false)
@@ -93,7 +108,7 @@ function ThinkingMessage({ event, streaming = false }: { event: TranscriptEvent;
   return (
     <li>
       <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
-        <span className={`orb size-2.5 shrink-0 ${streaming ? '' : 'idle'}`} />
+        <WorkMark size={10} working={streaming} />
         {streaming ? <span className="shimmer">Thinking…</span> : open ? 'Thinking' : firstLine}
       </button>
       {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">{event.text}</p>}
@@ -166,7 +181,7 @@ function ToolGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 
         <span className="w-3 shrink-0 text-[10px]">{open ? '▾' : '▸'}</span>
         {running ? (
           <>
-            <Spinner />
+            <WorkMark size={12} working />
             <span className="shrink-0 font-semibold text-ink-200">Working: {summary.tool}</span>
             <span title={summary.detail} className="min-w-0 truncate font-mono text-[12.5px]">{summary.detail}</span>
             {summary.earlier > 0 && <span className="shrink-0">· {summary.earlier} earlier</span>}

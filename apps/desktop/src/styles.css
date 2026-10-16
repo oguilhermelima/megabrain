@@ -88,10 +88,28 @@ html.native body {
   mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
 }
 
-/* The sidebar list: a thin scrollbar that shows only while the pointer is over the list. The
-   gutter is kept so rows do not shift when the list starts to scroll. */
+/* The sidebar list: a thin scrollbar that shows only while the pointer is over the list. Its track
+   is always there (overflow-y: scroll, transparent until hover) and the gutter is kept, so the rows
+   keep one width whether or not the list overflows. */
 .sidebar-scroll {
+  overflow-y: scroll;
   scrollbar-gutter: stable;
+}
+
+/* A chat, session or terminal row that appears in the sidebar fades and slides in. */
+@keyframes sidebar-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.sidebar-row-in {
+  animation: sidebar-row-in 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-row-in {
+    animation: none;
+  }
 }
 .sidebar-scroll::-webkit-scrollbar {
   width: 6px;
@@ -126,6 +144,42 @@ html.native body {
 @media (prefers-reduced-motion: reduce) {
   .orb {
     animation: none;
+  }
+}
+
+/* An agent's mark while its chat works or waits (components/agent-icons.tsx). */
+.agent-mark-spin {
+  animation: orb-spin 2.8s linear infinite;
+  transform-origin: center;
+}
+@keyframes agent-mark-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+.agent-mark-pulse {
+  animation: agent-mark-pulse 1.4s ease-in-out infinite;
+}
+/* A band of full colour sweeps across a dimmed mark. */
+@keyframes agent-mark-wave {
+  from {
+    mask-position: 150% 0;
+  }
+  to {
+    mask-position: -50% 0;
+  }
+}
+.agent-mark-wave {
+  mask-image: linear-gradient(100deg, rgb(0 0 0 / 0.35) 30%, #000 50%, rgb(0 0 0 / 0.35) 70%);
+  mask-size: 250% 100%;
+  animation: agent-mark-wave 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-mark-spin,
+  .agent-mark-pulse,
+  .agent-mark-wave {
+    animation: none;
+    mask-image: none;
   }
 }
 

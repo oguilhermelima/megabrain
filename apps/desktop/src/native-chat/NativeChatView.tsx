@@ -13,6 +13,7 @@ import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
 import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, withModel, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
+import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
 import { useFollowChat } from '@/native-chat/useFollowChat'
 
@@ -167,6 +168,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       ) : (
         <>
           <div className="flex min-h-0 flex-1 flex-col">
+            <ConversationAgent.Provider value={chat.agent}>
             <ApprovalRendererContext.Provider value={renderApproval}>
               {/* Until the first line of the follow arrives the history is still being read. */}
               {fresh ? (
@@ -177,13 +179,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
                 <ConversationList
                   events={state.events}
                   live={live}
-                  footer={working === null ? null : <WorkingIndicator status={working} />}
+                  footer={working === null ? null : <WorkingIndicator agent={chat.agent} status={working} />}
                   onOpenChat={onOpenChat}
                   root={chat.cwd}
                   onOpenPath={onOpenPath}
                 />
               )}
             </ApprovalRendererContext.Provider>
+            </ConversationAgent.Provider>
           </div>
           {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
           <div onKeyDown={onComposerKey} className="contents">

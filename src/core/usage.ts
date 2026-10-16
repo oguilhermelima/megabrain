@@ -58,7 +58,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json] | set terminal-engine native|tmux",
+  "settings": "settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json>",
   "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
@@ -209,6 +209,7 @@ Commands:
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
   settings [--json]                    Read all settings shown in the desktop app
   settings set terminal-engine ...     Choose the embedded terminal engine
+  settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
   resources [--json|--all]               Measure machine and open-dispatch resources
   proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
   chain list|limits|add|save|edit|delete|run ...  Manage ordered child-agent chains

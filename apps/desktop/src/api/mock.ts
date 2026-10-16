@@ -18,6 +18,7 @@ export function createMockApi(): DesktopApi {
     resolvesTo: '/Users/operator/Workspaces/megabrain/.build/megabrain',
   }
   let settings = mockSettings
+  let sidebarFolders: unknown = { version: 1, folders: [], order: [] }
   // Sessions released from megabrain's tmux server (`session release`).
   const released = new Set<string>()
   const withOwnership = (projects: Project[]): Project[] =>
@@ -200,5 +201,7 @@ export function createMockApi(): DesktopApi {
       return () => {}
     },
     setTerminalEngine: async () => {},
+    sidebarFolders: async () => sidebarFolders,
+    setSidebarFolders: async (json) => void (sidebarFolders = JSON.parse(json) as unknown),
   }
 }

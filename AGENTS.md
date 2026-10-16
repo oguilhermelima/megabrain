@@ -64,7 +64,7 @@
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain status [--json]. — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
-- Run megabrain settings [--json] | set terminal-engine native|tmux. — recommended when you need to read desktop settings or choose the embedded terminal engine.
+- Run megabrain settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json>. — recommended when you need to read desktop settings, choose the embedded terminal engine, or read or replace the desktop sidebar's project folders.
 - Run megabrain settings set terminal-engine native|tmux. — choose the engine used for embedded terminals.
 - Run megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json. — recommended when you need to start or control a persistent Claude or Codex chat.
 - Use megabrain chat model <id> <model> [--effort <level>] [--json] to change the model for an idle chat.

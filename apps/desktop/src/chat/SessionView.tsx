@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
+import { ConversationAgent } from '@/components/agent-icons'
 import { api } from '@/api'
 import type { MessagePart, ProjectSession } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
@@ -76,7 +77,9 @@ export function SessionView({
       ) : (
         <>
           <div className="flex min-h-0 flex-1 flex-col">
-            <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} />
+            <ConversationAgent.Provider value={session.agent}>
+              <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} />
+            </ConversationAgent.Provider>
           </div>
           <Composer
             placeholder={ended ? 'This session has ended' : `Reply to ${session.title}…`}

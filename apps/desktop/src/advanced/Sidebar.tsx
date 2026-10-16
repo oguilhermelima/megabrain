@@ -3,17 +3,20 @@ import { api } from '@/api'
 import type { NativeChat, Project, ProjectSession, ProjectWorktree } from '@/api/schema'
 import { projectWorktreeRows, relativeAge } from '@/advanced/projects-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
-import { dropTarget, moveProject, reconcileOrder, stepProject, type Placement } from '@/advanced/project-order'
+import { dropTarget, type Placement } from '@/advanced/project-order'
+import { createFolder, deleteFolder, folderOf, isFolderId, layoutDropTarget, moveEntry, moveToFolder, renameFolder, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { applyRowOrder, moveRow, parseRowOrder, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { RowMenu, type MenuItem, type OpenMenu } from '@/advanced/RowMenu'
+import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { FilterMenu, HeaderButton, SearchField, SearchIcon } from '@/advanced/SidebarTools'
 import { activeFilterLabels, emptyFilters, filterProjects, hasFilters, parseFilters, partitionHidden, sessionTimer, type HiddenPartition, type SidebarFilters } from '@/advanced/sidebar-model'
 import { SidebarSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
+import { activityOf } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { codeTargetFor, type CodeTarget } from '@/code/code-mode-model'
 import { countBadge, githubRepository, stateColors, worktreePullRequestState } from '@/github/github-model'
@@ -21,6 +24,7 @@ import { IssueIcon, PullRequestIcon } from '@/github/icons'
 import { useGithubCounts, type GithubCounts, type GithubKind } from '@/github/useGithubCounts'
 import { announceAction } from '@/lib/app-events'
 import { useStableCallback } from '@/lib/useStableCallback'
+import { useFlip } from '@/advanced/useFlip'
 import { ownership } from '@/chat/session-ownership'
 import { rowStatus } from '@/native-chat/chat-model'
 import { useChatState } from '@/native-chat/live-state'
@@ -115,7 +119,7 @@ function BranchIcon() {
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`transition-transform ${open ? 'rotate-90' : ''}`}>
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`transition-transform duration-[180ms] ease-out motion-reduce:transition-none ${open ? 'rotate-90' : ''}`}>
       <path d="M6 3.5 10.5 8 6 12.5" />
     </svg>
   )
@@ -319,7 +323,7 @@ function SessionRow({ session, selected, now, onSelect, menuItems, onMenu, onClo
           selected ? 'bg-row-selected text-ink-100' : live(session) ? 'text-ink-300 hover:bg-row-hover hover:text-ink-100' : 'text-ink-400 hover:bg-row-hover hover:text-ink-200'
         }`}
       >
-        <AgentIcon agent={session.agent} className="shrink-0 text-ink-300" />
+        <AgentIcon agent={session.agent} activity={activityOf(session.status)} className="shrink-0 text-ink-300" />
         <span className="min-w-0 flex-1 truncate">{session.title}</span>
         <TimerChip session={session} now={now} />
         <span className={`w-[30px] shrink-0 text-right text-[11px] whitespace-nowrap text-ink-400 tabular-nums ${hasEnd ? hiddenOnHover : ''}`}>{age}</span>
@@ -354,7 +358,7 @@ function NativeChatRow({ chat: listed, session, selected, now, onSelect, menuIte
           selected ? 'bg-row-selected text-ink-100' : status !== 'ended' ? 'text-ink-300 hover:bg-row-hover hover:text-ink-100' : 'text-ink-400 hover:bg-row-hover hover:text-ink-200'
         }`}
       >
-        <AgentIcon agent={chat.agent} className="shrink-0 text-ink-300" />
+        <AgentIcon agent={chat.agent} activity={activityOf(chat.state)} className="shrink-0 text-ink-300" />
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {session !== null && <TimerChip session={session} now={now} />}
         {chat.state === 'waiting-approval' && <span className="shrink-0 rounded-full bg-warn/[0.12] px-1.5 text-[10.5px] leading-4 font-medium text-warn">waiting</span>}
@@ -579,7 +583,7 @@ function WorktreeRow({
             rowControls.start(event, worktree.path, item.key, keys)
           }
           return (
-            <div key={item.key} data-row-key={item.key} className={`relative ${rowControls.dragging === item.key ? 'opacity-50' : ''}`}>
+            <div key={item.key} data-row-key={item.key} className={`sidebar-row-in relative ${rowControls.dragging === item.key ? 'opacity-50' : ''}`}>
               {rowControls.edge?.key === item.key && <DropLine edge={rowControls.edge.placement} />}
               {renderItem(item, drag)}
             </div>
@@ -683,7 +687,7 @@ const ProjectSection = memo(function ProjectSection({
   /** This row is the one being dragged. */
   dragging: boolean
   /** Where a dragged project would land against this row. */
-  edge: Placement | null
+  edge: DropPlacement | null
   /** This project's open counts; undefined until read. */
   githubCounts: GithubCounts[string] | undefined
   /** The GitHub page of this project showing in the main area, if any. */
@@ -696,12 +700,11 @@ const ProjectSection = memo(function ProjectSection({
   actions: RowActions
   onMenu: MenuOpener
 }) {
-  const projectItems = actions.project(project)
   if (project.missing) {
     return (
       <section
-        data-project-path={project.path}
-        onContextMenu={(event) => onMenu(event, projectItems)}
+        data-entry-key={project.path}
+        onContextMenu={(event) => onMenu(event, actions.project(project))}
         onPointerDown={(event) => drag.start(event, project.path)}
         className={`group relative flex h-9 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 select-none hover:bg-row-hover ${dragging ? 'opacity-50' : ''}`}
         title={`${project.name}\n${project.path}`}
@@ -711,7 +714,7 @@ const ProjectSection = memo(function ProjectSection({
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-400">{project.name}</h2>
         <span className="shrink-0 text-[11px] text-ink-400">folder missing</span>
         <RowActions gap="2.5">
-          <MoreButton label={`Manage ${project.name}`} onClick={(event) => onMenu(event, projectItems)} />
+          <MoreButton label={`Manage ${project.name}`} onClick={(event) => onMenu(event, actions.project(project))} />
         </RowActions>
       </section>
     )
@@ -719,12 +722,12 @@ const ProjectSection = memo(function ProjectSection({
   const rows = projectWorktreeRows(project)
   const running = project.worktrees.reduce((count, worktree) => count + worktree.sessions.filter(live).length, 0)
   return (
-    <section data-project-path={project.path} className={`relative space-y-1 ${dragging ? 'opacity-50' : ''}`}>
+    <section data-entry-key={project.path} className={`relative ${dragging ? 'opacity-50' : ''}`}>
       {edge !== null && <DropLine edge={edge} />}
-      <div onContextMenu={(event) => onMenu(event, projectItems)} onPointerDown={(event) => drag.start(event, project.path)} className="group flex items-center gap-0.5 rounded-[12px] pr-1.5 transition-colors select-none hover:bg-row-hover">
+      <div onContextMenu={(event) => onMenu(event, actions.project(project))} onPointerDown={(event) => drag.start(event, project.path)} className="group flex items-center gap-0.5 rounded-[12px] pr-1.5 transition-colors select-none hover:bg-row-hover">
         <button
           type="button"
-          data-project-toggle={project.path}
+          data-entry-toggle={project.path}
           onClick={() => onToggle(project.name)}
           onKeyDown={(event) => drag.key(event, project.path)}
           aria-expanded={!collapsed}
@@ -751,11 +754,11 @@ const ProjectSection = memo(function ProjectSection({
           </>
         )}
         <RowActions gap="0.5">
-          <MoreButton label={`Manage ${project.name}`} onClick={(event) => onMenu(event, projectItems)} />
+          <MoreButton label={`Manage ${project.name}`} onClick={(event) => onMenu(event, actions.project(project))} />
         </RowActions>
       </div>
-      {!collapsed && (
-        <div className="space-y-1">
+      <Collapse open={!collapsed}>
+        <div className="space-y-1 pt-1">
           {rows.map(({ worktree, depth }) => (
             <WorktreeRow
               key={worktree.path}
@@ -784,14 +787,116 @@ const ProjectSection = memo(function ProjectSection({
             <PendingWorktreeRow key={creation.id} creation={creation} rows={creationRows} />
           ))}
         </div>
-      )}
+      </Collapse>
     </section>
   )
 })
 
-/** The line that shows where a dragged project lands. */
-function DropLine({ edge }: { edge: Placement }) {
+/** The line that shows where a dragged project or folder lands; dropping into a folder rings its header. */
+function DropLine({ edge }: { edge: DropPlacement }) {
+  if (edge === 'into') return <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[12px] ring-2 ring-accent ring-inset" />
   return <span aria-hidden="true" className={`pointer-events-none absolute right-2 left-2 h-0.5 rounded-full bg-accent ${edge === 'before' ? '-top-1' : '-bottom-1'}`} />
+}
+
+function FolderIcon({ open }: { open: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+      {open ? <path d="M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.1c.6 0 1 .4 1 1v.8H4.6c-.5 0-.9.3-1 .7L1.8 12.3Zm1.9 2.9c.1-.4.5-.6.9-.6h9.6c.6 0 1 .6.8 1.1l-1.4 4.2c-.1.4-.5.7-1 .7H2.8" /> : <path d="M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1Z" />}
+    </svg>
+  )
+}
+
+/**
+ * A folder the person made to group projects: its header folds it, renames inline, drags among the
+ * projects at the top level and takes projects dropped on it; its projects sit under it.
+ */
+function FolderSection({
+  folder,
+  count,
+  renaming,
+  onStartRename,
+  onRename,
+  onToggle,
+  drag,
+  dragging,
+  edge,
+  menuItems,
+  onMenu,
+  children,
+}: {
+  folder: SidebarFolder
+  /** Projects shown in it. */
+  count: number
+  renaming: boolean
+  onStartRename: () => void
+  /** The new name, or null to stop renaming without one. */
+  onRename: (name: string | null) => void
+  onToggle: () => void
+  drag: ProjectDrag
+  dragging: boolean
+  edge: DropPlacement | null
+  menuItems: MenuItem[]
+  onMenu: MenuOpener
+  children: ReactNode
+}) {
+  const open = !folder.collapsed
+  return (
+    <section data-folder-id={folder.id} className={`relative ${dragging ? 'opacity-50' : ''}`}>
+      <div
+        data-entry-key={folder.id}
+        data-entry-folder=""
+        data-entry-open={open ? '' : undefined}
+        onContextMenu={renaming ? undefined : (event) => onMenu(event, menuItems)}
+        onPointerDown={renaming ? undefined : (event) => drag.start(event, folder.id)}
+        className="group relative flex items-center gap-0.5 rounded-[12px] pr-1.5 transition-colors select-none hover:bg-row-hover"
+      >
+        {edge !== null && <DropLine edge={edge} />}
+        {renaming ? (
+          <div className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-ink-300">
+            <FolderIcon open={open} />
+            <input
+              aria-label={`Rename ${folder.name}`}
+              defaultValue={folder.name}
+              maxLength={200}
+              autoFocus
+              onFocus={(event) => event.currentTarget.select()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') onRename(event.currentTarget.value)
+                if (event.key === 'Escape') onRename(null)
+              }}
+              onBlur={(event) => onRename(event.currentTarget.value)}
+              className="min-w-0 flex-1 bg-transparent text-[14px] font-semibold text-ink-100 outline-none"
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            data-entry-toggle={folder.id}
+            onClick={onToggle}
+            onDoubleClick={onStartRename}
+            onKeyDown={(event) => drag.key(event, folder.id)}
+            aria-expanded={open}
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            title={`${folder.name}\nDrag or press ⌥↑ ⌥↓ to reorder; drop projects on it to group them`}
+            className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left text-ink-300"
+          >
+            <FolderIcon open={open} />
+            <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em] text-ink-200">{folder.name}</h2>
+            <span className="shrink-0 text-[11px] font-medium text-ink-400 tabular-nums">{count}</span>
+            <Chevron open={open} />
+          </button>
+        )}
+        {!renaming && (
+          <RowActions gap="0.5">
+            <MoreButton label={`Manage ${folder.name}`} onClick={(event) => onMenu(event, menuItems)} />
+          </RowActions>
+        )}
+      </div>
+      <Collapse open={open}>
+        <div className="space-y-1 pt-1 pl-3">{children}</div>
+      </Collapse>
+    </section>
+  )
 }
 
 /** What a project row needs to be dragged or moved with the keyboard; the same object every render. */
@@ -860,12 +965,12 @@ function HiddenSection({ hidden, onShow }: { hidden: HiddenPartition; onShow: (t
         Hidden
         <span className="ml-auto text-[11px] font-medium tabular-nums">{count}</span>
       </button>
-      {open && (
-        <ul className="space-y-0.5">
+      <Collapse open={open}>
+        <ul className="space-y-0.5 pt-1">
           {hidden.hiddenProjects.map((project) => row(`p:${project.path}`, project.name, 'project', { project: project.path }))}
           {hidden.hiddenWorktrees.map(({ project, worktree }) => row(`w:${worktree.path}`, worktreeName(worktree), project.name, { worktree: worktree.path }))}
         </ul>
-      )}
+      </Collapse>
     </section>
   )
 }
@@ -881,8 +986,9 @@ export const Sidebar = memo(function Sidebar({
   onCode,
   onQuickView,
   onImport,
-  order,
-  onReorder,
+  layout,
+  onLayout,
+  layoutError,
   filters,
   onFilters,
   activeGithub,
@@ -935,9 +1041,11 @@ export const Sidebar = memo(function Sidebar({
   /** The read-only file browser, without VS Code. */
   onQuickView: (target: CodeTarget) => void
   onImport: () => void
-  /** The saved project order (paths), and where a drag or ⌥↑ ⌥↓ sends the new one. */
-  order: string[]
-  onReorder: (order: string[]) => void
+  /** The folders and top-level order, reconciled with the listed projects; drags, ⌥↑ ⌥↓ and the folder menus send the next one. */
+  layout: SidebarLayout
+  onLayout: (layout: SidebarLayout) => void
+  /** Why the folders could not be read or saved, if so. */
+  layoutError: unknown
   filters: SidebarFilters
   onFilters: (filters: SidebarFilters) => void
   /** The GitHub page showing in the main area, if any. */
@@ -987,13 +1095,21 @@ export const Sidebar = memo(function Sidebar({
   // below it: no tint or blur of its own, which inside the glass would stack a second, darker layer.
   // Rows that scroll up fade out under its edge, and a hairline shows once they do.
   const [scrolled, setScrolled] = useState(false)
-  const [dragState, setDragState] = useState<{ path: string; target: { path: string; placement: Placement } | null } | null>(null)
-  // Starting from every listed project keeps hidden and not-yet-ordered ones where they are.
-  const fullOrder = () => reconcileOrder(order, projects.map((project) => project.path))
-  const dropRows = () =>
-    [...(navRef.current?.querySelectorAll<HTMLElement>('[data-project-path]') ?? [])].map((element) => {
+  // Rows that change place slide there (useFlip); every layout change goes through here.
+  const captureRows = useFlip(navRef)
+  const applyLayout = (next: SidebarLayout) => {
+    captureRows()
+    onLayout(next)
+  }
+  // A project or a folder being dragged, and where it would land.
+  const [dragState, setDragState] = useState<{ key: string; target: { key: string; placement: DropPlacement } | null } | null>(null)
+  // Every project and folder header on screen, in order; a project inside a folder names it.
+  const dropRows = (): LayoutRow[] =>
+    [...(navRef.current?.querySelectorAll<HTMLElement>('[data-entry-key]') ?? [])].map((element) => {
       const rect = element.getBoundingClientRect()
-      return { path: element.dataset.projectPath ?? '', top: rect.top, bottom: rect.bottom }
+      const folder = element.dataset.entryFolder !== undefined
+      const parent = folder ? null : (element.parentElement?.closest<HTMLElement>('[data-folder-id]')?.dataset.folderId ?? null)
+      return { key: element.dataset.entryKey ?? '', parent, folder, open: element.dataset.entryOpen !== undefined, top: rect.top, bottom: rect.bottom }
     })
 
   const dragStart = useStableCallback((event: PointerEvent<HTMLElement>, path: string) => {
@@ -1003,7 +1119,7 @@ export const Sidebar = memo(function Sidebar({
     const onMove = (move: globalThis.PointerEvent) => {
       if (!moving && Math.abs(move.clientY - startY) < 4) return
       moving = true
-      setDragState({ path, target: dropTarget(dropRows(), move.clientY) })
+      setDragState({ key: path, target: layoutDropTarget(dropRows(), move.clientY, path) })
     }
     const onUp = (up: globalThis.PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
@@ -1012,8 +1128,8 @@ export const Sidebar = memo(function Sidebar({
       if (!moving) return
       swallowNextClick()
       setDragState(null)
-      const target = dropTarget(dropRows(), up.clientY)
-      if (target !== null && target.path !== path) onReorder(moveProject(fullOrder(), path, target.path, target.placement))
+      const target = layoutDropTarget(dropRows(), up.clientY, path)
+      if (target !== null) applyLayout(moveEntry(layout, path, target))
     }
     const onCancel = () => {
       window.removeEventListener('pointermove', onMove)
@@ -1028,15 +1144,48 @@ export const Sidebar = memo(function Sidebar({
   const dragKey = useStableCallback((event: KeyboardEvent<HTMLElement>, path: string) => {
     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
     event.preventDefault()
-    const current = fullOrder()
-    const next = stepProject(current, visible.map((project) => project.path), path, event.key === 'ArrowUp' ? -1 : 1)
-    if (next === current) return
-    onReorder(next)
+    const next = stepEntry(layout, path, event.key === 'ArrowUp' ? -1 : 1, new Set(visible.map((project) => project.path)))
+    if (next === layout) return
+    applyLayout(next)
     // Moving the row re-inserts it in the list, which drops focus; give it back.
-    requestAnimationFrame(() => navRef.current?.querySelector<HTMLElement>(`[data-project-toggle="${CSS.escape(path)}"]`)?.focus())
+    requestAnimationFrame(() => navRef.current?.querySelector<HTMLElement>(`[data-entry-toggle="${CSS.escape(path)}"]`)?.focus())
   })
   const drag = useMemo<ProjectDrag>(() => ({ start: dragStart, key: dragKey }), [dragStart, dragKey])
-  const edgeOf = (path: string) => (dragState?.target?.path === path && dragState.target.path !== dragState.path ? dragState.target.placement : null)
+  const edgeOf = (key: string) => (dragState?.target?.key === key ? dragState.target.placement : null)
+
+  // Folders: made from the header's + menu or a project's menu, renamed in place, removed after a confirm.
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null)
+  const newFolder = useStableCallback((project?: string) => {
+    const id = `folder-${crypto.randomUUID()}`
+    applyLayout(createFolder(layout, id, 'New folder', project))
+    setRenamingFolder(id)
+  })
+  const renameTo = (id: string, name: string | null) => {
+    setRenamingFolder(null)
+    if (name !== null) applyLayout(renameFolder(layout, id, name))
+  }
+  const folderItems = (folder: SidebarFolder): MenuItem[] => [
+    { label: 'Rename…', onSelect: () => setRenamingFolder(folder.id) },
+    {
+      label: 'Delete folder…',
+      danger: true,
+      onSelect: () =>
+        setConfirm({
+          title: `Delete ${folder.name}?`,
+          body: folder.projects.length === 0 ? 'The folder is empty; nothing else changes.' : 'Its projects move back to the top level of the sidebar, where the folder was. Nothing on disk changes.',
+          action: 'Delete folder',
+          run: async () => applyLayout(deleteFolder(layout, folder.id)),
+        }),
+    },
+  ]
+  const moveItems = useStableCallback((project: Project): MenuItem[] => {
+    const current = folderOf(layout, project.path)
+    return [
+      ...layout.folders.filter((folder) => folder.id !== current?.id).map((folder) => ({ label: `Move to ${folder.name}`, onSelect: () => applyLayout(moveToFolder(layout, project.path, folder.id)) })),
+      { label: 'Move to new folder', onSelect: () => newFolder(project.path) },
+      ...(current === null ? [] : [{ label: `Move out of ${current.name}`, onSelect: () => applyLayout(moveToFolder(layout, project.path, null)) }]),
+    ]
+  })
 
   // The row whose menu is open keeps its actions visible; see rowAction.
   const menuRow = useRef<HTMLElement | null>(null)
@@ -1077,6 +1226,7 @@ export const Sidebar = memo(function Sidebar({
     project: (project) => [
       { label: 'Open Code', onSelect: () => onCode(codeTargetFor(project)) },
       { label: 'Quick view', onSelect: () => onQuickView(codeTargetFor(project)) },
+      ...moveItems(project),
       { label: 'Hide', onSelect: () => setHidden({ project: project.path }, true) },
       {
         label: 'Remove from megabrain…',
@@ -1137,7 +1287,7 @@ export const Sidebar = memo(function Sidebar({
       if (!ownership(session).owned) return []
       return [{ label: 'Release from megabrain…', danger: true, onSelect: () => closeRow({ kind: 'session', session }) }]
     },
-  }), [onCode, onQuickView, setHidden, onNewTerminal, closeRow])
+  }), [onCode, onQuickView, setHidden, onNewTerminal, closeRow, moveItems])
 
   const [renamingTerminal, setRenamingTerminal] = useState<string | null>(null)
   const terminalRows = useMemo<TerminalRows>(() => ({
@@ -1194,6 +1344,7 @@ export const Sidebar = memo(function Sidebar({
       const target = targetAt(up.clientX, up.clientY)
       if (target === null) return
       swallowNextClick()
+      captureRows()
       setRowOrder((current) => {
         const next = { ...current, [worktreePath]: moveRow(shown, key, target.key, target.placement) }
         writeRowOrder(next)
@@ -1207,6 +1358,39 @@ export const Sidebar = memo(function Sidebar({
   const itemRows = useMemo<ItemRows>(
     () => ({ close: closeRow, order: rowOrder, dragging: rowDrag?.key ?? null, edge: rowDrag?.edge ?? null, start: rowDragStart }),
     [closeRow, rowOrder, rowDrag, rowDragStart],
+  )
+
+  const shownByPath = new Map(visible.map((project) => [project.path, project]))
+  const foldersById = new Map(layout.folders.map((folder) => [folder.id, folder]))
+  const renderProject = (project: Project) => (
+    <ProjectSection
+      key={project.name}
+      project={project}
+      collapsed={collapsed.has(project.name)}
+      onToggle={toggle}
+      selectedSessionId={selectedSessionId}
+      onSelectSession={onSelectSession}
+      actions={actions}
+      onMenu={openMenu}
+      now={now}
+      drag={drag}
+      dragging={dragState?.key === project.path}
+      edge={edgeOf(project.path)}
+      githubCounts={githubCounts[project.path]}
+      githubActive={activeGithub?.path === project.path ? activeGithub.kind : null}
+      onGithub={onGithub}
+      chats={chats}
+      selectedChatId={selectedChatId}
+      onSelectChat={onSelectChat}
+      onNewChat={onNewChat}
+      terminals={terminals}
+      terminalRows={terminalRows}
+      onDragRow={onDragRow}
+      itemRows={itemRows}
+      creations={creationsByProject[project.path] ?? noCreations}
+      creationRows={creationRows}
+      onNewWorktree={openNewWorktree}
+    />
   )
 
   return (
@@ -1232,7 +1416,19 @@ export const Sidebar = memo(function Sidebar({
                 <FilterMenu filters={filters} onFilters={onFilters} />
               </>
             )}
-            <button type="button" onClick={onImport} aria-label="Import project" title="Import project" className="flex size-7 items-center justify-center rounded-full text-ink-400 transition-colors hover:bg-white/[0.08] hover:text-ink-100">
+            <button
+              type="button"
+              onClick={(event) =>
+                openMenu(event, [
+                  { label: 'Import project…', onSelect: onImport },
+                  { label: 'New folder', onSelect: () => newFolder() },
+                ])
+              }
+              aria-label="Add project or folder"
+              title="Import a project or make a folder"
+              aria-haspopup="menu"
+              className="flex size-7 items-center justify-center rounded-full text-ink-400 transition-colors hover:bg-white/[0.08] hover:text-ink-100"
+            >
               <PlusIcon />
             </button>
           </span>
@@ -1240,43 +1436,47 @@ export const Sidebar = memo(function Sidebar({
         {searchOpen && partition.visible.length > 0 && <SearchField inputRef={searchRef} query={filters.query} onQuery={(query) => onFilters({ ...filters, query })} onClose={() => setSearchOpen(false)} />}
       </div>
       {/* The gutter the scrollbar keeps (6px) plus pr-1 matches the header's px-2.5, so rows and header actions share one right edge. */}
-      <div onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)} className={`sidebar-scroll min-h-0 flex-1 space-y-4 overflow-y-auto pt-1 pr-1 pb-6 pl-2.5 ${scrolled ? 'sidebar-fade' : ''}`}>
+      <div onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)} className={`sidebar-scroll min-h-0 flex-1 space-y-4 overflow-y-scroll pt-1 pr-1 pb-6 pl-2.5 ${scrolled ? 'sidebar-fade' : ''}`}>
         {actionError !== null && (
           <div className="px-1">
             <ErrorNote error={actionError} />
           </div>
         )}
         {!loaded && projects.length === 0 && <SidebarSkeleton />}
-        {visible.map((project) => (
-          <ProjectSection
-            key={project.name}
-            project={project}
-            collapsed={collapsed.has(project.name)}
-            onToggle={toggle}
-            selectedSessionId={selectedSessionId}
-            onSelectSession={onSelectSession}
-            actions={actions}
-            onMenu={openMenu}
-            now={now}
-            drag={drag}
-            dragging={dragState?.path === project.path}
-            edge={edgeOf(project.path)}
-            githubCounts={githubCounts[project.path]}
-            githubActive={activeGithub?.path === project.path ? activeGithub.kind : null}
-            onGithub={onGithub}
-            chats={chats}
-            selectedChatId={selectedChatId}
-            onSelectChat={onSelectChat}
-            onNewChat={onNewChat}
-            terminals={terminals}
-            terminalRows={terminalRows}
-            onDragRow={onDragRow}
-            itemRows={itemRows}
-            creations={creationsByProject[project.path] ?? noCreations}
-            creationRows={creationRows}
-            onNewWorktree={openNewWorktree}
-          />
-        ))}
+        {layoutError !== null && (
+          <div className="px-1">
+            <ErrorNote error={layoutError} />
+          </div>
+        )}
+        {layout.order.map((key) => {
+          if (!isFolderId(key)) {
+            const project = shownByPath.get(key)
+            return project === undefined ? null : renderProject(project)
+          }
+          const folder = foldersById.get(key)
+          if (folder === undefined) return null
+          const inside = folder.projects.flatMap((path) => shownByPath.get(path) ?? [])
+          // Filtering hides folders with nothing that passes; without filters an empty folder still shows.
+          if (filtered && inside.length === 0) return null
+          return (
+            <FolderSection
+              key={folder.id}
+              folder={folder}
+              count={inside.length}
+              renaming={renamingFolder === folder.id}
+              onStartRename={() => setRenamingFolder(folder.id)}
+              onRename={(name) => renameTo(folder.id, name)}
+              onToggle={() => applyLayout(toggleFolder(layout, folder.id))}
+              drag={drag}
+              dragging={dragState?.key === folder.id}
+              edge={edgeOf(folder.id)}
+              menuItems={folderItems(folder)}
+              onMenu={openMenu}
+            >
+              {inside.map(renderProject)}
+            </FolderSection>
+          )
+        })}
         {filtered && visible.length === 0 && partition.visible.length > 0 && (
           <div className="mx-1 rounded-[18px] border border-dashed border-white/[0.12] px-4 py-5 text-center">
             <p className="text-[13.5px] text-ink-300">Nothing matches {activeFilterLabels(filters).join(' + ')}.</p>

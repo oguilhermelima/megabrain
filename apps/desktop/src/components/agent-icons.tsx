@@ -1,7 +1,11 @@
-import type { ReactNode } from 'react'
+import { createContext, type CSSProperties, type ReactNode } from 'react'
+import { agentMarkLook, type AgentActivity } from '@/components/agent-activity'
 
 // Simple monochrome marks that say which agent a chat runs, drawn for this app: a spark for Claude,
 // a hexagon knot for Codex, a slash for Grok and a four-point star for agy. They take currentColor.
+// Given an activity, the mark also says what its chat does (see agent-activity.ts): Claude, Codex and
+// agy turn in their colour while they work, Grok's mark carries a wave of colour, and a mark waiting
+// for the person pulses amber. Reduced motion keeps the colour and drops the movement (styles.css).
 
 const marks: Record<string, ReactNode> = {
   claude: (
@@ -25,11 +29,18 @@ const marks: Record<string, ReactNode> = {
   agy: <path fill="currentColor" d="M8 1.5c.5 3.4 3.1 6 6.5 6.5-3.4.5-6 3.1-6.5 6.5-.5-3.4-3.1-6-6.5-6.5 3.4-.5 6-3.1 6.5-6.5Z" />,
 }
 
-export function AgentIcon({ agent, size = 14, className = '' }: { agent: string; size?: number; className?: string }) {
+const motionClass = { spin: 'agent-mark-spin', wave: 'agent-mark-wave', pulse: 'agent-mark-pulse' }
+
+export function AgentIcon({ agent, size = 14, className = '', activity = 'idle' }: { agent: string; size?: number; className?: string; activity?: AgentActivity }) {
+  const look = agentMarkLook(agent, activity)
+  const style: CSSProperties | undefined = look.color === null ? undefined : { color: look.color === 'amber' ? 'var(--color-warn)' : look.color }
   return (
-    <svg viewBox="0 0 16 16" width={size} height={size} role="img" aria-label={agent} className={`shrink-0 ${className}`}>
+    <svg viewBox="0 0 16 16" width={size} height={size} role="img" aria-label={activity === 'idle' ? agent : `${agent}, ${activity}`} style={style} className={`shrink-0 ${look.motion === null ? '' : motionClass[look.motion]} ${className}`}>
       <title>{agent}</title>
       {marks[agent] ?? <circle cx="8" cy="8" r="3" fill="currentColor" />}
     </svg>
   )
 }
+
+/** The agent a conversation view runs, so its working rows show that agent's mark instead of megabrain's orb. */
+export const ConversationAgent = createContext<string | null>(null)

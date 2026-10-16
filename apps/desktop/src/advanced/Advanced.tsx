@@ -7,7 +7,9 @@ import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, r
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
 import { Sidebar, readFilters, writeFilters, type SidebarDrag } from '@/advanced/Sidebar'
 import { filterProjects, partitionHidden, type SidebarFilters } from '@/advanced/sidebar-model'
-import { applyOrder, parseOrder } from '@/advanced/project-order'
+import { applyOrder } from '@/advanced/project-order'
+import { flattenLayout, reconcileLayout } from '@/advanced/sidebar-folders'
+import { useSidebarLayout } from '@/advanced/useSidebarLayout'
 import { CollapsedChrome, SettingsIcon, SidebarHeader } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
 import { OpenCodeContext } from '@/chat/code-context'
@@ -78,16 +80,6 @@ function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: bool
   return { projects, chats, loaded, dropChat }
 }
 
-const orderKey = 'megabrain.sidebar.order'
-
-function storedOrder(): string[] {
-  try {
-    return parseOrder(localStorage.getItem(orderKey))
-  } catch {
-    return []
-  }
-}
-
 const panesKey = 'megabrain.panes'
 
 const newPaneId = () => `pane-${crypto.randomUUID()}`
@@ -130,9 +122,10 @@ function storedSidebarCollapsed(): boolean {
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
   const { projects: listed, chats: nativeChats, loaded: projectsLoaded, dropChat } = useProjects()
-  const [projectOrder, setProjectOrder] = useState<string[]>(storedOrder)
-  // The order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
-  const projects = useMemo(() => applyOrder(listed, projectOrder), [listed, projectOrder])
+  const { layout: savedLayout, change: changeLayout, error: layoutError } = useSidebarLayout()
+  // The folders and order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
+  const layout = useMemo(() => reconcileLayout(savedLayout, listed.map((project) => project.path)), [savedLayout, listed])
+  const projects = useMemo(() => applyOrder(listed, flattenLayout(layout)), [listed, layout])
   // Chats are grouped by the repository of their worktree; the projects list already names it.
   const worktrees = useMemo(() => worktreeRepositories(listed), [listed])
   // The main area's panes, each showing one item; the sidebar follows the focused one.
@@ -176,15 +169,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const chatsInWorktrees = useMemo(() => chatsByWorktree(nativeChats, worktreePaths), [nativeChats, worktreePaths])
   const terminalsInWorktrees = useMemo(() => terminalsByWorktree(terminals, worktreePaths), [terminals, worktreePaths])
   const sessionRows = useMemo(() => sidebarSessionOrder(filterProjects(partitionHidden(projects).visible, filters), new Set()), [projects, filters])
-
-  const reorderProjects = (next: string[]) => {
-    setProjectOrder(next)
-    try {
-      localStorage.setItem(orderKey, JSON.stringify(next))
-    } catch {
-      // A remembered order is a convenience; the listed order is fine.
-    }
-  }
 
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((current) => {
@@ -312,7 +296,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setQuick(target)
   })
   const startImport = useStableCallback(() => setImporting(true))
-  const stableReorder = useStableCallback(reorderProjects)
+  const stableLayout = useStableCallback(changeLayout)
   const changeFilters = useStableCallback((next: SidebarFilters) => {
     setFilters(next)
     writeFilters(next)
@@ -755,8 +739,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onCode={stableOpenCode}
             onQuickView={openQuickView}
             onImport={startImport}
-            order={projectOrder}
-            onReorder={stableReorder}
+            layout={layout}
+            onLayout={stableLayout}
+            layoutError={layoutError}
             filters={filters}
             onFilters={changeFilters}
             activeGithub={githubPage}

@@ -24,7 +24,8 @@ export function StartingCard({ entry, icon, onRetry, onDismiss }: { entry: Pendi
             </Button>
           </span>
         ) : (
-          <Spinner />
+          // An agent's mark at work already says it is starting; a spinner beside it would say it twice.
+          icon === undefined && <Spinner />
         )}
       </div>
       {failed && entry.error !== null && <ErrorNote error={entry.error} />}
