@@ -15,6 +15,10 @@ export type Chat = {
   /** Ask for approvals instead of bypassing permission prompts. */
   approvals?: boolean;
   title: string | null;
+  /** Who set the title: the person by hand (never replaced), the chat summary, or the first message. Records from before this existed read as first-message. */
+  titleSource?: "person" | "summary" | "first-message";
+  /** The latest summary of the chat; the history is in its summaries.jsonl. */
+  summary?: { text: string; updatedAt: string; model: string } | null;
   /** `suspended`: no agent process, but the record keeps `agentSessionId`; the next send resumes it. `stopped` is only read from records written before that state existed. */
   state: "starting" | "idle" | "working" | "waiting-approval" | "suspended" | "stopped" | "error";
   mode: "chat" | "terminal";
@@ -28,7 +32,7 @@ export type Chat = {
 
 export type ChatApproval = { id: string; tool: string; input: string; reason: string | null; decisions: Array<"allow" | "allow-session" | "deny"> };
 /** `state` is stored; `delta` is a chunk of the message `messageId` and goes to followers only. */
-export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; /** On a user event: the images it carried, as local files (never their bytes). */ images?: { path: string }[]; /** On a user event with images: its text and images in the order they were sent. */ parts?: ({ type: "text"; text: string } | { type: "image"; path: string })[]; tool?: { name: string; input?: string; status?: "ok" | "error" };
+export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "thinking" | "tool-call" | "tool-result" | "system" | "approval" | "state" | "summary" | "delta"; text: string; messageId?: string; /** The agent log entry this event was imported from. */ sourceId?: string; stream?: "assistant" | "thinking"; turnStartedAt?: string; /** On a user event: the images it carried, as local files (never their bytes). */ images?: { path: string }[]; /** On a user event with images: its text and images in the order they were sent. */ parts?: ({ type: "text"; text: string } | { type: "image"; path: string })[]; tool?: { name: string; input?: string; status?: "ok" | "error" };
   /** On a step a subagent took (its thinking, text, tool calls and results): the id of that subagent. */
   parentId?: string;
   /** On the tool call that starts a subagent (no status) and on the tool result that ends it (status set, text its result). */

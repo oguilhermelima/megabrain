@@ -11,6 +11,7 @@ import { usageText } from "../../core/usage.js";
 import { modelRegistry, readConfig, readLimitRows, validateConfig } from "./chain.js";
 import { storedDefault } from "./terminal-open.js";
 import { supervisorWatcher } from "./supervise.js";
+import { defaultSummarySettings, parseSummarySettings } from "../../chat/summaries.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -166,6 +167,7 @@ const desktopSettings = {
   "shortcuts": desktopFileOf("shortcut-settings.json", parseShortcutOverrides, emptyShortcutOverrides, (value) => `shortcut overrides: ${Object.keys(value.bindings).length}`),
   "hidden-sessions": desktopFileOf("hidden-sessions.json", parseHiddenSessions, emptyHiddenSessions, (value) => `hidden sessions: ${Object.keys(value.sessions).length}`),
   "sidebar-state": desktopFileOf("sidebar-state.json", parseSidebarState, emptySidebarState, (value) => `sidebar state: ${value.collapsed.length} collapsed, ${Object.keys(value.rows).length} ordered worktrees`),
+  "chat-summaries": desktopFileOf("chat-summaries.json", parseSummarySettings, defaultSummarySettings, (value) => `chat summaries: ${value.enabled ? `on, ${value.agent} ${value.model}` : "off"}`),
   "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
 } as const;
 
@@ -311,7 +313,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

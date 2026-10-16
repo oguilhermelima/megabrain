@@ -185,6 +185,11 @@ megabrain chat events <id> [--since <cursor>] [--follow] --json — read or foll
 megabrain chat model <id> <model> [--effort <level>] [--json] — choose the model and reasoning effort for a chat.
 megabrain chat mode <id> chat|terminal --json — hand an idle chat to the terminal or resume it in chat mode.
 megabrain chat terminal-command <id> --json — return the argv for resuming a chat in the terminal.
+megabrain chat rename <id> <title> [--json] — name a chat by hand; automatic titles stop for it.
+megabrain chat summarize <id> [--json] — write a summary of a chat now with the configured model.
+megabrain chat summaries <id> --json — a chat's summaries, newest first.
+megabrain chat search <text> --json — find past chats by project, branch, title or summary.
+megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 megabrain proc start|run|list|status|stop|restart|logs ... — recommended when you need to run and inspect managed processes.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.

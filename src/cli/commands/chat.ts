@@ -5,6 +5,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 import { callChatd, callPermissionServer } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
+import { readSummaries, searchSummaries } from "../../chat/summaries.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 function stateDir(environment: Environment): string { return environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"); }
@@ -110,6 +111,29 @@ export async function executeChat(args: readonly string[], environment: Environm
       if (!id || !model || effort.rest.some((arg) => arg !== "--json")) throw new Error("Usage: megabrain chat model <id> <model> [--effort <level>] [--json]");
       value = await callChatd(dir, { operation: "model", id, model, effort: effort.value }, environment, processAdapter);
       return ok(json ? argsJson(value) : "");
+    }
+    if (verb === "rename") {
+      const [id, title, ...tail] = rest;
+      if (!id || !title || tail.some((arg) => arg !== "--json") || tail.length > 1) throw new Error("Usage: megabrain chat rename <id> <title> [--json]");
+      value = await callChatd(dir, { operation: "rename", id, title }, environment, processAdapter);
+      return ok(tail.length ? argsJson(value) : "");
+    }
+    if (verb === "summarize") {
+      const [id, ...tail] = rest;
+      if (!id || tail.some((arg) => arg !== "--json") || tail.length > 1) throw new Error("Usage: megabrain chat summarize <id> [--json]");
+      value = await callChatd(dir, { operation: "summarize", id }, environment, processAdapter);
+      return ok(tail.length ? argsJson(value) : `${(value as { text: string }).text}\n`);
+    }
+    if (verb === "summaries") {
+      const [id, ...tail] = rest;
+      if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat summaries <id> --json");
+      // The history is a plain file, so it reads without a daemon.
+      return ok(argsJson(readSummaries(dir, id)));
+    }
+    if (verb === "search") {
+      const [query, ...tail] = rest;
+      if (!query || query.startsWith("--") || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat search <text> --json");
+      return ok(argsJson(searchSummaries(dir, query)));
     }
     if (verb === "terminal-command") {
       const [id, ...tail] = rest;

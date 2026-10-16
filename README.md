@@ -304,6 +304,15 @@ session log stays, so it can still be resumed),
 and `chat mode <id> terminal --json` to hand an idle chat to the app's terminal. The app gets the
 agent's resume arguments from `chat terminal-command <id> --json`.
 
+Chat summaries are off until `settings set chat-summaries '{"enabled":true,"agent":"agy","model":"<model>","effort":"low"}'`
+(`everyMessages` default 6, `everyMinutes` default 10, `retitle` default true). After a turn ends, once
+enough user turns or minutes have passed, the configured agent runs once, headless and with tools off in
+an empty directory, over the new messages and the previous summary. The summary is kept on the chat
+record, appended to the chat's `summaries.jsonl`, added to a search index, and (with `retitle`) becomes
+the chat title unless a person renamed it with `chat rename`. `chat summarize <id>` writes one now,
+`chat summaries <id> --json` lists them and `chat search <text> --json` searches past chats. A failing
+agent never disturbs the chat; the next turn end retries.
+
 ## Chains: choosing who does the work
 
 A chain is an ordered list of steps. Each step names an agent, a model and an effort, and

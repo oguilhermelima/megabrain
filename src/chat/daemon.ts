@@ -14,6 +14,7 @@ import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
 import { discoverSessionId, readSessionTurns } from "./session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from "./subagents.js";
 import { selfInvocation } from "../core/self-invocation.js";
+import { ChatSummarizer } from "./summaries.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
@@ -90,6 +91,7 @@ function flattenContent(value: unknown): string { return Array.isArray(value) ? 
 /** Owns every chat child. The CLI is a short-lived socket client; chatd keeps this object alive. */
 export class ChatDaemon {
   readonly store: ChatStore;
+  private readonly summarizer: ChatSummarizer;
   private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
   /** Messages already sent that wait for the agent to be ready: the first message of a start or a resume, or one sent now. */
   private readonly queues = new Map<string, Part[][]>();
@@ -122,7 +124,7 @@ export class ChatDaemon {
   private clients = 0;
   private closed = false;
   private readonly sockets = new Set<Socket>();
-  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION) { this.store = new ChatStore(stateDir); }
+  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION) { this.store = new ChatStore(stateDir); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
   async start(): Promise<void> {
     const dir = join(this.stateDir, "chatd");
@@ -159,6 +161,8 @@ export class ChatDaemon {
         case "events": return await this.events(text(request.id), Number(request.since ?? 0), request.follow === true, socket);
         case "mode": return await this.mode(text(request.id), text(request.mode));
         case "model": return await this.setModel(text(request.id), text(request.model), text(request.effort) || null);
+        case "rename": return await this.rename(text(request.id), text(request.title));
+        case "summarize": return await this.summarizer.summarize(text(request.id));
         case "terminal-command": return await this.terminalCommand(text(request.id));
         case "permission": return await this.permission(text(request.id), object(request.request));
         default: throw new Error("unknown chat operation");
@@ -178,7 +182,7 @@ export class ChatDaemon {
     const now = new Date().toISOString();
     const chat: Chat = {
       id: randomUUID(), agent, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true ? { approvals: true } : {}),
-      title: firstText(parts).slice(0, 120) || null, state: "starting", mode: "chat",
+      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: "starting", mode: "chat",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };
     await this.save(chat);
@@ -757,6 +761,18 @@ export class ChatDaemon {
     await this.publish(chat, event("system", "Stopped"));
   }
 
+  /** A person's rename: the title is theirs from now on and automatic titles stop for this chat. */
+  private async rename(id: string, title: string): Promise<Chat> {
+    const chat = await this.requireChat(id);
+    const named = title.trim().slice(0, 120);
+    if (named === "") throw new Error("a chat title cannot be empty");
+    chat.title = named;
+    chat.titleSource = "person";
+    await this.save(chat);
+    await this.publish(chat, this.stateEvent(chat));
+    return chat;
+  }
+
   /** Stops the agent and deletes the chat's record and events; the agent's own session log stays resumable. */
   private async remove(id: string): Promise<{ removed: string }> {
     await this.requireChat(id);
@@ -1007,6 +1023,7 @@ export class ChatDaemon {
     if (chat.state === "working") { if (!this.turnStarted.has(chat.id)) this.turnStarted.set(chat.id, new Date().toISOString()); }
     else if (chat.state !== "waiting-approval") this.turnStarted.delete(chat.id);
     await this.publish(chat, this.stateEvent(chat));
+    if (chat.state === "idle") void this.summarizer.turnEnded(chat.id);
   }
   private stateEvent(chat: Chat): ChatEvent {
     const startedAt = this.turnStarted.get(chat.id);
