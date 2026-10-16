@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ComponentPropsWithRef, ReactNode } from 'react'
 import { Checkbox } from '@/components/Checkbox'
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'neutral' | 'accent'
@@ -28,7 +28,7 @@ export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
   )
 }
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost' }
+type ButtonProps = ComponentPropsWithRef<'button'> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost' }
 
 const variants = {
   primary: 'bg-accent text-accent-ink hover:bg-[#a3aeff] disabled:bg-ink-700 disabled:text-ink-400',

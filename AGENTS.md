@@ -21,7 +21,7 @@
 - Run megabrain worktree hide|unhide <path>. — recommended when you need to hide or restore a worktree in the project list.
 - Run megabrain worktree adopt <path|branch> [--json]. — recommended when you need to register an existing worktree missing from one orchestrator.
 - Run megabrain worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]. — recommended when you need to review or remove old worktrees safely.
-- Run megabrain repo list|add|clone|remove|hide|unhide|scripts|github .... — recommended when you need to manage megabrain's local project registry.
+- Run megabrain repo list|add|clone|remove|hide|unhide|scripts|github|discover .... — recommended when you need to manage megabrain's local project registry.
 - Run megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]. — recommended when you need to view or set a project's Run, Build and Install commands.
 - Run megabrain repo run <name|path> [--script run|build|install] [--worktree <path>] [--command <cmd>] [--port <p>] [--admission wait|fail] [--json]. — recommended when you need to run a project script as a managed process under the resource policy; a second run reports the running one.
 - Run megabrain repo stop <name|path> [--script run|build|install] [--worktree <path>] [--force] [--json]. — recommended when you need to stop a script started with repo run.
@@ -33,7 +33,8 @@
 - Run megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json. — recommended when you need the argv that starts, or resumes a past session in, an agent's interactive TUI with permission prompts skipped.
 - Run megabrain agent defaults [--json]. — recommended when you need each agent's default model and effort from its own config, and the shell a new terminal opens.
 - Run megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json]. — recommended when you need the slash commands an agent offers in a folder.
-- Run megabrain repo github [--owner <login>] [--json]. — recommended when you need to browse repositories available through GitHub CLI.
+- Run megabrain repo github [--owner <login>] [--orgs] [--json]. — recommended when you need to browse repositories available through GitHub CLI, or the account and organisations that own them with --orgs.
+- Run megabrain repo discover [--roots <paths>] [--json]. — recommended when you need to find git repositories on this machine that are not registered yet.
 - Run megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json]. — recommended when you need the past sessions of a folder, newest first, to resume with agent command --resume.
 - Run megabrain port who|free|kill .... — recommended when you need to find what listens on a port, the next free port, or stop a listener.
 - Run megabrain port who <port> [--json]. — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.

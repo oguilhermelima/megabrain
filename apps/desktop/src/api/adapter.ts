@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey } from '@/api/schema'
+import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -143,8 +143,14 @@ export interface DesktopApi {
   importFolder(path: string): Promise<Repository>
   /** Clone a repository and register it; `into` is the parent folder. */
   importClone(url: string, into: string): Promise<Repository>
-  /** Repositories on GitHub the person can clone. */
-  githubRepositories(): Promise<GithubRepository[]>
+  /** Repositories on GitHub the person can clone: their own, or one owner's (`repo github --owner`). */
+  githubRepositories(owner?: string): Promise<GithubRepository[]>
+  /** The signed-in GitHub account, then its organisations (`repo github --orgs`). */
+  githubOwners(): Promise<GithubOwner[]>
+  /** Git repositories on disk that are not registered yet (`repo discover`); roots replace the CLI's defaults. */
+  discoverRepositories(roots?: string[]): Promise<DiscoveredRepository[]>
+  /** The person's home folder. */
+  homeDir(): Promise<string>
   /** One page of a repository's pull requests through gh (`github prs`), after a cursor; the CLI caches each answer for 60 s. */
   githubPullRequests(root: string, state: 'open' | 'closed' | 'merged' | 'all', limit: number, after: string | null): Promise<GithubPullRequestList>
   /** One page of a repository's issues through gh (`github issues`). */
@@ -187,8 +193,8 @@ export interface DesktopApi {
   setIssueState(root: string, number: number, state: 'open' | 'closed', reason?: 'completed' | 'not planned'): Promise<void>
   /** Merges, closes or reopens a pull request (`github pr-state`). */
   setPrState(root: string, number: number, action: 'merge' | 'close' | 'reopen', options?: { method?: GithubMergeMethod }): Promise<void>
-  /** Ask the person for a folder with the native picker; null when cancelled. */
-  pickFolder(): Promise<string | null>
+  /** Ask the person for a folder with the native picker, opening at defaultPath when given; null when cancelled. */
+  pickFolder(defaultPath?: string): Promise<string | null>
   /** The system clipboard: text, and images as PNG bytes. */
   copyText(text: string): Promise<void>
   pasteText(): Promise<string>

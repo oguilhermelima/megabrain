@@ -11,10 +11,14 @@ import { listRepositories, registerRepository, removeRepository, type Repository
 import { executeRepoRun, executeRepoStop, resolveRepositoryPath } from "./repo-run.js";
 import { backfillProjectHistory } from "./projects.js";
 import { usageText } from "../../core/usage.js";
+import { defaultRoots, discoverRepositories } from "../../core/repository-discovery.js";
 import { setHiddenItem } from "../../db/queries/hidden-items.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
-type GithubRepository = Readonly<{ nameWithOwner: string; url: string; description: string | null; isPrivate: boolean; updatedAt: string | null }>;
+type GithubRepository = Readonly<{ nameWithOwner: string; url: string; description: string | null; isPrivate: boolean; updatedAt: string | null; primaryLanguage?: { name: string } | null; stargazerCount?: number }>;
+/** The signed-in login or one of its organisations: an owner whose repositories `repo github --owner` lists. */
+type GithubOwner = Readonly<{ login: string; kind: "user" | "organization"; avatarUrl: string | null }>;
+type GithubAccount = Readonly<{ login: string; avatar_url?: string | null }>;
 
 function parseRepository(record: Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; addedAt: string }>, json: boolean): string {
   return json ? `${JSON.stringify(record, null, 2)}\n` : `${record.name}\t${record.path}\n`;
@@ -45,7 +49,7 @@ async function addRepository(path: string, source: "megabrain" | "import", envir
 export async function executeRepository(args: readonly string[], environment: Environment, process = createProcessAdapter()): Promise<Result<string>> {
   const [verb, ...rest] = args;
   if (args.includes("-h") || args.includes("--help")) {
-    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "scripts" ? "repo-scripts" : verb === "run" ? "repo-run" : verb === "stop" ? "repo-stop" : verb === "github" ? "repo-github" : "repo";
+    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "scripts" ? "repo-scripts" : verb === "run" ? "repo-run" : verb === "stop" ? "repo-stop" : verb === "github" ? "repo-github" : verb === "discover" ? "repo-discover" : "repo";
     return ok(usageText(key));
   }
   const json = rest.includes("--json");
@@ -75,6 +79,20 @@ export async function executeRepository(args: readonly string[], environment: En
   }
   const backfilled = await backfillProjectHistory(environment, process);
   if (backfilled.kind !== "ok") return backfilled;
+  if (verb === "discover") {
+    const rootsIndex = rest.indexOf("--roots");
+    const rootsArgument = rootsIndex < 0 ? undefined : rest[rootsIndex + 1];
+    if (rootsIndex >= 0 && (rootsArgument === undefined || rootsArgument.startsWith("--"))) return failed("--roots requires a comma-separated list of folders", 2);
+    const records = databaseRead(environment, listRepositories);
+    if (records.kind !== "ok") return records;
+    const registered = records.value.map((record) => record.path);
+    const home = environment.HOME ?? "";
+    const roots = rootsArgument === undefined
+      ? defaultRoots(home, registered)
+      : rootsArgument.split(",").map((root) => root.trim()).filter((root) => root !== "").map((root) => resolve(root.replace(/^~(?=$|\/)/, home)));
+    const found = await discoverRepositories({ roots, registered }, process);
+    return ok(json ? `${JSON.stringify(found, null, 2)}\n` : found.map((repository) => `${repository.name}\t${repository.path}\n`).join(""));
+  }
   if (verb === "list") {
     const records = databaseRead(environment, listRepositories);
     if (records.kind !== "ok") return records;
@@ -141,12 +159,27 @@ export async function executeRepository(args: readonly string[], environment: En
     if (ownerIndex >= 0 && (owner === undefined || owner === "")) return failed("--owner requires a GitHub login", 2);
     const auth = await process.run("gh", ["auth", "status"]);
     if (auth.kind !== "ok") return failed(auth.error.includes("not found") ? "GitHub CLI (gh) is required; install it and sign in with gh auth login" : "GitHub CLI is not signed in; run gh auth login");
-    const listed = await process.run("gh", ["repo", "list", ...(owner === undefined ? [] : [owner]), "--json", "nameWithOwner,url,description,isPrivate,updatedAt", "--limit", "200"]);
+    if (rest.includes("--orgs")) {
+      const user = await process.run("gh", ["api", "user"]);
+      if (user.kind !== "ok") return failed(`could not read the GitHub account: ${user.error}`);
+      const orgs = await process.run("gh", ["api", "user/orgs", "--paginate"]);
+      if (orgs.kind !== "ok") return failed(`could not list GitHub organisations: ${orgs.error}`);
+      try {
+        const account = JSON.parse(user.value.stdout) as GithubAccount;
+        const organisations = JSON.parse(orgs.value.stdout) as GithubAccount[];
+        const owners: GithubOwner[] = [
+          { login: account.login, kind: "user", avatarUrl: account.avatar_url ?? null },
+          ...organisations.map((organisation): GithubOwner => ({ login: organisation.login, kind: "organization", avatarUrl: organisation.avatar_url ?? null })),
+        ];
+        return ok(json ? `${JSON.stringify(owners, null, 2)}\n` : owners.map((entry) => `${entry.login}\t${entry.kind}\n`).join(""));
+      } catch { return failed("gh api returned invalid JSON"); }
+    }
+    const listed = await process.run("gh", ["repo", "list", ...(owner === undefined ? [] : [owner]), "--json", "nameWithOwner,url,description,isPrivate,updatedAt,primaryLanguage,stargazerCount", "--limit", "200"]);
     if (listed.kind !== "ok") return failed(`could not list GitHub repositories: ${listed.error}`);
     try {
       const repositories = JSON.parse(listed.value.stdout) as GithubRepository[];
       return ok(json ? `${JSON.stringify(repositories, null, 2)}\n` : repositories.map((repository) => `${repository.nameWithOwner}\t${repository.url}\n`).join(""));
     } catch { return failed("gh repo list returned invalid JSON"); }
   }
-  return failed("Usage: megabrain repo list|add|clone|remove|hide|unhide|scripts|github ...", 2);
+  return failed("Usage: megabrain repo list|add|clone|remove|hide|unhide|scripts|github|discover ...", 2);
 }

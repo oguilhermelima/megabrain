@@ -2,7 +2,7 @@ import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat,
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
-import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
+import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { validateRule } from '@/settings/chain-rules'
@@ -285,8 +285,20 @@ export function createMockApi(): DesktopApi {
       return scriptsFor(root)
     },
     importFolder: async (path) => mockImported(path, null),
-    importClone: async (url, into) => mockImported(`${into}/${url.split('/').at(-1) ?? 'repo'}`, url),
-    githubRepositories: async () => mockGithubRepositories,
+    importClone: async (url, into) => {
+      await wait(1200)
+      return mockImported(`${into}/${url.split('/').at(-1) ?? 'repo'}`, url)
+    },
+    githubRepositories: async (owner) => {
+      await wait(500)
+      return mockGithubRepositories.filter((repository) => owner === undefined || repository.nameWithOwner.startsWith(`${owner ?? 'operator'}/`))
+    },
+    githubOwners: async () => mockGithubOwners,
+    discoverRepositories: async () => {
+      await wait(700)
+      return mockDiscovered
+    },
+    homeDir: async () => '/Users/operator',
     githubPullRequests: async (_root, state, limit, after) => {
       await wait(450)
       return { ...mockGithubPullRequests, ...mockPage(mockGithubPullRequests.items, state, limit, after) }

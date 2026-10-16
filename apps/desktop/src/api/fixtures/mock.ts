@@ -1,4 +1,4 @@
-import type { Settings, GithubDetail, GithubPullRequestFile, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import type { Settings, GithubDetail, GithubPullRequestFile, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, GithubOwner, DiscoveredRepository, HistorySession, Project, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
 import { measuredModels } from '@/api/fixtures/models'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
@@ -394,8 +394,26 @@ export const mockProjects: Project[] = [
 ]
 
 export const mockGithubRepositories: GithubRepository[] = [
-  { nameWithOwner: 'operator/canto', url: 'https://github.com/operator/canto', description: 'Media apps for web, phone and TV', isPrivate: true, updatedAt: ago(60) },
-  { nameWithOwner: 'operator/userscripts', url: 'https://github.com/operator/userscripts', description: null, isPrivate: false, updatedAt: ago(5000) },
+  { nameWithOwner: 'operator/canto', url: 'https://github.com/operator/canto', description: 'Media apps for web, phone and TV', isPrivate: true, updatedAt: ago(60), primaryLanguage: { name: 'TypeScript' }, stargazerCount: 3 },
+  { nameWithOwner: 'operator/userscripts', url: 'https://github.com/operator/userscripts', description: null, isPrivate: false, updatedAt: ago(5000), primaryLanguage: { name: 'JavaScript' }, stargazerCount: 0 },
+  { nameWithOwner: 'operator/dotfiles', url: 'https://github.com/operator/dotfiles', description: 'zsh, tmux and git configuration', isPrivate: false, updatedAt: ago(900), primaryLanguage: { name: 'Shell' }, stargazerCount: 14 },
+  { nameWithOwner: 'operator/juntin', url: 'https://github.com/operator/juntin', description: 'Shared shopping lists', isPrivate: true, updatedAt: ago(2600), primaryLanguage: { name: 'Swift' }, stargazerCount: 1 },
+  { nameWithOwner: 'acme-studio/storefront', url: 'https://github.com/acme-studio/storefront', description: 'The shop, its checkout and the admin', isPrivate: true, updatedAt: ago(180), primaryLanguage: { name: 'TypeScript' }, stargazerCount: 41 },
+  { nameWithOwner: 'acme-studio/design-tokens', url: 'https://github.com/acme-studio/design-tokens', description: 'Colours, type and spacing for every surface', isPrivate: false, updatedAt: ago(14000), primaryLanguage: { name: 'CSS' }, stargazerCount: 268 },
+  { nameWithOwner: 'acme-studio/infra', url: 'https://github.com/acme-studio/infra', description: null, isPrivate: true, updatedAt: ago(40000), primaryLanguage: { name: 'HCL' }, stargazerCount: 2 },
+]
+
+export const mockGithubOwners: GithubOwner[] = [
+  { login: 'operator', kind: 'user', avatarUrl: null },
+  { login: 'acme-studio', kind: 'organization', avatarUrl: null },
+]
+
+export const mockDiscovered: DiscoveredRepository[] = [
+  { name: 'lostudio', path: `${root}/lostudio`, branch: 'main', remote: 'git@github.com:operator/lostudio.git', lastCommitAt: ago(35), root },
+  { name: 'moide', path: `${root}/moide`, branch: 'feat/onboarding', remote: 'https://github.com/operator/moide', lastCommitAt: ago(300), root },
+  { name: 'storefront', path: `${root}/clients/storefront`, branch: 'develop', remote: 'git@github.com:acme-studio/storefront.git', lastCommitAt: ago(1900), root },
+  { name: 'scratch', path: '/Users/operator/code/scratch', branch: null, remote: null, lastCommitAt: ago(30000), root: '/Users/operator/code' },
+  { name: 'gitlab-mirror', path: '/Users/operator/src/gitlab-mirror', branch: 'main', remote: 'https://gitlab.com/operator/mirror.git', lastCommitAt: null, root: '/Users/operator/src' },
 ]
 
 export const mockImported = (path: string, remote: string | null): Repository => ({ name: path.split('/').at(-1) ?? path, path, remote, source: 'import', addedAt: ago(0) })

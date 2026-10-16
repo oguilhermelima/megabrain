@@ -8,6 +8,7 @@ import type { MenuIcon } from '@/components/menu-icons'
 import { Spinner } from '@/components/ui'
 import { native } from '@/lib/surface'
 import { usePresence } from '@/lib/usePresence'
+import { insideModal, useWindowDrop } from '@/lib/window-drop'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { attachmentKind, insertSlashCommand, skillInvocation, slashQuery } from '@/chat/composer-model'
 import { commandSections } from '@/chat/command-menu'
@@ -130,34 +131,6 @@ async function attachmentPath(attachment: Attachment): Promise<string> {
 
 function releasePreview(attachment: Attachment) {
   if (attachment.source === 'file' && attachment.preview !== null) URL.revokeObjectURL(attachment.preview)
-}
-
-/**
- * Files dropped on the app window. The native webview takes drops itself and hands over paths, with
- * where they were dropped in CSS pixels.
- */
-function useWindowDrop(onPaths: (paths: string[], x: number, y: number) => void, enabled: boolean) {
-  const handler = useRef(onPaths)
-  handler.current = onPaths
-  useEffect(() => {
-    if (!native || !enabled) return
-    let stopped = false
-    let unlisten: (() => void) | undefined
-    void import('@tauri-apps/api/webview').then(({ getCurrentWebview }) =>
-      getCurrentWebview()
-        .onDragDropEvent((event) => {
-          if (event.payload.type === 'drop') handler.current(event.payload.paths, event.payload.position.x / window.devicePixelRatio, event.payload.position.y / window.devicePixelRatio)
-        })
-        .then((stop) => {
-          if (stopped) stop()
-          else unlisten = stop
-        }),
-    )
-    return () => {
-      stopped = true
-      unlisten?.()
-    }
-  }, [enabled])
 }
 
 /** A dispatch chat's queue: read now, then every 2 seconds while anything waits; unqueue on Esc. */
@@ -597,10 +570,17 @@ export function Composer({
     apply(next, offset)
   }
 
-  useWindowDrop((paths, x, y) => {
-    const at = editor.current === null ? null : offsetAtPoint(editor.current, x, y)
-    attach(paths.map(fromPath), at === null ? undefined : [at, at])
-  }, !disabled)
+  useWindowDrop(
+    {
+      onDrop: (paths, x, y) => {
+        // A drop on an open dialog (Import project takes folders) is the dialog's, not the chat's.
+        if (insideModal(x, y)) return
+        const at = editor.current === null ? null : offsetAtPoint(editor.current, x, y)
+        attach(paths.map(fromPath), at === null ? undefined : [at, at])
+      },
+    },
+    !disabled,
+  )
 
   useEffect(
     () => () => {

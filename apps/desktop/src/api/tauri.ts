@@ -1,5 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { homeDir } from '@tauri-apps/api/path'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readImage, readText, writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -8,7 +9,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema } from '@/api/schema'
+import { agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -241,7 +242,10 @@ export function createTauriApi(): DesktopApi {
     portKill: async (port) => void (await cliJson(['port', 'kill', String(port), '--json'], portKillSchema)),
     importFolder: (path) => cliJson(['repo', 'add', path, '--json'], repositorySchema),
     importClone: (url, into) => cliJson(['repo', 'clone', url, '--into', into, '--json'], repositorySchema),
-    githubRepositories: () => cliJson(['repo', 'github', '--json'], githubRepositorySchema.array()),
+    githubRepositories: (owner) => cliJson(['repo', 'github', ...(owner === undefined ? [] : ['--owner', owner]), '--json'], githubRepositorySchema.array()),
+    githubOwners: () => cliJson(['repo', 'github', '--orgs', '--json'], githubOwnerSchema.array()),
+    discoverRepositories: (roots) => cliJson(['repo', 'discover', ...(roots === undefined ? [] : ['--roots', roots.join(',')]), '--json'], discoveredRepositorySchema.array()),
+    homeDir: () => homeDir(),
     githubPullRequests: (root, state, limit, after) => cliJson(['github', 'prs', root, '--state', state, '--limit', String(limit), ...(after === null ? [] : ['--after', after]), '--json'], githubPullRequestListSchema),
     githubIssues: (root, state, limit, after) => cliJson(['github', 'issues', root, '--state', state, '--limit', String(limit), ...(after === null ? [] : ['--after', after]), '--json'], githubIssueListSchema),
     githubPullRequest: (root, number) => cliJson(['github', 'pr', root, String(number), '--json'], githubDetailSchema),
@@ -286,8 +290,8 @@ export function createTauriApi(): DesktopApi {
     setPrState: async (root, number, action, options) => {
       await cliText(['github', 'pr-state', root, String(number), action, ...(options?.method === undefined ? [] : ['--method', options.method]), '--json'])
     },
-    pickFolder: async () => {
-      const selected = await open({ directory: true, multiple: false })
+    pickFolder: async (defaultPath) => {
+      const selected = await open({ directory: true, multiple: false, ...(defaultPath === undefined ? {} : { defaultPath }) })
       return selected ?? null
     },
     copyText: (text) => writeText(text),

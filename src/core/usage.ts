@@ -24,7 +24,7 @@ export const USAGE_LINES = {
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
   "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
-  "repo": "repo list|add|clone|remove|hide|unhide|scripts|github ...",
+  "repo": "repo list|add|clone|remove|hide|unhide|scripts|github|discover ...",
   "repo-list": "repo list [--json]",
   "repo-add": "repo add <path> [--json]",
   "repo-clone": "repo clone <url> --into <dir> [--json]",
@@ -32,7 +32,8 @@ export const USAGE_LINES = {
   "repo-scripts": "repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]",
   "repo-run": "repo run <name|path> [--script run|build|install] [--worktree <path>] [--command <cmd>] [--port <p>] [--admission wait|fail] [--json]",
   "repo-stop": "repo stop <name|path> [--script run|build|install] [--worktree <path>] [--force] [--json]",
-  "repo-github": "repo github [--owner <login>] [--json]",
+  "repo-github": "repo github [--owner <login>] [--orgs] [--json]",
+  "repo-discover": "repo discover [--roots <paths>] [--json]",
   "projects": "projects [--json]",
   "port": "port who|free|kill ...",
   "port-who": "port who <port> [--json]",
@@ -205,7 +206,7 @@ Commands:
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
-  repo list|add|clone|remove|scripts|github ... Manage the local project registry
+  repo list|add|clone|remove|scripts|github|discover ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
   port who|free|kill ...                Find, free and stop port listeners
   github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read, review and manage GitHub pull requests and issues

@@ -60,7 +60,8 @@ megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [
 megabrain agent defaults [--json] — recommended when you need each agent's default model and effort from its own config, and the shell a new terminal opens.
 megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json] — recommended when you need the past sessions of a folder, newest first.
 megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
-megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
+megabrain repo github [--owner <login>] [--orgs] [--json] — recommended when you need to find repositories available through GitHub CLI, or with --orgs the account and organisations that own them.
+megabrain repo discover [--roots <paths>] [--json] — recommended when you need to find git repositories on this machine that are not registered yet.
 megabrain port who <port> [--json] — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.
 megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
 megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.

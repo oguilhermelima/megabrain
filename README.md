@@ -45,6 +45,7 @@ megabrain repo add ~/code/api
 megabrain repo clone owner/project --into ~/code
 megabrain repo scripts api --run 'pnpm run dev' --build 'pnpm run build' --json
 megabrain repo github --json
+megabrain repo discover --roots ~/code,~/src --json
 megabrain projects --json
 ```
 

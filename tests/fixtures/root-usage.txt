@@ -11,7 +11,7 @@ Commands:
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
-  repo list|add|clone|remove|scripts|github ... Manage the local project registry
+  repo list|add|clone|remove|scripts|github|discover ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
   port who|free|kill ...                Find, free and stop port listeners
   github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read, review and manage GitHub pull requests and issues

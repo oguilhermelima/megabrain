@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
+import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
 const json = (name: string): unknown => JSON.parse(readFileSync(join(captured, name), 'utf8'))
@@ -67,6 +67,8 @@ describe('the mock serves payloads the schemas accept', () => {
   test('projects', () => {
     expect(projectsSchema.safeParse(mockProjects).error).toBeUndefined()
     expect(githubRepositorySchema.array().safeParse(mockGithubRepositories).error).toBeUndefined()
+    expect(githubOwnerSchema.array().safeParse(mockGithubOwners).error).toBeUndefined()
+    expect(discoveredRepositorySchema.array().safeParse(mockDiscovered).error).toBeUndefined()
   })
   test('transcript and code', () => {
     expect(transcriptSchema.safeParse(mockTranscript).error).toBeUndefined()

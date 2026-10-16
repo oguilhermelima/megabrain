@@ -259,6 +259,29 @@ export const githubRepositorySchema = z.looseObject({
   description: z.string().nullable(),
   isPrivate: z.boolean(),
   updatedAt: z.string().nullable(),
+  /** Absent from an older CLI. */
+  primaryLanguage: z.looseObject({ name: z.string() }).nullable().optional(),
+  stargazerCount: z.number().optional(),
+})
+
+// `megabrain repo github --orgs --json`: the signed-in account first, then its organisations.
+export const githubOwnerSchema = z.looseObject({
+  login: z.string(),
+  kind: z.enum(['user', 'organization']),
+  avatarUrl: z.string().nullable(),
+})
+
+// `megabrain repo discover [--roots <paths>] --json`: git repositories on disk that are not
+// registered, newest commit first.
+export const discoveredRepositorySchema = z.looseObject({
+  name: z.string(),
+  path: z.string(),
+  /** null when HEAD is detached. */
+  branch: z.string().nullable(),
+  remote: z.string().nullable(),
+  /** ISO 8601; null for a repository without commits. */
+  lastCommitAt: z.string().nullable(),
+  root: z.string(),
 })
 
 // `megabrain github prs|issues|pr|issue <repo> --json`: a repository's pull requests and issues as
@@ -793,6 +816,8 @@ export interface AdmissionPolicy {
   maxContainerSuites?: number
 }
 export type GithubRepository = z.infer<typeof githubRepositorySchema>
+export type GithubOwner = z.infer<typeof githubOwnerSchema>
+export type DiscoveredRepository = z.infer<typeof discoveredRepositorySchema>
 export type GithubCheck = z.infer<typeof githubCheckSchema>
 export type GithubPullRequest = z.infer<typeof githubPullRequestSchema>
 export type GithubIssue = z.infer<typeof githubIssueSchema>

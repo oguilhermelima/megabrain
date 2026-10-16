@@ -257,6 +257,16 @@ html.native body {
   background: rgb(255 255 255 / 0.16);
 }
 
+/* An indeterminate bar: a third of the track sweeping across while a clone runs. */
+@keyframes import-progress {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 300% 0;
+  }
+}
+
 @keyframes orb-spin {
   to {
     transform: rotate(360deg);
