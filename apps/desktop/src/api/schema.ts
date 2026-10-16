@@ -371,6 +371,14 @@ export const githubReviewThreadSchema = z.looseObject({
   comments: z.array(z.looseObject({ id: z.string(), author: githubPersonSchema.nullable(), body: z.string(), createdAt: z.string() })),
 })
 
+// `megabrain github image <repo> <url> --json`: a picture a body links from a GitHub repository,
+// read through gh's API so a private repository's file shows; data is the file as base64.
+export const githubImageSchema = z.looseObject({
+  contentType: z.string(),
+  size: z.number(),
+  data: z.string(),
+})
+
 /** A person or, with isTeam, a team (login org/team-slug) asked for a review or able to give one. */
 export const githubReviewerSchema = githubPersonSchema.extend({ isTeam: z.boolean().optional() })
 
@@ -762,6 +770,7 @@ export type GithubPullRequestFilesPage = z.infer<typeof githubPullRequestFilesPa
 export type GithubReviewThread = z.infer<typeof githubReviewThreadSchema>
 export type GithubReviewer = z.infer<typeof githubReviewerSchema>
 export type GithubReviewers = z.infer<typeof githubReviewersSchema>
+export type GithubImage = z.infer<typeof githubImageSchema>
 export type Project = z.infer<typeof projectsSchema>[number]
 export type StackShow = z.infer<typeof stackShowSchema>
 export type ProjectWorktree = z.infer<typeof projectWorktreeSchema>

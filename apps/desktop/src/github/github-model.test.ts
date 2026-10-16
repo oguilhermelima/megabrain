@@ -10,6 +10,7 @@ import {
   filterIssues,
   filterPullRequests,
   githubRepository,
+  isRepositoryFileLink,
   issueFilterOptions,
   labelStyle,
   listRequestKey,
@@ -297,5 +298,23 @@ describe('paging', () => {
 
   test('mergeItems keeps the front copy of an item listed twice', () => {
     expect(mergeItems([item(1, 'front')], [item(1, 'back'), item(2)])).toEqual([item(1, 'front'), item(2)])
+  })
+})
+
+describe('isRepositoryFileLink', () => {
+  test('blob and raw links to a repository file go through the CLI', () => {
+    expect(isRepositoryFileLink('https://github.com/cantospace/canto-space/blob/2a5bb4e5/pr-513/01-meta.png?raw=true')).toBe(true)
+    expect(isRepositoryFileLink('https://github.com/operator/sample/raw/main/docs/a.png')).toBe(true)
+    expect(isRepositoryFileLink('https://raw.githubusercontent.com/operator/sample/main/docs/a.png')).toBe(true)
+  })
+
+  test('any other picture loads as it is', () => {
+    expect(isRepositoryFileLink('https://avatars.githubusercontent.com/u/1')).toBe(false)
+    expect(isRepositoryFileLink('https://github.com/operator/sample/pull/7')).toBe(false)
+    expect(isRepositoryFileLink('https://github.com/operator/sample/blob/main')).toBe(false)
+    expect(isRepositoryFileLink('https://github.com/user-attachments/assets/1234')).toBe(false)
+    expect(isRepositoryFileLink('http://github.com/operator/sample/blob/main/a.png')).toBe(false)
+    expect(isRepositoryFileLink('https://example.com/a.png')).toBe(false)
+    expect(isRepositoryFileLink('docs/a.png')).toBe(false)
   })
 })

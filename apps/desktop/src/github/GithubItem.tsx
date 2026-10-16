@@ -8,19 +8,24 @@ import { checkSummary } from '@/github/github-model'
 import { RefreshIcon } from '@/github/icons'
 import { Avatar, CheckGlyph, ChecksList, ConversationThread, OpenLink, LineCounts, ReviewChip, StatePill, ago, checkTitle, useNow } from '@/github/parts'
 import { PullRequestFiles, type PendingControls, type ReviewContext } from '@/github/PullRequestFiles'
-import { ReadinessSummary, ReviewersSummary } from '@/github/ReviewSummary'
+import { ReviewersSummary } from '@/github/ReviewSummary'
+import { MergeBox, mergeMethods, type MergeBoxRunning } from '@/github/MergeBox'
+import { mergeBox, type PrimaryAction, type SecondaryAction, type Tone } from '@/github/merge-box-model'
 import { ThreadsList, type ThreadActions, type ThreadFocus } from '@/github/ReviewThread'
 import { useReviewers, useReviewThreads } from '@/github/usePullRequestReview'
 import { usePullRequestFiles } from '@/github/usePullRequestFiles'
-import { addPending, editPending, issueStateActions, mergeAction, removePending, reviewPayload, unresolvedCount, type IssueStateAction, type PendingComment } from '@/github/review-model'
+import { addPending, editPending, issueStateActions, removePending, reviewPayload, unresolvedCount, type IssueStateAction, type PendingComment } from '@/github/review-model'
 
-// One pull request or issue maximised as a pane item: a header with its state, author, branches,
-// checks and actions, a bar with its reviewers, and tabs for the conversation, the changed files
+// One pull request or issue maximised as a pane item: a header with its title, state, author,
+// branches, checks and where the merge stands, a bar with its reviewers, and tabs for the
+// conversation (ending in the merge box, which holds every merge and close action), the changed files
 // (with review threads under their lines and inline comments kept pending until a review submits
 // them), every review thread, and the checks. Every write goes through `megabrain github`
 // and shows gh's own message when it fails.
 
 type Tab = 'conversation' | 'files' | 'threads' | 'checks'
+
+const boxTone: Record<Tone, string> = { ok: 'text-ok', warn: 'text-warn', bad: 'text-bad', muted: 'text-ink-300' }
 
 /** One write at a time per control: running while it runs, its error kept until the next try. */
 function useAction() {
@@ -91,7 +96,6 @@ const pill = 'flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[1
 const pillTones = {
   primary: `${pill} bg-accent text-accent-ink hover:bg-[#a3aeff]`,
   secondary: `${pill} border border-white/[0.12] bg-white/[0.06] text-ink-100 hover:bg-white/[0.12]`,
-  danger: `${pill} border border-bad/40 bg-bad/10 text-bad hover:bg-bad/20`,
   merge: `${pill} bg-[#238636] text-white hover:bg-[#2ea043]`,
 }
 
@@ -173,12 +177,6 @@ function ReviewPanel({ pending, error, onSubmit, onConfirmChanges, onClose }: { 
     </div>
   )
 }
-
-const mergeMethods: { value: GithubMergeMethod; label: string }[] = [
-  { value: 'squash', label: 'Squash and merge' },
-  { value: 'merge', label: 'Create a merge commit' },
-  { value: 'rebase', label: 'Rebase and merge' },
-]
 
 /** The comment box under the conversation; `actions` sits beside its button (an issue's state). */
 function CommentBox({ onComment, actions }: { onComment: (body: string) => Promise<boolean>; actions?: ReactNode }) {
@@ -278,21 +276,11 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
       },
     })
 
-  // Readiness writes: each re-reads the detail and the reviewers once it lands.
+  // Merge box writes: each re-reads the detail and the reviewers once it lands.
   const [autoMerge, setAutoMergeOn] = useState<GithubMergeMethod | null>(null)
-  const [readinessRunning, setReadinessRunning] = useState<'rerun' | 'draft' | null>(null)
   const refreshReadiness = () => {
     void reload()
     void reviewers.reload()
-  }
-  const readinessWrite = (kind: 'rerun' | 'draft', write: () => Promise<void>) => {
-    setReadinessRunning(kind)
-    void state
-      .run(async () => {
-        await write()
-        refreshReadiness()
-      })
-      .finally(() => setReadinessRunning(null))
   }
   const enableAutoMerge = async () => {
     await api.setAutoMerge(root, number, method)
@@ -335,8 +323,50 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
   const summary = checkSummary(checks)
   const open = currentState === 'open'
   const draft = detail?.isDraft ?? false
-  const merge = mergeAction({ state: currentState, isDraft: draft }, reviewers.reviewers)
   const methodLabel = mergeMethods.find((option) => option.value === method)?.label ?? 'Merge'
+  const box = mergeBox({ state: currentState, isDraft: draft, checks, readiness: reviewers.reviewers, autoMerge })
+
+  // The merge box's buttons: merging, enabling auto-merge and closing ask first; the rest run here.
+  const [boxRunning, setBoxRunning] = useState<MergeBoxRunning>(null)
+  const mergeBoxRef = useRef<HTMLElement>(null)
+  const boxWrite = (action: PrimaryAction | SecondaryAction, write: () => Promise<unknown>) => {
+    setBoxRunning(action)
+    void write().finally(() => setBoxRunning(null))
+  }
+  const confirmMerge = () =>
+    setConfirm({
+      title: `Merge #${number}?`,
+      body: `${methodLabel} into ${detail?.baseRefName ?? 'the base branch'} on GitHub.`,
+      action: 'Merge',
+      tone: 'primary',
+      run: confirmed('merge'),
+    })
+  const confirmAutoMerge = (reason: string) =>
+    setConfirm({
+      title: `Enable auto-merge on #${number}?`,
+      body: `${methodLabel} into ${detail?.baseRefName ?? 'the base branch'} as soon as GitHub allows it. ${reason}`,
+      action: 'Enable auto-merge',
+      tone: 'primary',
+      run: enableAutoMerge,
+    })
+  const onBoxPrimary = (action: PrimaryAction) => {
+    if (action === 'merge') confirmMerge()
+    else if (action === 'auto-merge') confirmAutoMerge(box.detail)
+    else if (action === 'disable-auto-merge') boxWrite(action, disableAutoMerge)
+    else if (action === 'ready-for-review') boxWrite(action, markReady)
+    else boxWrite(action, () => changePrState('reopen'))
+  }
+  const onBoxSecondary = (action: SecondaryAction) => {
+    if (action === 'close') setConfirm({ title: `Close pull request #${number}?`, body: 'The pull request closes without merging. It can be reopened later.', action: 'Close pull request', run: confirmed('close') })
+    else if (action === 'rerun-failed') boxWrite(action, () => state.run(async () => {
+      await api.rerunChecks(root, number, true)
+      refreshReadiness()
+    }))
+    else boxWrite(action, () => state.run(async () => {
+      await api.setPrReady(root, number, false)
+      refreshReadiness()
+    }))
+  }
 
   const issueActions =
     kind === 'issue' && detail !== null
@@ -347,97 +377,35 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
         ))
       : undefined
 
+  const showMergeBox = () => {
+    setTab('conversation')
+    // The conversation mounts on this render when another tab was showing; scroll once it has.
+    requestAnimationFrame(() => mergeBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
+
   const header = (
-    <header className="relative space-y-3 px-8 pt-6 pb-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {detail !== null && <StatePill kind={kind} state={currentState} draft={detail.isDraft ?? false} />}
-        <span className="text-[13px] font-semibold text-ink-400 tabular-nums">#{number}</span>
-        <span className="ml-auto" />
-        <button type="button" onClick={() => void reload()} aria-label="Refresh" title="Refresh" className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-300 hover:bg-white/[0.08] hover:text-ink-100">
-          <span className={loading && read !== null ? 'animate-spin' : ''}>
-            <RefreshIcon size={14} />
-          </span>
-        </button>
-        {detail !== null && <OpenLink url={detail.url} />}
-        {kind === 'pr' && detail !== null && open && (
-          <>
+    <header className="relative space-y-2.5 px-8 pt-5 pb-3">
+      <div className="flex items-start gap-3">
+        <h1 className="min-w-0 flex-1 text-[22px] leading-snug font-semibold tracking-[-0.01em] text-ink-100 select-text">
+          {title} <span className="font-normal text-ink-500 tabular-nums">#{number}</span>
+        </h1>
+        <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+          <button type="button" onClick={() => void reload()} aria-label="Refresh" title="Refresh" className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-300 hover:bg-white/[0.08] hover:text-ink-100">
+            <span className={loading && read !== null ? 'animate-spin' : ''}>
+              <RefreshIcon size={14} />
+            </span>
+          </button>
+          {detail !== null && <OpenLink url={detail.url} />}
+          {kind === 'pr' && detail !== null && open && (
             <Pill tone="secondary" onClick={() => setReviewing((current) => !current)}>
               Review{pending.length > 0 ? ` (${pending.length})` : ''}
             </Pill>
-            {draft && (
-              <Pill tone="primary" disabled={state.running} onClick={() => void markReady()}>
-                {state.running ? <Spinner /> : 'Ready for review'}
-              </Pill>
-            )}
-            {(merge.kind === 'merge' || merge.kind === 'auto-merge') && autoMerge === null && (
-              <label className="relative flex h-8 items-center rounded-full border border-white/[0.12] bg-white/[0.06] text-[12.5px] font-semibold text-ink-100">
-                <span className="sr-only">Merge method</span>
-                <select value={method} onChange={(event) => setMethod(event.target.value as GithubMergeMethod)} style={{ colorScheme: 'dark' }} className="h-full cursor-pointer appearance-none rounded-full bg-transparent pr-3 pl-3 outline-none">
-                  {mergeMethods.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {autoMerge !== null ? (
-              <Pill tone="secondary" disabled={state.running} onClick={() => void disableAutoMerge()}>
-                {state.running ? <Spinner /> : 'Disable auto-merge'}
-              </Pill>
-            ) : merge.kind === 'auto-merge' ? (
-              <Pill
-                tone="merge"
-                disabled={state.running}
-                label={merge.reason}
-                onClick={() =>
-                  setConfirm({
-                    title: `Enable auto-merge on #${number}?`,
-                    body: `${methodLabel} into ${detail.baseRefName ?? 'the base branch'} as soon as GitHub allows it. ${merge.reason}`,
-                    action: 'Enable auto-merge',
-                    tone: 'primary',
-                    run: enableAutoMerge,
-                  })
-                }
-              >
-                {state.running ? <Spinner /> : 'Enable auto-merge'}
-              </Pill>
-            ) : (
-              <Pill
-                tone="merge"
-                disabled={state.running || merge.kind !== 'merge'}
-                label={merge.kind === 'blocked' ? merge.reason : undefined}
-                onClick={() =>
-                  setConfirm({
-                    title: `Merge #${number}?`,
-                    body: `${methodLabel} into ${detail.baseRefName ?? 'the base branch'} on GitHub.`,
-                    action: 'Merge',
-                    tone: 'primary',
-                    run: confirmed('merge'),
-                  })
-                }
-              >
-                {state.running ? <Spinner /> : 'Merge'}
-              </Pill>
-            )}
-            <Pill
-              tone="danger"
-              disabled={state.running}
-              onClick={() => setConfirm({ title: `Close #${number}?`, body: 'The pull request closes without merging. It can be reopened later.', action: 'Close pull request', run: confirmed('close') })}
-            >
-              Close
-            </Pill>
-          </>
-        )}
-        {kind === 'pr' && detail !== null && currentState === 'closed' && (
-          <Pill tone="secondary" disabled={state.running} onClick={() => void changePrState('reopen')}>
-            {state.running ? <Spinner /> : 'Reopen'}
-          </Pill>
-        )}
+          )}
+        </div>
       </div>
-      <h1 className="text-[22px] leading-snug font-semibold tracking-[-0.01em] text-ink-100 select-text">{title}</h1>
       {detail !== null && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12.5px] text-ink-400">
+          <StatePill kind={kind} state={currentState} draft={detail.isDraft ?? false} />
           <Avatar login={detail.author?.login ?? null} size={18} />
           <span className="font-semibold text-ink-200">{detail.author?.login ?? 'ghost'}</span>
           <span>opened {ago(detail.createdAt, now)}</span>
@@ -465,24 +433,20 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
             </>
           )}
           <ReviewChip decision={detail.reviewDecision ?? null} />
+          {kind === 'pr' && open && (
+            <>
+              <span className="text-ink-600">·</span>
+              <button type="button" onClick={showMergeBox} title="Show the merge box" className={`flex items-center gap-1 font-semibold hover:underline ${boxTone[box.tone]}`}>
+                {box.headline}
+                <span aria-hidden="true">↓</span>
+              </button>
+            </>
+          )}
         </div>
       )}
       {kind === 'pr' && detail !== null && (
         <ReviewersSummary root={root} reviewers={reviewers.reviewers} error={reviewers.error} canRequest={open} onRequest={reviewers.request} />
       )}
-      {kind === 'pr' && detail !== null && open && (
-        <ReadinessSummary
-          reviewers={reviewers.reviewers}
-          checks={checks}
-          action={merge}
-          autoMerge={autoMerge}
-          draft={draft}
-          running={readinessRunning}
-          onRerun={() => readinessWrite('rerun', () => api.rerunChecks(root, number, true))}
-          onDraft={() => readinessWrite('draft', () => api.setPrReady(root, number, false))}
-        />
-      )}
-      {kind === 'pr' && state.error !== null && <ErrorNote error={state.error} />}
       {reviewing && kind === 'pr' && <ReviewPanel pending={pending} error={review.error} onSubmit={submitReview} onConfirmChanges={confirmChanges} onClose={() => {
         review.clear()
         setReviewing(false)
@@ -510,7 +474,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
         <PullRequestFiles files={files} review={reviewContext} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[920px] space-y-4 px-8 py-6">
+          <div className="space-y-4 px-8 py-6">
             {error !== null && (
               <div className="space-y-3">
                 <ErrorNote error={error} />
@@ -525,6 +489,12 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
             {detail !== null && tab === 'conversation' && (
               <>
                 <ConversationThread detail={detail} now={now} />
+                {kind === 'pr' && (
+                  <>
+                    <MergeBox ref={mergeBoxRef} box={box} method={method} onMethod={setMethod} running={boxRunning} onPrimary={onBoxPrimary} onSecondary={onBoxSecondary} />
+                    {state.error !== null && <ErrorNote error={state.error} />}
+                  </>
+                )}
                 {comment.error !== null && <ErrorNote error={comment.error} />}
                 {kind === 'issue' && state.error !== null && <ErrorNote error={state.error} />}
                 <CommentBox onComment={addComment} actions={state.running && kind === 'issue' ? <Spinner /> : issueActions} />

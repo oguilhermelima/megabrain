@@ -18,13 +18,14 @@ import { findRepository, type RepositoryRecord } from "../../db/queries/reposito
 // pages use and cached for 60 seconds under the state directory, one private file per command,
 // repository, state, limit, cursor and number. The review verbs (pr-files, review, comment,
 // issue-state, pr-state) go through the same gh runner but are never cached, and a write is asked
-// once: repeating a timed-out POST could post twice.
+// once: repeating a timed-out POST could post twice. `image` reads a picture a body links from a
+// repository through gh's API, so a private repository's screenshots show without a browser session.
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Clock = () => number;
 type Verb = "prs" | "issues" | "pr" | "issue";
 type ReviewVerb = "review" | "comment" | "issue-state" | "pr-state";
-type FlowVerb = "pr-files" | "pr-file" | "threads" | "thread-reply" | "thread-resolve" | "reviewers" | "request-review" | "pr-ready" | "auto-merge" | "rerun-checks" | "file-viewed" | "assignable";
+type FlowVerb = "pr-files" | "pr-file" | "threads" | "thread-reply" | "thread-resolve" | "reviewers" | "request-review" | "pr-ready" | "auto-merge" | "rerun-checks" | "file-viewed" | "assignable" | "image";
 
 type Person = Readonly<{ login: string; name: string | null; isBot: boolean }>;
 type Label = Readonly<{ name: string; color: string; description: string }>;
@@ -74,10 +75,10 @@ const USAGE: Readonly<Record<Verb | ReviewVerb | FlowVerb, UsageKey>> = {
   "prs": "github-prs", "issues": "github-issues", "pr": "github-pr", "issue": "github-issue",
   "pr-files": "github-pr-files", "pr-file": "github-pr-file", "threads": "github-threads", "thread-reply": "github-thread-reply", "thread-resolve": "github-thread-resolve",
   "reviewers": "github-reviewers", "request-review": "github-request-review", "pr-ready": "github-pr-ready", "auto-merge": "github-auto-merge",
-  "rerun-checks": "github-rerun-checks", "file-viewed": "github-file-viewed", "assignable": "github-assignable", "review": "github-review", "comment": "github-comment", "issue-state": "github-issue-state", "pr-state": "github-pr-state",
+  "rerun-checks": "github-rerun-checks", "file-viewed": "github-file-viewed", "assignable": "github-assignable", "image": "github-image", "review": "github-review", "comment": "github-comment", "issue-state": "github-issue-state", "pr-state": "github-pr-state",
 };
 const REVIEW_VERBS: readonly string[] = ["review", "comment", "issue-state", "pr-state"];
-const FLOW_VERBS: readonly string[] = ["pr-files", "pr-file", "threads", "thread-reply", "thread-resolve", "reviewers", "request-review", "pr-ready", "auto-merge", "rerun-checks", "file-viewed", "assignable"];
+const FLOW_VERBS: readonly string[] = ["pr-files", "pr-file", "threads", "thread-reply", "thread-resolve", "reviewers", "request-review", "pr-ready", "auto-merge", "rerun-checks", "file-viewed", "assignable", "image"];
 // These change the pull request, so the repository's cached reads go after them.
 const FLOW_WRITES: readonly string[] = ["thread-reply", "thread-resolve", "request-review", "pr-ready", "auto-merge", "rerun-checks", "file-viewed"];
 const REVIEW_EVENTS: Readonly<Record<string, string>> = { "approve": "APPROVE", "request-changes": "REQUEST_CHANGES", "comment": "COMMENT" };
@@ -695,6 +696,64 @@ export async function rerunChecks(process: ProcessAdapter, nameWithOwner: string
   return ok({ runs, failedOnly });
 }
 
+// A picture a pull request body shows from its own repository. A private repository's file links
+// answer 404 without a session, so the bytes come through gh's API with its token, which never
+// leaves this process: the contents endpoint up to 1 MB, the git blob beyond it.
+const IMAGE_LIMIT = 20 * 1024 * 1024;
+const IMAGE_TYPES: readonly (readonly [string, (bytes: Buffer) => boolean])[] = [
+  ["image/png", (bytes) => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))],
+  ["image/jpeg", (bytes) => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff],
+  ["image/gif", (bytes) => ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("latin1"))],
+  ["image/webp", (bytes) => bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP"],
+];
+
+export type ImageLocation = Readonly<{ owner: string; name: string; ref: string; path: string }>;
+
+/** The repository file a github.com blob or raw link, or a raw.githubusercontent.com link, names. */
+export function imageLocation(url: string): ImageLocation | null {
+  let parsedUrl: URL;
+  try { parsedUrl = new URL(url); } catch { return null; }
+  if (parsedUrl.protocol !== "https:") return null;
+  let segments: string[];
+  try { segments = parsedUrl.pathname.split("/").filter((segment) => segment !== "").map(decodeURIComponent); } catch { return null; }
+  let owner: string | undefined;
+  let name: string | undefined;
+  let rest: string[];
+  if (parsedUrl.hostname === "github.com") {
+    const [first, second, kind, ...tail] = segments;
+    if (kind !== "blob" && kind !== "raw") return null;
+    [owner, name, rest] = [first, second, tail];
+  } else if (parsedUrl.hostname === "raw.githubusercontent.com") {
+    const [first, second, ...tail] = segments;
+    [owner, name, rest] = [first, second, tail];
+  } else return null;
+  const [ref, ...path] = rest;
+  if (owner === undefined || name === undefined || ref === undefined || path.length === 0 || !LOGIN.test(owner) || !/^[\w.-]+$/.test(name)) return null;
+  return { owner, name, ref, path: path.join("/") };
+}
+
+export async function repositoryImage(process: ProcessAdapter, url: string): Promise<Result<{ contentType: string; size: number; data: string }>> {
+  const location = imageLocation(url);
+  if (location === null) return failed(`${url} is not a file in a GitHub repository`, 2);
+  const repo = `repos/${location.owner}/${location.name}`;
+  const encodedPath = location.path.split("/").map(encodeURIComponent).join("/");
+  const found = await gh(process, ["api", `${repo}/contents/${encodedPath}?ref=${encodeURIComponent(location.ref)}`], { name: "gh api contents" });
+  if (found.kind !== "ok") return found;
+  const file = record(found.value);
+  if (file === undefined || file.type !== "file") return failed(`${location.path} is not a file at ${location.ref}`);
+  if (count(file.size) > IMAGE_LIMIT) return failed(`${location.path} is larger than ${IMAGE_LIMIT / 1024 / 1024} MB`);
+  let content = text(file.content);
+  if (file.encoding !== "base64" || content === "") {
+    const blob = await gh(process, ["api", `${repo}/git/blobs/${text(file.sha)}`], { name: "gh api git blob" });
+    if (blob.kind !== "ok") return blob;
+    content = text(record(blob.value)?.content);
+  }
+  const bytes = Buffer.from(content, "base64");
+  const type = IMAGE_TYPES.find(([, matches]) => matches(bytes))?.[0];
+  if (type === undefined) return failed(`${location.path} is not a PNG, JPEG, GIF or WebP image`);
+  return ok({ contentType: type, size: bytes.length, data: bytes.toString("base64") });
+}
+
 export async function assignable(process: ProcessAdapter, nameWithOwner: string, search?: string): Promise<Result<(Person & { isTeam?: true })[]>> {
   const answer = await graphqlCall(process, "gh api graphql", ASSIGNABLE_QUERY, { ...repositoryVariables(nameWithOwner), ...(search === undefined ? {} : { search }) });
   if (answer.kind !== "ok") return answer;
@@ -820,6 +879,7 @@ const FLOW_SPECS: Readonly<Record<FlowVerb, FlowSpec>> = {
   "rerun-checks": { positional: 0, values: [], switches: ["--failed"] },
   "file-viewed": { positional: 1, values: [], switches: ["--unviewed"] },
   "assignable": { positional: 0, values: ["--query"], switches: [], numbered: false },
+  "image": { positional: 1, values: [], switches: [], numbered: false },
 };
 
 type FlowOptions = Readonly<{ selector: string; number: number; json: boolean; positional: readonly string[]; values: Readonly<Record<string, string>>; switches: ReadonlySet<string> }>;
@@ -845,7 +905,7 @@ function parseFlow(verb: FlowVerb, args: readonly string[]): Result<FlowOptions>
   }
   const [selector, ...afterSelector] = positional;
   if (selector === undefined || selector === "") return usage;
-  if (spec.numbered === false) return afterSelector.length === 0 ? ok({ selector, number: 0, json, positional: [], values, switches }) : usage;
+  if (spec.numbered === false) return afterSelector.length === spec.positional ? ok({ selector, number: 0, json, positional: afterSelector, values, switches }) : usage;
   const [numberText, ...rest] = afterSelector;
   if (numberText === undefined || !/^[1-9]\d*$/.test(numberText) || rest.length !== spec.positional) return usage;
   return ok({ selector, number: Number(numberText), json, positional: rest, values, switches });
@@ -899,6 +959,7 @@ async function executeFlow(verb: FlowVerb, args: readonly string[], environment:
       method = raw;
     }
   }
+  if (verb === "image" && imageLocation(target) === null) return failed(`${target} is not a file in a GitHub repository (github.com/<owner>/<repo>/blob|raw/<ref>/<path> or raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>)`, 2);
   const repository = await resolveRepository(selector, environment, process);
   if (repository.kind !== "ok") return repository;
   const { nameWithOwner } = repository.value;
@@ -961,6 +1022,11 @@ async function executeFlow(verb: FlowVerb, args: readonly string[], environment:
     if (sent.kind !== "ok") return sent;
     output = { ...header, ...sent.value };
     line = `${target} is ${sent.value.viewed ? "viewed" : "not viewed"}\n`;
+  } else if (verb === "image") {
+    const found = await repositoryImage(process, target);
+    if (found.kind !== "ok") return found;
+    output = { repository: repository.value, url: target, ...found.value };
+    line = `${found.value.contentType}\t${found.value.size}\n`;
   } else {
     const found = await assignable(process, nameWithOwner, values["--query"]);
     if (found.kind !== "ok") return found;

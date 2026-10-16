@@ -2,7 +2,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import type { AnchorHTMLAttributes, ReactNode } from 'react'
+import { useMemo, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
 import { api } from '@/api'
 import { Linked } from '@/chat/path-links'
 import { openableUrl } from '@/lib/external'
@@ -101,13 +101,18 @@ const components = {
 // A sent message's image slots (user-images.ts imageSlot): a span whose data-image survives sanitizing.
 const imageSlotSchema = { ...defaultSchema, attributes: { ...defaultSchema.attributes, span: [...(defaultSchema.attributes?.span ?? []), 'dataImage'] } }
 
-/** Markdown; with `image`, each image slot in the text renders as what it returns for that image's index. */
-export function MarkdownText({ text, className = '', image }: { text: string; className?: string; image?: (index: number) => ReactNode }) {
+/**
+ * Markdown; with `image`, each image slot in the text renders as what it returns for that image's
+ * index, and with `picture`, each picture (markdown or HTML img) renders as what it returns.
+ */
+export function MarkdownText({ text, className = '', image, picture }: { text: string; className?: string; image?: (index: number) => ReactNode; picture?: (props: ImgHTMLAttributes<HTMLImageElement>) => ReactNode }) {
+  // Kept while `picture` is the same function, or every render would remount each picture.
+  const pictured = useMemo(() => (picture === undefined ? components : { ...components, img: ({ node: _node, ...props }: ImgHTMLAttributes<HTMLImageElement> & { node?: unknown }) => picture(props) }), [picture])
   const slotted =
     image === undefined
-      ? components
+      ? pictured
       : {
-          ...components,
+          ...pictured,
           span: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<'span'> & { node?: unknown; 'data-image'?: string }) => {
             const index = props['data-image'] === undefined ? Number.NaN : Number(props['data-image'])
             return Number.isInteger(index) ? image(index) : <span {...props} />

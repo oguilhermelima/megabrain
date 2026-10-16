@@ -36,7 +36,7 @@ export const USAGE_LINES = {
   "port-who": "port who <port> [--json]",
   "port-free": "port free [--from <port>] [--json]",
   "port-kill": "port kill <port> [--json]",
-  "github": "github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable ...",
+  "github": "github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
   "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-pr": "github pr <repo name|path> <number> [--json]",
@@ -53,6 +53,7 @@ export const USAGE_LINES = {
   "github-rerun-checks": "github rerun-checks <repo name|path> <number> [--failed] [--json]",
   "github-file-viewed": "github file-viewed <repo name|path> <number> <path> [--unviewed] [--json]",
   "github-assignable": "github assignable <repo name|path> [--query <text>] [--json]",
+  "github-image": "github image <repo name|path> <url> [--json]",
   "github-review": "github review <repo name|path> <number> --event approve|request-changes|comment --body <text> [--comments <json>] [--json]",
   "github-comment": "github comment <repo name|path> <number> --body <text> [--json]",
   "github-issue-state": "github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]",
@@ -205,7 +206,7 @@ Commands:
   repo list|add|clone|remove|scripts|github ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
   port who|free|kill ...                Find, free and stop port listeners
-  github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable ... Read, review and manage GitHub pull requests and issues
+  github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read, review and manage GitHub pull requests and issues
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

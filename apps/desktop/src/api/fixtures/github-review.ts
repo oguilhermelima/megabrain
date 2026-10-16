@@ -119,7 +119,7 @@ function initialReviewers(number: number): GithubReviewers {
   }
 }
 
-type ReviewApi = Pick<DesktopApi, 'prFilesPage' | 'prFile' | 'prThreads' | 'replyThread' | 'resolveThread' | 'prReviewers' | 'assignableReviewers' | 'requestReview' | 'setPrReady' | 'setAutoMerge' | 'rerunChecks' | 'setFileViewed'>
+type ReviewApi = Pick<DesktopApi, 'prFilesPage' | 'prFile' | 'prThreads' | 'replyThread' | 'resolveThread' | 'prReviewers' | 'githubImage' | 'assignableReviewers' | 'requestReview' | 'setPrReady' | 'setAutoMerge' | 'rerunChecks' | 'setFileViewed'>
 
 /** The review calls with their own session state; draftOf reports a pull request turned into or out of a draft. */
 export function createMockReviewApi(): ReviewApi & { draftOf: (number: number) => boolean | undefined } {
@@ -195,6 +195,12 @@ export function createMockReviewApi(): ReviewApi & { draftOf: (number: number) =
       if (draft === true) return { ...value, mergeStateStatus: 'draft' }
       if (draft === false && value.mergeStateStatus === 'draft') return { ...value, mergeStateStatus: 'blocked', reviewDecision: 'review_required' }
       return value
+    },
+    // Any repository file link answers with the same small picture; a name with "missing" fails as a 404 would.
+    githubImage: async (_root, url) => {
+      await wait(250)
+      if (url.includes('missing')) throw new CliError('gh api contents failed: HTTP 404: Not Found', 1)
+      return { contentType: 'image/png', size: 107, data: 'iVBORw0KGgoAAAANSUhEUgAAAAwAAAAYCAIAAABBUIs9AAAAMklEQVR4nGNIzv8PQcptZhCEKcJAUAWQzUBQBUgRQRUIRfhdxkBQBcLho74b9d0g8x0A/EqDEB71bMEAAAAASUVORK5CYII=' }
     },
     assignableReviewers: async (_root, query) => {
       await wait(200)

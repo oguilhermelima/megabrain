@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
-import type { GithubCheck, GithubReviewer, GithubReviewers } from '@/api/schema'
+import type { GithubReviewer, GithubReviewers } from '@/api/schema'
 import { ErrorNote, Spinner } from '@/components/ui'
-import { checkSummary } from '@/github/github-model'
-import { Avatar, CheckGlyph } from '@/github/parts'
-import type { MergeAction } from '@/github/review-model'
+import { Avatar } from '@/github/parts'
 
-// The bars under a pull request's header that say where it stands: who is asked to review (with a
-// people picker to ask or withdraw) and what each reviewer said, then whether it can merge: the
-// required checks, what holds the merge, and re-running failed checks or turning it back to a draft.
+// The bar under a pull request's header that says who is asked to review (with a people picker to
+// ask or withdraw) and what each reviewer said. Whether it can merge lives in the merge box.
 
 const reviewTone: Record<string, { label: string; className: string }> = {
   approved: { label: 'approved', className: 'text-ok' },
@@ -179,67 +176,6 @@ export function ReviewersSummary({ root, reviewers, error, canRequest, onRequest
         <div className="basis-full">
           <ErrorNote error={refusal} />
         </div>
-      )}
-    </div>
-  )
-}
-
-const quietButton = 'flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold text-ink-300 hover:bg-white/[0.07] hover:text-ink-100 disabled:opacity-60'
-
-export function ReadinessSummary({
-  reviewers,
-  checks,
-  action,
-  autoMerge,
-  draft,
-  running,
-  onRerun,
-  onDraft,
-}: {
-  reviewers: GithubReviewers | null
-  checks: GithubCheck[]
-  action: MergeAction
-  /** The method auto-merge was turned on with in this session, or null. */
-  autoMerge: string | null
-  draft: boolean
-  running: 'rerun' | 'draft' | null
-  onRerun: () => void
-  onDraft: () => void
-}) {
-  const required = reviewers?.requiredChecks ?? []
-  const summary = checkSummary(required)
-  const failing = [...checks, ...required].some((check) => check.state === 'failure')
-  const status =
-    autoMerge !== null
-      ? { text: `Auto-merge is on (${autoMerge}); it merges once GitHub allows it.`, className: 'text-ok' }
-      : action.kind === 'merge'
-        ? { text: reviewers?.mergeStateStatus === 'unstable' ? 'Can merge; some optional checks fail.' : 'Ready to merge.', className: 'text-ok' }
-        : action.kind === 'auto-merge'
-          ? { text: action.reason, className: 'text-warn' }
-          : action.kind === 'blocked'
-            ? { text: action.reason, className: 'text-bad' }
-            : null
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px]">
-      {required.length > 0 && (
-        <span className={`flex items-center gap-1 ${summary.state === 'failing' ? 'text-bad' : summary.state === 'pending' ? 'text-warn' : 'text-ok'}`} title={required.map((check) => `${check.name}: ${check.state}`).join('\n')}>
-          <CheckGlyph state={summary.state} size={13} />
-          {summary.passed}/{required.length} required checks passing
-        </span>
-      )}
-      {status !== null && <span className={status.className}>{status.text}</span>}
-      <span className="ml-auto" />
-      {failing && (
-        <button type="button" disabled={running !== null} onClick={onRerun} className={quietButton}>
-          {running === 'rerun' ? <Spinner /> : null}
-          Re-run failed checks
-        </button>
-      )}
-      {!draft && (
-        <button type="button" disabled={running !== null} onClick={onDraft} className={quietButton}>
-          {running === 'draft' ? <Spinner /> : null}
-          Convert to draft
-        </button>
       )}
     </div>
   )

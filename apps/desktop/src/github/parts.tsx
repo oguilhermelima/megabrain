@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ImgHTMLAttributes } from 'react'
 import { api } from '@/api'
 import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest } from '@/api/schema'
 import { httpsUrl } from '@/lib/external'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
-import { avatarUrl, checkSummary, labelStyle, pullRequestVisualState, stateColors, type CheckSummary, type PullRequestVisualState } from '@/github/github-model'
+import { avatarUrl, checkSummary, isRepositoryFileLink, labelStyle, pullRequestVisualState, stateColors, type CheckSummary, type PullRequestVisualState } from '@/github/github-model'
 import { projectColor } from '@/advanced/picture-model'
 import {
   CheckFailIcon,
@@ -215,12 +215,77 @@ export function ChecksList({ checks, limit = 6 }: { checks: GithubCheck[]; limit
   )
 }
 
+// A repository picture's object URL per repository and link, kept for the session so switching
+// tabs or pull requests does not read it again; a failed read is forgotten so the next try asks.
+const pictures = new Map<string, Promise<string>>()
+const shown = new Map<string, string>()
+const pictureKey = (root: string, url: string) => `${root}\n${url}`
+
+function pictureSource(root: string, url: string): Promise<string> {
+  const key = pictureKey(root, url)
+  const known = pictures.get(key)
+  if (known !== undefined) return known
+  const read = api.githubImage(root, url).then((image) => {
+    const bytes = Uint8Array.from(atob(image.data), (character) => character.charCodeAt(0))
+    const source = URL.createObjectURL(new Blob([bytes], { type: image.contentType }))
+    shown.set(key, source)
+    return source
+  })
+  read.catch(() => pictures.delete(key))
+  pictures.set(key, read)
+  return read
+}
+
+/**
+ * A picture in a body or comment. A repository file link is read through `github image` with gh's
+ * token and shown from a blob URL (a private repository answers the page with a 404); any other
+ * link loads as it is.
+ */
+function GithubPicture({ root, picture }: { root: string; picture: ImgHTMLAttributes<HTMLImageElement> }) {
+  const { src, alt, title, width, height } = picture
+  const link = typeof src === 'string' ? src : ''
+  const fromRepository = isRepositoryFileLink(link)
+  // A picture already read shows at once, so a re-render never flashes its placeholder.
+  const [source, setSource] = useState<string | null>(() => shown.get(pictureKey(root, link)) ?? null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!fromRepository) return
+    let current = true
+    setSource(shown.get(pictureKey(root, link)) ?? null)
+    setFailed(false)
+    pictureSource(root, link).then(
+      (url) => current && setSource(url),
+      () => current && setFailed(true),
+    )
+    return () => {
+      current = false
+    }
+  }, [root, link, fromRepository])
+  const size = { width, height }
+  if (!fromRepository) return <img src={link} alt={alt ?? ''} title={title} {...size} />
+  if (failed) {
+    return (
+      <span title={link} className="inline-flex items-center rounded-[10px] border border-dashed border-white/[0.14] px-2.5 py-1.5 text-[12px] text-ink-400">
+        {alt !== undefined && alt !== '' ? `${alt} (picture unavailable)` : 'Picture unavailable'}
+      </span>
+    )
+  }
+  if (source === null) return <span aria-label="Loading picture" style={{ width: width ?? 160 }} className="inline-block aspect-[3/4] max-w-full animate-pulse rounded-[10px] bg-white/[0.06] align-top" />
+  return <img src={source} alt={alt ?? ''} title={title} {...size} />
+}
+
+// The conversation spans the pane; only running text keeps a readable line length, while code,
+// tables and pictures take the whole width.
+const bodyText = 'text-ink-200 [&_li]:max-w-[90ch] [&_p]:max-w-[90ch] [&_img]:inline-block [&_img]:max-w-full'
+
 /** The description and the comments of a pull request or an issue, as markdown. */
-export function ConversationThread({ detail, now }: { detail: Pick<GithubDetail, 'body' | 'comments'>; now: number }) {
+export function ConversationThread({ detail, now }: { detail: Pick<GithubDetail, 'body' | 'comments' | 'repository'>; now: number }) {
+  const root = detail.repository.path
+  const picture = useCallback((props: ImgHTMLAttributes<HTMLImageElement>) => <GithubPicture root={root} picture={props} />, [root])
   return (
     <>
       <section className="rounded-[20px] border border-white/[0.08] bg-ink-900 px-5 py-4 select-text">
-        {detail.body.trim() === '' ? <p className="text-[13.5px] text-ink-400 italic">No description provided.</p> : <MarkdownText text={detail.body} className="text-ink-200" />}
+        {detail.body.trim() === '' ? <p className="text-[13.5px] text-ink-400 italic">No description provided.</p> : <MarkdownText text={detail.body} className={bodyText} picture={picture} />}
       </section>
       {detail.comments.length > 0 && (
         <section className="space-y-3">
@@ -236,7 +301,7 @@ export function ConversationThread({ detail, now }: { detail: Pick<GithubDetail,
                   <span className="text-ink-400">{ago(comment.createdAt, now)}</span>
                 </p>
                 <div className="select-text">
-                  <MarkdownText text={comment.body} className="text-ink-200" />
+                  <MarkdownText text={comment.body} className={bodyText} picture={picture} />
                 </div>
               </div>
             </article>

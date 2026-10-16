@@ -591,6 +591,12 @@ export const mockGithubDetail = (kind: 'pr' | 'issue', number: number): GithubDe
       '| --- | --- |',
       '| typecheck | passing |',
       '| unit | pending |',
+      '',
+      '## Screenshots',
+      '',
+      '| Pages | Detail | Gone |',
+      '| --- | --- | --- |',
+      `| <img src="${githubRef.url}/blob/0a1b2c3/docs/pages.png?raw=true" width="120"> | <img src="${githubRef.url}/blob/0a1b2c3/docs/detail.png?raw=true" width="120"> | <img src="${githubRef.url}/blob/0a1b2c3/docs/missing.png?raw=true" alt="An old capture" width="120"> |`,
     ].join('\n'),
     comments:
       (item?.comments ?? 0) === 0

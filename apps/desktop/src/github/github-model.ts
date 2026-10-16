@@ -223,3 +223,21 @@ export function refreshedPage<T extends { number: number }>(loaded: GithubPage<T
   if (loaded === null) return first
   return { items: mergeItems(first.items, loaded.items), nextCursor: loaded.nextCursor, counts: first.counts, fetchedAt: first.fetchedAt }
 }
+
+/**
+ * Whether a picture's link names a file in a GitHub repository (a github.com blob or raw link, or
+ * raw.githubusercontent.com), which a private repository only serves with a token, so the desktop
+ * reads it through `github image`. Pictures anywhere else load as they are.
+ */
+export function isRepositoryFileLink(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'https:') return false
+  const segments = parsed.pathname.split('/').filter((segment) => segment !== '')
+  if (parsed.hostname === 'github.com') return (segments[2] === 'blob' || segments[2] === 'raw') && segments.length >= 5
+  return parsed.hostname === 'raw.githubusercontent.com' && segments.length >= 4
+}

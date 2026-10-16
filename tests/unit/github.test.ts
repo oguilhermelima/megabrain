@@ -475,7 +475,7 @@ describe("github cache", () => {
 
 describe("github routing and usage", () => {
   const usage = {
-    "github": "github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable ...",
+    "github": "github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
     "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
     "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
     "github-pr": "github pr <repo name|path> <number> [--json]",
@@ -513,6 +513,7 @@ const REVIEW_USAGE = {
   "rerun-checks": "github rerun-checks <repo name|path> <number> [--failed] [--json]",
   "file-viewed": "github file-viewed <repo name|path> <number> <path> [--unviewed] [--json]",
   "assignable": "github assignable <repo name|path> [--query <text>] [--json]",
+  "image": "github image <repo name|path> <url> [--json]",
   "review": "github review <repo name|path> <number> --event approve|request-changes|comment --body <text> [--comments <json>] [--json]",
   "comment": "github comment <repo name|path> <number> --body <text> [--json]",
   "issue-state": "github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]",
@@ -1352,6 +1353,69 @@ describe("github assignable", () => {
   test("takes no pull request number", async () => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     expect(await github(["assignable", path, "7"])).toMatchObject({ kind: "failed", error: `Usage: megabrain ${REVIEW_USAGE.assignable}`, exitCode: 2 });
+  });
+});
+
+describe("github image", () => {
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16]);
+  const CONTENTS = "repos/cantospace/canto-space/contents/pr-513/01%20meta.png";
+  const BLOB_URL = "https://github.com/cantospace/canto-space/blob/2a5bb4e5/pr-513/01%20meta.png?raw=true";
+  type Image = { repository: { nameWithOwner: string }; url: string; contentType: string; size: number; data: string };
+  const contents = (bytes: Buffer, extra: Record<string, unknown> = {}) => JSON.stringify({ type: "file", encoding: "base64", size: bytes.length, sha: "b10b", content: `${bytes.toString("base64")}\n`, ...extra });
+
+  test("reads a blob link through the contents API at its ref and sniffs the type", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args[1] === `${CONTENTS}?ref=2a5bb4e5` ? stdout(contents(PNG)) : failed(`unexpected gh ${args.join(" ")}`);
+    const result = parsed<Image>(await github(["image", path, BLOB_URL, "--json"]));
+    expect(calls).toEqual([["api", `${CONTENTS}?ref=2a5bb4e5`]]);
+    expect(result).toMatchObject({ repository: { nameWithOwner: "operator/sample" }, url: BLOB_URL, contentType: "image/png", size: PNG.length, data: PNG.toString("base64") });
+  });
+
+  test("raw links on github.com and raw.githubusercontent.com name the same file", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(contents(JPEG));
+    await github(["image", path, "https://github.com/cantospace/canto-space/raw/main/pr-513/01%20meta.png", "--json"]);
+    await github(["image", path, "https://raw.githubusercontent.com/cantospace/canto-space/main/pr-513/01%20meta.png", "--json"]);
+    expect(calls.map((call) => call[1])).toEqual([`${CONTENTS}?ref=main`, `${CONTENTS}?ref=main`]);
+  });
+
+  test("a file over the contents limit comes from its git blob", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args[1]?.startsWith(CONTENTS) === true ? stdout(contents(Buffer.alloc(0), { encoding: "none", content: "", size: 2_000_000 }))
+      : args[1] === "repos/cantospace/canto-space/git/blobs/b10b" ? stdout(JSON.stringify({ encoding: "base64", content: PNG.toString("base64") }))
+      : failed(`unexpected gh ${args.join(" ")}`);
+    const result = parsed<Image>(await github(["image", path, BLOB_URL, "--json"]));
+    expect(calls).toHaveLength(2);
+    expect(result).toMatchObject({ contentType: "image/png", size: PNG.length });
+  });
+
+  test("a file that is not a picture is refused", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(contents(Buffer.from("<svg onload=alert(1)>")));
+    const result = await github(["image", path, BLOB_URL, "--json"]);
+    expect(result.kind === "failed" ? result.error : "").toContain("not a PNG, JPEG, GIF or WebP image");
+  });
+
+  test("a link outside a GitHub repository is refused before gh runs", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    for (const url of ["https://example.com/a.png", "http://github.com/o/r/blob/main/a.png", "https://github.com/o/r/pull/7", "https://github.com/user-attachments/assets/1234", "not a url"]) {
+      const result = await github(["image", path, url, "--json"]);
+      expect(result).toMatchObject({ kind: "failed", exitCode: 2 });
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a directory or a missing answer is a failure", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = () => stdout(JSON.stringify([{ type: "file", name: "a.png" }]));
+    expect((await github(["image", path, BLOB_URL, "--json"])).kind).toBe("failed");
+  });
+
+  test("the link is required and takes no pull request number", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    expect(await github(["image", path])).toMatchObject({ kind: "failed", error: `Usage: megabrain ${REVIEW_USAGE.image}`, exitCode: 2 });
+    expect(await github(["image", path, "7", BLOB_URL])).toMatchObject({ kind: "failed", error: `Usage: megabrain ${REVIEW_USAGE.image}`, exitCode: 2 });
   });
 });
 
