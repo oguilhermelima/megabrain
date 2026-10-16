@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Settings, UsageReading } from '@/api/schema'
+import { measuredModels } from '@/api/fixtures/models'
 import {
   providerUsage,
   readingAge,
@@ -11,10 +12,12 @@ import {
   contextMeter,
   contextUsage,
   contextWindow,
+  defaultWindow,
   displayName,
   effortCommand,
   effortLevels,
   effortName,
+  effortStep,
   findModel,
   formatTokens,
   groupModels,
@@ -22,6 +25,7 @@ import {
   usageLimitTone,
   menuGroups,
   modelCommand,
+  modelDescriptor,
   modelHint,
   modelLabel,
   modelName,
@@ -141,6 +145,40 @@ describe('groupModels', () => {
     const grouped = groupModels(claude)
     expect(grouped.current.map((model) => model.model)).toEqual(['claude-opus-5-5'])
     expect(grouped.older.map((model) => model.model)).toEqual(['claude-mythos-preview', 'claude-haiku-4-5-20251001'])
+  })
+})
+
+describe('main models per agent, on the registry measured 2026-10-16', () => {
+  const main = (agent: string) => groupModels(agentModels(measuredModels, agent)).current.map((model) => model.model)
+  const older = (agent: string) => groupModels(agentModels(measuredModels, agent)).older.length
+
+  test('Claude: the 5.5 family', () => {
+    expect(main('claude')).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-5', 'claude-haiku-5-5'])
+    expect(older('claude')).toBe(18)
+  })
+
+  test('Codex: the gpt-6 family', () => {
+    expect(main('codex')).toEqual(['gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol'])
+    expect(older('codex')).toBe(9)
+  })
+
+  test('agy, after the fold: Gemini 4, Gemini 3.8, Claude Opus 5.5 and Claude Sonnet 5.5', () => {
+    expect(main('agy')).toEqual(['gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5'])
+    expect(older('agy')).toBe(1)
+  })
+
+  test('Grok: the newest grok, standard and fast', () => {
+    expect(main('grok')).toEqual(['grok-4.7', 'grok-4.7-build-fast'])
+    expect(older('grok')).toBe(2)
+  })
+
+  test('a newer point release takes its line over, the rest of the generation stays', () => {
+    const codex = registry('codex', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra'])
+    expect(groupModels(codex).current.map((model) => model.model)).toEqual(['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'])
+  })
+
+  test('a model with no version to rank is older', () => {
+    expect(groupModels(registry('agy', ['gpt-oss-120b', 'gemini-4-argon'])).older.map((model) => model.model)).toEqual(['gpt-oss-120b'])
   })
 })
 
@@ -336,10 +374,10 @@ describe('registry names, windows and the current flag', () => {
     expect(displayName('claude-3-7-sonnet-20250219', legacy)).toBe('Sonnet 3.7')
   })
 
-  test('the registry current flag decides the groups when it is there', () => {
+  test('a current flag an older registry still carries does not override the rule', () => {
     const grouped = groupModels(models)
-    expect(grouped.current.map((model) => model.model)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5'])
-    expect(grouped.older.map((model) => model.model)).toEqual(['claude-opus-5', 'claude-haiku-4-5-20251001'])
+    expect(grouped.current.map((model) => model.model)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'])
+    expect(grouped.older.map((model) => model.model)).toEqual(['claude-opus-5'])
   })
 
   test('the windows a model supports: the registry list, else 200k and 1M for Claude, else its one window', () => {
@@ -350,6 +388,67 @@ describe('registry names, windows and the current flag', () => {
     expect(modelWindows({ agent: 'codex', model: 'gpt-6-sol', reasoning: { levels: [] }, contextWindow: 400_000 }, 'codex')).toEqual([400_000])
     expect(modelWindows(undefined, 'codex')).toEqual([272_000])
     expect(modelWindows(undefined, 'grok')).toEqual([])
+  })
+})
+
+describe('modelDescriptor', () => {
+  test("the registry's own description, else the family's hint, else what the model offers", () => {
+    expect(modelDescriptor({ agent: 'grok', model: 'grok-4.7', reasoning: { levels: ['low', 'high'] }, description: "SpaceXAI's latest frontier model" }, 'grok')).toBe("SpaceXAI's latest frontier model")
+    expect(modelDescriptor({ agent: 'claude', model: 'claude-opus-5-5', reasoning: { levels: [] } }, 'claude')).toBe('Most capable')
+    expect(modelDescriptor({ agent: 'agy', model: 'gemini-3.8-flash', reasoning: { levels: ['low', 'medium', 'high'] } }, 'agy')).toBe('Fastest')
+    expect(modelDescriptor({ agent: 'claude', model: 'claude-fable-5-5', reasoning: { levels: ['low'] }, contextWindows: [200_000, 1_000_000] }, 'claude')).toBe('Up to 1M context')
+    expect(modelDescriptor({ agent: 'agy', model: 'gemini-4-argon', reasoning: { levels: ['low', 'medium', 'high'] } }, 'agy')).toBe('Low to High effort')
+    expect(modelDescriptor({ agent: 'agy', model: 'gpt-oss-120b', reasoning: { levels: ['medium'] } }, 'agy')).toBeNull()
+  })
+
+  test('Codex tiers say what each is for, as Codex itself describes them', () => {
+    expect(modelDescriptor({ agent: 'codex', model: 'gpt-6-luna', reasoning: { levels: [] } }, 'codex')).toBe('Fast and affordable')
+    expect(modelDescriptor({ agent: 'codex', model: 'gpt-6-sol', reasoning: { levels: [] } }, 'codex')).toBe('Everyday workhorse')
+    expect(modelDescriptor({ agent: 'codex', model: 'gpt-6-astra', reasoning: { levels: [] } }, 'codex')).toBe('Frontier intelligence')
+  })
+})
+
+describe('the context window a pick starts with', () => {
+  test('1M wherever the model supports it, else its first window', () => {
+    expect(defaultWindow([200_000, 1_000_000])).toBe(1_000_000)
+    expect(defaultWindow([256_000, 500_000])).toBe(256_000)
+    expect(defaultWindow([272_000])).toBe(272_000)
+    expect(defaultWindow([])).toBeNull()
+  })
+
+  test('switching to a model that supports 1M lands on 1M, even from 200k', () => {
+    const windows = modelWindows(findModel(measuredModels, 'claude-opus-5-5'), 'claude')
+    expect(switchTarget('claude-opus-5-5', windows, defaultWindow(windows))).toEqual({ model: 'claude-opus-5-5[1m]', window: 1_000_000 })
+    const haiku = modelWindows(findModel(measuredModels, 'claude-haiku-4-5-20251001'), 'claude')
+    expect(switchTarget('claude-haiku-4-5-20251001', haiku, defaultWindow(haiku))).toEqual({ model: 'claude-haiku-4-5-20251001', window: 200_000 })
+  })
+})
+
+describe('the effort slider', () => {
+  const stops = (agent: string, id: string) => effortLevels(findModel(agentModels(measuredModels, agent), id), agent, true).map(effortName)
+
+  test('one stop per level the selected model supports, with its full name', () => {
+    expect(stops('claude', 'claude-opus-5-5[1m]')).toEqual(['Low', 'Medium', 'High', 'X-High', 'Max'])
+    expect(stops('codex', 'gpt-6-astra')).toEqual(['Low', 'Medium', 'High', 'X-High', 'Max', 'Ultra'])
+    expect(stops('codex', 'gpt-6-luna')).toEqual(['Low', 'Medium', 'High', 'X-High', 'Max'])
+    expect(stops('agy', 'gemini-4-argon')).toEqual(['Low', 'Medium', 'High'])
+    expect(stops('grok', 'grok-4.5')).toEqual(['Low', 'Medium', 'High'])
+    expect(stops('grok', 'grok-4.7')).toEqual(['Low', 'Medium', 'High', 'X-High'])
+  })
+
+  test('arrows move one stop and stop at the ends; Home and End jump; other keys do nothing', () => {
+    const levels = ['low', 'medium', 'high']
+    expect(effortStep(levels, 'medium', 'ArrowRight')).toBe('high')
+    expect(effortStep(levels, 'medium', 'ArrowUp')).toBe('high')
+    expect(effortStep(levels, 'medium', 'ArrowLeft')).toBe('low')
+    expect(effortStep(levels, 'medium', 'ArrowDown')).toBe('low')
+    expect(effortStep(levels, 'high', 'ArrowRight')).toBe('high')
+    expect(effortStep(levels, 'low', 'ArrowLeft')).toBe('low')
+    expect(effortStep(levels, 'medium', 'Home')).toBe('low')
+    expect(effortStep(levels, 'low', 'End')).toBe('high')
+    expect(effortStep(levels, undefined, 'ArrowRight')).toBe('low')
+    expect(effortStep(levels, 'medium', 'Enter')).toBeNull()
+    expect(effortStep([], undefined, 'ArrowRight')).toBeNull()
   })
 })
 
@@ -472,11 +571,9 @@ describe('session model names', () => {
 })
 
 describe('menuGroups', () => {
+  // Haiku 4.5 is the newest haiku here, so it is retired to stay older.
   const models = registry('claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'], {
-    'claude-opus-5-5': { current: true },
-    'claude-sonnet-5-5': { current: true },
-    'claude-opus-5': { current: false },
-    'claude-haiku-4-5-20251001': { current: false },
+    'claude-haiku-4-5-20251001': { status: 'retired' },
   })
   const ids = (list: Models) => list.map((model) => model.model)
 

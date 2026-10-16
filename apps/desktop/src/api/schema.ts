@@ -227,8 +227,10 @@ export const settingsSchema = z.looseObject({
       name: z.string().optional(),
       /** Token windows the model supports, the default first; absent from an older CLI. */
       contextWindows: z.array(z.number()).optional(),
-      /** True for the newest generation of its family; absent from an older CLI. */
-      current: z.boolean().optional(),
+      /** active, retired or deprecated; absent from an older CLI. */
+      status: z.string().optional(),
+      /** What the agent's CLI says the model is for; null or absent when it says nothing. */
+      description: z.string().nullable().optional(),
     }),
   ),
   terminal: z.looseObject({ default: z.string().nullable(), detected: z.string().nullable(), available: z.array(z.string()) }),

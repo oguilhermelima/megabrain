@@ -105,33 +105,85 @@ export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry
     else if (models[index].provenance.kind !== "curated") models[index] = {
       ...models[index], reasoning: templateModel.reasoning, status: templateModel.status,
       contextWindow: templateModel.contextWindow, name: templateModel.name,
-      contextWindows: templateModel.contextWindows, current: templateModel.current,
+      contextWindows: templateModel.contextWindows, description: templateModel.description,
     };
   }
   return { ...registry, models };
 }
 
-export function refreshAgyModels(ids: readonly string[], obtainedAt: string): readonly Model[] {
-  const models = [...new Set(ids.filter((id) => /^(gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+$/.test(id)))].sort();
-  return models.map((model) => {
-    const level = model.endsWith("-high") ? "high" : model.endsWith("-medium") ? "medium" : model.endsWith("-low") ? "low" : "none";
-    return { agent: "agy", model, reasoning: { separateAxis: false, levels: [level] }, provenance: { kind: "live", command: "agy models", obtainedAt } };
-  });
+// Every level a CLI can name, in order; agy also offers a "thinking" variant of some Claude models.
+const levelOrder: readonly string[] = [...reasoningLevels, "thinking"];
+const byLevel = (left: string, right: string) => levelOrder.indexOf(left) - levelOrder.indexOf(right);
+
+// agy lists one id per reasoning level ("gemini-4-argon-high\tGemini 4 Argon (High)"); an id with
+// no level runs at none. The registry keeps one model per base id with the levels it was listed
+// at, and launching joins the two back into the id agy listed (agyModelId).
+const agyLevel = /-(minimal|low|medium|high|xhigh|max|thinking)$/;
+
+export function agyModelId(model: string, effort: string | null): string {
+  return effort === null || effort === "none" || agyLevel.test(model) ? model : `${model}-${effort}`;
 }
 
-// `grok models` lists ids only; the reasoning levels per model live in grok's own models_cache.json.
-// The shipped template carries the measured levels, so a refresh keeps what the registry already
-// knows for an id and falls back to the levels every listed model supports.
+export function refreshAgyModels(listing: string, obtainedAt: string): readonly Model[] {
+  const folded = new Map<string, { name: string | undefined; levels: string[] }>();
+  for (const [, id = "", listedName] of listing.matchAll(/^((?:gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+)(?:\t(.*))?$/gm)) {
+    const level = agyLevel.exec(id)?.[1];
+    const base = level === undefined ? id : id.slice(0, -level.length - 1);
+    const entry = folded.get(base) ?? { name: undefined, levels: [] };
+    entry.name ??= listedName?.replace(/\s*\([^)]*\)\s*$/, "").trim() || undefined;
+    if (!entry.levels.includes(level ?? "none")) entry.levels.push(level ?? "none");
+    folded.set(base, entry);
+  }
+  return [...folded].map(([model, { name, levels }]) => ({
+    agent: "agy",
+    model,
+    ...(name === undefined ? {} : { name }),
+    reasoning: { separateAxis: true, levels: levels.sort(byLevel) },
+    provenance: { kind: "live", command: "agy models", obtainedAt },
+  }));
+}
+
+// `grok models` lists the ids it offers. Their levels, names and windows live in grok's own
+// ~/.grok/models_cache.json; without it a refresh keeps the levels the registry already knows for
+// an id and falls back to the levels every listed model supports.
 const grokFallbackLevels = ["low", "medium", "high"];
 
-export function refreshGrokModels(listing: string, known: readonly Model[], obtainedAt: string): readonly Model[] {
-  const ids = [...listing.matchAll(/^[ \t]*[*-][ \t]+(grok-[A-Za-z0-9_.-]+)/gm)].map((match) => match[1]!);
-  return [...new Set(ids)].sort().map((model) => ({
-    agent: "grok",
-    model,
-    reasoning: { separateAxis: true, levels: known.find((entry) => entry.agent === "grok" && entry.model === model)?.reasoning.levels ?? grokFallbackLevels },
-    provenance: { kind: "live", command: "grok models", obtainedAt },
-  }));
+type GrokCacheEntry = { name?: unknown; description?: unknown; context_window?: unknown; context_windows?: unknown; reasoning_efforts?: unknown };
+
+function grokCache(text: string | undefined): Readonly<Record<string, GrokCacheEntry>> {
+  try {
+    const models = (JSON.parse(text ?? "{}") as { models?: Record<string, { info?: GrokCacheEntry }> }).models ?? {};
+    return Object.fromEntries(Object.entries(models).flatMap(([id, value]) => (value?.info === undefined ? [] : [[id, value.info]])));
+  } catch {
+    return {};
+  }
+}
+
+const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+export function refreshGrokModels(listing: string, cacheText: string | undefined, known: readonly Model[], obtainedAt: string): readonly Model[] {
+  const ids = [...new Set([...listing.matchAll(/^[ \t]*[*-][ \t]+(grok-[A-Za-z0-9_.-]+)/gm)].map((match) => match[1]!))];
+  const cache = grokCache(cacheText);
+  return ids.map((model) => {
+    const provenance = { kind: "live", command: "grok models", obtainedAt };
+    const info = cache[model];
+    const cachedLevels = Array.isArray(info?.reasoning_efforts) ? info.reasoning_efforts.map((effort: { id?: unknown }) => effort?.id).filter((id): id is string => typeof id === "string") : [];
+    if (info === undefined || cachedLevels.length === 0) {
+      const levels = known.find((entry) => entry.agent === "grok" && entry.model === model)?.reasoning.levels ?? grokFallbackLevels;
+      return { agent: "grok", model, reasoning: { separateAxis: true, levels }, provenance };
+    }
+    const windows = Array.isArray(info.context_windows) ? info.context_windows.filter(positive) : [];
+    return {
+      agent: "grok",
+      model,
+      ...(typeof info.name === "string" ? { name: info.name } : {}),
+      ...(typeof info.description === "string" ? { description: info.description } : {}),
+      ...(positive(info.context_window) ? { contextWindow: info.context_window } : {}),
+      ...(windows.length > 0 ? { contextWindows: windows } : {}),
+      reasoning: { separateAxis: true, levels: cachedLevels.sort(byLevel) },
+      provenance,
+    };
+  });
 }
 
 export type ModelEnvironment = StateEnvironment & Readonly<{

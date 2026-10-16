@@ -3,117 +3,82 @@
   "models": [
     {
       "agent": "agy",
-      "model": "claude-opus-4-6-thinking",
+      "model": "gemini-4-argon",
+      "name": "Gemini 4 Argon",
       "reasoning": {
-        "separateAxis": false,
+        "separateAxis": true,
         "levels": [
-          "none"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Claude Opus 4.6 Thinking",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "claude-sonnet-4-6",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "none"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Claude Sonnet 4.6",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.1-pro-high",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
+          "low",
+          "medium",
           "high"
         ]
       },
       "provenance": {
         "kind": "live",
         "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.1 Pro High",
-      "contextWindows": [],
-      "current": false
+        "obtainedAt": "2026-10-16"
+      }
     },
     {
       "agent": "agy",
-      "model": "gemini-3.1-pro-low",
+      "model": "gemini-3.8-flash",
+      "name": "Gemini 3.8 Flash",
       "reasoning": {
-        "separateAxis": false,
+        "separateAxis": true,
         "levels": [
-          "low"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.1 Pro Low",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.6-flash-high",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
+          "low",
+          "medium",
           "high"
         ]
       },
       "provenance": {
         "kind": "live",
         "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.6 Flash High",
-      "contextWindows": [],
-      "current": false
+        "obtainedAt": "2026-10-16"
+      }
     },
     {
       "agent": "agy",
-      "model": "gemini-3.6-flash-low",
+      "model": "claude-opus-5-5",
+      "name": "Claude Opus 5.5",
       "reasoning": {
-        "separateAxis": false,
+        "separateAxis": true,
         "levels": [
-          "low"
+          "low",
+          "medium",
+          "high"
         ]
       },
       "provenance": {
         "kind": "live",
         "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.6 Flash Low",
-      "contextWindows": [],
-      "current": false
+        "obtainedAt": "2026-10-16"
+      }
     },
     {
       "agent": "agy",
-      "model": "gemini-3.6-flash-medium",
+      "model": "claude-sonnet-5-5",
+      "name": "Claude Sonnet 5.5",
       "reasoning": {
-        "separateAxis": false,
+        "separateAxis": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "provenance": {
+        "kind": "live",
+        "command": "agy models",
+        "obtainedAt": "2026-10-16"
+      }
+    },
+    {
+      "agent": "agy",
+      "model": "gpt-oss-120b",
+      "name": "GPT-OSS 120B",
+      "reasoning": {
+        "separateAxis": true,
         "levels": [
           "medium"
         ]
@@ -121,137 +86,8 @@
       "provenance": {
         "kind": "live",
         "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.6 Flash Medium",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.7-flash-high",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "high"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.7 Flash High",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.7-flash-low",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "low"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.7 Flash Low",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.7-flash-medium",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "medium"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.7 Flash Medium",
-      "contextWindows": [],
-      "current": false
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.8-flash-high",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "high"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.8 Flash High",
-      "contextWindows": [],
-      "current": true
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.8-flash-low",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "low"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.8 Flash Low",
-      "contextWindows": [],
-      "current": true
-    },
-    {
-      "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "medium"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "Gemini 3.8 Flash Medium",
-      "contextWindows": [],
-      "current": true
-    },
-    {
-      "agent": "agy",
-      "model": "gpt-oss-120b-medium",
-      "reasoning": {
-        "separateAxis": false,
-        "levels": [
-          "medium"
-        ]
-      },
-      "provenance": {
-        "kind": "live",
-        "command": "agy models",
-        "obtainedAt": "2026-09-07T21:06:31Z"
-      },
-      "name": "GPT-OSS 120b Medium",
-      "contextWindows": [],
-      "current": false
+        "obtainedAt": "2026-10-16"
+      }
     },
     {
       "agent": "claude",
@@ -289,8 +125,7 @@
       "name": "3.5 Haiku",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -328,8 +163,7 @@
       "name": "3.7 Sonnet",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -367,8 +201,7 @@
       "name": "3 Haiku",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -406,8 +239,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -445,8 +277,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -493,8 +324,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": true
+      ]
     },
     {
       "agent": "claude",
@@ -532,8 +362,7 @@
       "name": "Haiku 4.5",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -580,8 +409,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": true
+      ]
     },
     {
       "agent": "claude",
@@ -618,8 +446,7 @@
       "name": "Mythos Preview",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -657,8 +484,7 @@
       "name": "Opus 4.1",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -697,8 +523,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -735,8 +560,7 @@
       "name": "Opus 4.5",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -774,8 +598,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -813,8 +636,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -852,8 +674,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -891,8 +712,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -923,8 +743,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": true
+      ]
     },
     {
       "agent": "claude",
@@ -963,8 +782,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -1001,8 +819,7 @@
       "name": "Sonnet 4.5",
       "contextWindows": [
         200000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -1040,8 +857,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -1080,8 +896,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "claude",
@@ -1120,8 +935,7 @@
       "contextWindows": [
         200000,
         1000000
-      ],
-      "current": true
+      ]
     },
     {
       "agent": "codex",
@@ -1167,8 +981,7 @@
       "name": "GPT-5.2",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1214,8 +1027,7 @@
       "name": "GPT-5.3 Codex",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1261,8 +1073,7 @@
       "name": "GPT-5.3 Codex Spark",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1309,8 +1120,7 @@
       "name": "GPT-5.4",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1357,8 +1167,7 @@
       "name": "GPT-5.4 Mini",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1401,8 +1210,7 @@
       "name": "GPT-5.5",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1446,8 +1254,7 @@
       "name": "GPT-5.6 Luna",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1492,8 +1299,7 @@
       "name": "GPT-5.6 Sol",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1538,8 +1344,7 @@
       "name": "GPT-5.6 Terra",
       "contextWindows": [
         272000
-      ],
-      "current": false
+      ]
     },
     {
       "agent": "codex",
@@ -1584,8 +1389,7 @@
       "name": "GPT-6 Astra",
       "contextWindows": [
         272000
-      ],
-      "current": true
+      ]
     },
     {
       "agent": "codex",
@@ -1615,8 +1419,39 @@
       "name": "GPT-6 Luna",
       "contextWindows": [
         272000
+      ]
+    },
+    {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "reasoning": {
+        "separateAxis": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "provenance": {
+          "kind": "sourced",
+          "source": "~/.codex/models_cache.json",
+          "field": "supported_reasoning_levels",
+          "fetchedAt": "2026-10-16"
+        }
+      },
+      "provenance": {
+        "kind": "sourced",
+        "source": "~/.codex/models_cache.json",
+        "obtainedAt": "2026-10-16"
+      },
+      "status": "active",
+      "name": "GPT-6.1 Sol",
+      "contextWindows": [
+        500000
       ],
-      "current": true
+      "contextWindow": 500000
     },
     {
       "agent": "codex",
@@ -1647,8 +1482,7 @@
       "name": "GPT-6 Sol",
       "contextWindows": [
         272000
-      ],
-      "current": true
+      ]
     },
     {
       "agent": "grok",
@@ -1679,11 +1513,11 @@
       },
       "contextWindow": 256000,
       "status": "active",
-      "name": "4.5",
+      "name": "Grok 4.5",
       "contextWindows": [
-        256000
-      ],
-      "current": false
+        256000,
+        500000
+      ]
     },
     {
       "agent": "grok",
@@ -1716,11 +1550,11 @@
       },
       "contextWindow": 256000,
       "status": "active",
-      "name": "4.6",
+      "name": "Grok 4.6",
       "contextWindows": [
-        256000
-      ],
-      "current": false
+        256000,
+        500000
+      ]
     },
     {
       "agent": "grok",
@@ -1753,11 +1587,12 @@
       },
       "contextWindow": 256000,
       "status": "active",
-      "name": "4.7",
+      "name": "Grok 4.7",
       "contextWindows": [
-        256000
+        256000,
+        500000
       ],
-      "current": true
+      "description": "SpaceXAI's latest frontier model"
     },
     {
       "agent": "grok",
@@ -1790,11 +1625,12 @@
       },
       "contextWindow": 256000,
       "status": "active",
-      "name": "4.7 Build Fast",
+      "name": "Grok 4.7 Fast",
       "contextWindows": [
-        256000
+        256000,
+        500000
       ],
-      "current": true
+      "description": "Fast variant. 2x the price."
     }
   ]
 }

@@ -85,27 +85,40 @@ function compareVersions(left: number[], right: number[]): number {
 }
 
 const retiredStatuses = new Set(['retired', 'deprecated'])
+const fastWords = new Set(['mini', 'nano', 'flash', 'fast', 'spark'])
 
 /**
- * The models the menu shows first, the newest version of each family, and the older ones it folds
- * away; the registry's current flag decides when it is there, and a model it marks retired or
- * deprecated is always older. Both keep registry order.
+ * The models the menu shows first and the older ones it folds away, by rule rather than a list. A
+ * model's line is its family with the words after its version (gpt-6-luna is the gpt luna line,
+ * gemini-3.8-flash the gemini flash line), and its class is the family split into a standard and a
+ * fast tier (flash, mini, fast...), since a fast tier ships on its own clock. A model is main when
+ * it is the newest of its line and its line's generation, the major version, is the newest of its
+ * class. A model the registry marks retired or deprecated, or one with no version to rank, is older.
+ * On the registry of 2026-10-16 that gives:
+ * - claude: Opus, Sonnet, Fable and Haiku 5.5; Opus 5 and Opus 4.8 are older in the opus line.
+ * - codex: GPT-6 Astra, Luna and Sol; GPT-5.6 Terra is the newest terra, but generation 5 is not 6.
+ * - agy: Gemini 4 Argon, Gemini 3.8 Flash (the newest of gemini's fast tier), Claude Opus and Sonnet
+ *   5.5; GPT-OSS 120B has no version.
+ * - grok: Grok 4.7 and Grok 4.7 Build Fast.
+ * Both groups keep registry order.
  */
 export function groupModels(models: Models): { current: Models; older: Models } {
-  const active = models.filter((model) => typeof model.status !== 'string' || !retiredStatuses.has(model.status))
-  const newest = new Map<string, number[]>()
-  for (const model of active) {
-    const { family, version } = modelParts(model.model)
-    const known = newest.get(family)
-    if (known === undefined || compareVersions(version, known) > 0) newest.set(family, version)
+  const ranked = models.flatMap((model) => {
+    if (typeof model.status === 'string' && retiredStatuses.has(model.status)) return []
+    const { family, version, words } = modelParts(model.model)
+    if (version.length === 0) return []
+    const tier = words.some((word) => fastWords.has(word)) ? 'fast' : 'standard'
+    return [{ model, version, line: [family, ...words].join(' '), kind: `${family} ${tier}` }]
+  })
+  const newestInLine = new Map<string, number[]>()
+  const newestGeneration = new Map<string, number>()
+  for (const { version, line, kind } of ranked) {
+    const known = newestInLine.get(line)
+    if (known === undefined || compareVersions(version, known) > 0) newestInLine.set(line, version)
+    newestGeneration.set(kind, Math.max(newestGeneration.get(kind) ?? 0, version[0] ?? 0))
   }
-  const isCurrent = (model: Models[number]) => {
-    if (!active.includes(model)) return false
-    if (typeof model.current === 'boolean') return model.current
-    const { family, version } = modelParts(model.model)
-    return compareVersions(version, newest.get(family) ?? []) === 0
-  }
-  return { current: models.filter(isCurrent), older: models.filter((model) => !isCurrent(model)) }
+  const main = new Set(ranked.filter((item) => compareVersions(item.version, newestInLine.get(item.line) ?? []) === 0 && item.version[0] === newestGeneration.get(item.kind)).map((item) => item.model))
+  return { current: models.filter((model) => main.has(model)), older: models.filter((model) => !main.has(model)) }
 }
 
 export function agentModels(models: Models, agent: string | null): Models {
@@ -141,6 +154,11 @@ export function contextWindow(reported: number | null | undefined, agent: string
   if (typeof listed === 'number' && listed > 0) return { tokens: listed, derived: true }
   const fallback = agent === null ? undefined : defaultWindows[agent]
   return fallback === undefined ? null : { tokens: fallback, derived: true }
+}
+
+/** The window a model starts on: 1M wherever it supports it, else its first; null when none is known. */
+export function defaultWindow(windows: number[]): number | null {
+  return windows.find((tokens) => tokens >= 1_000_000) ?? windows[0] ?? null
 }
 
 /** The windows a model supports, the default first: the registry's list, else 200k and 1M for Claude, else its one window. */
@@ -181,13 +199,32 @@ export function menuGroups(models: Models, id: string | null): { current: Models
 }
 
 const familyHints: Record<string, string> = { haiku: 'Fastest', sonnet: 'Balanced', opus: 'Most capable' }
-const fastWords = new Set(['mini', 'nano', 'flash', 'fast', 'spark'])
+// Codex's tiers, as Codex's own model list describes them.
+const tierHints: Record<string, string> = { luna: 'Fast and affordable', sol: 'Everyday workhorse', astra: 'Frontier intelligence' }
 
-/** One line on what a model is for, by family; null for a family it does not know. */
+/** One line on what a model is for, by tier or family; null for one it does not know. */
 export function modelHint(id: string): string | null {
   const { family, words } = modelParts(id)
   if (words.some((word) => fastWords.has(word))) return 'Fastest'
-  return familyHints[family] ?? null
+  const tier = words.find((word) => tierHints[word] !== undefined)
+  return tier === undefined ? (familyHints[family] ?? null) : (tierHints[tier] ?? null)
+}
+
+/**
+ * The one line under a model's name: the registry's own description, else what its tier or family is
+ * for, else what it offers, its largest window or its range of effort; null when nothing says.
+ */
+export function modelDescriptor(entry: Models[number], agent: string | null): string | null {
+  if (typeof entry.description === 'string' && entry.description !== '') return entry.description
+  const hint = modelHint(entry.model)
+  if (hint !== null) return hint
+  const windows = modelWindows(entry, agent)
+  const largest = Math.max(...windows)
+  if (windows.length > 1) return `Up to ${formatTokens(largest)} context`
+  if (windows.length === 1) return `${formatTokens(largest)} context`
+  const levels = entry.reasoning.levels
+  const [first, last] = [levels[0], levels.at(-1)]
+  return levels.length > 1 && first !== undefined && last !== undefined ? `${effortName(first)} to ${effortName(last)} effort` : null
 }
 
 /** What the model picker shows: name, window and effort, each only when known. */
@@ -287,6 +324,18 @@ export function contextMeter(tokens: number | null | undefined, size: ContextWin
 const effortNames: Record<string, string> = { xhigh: 'X-High' }
 
 /** An effort level as the menu labels it: xhigh is X-High, the rest capitalised. */
+/** The level an arrow, Home or End moves the effort slider to; null for any other key or no levels. */
+export function effortStep(levels: string[], current: string | undefined, key: string): string | null {
+  if (levels.length === 0) return null
+  const index = current === undefined ? -1 : levels.indexOf(current)
+  const at = (position: number) => levels[Math.min(Math.max(position, 0), levels.length - 1)] ?? null
+  if (key === 'ArrowRight' || key === 'ArrowUp') return at(index + 1)
+  if (key === 'ArrowLeft' || key === 'ArrowDown') return at(index - 1)
+  if (key === 'Home') return at(0)
+  if (key === 'End') return at(levels.length - 1)
+  return null
+}
+
 export function effortName(level: string): string {
   return effortNames[level] ?? capitalise(level)
 }

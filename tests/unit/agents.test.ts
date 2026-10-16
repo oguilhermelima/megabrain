@@ -31,6 +31,15 @@ describe("agent registry", () => {
       kind: "ok",
       value: 'agy --dangerously-skip-permissions --model "gemini-3.8-flash-high"',
     });
+    // agy lists one id per level; a model the registry folded runs as the id for the level picked.
+    expect(commandLine("agy", { model: "gemini-4-argon", effort: "high", browser: true, agentArgs: [] })).toEqual({
+      kind: "ok",
+      value: 'agy --dangerously-skip-permissions --model "gemini-4-argon-high"',
+    });
+    expect(commandLine("agy", { model: "claude-sonnet-4-6", effort: "none", browser: true, agentArgs: [] })).toEqual({
+      kind: "ok",
+      value: 'agy --dangerously-skip-permissions --model "claude-sonnet-4-6"',
+    });
   });
 
   test("a Claude child always launches in bypass: no --agent-arg may change its permission mode", () => {

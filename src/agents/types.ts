@@ -19,6 +19,8 @@ export type AgentFlags = Readonly<{
   readonly permission: readonly string[];
   readonly model: (value: string, quote: Quote) => readonly string[];
   readonly effort: ((value: string, quote: Quote) => readonly string[]) | null;
+  // For a CLI that takes the effort as part of the model id instead of a flag of its own.
+  readonly modelWithEffort?: (model: string, effort: string | null) => string;
   // How the agent's CLI resumes a session by id; `lead` goes right after the executable (a subcommand).
   readonly resume: (id: string, quote: Quote) => Readonly<{ lead: readonly string[]; trail: readonly string[] }>;
 }>;
@@ -72,7 +74,7 @@ export function launchArgv(flags: AgentFlags, model: string | null, effort: stri
     flags.executable,
     ...(resumed?.lead ?? []),
     ...flags.permission,
-    ...(model === null ? [] : flags.model(model, quote)),
+    ...(model === null ? [] : flags.model(flags.modelWithEffort?.(model, effort) ?? model, quote)),
     ...(effort === null || flags.effort === null ? [] : flags.effort(effort, quote)),
     ...(resumed?.trail ?? []),
   ];

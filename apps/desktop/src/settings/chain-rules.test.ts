@@ -200,9 +200,9 @@ describe('step editing', () => {
 
 describe('condition dropdowns', () => {
   const registry: ModelInfo[] = [
-    { agent: 'claude', model: 'claude-opus-5-5', name: 'Opus 5.5', current: true, reasoning: { levels: ['low', 'medium', 'high', 'max'] } },
-    { agent: 'claude', model: 'claude-opus-4-8', name: 'Opus 4.8', current: false, reasoning: { levels: ['low', 'medium', 'high'] } },
-    { agent: 'claude', model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', current: true, reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'claude', model: 'claude-opus-5-5', name: 'Opus 5.5', reasoning: { levels: ['low', 'medium', 'high', 'max'] } },
+    { agent: 'claude', model: 'claude-opus-4-8', name: 'Opus 4.8', reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'claude', model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', reasoning: { levels: ['low', 'medium', 'high'] } },
     { agent: 'codex', model: 'gpt-5.5', name: 'GPT-5.5', reasoning: { levels: ['low', 'medium'] } },
     { agent: 'codex', model: 'gpt-6-luna', name: 'GPT-6 Luna', reasoning: { levels: ['medium', 'high', 'xhigh'] } },
   ]
@@ -236,20 +236,20 @@ describe('condition dropdowns', () => {
 
   test('an id two agents list shows once, under the first agent', () => {
     const shared: ModelInfo[] = [
-      { agent: 'agy', model: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', current: false, reasoning: { levels: [] } },
-      { agent: 'agy', model: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash High', current: true, reasoning: { levels: ['high'] } },
-      { agent: 'claude', model: 'claude-sonnet-4-6', current: false, reasoning: { levels: ['low', 'high'] } },
-      { agent: 'claude', model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', current: true, reasoning: { levels: ['low', 'high'] } },
+      { agent: 'agy', model: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', status: 'deprecated', reasoning: { levels: [] } },
+      { agent: 'agy', model: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', reasoning: { levels: ['low', 'medium', 'high'] } },
+      { agent: 'claude', model: 'claude-sonnet-4-6', reasoning: { levels: ['low', 'high'] } },
+      { agent: 'claude', model: 'claude-sonnet-5-5', name: 'Sonnet 5.5', reasoning: { levels: ['low', 'high'] } },
     ]
     const ids = modelGroups(shared, []).flatMap((group) => [...group.options, ...(group.older ?? [])].map((option) => option.value))
-    expect(ids).toEqual(['gemini-3.8-flash-high', 'claude-sonnet-4-6', 'claude-sonnet-5-5'])
+    expect(ids).toEqual(['gemini-3.8-flash', 'claude-sonnet-4-6', 'claude-sonnet-5-5'])
     // Chosen alone, an agent still lists the shared id.
     expect(modelGroups(shared, ['claude'])[0]?.older).toEqual([{ value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', detail: 'claude-sonnet-4-6' }])
   })
 
   test('every model reads as family and version, the id beside it', () => {
     const named: ModelInfo[] = [
-      { agent: 'grok', model: 'grok-4.7', name: '4.7', current: true, reasoning: { levels: [] } },
+      { agent: 'grok', model: 'grok-4.7', name: '4.7', reasoning: { levels: [] } },
       { agent: 'claude', model: 'claude-opus-5-5', reasoning: { levels: [] } },
       { agent: 'codex', model: 'gpt-6-luna', name: 'gpt-6-luna', reasoning: { levels: [] } },
     ]

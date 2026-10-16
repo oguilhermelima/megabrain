@@ -1,4 +1,5 @@
 import type { Settings, GithubDetail, GithubPullRequestFile, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, GithubRepository, HistorySession, Project, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, DoctorReport, InstallEvent, InstallPlan, Status, Transcript, Worktree } from '@/api/schema'
+import { measuredModels } from '@/api/fixtures/models'
 
 // Hand-made data for running the UI in a browser. Its shapes are checked against the same schemas as
 // the payloads captured from the real CLI in ./captured (see schema.test.ts).
@@ -444,14 +445,7 @@ export const mockSettings: Settings = {
     },
     { name: 'docs-on-megabrain', when: { repo: 'megabrain', label: 'docs*' }, steps: [{ agent: 'codex', model: 'gpt-6-luna', effort: 'low' }] },
   ],
-  models: [
-    { agent: 'codex', model: 'gpt-6-luna', name: 'luna 6', reasoning: { levels: ['low', 'medium', 'high', 'xhigh'] } },
-    { agent: 'codex', model: 'gpt-6-astra', name: 'astra 6', reasoning: { levels: ['low', 'medium', 'high', 'xhigh'] } },
-    { agent: 'claude', model: 'claude-sonnet-5', name: 'Sonnet 5', reasoning: { levels: ['low', 'medium', 'high'] } },
-    { agent: 'claude', model: 'claude-opus-5-5', name: 'Opus 5.5', reasoning: { levels: ['low', 'medium', 'high'] } },
-    { agent: 'claude', model: 'claude-opus-5', reasoning: { levels: ['low', 'medium', 'high'] } },
-    { agent: 'agy', model: 'gemini-3.1-pro-high', reasoning: { levels: ['high'] } },
-  ],
+  models: measuredModels,
   terminal: { default: null, detected: 'terminal', available: ['terminal', 'iterm', 'ghostty'] },
 }
 

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, refreshGrokModels, saveModelRegistry, validateReasoning } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -63,7 +65,8 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
   if (agent === "grok") {
     const listed = await processAdapter.run("grok", ["models"]);
     if (listed.kind !== "ok") return errorResult("could not refresh grok models: grok models failed");
-    const refreshed = refreshGrokModels(listed.value.stdout, loaded.registry.models, new Date().toISOString());
+    const cache = await readFile(join(environment.HOME ?? "", ".grok", "models_cache.json"), "utf8").catch(() => undefined);
+    const refreshed = refreshGrokModels(listed.value.stdout, cache, loaded.registry.models, new Date().toISOString());
     if (refreshed.length === 0) return errorResult("could not refresh grok models: grok models returned no model ids");
     const stored = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "grok"), ...refreshed] });
     if (stored.kind !== "ok") return errorResult(stored.error, stored.exitCode);
@@ -71,8 +74,7 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
   }
   const result = await processAdapter.run("agy", ["models"]);
   if (result.kind !== "ok") return errorResult("could not refresh agy models: agy models failed");
-  const ids = result.value.stdout.split(/\s+/).map((id) => id.replace(/[^A-Za-z0-9_.-]/g, "")).filter((id) => /^(gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+$/.test(id));
-  const models = refreshAgyModels(ids, new Date().toISOString());
+  const models = refreshAgyModels(result.value.stdout, new Date().toISOString());
   if (models.length === 0) return errorResult("could not refresh agy models: agy models returned no model ids");
   const saved = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models] });
   if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);

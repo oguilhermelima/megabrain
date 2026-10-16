@@ -32,7 +32,7 @@ describe("agent command", () => {
     expect(await agentCommand("claude", options, all)).toEqual(["claude", "--dangerously-skip-permissions", "--model", "m1", "--effort", "high"]);
     expect(await agentCommand("codex", options, all)).toEqual(["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=m1", "-c", "model_reasoning_effort=high"]);
     expect(await agentCommand("grok", options, all)).toEqual(["grok", "--always-approve", "-m", "m1", "--reasoning-effort", "high"]);
-    expect(await agentCommand("agy", options, all)).toEqual(["agy", "--dangerously-skip-permissions", "--model", "m1", "--effort", "high"]);
+    expect(await agentCommand("agy", options, all)).toEqual(["agy", "--dangerously-skip-permissions", "--model", "m1-high"]);
   });
 
   test("a model alone leaves effort out", async () => {

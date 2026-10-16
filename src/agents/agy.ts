@@ -1,4 +1,5 @@
 import { classifyMarkers, doubleQuote, launchArgv, shellArgument, type Agent, type AgentFlags, type AgentMarker } from "./types.js";
+import { agyModelId } from "../core/model.js";
 import { ok } from "../core/result.js";
 
 // The composer box renders a bare "> " at the bottom whether Antigravity CLI is idle or
@@ -16,7 +17,10 @@ export const agyFlags: AgentFlags = {
   executable: "agy",
   permission: ["--dangerously-skip-permissions"],
   model: (value, quote) => ["--model", quote(value)],
-  effort: (value, quote) => ["--effort", quote(value)],
+  // agy 1.4.0 also has --effort, but the ids `agy models` lists carry the level, and those are the
+  // ones known to start; the registry folds them per model and the launch joins them back.
+  effort: null,
+  modelWithEffort: agyModelId,
   resume: (id, quote) => ({ lead: [], trail: ["--conversation", quote(id)] }),
 };
 
@@ -27,9 +31,8 @@ export const agy: Agent = {
   firstRunDialog: trustDialog,
   initialPromptFlag: "-i",
   flags: agyFlags,
-  commandLine: ({ model, agentArgs }) => {
-    // Spawn has never passed an effort to agy; only the interactive TUI does.
-    const parts = launchArgv(agyFlags, model, null, doubleQuote);
+  commandLine: ({ model, effort, agentArgs }) => {
+    const parts = launchArgv(agyFlags, model, effort, doubleQuote);
     parts.push(...agentArgs.map(shellArgument));
     return { kind: "ok", value: parts.join(" ") };
   },

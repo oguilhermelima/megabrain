@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import type { Settings } from '@/api/schema'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { Popover } from '@/components/Popover'
@@ -7,13 +7,15 @@ import {
   agentModels,
   contextMeter,
   contextWindow,
+  defaultWindow,
   displayName,
   effortLevels,
   effortName,
+  effortStep,
   findModel,
   formatTokens,
   menuGroups,
-  modelHint,
+  modelDescriptor,
   modelWindows,
   pickerLabel,
   switchNeedsConfirm,
@@ -64,6 +66,8 @@ export interface ModelPick {
 }
 
 type MenuPick = Omit<ModelPick, 'name'>
+/** keepOpen leaves the menu up, for the effort slider moving under the pointer or the arrows. */
+type MenuPickOptions = { keepOpen?: boolean }
 
 const heading = 'px-2 pb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-ink-500 uppercase'
 
@@ -90,9 +94,85 @@ function Segmented<T extends string | number>({ label, options, value, onPick }:
   )
 }
 
-function ModelRow({ item, checked, onPick }: { item: Models[number]; checked: boolean; onPick: () => void }) {
+/**
+ * The effort as a slider: one stop per level the model supports, its full name under it, the chosen
+ * one raised on a filled track. A click or an arrow moves it at once and sends the level a moment
+ * after the last move, so stepping across does not send every level on the way; Home and End jump.
+ */
+function EffortSlider({ levels, value, onPick }: { levels: string[]; value: string | undefined; onPick: (level: string) => void }) {
+  const [shown, setShown] = useState(value)
+  const pending = useRef<{ level: string; timer: ReturnType<typeof setTimeout> } | null>(null)
+  const send = useRef(onPick)
+  send.current = onPick
+  const flush = useCallback(() => {
+    const held = pending.current
+    if (held === null) return
+    clearTimeout(held.timer)
+    pending.current = null
+    send.current(held.level)
+  }, [])
+  useEffect(() => {
+    if (pending.current === null) setShown(value)
+  }, [value])
+  // A level still waiting when the menu closes is sent then.
+  useEffect(() => flush, [flush])
+  const move = (level: string) => {
+    setShown(level)
+    if (pending.current !== null) clearTimeout(pending.current.timer)
+    pending.current = level === value ? null : { level, timer: setTimeout(flush, 300) }
+  }
+  const index = shown === undefined ? -1 : levels.indexOf(shown)
+  const columns = { gridTemplateColumns: `repeat(${levels.length}, minmax(0, 1fr))` }
+  // The track runs from the middle of the first column to the middle of the last.
+  const inset = `${50 / levels.length}%`
+  const filled = levels.length > 1 && index > 0 ? (index / (levels.length - 1)) * 100 : 0
+  return (
+    <div className="px-1 pt-2 pb-1">
+      <p className={heading}>Effort</p>
+      <div
+        role="slider"
+        tabIndex={0}
+        aria-label="Effort"
+        aria-valuemin={0}
+        aria-valuemax={levels.length - 1}
+        aria-valuenow={index < 0 ? undefined : index}
+        aria-valuetext={shown === undefined ? 'Agent default' : effortName(shown)}
+        onKeyDown={(event) => {
+          const next = effortStep(levels, shown, event.key)
+          if (next === null) return
+          event.preventDefault()
+          move(next)
+        }}
+        className="rounded-[10px] px-1 pb-1 outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+      >
+        <div className="relative grid h-7 items-center" style={columns}>
+          <span aria-hidden="true" className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/[0.1]" style={{ left: inset, right: inset }}>
+            <span className="absolute inset-y-0 left-0 rounded-full bg-accent/70 transition-[width] duration-150 motion-reduce:transition-none" style={{ width: `${filled}%` }} />
+          </span>
+          {levels.map((level, position) => (
+            <button key={level} type="button" tabIndex={-1} aria-label={effortName(level)} onClick={() => move(level)} className="relative z-[1] flex h-7 items-center justify-center">
+              <span
+                aria-hidden="true"
+                className={`rounded-full transition-[width,height,background-color] duration-150 motion-reduce:transition-none ${position === index ? 'size-3.5 bg-ink-100 shadow-[0_1px_3px_rgba(0,0,0,0.45)]' : position < index ? 'size-2 bg-accent' : 'size-2 bg-white/[0.22]'}`}
+              />
+            </button>
+          ))}
+        </div>
+        <div className="grid" style={columns}>
+          {levels.map((level, position) => (
+            <span key={level} className={`text-center text-[11.5px] leading-4 whitespace-nowrap ${position === index ? 'font-medium text-ink-100' : 'text-ink-500'}`}>
+              {effortName(level)}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ModelRow({ item, agent, checked, onPick }: { item: Models[number]; agent: string | null; checked: boolean; onPick: () => void }) {
   const name = displayName(item.model, [item])
-  const hint = modelHint(item.model)
+  const hint = modelDescriptor(item, agent)
   return (
     <button
       type="button"
@@ -146,7 +226,7 @@ function ModelMenu({
   /** True for a native chat, which sets effort itself; a session takes it by command when its agent has one. */
   native: boolean
   contextTokens: number | null | undefined
-  onPick: (pick: MenuPick) => void
+  onPick: (pick: MenuPick, options?: MenuPickOptions) => void
   /** A switch that needs a yes first: the picker closes and the app's confirm dialog asks. */
   onAsk: (confirm: PendingConfirm) => void
   leaving: boolean
@@ -173,11 +253,13 @@ function ModelMenu({
     })
   }
   const pickModel = (item: Models[number]) => {
-    const target = switchTarget(item.model, modelWindows(item, agent), currentWindow)
+    const windows = modelWindows(item, agent)
+    // Another model starts on 1M wherever it supports it.
+    const target = switchTarget(item.model, windows, defaultWindow(windows))
     // Effort carries over to a model that has the same level.
     choose({ ...target, effort: effort !== undefined && item.reasoning.levels.includes(effort) ? effort : undefined })
   }
-  const row = (item: Models[number]) => <ModelRow key={item.model} item={item} checked={item === entry} onPick={() => pickModel(item)} />
+  const row = (item: Models[number]) => <ModelRow key={item.model} item={item} agent={agent} checked={item === entry} onPick={() => pickModel(item)} />
 
   return (
     <Popover {...menuLook} anchor={anchor} label="Model" leaving={leaving} onClose={onClose} trigger={trigger}>
@@ -214,14 +296,7 @@ function ModelMenu({
             />
           )}
           {levels.length > 0 && current !== null && (
-            <Segmented
-              label="Effort"
-              options={levels.map((level) => ({ value: level, label: effortName(level) }))}
-              value={effort}
-              onPick={(level) => {
-                if (level !== effort) onPick({ model: current, window: currentWindow, effort: level })
-              }}
-            />
+            <EffortSlider levels={levels} value={effort} onPick={(level) => onPick({ model: current, window: currentWindow, effort: level }, { keepOpen: true })} />
           )}
         </>
       </div>
@@ -373,8 +448,8 @@ export function ComposerStatus({
           effort={effort}
           native={canSetEffort}
           contextTokens={context?.tokens}
-          onPick={(pick) => {
-            setOpen(null)
+          onPick={(pick, options) => {
+            if (options?.keepOpen !== true) setOpen(null)
             onPickModel({ ...pick, name: displayName(pick.model, models) })
           }}
           onAsk={(confirm) => {

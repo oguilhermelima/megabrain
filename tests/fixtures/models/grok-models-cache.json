@@ -1,0 +1,168 @@
+{
+  "fetched_at": "2026-10-16T21:18:57.985452Z",
+  "grok_version": "1.0.52",
+  "models": {
+    "grok-4.7": {
+      "info": {
+        "id": "grok-4.7",
+        "model": "grok-4.7",
+        "name": "Grok 4.7",
+        "description": "SpaceXAI's latest frontier model",
+        "context_window": 256000,
+        "context_windows": [
+          256000,
+          500000
+        ],
+        "hidden": false,
+        "reasoning_effort": "high",
+        "supports_reasoning_effort": true,
+        "reasoning_efforts": [
+          {
+            "id": "xhigh",
+            "value": "xhigh",
+            "label": "Extra High",
+            "default": false
+          },
+          {
+            "id": "high",
+            "value": "high",
+            "label": "High",
+            "default": true
+          },
+          {
+            "id": "medium",
+            "value": "medium",
+            "label": "Medium",
+            "default": false
+          },
+          {
+            "id": "low",
+            "value": "low",
+            "label": "Low",
+            "default": false
+          }
+        ]
+      }
+    },
+    "grok-4.7-build-fast": {
+      "info": {
+        "id": "grok-4.7-build-fast",
+        "model": "grok-4.7-build-fast",
+        "name": "Grok 4.7 Fast",
+        "description": "Fast variant. 2x the price.",
+        "context_window": 256000,
+        "context_windows": [
+          256000,
+          500000
+        ],
+        "hidden": false,
+        "reasoning_effort": "high",
+        "supports_reasoning_effort": true,
+        "reasoning_efforts": [
+          {
+            "id": "xhigh",
+            "value": "xhigh",
+            "label": "Extra High",
+            "default": false
+          },
+          {
+            "id": "high",
+            "value": "high",
+            "label": "High",
+            "default": true
+          },
+          {
+            "id": "medium",
+            "value": "medium",
+            "label": "Medium",
+            "default": false
+          },
+          {
+            "id": "low",
+            "value": "low",
+            "label": "Low",
+            "default": false
+          }
+        ]
+      }
+    },
+    "grok-4.6": {
+      "info": {
+        "id": "grok-4.6",
+        "model": "grok-4.6",
+        "name": "Grok 4.6",
+        "description": null,
+        "context_window": 256000,
+        "context_windows": [
+          256000,
+          500000
+        ],
+        "hidden": false,
+        "reasoning_effort": "high",
+        "supports_reasoning_effort": true,
+        "reasoning_efforts": [
+          {
+            "id": "xhigh",
+            "value": "xhigh",
+            "label": "Extra High",
+            "default": false
+          },
+          {
+            "id": "high",
+            "value": "high",
+            "label": "High",
+            "default": true
+          },
+          {
+            "id": "medium",
+            "value": "medium",
+            "label": "Medium",
+            "default": false
+          },
+          {
+            "id": "low",
+            "value": "low",
+            "label": "Low",
+            "default": false
+          }
+        ]
+      }
+    },
+    "grok-4.5": {
+      "info": {
+        "id": "grok-4.5",
+        "model": "grok-4.5",
+        "name": "Grok 4.5",
+        "description": null,
+        "context_window": 256000,
+        "context_windows": [
+          256000,
+          500000
+        ],
+        "hidden": false,
+        "reasoning_effort": "high",
+        "supports_reasoning_effort": true,
+        "reasoning_efforts": [
+          {
+            "id": "high",
+            "value": "high",
+            "label": "High",
+            "default": true
+          },
+          {
+            "id": "medium",
+            "value": "medium",
+            "label": "Medium",
+            "default": false
+          },
+          {
+            "id": "low",
+            "value": "low",
+            "label": "Low",
+            "default": false
+          }
+        ]
+      }
+    }
+  }
+}

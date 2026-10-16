@@ -236,7 +236,7 @@ type SettingsValue = {
     readings: Awaited<ReturnType<typeof readLimitRows>>;
   };
   chains: Array<Record<string, unknown> & { name: string }>;
-  models: Array<{ agent: string; model: string; name: string; contextWindows: number[]; current: boolean; reasoning: { levels: string[] } }>;
+  models: Array<{ agent: string; model: string; name: string; contextWindows: number[]; status: string; description: string | null; reasoning: { levels: string[] } }>;
   terminal: { default: string | null; detected: string | null; available: string[] };
 };
 
@@ -270,7 +270,8 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
     model: model.model,
     name: typeof model.name === "string" ? model.name : model.model,
     contextWindows: Array.isArray(model.contextWindows) ? model.contextWindows.filter((window): window is number => typeof window === "number") : [],
-    current: model.current === true,
+    status: typeof model.status === "string" ? model.status : "active",
+    description: typeof model.description === "string" ? model.description : null,
     reasoning: { levels: [...(model.reasoning?.levels ?? [])] },
   }));
   const watcher = supervisorWatcher(database.value);
