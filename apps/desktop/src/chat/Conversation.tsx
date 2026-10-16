@@ -371,7 +371,8 @@ export function ConversationList({
 
   return (
     <PathLinksContext.Provider value={links}>
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* It fades in where the suggestions or the loading rows were, as the first message arrives. */}
+      <div className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <div ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 overflow-y-auto select-text">
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {

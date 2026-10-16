@@ -134,17 +134,19 @@ export function ChainsSection({
 
   return (
     <>
-      {confirmDelete !== null && (
-        <ConfirmDialog
-          confirm={{
-            title: `Delete ${confirmDelete}?`,
-            body: 'The chain is removed for good; a dispatch that names it no longer finds it.',
-            action: 'Delete chain',
-            run: async () => onDelete(confirmDelete),
-          }}
-          onClose={() => setConfirmDelete(null)}
-        />
-      )}
+      <ConfirmDialog
+        confirm={
+          confirmDelete === null
+            ? null
+            : {
+                title: `Delete ${confirmDelete}?`,
+                body: 'The chain is removed for good; a dispatch that names it no longer finds it.',
+                action: 'Delete chain',
+                run: async () => onDelete(confirmDelete),
+              }
+        }
+        onClose={() => setConfirmDelete(null)}
+      />
       {chains.map((chain) => (
         <SettingsGroup
           key={chain.name}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { ProjectScripts } from '@/api/schema'
 import { onAction } from '@/lib/app-events'
+import { usePresence } from '@/lib/usePresence'
 import { useRunControls } from '@/run-panel/run-context'
 import { commandFor, liveRuns, primaryAction, runActionLabel, runActions, type RunAction } from '@/run-panel/run-model'
 
@@ -95,6 +96,7 @@ export function RunButton() {
   const controls = useRunControls()
   const scripts = useProjectScripts(controls?.root ?? null)
   const [open, setOpen] = useState(false)
+  const menu = usePresence(open || null)
   const box = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -149,8 +151,8 @@ export function RunButton() {
       >
         <Caret />
       </button>
-      {open && (
-        <div role="menu" className="popover absolute top-full right-0 z-50 mt-1.5 w-[300px] max-w-[80vw] p-1.5">
+      {menu.shown !== null && (
+        <div role="menu" data-leaving={menu.leaving || undefined} inert={menu.leaving} className="popover absolute top-full right-0 z-50 mt-1.5 w-[300px] max-w-[80vw] p-1.5">
           {runActions.map((action) => {
             const command = commandFor(scripts, action)
             return (

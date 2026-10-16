@@ -8,22 +8,27 @@ import { promptKey, trapFocus } from '@/chat/composer-look'
  * returns where it was on close. It renders on document.body, so a sidebar or pane that is a
  * containing block for position fixed cannot hold it; the keys are taken in the capture phase so a
  * terminal or editor behind does not get them. The element marked data-autofocus takes focus first.
+ * While `leaving` (see usePresence) it fades out inert, and focus is already back where it was.
  */
-export function Dialog({ title, busy, onCancel, onSubmit, children }: { title: string; busy: boolean; onCancel: () => void; onSubmit: () => void; children: ReactNode }) {
+export function Dialog({ title, busy, leaving = false, onCancel, onSubmit, children }: { title: string; busy: boolean; leaving?: boolean; onCancel: () => void; onSubmit: () => void; children: ReactNode }) {
   const card = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const latest = useRef({ busy, onCancel, onSubmit })
   latest.current = { busy, onCancel, onSubmit }
 
+  const before = useRef<Element | null>(null)
   useEffect(() => {
-    const before = document.activeElement
+    if (leaving) return
+    before.current = document.activeElement
     card.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus()
     return () => {
-      if (before instanceof HTMLElement && before.isConnected) before.focus()
+      const element = before.current
+      if (element instanceof HTMLElement && element.isConnected) element.focus()
     }
-  }, [])
+  }, [leaving])
 
   useEffect(() => {
+    if (leaving) return
     const onKey = (event: KeyboardEvent) => {
       const element = card.current
       if (element === null) return
@@ -44,16 +49,18 @@ export function Dialog({ title, busy, onCancel, onSubmit, children }: { title: s
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  }, [leaving])
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] grid place-items-center bg-ink-950/70 px-4 backdrop-blur-sm"
+      data-leaving={leaving || undefined}
+      inert={leaving}
+      className="dialog-backdrop fixed inset-0 z-[200] grid place-items-center bg-ink-950/70 px-4 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel()
       }}
     >
-      <div ref={card} role="dialog" aria-modal="true" aria-labelledby={titleId} className="glass w-full max-w-md rounded-[28px] border border-white/[0.1] p-6 shadow-2xl">
+      <div ref={card} role="dialog" aria-modal="true" aria-labelledby={titleId} className="dialog-card glass w-full max-w-md rounded-[28px] border border-white/[0.1] p-6 shadow-2xl">
         <h2 id={titleId} className="text-[17px] font-semibold tracking-[-0.01em] text-ink-100">
           {title}
         </h2>

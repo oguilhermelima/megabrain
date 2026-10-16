@@ -5,6 +5,7 @@ import { api } from '@/api'
 import type { MessagePart, SlashCommand } from '@/api/schema'
 import { Spinner } from '@/components/ui'
 import { native } from '@/lib/surface'
+import { usePresence } from '@/lib/usePresence'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { attachmentKind, insertSlashCommand, skillInvocation, slashQuery } from '@/chat/composer-model'
 import { commandSections } from '@/chat/command-menu'
@@ -481,6 +482,8 @@ export function Composer({
     if (rect !== undefined) setMenuAnchor((open) => open ?? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
   }, [menuOpen])
   const closeMenu = useCallback(() => setMenuClosed(true), [])
+  // A closing menu fades with what it last listed.
+  const slashMenu = usePresence(menuOpen && menuAnchor !== null && query !== null ? { anchor: menuAnchor, sections, active: activeMatch, query } : null)
 
   const pick = (command: SlashCommand) => {
     rememberCommand(command)
@@ -677,6 +680,7 @@ export function Composer({
 
   const closePreview = useCallback(() => setPreview(null), [])
   const closeSkills = useCallback(() => setSkillAnchor(null), [])
+  const skillMenu = usePresence(skillAnchor)
   const hasSkills = commands.some((command) => command.source === 'skill' || command.source === 'plugin')
 
   /** A picked skill goes in at the caret, apart from a word right before it. */
@@ -814,15 +818,16 @@ export function Composer({
       {hover !== null && <ChipPreview attachment={attachments.current.get(hover.id)} left={hover.left} top={hover.top} />}
       {dispatchId !== undefined && <QueuePills state={queue} empty={!sendable} />}
       <div className="relative">
-        {menuOpen && menuAnchor !== null && (
+        {slashMenu.shown !== null && (
           <CommandMenu
-            anchor={menuAnchor}
+            anchor={slashMenu.shown.anchor}
             label="Commands"
-            sections={sections}
-            active={activeMatch}
-            query={query}
-            width={Math.min(720, menuAnchor.right - menuAnchor.left)}
+            sections={slashMenu.shown.sections}
+            active={slashMenu.shown.active}
+            query={slashMenu.shown.query}
+            width={Math.min(720, slashMenu.shown.anchor.right - slashMenu.shown.anchor.left)}
             inside={box}
+            leaving={slashMenu.leaving}
             onActive={setActive}
             onPick={pick}
             onClose={closeMenu}
@@ -891,7 +896,7 @@ export function Composer({
                 </svg>
               </button>
             </span>
-            {skillAnchor !== null && <SkillMenu anchor={skillAnchor} commands={commands} recent={recent} onPick={pickSkill} onClose={closeSkills} />}
+            {skillMenu.shown !== null && <SkillMenu anchor={skillMenu.shown} commands={commands} recent={recent} leaving={skillMenu.leaving} onPick={pickSkill} onClose={closeSkills} />}
             <input
               ref={picker}
               type="file"

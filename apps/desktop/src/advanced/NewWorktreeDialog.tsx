@@ -3,6 +3,7 @@ import type { Project } from '@/api/schema'
 import { baseSuggestions, branchNameError } from '@/advanced/new-worktree-model'
 import { Dialog } from '@/components/Dialog'
 import { Button } from '@/components/ui'
+import { usePresence } from '@/lib/usePresence'
 
 const field =
   'mt-1.5 h-9 w-full rounded-[12px] border border-white/[0.1] bg-ink-900 px-3 font-mono text-[13px] text-ink-100 outline-none placeholder:text-ink-500 focus:border-accent/60 aria-invalid:border-bad/60'
@@ -12,7 +13,13 @@ const field =
  * the branches the project's worktrees have checked out and takes any typed ref. Create closes the
  * dialog at once; the sidebar shows the worktree as pending until megabrain lists it.
  */
-export function NewWorktreeDialog({ project, taken, onCreate, onClose }: { project: Project; taken: readonly string[]; onCreate: (branch: string, base: string) => void; onClose: () => void }) {
+export function NewWorktreeDialog({ project, taken, onCreate, onClose }: { project: Project | null; taken: readonly string[]; onCreate: (project: Project, branch: string, base: string) => void; onClose: () => void }) {
+  const { shown, leaving } = usePresence(project)
+  if (shown === null) return null
+  return <NewWorktreeCard key={shown.path} project={shown} taken={taken} leaving={leaving} onCreate={(branch, base) => onCreate(shown, branch, base)} onClose={onClose} />
+}
+
+function NewWorktreeCard({ project, taken, leaving, onCreate, onClose }: { project: Project; taken: readonly string[]; leaving: boolean; onCreate: (branch: string, base: string) => void; onClose: () => void }) {
   const bases = baseSuggestions(project)
   const [branch, setBranch] = useState('')
   const [base, setBase] = useState(bases.initial)
@@ -33,7 +40,7 @@ export function NewWorktreeDialog({ project, taken, onCreate, onClose }: { proje
   }
 
   return (
-    <Dialog title={`New worktree in ${project.name}`} busy={false} onCancel={onClose} onSubmit={submit}>
+    <Dialog title={`New worktree in ${project.name}`} busy={false} leaving={leaving} onCancel={onClose} onSubmit={submit}>
       <div className="mt-4 space-y-4">
         <label htmlFor={branchId} className="block text-[12.5px] font-medium text-ink-300">
           Branch

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { agents, emptyFilters, type SidebarFilters } from '@/advanced/sidebar-model'
 import { AgentIcon } from '@/components/agent-icons'
+import { usePresence } from '@/lib/usePresence'
 
 // The search and filter controls of the Projects header: two icons beside +, a search field that
 // opens under the header, and a menu of filters anchored to the funnel.
@@ -103,6 +104,7 @@ function Group({ label, children }: { label: string; children: ReactNode }) {
 /** The funnel and its menu of filters, closed by a click elsewhere or Escape; the badge counts filters in effect. */
 export function FilterMenu({ filters, onFilters }: { filters: SidebarFilters; onFilters: (filters: SidebarFilters) => void }) {
   const [open, setOpen] = useState(false)
+  const menu = usePresence(open || null)
   const ref = useRef<HTMLDivElement>(null)
   const set = (patch: Partial<SidebarFilters>) => onFilters({ ...filters, ...patch })
   const count = (filters.active ? 1 : 0) + (filters.needsYou ? 1 : 0) + filters.agents.length + (filters.pr === null ? 0 : 1)
@@ -132,8 +134,8 @@ export function FilterMenu({ filters, onFilters }: { filters: SidebarFilters; on
         <FilterIcon />
         {count > 0 && <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9.5px] leading-none font-bold text-ink-100 tabular-nums">{count}</span>}
       </HeaderButton>
-      {open && (
-        <div role="menu" aria-label="Filters" className="popover absolute top-full right-0 z-50 mt-1.5 w-[220px] p-1.5">
+      {menu.shown !== null && (
+        <div role="menu" aria-label="Filters" data-leaving={menu.leaving || undefined} inert={menu.leaving} className="popover absolute top-full right-0 z-50 mt-1.5 w-[220px] p-1.5">
           <Group label="Status">
             <FilterRow on={filters.active} onClick={() => set({ active: !filters.active })} title="Only worktrees with a live session">
               Active

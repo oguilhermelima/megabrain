@@ -49,6 +49,14 @@ export function PaneArea({
     if (paneId !== panes.focused) onPanes((current) => ({ ...current, focused: paneId }))
   }
 
+  // Items opened into a pane rise into view. The ones already there when the area first renders do
+  // not; one of them that goes to the background loses that, so it rises when it comes back. The
+  // class stays on, so the animation plays once when the view mounts or stops being hidden, never
+  // when a pane is moved or resized.
+  const initial = useRef<Set<string> | null>(null)
+  if (initial.current === null) initial.current = new Set(rects.map((pane) => pane.item))
+  const quiet = initial.current
+
   const slots: { item: string; pane: (typeof rects)[number] | null }[] = [...rects.map((pane) => ({ item: pane.item, pane })), ...background.map((item) => ({ item, pane: null }))]
   // React keeps a keyed child only among the same siblings, so every slot renders here in one stable order.
   slots.sort((left, right) => (left.item < right.item ? -1 : left.item > right.item ? 1 : 0))
@@ -58,6 +66,7 @@ export function PaneArea({
       {slots.map(({ item, pane }) => {
         const content = render(item)
         const focused = pane !== null && split && pane.id === panes.focused
+        if (pane === null) quiet.delete(item)
         return (
           <section
             key={item}
@@ -68,7 +77,7 @@ export function PaneArea({
             className={pane === null ? 'hidden' : `absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${pane.rect.x > 0 ? 'border-l border-white/[0.07]' : ''} ${pane.rect.y > 0 ? 'border-t border-white/[0.07]' : ''}`}
           >
             {split && pane !== null && <PaneHeader title={content.title} focused={pane.id === panes.focused} onDrag={(event) => drag.start(event, { kind: 'pane', paneId: pane.id, label: content.title })} onClose={() => onClose(pane.id)} />}
-            <div className="flex min-h-0 flex-1 flex-col">{content.node}</div>
+            <div className={`flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>{content.node}</div>
             {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 ring-1 ring-accent/50 ring-inset" />}
             {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} replace={preview.zone === 'center'} />}
           </section>

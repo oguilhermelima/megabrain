@@ -81,7 +81,7 @@ export function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
 /** Shown in place of the sidebar when it is hidden: the lights' row with one button to bring it back. */
 export function CollapsedChrome({ onExpand }: { onExpand: () => void }) {
   return (
-    <div data-tauri-drag-region className={`flex ${lightsRow} shrink-0 items-center ${trafficLightsInset}`}>
+    <div data-tauri-drag-region className={`motion-fade flex ${lightsRow} shrink-0 items-center ${trafficLightsInset}`}>
       <IconButton label="Show sidebar" title="Show sidebar (⌘B)" compact onClick={onExpand}>
         <SidebarToggleIcon />
       </IconButton>

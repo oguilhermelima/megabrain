@@ -108,6 +108,7 @@ export function CommandMenu({
   width,
   inside,
   search,
+  leaving = false,
   onActive,
   onPick,
   onClose,
@@ -123,6 +124,8 @@ export function CommandMenu({
   inside?: RefObject<HTMLElement | null>
   /** A search box at the top, for a menu that is not typed into the composer. */
   search?: { value: string; placeholder: string; onChange: (value: string) => void; onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void }
+  /** Closed and fading out: it takes no clicks or keys (see usePresence). */
+  leaving?: boolean
   onActive: (index: number) => void
   onPick: (command: SlashCommand) => void
   onClose: () => void
@@ -133,6 +136,7 @@ export function CommandMenu({
   const highlighted = items[Math.min(active, items.length - 1)]
 
   useEffect(() => {
+    if (leaving) return
     const onDown = (event: MouseEvent) => {
       if (!(event.target instanceof Node)) return
       if (ref.current?.contains(event.target) === true || inside?.current?.contains(event.target) === true) return
@@ -144,7 +148,7 @@ export function CommandMenu({
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('blur', onClose)
     }
-  }, [onClose, inside])
+  }, [onClose, inside, leaving])
 
   // Measured before paint and again when the content changes size, then flipped when it would leave the window.
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
@@ -173,6 +177,8 @@ export function CommandMenu({
       ref={ref}
       role="dialog"
       aria-label={label}
+      data-leaving={leaving || undefined}
+      inert={leaving}
       style={{ ...(position ?? { left: 0, top: 0, visibility: 'hidden' }), width: shownWidth }}
       className="popover fixed z-[100] flex max-h-[min(420px,calc(100vh-16px))] flex-col overflow-hidden"
     >

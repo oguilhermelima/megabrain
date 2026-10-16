@@ -12,6 +12,7 @@ export function CodeSwitcher({
   anchor,
   projects,
   active,
+  leaving,
   onSelect,
   onClose,
 }: {
@@ -19,6 +20,8 @@ export function CodeSwitcher({
   anchor: DOMRect
   projects: Project[]
   active: string | null
+  /** Closed and fading out (see usePresence). */
+  leaving: boolean
   onSelect: (target: CodeTarget) => void
   onClose: () => void
 }) {
@@ -28,6 +31,7 @@ export function CodeSwitcher({
   const first = groups[0]?.items[0]
 
   useEffect(() => {
+    if (leaving) return
     const onDown = (event: MouseEvent) => {
       if (!(event.target instanceof Node) || ref.current?.contains(event.target) !== true) onClose()
     }
@@ -43,7 +47,7 @@ export function CodeSwitcher({
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('blur', onClose)
     }
-  }, [onClose])
+  }, [onClose, leaving])
 
   const pick = (target: CodeTarget) => {
     onClose()
@@ -56,6 +60,8 @@ export function CodeSwitcher({
       ref={ref}
       role="dialog"
       aria-label="Open project"
+      data-leaving={leaving || undefined}
+      inert={leaving}
       style={{ left: anchor.right + 8, top }}
       className="popover fixed z-50 flex max-h-[min(420px,calc(100vh-16px))] w-[300px] flex-col p-1.5"
     >

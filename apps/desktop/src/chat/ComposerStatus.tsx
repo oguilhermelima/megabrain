@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { api } from '@/api'
 import { settingsSchema, type Settings } from '@/api/schema'
 import { placeMenu, type AnchorRect } from '@/advanced/menu-placement'
+import { usePresence } from '@/lib/usePresence'
 import {
   agentLimits,
   agentModels,
@@ -77,10 +78,11 @@ function useSettings(): { settings: Settings | null; stale: boolean } {
 
 type Models = Settings['models']
 
-/** A menu on document.body, flipped inside the window; a click elsewhere, Escape or blur closes it. */
-function Popover({ anchor, label, onClose, children }: { anchor: AnchorRect; label: string; onClose: () => void; children: ReactNode }) {
+/** A menu on document.body, flipped inside the window; a click elsewhere, Escape or blur closes it. It is inert while `leaving`. */
+function Popover({ anchor, label, leaving, onClose, children }: { anchor: AnchorRect; label: string; leaving: boolean; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    if (leaving) return
     const onDown = (event: MouseEvent) => {
       if (!(event.target instanceof Node) || ref.current?.contains(event.target) !== true) onClose()
     }
@@ -99,7 +101,7 @@ function Popover({ anchor, label, onClose, children }: { anchor: AnchorRect; lab
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('blur', onClose)
     }
-  }, [onClose])
+  }, [onClose, leaving])
   // Measured before paint and again when the content changes size, then flipped when it would leave the window.
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   useLayoutEffect(() => {
@@ -119,6 +121,8 @@ function Popover({ anchor, label, onClose, children }: { anchor: AnchorRect; lab
       ref={ref}
       role="menu"
       aria-label={label}
+      data-leaving={leaving || undefined}
+      inert={leaving}
       style={position === null ? { left: 0, top: 0, visibility: 'hidden' } : position}
       className="popover fixed z-[100] max-h-[calc(100vh-16px)] min-w-[240px] overflow-y-auto p-2"
     >
@@ -207,6 +211,7 @@ function ModelMenu({
   contextTokens,
   onPick,
   onAsk,
+  leaving,
   onClose,
 }: {
   anchor: AnchorRect
@@ -221,6 +226,7 @@ function ModelMenu({
   onPick: (pick: MenuPick) => void
   /** A switch that needs a yes first: the picker closes and the app's confirm dialog asks. */
   onAsk: (confirm: PendingConfirm) => void
+  leaving: boolean
   onClose: () => void
 }) {
   const groups = menuGroups(models, current)
@@ -250,7 +256,7 @@ function ModelMenu({
   const row = (item: Models[number]) => <ModelRow key={item.model} item={item} checked={item === entry} onPick={() => pickModel(item)} />
 
   return (
-    <Popover anchor={anchor} label="Model" onClose={onClose}>
+    <Popover anchor={anchor} label="Model" leaving={leaving} onClose={onClose}>
       <div className="w-[304px] max-w-[calc(100vw-32px)]">
         <>
           <p className={`${heading} pt-1`}>Model</p>
@@ -444,6 +450,7 @@ export function ComposerStatus({
   const size = contextWindow(context?.window, agent, model, registry)
   const meter = contextMeter(context?.tokens, size)
   const close = useRef(() => setOpen(null)).current
+  const menu = usePresence(open)
   const known = model !== null && model !== ''
   const label = pickerLabel(known ? displayName(model, models) : null, known ? (size?.tokens ?? null) : null, effort)
   // Before the first reading, from the cache or the CLI, the picker holds its place.
@@ -455,9 +462,10 @@ export function ComposerStatus({
       {loading && <PickerSkeleton />}
       {models.length > 0 && <Trigger agent={agent} label={label} title={known ? `${model}${size?.derived === true ? ' (window from the model)' : ''}` : 'The agent picks its default model'} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
       <ContextGauge meter={meter} />
-      {open !== null && (
+      {menu.shown !== null && (
         <ModelMenu
-          anchor={open}
+          anchor={menu.shown}
+          leaving={menu.leaving}
           agent={agent}
           models={models}
           current={known ? model : null}
@@ -476,7 +484,7 @@ export function ComposerStatus({
           onClose={close}
         />
       )}
-      {asking !== null && <ConfirmDialog confirm={asking} onClose={() => setAsking(null)} />}
+      <ConfirmDialog confirm={asking} onClose={() => setAsking(null)} />
     </div>
   )
 }

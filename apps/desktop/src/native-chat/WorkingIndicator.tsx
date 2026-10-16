@@ -12,7 +12,7 @@ export function WorkingIndicator({ agent, status }: { agent: string; status: Wor
   const since = status.since === null ? Number.NaN : Date.parse(status.since)
   const waiting = status.label === 'Waiting for approval'
   return (
-    <li role="status" aria-live="polite" className="flex items-center gap-2.5 py-1 text-[13px]">
+    <li role="status" aria-live="polite" className="motion-rise flex items-center gap-2.5 py-1 text-[13px]">
       <span aria-hidden="true" className="contents text-ink-400">
         <AgentIcon agent={agent} size={14} activity={waiting ? 'waiting' : 'working'} />
       </span>

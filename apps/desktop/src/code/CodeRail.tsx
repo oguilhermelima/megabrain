@@ -4,6 +4,7 @@ import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { Logo } from '@/components/ui'
 import { lightsRow } from '@/advanced/chrome'
 import { CodeSwitcher } from '@/code/CodeSwitcher'
+import { usePresence } from '@/lib/usePresence'
 import { railEntries, type CodeModeState, type CodeTarget } from '@/code/code-mode-model'
 
 /** A list of chats: three lines, each led by a bubble dot. */
@@ -65,6 +66,7 @@ export function CodeRail({
 }) {
   const [switcher, setSwitcher] = useState<DOMRect | null>(null)
   const closeSwitcher = useCallback(() => setSwitcher(null), [])
+  const switcherMenu = usePresence(switcher)
   const toggleSwitcher = (event: MouseEvent<HTMLElement>) => {
     const box = event.currentTarget.getBoundingClientRect()
     setSwitcher((current) => (current === null ? box : null))
@@ -137,7 +139,7 @@ export function CodeRail({
       <button type="button" onClick={onSettings} aria-label="Settings" title="Settings (⌘,)" className={railButton}>
         <GearIcon />
       </button>
-      {switcher !== null && <CodeSwitcher anchor={switcher} projects={projects} active={state.active} onSelect={onSelect} onClose={closeSwitcher} />}
+      {switcherMenu.shown !== null && <CodeSwitcher anchor={switcherMenu.shown} projects={projects} active={state.active} leaving={switcherMenu.leaving} onSelect={onSelect} onClose={closeSwitcher} />}
     </nav>
   )
 }

@@ -27,6 +27,43 @@
   --radius-panel: 32px;
 }
 
+/* Motion: every animation in the app takes its duration and easing from these, and the code reads the
+   same tokens (lib/motion.ts) to know when an exit is over. Things arrive with a quick deceleration
+   and leave faster than they came. Reduced motion sets every duration to zero. */
+:root {
+  --motion-enter: 160ms;
+  --motion-exit: 110ms;
+  --motion-panel: 240ms;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --motion-ease-panel: cubic-bezier(0.32, 0.72, 0, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-enter: 0ms;
+    --motion-exit: 0ms;
+    --motion-panel: 0ms;
+  }
+}
+
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes motion-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+/* scale, not transform, so it composes with a translate a popover already has. */
+@keyframes motion-pop-in {
+  from {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
 html,
 body,
 #root {
@@ -62,6 +99,56 @@ html.native body {
   border: 1px solid rgb(255 255 255 / 0.1);
   border-radius: 16px;
   box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+  animation: motion-pop-in var(--motion-enter) var(--motion-ease-out);
+}
+
+/* Something new in place: a pane's item, a chat's first rows, the working line. It fades and rises a
+   few pixels. translate, not transform, so a translate it already has is kept. */
+@keyframes motion-rise-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+.motion-rise {
+  animation: motion-rise-in var(--motion-enter) var(--motion-ease-out) backwards;
+}
+.motion-fade {
+  animation: motion-fade-in var(--motion-enter) var(--motion-ease-out) backwards;
+}
+
+/* The sidebar and the run panel (components/SlidePanel.tsx): the outer box grows from nothing to its
+   width, or shrinks to nothing and stays there until it unmounts. Only the from or to end is given,
+   so the other is whatever width the panel has. */
+@keyframes motion-panel-in {
+  from {
+    width: 0;
+  }
+}
+@keyframes motion-panel-out {
+  to {
+    width: 0;
+  }
+}
+.slide-in {
+  animation: motion-panel-in var(--motion-panel) var(--motion-ease-panel);
+}
+.slide-out {
+  animation: motion-panel-out var(--motion-panel) var(--motion-ease-panel) forwards;
+}
+
+/* A closing menu or dialog stays mounted while it fades (lib/usePresence.ts marks it data-leaving). */
+.popover[data-leaving],
+.dialog-backdrop[data-leaving] {
+  animation: motion-fade-out var(--motion-exit) var(--motion-ease-in) forwards;
+}
+
+/* The centered dialog: the backdrop fades in and the card grows into place over it. */
+.dialog-backdrop {
+  animation: motion-fade-in var(--motion-enter) var(--motion-ease-out);
+}
+.dialog-card {
+  animation: motion-pop-in var(--motion-enter) var(--motion-ease-out);
 }
 
 .glass {

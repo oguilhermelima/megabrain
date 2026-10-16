@@ -23,6 +23,7 @@ import { ImportProject } from '@/import/ImportProject'
 import { PaneSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
+import { SlidePanel } from '@/components/SlidePanel'
 import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { ownership } from '@/chat/session-ownership'
@@ -727,9 +728,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   return (
     <div className="relative flex h-full">
       {inCode && <Suspense fallback={null}><CodeRail state={codeMode} projects={projects} onSelect={openCode} onClose={closeCodeRoot} onChats={() => setCodeMode(leaveCode)} onSettings={() => setSettingsOpen(true)} /></Suspense>}
-      {!inCode && !sidebarCollapsed && (
-        <aside style={{ width: sidebarWidth.width }} className="glass relative flex shrink-0 flex-col border-r border-white/[0.06]">
-          <ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />
+      {!inCode && (
+        <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
           <SidebarHeader onCollapse={toggleSidebarCollapsed} />
           <Sidebar
             loaded={projectsLoaded}
@@ -773,7 +773,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
               Settings
             </button>
           </footer>
-        </aside>
+        </SlidePanel>
       )}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
         {/* Chats stay mounted under Code mode so a draft or a scroll position survives the trip. */}
@@ -818,15 +818,25 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       </main>
       {/* Every worktree's runs stay mounted; only the open chat's panel shows. */}
       {runPanelRoots.length > 0 && (
-        <aside style={{ width: runPanelWidth.width, maxWidth: '50vw' }} className={runPanelShown ? 'glass relative flex shrink-0 flex-col border-l border-white/[0.06]' : 'hidden'}>
-          <ResizeHandle edge="left" label="Resize the run panel" panel={runPanelWidth} grip />
-          {runPanelRoots.map((root) => (
-            <RunPanel key={root} worktree={root} panel={panelFor(runs.panels, root)} visible={runPanelShown && root === runRoot} runs={runs} onEditCommands={() => runControls?.editCommands(root)} />
-          ))}
-        </aside>
+        <SlidePanel
+          open={runPanelShown}
+          side="right"
+          width={runPanelWidth.width}
+          maxWidth="50vw"
+          keepMounted
+          appear
+          className="glass border-l border-white/[0.06]"
+          handle={<ResizeHandle edge="left" label="Resize the run panel" panel={runPanelWidth} grip />}
+        >
+          {(present) =>
+            runPanelRoots.map((root) => (
+              <RunPanel key={root} worktree={root} panel={panelFor(runs.panels, root)} visible={present && root === runRoot} runs={runs} onEditCommands={() => runControls?.editCommands(root)} />
+            ))
+          }
+        </SlidePanel>
       )}
-      {closeConfirm !== null && <ConfirmDialog key={closeConfirm.title} confirm={closeConfirm} onClose={() => setCloseConfirm(null)} />}
-      {runs.confirm !== null && <ConfirmDialog key={runs.confirm.title} confirm={runs.confirm} onClose={runs.dismissConfirm} />}
+      <ConfirmDialog confirm={closeConfirm} onClose={() => setCloseConfirm(null)} />
+      <ConfirmDialog confirm={runs.confirm} onClose={runs.dismissConfirm} />
       {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
       {settingsOverlay}
     </div>

@@ -7,7 +7,7 @@ import { CommandMenu, handleMenuKey } from '@/chat/CommandMenu'
 const skillSources: SlashCommand['source'][] = ['skill', 'plugin']
 
 /** The agent's skills and plugin skills in the shared command menu, anchored to the composer's skills button, with a search of its own. */
-export function SkillMenu({ anchor, commands, recent, onPick, onClose }: { anchor: AnchorRect; commands: SlashCommand[]; recent: string[]; onPick: (command: SlashCommand) => void; onClose: () => void }) {
+export function SkillMenu({ anchor, commands, recent, leaving, onPick, onClose }: { anchor: AnchorRect; commands: SlashCommand[]; recent: string[]; leaving: boolean; onPick: (command: SlashCommand) => void; onClose: () => void }) {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const sections = commandSections(commands, query, recent, { sources: skillSources })
@@ -21,6 +21,7 @@ export function SkillMenu({ anchor, commands, recent, onPick, onClose }: { ancho
       active={current}
       query={query}
       width={560}
+      leaving={leaving}
       search={{
         value: query,
         placeholder: 'Search skills',

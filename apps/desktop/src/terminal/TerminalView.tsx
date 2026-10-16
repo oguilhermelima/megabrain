@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { TerminalSession } from '@/api/schema'
 import { Button, ErrorNote } from '@/components/ui'
+import { onPanelsSettled, panelsMoving } from '@/lib/panel-motion'
 import { base64ToBytes } from '@/terminal/terminal-model'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 
@@ -74,11 +75,16 @@ export function TerminalView({
     const resized = terminal.onResize(({ cols, rows }) => {
       if (terminalId !== null) void api.resizeTerminal(terminalId, cols, rows).catch(() => {})
     })
-    // A hidden view (a terminal no pane shows) measures zero; fitting then would shrink the terminal to nothing.
-    const observer = new ResizeObserver(() => {
+    // A hidden view (a terminal no pane shows) measures zero; fitting then would shrink the terminal to
+    // nothing. While a side panel slides the size changes every frame, so it fits once when it stops.
+    const refit = () => {
       if (element.clientWidth > 0 && element.clientHeight > 0) fit.fit()
+    }
+    const observer = new ResizeObserver(() => {
+      if (!panelsMoving()) refit()
     })
     observer.observe(element)
+    const stopSettled = onPanelsSettled(refit)
 
     latest.current
       .connect(terminal.cols, terminal.rows)
@@ -111,6 +117,7 @@ export function TerminalView({
       stopped = true
       unlisten?.()
       observer.disconnect()
+      stopSettled()
       input.dispose()
       resized.dispose()
       terminal.dispose()

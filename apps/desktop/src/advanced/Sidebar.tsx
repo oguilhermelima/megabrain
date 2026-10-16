@@ -1501,21 +1501,19 @@ export const Sidebar = memo(function Sidebar({
         )}
         <HiddenSection hidden={partition} onShow={(target) => setHidden(target, false)} />
       </div>
-      {menu !== null && <RowMenu menu={menu} onClose={closeMenu} />}
-      {confirm !== null && <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />}
-      {newWorktreeFor !== null && (
-        <NewWorktreeDialog
-          project={newWorktreeFor}
-          taken={creations.filter((item) => item.repo === newWorktreeFor.path && item.status !== 'failed').map((item) => item.branch)}
-          onCreate={(branch, base) => {
-            setNewWorktreeFor(null)
-            // The pending row shows under the project, so a folded project opens.
-            if (collapsed.has(newWorktreeFor.name)) toggle(newWorktreeFor.name)
-            onCreateWorktree(newWorktreeFor, branch, base)
-          }}
-          onClose={() => setNewWorktreeFor(null)}
-        />
-      )}
+      <RowMenu menu={menu} onClose={closeMenu} />
+      <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
+      <NewWorktreeDialog
+        project={newWorktreeFor}
+        taken={creations.filter((item) => item.repo === newWorktreeFor?.path && item.status !== 'failed').map((item) => item.branch)}
+        onCreate={(project, branch, base) => {
+          setNewWorktreeFor(null)
+          // The pending row shows under the project, so a folded project opens.
+          if (collapsed.has(project.name)) toggle(project.name)
+          onCreateWorktree(project, branch, base)
+        }}
+        onClose={() => setNewWorktreeFor(null)}
+      />
     </nav>
   )
 })
