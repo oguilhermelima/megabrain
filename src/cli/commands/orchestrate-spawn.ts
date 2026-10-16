@@ -14,7 +14,7 @@ import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-wri
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
-import { createTmuxSession, getTmux, sendTmuxPair, splitTmuxWorktreePane, verifyTmuxPane, waitForTmuxSession } from "../../hosts/tmux.js";
+import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendTmuxPair, splitTmuxWorktreePane, verifyTmuxPane, waitForTmuxSession } from "../../hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
@@ -851,7 +851,13 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   return failed(error, result.exitCode, `${JSON.stringify(body)}\n`);
 }
 
-async function runSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies, trace: SpawnTrace): Promise<Result<string>> {
+async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnvironment, rawProcess: ProcessAdapter, dependencies: SpawnDependencies, trace: SpawnTrace): Promise<Result<string>> {
+  // A coordinator inside an app terminal must not split its pane or share its server with workers:
+  // drop its tmux identity and address the dispatch server on every call.
+  const fromApp = onAppTmuxServer(rawEnvironment);
+  const { TMUX: _tmux, TMUX_PANE: _tmuxPane, ...withoutTmux } = rawEnvironment;
+  const environment: SpawnEnvironment = fromApp ? withoutTmux : rawEnvironment;
+  const process = fromApp ? dispatchTmuxProcess(rawProcess) : rawProcess;
   if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("orchestrate-spawn")}${SPAWN_ENVIRONMENT_HELP}`);
   const parsed = parseArgs(args);
   if (parsed.kind !== "ok") return parsed;
