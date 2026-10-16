@@ -7,7 +7,7 @@ import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js"
 import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, agyLogRecord, backgroundTasks, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { acquireSupervisorLease, agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
@@ -39,6 +39,27 @@ function intervalSeconds(environment: Environment): number {
 }
 
 function leaseSeconds(interval: number): number { return Math.max(30, interval + LEASE_PADDING_SECONDS); }
+
+const CLAUDE_TAIL_BYTES = 16 * 1024 * 1024;
+
+// The tail is enough for work started in the recent past; a first line cut by the window fails to parse and is skipped.
+async function claudeActiveSince(meta: RecordValue, environment: Environment): Promise<number> {
+  const home = environment.HOME;
+  const session = string(meta.agentSessionId);
+  if (home === undefined || session === undefined || string(meta.agent) !== "claude") return 0;
+  const path = await findClaudeTranscript(home, session);
+  if (path === undefined) return 0;
+  let file;
+  try {
+    file = await open(path, "r");
+    const info = await file.stat();
+    const start = Math.max(0, info.size - CLAUDE_TAIL_BYTES);
+    const buffer = Buffer.alloc(info.size - start);
+    await file.read(buffer, 0, buffer.length, start);
+    return claudeActiveWork(buffer.toString("utf8"));
+  } catch { return 0; }
+  finally { await file?.close(); }
+}
 
 function readLatestLine<T>(path: string): Promise<T | undefined> {
   return (async () => {
@@ -248,7 +269,7 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
     return { ...base, ...(exitCode === undefined ? {} : { exitCode }), ...(lastLines === "" ? {} : { lastLines }) };
   }
   // Running shells or monitors mean the agent is working in the background, not stuck.
-  if (backgroundTasks(frame) !== undefined) return { cause: "unknown" };
+  if (backgroundTasks(frame) !== undefined || await claudeActiveSince(meta, environment) > 0) return { cause: "unknown" };
   const agent = string(meta.agent) ?? "";
   // Spawn owns the first prompt until its transport step settles: an agent launched with the brief on
   // its command line may idle at an empty composer for seconds before submitting it.

@@ -49,6 +49,51 @@ export function backgroundTasks(frame: string): number | undefined {
   return most > 0 ? most : undefined;
 }
 
+const TASK_ENDED = /^(?:completed|failed|killed|stopped|cancelled|canceled|expired|timeout|timed_out)$/i;
+
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((part) => {
+    const block = object(part);
+    return typeof block?.text === "string" ? [block.text] : [];
+  }).join("\n");
+}
+
+// The pane footer is only on screen when the composer is, so a Claude child's work is also read from its
+// own transcript: a tool_use without a tool_result is in flight; a run_in_background Bash ("... running in
+// background with ID x") or a Monitor ("Monitor started (task x ...)") answers at once but runs until a
+// queued <task-notification> names its id with a final status. Count what has not ended.
+export function claudeActiveWork(transcript: string): number {
+  const inFlight = new Set<string>();
+  const tasks = new Set<string>();
+  for (const line of transcript.split(/\r?\n/)) {
+    if (line === "") continue;
+    let record: Record<string, unknown> | undefined;
+    try { record = object(JSON.parse(line)); } catch { continue; }
+    if (record === undefined) continue;
+    if (record.type === "queue-operation" && typeof record.content === "string") {
+      const id = /<task-id>([^<]+)<\/task-id>/.exec(record.content)?.[1];
+      const status = /<status>([^<]+)<\/status>/.exec(record.content)?.[1];
+      if (id !== undefined && status !== undefined && TASK_ENDED.test(status.trim())) tasks.delete(id.trim());
+      continue;
+    }
+    const content = object(record.message)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const block = object(part);
+      if (block === undefined || typeof block.id !== "string" && typeof block.tool_use_id !== "string") continue;
+      if (block.type === "tool_use" && typeof block.id === "string") inFlight.add(block.id);
+      if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
+        inFlight.delete(block.tool_use_id);
+        const started = /(?:running in background with ID: |Monitor started \(task )([A-Za-z0-9_-]+)/.exec(resultText(block.content));
+        if (started?.[1] !== undefined) tasks.add(started[1]);
+      }
+    }
+  }
+  return inFlight.size + tasks.size;
+}
+
 export function acquireSupervisorLease(database: DatabaseHandle, holder: string, seconds: number): ReturnType<typeof acquireLease> {
   return acquireLease(database, "supervise", holder, seconds);
 }

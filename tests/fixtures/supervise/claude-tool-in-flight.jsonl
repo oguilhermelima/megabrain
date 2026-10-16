@@ -1,0 +1,1 @@
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fg1","name":"Bash","input":{"command":"bun run build","timeout":600000},"caller":{"type":"direct"}}],"stop_reason":"tool_use"},"timestamp":"2026-10-16T16:00:00.000Z"}

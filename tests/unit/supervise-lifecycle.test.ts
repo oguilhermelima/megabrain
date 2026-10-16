@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { executeSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
 import { appendMessage, createDispatch, listMessages } from "../../src/adapters/state-db.js";
@@ -200,7 +200,7 @@ describe("supervisor worker", () => {
 // command line can show an idle, empty composer for seconds before submitting it (Codex while its MCP
 // servers start), and the paste fallback waits through that. Judging the prompt then calls it lost.
 describe("supervisor and a prompt still in transport", () => {
-  async function idleFixture(dispatchId: string, record: Record<string, unknown>) {
+  async function idleFixture(dispatchId: string, record: Record<string, unknown>, frameName = "tmux-capture-codex-argv-pending.txt") {
     const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-transport-`);
     const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
     const opened = openDatabase(environment);
@@ -213,7 +213,7 @@ describe("supervisor and a prompt still in transport", () => {
     if (created.kind !== "ok") throw new Error(created.error);
     const prompt = appendMessage(opened.value, dispatchId, { from: "parent", type: "prompt", text: "[megabrain dispatch: codex /shared/worktree]\n\nDispatch identity: " + dispatchId + "\n\nRun the whole migration and report the counts.", sessionId: "parent" });
     if (prompt.kind !== "ok") throw new Error(prompt.error);
-    const frame = await readFile(new URL("../fixtures/tmux-capture-codex-argv-pending.txt", import.meta.url), "utf8");
+    const frame = await readFile(new URL(`../fixtures/${frameName}`, import.meta.url), "utf8");
     const process = {
       async run(command: string, args: readonly string[]) {
         if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
@@ -248,6 +248,27 @@ describe("supervisor and a prompt still in transport", () => {
     try {
       await superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, Date.now());
       expect(superviseMessages(fixture.database, "spawning-idle")).toEqual([]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  // The pane footer is not always on screen, so a Claude child's own transcript decides whether it
+  // still has a background shell, a monitor or a tool call running (#123).
+  test.each([
+    ["claude-background-shell.jsonl", []],
+    ["claude-monitor.jsonl", []],
+    ["claude-tool-in-flight.jsonl", []],
+    ["claude-background-shell-done.jsonl", ["prompt-lost"]],
+  ])("a claude child idle at an empty composer with %s reports %j", async (name, expected) => {
+    const id = `claude-${name.replace(/\W/g, "")}`;
+    const fixture = await idleFixture(id, { state: "running", promptTransport: "transported", agent: "claude", agentSessionId: "session-1" }, "tmux-capture-claude-ghost.txt");
+    try {
+      const folder = `${fixture.directory}/.claude/projects/-work`;
+      await mkdir(folder, { recursive: true });
+      await writeFile(`${folder}/session-1.jsonl`, await readFile(new URL(`../fixtures/supervise/${name}`, import.meta.url), "utf8"));
+      await superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, Date.now());
+      expect(superviseMessages(fixture.database, id).map((message) => message.text.split(".")[0])).toEqual(expected);
     } finally {
       await fixture.close();
     }

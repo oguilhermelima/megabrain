@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { agyLogRecord, backgroundTasks, classifyRecordedError, classifySupervision, recommendationFor } from "../../src/core/supervise.js";
+import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, recommendationFor } from "../../src/core/supervise.js";
 
 const now = Date.parse("2026-10-11T12:03:00.000Z");
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(resolve(import.meta.dir, "../fixtures/supervise", name), "utf8")) as Record<string, unknown>;
@@ -91,6 +91,36 @@ describe("background task detection", () => {
     expect(backgroundTasks("✻ Brewed for 9m 47s\n❯ \n⏵⏵ bypass permissions on · ← 3 agents")).toBeUndefined();
     expect(backgroundTasks("the shell script exited; run the monitor later")).toBeUndefined();
     expect(backgroundTasks("")).toBeUndefined();
+  });
+});
+
+// Real Claude session shapes (paths redacted): a run_in_background Bash answers at once with "running in
+// background with ID", Monitor with "Monitor started (task ...)", and the end of either arrives later as a
+// queued <task-notification> naming that id.
+describe("claude transcript active work", () => {
+  const transcript = (name: string): string => readFileSync(resolve(import.meta.dir, "../fixtures/supervise", name), "utf8");
+
+  test("a background shell without its completion notification is active work", () => {
+    expect(claudeActiveWork(transcript("claude-background-shell.jsonl"))).toBe(1);
+  });
+
+  test("a completed background shell is not", () => {
+    expect(claudeActiveWork(transcript("claude-background-shell-done.jsonl"))).toBe(0);
+  });
+
+  test("a monitor is active until its notification arrives", () => {
+    expect(claudeActiveWork(transcript("claude-monitor.jsonl"))).toBe(1);
+    expect(claudeActiveWork(transcript("claude-monitor-expired.jsonl"))).toBe(0);
+  });
+
+  test("a tool call without a result is in flight, a finished one is not", () => {
+    expect(claudeActiveWork(transcript("claude-tool-in-flight.jsonl"))).toBe(1);
+    expect(claudeActiveWork(transcript("claude-tool-finished.jsonl"))).toBe(0);
+  });
+
+  test("ignores a torn first line and an empty transcript", () => {
+    expect(claudeActiveWork(`{"type":"user","mess\n${transcript("claude-monitor.jsonl")}`)).toBe(1);
+    expect(claudeActiveWork("")).toBe(0);
   });
 });
 

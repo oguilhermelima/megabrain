@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fg1","name":"Bash","input":{"command":"bun run build"},"caller":{"type":"direct"}}],"stop_reason":"tool_use"},"timestamp":"2026-10-16T16:00:00.000Z"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_fg1","type":"tool_result","content":"ok","is_error":false}]},"timestamp":"2026-10-16T16:01:00.000Z"}
