@@ -234,10 +234,7 @@ export function columnAt(layout: StripLayout, x: number): string | null {
   return layout.columns.find((column) => x >= column.x && x < column.x + column.width)?.id ?? null
 }
 
-/**
- * The sideways scroll a wheel event asks of the strip on top of what the platform does: a mostly
- * vertical wheel with shift. A sideways swipe already scrolls the strip natively.
- */
+/** The sideways scroll a mostly vertical wheel with shift asks of the strip; 0 for any other wheel (see strip-gesture). */
 export function horizontalWheel(event: { deltaX: number; deltaY: number; shiftKey: boolean }): number {
   return event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : 0
 }

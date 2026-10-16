@@ -2,12 +2,15 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStableCallback } from '@/lib/useStableCallback'
 import type { PaneNode } from '@/panes/pane-model'
 import { panelMotion } from '@/panes/scroll-motion'
-import { horizontalWheel, revealPane, stripLayout, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
+import { revealPane, stripLayout, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
+import { follow, gestureGap, revealAllowed, snapTarget, wheelStep, type Gesture } from '@/panes/strip-gesture'
 
-// How the strip of columns scrolls. Sideways it is a native scroll container, so a two-finger swipe
-// moves it as any page; shift with a wheel is added on top. A column taller than the area scrolls by
-// an offset of its own (its panes stay siblings of every other pane, so moving one never remounts
-// it): a vertical wheel moves it once nothing under the pointer can scroll that way any more.
+// How the strip of columns scrolls. A sideways wheel or two-finger swipe is one gesture
+// (panes/strip-gesture): the strip takes it before anything inside sees it and follows its deltas,
+// unless something under the pointer scrolls sideways itself; once it rests, the strip settles on a
+// column edge a few pixels away. A column taller than the area scrolls by an offset of its own (its
+// panes stay siblings of every other pane, so moving one never remounts it): a vertical wheel moves
+// it once nothing under the pointer can scroll that way any more.
 
 /** How long the strip rests before its scroll is saved with the group. */
 const saveDelay = 200
@@ -18,6 +21,16 @@ function innerScrolls(from: Element | null, stop: Element, deltaY: number): bool
     const overflow = getComputedStyle(element).overflowY
     if ((overflow !== 'auto' && overflow !== 'scroll') || element.scrollHeight <= element.clientHeight + 1) continue
     if (deltaY > 0 ? element.scrollTop + element.clientHeight < element.scrollHeight - 1 : element.scrollTop > 0) return true
+  }
+  return false
+}
+
+/** Whether something between `from` and `stop` can still scroll sideways by `deltaX`, so the gesture is its. */
+function innerScrollsX(from: Element | null, stop: Element, deltaX: number): boolean {
+  for (let element = from; element !== null && element !== stop; element = element.parentElement) {
+    const overflow = getComputedStyle(element).overflowX
+    if ((overflow !== 'auto' && overflow !== 'scroll') || element.scrollWidth <= element.clientWidth + 1) continue
+    if (deltaX > 0 ? element.scrollLeft + element.clientWidth < element.scrollWidth - 1 : element.scrollLeft > 0) return true
   }
   return false
 }
@@ -106,9 +119,12 @@ export function useStripScroll({
   })
   useEffect(() => () => (frame.current === null ? undefined : cancelAnimationFrame(frame.current)), [])
 
+  // The wheel gesture under way, if any; while it runs the person moves the strip, not the focus.
+  const gesture = useRef<Gesture | null>(null)
+
   const reveal = (animate: boolean, columns: Readonly<Record<string, number>>) => {
     const element = scroller.current
-    if (element === null) return
+    if (element === null || !revealAllowed(gesture.current, performance.now())) return
     const target = revealPane(latest.current.layout, focused, { scroll: element.scrollLeft, columnScroll: columns, width: latest.current.size.width, height: latest.current.size.height })
     if (target !== null) move({ x: target.scroll, columnId: target.columnId, y: target.columnScroll }, animate)
   }
@@ -132,6 +148,7 @@ export function useStripScroll({
     const element = scroller.current
     if (element === null || !measured) return
     setColumnScroll({})
+    gesture.current = null
     element.scrollLeft = strip.scroll * latest.current.size.width
     reveal(false, {})
     // Only a new group or the first measure restores; every other change keeps the scroll as it is.
@@ -157,14 +174,32 @@ export function useStripScroll({
       if (timer.current !== null) clearTimeout(timer.current)
       timer.current = setTimeout(flush, saveDelay)
     }
+    // Sideways: taken on the way down, so a terminal or a transcript never scrolls with the jitter of a swipe.
+    let position: number | null = null
+    let snap: ReturnType<typeof setTimeout> | null = null
+    const settle = () => {
+      snap = null
+      if (gesture.current?.moved !== true) return
+      const target = snapTarget(latest.current.layout, element.scrollLeft, latest.current.size.width)
+      if (target !== null) move({ x: target }, true)
+    }
+    const onSideways = (event: WheelEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      const step = wheelStep(gesture.current, { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode, shiftKey: event.shiftKey, time: performance.now() }, latest.current.size.width, (deltaX) => innerScrollsX(target, element, deltaX))
+      gesture.current = step.gesture
+      if (step.strip === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      // The person's hand wins over any motion under way.
+      if (frame.current !== null) cancelAnimationFrame(frame.current)
+      frame.current = null
+      position = follow(position, element.scrollLeft, step.strip, Math.max(0, element.scrollWidth - element.clientWidth))
+      element.scrollLeft = position
+      if (snap !== null) clearTimeout(snap)
+      snap = setTimeout(settle, gestureGap + 10)
+    }
     const onWheel = (event: WheelEvent) => {
-      const sideways = horizontalWheel(event)
-      if (sideways !== 0) {
-        event.preventDefault()
-        element.scrollLeft += sideways
-        return
-      }
-      if (event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+      if (gesture.current?.axis !== 'y') return
       const pane = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-pane-id]') : null
       const paneId = pane?.dataset.paneId
       if (pane === null || paneId === undefined) return
@@ -178,12 +213,15 @@ export function useStripScroll({
       setColumn(column.id, next)
     }
     element.addEventListener('scroll', onScroll, { passive: true })
+    element.addEventListener('wheel', onSideways, { capture: true, passive: false })
     element.addEventListener('wheel', onWheel, { passive: false })
     return () => {
+      if (snap !== null) clearTimeout(snap)
       element.removeEventListener('scroll', onScroll)
+      element.removeEventListener('wheel', onSideways, { capture: true })
       element.removeEventListener('wheel', onWheel)
     }
-  }, [flush])
+  }, [flush, move])
 
   // A column scrolled by its offset moves panes without any native scroll; the code layer listens for one.
   useLayoutEffect(() => {
