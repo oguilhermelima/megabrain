@@ -32,3 +32,19 @@ export function menuFocusStep(count: number, current: number | null, key: string
       return null
   }
 }
+
+const macGlyphs: Record<string, string> = { ctrl: '⌃', alt: '⌥', shift: '⇧', mod: '⌘' }
+const macOrder = ['ctrl', 'alt', 'shift', 'mod']
+const otherNames: Record<string, string> = { mod: 'Ctrl', ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift' }
+const otherOrder = ['mod', 'ctrl', 'alt', 'shift']
+
+/** `mod+shift+v` as macOS writes it (⇧⌘V) or as other systems do (Ctrl+Shift+V). */
+export function shortcutLabel(shortcut: string, mac: boolean): string {
+  const parts = shortcut.toLowerCase().split('+')
+  const key = (parts.pop() ?? '').toUpperCase()
+  const modifiers = new Set(parts)
+  if (mac) return macOrder.filter((name) => modifiers.has(name)).map((name) => macGlyphs[name]).join('') + key
+  return [...otherOrder.filter((name) => modifiers.has(name)).map((name) => otherNames[name]), key].join('+')
+}
+
+export const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent)

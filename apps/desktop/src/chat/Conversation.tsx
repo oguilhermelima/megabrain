@@ -1,7 +1,9 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
+import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
+import type { MenuIcon } from '@/components/menu-icons'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
 import { ErrorNote } from '@/components/ui'
@@ -9,6 +11,9 @@ import { deriveConversation, type DerivedConversation } from '@/chat/conversatio
 import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
 import { toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
 import { MarkdownText } from '@/chat/markdown'
+import { chatMenu, quoteText, toolCommand, type ChatAction } from '@/chat/chat-menu-model'
+import { markMenu, markedParts, toSections, type ComposeChannel } from '@/chat/chat-menu'
+import { imageBytes, pngBytes, saveName } from '@/lib/image-bytes'
 import { NoticeCard } from '@/chat/NoticeCard'
 import { collapseNotices, type NoticeDisplayItem } from '@/chat/notice-model'
 import { UserMessageBody } from '@/chat/MessageImages'
@@ -22,10 +27,13 @@ export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) 
 /** Opens a file under a chat's worktree in Code mode, at a line when one was named. */
 export type OpenPath = (root: string, path: string, line: number | null) => void
 
+/** A row's right click offers its message: the markdown as sent, and the element it renders as. */
+const markMessage = (text: string) => (event: ReactMouseEvent<HTMLElement>) => markMenu(event, { message: { markdown: text, element: event.currentTarget } })
+
 function UserMessage({ event, pending = false }: { event: TranscriptEvent; pending?: boolean }) {
   return (
     <li className="flex justify-end">
-      <div title={pending ? 'Sending…' : undefined} className={`min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100 transition-opacity ${pending ? 'opacity-70' : ''}`}>
+      <div onContextMenu={markMessage(event.text)} title={pending ? 'Sending…' : undefined} className={`min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100 transition-opacity ${pending ? 'opacity-70' : ''}`}>
         <UserMessageBody text={event.text} images={event.images} />
       </div>
     </li>
@@ -34,7 +42,7 @@ function UserMessage({ event, pending = false }: { event: TranscriptEvent; pendi
 
 function AssistantMessage({ event }: { event: TranscriptEvent }) {
   return (
-    <li className="max-w-[80%] text-ink-200">
+    <li onContextMenu={markMessage(event.text)} className="max-w-[80%] text-ink-200">
       <MarkdownText text={event.text} />
     </li>
   )
@@ -49,7 +57,11 @@ function ApprovalMessage({ event }: { event: TranscriptEvent }) {
 }
 
 function SystemMessage({ event }: { event: TranscriptEvent }) {
-  return <li className="text-center text-[12px] text-ink-400">{event.text}</li>
+  return (
+    <li onContextMenu={markMessage(event.text)} className="text-center text-[12px] text-ink-400">
+      {event.text}
+    </li>
+  )
 }
 
 function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenChat: OpenChat | undefined }) {
@@ -59,7 +71,7 @@ function RelayedMessage({ event, onOpenChat }: { event: TranscriptEvent; onOpenC
   const target = relayedTarget(origin)
   const header = origin.kind === 'parent' ? `From parent · ${origin.label}` : `From ${origin.label}`
   return (
-    <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+    <li onContextMenu={markMessage(event.text)} className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <div className="flex items-center gap-2 px-3.5 py-2">
         <span className="shrink-0 text-[13px] text-ink-400" aria-label={origin.kind === 'parent' ? 'relayed from parent' : 'relayed from child'}>
           {origin.kind === 'parent' ? '↑' : '↓'}
@@ -111,7 +123,11 @@ function ThinkingMessage({ event, streaming = false }: { event: TranscriptEvent;
         <WorkMark size={10} working={streaming} />
         {streaming ? <span className="shimmer">Thinking…</span> : open ? 'Thinking' : firstLine}
       </button>
-      {open && <p className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">{event.text}</p>}
+      {open && (
+        <p onContextMenu={markMessage(event.text)} className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">
+          {event.text}
+        </p>
+      )}
     </li>
   )
 }
@@ -134,8 +150,10 @@ function ToolItem({ item }: { item: ToolRow }) {
   const links = useContext(PathLinksContext)
   // The row toggles open, so its path opens through a button of its own beside it.
   const target = links === null ? null : firstPath(summary, links.root)
+  const onContextMenu = (event: ReactMouseEvent) =>
+    markMenu(event, { tool: { command: toolCommand(input), input: input === undefined ? null : prettyInput(input), output: item.result?.text ?? null } })
   return (
-    <li className="rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+    <li onContextMenu={onContextMenu} className="rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <div className="flex items-center pr-2">
         <button type="button" onClick={() => setOpen((value) => !value)} className="flex min-w-0 flex-1 items-center gap-2 px-3.5 py-2 text-left text-[13px]">
           <span className={`size-1.5 shrink-0 rounded-full ${toolDot[item.status]} ${item.status === 'running' ? 'animate-pulse' : ''}`} />
@@ -241,6 +259,7 @@ export function Conversation({
   onOpenChat,
   root = null,
   onOpenPath,
+  channel,
 }: {
   target: { dispatchId: string } | { sessionId: string }
   live: boolean
@@ -248,6 +267,8 @@ export function Conversation({
   /** The chat's worktree: only paths under it become links. */
   root?: string | null
   onOpenPath?: OpenPath
+  /** The chat's composer, which quotes and code blocks from the right-click menu go into. */
+  channel?: ComposeChannel
 }) {
   const [transcript, setTranscript] = useState<Transcript | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -290,7 +311,7 @@ export function Conversation({
   if (transcript === null) {
     return <TranscriptSkeleton />
   }
-  return <ConversationList events={transcript.events} onOpenChat={onOpenChat} root={root} onOpenPath={onOpenPath} />
+  return <ConversationList events={transcript.events} onOpenChat={onOpenChat} root={root} onOpenPath={onOpenPath} channel={channel} />
 }
 
 /**
@@ -304,6 +325,7 @@ export function ConversationList({
   onOpenPath,
   live = noLive,
   footer = null,
+  channel,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
@@ -313,6 +335,8 @@ export function ConversationList({
   live?: LiveRow[]
   /** The last row, under everything: a native chat's working indicator. */
   footer?: ReactNode
+  /** The chat's composer, which quotes and code blocks from the right-click menu go into. */
+  channel?: ComposeChannel
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -365,6 +389,100 @@ export function ConversationList({
     setPinned(element.scrollHeight - element.scrollTop - element.clientHeight < 40)
   }
 
+  const contextMenu = useContextMenu()
+  // What a menu action could not do (a clipboard or a save refused), shown for a few seconds.
+  const [menuError, setMenuError] = useState<string | null>(null)
+  useEffect(() => {
+    if (menuError === null) return
+    const timer = setTimeout(() => setMenuError(null), 4_000)
+    return () => clearTimeout(timer)
+  }, [menuError])
+
+  const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const marked = markedParts(event)
+    const element = event.target instanceof Element ? event.target : null
+    const selected = window.getSelection()
+    const selection = selected !== null && !selected.isCollapsed && list.current?.contains(selected.anchorNode) === true ? selected.toString() : ''
+    const link = element?.closest<HTMLElement>('[data-link]')?.dataset.link ?? null
+    const image = marked.image ?? (element instanceof HTMLImageElement ? { src: element.currentSrc || element.src, name: element.alt || 'Image', open: null } : null)
+    // A tool's input and output are <pre> too; the tool's own actions cover them.
+    const code = marked.tool === undefined ? (element?.closest('pre')?.textContent ?? null) : null
+    const message = marked.message ?? null
+    const tool = marked.tool ?? null
+    const insert = channel?.current ?? null
+    const failed = (caught: unknown) => setMenuError(caught instanceof Error ? caught.message : String(caught))
+    const copy = (text: string) => void api.copyText(text).catch(failed)
+    const run = (action: ChatAction) => {
+      switch (action) {
+        case 'open-link':
+          if (link !== null) void api.openUrl(link).catch(failed)
+          return
+        case 'copy-link':
+          if (link !== null) copy(link)
+          return
+        case 'copy-image':
+          if (image !== null) void pngBytes(image.src).then(api.copyImage).catch(failed)
+          return
+        case 'save-image':
+          if (image !== null) void imageBytes(image.src).then(({ bytes, type }) => api.saveImageAs(bytes, saveName(image.name, type))).catch(failed)
+          return
+        case 'open-image':
+          image?.open?.()
+          return
+        case 'copy-code':
+          if (code !== null) copy(code)
+          return
+        case 'insert-code':
+          if (code !== null) insert?.(`\`\`\`\n${code.replace(/\n$/, '')}\n\`\`\`\n\n`)
+          return
+        case 'copy-input':
+          if (tool !== null) copy(tool.command ?? tool.input ?? '')
+          return
+        case 'copy-output':
+          if (tool !== null && tool.output !== null) copy(tool.output)
+          return
+        case 'copy':
+          copy(selection !== '' ? selection : (message?.markdown ?? ''))
+          return
+        case 'copy-plain':
+          copy(selection !== '' ? selection : (message?.element.innerText ?? ''))
+          return
+        case 'quote':
+          insert?.(quoteText(selection !== '' ? selection : (message?.markdown ?? '')))
+          return
+        case 'select-message': {
+          if (message === null) return
+          const range = document.createRange()
+          range.selectNodeContents(message.element)
+          selected?.removeAllRanges()
+          selected?.addRange(range)
+          return
+        }
+        case 'scroll-bottom':
+          setPinned(true)
+          scrollToLatest()
+      }
+    }
+    const icons: Record<ChatAction, MenuIcon> = {
+      'open-link': 'external',
+      'copy-link': 'link',
+      'copy-image': 'copy',
+      'save-image': 'save',
+      'open-image': 'image',
+      'copy-code': 'copy',
+      'insert-code': 'insert',
+      'copy-input': tool !== null && tool.command !== null ? 'terminal' : 'copy',
+      'copy-output': 'copy',
+      copy: 'copy',
+      'copy-plain': 'copy',
+      quote: 'quote',
+      'select-message': 'select',
+      'scroll-bottom': 'bottom',
+    }
+    const target = { selection, message, code, tool, image: image === null ? null : { viewer: image.open !== null }, link, canCompose: insert !== null }
+    contextMenu.open(event, toSections(chatMenu(target), run, icons))
+  }
+
   if (count === 0) {
     return <div className="mx-8 my-5 text-[13px] text-ink-400">Nothing here yet.</div>
   }
@@ -373,7 +491,16 @@ export function ConversationList({
     <PathLinksContext.Provider value={links}>
       {/* It fades in where the suggestions or the loading rows were, as the first message arrives. */}
       <div className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div ref={list} onScroll={onScroll} className="mx-8 min-h-0 flex-1 overflow-y-auto select-text">
+        <div
+          ref={list}
+          onScroll={onScroll}
+          onContextMenu={onContextMenu}
+          // A right click keeps the selection it lands on, where WebKit would select the word under it.
+          onMouseDown={(event) => {
+            if (event.button === 2) event.preventDefault()
+          }}
+          className="mx-8 min-h-0 flex-1 overflow-y-auto select-text"
+        >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {
               const item = items[row.index]
@@ -406,6 +533,12 @@ export function ConversationList({
             Jump to latest
           </button>
         )}
+        {menuError !== null && (
+          <p role="status" className="absolute bottom-14 left-1/2 max-w-[80%] -translate-x-1/2 truncate rounded-full border border-bad/30 bg-ink-900/95 px-4 py-1.5 text-[12.5px] text-bad shadow-lg">
+            {menuError}
+          </p>
+        )}
+        <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
       </div>
     </PathLinksContext.Provider>
   )

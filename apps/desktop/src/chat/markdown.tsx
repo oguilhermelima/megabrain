@@ -5,15 +5,15 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { AnchorHTMLAttributes } from 'react'
 import { api } from '@/api'
 import { Linked } from '@/chat/path-links'
-import { httpsUrl } from '@/lib/external'
+import { openableUrl } from '@/lib/external'
 
-// An https link opens in the system's browser; any other target stays inert text that only shows
-// where it points on hover.
+// A web or mail link opens in the system's default app; any other target stays inert text that only
+// shows where it points on hover. Either way the transcript's right-click menu reads data-link.
 function ExternalLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const address = href === undefined ? null : httpsUrl(href)
+  const address = href === undefined ? null : openableUrl(href)
   if (address === null) {
     return (
-      <span title={href} className="cursor-default text-accent underline decoration-dotted underline-offset-2">
+      <span title={href} data-link={href} className="cursor-default text-accent underline decoration-dotted underline-offset-2">
         {children}
       </span>
     )
@@ -25,6 +25,7 @@ function ExternalLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement
       role="link"
       tabIndex={0}
       title={address}
+      data-link={address}
       onClick={open}
       onKeyDown={(event) => {
         if (event.key !== 'Enter') return

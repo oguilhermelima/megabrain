@@ -2,6 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useMemo, useState } from 'react'
 import type { TranscriptImage } from '@/api/schema'
 import { Lightbox } from '@/chat/Lightbox'
+import { markMenu } from '@/chat/chat-menu'
 import { MarkdownText } from '@/chat/markdown'
 import { placeImages, thumbnail, type Thumbnail } from '@/chat/user-images'
 import { native } from '@/lib/surface'
@@ -29,7 +30,15 @@ export function UserMessageBody({ text, images }: { text: string; images: readon
               const thumb = thumbs[index]
               if (thumb === undefined) return null
               return thumb.kind === 'image' ? (
-                <button key={index} type="button" onClick={() => setOpen(index)} aria-label={`Open ${thumb.name}`} title={thumb.name} className="block overflow-hidden rounded-[12px] border border-white/[0.1] hover:border-white/25 focus-visible:outline-2 focus-visible:outline-accent">
+                <button
+                  key={index}
+                  type="button"
+                  onClick={() => setOpen(index)}
+                  onContextMenu={(event) => markMenu(event, { image: { src: thumb.src, name: thumb.name, open: () => setOpen(index) } })}
+                  aria-label={`Open ${thumb.name}`}
+                  title={thumb.name}
+                  className="block overflow-hidden rounded-[12px] border border-white/[0.1] hover:border-white/25 focus-visible:outline-2 focus-visible:outline-accent"
+                >
                   <img src={thumb.src} alt={thumb.name} onError={() => setFailed((previous) => new Set(previous).add(index))} className="block h-auto max-h-[240px] w-auto max-w-[240px] object-contain" />
                 </button>
               ) : (

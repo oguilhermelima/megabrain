@@ -219,6 +219,18 @@ export function createMockApi(): DesktopApi {
       githubStates.set(`pr:${number}`, action === 'merge' ? 'merged' : action === 'close' ? 'closed' : 'open')
     },
     pickFolder: async () => '/Users/operator/Workspaces/new-project',
+    copyText: (text) => navigator.clipboard.writeText(text),
+    pasteText: () => navigator.clipboard.readText(),
+    copyImage: (png) => navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([png as BlobPart], { type: 'image/png' }) })]),
+    pasteImage: async () => null,
+    saveImageAs: async (bytes, name) => {
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(new Blob([bytes as BlobPart]))
+      link.download = name
+      link.click()
+      URL.revokeObjectURL(link.href)
+      return true
+    },
     codeTree: async () => mockCodeTree,
     codeRead: async (_root, path) => {
       const text = mockCodeFiles[path]

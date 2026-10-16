@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { menuFocusStep, menuGroups, menuSections, type MenuGroup } from '@/components/menu-model'
+import { menuFocusStep, menuGroups, menuSections, shortcutLabel, type MenuGroup } from '@/components/menu-model'
 
 const item = (label: string, group: MenuGroup) => ({ label, group })
 
@@ -51,5 +51,17 @@ describe('menuFocusStep', () => {
     expect(menuFocusStep(4, 1, 'End')).toBe(3)
     expect(menuFocusStep(4, 1, 'Enter')).toBeNull()
     expect(menuFocusStep(0, null, 'ArrowDown')).toBeNull()
+  })
+})
+
+describe('shortcutLabel', () => {
+  test('macOS shows the modifier glyphs in the system order', () => {
+    expect(shortcutLabel('mod+c', true)).toBe('⌘C')
+    expect(shortcutLabel('mod+shift+alt+v', true)).toBe('⌥⇧⌘V')
+  })
+
+  test('elsewhere the modifiers are spelled out with Ctrl', () => {
+    expect(shortcutLabel('mod+c', false)).toBe('Ctrl+C')
+    expect(shortcutLabel('mod+shift+alt+v', false)).toBe('Ctrl+Alt+Shift+V')
   })
 })

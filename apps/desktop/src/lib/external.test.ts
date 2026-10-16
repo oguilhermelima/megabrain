@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { httpsUrl, insideRoots } from '@/lib/external'
+import { httpsUrl, insideRoots, openableUrl } from '@/lib/external'
 
 describe('httpsUrl', () => {
   test('keeps https addresses', () => {
@@ -8,6 +8,17 @@ describe('httpsUrl', () => {
 
   test('refuses every other scheme and anything that is not a URL', () => {
     for (const value of ['http://github.com', 'file:///etc/passwd', 'javascript:alert(1)', 'mailto:a@b.c', '/relative', '', 'github.com']) expect(httpsUrl(value)).toBeNull()
+  })
+})
+
+describe('openableUrl', () => {
+  test('keeps https and mailto addresses', () => {
+    expect(openableUrl('https://github.com/o/r')).toBe('https://github.com/o/r')
+    expect(openableUrl(' mailto:a@b.c ')).toBe('mailto:a@b.c')
+  })
+
+  test('refuses http, other schemes and anything that is not a URL', () => {
+    for (const value of ['http://github.com', 'file:///etc/passwd', 'javascript:alert(1)', '/relative', '', 'github.com']) expect(openableUrl(value)).toBeNull()
   })
 })
 

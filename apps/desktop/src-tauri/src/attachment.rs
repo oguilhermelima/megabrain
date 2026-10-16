@@ -57,9 +57,23 @@ pub fn save_attachment_to(
         .map_err(|error| format!("could not resolve saved attachment path: {error}"))
 }
 
+/// Writes an image the person chose to save from a chat to the path they picked in the save dialog.
+pub fn save_image_to(path: &Path, encoded: &str) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err("the save path must be absolute".to_string());
+    }
+    if encoded.len() > MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 + 4 {
+        return Err("image exceeds the 20 MB limit".to_string());
+    }
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|_| "image is not valid base64".to_string())?;
+    fs::write(path, bytes).map_err(|error| format!("could not save image: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::save_attachment_to;
+    use super::{save_attachment_to, save_image_to};
     use std::fs;
 
     #[test]
@@ -101,6 +115,18 @@ mod tests {
         assert!(save_attachment_to(&root, "aGVsbG8=", "sh").is_err());
         let too_large = "A".repeat(28_000_000);
         assert!(save_attachment_to(&root, &too_large, "pdf").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn saves_an_image_to_an_absolute_path_only() {
+        let root = std::env::temp_dir().join(format!("megabrain-save-image-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("root created");
+        let path = root.join("picture.png");
+        save_image_to(&path, "aGVsbG8=").expect("image saved");
+        assert_eq!(fs::read(&path).expect("bytes readable"), b"hello");
+        assert!(save_image_to(std::path::Path::new("relative.png"), "aGVsbG8=").is_err());
+        assert!(save_image_to(&path, "not base64!").is_err());
         let _ = fs::remove_dir_all(root);
     }
 }

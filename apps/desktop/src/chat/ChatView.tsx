@@ -9,6 +9,7 @@ import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Mono } from '@/components/ui'
 import { Composer } from '@/chat/Composer'
+import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -16,6 +17,7 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-di
 // Memoised: a status poll that left this chat unchanged keeps the same chat object (see reuse.ts).
 export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, onOpenPath }: { chat: Dispatch; repository: string | null; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
   const [read, setRead] = useState<ChatRead | null>(null)
+  const compose = useComposeChannel()
   const [readError, setReadError] = useState<unknown>(null)
   const pane = useRef<HTMLPreElement>(null)
   const state = chatState(chat)
@@ -88,7 +90,7 @@ export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, o
       {tab === 'conversation' && (
         <div className="flex min-h-0 flex-1 flex-col">
           <ConversationAgent.Provider value={chat.agent ?? null}>
-            <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} root={chat.worktreePath ?? null} onOpenPath={onOpenPath} />
+            <Conversation target={{ dispatchId: chat.dispatchId }} live={state !== 'ended'} onOpenChat={onOpenChat} root={chat.worktreePath ?? null} onOpenPath={onOpenPath} channel={compose} />
           </ConversationAgent.Provider>
         </div>
       )}
@@ -117,6 +119,7 @@ export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, o
         dispatchId={chat.dispatchId}
         model={chat.model ?? null}
         onSend={send}
+        channel={compose}
       />
     </div>
   )

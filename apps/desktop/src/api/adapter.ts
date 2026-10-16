@@ -68,7 +68,7 @@ export interface DesktopApi {
   sendToSession(sessionId: string, text: string): Promise<SendResult>
   /** Forget ownership and kill megabrain's tmux session for it (`session release`). */
   releaseSession(sessionId: string): Promise<void>
-  /** Open an https address in the system's browser. */
+  /** Open an https address in the system's browser, or a mailto address in the mail app. */
   openUrl(url: string): Promise<void>
   /** Show a folder or file in Finder (the file manager on Linux). */
   revealPath(path: string): Promise<void>
@@ -129,6 +129,14 @@ export interface DesktopApi {
   setPrState(root: string, number: number, action: 'merge' | 'close' | 'reopen', options?: { method?: GithubMergeMethod }): Promise<void>
   /** Ask the person for a folder with the native picker; null when cancelled. */
   pickFolder(): Promise<string | null>
+  /** The system clipboard: text, and images as PNG bytes. */
+  copyText(text: string): Promise<void>
+  pasteText(): Promise<string>
+  copyImage(png: Uint8Array): Promise<void>
+  /** The clipboard's image as a PNG file; null when it holds none. */
+  pasteImage(): Promise<File | null>
+  /** Writes an image where the person picks in the save dialog; false when they cancel. */
+  saveImageAs(bytes: Uint8Array, name: string): Promise<boolean>
   /** A chat's conversation; pass the last cursor to get only newer events. */
   transcript(target: { dispatchId: string } | { sessionId: string }, since?: string): Promise<Transcript>
   /** Read-only code browsing inside a worktree or repository megabrain lists. */

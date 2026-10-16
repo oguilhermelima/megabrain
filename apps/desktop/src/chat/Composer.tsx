@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '@/api'
 import type { MessagePart, SlashCommand } from '@/api/schema'
+import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
+import type { MenuIcon } from '@/components/menu-icons'
 import { Spinner } from '@/components/ui'
 import { native } from '@/lib/surface'
 import { usePresence } from '@/lib/usePresence'
@@ -17,6 +19,8 @@ import { composerBanner, sendState, type Banner, type Notice } from '@/chat/comp
 import { Lightbox, type LightboxImage } from '@/chat/Lightbox'
 import { SkillMenu } from '@/chat/SkillMenu'
 import { caretRect, offsetAtPoint, readDraft, relabel, renderDraft, selectionOffsets, setCaret, tokenAt, type TokenView } from '@/chat/rich-input'
+import { composerMenu, insertBlock, type ComposerAction } from '@/chat/chat-menu-model'
+import { toSections, type ComposeChannel } from '@/chat/chat-menu'
 import { initialQueueState, queueReducer, type QueueAction, type QueueState } from '@/chat/queue-model'
 
 export type { Notice } from '@/chat/composer-look'
@@ -334,6 +338,7 @@ export function Composer({
   running = false,
   onStop,
   fill = null,
+  channel,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
   fill?: { text: string } | null
@@ -354,6 +359,8 @@ export function Composer({
   /** The agent's turn runs: with nothing typed, the send button stops it through onStop. */
   running?: boolean
   onStop?: () => void
+  /** Where the transcript's right-click menu puts quotes and code; the box fills it while it takes text. */
+  channel?: ComposeChannel
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -422,6 +429,18 @@ export function Composer({
   }, [fill])
 
   const insertAt = (text: string, [start, end]: [number, number] = selection()) => apply(insertText(deleteRange(current(), start, end), start, text), start + text.length)
+
+  // Assigned on every render so the transcript always calls the latest draft's insert.
+  useEffect(() => {
+    if (channel === undefined || disabled) return
+    channel.current = (block) => {
+      const at = selection()
+      insertAt(insertBlock(draftText(current()).slice(0, at[0]), block), at)
+    }
+    return () => {
+      channel.current = null
+    }
+  })
 
   useEffect(() => {
     const onSelection = () => {
@@ -527,6 +546,67 @@ export function Composer({
     }
     const text = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n')
     if (text !== '') insertAt(text)
+  }
+
+  // The box's own right-click menu: it covers cut, copy, paste and select all, so it replaces the
+  // webview's. Paste reads the clipboard natively, as the webview's would ask before each read.
+  const contextMenu = useContextMenu()
+  const onContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    const element = editor.current
+    if (element === null) return
+    const range = selection()
+    const selected = window.getSelection()
+    const text = selected !== null && !selected.isCollapsed && element.contains(selected.anchorNode) ? selected.toString() : ''
+    const failed = (caught: unknown) => show({ tone: 'bad', text: caught instanceof Error ? caught.message : String(caught) })
+    const pasteText = () => api.pasteText().catch(() => '')
+    const run = (action: ComposerAction) => {
+      switch (action) {
+        case 'cut':
+          api.copyText(text).then(() => apply(deleteRange(current(), range[0], range[1]), range[0]), failed)
+          return
+        case 'copy':
+          api.copyText(text).catch(failed)
+          return
+        case 'paste':
+          // Text first, as the box takes it; an image only when the clipboard has no text.
+          pasteText()
+            .then(async (pasted) => {
+              if (pasted !== '') return insertAt(pasted.replace(/\r\n?/g, '\n'), range)
+              const image = await api.pasteImage()
+              if (image !== null) attach([fromFile(image)], range)
+            })
+            .catch(failed)
+          return
+        case 'paste-plain':
+          pasteText().then((pasted) => {
+            if (pasted !== '') insertAt(pasted.replace(/\r\n?/g, '\n'), range)
+          }, failed)
+          return
+        case 'select-all': {
+          element.focus()
+          const all = document.createRange()
+          all.selectNodeContents(element)
+          selected?.removeAllRanges()
+          selected?.addRange(all)
+          return
+        }
+        case 'attach':
+          picker.current?.click()
+          return
+        case 'clear':
+          apply([], 0)
+      }
+    }
+    const icons: Record<ComposerAction, MenuIcon> = {
+      cut: 'cut',
+      copy: 'copy',
+      paste: 'paste',
+      'paste-plain': 'paste',
+      'select-all': 'select',
+      attach: 'attach',
+      clear: 'close',
+    }
+    contextMenu.open(event, toSections(composerMenu({ hasSelection: text !== '', empty: current().length === 0, disabled }), run, icons))
   }
 
   const removeToken = (id: string) => {
@@ -851,6 +931,7 @@ export function Composer({
               onInput={(event) => changed(readDraft(event.currentTarget))}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
+              onContextMenu={onContextMenu}
               onClick={onClick}
               onPointerDown={onPointerDown}
               onPointerMove={onHover}
@@ -955,6 +1036,7 @@ export function Composer({
         </div>
       </div>
       <ComposerLimits agent={agent} />
+      <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
     </footer>
   )
 }

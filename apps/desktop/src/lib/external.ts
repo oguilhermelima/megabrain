@@ -1,11 +1,21 @@
-// What the app hands to the system: only https addresses open in the browser, and only folders
-// inside a listed project or worktree show in Finder.
+// What the app hands to the system: only https addresses open in the browser (and, from a chat,
+// mailto addresses in the mail app), and only folders inside a listed project or worktree show in Finder.
 
 /** The address when it is a well-formed https URL, else null. */
 export function httpsUrl(value: string): string | null {
   try {
     const url = new URL(value)
     return url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+/** The address when it is a well-formed https or mailto URL, else null: the links a chat opens. */
+export function openableUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' || url.protocol === 'mailto:' ? url.href : null
   } catch {
     return null
   }

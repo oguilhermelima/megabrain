@@ -1,10 +1,12 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { open } from '@tauri-apps/plugin-dialog'
+import { readImage, readText, writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
+import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
 import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
@@ -189,6 +191,22 @@ export function createTauriApi(): DesktopApi {
     pickFolder: async () => {
       const selected = await open({ directory: true, multiple: false })
       return selected ?? null
+    },
+    copyText: (text) => writeText(text),
+    pasteText: () => readText(),
+    copyImage: (png) => writeImage(png),
+    pasteImage: async () => {
+      // readImage throws when the clipboard holds no image.
+      const image = await readImage().catch(() => null)
+      if (image === null) return null
+      const [size, rgba] = await Promise.all([image.size(), image.rgba()])
+      return pngFile(rgba, size.width, size.height, 'Pasted image.png')
+    },
+    saveImageAs: async (bytes, name) => {
+      const path = await save({ defaultPath: name })
+      if (path === null) return false
+      await invoke('save_image', { path, base64: base64Of(bytes) })
+      return true
     },
     codeTree: async (root) => codeEntrySchema.array().parse(await invoke('code_tree', { root })),
     codeRead: async (root, path) => codeFileSchema.parse(await invoke('code_read', { root, path })),

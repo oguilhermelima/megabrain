@@ -5,6 +5,7 @@ import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '
 import { ChatHeader } from '@/chat/ChatHeader'
 import { ViewSwitch } from '@/chat/ViewSwitch'
 import { Composer } from '@/chat/Composer'
+import { useComposeChannel } from '@/chat/chat-menu'
 import { ApprovalRendererContext, ConversationList, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { ErrorNote } from '@/components/ui'
 import { terminalEngine } from '@/terminal/terminal-engine'
@@ -36,6 +37,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
   const [switching, setSwitching] = useState(false)
+  const compose = useComposeChannel()
   // The view being switched to shows at once; the chat record catches up when the switch lands.
   const [target, setTarget] = useState<NativeChat['mode'] | null>(null)
   const opening = useRef<Promise<{ command: string[] | null }> | null>(null)
@@ -213,6 +215,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
                   onOpenChat={onOpenChat}
                   root={chat.cwd}
                   onOpenPath={onOpenPath}
+                  channel={compose}
                 />
               )}
             </ApprovalRendererContext.Provider>
@@ -232,6 +235,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               running={chat.state === 'working'}
               onStop={stop}
               fill={fill}
+              channel={compose}
             />
           </div>
         </>

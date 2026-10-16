@@ -59,6 +59,11 @@ fn save_attachment(base64: String, extension: String) -> Result<String, String> 
 }
 
 #[tauri::command]
+fn save_image(path: String, base64: String) -> Result<(), String> {
+    attachment::save_image_to(Path::new(&path), &base64)
+}
+
+#[tauri::command]
 async fn run_cli(cli: State<'_, Cli>, args: Vec<String>) -> Result<CliOutput, String> {
     let mut command = cli.command(&args);
     tauri::async_runtime::spawn_blocking(move || {
@@ -324,6 +329,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| match event {
             // Closing the main window keeps megabrain in the pill and the tray; Quit ends it.
@@ -359,7 +365,8 @@ pub fn run() {
             code_read,
             code_changes,
             code_diff,
-            save_attachment
+            save_attachment,
+            save_image
         ])
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");

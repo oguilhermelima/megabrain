@@ -6,6 +6,7 @@ import type { MessagePart, ProjectSession } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { Composer, type Notice } from '@/chat/Composer'
+import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
 import { ownership, ownedTerminalTarget, sessionView, type SessionViewMode } from '@/chat/session-ownership'
 import { ViewSwitch } from '@/chat/ViewSwitch'
@@ -27,6 +28,7 @@ export function SessionView({
   onOpenPath?: OpenPath
 }) {
   const [chosenView, setChosenView] = useState<SessionViewMode>('chat')
+  const compose = useComposeChannel()
   const view = sessionView(session, chosenView)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
 
@@ -80,7 +82,7 @@ export function SessionView({
         <>
           <div className="flex min-h-0 flex-1 flex-col">
             <ConversationAgent.Provider value={session.agent}>
-              <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} />
+              <Conversation target={{ sessionId: session.sessionId }} live={!ended} onOpenChat={onOpenChat} root={worktreePath} onOpenPath={onOpenPath} channel={compose} />
             </ConversationAgent.Provider>
           </div>
           <Composer
@@ -91,6 +93,7 @@ export function SessionView({
             context={{ tokens: session.contextTokens, window: session.contextWindow }}
             model={session.model ?? null}
             onSend={send}
+            channel={compose}
           />
         </>
       )}
