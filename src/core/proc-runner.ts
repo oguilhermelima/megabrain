@@ -234,7 +234,7 @@ async function procList(args: readonly string[], env: Readonly<Record<string, st
   return ok(json ? `${JSON.stringify(rows, null, 2)}\n` : `${rows.map((r) => `${r.name}\t${r.state}\t${r.pid}\t${r.worktree}`).join("\n")}${rows.length ? "\n" : ""}`);
 }
 async function procAction(verb: string, args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
-  const force = args.includes("--force"), json = args.includes("--json"); const found = await procPath(args.filter((x) => !x.startsWith("--")), env, process); if (!found) return failed(`proc not found: ${args[0] ?? ""}`);
+  const force = args.includes("--force"), json = args.includes("--json"); const found = await procPath(args, env, process); if (!found) return failed(`proc not found: ${args[0] ?? ""}`);
   const { path } = found; let record = found.record;
   if (!(await owns(record, env, force, process))) return failed(`proc ${record.name} is owned by another caller; use --force`);
   if (verb === "status") {

@@ -48,6 +48,7 @@ export function useRunPanels() {
   // Closing the terminal ends the command (native) or detaches from it (tmux); either way the tab is done.
   const stopTab = async (worktree: string, tab: RunTab) => {
     if (tab.terminalId !== null) await api.closeTerminal(tab.terminalId).catch(() => {})
+    await api.stopScript(worktree, tab.action).catch(() => {})
     setPanels((current) => {
       const now = panelFor(current, worktree).tabs.find((item) => item.action === tab.action)
       return now?.generation === tab.generation && now.status.kind !== 'exited' ? markExited(current, worktree, tab.action, tab.generation, null) : current

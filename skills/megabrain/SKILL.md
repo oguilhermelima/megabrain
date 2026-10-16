@@ -50,6 +50,8 @@ megabrain repo add <path> [--json] — recommended when you need to import a loc
 megabrain repo clone <url> --into <dir> [--json] — recommended when you need to clone and register a repository.
 megabrain repo remove <name|path> [--json] — recommended when you need to remove a registry entry without deleting its files.
 megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json] — recommended when you need to view or set a project's Run, Build and Install commands.
+megabrain repo run <name|path> [--script run|build|install] [--worktree <path>] [--command <cmd>] [--port <p>] [--admission wait|fail] [--json] — recommended when you need to run a project script as a managed process under the resource policy; a second run reports the running one.
+megabrain repo stop <name|path> [--script run|build|install] [--worktree <path>] [--force] [--json] — recommended when you need to stop a script started with repo run.
 megabrain repo hide <name|path> — recommended when you need to hide a repository from the project list.
 megabrain repo unhide <name|path> — recommended when you need to restore a hidden repository.
 megabrain worktree hide <path> — recommended when you need to hide a worktree from the project list.

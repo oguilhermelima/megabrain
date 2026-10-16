@@ -24,12 +24,11 @@ export function primaryAction(last: RunAction | null | undefined): RunAction {
 }
 
 /**
- * The argv for the embedded terminal: the person's login shell runs the command, so PATH and the
- * shell's own setup are what a terminal of theirs would have. $SHELL is read where the terminal
- * starts, the same variable the native side uses for a plain terminal.
+ * The argv for the embedded terminal: it attaches to the tmux session `megabrain repo run` started,
+ * so the terminal ends when the script does. TMUX is unset so it also attaches from inside tmux.
  */
-export function runShellCommand(command: string): string[] {
-  return ['/bin/sh', '-c', 'exec "${SHELL:-/bin/sh}" -lc "$1"', 'sh', command]
+export function attachCommand(session: string): string[] {
+  return ['/usr/bin/env', '-u', 'TMUX', 'tmux', 'attach-session', '-t', session]
 }
 
 export type RunStatus = { kind: 'starting' } | { kind: 'running' } | { kind: 'exited'; code: number | null }

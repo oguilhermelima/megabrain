@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { projectScriptsSchema, type ProjectScripts } from '@/api/schema'
-import { closeTab, commandFor, isRunning, liveRuns, markExited, markStarted, needsSetup, panelFor, primaryAction, runActions, runShellCommand, selectTab, setPanelOpen, startRun, type RunPanels } from '@/run-panel/run-model'
+import { closeTab, commandFor, isRunning, liveRuns, markExited, markStarted, needsSetup, panelFor, primaryAction, runActions, attachCommand, selectTab, setPanelOpen, startRun, type RunPanels } from '@/run-panel/run-model'
 
 const scripts = (fields: Partial<ProjectScripts['scripts']> = {}): ProjectScripts => ({
   repo: '/repo',
@@ -61,11 +61,11 @@ describe('Set up', () => {
   })
 })
 
-describe('runShellCommand', () => {
-  test('runs the command through the login shell', () => {
-    const argv = runShellCommand('bun dev')
-    expect(argv.at(-1)).toBe('bun dev')
-    expect(argv.join(' ')).toContain('-lc')
+describe('attachCommand', () => {
+  test('attaches to the managed process session, outside any tmux of its own', () => {
+    const argv = attachCommand('mb-proc-1-repo-run')
+    expect(argv.at(-1)).toBe('mb-proc-1-repo-run')
+    expect(argv.join(' ')).toContain('-u TMUX tmux attach-session')
   })
 })
 

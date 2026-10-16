@@ -4,7 +4,7 @@ import type { TerminalSession } from '@/api/schema'
 import { terminalEngine } from '@/terminal/terminal-engine'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { Spinner, ErrorNote } from '@/components/ui'
-import { runActionLabel, runActions, runShellCommand, runTabTitle, type RunTab, type WorktreePanel } from '@/run-panel/run-model'
+import { runActionLabel, runActions, attachCommand, runTabTitle, type RunTab, type WorktreePanel } from '@/run-panel/run-model'
 import { runStatusView, type RunTone } from '@/run-panel/run-view'
 import type { RunPanelsState } from '@/run-panel/useRunPanels'
 
@@ -162,7 +162,10 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
 
   const connect = (tab: RunTab) => async (cols: number, rows: number): Promise<TerminalSession> => {
     try {
-      const terminal = await api.openTerminal({ engine: await terminalEngine(), cwd: worktree, command: runShellCommand(tab.command), cols, rows })
+      // The CLI runs the script as a managed process under the resource policy (it waits here while queued);
+      // the terminal only shows its tmux session, so closing the tab detaches and stopping goes through the CLI.
+      const run = await api.runScript(worktree, tab.action, tab.command)
+      const terminal = await api.openTerminal({ engine: await terminalEngine(), cwd: worktree, command: attachCommand(run.session), cols, rows })
       runs.started(worktree, tab, terminal.id)
       return terminal
     } catch (caught) {

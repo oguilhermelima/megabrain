@@ -30,6 +30,8 @@ export const USAGE_LINES = {
   "repo-clone": "repo clone <url> --into <dir> [--json]",
   "repo-remove": "repo remove <name|path> [--json]",
   "repo-scripts": "repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]",
+  "repo-run": "repo run <name|path> [--script run|build|install] [--worktree <path>] [--command <cmd>] [--port <p>] [--admission wait|fail] [--json]",
+  "repo-stop": "repo stop <name|path> [--script run|build|install] [--worktree <path>] [--force] [--json]",
   "repo-github": "repo github [--owner <login>] [--json]",
   "projects": "projects [--json]",
   "port": "port who|free|kill ...",

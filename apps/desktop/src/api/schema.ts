@@ -855,6 +855,16 @@ export const projectScriptsSchema = z.object({
 })
 export type ProjectScripts = z.infer<typeof projectScriptsSchema>
 
+/** `megabrain repo run --json`: the managed process a project script runs as. `session` is the tmux session to attach a terminal to. */
+export const runScriptSchema = z.object({
+  script: z.enum(['run', 'build', 'install']),
+  session: z.string(),
+  pid: z.number().int(),
+  alreadyRunning: z.boolean(),
+  port: z.number().int().nullable(),
+})
+export type RunScriptResult = z.infer<typeof runScriptSchema>
+
 /** One process listening on a port (`megabrain port who`), and the megabrain process or app terminal it runs in, if any. */
 export const portListenerSchema = z.object({
   pid: z.number().int(),

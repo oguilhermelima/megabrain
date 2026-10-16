@@ -8,6 +8,7 @@ import { detectScriptPort } from "../../core/script-port.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from "../../db/db.js";
 import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { executeRepoRun, executeRepoStop, resolveRepositoryPath } from "./repo-run.js";
 import { backfillProjectHistory } from "./projects.js";
 import { usageText } from "../../core/usage.js";
 import { setHiddenItem } from "../../db/queries/hidden-items.js";
@@ -44,23 +45,18 @@ async function addRepository(path: string, source: "megabrain" | "import", envir
 export async function executeRepository(args: readonly string[], environment: Environment, process = createProcessAdapter()): Promise<Result<string>> {
   const [verb, ...rest] = args;
   if (args.includes("-h") || args.includes("--help")) {
-    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "scripts" ? "repo-scripts" : verb === "github" ? "repo-github" : "repo";
+    const key = verb === "list" ? "repo-list" : verb === "add" ? "repo-add" : verb === "clone" ? "repo-clone" : verb === "remove" ? "repo-remove" : verb === "scripts" ? "repo-scripts" : verb === "run" ? "repo-run" : verb === "stop" ? "repo-stop" : verb === "github" ? "repo-github" : "repo";
     return ok(usageText(key));
   }
   const json = rest.includes("--json");
+  if (verb === "run") return executeRepoRun(rest, environment, process);
+  if (verb === "stop") return executeRepoStop(rest, environment, process);
   if (verb === "scripts") {
     const selector = rest.find((argument) => !argument.startsWith("-"));
     if (selector === undefined) return failed("Usage: megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]", 2);
-    let checkout = await repositoryCheckout(selector, process);
-    let repoPath: string | undefined = checkout.kind === "ok" ? checkout.value.path : undefined;
-    if (repoPath === undefined) {
-      const records = databaseRead(environment, listRepositories);
-      if (records.kind !== "ok") return records;
-      const matches = records.value.filter((record) => record.name === selector || record.path === selector);
-      if (matches.length > 1) return failed(`repository name is ambiguous: ${selector}; use a path`);
-      repoPath = matches[0]?.path;
-    }
-    if (repoPath === undefined) return failed(`repository not found: ${selector}`);
+    const resolved = await resolveRepositoryPath(selector, environment, process);
+    if (resolved.kind !== "ok") return resolved;
+    const repoPath = resolved.value;
     const changes: SavedProjectScripts = {};
     for (const name of ["run", "build", "install"] as const) {
       const index = rest.indexOf(`--${name}`);
@@ -152,5 +148,5 @@ export async function executeRepository(args: readonly string[], environment: En
       return ok(json ? `${JSON.stringify(repositories, null, 2)}\n` : repositories.map((repository) => `${repository.nameWithOwner}\t${repository.url}\n`).join(""));
     } catch { return failed("gh repo list returned invalid JSON"); }
   }
-  return failed("Usage: megabrain repo list|add|clone|remove|hide|unhide|github ...", 2);
+  return failed("Usage: megabrain repo list|add|clone|remove|hide|unhide|scripts|github ...", 2);
 }
