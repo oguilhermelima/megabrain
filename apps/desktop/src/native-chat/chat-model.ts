@@ -58,7 +58,7 @@ export function compareCursors(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-const turnEnded = (state: NativeChat['state']) => state === 'idle' || state === 'stopped' || state === 'error'
+const turnEnded = (state: NativeChat['state']) => state === 'idle' || state === 'suspended' || state === 'stopped' || state === 'error'
 
 function applyDelta(state: FollowState, delta: ChatDeltaEvent): FollowState {
   if (state.finished.includes(delta.messageId)) return state
@@ -192,6 +192,7 @@ const busyReason: Record<NativeChat['state'], string | null> = {
   working: 'Wait until the agent finishes its turn',
   'waiting-approval': 'Answer the pending approval first',
   starting: 'The chat is still starting',
+  suspended: 'Send a message to resume the chat first',
   stopped: 'The chat has stopped',
   error: 'The chat stopped on an error',
 }

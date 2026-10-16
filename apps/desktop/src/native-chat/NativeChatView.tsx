@@ -26,7 +26,9 @@ const handedOver = new Map<string, TerminalSession>()
 
 const folder = (path: string) => path.split('/').at(-1) ?? path
 
-const ended = (state: NativeChat['state']) => state === 'stopped' || state === 'error'
+// A suspended (or legacy stopped) chat is not over: its next message resumes the agent session.
+const ended = (state: NativeChat['state']) => state === 'error'
+const resumable = (state: NativeChat['state']) => state === 'suspended' || state === 'stopped'
 
 /** A conversation megabrain owns through the agent's protocol, followed live while it is open. */
 export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
@@ -34,6 +36,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
   const [switching, setSwitching] = useState(false)
+  const [startFresh, setStartFresh] = useState(false)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
   const toggle = modeToggle(chat)
   const inTerminal = chat.mode === 'terminal'
@@ -78,7 +81,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
     update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString() }))
     try {
-      await api.sendChat(chat.id, parts)
+      await api.sendChat(chat.id, parts, { fresh: startFresh && resumable(chat.state) })
+      setStartFresh(false)
     } catch (caught) {
       update((current) => dropOutgoing(current, id))
       throw caught
@@ -156,6 +160,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           {actionError !== null && <ErrorNote error={actionError} />}
         </div>
       )}
+      {resumable(chat.state) && chat.error != null && (
+        <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-warn">
+          <span className="min-w-0 flex-1 truncate" title={chat.error}>Could not resume: {chat.error}</span>
+          <button type="button" onClick={() => setStartFresh((current) => !current)} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07]">
+            {startFresh ? 'Starting fresh with your next message' : 'Start fresh'}
+          </button>
+        </div>
+      )}
       {inTerminal ? (
         <>
           {exited !== undefined && (
@@ -193,7 +205,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
           <div onKeyDown={onComposerKey} className="contents">
             <Composer
-              placeholder={ended(chat.state) ? 'This chat has stopped' : chat.state === 'working' ? `Reply to ${title}… (Esc stops the turn)` : `Reply to ${title}…`}
+              placeholder={ended(chat.state) ? 'This chat has stopped' : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Reply to ${title}… (Esc stops the turn)` : `Reply to ${title}…`}
               disabled={ended(chat.state)}
               agent={chat.agent}
               cwd={chat.cwd}

@@ -264,6 +264,13 @@ megabrain chat send <id> --parts '[{"type":"text","text":"Explain this project"}
 megabrain chat events <id> --follow --json
 ```
 
+A chat whose agent process is gone (daemon restart, app update, reboot, crash, `chat stop <id>`) is
+`suspended`, not lost: its record keeps the agent's session id and the next `chat send` respawns the
+agent with resume. If that resume fails the chat stays suspended with the error;
+`chat send <id> --parts <json> --fresh` then starts a new agent session in the same folder. A newer
+app asks a running chatd of another protocol version to hand over, so an update never ends a turn
+mid-flight without saying so in the transcript.
+
 Chats run without permission prompts. Add `--approvals` to `chat start` to be asked instead.
 
 `chat list --json` returns saved chats. Use `chat interrupt <id>` to stop the current turn,

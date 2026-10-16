@@ -446,7 +446,7 @@ export const queuedMessageSchema = z.looseObject({
 
 // Native chats: conversations megabrain itself owns through each agent's protocol (Claude
 // stream-json, Codex app-server), kept alive by megabrain chatd while the app is closed.
-export const nativeChatStateSchema = z.enum(['starting', 'idle', 'working', 'waiting-approval', 'stopped', 'error'])
+export const nativeChatStateSchema = z.enum(['starting', 'idle', 'working', 'waiting-approval', 'suspended', 'stopped', 'error'])
 export const nativeChatSchema = z.looseObject({
   id: z.string(),
   agent: z.string(),

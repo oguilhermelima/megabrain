@@ -194,7 +194,7 @@ export function createTauriApi(): DesktopApi {
     chats: () => cliJson(['chat', 'list', '--json'], nativeChatSchema.array()),
     startChat: ({ agent, model, cwd, parts }) =>
       cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
-    sendChat: async (chatId, parts) => void (await cliText(['chat', 'send', chatId, '--parts', JSON.stringify(parts)])),
+    sendChat: async (chatId, parts, options) => void (await cliText(['chat', 'send', chatId, '--parts', JSON.stringify(parts), ...(options?.fresh === true ? ['--fresh'] : [])])),
     interruptChat: async (chatId) => void (await cliText(['chat', 'interrupt', chatId])),
     answerApproval: async (chatId, approvalId, decision) => void (await cliText(['chat', 'approve', chatId, approvalId, '--decision', decision])),
     stopChat: async (chatId) => void (await cliText(['chat', 'stop', chatId])),

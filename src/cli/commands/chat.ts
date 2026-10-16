@@ -54,8 +54,9 @@ export async function executeChat(args: readonly string[], environment: Environm
     if (verb === "send") {
       const [id, ...tail] = rest;
       const parsed = takeValue(tail, "--parts");
-      if (!id || parsed.value === undefined || parsed.rest.length > 0) throw new Error("Usage: megabrain chat send <id> --parts <json>");
-      await callChatd(dir, { operation: "send", id, parts: partsJson(parsed.value) }, environment, processAdapter);
+      const fresh = parsed.rest.includes("--fresh");
+      if (!id || parsed.value === undefined || parsed.rest.some((arg) => arg !== "--fresh")) throw new Error("Usage: megabrain chat send <id> --parts <json> [--fresh]");
+      await callChatd(dir, { operation: "send", id, parts: partsJson(parsed.value), ...(fresh ? { fresh } : {}) }, environment, processAdapter);
       return ok("");
     }
     if (verb === "interrupt" || verb === "stop") {

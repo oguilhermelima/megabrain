@@ -135,7 +135,8 @@ export interface DesktopApi {
   /** Native chats (megabrain chat ...). */
   chats(): Promise<NativeChat[]>
   startChat(options: { agent: string; model?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
-  sendChat(chatId: string, parts: MessagePart[]): Promise<void>
+  /** `fresh` starts a new agent session when a suspended chat cannot resume its recorded one. */
+  sendChat(chatId: string, parts: MessagePart[], options?: { fresh?: boolean }): Promise<void>
   interruptChat(chatId: string): Promise<void>
   answerApproval(chatId: string, approvalId: string, decision: 'allow' | 'allow-session' | 'deny'): Promise<void>
   stopChat(chatId: string): Promise<void>

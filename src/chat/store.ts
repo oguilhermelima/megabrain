@@ -13,7 +13,8 @@ export type Chat = {
   /** Ask for approvals instead of bypassing permission prompts. */
   approvals?: boolean;
   title: string | null;
-  state: "starting" | "idle" | "working" | "waiting-approval" | "stopped" | "error";
+  /** `suspended`: no agent process, but the record keeps `agentSessionId`; the next send resumes it. `stopped` is only read from records written before that state existed. */
+  state: "starting" | "idle" | "working" | "waiting-approval" | "suspended" | "stopped" | "error";
   mode: "chat" | "terminal";
   agentSessionId: string | null;
   createdAt: string;

@@ -20,6 +20,9 @@ const instances = new Map<string, ChatDaemon>();
 function chatSocket(stateDir: string): string { return join(stateDir, "chatd", "s"); }
 function chatPid(stateDir: string): string { return join(stateDir, "chatd", "chatd.pid"); }
 function chatLock(stateDir: string): string { return join(stateDir, "chatd", "start.lock"); }
+/** Bumped whenever the socket contract changes in a way an older chatd cannot serve; a client that finds another number asks that chatd to hand over. */
+export const CHAT_PROTOCOL_VERSION = 1;
+const DEFAULT_HANDOVER_TIMEOUT_MS = 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 function timeoutMs(value: string | undefined, fallback: number): number {
@@ -91,7 +94,8 @@ export class ChatDaemon {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private clients = 0;
   private closed = false;
-  constructor(readonly stateDir: string, readonly environment: Environment = process.env) { this.store = new ChatStore(stateDir); }
+  private readonly sockets = new Set<Socket>();
+  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION) { this.store = new ChatStore(stateDir); }
 
   async start(): Promise<void> {
     const dir = join(this.stateDir, "chatd");
@@ -100,13 +104,7 @@ export class ChatDaemon {
     if (await socketAccepts(this.stateDir, DEFAULT_CONNECT_TIMEOUT_MS)) throw new Error("chatd is already running");
     await discardStaleState(this.stateDir, { pid: true });
     await this.store.initialize();
-    for (const chat of await this.store.list()) {
-      if (chat.state !== "stopped" && chat.state !== "error") {
-        chat.state = "stopped";
-        chat.error = null;
-        await this.store.put(chat);
-      }
-    }
+    await this.suspendActive();
     await writeFile(chatPid(this.stateDir), `${process.pid}\n`, { mode: 0o600 });
     await chmod(chatPid(this.stateDir), 0o600);
   }
@@ -119,8 +117,10 @@ export class ChatDaemon {
         case "list":
           await Promise.all([...this.eventChains.values(), ...this.appendChains.values()]);
           return await this.store.list();
+        case "hello": return { protocol: this.protocol, pid: process.pid };
+        case "handover": return await this.handover();
         case "start": return await this.startChat(request);
-        case "send": return await this.send(text(request.id), validateParts(request.parts));
+        case "send": return await this.send(text(request.id), validateParts(request.parts), request.fresh === true);
         case "interrupt": return await this.interrupt(text(request.id));
         case "stop": return await this.stop(text(request.id));
         case "remove": return await this.remove(text(request.id));
@@ -158,10 +158,47 @@ export class ChatDaemon {
     return chat;
   }
 
-  private async send(id: string, inputParts: Part[]): Promise<void> {
+  /**
+   * Every chat whose agent process is gone becomes suspended: the record, its session id and its transcript stay,
+   * and the next send respawns the agent with resume. A turn that was cut is marked interrupted. Also kills the
+   * children this daemon still owns, which is how a handover leaves nothing running.
+   */
+  private async suspendActive(): Promise<string[]> {
+    const interrupted: string[] = [];
+    for (const chat of await this.store.list()) {
+      if (chat.state === "suspended" || chat.state === "error" || chat.mode === "terminal") continue;
+      const child = this.children.get(chat.id);
+      if (child) { this.children.delete(chat.id); child.kill("SIGTERM"); }
+      this.clearStartTimer(chat.id);
+      for (const map of [this.queues, this.activeTurns]) map.delete(chat.id);
+      if (chat.state === "working" || chat.state === "waiting-approval") {
+        interrupted.push(chat.id);
+        await this.publish(chat, event("system", "Interrupted"));
+      }
+      chat.state = "suspended";
+      chat.error = null;
+      await this.save(chat);
+    }
+    return interrupted;
+  }
+
+  /** Waits (bounded) for working chats to finish, suspends the rest, then leaves so a newer chatd can take the socket. */
+  private async handover(): Promise<{ handedOver: true; waitedMs: number; interrupted: string[] }> {
+    const bound = timeoutMs(this.environment.MEGABRAIN_CHATD_HANDOVER_TIMEOUT_MS, DEFAULT_HANDOVER_TIMEOUT_MS);
+    const started = Date.now();
+    const busy = async () => (await this.store.list()).some((chat) => chat.state === "working" || chat.state === "waiting-approval");
+    while (await busy() && Date.now() - started < bound) await new Promise((resolve) => setTimeout(resolve, 50));
+    const interrupted = await this.suspendActive();
+    await Promise.all([...this.eventChains.values(), ...this.appendChains.values()]);
+    await this.close();
+    return { handedOver: true, waitedMs: Date.now() - started, interrupted };
+  }
+
+  private async send(id: string, inputParts: Part[], fresh = false): Promise<void> {
     const chat = await this.requireChat(id);
     const parts = await this.normalizeParts(chat.cwd, inputParts);
-    if (chat.state === "stopped" || chat.mode !== "chat") throw new Error("chat is stopped or in terminal mode");
+    if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
+    const resuming = chat.state === "suspended" || chat.state === "stopped";
     const textValue = firstText(parts);
     if (chat.title === null && textValue !== "") chat.title = textValue.slice(0, 120);
     chat.lastActivityAt = new Date().toISOString();
@@ -169,6 +206,16 @@ export class ChatDaemon {
     await this.publish(chat, event("user", textValue));
     this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
+    if (resuming) {
+      // The first send is the trigger: opening a chat spawns nothing, so a person browsing history costs no agent process.
+      if (fresh) chat.agentSessionId = null;
+      chat.state = "starting";
+      chat.error = null;
+      this.queues.set(id, [parts]);
+      await this.save(chat);
+      void this.runAgent(chat).catch((error) => this.resumeFailed(id, error));
+      return;
+    }
     if (chat.agent === "codex" && chat.state === "working" && this.activeTurns.has(id)) {
       const child = this.children.get(id);
       const turnId = this.activeTurns.get(id);
@@ -186,6 +233,20 @@ export class ChatDaemon {
       return;
     }
     await this.drain(id);
+  }
+
+  /** A resume that cannot start leaves the chat suspended with the reason, and drops the message it carried. */
+  private async resumeFailed(id: string, error: unknown): Promise<void> {
+    const child = this.children.get(id);
+    if (child) { this.children.delete(id); child.kill("SIGTERM"); }
+    this.clearStartTimer(id);
+    this.queues.delete(id);
+    const chat = await this.store.get(id);
+    if (!chat || chat.state === "suspended" && chat.error !== null) return;
+    chat.state = "suspended";
+    chat.error = error instanceof Error ? error.message : String(error);
+    await this.save(chat);
+    await this.publish(chat, event("system", chat.error));
   }
 
   private async runAgent(chat: Chat): Promise<void> {
@@ -219,8 +280,10 @@ export class ChatDaemon {
       if (this.children.get(chat.id) !== child) return;
       this.clearStartTimer(chat.id);
       this.children.delete(chat.id);
+      for (const waiter of this.rpcWaiters.get(chat.id)?.values() ?? []) waiter.reject(new Error(stderr.trim() || `${signal ?? "agent exited"}`));
+      this.rpcWaiters.delete(chat.id);
       void this.store.get(chat.id).then(async (current) => {
-        if (!current || current.state === "stopped" || current.mode === "terminal") return;
+        if (!current || current.state === "suspended" || current.state === "stopped" || current.mode === "terminal") return;
         if (this.interrupting.has(chat.id)) {
           this.interrupting.delete(chat.id);
           current.state = "idle";
@@ -229,8 +292,9 @@ export class ChatDaemon {
           await this.publishInterrupted(current);
           return;
         }
-        current.state = code === 0 ? "idle" : "stopped";
+        current.state = code === 0 ? "idle" : "suspended";
         current.error = code === 0 ? null : `${signal ?? "agent exited"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`;
+        if (code !== 0) this.queues.delete(chat.id);
         await this.save(current);
         await this.publish(current, event("system", current.error ?? "Agent process stopped"));
       });
@@ -460,7 +524,10 @@ export class ChatDaemon {
     const chat = await this.requireChat(id);
     const child = this.children.get(id);
     if (child) { child.kill("SIGTERM"); this.children.delete(id); }
-    chat.state = "stopped";
+    this.clearStartTimer(id);
+    for (const map of [this.queues, this.activeTurns]) map.delete(id);
+    chat.state = "suspended";
+    chat.error = null;
     chat.lastActivityAt = new Date().toISOString();
     await this.save(chat);
     await this.publish(chat, event("system", "Stopped"));
@@ -517,11 +584,11 @@ export class ChatDaemon {
   private async setModel(id: string, model: string, effort: string | null): Promise<Chat> {
     if (!model || model.length > 200) throw new Error("model must be a non-empty id no longer than 200 characters");
     const chat = await this.requireChat(id);
-    if (chat.state !== "idle" || chat.mode !== "chat") throw new Error(`cannot change the model while chat is ${chat.state}; wait until it is idle`);
+    if ((chat.state !== "idle" && chat.state !== "suspended") || chat.mode !== "chat") throw new Error(`cannot change the model while chat is ${chat.state}; wait until it is idle`);
     chat.model = model;
     if (effort !== null) chat.effort = effort;
     chat.lastActivityAt = new Date().toISOString();
-    if (chat.agent === "claude") {
+    if (chat.agent === "claude" && chat.state === "idle") {
       const child = this.children.get(id);
       if (child) { this.children.delete(id); child.kill("SIGTERM"); }
       chat.state = "starting";
@@ -676,6 +743,9 @@ export class ChatDaemon {
     this.idleTimer && clearTimeout(this.idleTimer);
     this.server?.close();
     this.server = undefined;
+    // The caller of a handover still has its answer in flight; everything else is dropped shortly after so the process can leave.
+    const open = [...this.sockets];
+    setTimeout(() => { for (const socket of open) socket.destroy(); }, 100).unref?.();
     try { await (await import("node:fs/promises")).unlink(chatSocket(this.stateDir)); } catch { /* already closed */ }
     try { await (await import("node:fs/promises")).unlink(chatPid(this.stateDir)); } catch { /* already closed */ }
     instances.delete(this.stateDir);
@@ -687,6 +757,8 @@ export class ChatDaemon {
     return new Promise((resolve, reject) => {
       const socketPath = chatSocket(this.stateDir);
       this.server = createServer((socket) => {
+        this.sockets.add(socket);
+        socket.once("close", () => this.sockets.delete(socket));
         this.clients += 1;
         if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
         socket.once("close", () => { this.clients -= 1; this.scheduleExit(); });
@@ -762,6 +834,23 @@ export async function runChatd(stateDir: string): Promise<void> {
   try { await unlink(chatLock(stateDir)); } catch { /* no client lock during direct starts */ }
 }
 
+/**
+ * A running chatd of another protocol version is asked to hand over: it waits for working chats, suspends the rest and
+ * leaves, so the caller's next request finds no socket and starts a current daemon. One that predates the handshake
+ * cannot be asked, and is used as it is.
+ */
+async function ensureProtocol(stateDir: string, timeouts: Timeouts): Promise<void> {
+  let protocol: unknown;
+  try { protocol = object(await socketRequest(stateDir, { operation: "hello" }, timeouts)).protocol; }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ECONNREFUSED" || code === "ENOENT") throw error;
+  }
+  if (protocol === CHAT_PROTOCOL_VERSION || protocol === undefined) return;
+  await socketRequest(stateDir, { operation: "handover" }, { connect: timeouts.connect, request: undefined });
+  for (let attempt = 0; attempt < 100 && await socketAccepts(stateDir, 200); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
 export async function callChatd(stateDir: string, request: Request, environment: Environment, processAdapter: { startDetached(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<{ kind: string; error?: string }> }, onLine?: (line: ChatLine) => void): Promise<unknown> {
   const local = instances.get(stateDir);
   if (local) return local.handle(request);
@@ -790,7 +879,10 @@ export async function callChatd(stateDir: string, request: Request, environment:
     throw new Error("chatd did not become ready in time");
   };
   if (existsSync(chatSocket(stateDir))) {
-    try { return await socketRequest(stateDir, request, timeouts, onLine); }
+    try {
+      await ensureProtocol(stateDir, timeouts);
+      return await socketRequest(stateDir, request, timeouts, onLine);
+    }
     catch (error) {
       if (!transportFailure(error)) throw error;
       // The socket belongs to a dead chatd unless a starter holds a live lock; clean up and start one fresh daemon.

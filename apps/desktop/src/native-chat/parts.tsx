@@ -5,6 +5,7 @@ export const nativeStateLabel: Record<NativeChat['state'], string> = {
   working: 'working',
   'waiting-approval': 'waiting approval',
   idle: 'idle',
+  suspended: 'suspended',
   stopped: 'stopped',
   error: 'error',
 }

@@ -173,6 +173,7 @@ describe('rowStatus', () => {
     expect(rowStatus('waiting-approval')).toBe('waiting')
     expect(rowStatus('idle')).toBe('idle')
     expect(rowStatus('stopped')).toBe('ended')
+    expect(rowStatus('suspended')).toBe('ended')
     expect(rowStatus('error')).toBe('ended')
   })
 })

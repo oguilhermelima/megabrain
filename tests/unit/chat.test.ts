@@ -600,7 +600,7 @@ rl.on("line", (line) => {
     } finally { await daemon.close(); }
   });
 
-  test("marks persisted working chats stopped after chatd restarts", async () => {
+  test("suspends persisted working chats after chatd restarts", async () => {
     const env = sandbox();
     const store = new ChatStore(env.state);
     const chat: Chat = {
@@ -611,7 +611,7 @@ rl.on("line", (line) => {
     await store.put(chat);
     const daemon = new ChatDaemon(env.state, { HOME: env.root });
     await daemon.start();
-    try { expect(await store.get(chat.id)).toMatchObject({ state: "stopped", agentSessionId: "persisted-session" }); }
+    try { expect(await store.get(chat.id)).toMatchObject({ state: "suspended", agentSessionId: "persisted-session" }); }
     finally { await daemon.close(); }
   });
 
