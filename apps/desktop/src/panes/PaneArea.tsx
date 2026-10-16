@@ -1,6 +1,7 @@
 import { useRef, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { equaliseSplit, paneRects, resizeSplit, zonePreview, type Divider, type Panes, type Rect } from '@/panes/pane-model'
 import type { PaneDrag } from '@/panes/usePaneDrag'
+import { minPaneHeight, minPaneWidth } from '@/panes/split-groups'
 import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
 
 /** What a pane shows for its item: the title on its header, and the view. */
@@ -8,10 +9,6 @@ export interface PaneContent {
   title: string
   node: ReactNode
 }
-
-/** The smallest a pane may be dragged to, in pixels. */
-const minWidth = 240
-const minHeight = 140
 
 const percent = (rect: Rect): CSSProperties => ({ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%` })
 
@@ -175,7 +172,7 @@ function DividerHandle({ divider, panes, area, onPanes }: { divider: Divider; pa
     const origin = row ? event.clientX : event.clientY
     const span = row ? divider.split.width * bounds.width : divider.split.height * bounds.height
     if (span <= 0) return
-    const min = (row ? minWidth : minHeight) / span
+    const min = (row ? minPaneWidth : minPaneHeight) / span
     const onMove = (move: globalThis.PointerEvent) => {
       const delta = ((row ? move.clientX : move.clientY) - origin) / span
       onPanes(() => resizeSplit(startTree, divider.splitId, divider.index, delta, min))

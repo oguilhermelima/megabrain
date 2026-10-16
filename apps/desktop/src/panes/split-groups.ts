@@ -1,0 +1,266 @@
+import { closePane, dropItem, normalise, paneList, paneRects, parsePanes, replaceItem, singlePane, type Edge, type PaneLeaf, type PaneNode, type Panes } from '@/panes/pane-model'
+
+// Splits as groups, the way Zen keeps its split views: every arrangement of two or more panes is a
+// group with an id, its members (the items its panes show), its layout tree and an optional name.
+// The main area shows one group, or one item alone. Opening a member shows its group; opening any
+// other item shows it alone and the group waits in the sidebar. An item is in one group at most, and
+// a group left with one member dissolves. Every operation is pure.
+
+export interface SplitGroup {
+  id: string
+  name: string | null
+  /** Two or more panes. */
+  panes: Panes
+}
+
+export interface Layout {
+  groups: SplitGroup[]
+  /** The group shown, or null when `single` is. */
+  active: string | null
+  /** The one pane shown while no group is. */
+  single: Panes
+}
+
+/** side by side, stacked, a grid of rows of two (of three past four members), or one large and a column of the rest. */
+export type Preset = 'row' | 'column' | 'grid' | 'main'
+
+/** The smallest a pane may be, in pixels: a split that would go under it is refused, and dividers stop there. */
+export const minPaneWidth = 280
+export const minPaneHeight = 160
+
+const leafCount = (panes: Panes) => paneList(panes.root).length
+
+/** A plain tree as a layout: a split one is a group (`groupId`), shown; one pane is the single pane. */
+export function layoutOf(panes: Panes, groupId: string): Layout {
+  if (leafCount(panes) < 2) return { groups: [], active: null, single: panes }
+  const first = paneList(panes.root)[0]
+  return { groups: [{ id: groupId, name: null, panes }], active: groupId, single: singlePane(first?.item ?? '', first?.id ?? groupId) }
+}
+
+export function activeGroup(layout: Layout): SplitGroup | null {
+  return layout.groups.find((group) => group.id === layout.active) ?? null
+}
+
+export function shownPanes(layout: Layout): Panes {
+  return activeGroup(layout)?.panes ?? layout.single
+}
+
+export function groupOfItem(layout: Layout, item: string): SplitGroup | null {
+  return layout.groups.find((group) => paneList(group.panes.root).some((leaf) => leaf.item === item)) ?? null
+}
+
+/** The group without `items`; null once it has fewer than two members. */
+function stripItems(group: SplitGroup, items: ReadonlySet<string>): SplitGroup | null {
+  let panes = group.panes
+  for (const leaf of paneList(group.panes.root)) if (items.has(leaf.item)) panes = closePane(panes, leaf.id)
+  const left = paneList(panes.root).filter((leaf) => !items.has(leaf.item))
+  if (left.length < 2) return null
+  return panes === group.panes ? group : { ...group, panes }
+}
+
+/**
+ * What is shown, changed by a pane operation (split, drop, move, resize, close, focus). The result
+ * decides the group: two or more panes are the active group (a new one, `newGroupId`, when a single
+ * pane was split); one pane dissolves the group and shows alone. Items now shown leave every other group.
+ */
+export function changeShown(layout: Layout, change: (panes: Panes) => Panes, newGroupId: string): Layout {
+  const current = shownPanes(layout)
+  const next = change(current)
+  if (next === current) return layout
+  const shown = new Set(paneList(next.root).map((leaf) => leaf.item))
+  const groups: SplitGroup[] = []
+  let placed = false
+  for (const group of layout.groups) {
+    if (group.id === layout.active) {
+      if (leafCount(next) >= 2) {
+        groups.push({ ...group, panes: next })
+        placed = true
+      }
+      continue
+    }
+    const kept = stripItems(group, shown)
+    if (kept !== null) groups.push(kept)
+  }
+  if (leafCount(next) < 2) return { groups, active: null, single: next }
+  if (placed) return { ...layout, groups }
+  return { groups: [...groups, { id: newGroupId, name: null, panes: next }], active: newGroupId, single: layout.single }
+}
+
+/** A sidebar click: a member shows its group, focused on it; any other item shows alone. */
+export function openLayoutItem(layout: Layout, item: string): Layout {
+  const group = groupOfItem(layout, item)
+  if (group !== null) return focusGroup(layout, group.id, item)
+  const single = replaceItem(layout.single, layout.single.focused, item)
+  return { ...layout, active: null, single }
+}
+
+/** Shows group `groupId`, focused on the member showing `item` when given. */
+export function focusGroup(layout: Layout, groupId: string, item?: string): Layout {
+  const group = layout.groups.find((candidate) => candidate.id === groupId)
+  if (group === undefined) return layout
+  const leaf = item === undefined ? undefined : paneList(group.panes.root).find((candidate) => candidate.item === item)
+  const panes = leaf === undefined || leaf.id === group.panes.focused ? group.panes : { ...group.panes, focused: leaf.id }
+  if (layout.active === groupId && panes === group.panes) return layout
+  return { ...layout, active: groupId, groups: layout.groups.map((candidate) => (candidate.id === groupId ? { ...candidate, panes } : candidate)) }
+}
+
+export function renameGroup(layout: Layout, groupId: string, name: string): Layout {
+  const trimmed = name.trim()
+  return { ...layout, groups: layout.groups.map((group) => (group.id === groupId ? { ...group, name: trimmed === '' ? null : trimmed } : group)) }
+}
+
+/** The group goes and its members go back to rows of their own; a shown one leaves its focused member shown alone. */
+export function unsplitGroup(layout: Layout, groupId: string): Layout {
+  const group = layout.groups.find((candidate) => candidate.id === groupId)
+  if (group === undefined) return layout
+  const groups = layout.groups.filter((candidate) => candidate.id !== groupId)
+  if (layout.active !== groupId) return { ...layout, groups }
+  const focused = paneList(group.panes.root).find((leaf) => leaf.id === group.panes.focused) ?? paneList(group.panes.root)[0]
+  return { groups, active: null, single: focused === undefined ? layout.single : singlePane(focused.item, focused.id) }
+}
+
+/** The group and its panes close (the items stay in the sidebar); a shown one gives way to `fallback`. */
+export function closeGroup(layout: Layout, groupId: string, fallback: { id: string; item: string }): Layout {
+  if (!layout.groups.some((group) => group.id === groupId)) return layout
+  const groups = layout.groups.filter((group) => group.id !== groupId)
+  if (layout.active !== groupId) return { ...layout, groups }
+  return { groups, active: null, single: singlePane(fallback.item, fallback.id) }
+}
+
+/** The pane showing `item` closes wherever it is; the single pane shows `fallback` instead. */
+export function removeLayoutItem(layout: Layout, item: string, fallback: { id: string; item: string }): Layout {
+  const group = groupOfItem(layout, item)
+  if (group === null) {
+    if (paneList(layout.single.root).some((leaf) => leaf.item === item)) return { ...layout, single: singlePane(fallback.item, fallback.id) }
+    return layout
+  }
+  const leaf = paneList(group.panes.root).find((candidate) => candidate.item === item)
+  if (leaf === undefined) return layout
+  if (group.id === layout.active) return changeShown(layout, (panes) => closePane(panes, leaf.id), group.id)
+  const kept = stripItems(group, new Set([item]))
+  return { ...layout, groups: kept === null ? layout.groups.filter((candidate) => candidate.id !== group.id) : layout.groups.map((candidate) => (candidate.id === group.id ? kept : candidate)) }
+}
+
+export function presetsFor(count: number): Preset[] {
+  return count < 3 ? ['row', 'column'] : ['row', 'column', 'grid', 'main']
+}
+
+const even = (count: number) => Array.from({ length: count }, () => 1 / count)
+
+function line(id: string, direction: 'row' | 'column', children: PaneNode[]): PaneNode {
+  return { type: 'split', id, direction, children, sizes: even(children.length) }
+}
+
+/** The members, in order, laid out by `preset`; split ids start with `idBase`. */
+export function presetTree(leaves: PaneLeaf[], preset: Preset, idBase: string): PaneNode {
+  if (leaves.length === 1 && leaves[0] !== undefined) return leaves[0]
+  let tree: PaneNode
+  if (preset === 'row' || preset === 'column') tree = line(`${idBase}-${preset}`, preset, leaves)
+  else if (preset === 'main') {
+    const [first, ...rest] = leaves
+    tree = first === undefined ? line(`${idBase}-row`, 'row', leaves) : { type: 'split', id: `${idBase}-main`, direction: 'row', children: [first, line(`${idBase}-rest`, 'column', rest)], sizes: [0.5, 0.5] }
+  } else {
+    const columns = leaves.length <= 4 ? 2 : 3
+    const rows: PaneNode[] = []
+    for (let index = 0; index < leaves.length; index += columns) rows.push(line(`${idBase}-r${index / columns}`, 'row', leaves.slice(index, index + columns)))
+    tree = line(`${idBase}-grid`, 'column', rows)
+  }
+  return normalise(tree) ?? tree
+}
+
+/** Lays group `groupId` out again by `preset`, keeping its panes, focus and name. */
+export function arrangeGroup(layout: Layout, groupId: string, preset: Preset): Layout {
+  return {
+    ...layout,
+    groups: layout.groups.map((group) => (group.id === groupId ? { ...group, panes: { ...group.panes, root: presetTree(paneList(group.panes.root), preset, group.id) } } : group)),
+  }
+}
+
+/** Open in split: the items, in order, become one shown group (grid by default; two side by side), leaving any group they were in. */
+export function splitItems(layout: Layout, items: string[], groupId: string, paneIds: string[], preset: Preset = 'grid'): Layout {
+  const unique = [...new Set(items)]
+  if (unique.length < 2) return layout
+  const leaves: PaneLeaf[] = unique.map((item, index) => ({ type: 'pane', id: paneIds[index] ?? `${groupId}-p${index}`, item }))
+  const panes: Panes = { root: presetTree(leaves, preset, groupId), focused: leaves[0]?.id ?? '' }
+  const members = new Set(unique)
+  const groups = layout.groups.flatMap((group) => {
+    const kept = stripItems(group, members)
+    return kept === null ? [] : [kept]
+  })
+  return { groups: [...groups, { id: groupId, name: null, panes }], active: groupId, single: layout.single }
+}
+
+/** Whether every pane of a split tree is at least the minimum size in an area of that many pixels; one pane always fits. */
+export function fits(root: PaneNode, area: { width: number; height: number }): boolean {
+  if (root.type === 'pane') return true
+  const epsilon = 1e-6
+  return paneRects(root).panes.every(({ rect }) => rect.width * area.width >= minPaneWidth - epsilon && rect.height * area.height >= minPaneHeight - epsilon)
+}
+
+/**
+ * Split right or down from the focused pane: `item` opens beside it, or `launcher` when the focused
+ * pane already shows `item`. Null when a pane would go under the minimum in `area`.
+ */
+export function splitBeside(layout: Layout, item: string, edge: Extract<Edge, 'right' | 'bottom'>, launcher: string, ids: { pane: string; group: string }, area: { width: number; height: number }): Layout | null {
+  const shown = shownPanes(layout)
+  const focusedItem = paneList(shown.root).find((leaf) => leaf.id === shown.focused)?.item
+  const next = dropItem(shown, focusedItem === item ? launcher : item, shown.focused, edge, ids.pane)
+  if (next === shown || !fits(next.root, area)) return null
+  return changeShown(layout, () => next, ids.group)
+}
+
+/** Drops the panes whose item no longer exists, from every group and the single pane. */
+export function pruneLayout(layout: Layout, exists: (item: string) => boolean, fallback: { id: string; item: string }): Layout {
+  const gone = new Set([...layout.groups.flatMap((group) => paneList(group.panes.root)), ...paneList(layout.single.root)].map((leaf) => leaf.item).filter((item) => !exists(item)))
+  if (gone.size === 0) return layout
+  let next = layout
+  for (const item of gone) next = removeLayoutItem(next, item, fallback)
+  return next
+}
+
+const storageVersion = 2
+
+export function serialiseLayout(layout: Layout): string {
+  return JSON.stringify({ version: storageVersion, groups: layout.groups, active: layout.active, single: layout.single })
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** Stored panes read with the plain layout's own reader, which validates and normalises them. */
+const readPanes = (value: unknown): Panes | null => (isRecord(value) ? parsePanes(JSON.stringify({ ...value, version: 1 })) : null)
+
+/**
+ * A stored layout, or null when there is none or it is unreadable. A layout saved before groups
+ * existed reads as one group (`groupId`) when split. Groups of one member, and an item's second
+ * group, are dropped.
+ */
+export function parseLayout(raw: string | null, groupId: string): Layout | null {
+  if (raw === null) return null
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isRecord(value)) return null
+  if (value.version === 1) {
+    const panes = parsePanes(raw)
+    return panes === null ? null : layoutOf(panes, groupId)
+  }
+  if (value.version !== storageVersion || !Array.isArray(value.groups)) return null
+  const single = readPanes(value.single)
+  if (single === null || leafCount(single) !== 1) return null
+  const groups: SplitGroup[] = []
+  const taken = new Set<string>()
+  for (const entry of value.groups) {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || groups.some((group) => group.id === entry.id)) continue
+    const panes = readPanes(entry.panes)
+    if (panes === null) continue
+    const items = paneList(panes.root).map((leaf) => leaf.item)
+    if (items.length < 2 || items.some((item) => taken.has(item))) continue
+    for (const item of items) taken.add(item)
+    groups.push({ id: entry.id, name: typeof entry.name === 'string' && entry.name.trim() !== '' ? entry.name : null, panes })
+  }
+  const active = typeof value.active === 'string' && groups.some((group) => group.id === value.active) ? value.active : null
+  return { groups, active, single }
+}

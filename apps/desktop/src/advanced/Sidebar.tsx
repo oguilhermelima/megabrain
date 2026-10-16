@@ -14,6 +14,8 @@ import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { applyRowOrder, moveRow, parseRowOrder, rowToOpen, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
+import { GroupRowView, SpanningSplits, useSplitRows } from '@/advanced/SplitRows'
+import type { GroupRow } from '@/advanced/split-rows'
 import { ContextMenu, menuFrom, openMenuFromKeyboard, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
@@ -568,8 +570,51 @@ function WorktreeRow({
   onCode: () => void
 }) {
   const running = worktree.sessions.some(live)
-  const shown = applyRowOrder(worktreeItems(chats, terminals, worktree.sessions), rowControls.order[worktree.path] ?? [])
+  const splits = useSplitRows()
+  const ordered = applyRowOrder(worktreeItems(chats, terminals, worktree.sessions), rowControls.order[worktree.path] ?? [])
+  const itemOfRow = (item: KeyedItem): string | null => splits?.itemOf(item.kind === 'native' ? { kind: 'native', chat: item.chat } : item.kind === 'terminal' ? { kind: 'terminal', terminal: item.terminal } : { kind: 'session', session: item.session }) ?? null
+  // A split's members show as its one row, where its first member's row was; a split with none of
+  // its members' rows here goes on top. Members of a split shown elsewhere hide here too.
+  const groupsHere = splits?.byWorktree.get(worktree.path) ?? noGroups
+  const groupOfRow = (item: KeyedItem): GroupRow | null => {
+    const key = itemOfRow(item)
+    return key === null ? null : (groupsHere.find((row) => row.members.some((member) => member.item === key)) ?? null)
+  }
+  const shown = ordered.filter((item) => {
+    const key = itemOfRow(item)
+    return key === null || !(splits?.members.has(key) ?? false)
+  })
+  const anchored = new Map<string, GroupRow[]>()
+  for (const item of ordered) {
+    const group = groupOfRow(item)
+    if (group !== null && ![...anchored.values()].flat().includes(group)) anchored.set(item.key, [...(anchored.get(item.key) ?? []), group])
+  }
+  const loose = groupsHere.filter((row) => ![...anchored.values()].flat().includes(row))
+  const groupRowsAt = (key: string | null) =>
+    (key === null ? loose : (anchored.get(key) ?? noGroups)).map((row) => (
+      <div key={row.id} className="sidebar-row-in relative">
+        <GroupRowView row={row} indent="worktree" onMenu={onMenu} end={(items) => <MoreButton label={`Manage ${row.title}`} onClick={(event) => onMenu(event, items)} />} />
+      </div>
+    ))
   const keys = shown.map((item) => item.key)
+  // Split right or down, and Open in split for the rows picked with ⌘-click, go first in a row's menu.
+  const withSplit = (item: KeyedItem, items: MenuItem[]) => {
+    const key = itemOfRow(item)
+    return key === null || splits === null ? items : [...splits.rowMenu(key), ...items]
+  }
+  const pickRow = (item: KeyedItem) => (event: MouseEvent<HTMLElement>) => {
+    const key = itemOfRow(item)
+    if (key === null || splits === null) return
+    if (event.metaKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      splits.pick(key, true)
+    } else if (splits.selected.size > 0) splits.pick(key, false)
+  }
+  const picked = (item: KeyedItem) => {
+    const key = itemOfRow(item)
+    return key !== null && (splits?.selected.has(key) ?? false)
+  }
   const openItem = (item: KeyedItem) => {
     if (item.kind === 'native') onSelectChat(item.chat)
     else if (item.kind === 'terminal') terminalRows.select(item.terminal)
@@ -584,7 +629,7 @@ function WorktreeRow({
   const renderItem = (item: KeyedItem, drag: RowDragger) => {
     if (item.kind === 'native') {
       const { chat } = item
-      return <NativeChatRow chat={chat} session={item.session} selected={chat.id === selectedChatId} now={now} onSelect={() => onSelectChat(chat)} menuItems={chatItems(chat)} onMenu={onMenu} onClose={(live) => rowControls.close({ kind: 'native', chat: live })} onDrag={drag} />
+      return <NativeChatRow chat={chat} session={item.session} selected={chat.id === selectedChatId} now={now} onSelect={() => onSelectChat(chat)} menuItems={withSplit(item, chatItems(chat))} onMenu={onMenu} onClose={(live) => rowControls.close({ kind: 'native', chat: live })} onDrag={drag} />
     }
     if (item.kind === 'terminal') {
       const { terminal } = item
@@ -597,7 +642,7 @@ function WorktreeRow({
           renaming={terminal.id === terminalRows.renamingId}
           onSelect={() => terminalRows.select(terminal)}
           onRename={(name) => terminalRows.rename(terminal, name)}
-          menuItems={terminalRows.items(terminal)}
+          menuItems={withSplit(item, terminalRows.items(terminal))}
           onMenu={onMenu}
           onClose={() => rowControls.close({ kind: 'terminal', terminal })}
           onDrag={drag}
@@ -611,7 +656,7 @@ function WorktreeRow({
         selected={session.sessionId === selectedSessionId}
         now={now}
         onSelect={() => onSelectSession(session)}
-        menuItems={sessionItems(session)}
+        menuItems={withSplit(item, sessionItems(session))}
         onMenu={onMenu}
         onClose={ownership(session).owned ? () => rowControls.close({ kind: 'session', session }) : null}
         onDrag={drag}
@@ -660,17 +705,27 @@ function WorktreeRow({
         </RowActions>
       </div>
       <div data-worktree-rows={worktree.path} className="space-y-0.5">
-        {shown.map((item) => {
+        {groupRowsAt(null)}
+        {ordered.map((item) => {
+          const groups = groupRowsAt(item.key)
+          if (!shown.includes(item)) return groups
           const drag: RowDragger = (event, row) => {
             onDrag(event, row)
             rowControls.start(event, worktree.path, item.key, keys)
           }
-          return (
-            <div key={item.key} data-row-key={item.key} className={`sidebar-row-in relative ${rowControls.dragging === item.key ? 'opacity-50' : ''}`}>
+          return [
+            ...groups,
+            <div
+              key={item.key}
+              data-row-key={item.key}
+              onClickCapture={pickRow(item)}
+              aria-selected={picked(item) ? 'true' : undefined}
+              className={`sidebar-row-in relative rounded-[12px] ${rowControls.dragging === item.key ? 'opacity-50' : ''} ${picked(item) ? 'ring-1 ring-accent/60 ring-inset' : ''}`}
+            >
               {rowControls.edge?.key === item.key && <DropLine edge={rowControls.edge.placement} />}
               {renderItem(item, drag)}
-            </div>
-          )
+            </div>,
+          ]
         })}
       </div>
     </div>
@@ -678,6 +733,7 @@ function WorktreeRow({
 }
 
 const noCreations: PendingWorktree[] = []
+const noGroups: GroupRow[] = []
 
 /** What every pending worktree row needs; the same object every render. */
 interface CreationRows {
@@ -1763,6 +1819,7 @@ export const Sidebar = memo(function Sidebar({
           </div>
         )}
         {!loaded && loadError === null && projects.length === 0 && <SidebarSkeleton />}
+        <SpanningSplits onMenu={openMenu} end={(items) => <MoreButton label="Manage split" onClick={(event) => openMenu(event, items)} />} />
         {layoutError !== null && (
           <div className="px-1">
             <ErrorNote error={layoutError} />

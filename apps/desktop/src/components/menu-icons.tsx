@@ -34,6 +34,11 @@ const paths = {
   stop: 'M4.5 3.5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z',
   release: 'M6.5 9.5 9.5 6.5M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1',
   archive: 'M2.5 3h11v3h-11ZM3.5 6v6.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M6.5 8.75h3',
+  splitRight: 'M2.5 3.5h11v9h-11ZM8 3.5v9',
+  splitDown: 'M2.5 3.5h11v9h-11ZM2.5 8h11',
+  splitGrid: 'M2.5 3.5h11v9h-11ZM8 3.5v9M2.5 8h11',
+  splitMain: 'M2.5 3.5h11v9h-11ZM7 3.5v9M7 8h6.5',
+  unsplit: 'M2 3.5h4.5v9H2ZM9.5 3.5H14v9H9.5Z',
   trash: 'M2.5 4.5h11M6 4.5V3a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1',
 } as const
 

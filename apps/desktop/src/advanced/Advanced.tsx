@@ -43,12 +43,18 @@ import { announceAction } from '@/lib/app-events'
 import { usePoll } from '@/lib/usePoll'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { useStatus } from '@/lib/useStatus'
-import { chatsByWorktree } from '@/native-chat/chat-model'
+import { chatsByWorktree, rowStatus } from '@/native-chat/chat-model'
 import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, focusDirection, movePane, itemKey, openItem, paneList, paneOfItem, paneRects, parseItem, parsePanes, pruneItems, removeItem, replaceItem, serialisePanes, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
+import { closePane, dropItem, focusDirection, movePane, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
+import { arrangeGroup, changeShown, closeGroup, fits, focusGroup, layoutOf, minPaneHeight, minPaneWidth, openLayoutItem, parseLayout, presetsFor, presetTree, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shownPanes, splitBeside, splitItems, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
+import { paneShortcut } from '@/panes/shortcuts'
+import { groupRows, groupsByPlace, type GroupRow, type MemberInfo } from '@/advanced/split-rows'
+import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
+import type { MenuItem } from '@/components/ContextMenu'
+import { Toast, type ToastMessage } from '@/components/Toast'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
@@ -99,17 +105,18 @@ const noProjects: Project[] = []
 const panesKey = 'megabrain.panes'
 
 const newPaneId = () => `pane-${crypto.randomUUID()}`
+const newGroupId = () => `group-${crypto.randomUUID()}`
 const newLauncher = () => itemKey('launcher', crypto.randomUUID())
 
-/** The layout this viewer left, or one pane with the launcher. Items that are gone are dropped once the lists load. */
-function storedPanes(): Panes {
+/** The layout and split groups this viewer left, or one pane with the launcher. Items that are gone are dropped once the lists load. */
+function storedLayout(): Layout {
   try {
-    const stored = parsePanes(localStorage.getItem(panesKey))
+    const stored = parseLayout(localStorage.getItem(panesKey), newGroupId())
     if (stored !== null) return stored
   } catch {
     // A remembered layout is a convenience; one pane is fine.
   }
-  return singlePane(newLauncher(), newPaneId())
+  return layoutOf(singlePane(newLauncher(), newPaneId()), newGroupId())
 }
 
 const terminalIdsKey = 'megabrain.terminals.ids'
@@ -144,8 +151,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const projects = useMemo(() => applyOrder(listed, flattenLayout(layout)), [listed, layout])
   // Chats are grouped by the repository of their worktree; the projects list already names it.
   const worktrees = useMemo(() => worktreeRepositories(listed), [listed])
-  // The main area's panes, each showing one item; the sidebar follows the focused one.
-  const [panes, setPanes] = useState<Panes>(storedPanes)
+  // The split groups and the single pane; the main area shows one of them, each pane one item, and
+  // the sidebar follows the focused one.
+  const [paneLayout, setLayout] = useState<Layout>(storedLayout)
+  const panes = shownPanes(paneLayout)
+  /** A pane operation on what is shown; it may make a split group or dissolve one (see changeShown). */
+  const setPanes = (change: (current: Panes) => Panes) => setLayout((current) => changeShown(current, change, newGroupId()))
   const [pruned, setPruned] = useState(false)
   // The view each item's pane shows (see the action bar); an item not listed shows its initialView.
   const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
@@ -222,7 +233,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   /** Shows an item: the pane that has it gets focus, else the focused pane shows it. */
   const showItem = (item: string) => {
     setGithubPage(null)
-    setPanes((current) => openItem(current, item))
+    setLayout((current) => openLayoutItem(current, item))
   }
 
   const openSession = (session: ProjectSession, worktreePath: string) => {
@@ -300,7 +311,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     const leaves = paneList(panes.root).filter((leaf) => hasActionBar(leaf.item) && rootOf(leaf.item) === root)
     const leaf = leaves.find((candidate) => candidate.id === panes.focused) ?? leaves[0]
     const item = leaf?.item ?? itemKey('code', root)
-    if (leaf === undefined) setPanes((current) => openItem(current, item))
+    if (leaf === undefined) setLayout((current) => openLayoutItem(current, item))
     else focusItem(item)
     setPaneViews((current) => ({ ...current, [item]: 'code' }))
   }
@@ -322,9 +333,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     const launcher = newLauncher()
     const root = rootOf(item)
     if (root !== null) setLauncherClicked((current) => ({ ...current, [launcher]: root }))
-    setPanes((current) => {
-      const pane = paneOfItem(current, item)
-      return pane === null ? openItem(current, launcher) : replaceItem(current, pane.id, launcher)
+    setLayout((current) => {
+      const pane = paneOfItem(shownPanes(current), item)
+      return pane === null ? openLayoutItem(current, launcher) : changeShown(current, (shown) => replaceItem(shown, pane.id, launcher), newGroupId())
     })
   }
 
@@ -349,9 +360,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   /** What a launcher started takes the launcher's own pane, whichever pane is focused. */
   const replaceLauncher = (launcher: string | null, item: string) => {
     setGithubPage(null)
-    setPanes((current) => {
-      const pane = launcher === null ? null : paneOfItem(current, launcher)
-      return pane === null ? openItem(current, item) : replaceItem(current, pane.id, item)
+    setLayout((current) => {
+      const pane = launcher === null ? null : paneOfItem(shownPanes(current), launcher)
+      return pane === null ? openLayoutItem(current, item) : changeShown(current, (shown) => replaceItem(shown, pane.id, item), newGroupId())
     })
   }
   const chatStarted = (launcher: string, chat: NativeChat) => {
@@ -405,13 +416,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     if (call !== null) await api.closeTerminal(call.id, call.kill ? { kill: true } : undefined)
     forgetTerminal(terminal.id)
     setTerminals((current) => removeTerminal(current, terminal.id))
-    setPanes((current) => removeItem(current, itemKey('terminal', terminal.id), newLauncher()))
+    setLayout((current) => removeLayoutItem(current, itemKey('terminal', terminal.id), { id: newPaneId(), item: newLauncher() }))
   })
   const closeChat = async (chat: NativeChat) => {
     await api.removeChat(chat.id)
     dropChat(chat.id)
     if (startedChat?.id === chat.id) setStartedChat(null)
-    setPanes((current) => removeItem(current, itemKey('native', chat.id), newLauncher()))
+    setLayout((current) => removeLayoutItem(current, itemKey('native', chat.id), { id: newPaneId(), item: newLauncher() }))
   }
   // A row's close (its x, its menu or ⌘W on its pane): what still runs is asked about first. A close
   // that needs no question runs at once, and its refusal is the caller's to show.
@@ -479,11 +490,140 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     closePaneById(panes.focused)
     return Promise.resolve()
   })
+  // Split groups in the sidebar: each member described for its group's row (see split-rows.ts).
+  const worktreeOfItem = (item: string): string | null => {
+    const parsed = parseItem(item)
+    if (parsed === null) return null
+    const keyOf = <T,>(lists: Record<string, T[]>, has: (entry: T) => boolean) => Object.entries(lists).find(([, list]) => list.some(has))?.[0] ?? null
+    switch (parsed.kind) {
+      case 'native':
+        return keyOf(chatsInWorktrees, (chat) => chat.id === parsed.id)
+      case 'terminal':
+        return keyOf(terminalsInWorktrees, (terminal) => terminal.id === parsed.id)
+      default: {
+        const root = rootOf(item)
+        return root === null || root === '' ? null : root
+      }
+    }
+  }
+  const describeItem = (item: string): MemberInfo => {
+    const parsed = parseItem(item)
+    const worktree = worktreeOfItem(item)
+    if (parsed === null) return { title: 'Unknown', mark: { kind: 'launcher' }, state: 'ended', worktree }
+    switch (parsed.kind) {
+      case 'dispatch': {
+        const chat = status?.dispatches.find((entry) => entry.dispatchId === parsed.id)
+        const session = sessionRows.find((row) => row.session.dispatchId === parsed.id)?.session
+        return { title: chat?.label ?? session?.title ?? parsed.id, mark: { kind: 'agent', agent: chat?.agent ?? session?.agent ?? 'claude' }, state: session?.status ?? 'idle', worktree }
+      }
+      case 'session': {
+        const session = findSession(parsed.id)?.session
+        return { title: session?.title ?? 'Session', mark: { kind: 'agent', agent: session?.agent ?? parsed.id.split(':', 1)[0] ?? 'claude' }, state: session?.status ?? 'ended', worktree }
+      }
+      case 'native': {
+        const chat = nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null)
+        return { title: chat?.title ?? 'New chat', mark: { kind: 'agent', agent: chat?.agent ?? 'claude' }, state: chat === null ? 'ended' : rowStatus(chat.state), worktree }
+      }
+      case 'terminal': {
+        const terminal = terminals.find((entry) => entry.id === parsed.id)
+        const state = terminal === undefined ? 'ended' : terminal.status === 'starting' ? 'working' : terminal.status === 'live' ? 'idle' : 'ended'
+        return { title: terminal === undefined ? 'Terminal' : terminalLabel(terminal), mark: { kind: 'terminal' }, state, worktree }
+      }
+      // A launcher's worktree is only its current pick, so it does not decide where its group sits.
+      case 'launcher':
+        return { title: 'New chat', mark: { kind: 'launcher' }, state: 'idle', worktree: null }
+      case 'github': {
+        const target = parseGithubItemId(parsed.id)
+        return { title: target === null ? 'GitHub' : `${target.kind === 'pr' ? 'Pull request' : 'Issue'} #${target.number}`, mark: { kind: 'github' }, state: 'idle', worktree }
+      }
+      case 'code':
+        return { title: codeTargetForRoot(projects, parsed.id).title, mark: { kind: 'code' }, state: 'idle', worktree }
+    }
+  }
+  // The pixels the panes share, so a split or a layout that would make a pane too small is refused.
+  const paneAreaRef = useRef<HTMLDivElement>(null)
+  const areaSize = () => {
+    const rect = paneAreaRef.current?.getBoundingClientRect()
+    return rect === undefined ? { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY } : { width: rect.width, height: rect.height }
+  }
+  const [splitNote, setSplitNote] = useState<ToastMessage | null>(null)
+  const sayTooSmall = (what: string) => setSplitNote({ id: crypto.randomUUID(), text: `No room: ${what} needs every pane at least ${minPaneWidth} × ${minPaneHeight} px.` })
+  const closeSplitNote = useStableCallback(() => setSplitNote(null))
+  const arrange = (row: GroupRow, preset: Preset) => {
+    const group = paneLayout.groups.find((candidate) => candidate.id === row.id)
+    if (group === undefined) return
+    if (!fits(presetTree(paneList(group.panes.root), preset, group.id), areaSize())) {
+      sayTooSmall(`${presetNames[preset]} with ${row.members.length} panes`)
+      return
+    }
+    setLayout((current) => focusGroup(arrangeGroup(current, row.id, preset), row.id))
+  }
+  const focusSplit = useStableCallback((groupId: string) => {
+    setGithubPage(null)
+    setLayout((current) => focusGroup(current, groupId))
+  })
+  const focusSplitMember = useStableCallback((groupId: string, item: string) => {
+    setGithubPage(null)
+    setLayout((current) => focusGroup(current, groupId, item))
+  })
+  const renameSplit = useStableCallback((groupId: string, name: string) => setLayout((current) => renameGroup(current, groupId, name)))
+  const splitGroupMenu = useStableCallback((row: GroupRow, startRename: () => void): MenuItem[] => [
+    ...presetsFor(row.members.length).map((preset): MenuItem => ({ label: presetNames[preset], icon: presetIcons[preset], group: 'open', onSelect: () => arrange(row, preset) })),
+    { label: 'Rename group', icon: 'rename', group: 'organise', onSelect: startRename },
+    { label: 'Unsplit', icon: 'unsplit', group: 'organise', onSelect: () => setLayout((current) => unsplitGroup(current, row.id)) },
+    { label: 'Close group', icon: 'close', group: 'danger', onSelect: () => setLayout((current) => closeGroup(current, row.id, { id: newPaneId(), item: newLauncher() })) },
+  ])
+  const splitItemOf = useStableCallback((row: SidebarDrag): string | null => {
+    if (row.kind === 'native') return itemKey('native', row.chat.id)
+    if (row.kind === 'terminal') return itemKey('terminal', row.terminal.id)
+    return sessionItem(row.session)
+  })
+  // Split right or down from a row: the row's item opens beside the focused pane (a launcher when it
+  // is the focused pane's own item). ⌘D and ⌘⇧D do the same with a launcher.
+  const splitWith = (item: string | null, edge: 'right' | 'bottom') => {
+    const launcher = newLauncher()
+    const next = splitBeside(paneLayout, item ?? launcher, edge, launcher, { pane: newPaneId(), group: newGroupId() }, areaSize())
+    if (next === null) {
+      sayTooSmall(edge === 'right' ? 'splitting right' : 'splitting down')
+      return
+    }
+    setGithubPage(null)
+    setLayout(next)
+    const focused = shownPanes(next).focused
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(focused)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
+  }
+  // Rows picked with ⌘-click open together as one split, as Zen joins multi-selected tabs.
+  const [picks, setPicks] = useState<string[]>([])
+  const openInSplit = (items: string[]) => {
+    const unique = [...new Set(items)]
+    const ids = unique.map(() => newPaneId())
+    const preset: Preset = unique.length === 2 ? 'row' : 'grid'
+    if (!fits(presetTree(unique.map((item, index) => ({ type: 'pane', id: ids[index] ?? '', item })), preset, 'check'), areaSize())) {
+      sayTooSmall(`opening ${unique.length} panes`)
+      return
+    }
+    setGithubPage(null)
+    setPicks([])
+    setLayout((current) => splitItems(current, unique, newGroupId(), ids, preset))
+  }
+  const splitRowMenu = useStableCallback((item: string): MenuItem[] => {
+    const together = [...new Set([...picks, item])]
+    return [
+      ...(picks.length > 0 && together.length >= 2 ? [{ label: `Open ${together.length} in split`, icon: 'splitGrid', group: 'open', onSelect: () => openInSplit(together) } satisfies MenuItem] : []),
+      { label: 'Split right', icon: 'splitRight', group: 'open', onSelect: () => splitWith(item, 'right') },
+      { label: 'Split down', icon: 'splitDown', group: 'open', onSelect: () => splitWith(item, 'bottom') },
+    ]
+  })
+  const pickSplitRow = useStableCallback((item: string, add: boolean) => setPicks((current) => (!add ? [] : current.includes(item) ? current.filter((entry) => entry !== item) : [...current, item])))
   // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header moves.
   const drag = usePaneDrag((source, target) => {
     setGithubPage(null)
-    if (source.kind === 'pane') setPanes((current) => movePane(current, source.paneId, target.paneId, target.zone))
-    else setPanes((current) => dropItem(current, source.item, target.paneId, target.zone, newPaneId()))
+    const next = source.kind === 'pane' ? movePane(panes, source.paneId, target.paneId, target.zone) : dropItem(panes, source.item, target.paneId, target.zone, newPaneId())
+    if (target.zone !== 'center' && !fits(next.root, areaSize())) {
+      sayTooSmall('splitting here')
+      return
+    }
+    setPanes(() => next)
   })
   // A row from the sidebar starts a drag of the item it opens.
   const dragRow = useStableCallback((event: PointerEvent<HTMLElement>, row: SidebarDrag) => {
@@ -582,16 +722,16 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   useEffect(() => {
     if (pruned || !listsLoaded) return
     setPruned(true)
-    setPanes((current) => pruneItems(current, itemExists, { id: newPaneId(), item: newLauncher() }))
+    setLayout((current) => pruneLayout(current, itemExists, { id: newPaneId(), item: newLauncher() }))
   }, [pruned, listsLoaded])
 
   useEffect(() => {
     try {
-      localStorage.setItem(panesKey, serialisePanes(panes))
+      localStorage.setItem(panesKey, serialiseLayout(paneLayout))
     } catch {
       // A remembered layout is a convenience; the next launch starts with one pane.
     }
-  }, [panes])
+  }, [paneLayout])
 
   const render = (item: string): PaneContent => {
     const parsed = parseItem(item)
@@ -779,13 +919,18 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // They listen in the capture phase, so a terminal or an editor in a pane does not keep them.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!event.metaKey || event.shiftKey || event.ctrlKey) return
-      if (event.key.toLowerCase() === 'w' && !event.altKey) {
+      const shortcut = paneShortcut(event)
+      if (shortcut !== null && !settingsOpen) {
         event.preventDefault()
         event.stopPropagation()
-        closeFocused().catch(() => {})
+        // In a split ⌘W closes the focused pane and its item stays in the sidebar; alone it closes the item.
+        if (shortcut === 'close-pane') {
+          if (paneList(panes.root).length > 1) closePaneById(panes.focused)
+          else closeFocused().catch(() => {})
+        } else splitWith(null, shortcut === 'split-right' ? 'right' : 'bottom')
         return
       }
+      if (!event.metaKey || event.shiftKey || event.ctrlKey) return
       if (event.key.toLowerCase() === 't' && !event.altKey) {
         event.preventDefault()
         event.stopPropagation()
@@ -799,13 +944,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       event.stopPropagation()
       const next = focusDirection(panes, direction)
       if (next.focused === panes.focused) return
-      setPanes(next)
+      setPanes(() => next)
       // The keyboard goes with the focus: into the pane's terminal, composer or first field.
       requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(next.focused)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus())
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [runRoot, projects, panes])
+  }, [runRoot, projects, panes, paneLayout, settingsOpen])
 
   const runPanelRoots = Object.keys(runs.panels).filter((root) => runs.panels[root]?.tabs.length !== 0)
   const runPanelShown = runControls !== null && runControls.panel.open
@@ -823,44 +968,66 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       />
     ) : null
 
+  // Built here, after everything describing an item (rootOf) is declared.
+  const splitRowsValue = groupRows(paneLayout, describeItem)
+  const splitRowsSignature = JSON.stringify(splitRowsValue)
+  const splitRows = useMemo<SplitRowsValue>(() => {
+    const placed = groupsByPlace(splitRowsValue)
+    return {
+      byWorktree: placed.byWorktree,
+      spanning: placed.spanning,
+      members: new Set(splitRowsValue.flatMap((row) => row.members.map((member) => member.item))),
+      itemOf: splitItemOf,
+      focusGroup: focusSplit,
+      focusMember: focusSplitMember,
+      rename: renameSplit,
+      groupMenu: splitGroupMenu,
+      rowMenu: splitRowMenu,
+      selected: new Set(picks),
+      pick: pickSplitRow,
+    }
+  }, [splitRowsSignature, picks])
+
   const windowRow = windowRowJoin({ collapsed: sidebarCollapsed, covered: githubView !== null, panes: paneRects(panes.root).panes, hasTopBar: hasActionBar })
 
   return (
     <div className="relative flex h-full">
       <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
         <SidebarHeader onCollapse={toggleSidebarCollapsed} />
-        <Sidebar
-          loaded={projectsLoaded}
-          loadError={projectsError}
-          onRetryLoad={retryProjects}
-          projects={projects}
-          selectedSessionId={selectedSessionId}
-          onSelectSession={selectSidebarSession}
-          onCode={stableShowCode}
-          onImport={startImport}
-          layout={layout}
-          onLayout={stableLayout}
-          layoutError={layoutError}
-          filters={filters}
-          onFilters={changeFilters}
-          activeGithub={githubPage}
-          onGithub={openGithub}
-          chats={chatsInWorktrees}
-          selectedChatId={nativeChatId}
-          onSelectChat={selectNativeChat}
-          onNewChat={openNewChat}
-          onNewTerminal={openWorktreeTerminal}
-          terminals={terminalsInWorktrees}
-          selectedTerminalId={focusedTerminalId}
-          onSelectTerminal={selectTerminal}
-          onRenameTerminal={stableRenameTerminal}
-          onCloseRow={requestClose}
-          onDragRow={dragRow}
-          creations={creations}
-          onCreateWorktree={createWorktree}
-          onRetryCreation={retryWorktree}
-          onDismissCreation={dismissWorktree}
-        />
+        <SplitRowsContext.Provider value={splitRows}>
+          <Sidebar
+            loaded={projectsLoaded}
+            loadError={projectsError}
+            onRetryLoad={retryProjects}
+            projects={projects}
+            selectedSessionId={selectedSessionId}
+            onSelectSession={selectSidebarSession}
+            onCode={stableShowCode}
+            onImport={startImport}
+            layout={layout}
+            onLayout={stableLayout}
+            layoutError={layoutError}
+            filters={filters}
+            onFilters={changeFilters}
+            activeGithub={githubPage}
+            onGithub={openGithub}
+            chats={chatsInWorktrees}
+            selectedChatId={nativeChatId}
+            onSelectChat={selectNativeChat}
+            onNewChat={openNewChat}
+            onNewTerminal={openWorktreeTerminal}
+            terminals={terminalsInWorktrees}
+            selectedTerminalId={focusedTerminalId}
+            onSelectTerminal={selectTerminal}
+            onRenameTerminal={stableRenameTerminal}
+            onCloseRow={requestClose}
+            onDragRow={dragRow}
+            creations={creations}
+            onCreateWorktree={createWorktree}
+            onRetryCreation={retryWorktree}
+            onDismissCreation={dismissWorktree}
+          />
+        </SplitRowsContext.Provider>
         <footer className="shrink-0 border-t border-white/[0.07] px-2.5 py-2">
           <button
             type="button"
@@ -882,7 +1049,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         )}
         <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
           {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div ref={paneAreaRef} className="relative flex min-h-0 flex-1 flex-col">
             <PaneArea
               panes={panes}
               onPanes={setPanes}
@@ -942,6 +1109,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         </SlidePanel>
       )}
       <ConfirmDialog confirm={closeConfirm} onClose={() => setCloseConfirm(null)} />
+      <Toast toast={splitNote} onClose={closeSplitNote} />
       <ConfirmDialog confirm={runs.confirm} onClose={runs.dismissConfirm} />
       {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
       {settingsOverlay}
@@ -950,6 +1118,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 }
 
 const noDispatches: readonly Dispatch[] = []
+
+const presetNames: Record<Preset, string> = { row: 'Side by side', column: 'Stacked', grid: 'Grid', main: 'One large + column' }
+const presetIcons: Record<Preset, 'splitRight' | 'splitDown' | 'splitGrid' | 'splitMain'> = { row: 'splitRight', column: 'splitDown', grid: 'splitGrid', main: 'splitMain' }
 
 /** The items whose top bar carries the action bar, and so can show Code: all but a GitHub item. */
 const paneViewKinds: ReadonlySet<ItemKind> = new Set<ItemKind>(['dispatch', 'session', 'native', 'terminal', 'launcher', 'code'])
