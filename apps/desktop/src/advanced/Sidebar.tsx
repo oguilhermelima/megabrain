@@ -1,12 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { NativeChat, Project, ProjectSession, ProjectWorktree } from '@/api/schema'
-import { projectWorktreeRows, relativeAge, sortSessions } from '@/advanced/projects-model'
+import { projectWorktreeRows, relativeAge } from '@/advanced/projects-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { dropTarget, moveProject, reconcileOrder, stepProject, type Placement } from '@/advanced/project-order'
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
+import { applyRowOrder, moveRow, parseRowOrder, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { RowMenu, type MenuItem, type OpenMenu } from '@/advanced/RowMenu'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { FilterMenu, HeaderButton, SearchField, SearchIcon } from '@/advanced/SidebarTools'
@@ -51,6 +52,24 @@ function readCollapsed(): Set<string> {
     return raw === null ? new Set() : new Set(JSON.parse(raw) as string[])
   } catch {
     return new Set()
+  }
+}
+
+const rowOrderKey = 'megabrain.sidebar.rows'
+
+function readRowOrder(): RowOrder {
+  try {
+    return parseRowOrder(localStorage.getItem(rowOrderKey))
+  } catch {
+    return {}
+  }
+}
+
+function writeRowOrder(order: RowOrder) {
+  try {
+    localStorage.setItem(rowOrderKey, saveRowOrder(order))
+  } catch {
+    // Without storage the order lasts for this run.
   }
 }
 
@@ -172,6 +191,39 @@ function MoreButton({ label, onClick }: { label: string; onClick: (event: MouseE
   )
 }
 
+function CloseButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick()
+      }}
+      aria-label={label}
+      title={label}
+      className={rowAction}
+    >
+      <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+        <path d="M4 4l8 8M12 4l-8 8" />
+      </svg>
+    </button>
+  )
+}
+
+// On hover a row's age and status dot give their place to its … and its close, at the trailing edge.
+const hiddenOnHover = 'group-focus-within:invisible group-hover:invisible group-data-[menu-open]:invisible'
+
+/** The … and the close of a chat, session or terminal row, over the age and dot they replace on hover. */
+function RowEnd({ label, menuItems, onMenu, onClose }: { label: string; menuItems: MenuItem[]; onMenu: MenuOpener; onClose: (() => void) | null }) {
+  if (menuItems.length === 0 && onClose === null) return null
+  return (
+    <span className="absolute top-1/2 right-0.5 flex -translate-y-1/2 items-center">
+      {menuItems.length > 0 && <MoreButton label={`Manage ${label}`} onClick={(event) => onMenu(event, menuItems)} />}
+      {onClose !== null && <CloseButton label={`Close ${label}`} onClick={onClose} />}
+    </span>
+  )
+}
+
 /** Opens the project's pull request or issue page; the badge is the open count. */
 function GithubButton({ kind, label, count, active, last, onClick }: { kind: GithubKind; label: string; count: number | null; active: boolean; last: boolean; onClick: () => void }) {
   const badge = count === null ? null : countBadge(count)
@@ -249,9 +301,10 @@ function ClockIcon() {
  * An agent session under its worktree. One megabrain owns has a menu (right click or the … that
  * replaces the age on hover) that holds Release; other sessions have none.
  */
-function SessionRow({ session, selected, now, onSelect, menuItems, onMenu, onDrag }: { session: ProjectSession; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onDrag: RowDragger }) {
+function SessionRow({ session, selected, now, onSelect, menuItems, onMenu, onClose, onDrag }: { session: ProjectSession; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onClose: (() => void) | null; onDrag: RowDragger }) {
   const age = relativeAge(session.lastActivityAt, now)
   const hasMenu = menuItems.length > 0
+  const hasEnd = hasMenu || onClose !== null
   return (
     <div className="group relative" onContextMenu={hasMenu ? (event) => onMenu(event, menuItems) : undefined}>
       <button
@@ -269,14 +322,10 @@ function SessionRow({ session, selected, now, onSelect, menuItems, onMenu, onDra
         <AgentIcon agent={session.agent} className="shrink-0 text-ink-300" />
         <span className="min-w-0 flex-1 truncate">{session.title}</span>
         <TimerChip session={session} now={now} />
-        <span className={`w-[30px] shrink-0 text-right text-[11px] whitespace-nowrap text-ink-400 tabular-nums ${hasMenu ? 'group-focus-within:invisible group-hover:invisible group-data-[menu-open]:invisible' : ''}`}>{age}</span>
-        <span className={`size-1.5 shrink-0 rounded-full ${sessionDot[session.status]}`} aria-label={session.status} />
+        <span className={`w-[30px] shrink-0 text-right text-[11px] whitespace-nowrap text-ink-400 tabular-nums ${hasEnd ? hiddenOnHover : ''}`}>{age}</span>
+        <span className={`size-1.5 shrink-0 rounded-full ${sessionDot[session.status]} ${hasEnd ? hiddenOnHover : ''}`} aria-label={session.status} />
       </button>
-      {hasMenu && (
-        <span className="absolute top-1/2 right-[23px] -translate-y-1/2">
-          <MoreButton label={`Manage ${session.title}`} onClick={(event) => onMenu(event, menuItems)} />
-        </span>
-      )}
+      <RowEnd label={session.title} menuItems={menuItems} onMenu={onMenu} onClose={onClose} />
     </div>
   )
 }
@@ -287,15 +336,14 @@ const noChats: NativeChat[] = []
  * A native chat under its worktree: the same row as a session, with a badge while an approval
  * waits. Its menu (right click or the … that replaces the age on hover) holds Stop.
  */
-function NativeChatRow({ chat: listed, selected, now, onSelect, menuItems, onMenu, onDrag }: { chat: NativeChat; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onDrag: RowDragger }) {
+function NativeChatRow({ chat: listed, session, selected, now, onSelect, menuItems, onMenu, onClose, onDrag }: { chat: NativeChat; session: ProjectSession | null; selected: boolean; now: number; onSelect: () => void; menuItems: MenuItem[]; onMenu: MenuOpener; onClose: (chat: NativeChat) => void; onDrag: RowDragger }) {
   // An open view's follow knows a turn started before the next poll of the list does.
   const state = useChatState(listed)
   const chat = state === listed.state ? listed : { ...listed, state }
   const status = rowStatus(chat.state)
   const title = chat.title ?? 'New chat'
-  const hasMenu = menuItems.length > 0
   return (
-    <div className="group relative" onContextMenu={hasMenu ? (event) => onMenu(event, menuItems) : undefined}>
+    <div className="group relative" onContextMenu={(event) => onMenu(event, menuItems)}>
       <button
         type="button"
         onClick={onSelect}
@@ -308,17 +356,12 @@ function NativeChatRow({ chat: listed, selected, now, onSelect, menuItems, onMen
       >
         <AgentIcon agent={chat.agent} className="shrink-0 text-ink-300" />
         <span className="min-w-0 flex-1 truncate">{title}</span>
+        {session !== null && <TimerChip session={session} now={now} />}
         {chat.state === 'waiting-approval' && <span className="shrink-0 rounded-full bg-warn/[0.12] px-1.5 text-[10.5px] leading-4 font-medium text-warn">waiting</span>}
-        <span className={`w-[30px] shrink-0 text-right text-[11px] whitespace-nowrap text-ink-400 tabular-nums ${hasMenu ? 'group-focus-within:invisible group-hover:invisible group-data-[menu-open]:invisible' : ''}`}>
-          {relativeAge(chat.lastActivityAt ?? chat.createdAt, now)}
-        </span>
-        <span className={`size-1.5 shrink-0 rounded-full ${sessionDot[status]}`} aria-label={nativeStateLabel[chat.state]} />
+        <span className={`w-[30px] shrink-0 text-right text-[11px] whitespace-nowrap text-ink-400 tabular-nums ${hiddenOnHover}`}>{relativeAge(chat.lastActivityAt ?? chat.createdAt, now)}</span>
+        <span className={`size-1.5 shrink-0 rounded-full ${sessionDot[status]} ${hiddenOnHover}`} aria-label={nativeStateLabel[chat.state]} />
       </button>
-      {hasMenu && (
-        <span className="absolute top-1/2 right-[23px] -translate-y-1/2">
-          <MoreButton label={`Manage ${title}`} onClick={(event) => onMenu(event, menuItems)} />
-        </span>
-      )}
+      <RowEnd label={title} menuItems={menuItems} onMenu={onMenu} onClose={() => onClose(chat)} />
     </div>
   )
 }
@@ -334,15 +377,22 @@ const terminalStatus: Record<AppTerminal['status'], string> = { starting: 'start
  */
 function TerminalRow({
   terminal,
+  session,
+  now,
   selected,
   renaming,
   onSelect,
   onRename,
   menuItems,
   onMenu,
+  onClose,
   onDrag,
 }: {
+  onClose: () => void
   terminal: AppTerminal
+  /** The agent session a terminal resumed from Resume runs, when the projects list reports it. */
+  session: ProjectSession | null
+  now: number
   onDrag: RowDragger
   selected: boolean
   renaming: boolean
@@ -388,12 +438,11 @@ function TerminalRow({
       >
         <TerminalIcon className="shrink-0 text-ink-300" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="w-[30px] shrink-0 group-focus-within:invisible group-hover:invisible group-data-[menu-open]:invisible" />
-        <span className={`size-1.5 shrink-0 rounded-full ${terminalDot[terminal.status]}`} aria-label={terminalStatus[terminal.status]} />
+        {session !== null && <TimerChip session={session} now={now} />}
+        <span className={`w-[30px] shrink-0 ${hiddenOnHover}`} />
+        <span className={`size-1.5 shrink-0 rounded-full ${terminalDot[terminal.status]} ${hiddenOnHover}`} aria-label={terminalStatus[terminal.status]} />
       </button>
-      <span className="absolute top-1/2 right-[23px] -translate-y-1/2">
-        <MoreButton label={`Manage ${label}`} onClick={(event) => onMenu(event, menuItems)} />
-      </span>
+      <RowEnd label={label} menuItems={menuItems} onMenu={onMenu} onClose={onClose} />
     </div>
   )
 }
@@ -435,8 +484,11 @@ function WorktreeRow({
   terminals,
   terminalRows,
   onDrag,
+  rows: rowControls,
 }: {
   onDrag: RowDragger
+  /** Closing, ordering and dragging the rows; the same object while nothing about them changes. */
+  rows: ItemRows
   worktree: ProjectWorktree
   depth: number
   /** Terminals the app opened in this worktree. */
@@ -459,6 +511,45 @@ function WorktreeRow({
   onCode: () => void
 }) {
   const running = worktree.sessions.some(live)
+  const shown = applyRowOrder(worktreeItems(chats, terminals, worktree.sessions), rowControls.order[worktree.path] ?? [])
+  const keys = shown.map((item) => item.key)
+  const renderItem = (item: KeyedItem, drag: RowDragger) => {
+    if (item.kind === 'native') {
+      const { chat } = item
+      return <NativeChatRow chat={chat} session={item.session} selected={chat.id === selectedChatId} now={now} onSelect={() => onSelectChat(chat)} menuItems={chatItems(chat)} onMenu={onMenu} onClose={(live) => rowControls.close({ kind: 'native', chat: live })} onDrag={drag} />
+    }
+    if (item.kind === 'terminal') {
+      const { terminal } = item
+      return (
+        <TerminalRow
+          terminal={terminal}
+          session={item.session}
+          now={now}
+          selected={terminal.id === terminalRows.selectedId}
+          renaming={terminal.id === terminalRows.renamingId}
+          onSelect={() => terminalRows.select(terminal)}
+          onRename={(name) => terminalRows.rename(terminal, name)}
+          menuItems={terminalRows.items(terminal)}
+          onMenu={onMenu}
+          onClose={() => rowControls.close({ kind: 'terminal', terminal })}
+          onDrag={drag}
+        />
+      )
+    }
+    const { session } = item
+    return (
+      <SessionRow
+        session={session}
+        selected={session.sessionId === selectedSessionId}
+        now={now}
+        onSelect={() => onSelectSession(session)}
+        menuItems={sessionItems(session)}
+        onMenu={onMenu}
+        onClose={ownership(session).owned ? () => rowControls.close({ kind: 'session', session }) : null}
+        onDrag={drag}
+      />
+    )
+  }
   const name = worktree.branch === null ? `Detached HEAD at ${worktree.head ?? ''}` : worktree.branch
   const prState = worktreePullRequestState(worktree.pullRequest)
   const prColor = prState === null ? null : stateColors[prState]
@@ -481,25 +572,20 @@ function WorktreeRow({
           <MoreButton label={`Manage ${name}`} onClick={(event) => onMenu(event, menuItems)} />
         </RowActions>
       </div>
-      {chats.map((chat) => (
-        <NativeChatRow key={chat.id} chat={chat} selected={chat.id === selectedChatId} now={now} onSelect={() => onSelectChat(chat)} menuItems={chatItems(chat)} onMenu={onMenu} onDrag={onDrag} />
-      ))}
-      {terminals.map((terminal) => (
-        <TerminalRow
-          key={terminal.id}
-          terminal={terminal}
-          selected={terminal.id === terminalRows.selectedId}
-          renaming={terminal.id === terminalRows.renamingId}
-          onSelect={() => terminalRows.select(terminal)}
-          onRename={(name) => terminalRows.rename(terminal, name)}
-          menuItems={terminalRows.items(terminal)}
-          onMenu={onMenu}
-          onDrag={onDrag}
-        />
-      ))}
-      {sortSessions(worktree.sessions).map((session) => (
-        <SessionRow key={session.sessionId} session={session} selected={session.sessionId === selectedSessionId} now={now} onSelect={() => onSelectSession(session)} menuItems={sessionItems(session)} onMenu={onMenu} onDrag={onDrag} />
-      ))}
+      <div data-worktree-rows={worktree.path} className="space-y-0.5">
+        {shown.map((item) => {
+          const drag: RowDragger = (event, row) => {
+            onDrag(event, row)
+            rowControls.start(event, worktree.path, item.key, keys)
+          }
+          return (
+            <div key={item.key} data-row-key={item.key} className={`relative ${rowControls.dragging === item.key ? 'opacity-50' : ''}`}>
+              {rowControls.edge?.key === item.key && <DropLine edge={rowControls.edge.placement} />}
+              {renderItem(item, drag)}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -571,11 +657,13 @@ const ProjectSection = memo(function ProjectSection({
   terminals,
   terminalRows,
   onDragRow,
+  itemRows,
   creations,
   creationRows,
   onNewWorktree,
 }: {
   onDragRow: RowDragger
+  itemRows: ItemRows
   /** Worktrees being created in this project. */
   creations: PendingWorktree[]
   creationRows: CreationRows
@@ -689,6 +777,7 @@ const ProjectSection = memo(function ProjectSection({
               terminals={terminals[worktree.path] ?? noTerminals}
               terminalRows={terminalRows}
               onDrag={onDragRow}
+              rows={itemRows}
             />
           ))}
           {creations.map((creation) => (
@@ -728,6 +817,17 @@ interface TerminalRows {
   select: (terminal: AppTerminal) => void
   rename: (terminal: AppTerminal, name: string | null) => void
   items: (terminal: AppTerminal) => MenuItem[]
+}
+
+/** What every chat, session and terminal row needs to close and be reordered; one object per change. */
+interface ItemRows {
+  close: (row: SidebarDrag) => void
+  /** Each worktree's saved row order. */
+  order: RowOrder
+  /** The row being dragged, and where it would land. */
+  dragging: string | null
+  edge: { key: string; placement: Placement } | null
+  start: (event: PointerEvent<HTMLElement>, worktreePath: string, key: string, shown: string[]) => void
 }
 
 interface RowActions {
@@ -796,7 +896,7 @@ export const Sidebar = memo(function Sidebar({
   selectedTerminalId,
   onSelectTerminal,
   onRenameTerminal,
-  onCloseTerminal,
+  onCloseRow,
   onDragRow,
   creations,
   onCreateWorktree,
@@ -817,8 +917,8 @@ export const Sidebar = memo(function Sidebar({
   selectedTerminalId: string | null
   onSelectTerminal: (terminal: AppTerminal) => void
   onRenameTerminal: (terminal: AppTerminal, name: string) => void
-  /** Ends the terminal; asked first here while it may still run. */
-  onCloseTerminal: (terminal: AppTerminal) => Promise<void>
+  /** Closes a chat, terminal or session row, asking first about what still runs; rejects with megabrain's refusal. */
+  onCloseRow: (row: SidebarDrag) => Promise<void>
   /** Native chats by worktree path. */
   chats: Record<string, NativeChat[]>
   selectedChatId: string | null
@@ -967,6 +1067,11 @@ export const Sidebar = memo(function Sidebar({
     api.setHidden(target, hidden).catch(setActionError)
   }, [])
 
+  const closeRow = useStableCallback((row: SidebarDrag) => {
+    setActionError(null)
+    onCloseRow(row).catch(setActionError)
+  })
+
   const actions = useMemo<RowActions>(() => ({
     code: onCode,
     project: (project) => [
@@ -1010,8 +1115,9 @@ export const Sidebar = memo(function Sidebar({
       return items
     },
     chat: (chat) => {
-      if (rowStatus(chat.state) === 'ended') return []
       const title = chat.title ?? 'New chat'
+      const close: MenuItem = { label: 'Close chat', danger: true, onSelect: () => closeRow({ kind: 'native', chat }) }
+      if (rowStatus(chat.state) === 'ended') return [close]
       return [
         {
           label: 'Stop chat…',
@@ -1024,25 +1130,14 @@ export const Sidebar = memo(function Sidebar({
               run: () => api.stopChat(chat.id).then(announceAction),
             }),
         },
+        close,
       ]
     },
     session: (session) => {
       if (!ownership(session).owned) return []
-      return [
-        {
-          label: 'Release from megabrain…',
-          danger: true,
-          onSelect: () =>
-            setConfirm({
-              title: `Release ${session.title}?`,
-              body: 'megabrain stops owning this session and closes its tmux session, which ends the agent running there. The conversation stays on disk and can be resumed again.',
-              action: 'Release',
-              run: () => api.releaseSession(session.sessionId),
-            }),
-        },
-      ]
+      return [{ label: 'Release from megabrain…', danger: true, onSelect: () => closeRow({ kind: 'session', session }) }]
     },
-  }), [onCode, onQuickView, setHidden, onNewTerminal])
+  }), [onCode, onQuickView, setHidden, onNewTerminal, closeRow])
 
   const [renamingTerminal, setRenamingTerminal] = useState<string | null>(null)
   const terminalRows = useMemo<TerminalRows>(() => ({
@@ -1055,27 +1150,64 @@ export const Sidebar = memo(function Sidebar({
     },
     items: (terminal) => [
       { label: 'Rename…', onSelect: () => setRenamingTerminal(terminal.id) },
-      {
-        label: 'Close terminal…',
-        danger: true,
-        onSelect: () => {
-          if (!closeNeedsConfirm(terminal)) {
-            onCloseTerminal(terminal).catch(setActionError)
-            return
-          }
-          setConfirm({
-            title: `Close ${terminalLabel(terminal)}?`,
-            body:
-              terminal.engine === 'tmux'
-                ? 'The app lets go of this terminal. Its tmux session keeps running on megabrain\'s tmux server, but the app does not list it again.'
-                : 'Its process may still be running. Closing the terminal ends it.',
-            action: 'Close terminal',
-            run: () => onCloseTerminal(terminal),
-          })
-        },
-      },
+      { label: closeNeedsConfirm(terminal) ? 'Close terminal…' : 'Close terminal', danger: true, onSelect: () => closeRow({ kind: 'terminal', terminal }) },
     ],
-  }), [selectedTerminalId, renamingTerminal, onSelectTerminal, onRenameTerminal, onCloseTerminal])
+  }), [selectedTerminalId, renamingTerminal, onSelectTerminal, onRenameTerminal, closeRow])
+
+  // Rows keep the order the person dragged them into, per worktree; new ones show on top.
+  const [rowOrder, setRowOrder] = useState<RowOrder>(readRowOrder)
+  const [rowDrag, setRowDrag] = useState<{ key: string; edge: { key: string; placement: Placement } | null } | null>(null)
+  const rowDragStart = useStableCallback((event: PointerEvent<HTMLElement>, worktreePath: string, key: string, shown: string[]) => {
+    if (event.button !== 0) return
+    const startY = event.clientY
+    let moving = false
+    const container = () => navRef.current?.querySelector<HTMLElement>(`[data-worktree-rows="${CSS.escape(worktreePath)}"]`) ?? null
+    // Only a pointer over this worktree's own rows reorders; anywhere else the pane drag decides.
+    const targetAt = (x: number, y: number) => {
+      const rows = container()
+      if (rows === null) return null
+      const box = rows.getBoundingClientRect()
+      if (x < box.left || x > box.right || y < box.top - 8 || y > box.bottom + 8) return null
+      const found = dropTarget(
+        [...rows.querySelectorAll<HTMLElement>(':scope > [data-row-key]')].map((element) => {
+          const rect = element.getBoundingClientRect()
+          return { path: element.dataset.rowKey ?? '', top: rect.top, bottom: rect.bottom }
+        }),
+        y,
+      )
+      return found === null || found.path === key ? null : { key: found.path, placement: found.placement }
+    }
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', stop)
+      setRowDrag(null)
+    }
+    const onMove = (move: globalThis.PointerEvent) => {
+      if (!moving && Math.abs(move.clientY - startY) < 4) return
+      moving = true
+      setRowDrag({ key, edge: targetAt(move.clientX, move.clientY) })
+    }
+    const onUp = (up: globalThis.PointerEvent) => {
+      stop()
+      if (!moving) return
+      const target = targetAt(up.clientX, up.clientY)
+      if (target === null) return
+      swallowNextClick()
+      setRowOrder((current) => {
+        const next = { ...current, [worktreePath]: moveRow(shown, key, target.key, target.placement) }
+        writeRowOrder(next)
+        return next
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', stop)
+  })
+  const itemRows = useMemo<ItemRows>(
+    () => ({ close: closeRow, order: rowOrder, dragging: rowDrag?.key ?? null, edge: rowDrag?.edge ?? null, start: rowDragStart }),
+    [closeRow, rowOrder, rowDrag, rowDragStart],
+  )
 
   return (
     <nav
@@ -1139,6 +1271,7 @@ export const Sidebar = memo(function Sidebar({
             terminals={terminals}
             terminalRows={terminalRows}
             onDragRow={onDragRow}
+            itemRows={itemRows}
             creations={creationsByProject[project.path] ?? noCreations}
             creationRows={creationRows}
             onNewWorktree={openNewWorktree}

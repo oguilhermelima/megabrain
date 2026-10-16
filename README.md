@@ -250,6 +250,8 @@ megabrain chat events <id> --follow --json
 Chats run without permission prompts. Add `--approvals` to `chat start` to be asked instead.
 
 `chat list --json` returns saved chats. Use `chat interrupt <id>` to stop the current turn,
+`chat remove <id> [--json]` to stop a chat and delete its record and transcript (the agent's own
+session log stays, so it can still be resumed),
 `chat approve <id> <approvalId> --decision allow|allow-session|deny` to answer a permission request,
 and `chat mode <id> terminal --json` to hand an idle chat to the app's terminal. The app gets the
 agent's resume arguments from `chat terminal-command <id> --json`.

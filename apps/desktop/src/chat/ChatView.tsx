@@ -7,7 +7,7 @@ import { ChatHeader } from '@/chat/ChatHeader'
 import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Mono } from '@/components/ui'
-import { Composer, type Notice } from '@/chat/Composer'
+import { Composer } from '@/chat/Composer'
 import { messagePartsToText } from '@/chat/composer-parts'
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -45,9 +45,10 @@ export const ChatView = memo(function ChatView({ chat, repository, onOpenChat, o
     if (element !== null) element.scrollTop = element.scrollHeight
   }, [read?.text])
 
-  const send = async (parts: MessagePart[]): Promise<Notice> => {
+  // A sent message shows in the conversation; only a failure needs words.
+  const send = async (parts: MessagePart[]): Promise<null> => {
     await api.reply(chat.dispatchId, messagePartsToText(parts))
-    return { tone: 'ok', text: 'Sent.' }
+    return null
   }
 
   const finding = chat.supervision.finding

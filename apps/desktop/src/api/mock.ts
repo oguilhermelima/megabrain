@@ -173,6 +173,7 @@ export function createMockApi(): DesktopApi {
     interruptChat: async (chatId) => interruptMockChat(chatId),
     answerApproval: async (chatId, _approvalId, decision) => answerMockApproval(chatId, decision),
     stopChat: async () => {},
+    removeChat: async () => {},
     setChatModel: async () => {},
     setChatMode: async (chatId, mode) => ({
       chat: { ...mockNativeChat, id: chatId, mode },

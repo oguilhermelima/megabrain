@@ -22,7 +22,8 @@ import { PaneSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
+import { ownership } from '@/chat/session-ownership'
 import { RunContext, type RunControls } from '@/run-panel/run-context'
 import { panelFor } from '@/run-panel/run-model'
 import { RunPanel } from '@/run-panel/RunPanel'
@@ -37,7 +38,7 @@ import { chatsByWorktree } from '@/native-chat/chat-model'
 import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
-import { addTerminal, closeCall, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
+import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, focusDirection, movePane, itemKey, openItem, paneList, paneOfItem, parseItem, parsePanes, pruneItems, removeItem, replaceItem, serialisePanes, singlePane, type Direction, type Panes } from '@/panes/pane-model'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { usePaneDrag } from '@/panes/usePaneDrag'
@@ -55,7 +56,7 @@ function Loading() {
   return <PaneSkeleton />
 }
 
-function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean } {
+function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean; dropChat: (id: string) => void } {
   const [projects, setProjects] = useState<Project[]>([])
   const [chats, setChats] = useState<NativeChat[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -72,7 +73,9 @@ function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: bool
     },
     [],
   )
-  return { projects, chats, loaded }
+  // A removed chat leaves the list at once instead of at the next poll.
+  const dropChat = useStableCallback((id: string) => setChats((previous) => previous.filter((chat) => chat.id !== id)))
+  return { projects, chats, loaded, dropChat }
 }
 
 const orderKey = 'megabrain.sidebar.order'
@@ -126,7 +129,7 @@ function storedSidebarCollapsed(): boolean {
 // live, and each project's code.
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
-  const { projects: listed, chats: nativeChats, loaded: projectsLoaded } = useProjects()
+  const { projects: listed, chats: nativeChats, loaded: projectsLoaded, dropChat } = useProjects()
   const [projectOrder, setProjectOrder] = useState<string[]>(storedOrder)
   // The order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
   const projects = useMemo(() => applyOrder(listed, projectOrder), [listed, projectOrder])
@@ -152,6 +155,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [extraSessions, setExtraSessions] = useState<Record<string, { session: ProjectSession; worktreePath: string }>>({})
   // A chat just started shows before the next poll lists it.
   const [startedChat, setStartedChat] = useState<NativeChat | null>(null)
+  // Closing a running chat, a live terminal or an owned session asks first.
+  const [closeConfirm, setCloseConfirm] = useState<PendingConfirm | null>(null)
   // Worktrees being created from a project's +, shown pending in the sidebar until megabrain lists them.
   const [creations, setCreations] = useState<PendingWorktree[]>([])
   // Every terminal the app opened in this run, plus the tmux ones a past run left running.
@@ -379,6 +384,50 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setTerminals((current) => removeTerminal(current, terminal.id))
     setPanes((current) => removeItem(current, itemKey('terminal', terminal.id), newLauncher()))
   })
+  const closeChat = async (chat: NativeChat) => {
+    await api.removeChat(chat.id)
+    dropChat(chat.id)
+    if (startedChat?.id === chat.id) setStartedChat(null)
+    setPanes((current) => removeItem(current, itemKey('native', chat.id), newLauncher()))
+  }
+  // A row's close (its x, its menu or ⌘W on its pane): what still runs is asked about first. A close
+  // that needs no question runs at once, and its refusal is the caller's to show.
+  const requestClose = useStableCallback(async (row: SidebarDrag): Promise<void> => {
+    if (row.kind === 'native') {
+      const { chat } = row
+      const title = chat.title ?? 'New chat'
+      if (chat.state !== 'working' && chat.state !== 'waiting-approval') return closeChat(chat)
+      setCloseConfirm({
+        title: `Close ${title}?`,
+        body: "A turn is running. Closing stops the agent and removes the chat from megabrain. The agent's own session stays, so Resume can still open it.",
+        action: 'Close chat',
+        run: () => closeChat(chat),
+      })
+      return
+    }
+    if (row.kind === 'terminal') {
+      const { terminal } = row
+      if (!closeNeedsConfirm(terminal)) return closeTerminal(terminal)
+      setCloseConfirm({
+        title: `Close ${terminalLabel(terminal)}?`,
+        body:
+          terminal.engine === 'tmux'
+            ? "The app lets go of this terminal. Its tmux session keeps running on megabrain's tmux server, but the app does not list it again."
+            : 'Its process may still be running. Closing the terminal ends it.',
+        action: 'Close terminal',
+        run: () => closeTerminal(terminal),
+      })
+      return
+    }
+    const { session } = row
+    if (!ownership(session).owned) return
+    setCloseConfirm({
+      title: `Release ${session.title}?`,
+      body: 'megabrain stops owning this session and closes its tmux session, which ends the agent running there. The conversation stays on disk and can be resumed again.',
+      action: 'Release',
+      run: () => api.releaseSession(session.sessionId),
+    })
+  })
   // A past chat megabrain already shows opens there; any other is resumed in its agent's TUI.
   const resumeChat = (launcher: string, session: HistorySession, launched: TerminalLaunch) => {
     const open = alreadyOpen(session, listed, nativeChats)
@@ -390,6 +439,23 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
   }
   const closePaneById = (paneId: string) => setPanes((current) => closePane(current, paneId))
+  // ⌘W closes what the focused pane shows, as its row's close would; anything else closes the pane.
+  const closeFocused = useStableCallback((): Promise<void> => {
+    if (focusedParsed?.kind === 'native') {
+      const chat = nativeChats.find((entry) => entry.id === focusedParsed.id) ?? (startedChat?.id === focusedParsed.id ? startedChat : null)
+      if (chat !== null) return requestClose({ kind: 'native', chat })
+    }
+    if (focusedParsed?.kind === 'terminal') {
+      const terminal = terminals.find((entry) => entry.id === focusedParsed.id)
+      if (terminal !== undefined) return requestClose({ kind: 'terminal', terminal })
+    }
+    if (focusedParsed?.kind === 'session') {
+      const found = findSession(focusedParsed.id)
+      if (found !== null && ownership(found.session).owned) return requestClose({ kind: 'session', session: found.session })
+    }
+    closePaneById(panes.focused)
+    return Promise.resolve()
+  })
   // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header moves.
   const drag = usePaneDrag((source, target) => {
     setQuick(null)
@@ -632,6 +698,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (codeMode.active !== null || !event.metaKey || event.shiftKey || event.ctrlKey) return
+      if (event.key.toLowerCase() === 'w' && !event.altKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        closeFocused().catch(() => {})
+        return
+      }
       if (event.key.toLowerCase() === 't' && !event.altKey) {
         event.preventDefault()
         event.stopPropagation()
@@ -698,7 +770,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             selectedTerminalId={focusedTerminalId}
             onSelectTerminal={selectTerminal}
             onRenameTerminal={stableRenameTerminal}
-            onCloseTerminal={closeTerminal}
+            onCloseRow={requestClose}
             onDragRow={dragRow}
             creations={creations}
             onCreateWorktree={createWorktree}
@@ -768,6 +840,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           ))}
         </aside>
       )}
+      {closeConfirm !== null && <ConfirmDialog key={closeConfirm.title} confirm={closeConfirm} onClose={() => setCloseConfirm(null)} />}
       {runs.confirm !== null && <ConfirmDialog key={runs.confirm.title} confirm={runs.confirm} onClose={runs.dismissConfirm} />}
       {importing && <ImportProject projects={projects} onClose={() => setImporting(false)} onImported={() => setImporting(false)} />}
       {settingsOverlay}

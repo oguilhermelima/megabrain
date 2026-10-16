@@ -119,6 +119,8 @@ export interface DesktopApi {
   interruptChat(chatId: string): Promise<void>
   answerApproval(chatId: string, approvalId: string, decision: 'allow' | 'allow-session' | 'deny'): Promise<void>
   stopChat(chatId: string): Promise<void>
+  /** Stops the chat if it runs and deletes it from megabrain; the agent's own session stays resumable. */
+  removeChat(chatId: string): Promise<void>
   /** Switches the model, and optionally the reasoning effort, for the chat's next turns. */
   setChatModel(chatId: string, model: string, effort?: string): Promise<void>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */

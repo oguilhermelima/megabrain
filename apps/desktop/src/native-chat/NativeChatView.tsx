@@ -3,7 +3,7 @@ import { api } from '@/api'
 import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { ViewSwitch } from '@/chat/ViewSwitch'
-import { Composer, type Notice } from '@/chat/Composer'
+import { Composer } from '@/chat/Composer'
 import { ApprovalRendererContext, ConversationList, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { ErrorNote } from '@/components/ui'
 import { terminalEngine } from '@/terminal/terminal-engine'
@@ -13,6 +13,7 @@ import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
 import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, withModel, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
+import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
 import { useFollowChat } from '@/native-chat/useFollowChat'
 
 // xterm loads the first time a chat moves to its terminal.
@@ -39,6 +40,9 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   const pending = pendingApproval(state)
   const live = useMemo(() => liveTail(state), [state])
   const working = workingStatus(state)
+  // Nothing said yet: the agent waits for the first message, so suggestions replace any spinner.
+  const fresh = !ended(chat.state) && chat.title === null && state.outgoing.length === 0 && !state.events.some((event) => event.kind === 'user')
+  const [fill, setFill] = useState<{ text: string } | null>(null)
 
   const answer = async (approvalId: string, decision: ApprovalDecision) => {
     await api.answerApproval(chat.id, approvalId, decision)
@@ -67,7 +71,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     )
 
   // The message shows at once and the chat's user event confirms it; a failed send takes it back.
-  const send = async (parts: MessagePart[]): Promise<Notice> => {
+  const send = async (parts: MessagePart[]): Promise<null> => {
     const id = crypto.randomUUID()
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
     update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString() }))
@@ -77,7 +81,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
       update((current) => dropOutgoing(current, id))
       throw caught
     }
-    return { tone: 'ok', text: 'Sent.' }
+    return null
   }
 
   const stop = () => void act(() => api.interruptChat(chat.id))
@@ -165,7 +169,9 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           <div className="flex min-h-0 flex-1 flex-col">
             <ApprovalRendererContext.Provider value={renderApproval}>
               {/* Until the first line of the follow arrives the history is still being read. */}
-              {state.cursor === null && state.events.length === 0 && error === null ? (
+              {fresh ? (
+                <ChatSuggestions cwd={chat.cwd} agent={chat.agent} onPick={(text) => setFill({ text })} />
+              ) : state.cursor === null && state.events.length === 0 && error === null ? (
                 <TranscriptSkeleton />
               ) : (
                 <ConversationList
@@ -192,6 +198,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               onSend={send}
               running={chat.state === 'working'}
               onStop={stop}
+              fill={fill}
             />
           </div>
         </>

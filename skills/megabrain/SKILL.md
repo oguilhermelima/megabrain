@@ -152,12 +152,13 @@ megabrain supervise [--status|--stop] — recommended when you need to check, or
 megabrain status [--json] — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
 megabrain settings [--json] — recommended when you need one read of the settings shown in the desktop app.
 megabrain settings [--json] | set terminal-engine native|tmux — recommended when you need to read desktop settings or choose the embedded terminal engine.
-megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json — recommended when you need to start or control a persistent Claude or Codex chat.
+megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json — recommended when you need to start or control a persistent Claude or Codex chat.
 megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json — start a persistent native chat in a project folder.
 megabrain chat send <id> --parts <json> — send ordered text and local image parts to a chat.
 megabrain chat interrupt <id> — interrupt the current turn.
 megabrain chat approve <id> <approvalId> --decision allow|allow-session|deny — answer a tool approval request.
 megabrain chat stop <id> — stop the chat process while keeping its saved transcript.
+megabrain chat remove <id> [--json] — stop the chat if it runs and delete its record and transcript; the agent's own session stays resumable.
 megabrain chat events <id> [--since <cursor>] [--follow] --json — read or follow a chat's cursor-based transcript.
 megabrain chat model <id> <model> [--effort <level>] [--json] — choose the model and reasoning effort for a chat.
 megabrain chat mode <id> chat|terminal --json — hand an idle chat to the terminal or resume it in chat mode.

@@ -64,6 +64,12 @@ export async function executeChat(args: readonly string[], environment: Environm
       await callChatd(dir, { operation: verb, id }, environment, processAdapter);
       return ok("");
     }
+    if (verb === "remove") {
+      const [id, ...tail] = rest;
+      if (!id || tail.some((arg) => arg !== "--json") || tail.length > 1) throw new Error("Usage: megabrain chat remove <id> [--json]");
+      value = await callChatd(dir, { operation: "remove", id }, environment, processAdapter);
+      return ok(tail.length ? argsJson(value) : "");
+    }
     if (verb === "approve") {
       const [id, approvalId, ...tail] = rest;
       const parsed = takeValue(tail, "--decision");

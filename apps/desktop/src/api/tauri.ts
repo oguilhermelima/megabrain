@@ -174,6 +174,7 @@ export function createTauriApi(): DesktopApi {
     interruptChat: async (chatId) => void (await cliText(['chat', 'interrupt', chatId])),
     answerApproval: async (chatId, approvalId, decision) => void (await cliText(['chat', 'approve', chatId, approvalId, '--decision', decision])),
     stopChat: async (chatId) => void (await cliText(['chat', 'stop', chatId])),
+    removeChat: async (chatId) => void (await cliText(['chat', 'remove', chatId, '--json'])),
     setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),
     setChatMode: (chatId, mode) =>
       cliJson(['chat', 'mode', chatId, mode, '--json'], z.looseObject({ chat: nativeChatSchema, terminal: terminalSessionSchema.nullable() })),

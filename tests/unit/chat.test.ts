@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createConnection } from "node:net";
@@ -543,6 +543,61 @@ rl.on("line", (line) => {
       if (chatId) await daemon.handle({ operation: "stop", id: chatId } as never);
       await daemon.close();
     }
+  });
+
+  test("removes a running chat: stops its agent and deletes its record and events", async () => {
+    const env = sandbox();
+    const pidFile = join(env.root, "agent.pid");
+    fakeAgent(env.bin, "claude", `
+require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const input = JSON.parse(line);
+  if (input.type !== "user") return;
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "removed-session" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "result", session_id: "removed-session", is_error: false }) + "\\n");
+});
+`);
+    const daemon = await socketDaemon(env);
+    try {
+      const started = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--parts", JSON.stringify([{ type: "text", text: "hi" }]), "--json"], env);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      const id = (JSON.parse(started.value) as Chat).id;
+      await waitForChat(id, "idle", env);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      const removed = await call(["chat", "remove", id, "--json"], env);
+      expect(removed).toMatchObject({ kind: "ok" });
+      if (removed.kind === "ok") expect(JSON.parse(removed.value)).toEqual({ removed: id });
+      const listed = await call(["chat", "list", "--json"], env);
+      expect(listed.kind === "ok" && (JSON.parse(listed.value) as Chat[]).some((chat) => chat.id === id)).toBe(false);
+      expect(existsSync(join(env.state, "chats", id))).toBe(false);
+      let alive = true;
+      for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
+        try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 20)); } catch { alive = false; }
+      }
+      expect(alive).toBe(false);
+    } finally { await daemon.close(); }
+  });
+
+  test("removes a stopped chat without --json and refuses an unknown or malformed id", async () => {
+    const env = sandbox();
+    const store = new ChatStore(env.state);
+    const chat: Chat = {
+      id: "0b6f6a43-5d2a-4f43-9f55-6a3f4d1a2b3c", agent: "codex", model: null, cwd: env.cwd,
+      title: "old", state: "stopped", mode: "chat", agentSessionId: "thread-1",
+      createdAt: new Date().toISOString(), lastActivityAt: null,
+    };
+    await store.put(chat);
+    const daemon = await socketDaemon(env);
+    try {
+      expect(await call(["chat", "remove", chat.id], env)).toEqual({ kind: "ok", value: "" });
+      expect(await store.get(chat.id)).toBeNull();
+      expect((await call(["chat", "remove", chat.id], env)).kind).toBe("failed");
+      expect((await call(["chat", "remove", "../outside"], env)).kind).toBe("failed");
+      expect((await call(["chat", "remove"], env)).kind).toBe("failed");
+    } finally { await daemon.close(); }
   });
 
   test("marks persisted working chats stopped after chatd restarts", async () => {

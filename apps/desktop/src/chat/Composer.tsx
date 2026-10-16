@@ -332,7 +332,10 @@ export function Composer({
   onSend,
   running = false,
   onStop,
+  fill = null,
 }: {
+  /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
+  fill?: { text: string } | null
   placeholder: string
   disabled: boolean
   agent: string | null
@@ -345,8 +348,8 @@ export function Composer({
   model?: string | null
   /** Set for native chats, which switch model and effort themselves; without it, picking a model sends /model <model> through onSend. */
   onModelChange?: (model: string, effort: string | undefined) => Promise<void>
-  /** Sends the message as text and image parts in order; resolves to the notice to show, and clears the box when it is ok. */
-  onSend: (parts: MessagePart[]) => Promise<Notice>
+  /** Sends the message as text and image parts in order; resolves to the notice to show (null: sent, nothing to say), and clears the box unless it is bad. */
+  onSend: (parts: MessagePart[]) => Promise<Notice | null>
   /** The agent's turn runs: with nothing typed, the send button stops it through onStop. */
   running?: boolean
   onStop?: () => void
@@ -411,6 +414,11 @@ export function Composer({
   }
 
   const selection = (): [number, number] => (editor.current === null ? null : selectionOffsets(editor.current)) ?? caret.current
+
+  useEffect(() => {
+    if (fill !== null) apply(insertText([], 0, fill.text), fill.text.length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fill])
 
   const insertAt = (text: string, [start, end]: [number, number] = selection()) => apply(insertText(deleteRange(current(), start, end), start, text), start + text.length)
 
@@ -709,8 +717,9 @@ export function Composer({
     if (command === null) return
     onSend([{ type: 'text', text: command }]).then(
       (result) => {
-        if (result.tone === 'ok') setChosen({ model: picked, effort, base: model, byCommand: picked !== model })
-        show(result.tone === 'ok' ? { tone: 'ok', text: `Switching to ${label}: sent ${command}.` } : result)
+        const ok = result === null || result.tone === 'ok'
+        if (ok) setChosen({ model: picked, effort, base: model, byCommand: picked !== model })
+        show(ok ? { tone: 'ok', text: `Switching to ${label}: sent ${command}.` } : result)
         setSentCount((count) => count + 1)
       },
       (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
@@ -744,9 +753,10 @@ export function Composer({
       })
       .then(
         (result) => {
-          show(result, result.tone === 'bad')
+          const bad = result?.tone === 'bad'
+          show(result, bad)
           setSentCount((count) => count + 1)
-          if (result.tone === 'ok') {
+          if (!bad) {
             apply([], 0)
             attachments.current.forEach(releasePreview)
             attachments.current.clear()

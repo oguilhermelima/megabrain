@@ -2,7 +2,7 @@ import { scrubAgentEnvironment } from "../core/agent-env.js";
 import { randomUUID } from "node:crypto";
 import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chmod, mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine } from "./store.js";
@@ -86,6 +86,8 @@ export class ChatDaemon {
   private readonly turnStarted = new Map<string, string>();
   private readonly currentMessage = new Map<string, string>();
   private readonly toolNames = new Map<string, Map<string, string>>();
+  /** Removed chats: late agent output must not write their record back. */
+  private readonly removed = new Set<string>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private clients = 0;
   private closed = false;
@@ -121,6 +123,7 @@ export class ChatDaemon {
         case "send": return await this.send(text(request.id), validateParts(request.parts));
         case "interrupt": return await this.interrupt(text(request.id));
         case "stop": return await this.stop(text(request.id));
+        case "remove": return await this.remove(text(request.id));
         case "approve": return await this.approve(text(request.id), text(request.approvalId), text(request.decision));
         case "events": return await this.events(text(request.id), Number(request.since ?? 0), request.follow === true, socket);
         case "mode": return await this.mode(text(request.id), text(request.mode));
@@ -463,6 +466,23 @@ export class ChatDaemon {
     await this.publish(chat, event("system", "Stopped"));
   }
 
+  /** Stops the agent and deletes the chat's record and events; the agent's own session log stays resumable. */
+  private async remove(id: string): Promise<{ removed: string }> {
+    await this.requireChat(id);
+    this.removed.add(id);
+    const child = this.children.get(id);
+    this.children.delete(id);
+    this.clearStartTimer(id);
+    if (child) child.kill("SIGTERM");
+    await Promise.allSettled([this.eventChains.get(id), this.appendChains.get(id)]);
+    for (const map of [this.queues, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.toolNames, this.subscribers]) map.delete(id);
+    this.interrupting.delete(id);
+    this.interruptedEvents.delete(id);
+    this.outputSeen.delete(id);
+    await rm(this.store.dir(id), { recursive: true, force: true });
+    return { removed: id };
+  }
+
   private async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null }> {
     const chat = await this.requireChat(id);
     if (mode !== "chat" && mode !== "terminal") throw new Error("mode must be chat or terminal");
@@ -607,6 +627,7 @@ export class ChatDaemon {
   }
   /** Persists the chat and, when its state moved, publishes the new state to followers and history. */
   private async save(chat: Chat): Promise<void> {
+    if (this.removed.has(chat.id)) return;
     await this.store.put(chat);
     if (this.publishedState.get(chat.id) === chat.state) return;
     this.publishedState.set(chat.id, chat.state);
@@ -625,6 +646,7 @@ export class ChatDaemon {
   private async publish(chat: Chat, value: ChatEvent, approval?: ChatApproval): Promise<void> {
     const previous = this.appendChains.get(chat.id) ?? Promise.resolve();
     const next = previous.then(async () => {
+      if (this.removed.has(chat.id)) return;
       const line = await this.store.append(chat.id, value, approval);
       for (const listener of this.subscribers.get(chat.id) ?? []) listener(line);
     });
