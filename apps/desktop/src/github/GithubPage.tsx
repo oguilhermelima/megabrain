@@ -22,6 +22,7 @@ import {
 import { CloseIcon, CommentIcon, IssueIcon, MaximiseIcon, MilestoneIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
+import { BranchFlow, StatPill } from '@/github/ItemHero'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
 
@@ -241,7 +242,7 @@ function Meta({ children }: { children: ReactNode }) {
 const dot = <span className="text-ink-600">·</span>
 
 function rowClass(selected: boolean) {
-  return `grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-[16px] px-4 py-3 text-left transition-colors ${selected ? 'bg-accent/[0.14]' : 'hover:bg-white/[0.04]'}`
+  return `grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3.5 px-5 py-4 text-left transition-colors duration-[var(--motion-enter)] ${selected ? 'bg-accent/[0.10]' : 'hover:bg-white/[0.03]'}`
 }
 
 function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullRequest; selected: boolean; now: number; onSelect: () => void }) {
@@ -250,7 +251,7 @@ function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullReq
       <span className="pt-0.5">
         <PullRequestStateIcon item={item} />
       </span>
-      <span className="min-w-0 space-y-1.5">
+      <span className="min-w-0 space-y-2">
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[14.5px] leading-snug font-semibold text-ink-100">{item.title}</span>
           {item.labels.map((label) => (
@@ -263,8 +264,8 @@ function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullReq
           <Avatar login={item.author?.login ?? null} size={16} />
           <span className="shrink-0">{item.author?.login ?? 'ghost'}</span>
           {dot}
-          <span className="min-w-0 truncate font-mono text-[11.5px] text-ink-300" title={`${item.headRefName} → ${item.baseRefName}`}>
-            {item.headRefName} <span className="text-ink-500">→</span> {item.baseRefName}
+          <span className="min-w-0">
+            <BranchFlow head={item.headRefName} base={item.baseRefName} />
           </span>
           {dot}
           <span className="shrink-0 whitespace-nowrap">{ago(item.updatedAt, now)}</span>
@@ -286,7 +287,7 @@ function IssueRow({ item, selected, now, onSelect }: { item: GithubIssue; select
       <span className="pt-0.5">
         <IssueStateIcon state={item.state} />
       </span>
-      <span className="min-w-0 space-y-1.5">
+      <span className="min-w-0 space-y-2">
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[14.5px] leading-snug font-semibold text-ink-100">{item.title}</span>
           {item.labels.map((label) => (
@@ -358,7 +359,7 @@ function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onC
 
   return (
     <aside className="flex min-h-0 w-[min(580px,50%)] shrink-0 flex-col border-l border-white/[0.06] bg-ink-950">
-      <header className="space-y-3 px-6 pt-5 pb-4">
+      <header className="space-y-3.5 px-6 pt-6 pb-5">
         <div className="flex items-center gap-2">
           <StatePill kind={kind === 'prs' ? 'pr' : 'issue'} state={state} draft={pullRequest?.isDraft ?? detail?.isDraft ?? false} />
           <span className="text-[13px] font-semibold text-ink-400 tabular-nums">#{number}</span>
@@ -371,26 +372,27 @@ function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onC
             <CloseIcon size={14} />
           </IconButton>
         </div>
-        <h2 className="text-[20px] leading-snug font-semibold tracking-[-0.01em] text-ink-100 select-text">{title}</h2>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12.5px] text-ink-400">
-          <Avatar login={author?.login ?? null} size={18} />
-          <span className="font-semibold text-ink-200">{author?.login ?? 'ghost'}</span>
-          <span>opened {ago(pullRequest?.createdAt ?? issue?.createdAt ?? detail?.createdAt ?? null, now)}</span>
+        <h2 className="text-[21px] leading-[1.3] font-semibold tracking-[-0.02em] text-balance text-ink-100 select-text">{title}</h2>
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 text-[13px] text-ink-400">
+          <span className="flex items-center gap-2">
+            <Avatar login={author?.login ?? null} size={20} />
+            <span className="font-semibold text-ink-200">{author?.login ?? 'ghost'}</span>
+            <span>opened {ago(pullRequest?.createdAt ?? issue?.createdAt ?? detail?.createdAt ?? null, now)}</span>
+          </span>
           {pullRequest !== null && (
             <>
               {dot}
-              <span className="rounded-[7px] bg-white/[0.06] px-1.5 font-mono text-[11.5px] text-ink-200">{pullRequest.headRefName}</span>
-              <span className="text-ink-500">→</span>
-              <span className="rounded-[7px] bg-white/[0.06] px-1.5 font-mono text-[11.5px] text-ink-200">{pullRequest.baseRefName}</span>
-              {detail?.additions !== undefined && detail.deletions !== undefined && (
-                <>
-                  {dot}
-                  <LineCounts additions={detail.additions} deletions={detail.deletions} />
-                </>
-              )}
+              <BranchFlow head={pullRequest.headRefName} base={pullRequest.baseRefName} />
             </>
           )}
         </div>
+        {pullRequest !== null && detail?.additions !== undefined && detail.deletions !== undefined && (
+          <div className="flex flex-wrap items-center gap-2">
+            <StatPill>
+              <LineCounts additions={detail.additions} deletions={detail.deletions} />
+            </StatPill>
+          </div>
+        )}
         {(labels.length > 0 || review !== null || (issue !== null && (issue.assignees.length > 0 || issue.milestone !== null))) && (
           <div className="flex flex-wrap items-center gap-1.5">
             <ReviewChip decision={review} />
@@ -555,7 +557,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
         )}
       </div>
       <div className="flex min-h-0 flex-1 border-t border-white/[0.06]">
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto py-3">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5">
           {!known && loading && <SkeletonRows />}
           {!known && !loading && error !== null && (
             <div className="space-y-3 px-6 py-4">
@@ -577,7 +579,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
               <Empty title={`No ${tabName === 'all' ? '' : `${tabName} `}${noun}`} detail={`${repository.nameWithOwner} has none right now.`} />
             ))}
           {known && (
-            <ul className="space-y-0.5 px-3">
+            <ul className="mx-6 divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60">
               {kind === 'prs'
                 ? shownPrs.map((item) => (
                     <li key={item.number}>

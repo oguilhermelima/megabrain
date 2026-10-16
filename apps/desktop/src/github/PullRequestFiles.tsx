@@ -5,7 +5,7 @@ import { languageForPath } from '@/code/code-model'
 import { CodeSkeleton, RowsSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
 import { highlightPatch, type PatchHighlight } from '@/github/diff-highlight'
-import { ChevronIcon, CommentIcon } from '@/github/icons'
+import { ChevronIcon, CommentIcon, FileStatusIcon } from '@/github/icons'
 import { LineCounts } from '@/github/parts'
 import { diffWindow, filesToFetch, isLargeDiff, isViewed, shownFiles, startsFolded, viewedCount } from '@/github/pr-files-model'
 import { ReviewThread, type ThreadActions, type ThreadFocus } from '@/github/ReviewThread'
@@ -19,11 +19,20 @@ import type { PullRequestFiles as Files } from '@/github/usePullRequestFiles'
 // there; it stays pending, under its line, until the review is submitted. Review threads sit under
 // their lines, and each file can be marked viewed, which folds it.
 
-const statusTone: Record<GithubPullRequestFile['status'], { letter: string; className: string }> = {
-  added: { letter: 'A', className: 'text-ok' },
-  modified: { letter: 'M', className: 'text-warn' },
-  removed: { letter: 'D', className: 'text-bad' },
-  renamed: { letter: 'R', className: 'text-accent' },
+const statusTone: Record<GithubPullRequestFile['status'], { label: string; className: string }> = {
+  added: { label: 'Added', className: 'text-ok' },
+  modified: { label: 'Modified', className: 'text-warn' },
+  removed: { label: 'Removed', className: 'text-bad' },
+  renamed: { label: 'Renamed', className: 'text-accent' },
+}
+
+function StatusGlyph({ status }: { status: GithubPullRequestFile['status'] }) {
+  const tone = statusTone[status]
+  return (
+    <span title={tone.label} aria-label={tone.label} className={`flex shrink-0 ${tone.className}`}>
+      <FileStatusIcon status={status} size={14} />
+    </span>
+  )
 }
 
 const lineTone: Record<DiffLine['kind'], string> = {
@@ -297,7 +306,6 @@ const FileSection = memo(function FileSection({
   onViewed: (path: string, viewed: boolean) => void
   review: ReviewContext
 }) {
-  const tone = statusTone[file.status]
   const pendingHere = review.controls.pending.filter((comment) => comment.path === file.path).length
   const openThreads = unresolvedCount(review.threads.filter((thread) => thread.path === file.path))
   const large = isLargeDiff(file)
@@ -309,7 +317,7 @@ const FileSection = memo(function FileSection({
             <ChevronIcon size={12} />
           </span>
         </button>
-        <span className={`w-3 shrink-0 font-mono text-[11.5px] font-bold ${tone.className}`}>{tone.letter}</span>
+        <StatusGlyph status={file.status} />
         <span className="min-w-0 truncate font-mono text-[12.5px] text-ink-100 select-text" title={file.previousPath === undefined ? file.path : `${file.previousPath} → ${file.path}`}>
           {file.previousPath !== undefined && <span className="text-ink-500">{file.previousPath} → </span>}
           {file.path}
@@ -521,7 +529,6 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
           {nav.getVirtualItems().map((item) => {
             const file = shown[item.index]
             if (file === undefined) return null
-            const tone = statusTone[file.status]
             const name = file.path.split('/').at(-1) ?? file.path
             const pending = controls.pending.filter((comment) => comment.path === file.path).length
             const seen = isViewed(file, marks)
@@ -531,11 +538,11 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
                   type="button"
                   title={file.path}
                   onClick={() => reveal(item.index)}
-                  className="grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] px-2 text-left hover:bg-white/[0.05]"
+                  className="grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[12px] px-2.5 text-left transition-colors duration-[var(--motion-enter)] hover:bg-white/[0.05]"
                 >
-                  <span className={`w-3 font-mono text-[11px] font-bold ${tone.className}`}>{tone.letter}</span>
+                  <StatusGlyph status={file.status} />
                   <span className={`min-w-0 ${seen ? 'opacity-50' : ''}`}>
-                    <span className="block truncate text-[12.5px] text-ink-100">{name}</span>
+                    <span className="block truncate text-[12.5px] font-medium text-ink-100">{name}</span>
                     <span className="block truncate text-[11px] text-ink-500">{file.path.slice(0, Math.max(0, file.path.length - name.length - 1))}</span>
                   </span>
                   <span className="flex items-center gap-1.5">

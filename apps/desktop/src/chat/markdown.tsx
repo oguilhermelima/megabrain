@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
@@ -103,11 +103,15 @@ const imageSlotSchema = { ...defaultSchema, attributes: { ...defaultSchema.attri
 
 /**
  * Markdown; with `image`, each image slot in the text renders as what it returns for that image's
- * index, and with `picture`, each picture (markdown or HTML img) renders as what it returns.
+ * index, with `picture`, each picture (markdown or HTML img) renders as what it returns, and
+ * `elements` replaces how other elements render (a code block with a copy button, say).
  */
-export function MarkdownText({ text, className = '', image, picture }: { text: string; className?: string; image?: (index: number) => ReactNode; picture?: (props: ImgHTMLAttributes<HTMLImageElement>) => ReactNode }) {
-  // Kept while `picture` is the same function, or every render would remount each picture.
-  const pictured = useMemo(() => (picture === undefined ? components : { ...components, img: ({ node: _node, ...props }: ImgHTMLAttributes<HTMLImageElement> & { node?: unknown }) => picture(props) }), [picture])
+export function MarkdownText({ text, className = '', image, picture, elements }: { text: string; className?: string; image?: (index: number) => ReactNode; picture?: (props: ImgHTMLAttributes<HTMLImageElement>) => ReactNode; elements?: Components }) {
+  // Kept while `picture` and `elements` are the same, or every render would remount each picture.
+  const pictured = useMemo(() => {
+    const base = elements === undefined ? components : { ...components, ...elements }
+    return picture === undefined ? base : { ...base, img: ({ node: _node, ...props }: ImgHTMLAttributes<HTMLImageElement> & { node?: unknown }) => picture(props) }
+  }, [picture, elements])
   const slotted =
     image === undefined
       ? pictured

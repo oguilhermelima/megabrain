@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { GithubReviewThread } from '@/api/schema'
 import { MarkdownText } from '@/chat/markdown'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
+import { ArrowRightIcon, FileIcon } from '@/github/icons'
 import { Avatar, ago, useNow } from '@/github/parts'
 import { unresolvedCount } from '@/github/review-model'
 
@@ -46,8 +47,8 @@ export function ReviewThread({ thread, actions }: { thread: GithubReviewThread; 
   const first = thread.comments[0]
 
   return (
-    <div className={`rounded-[14px] border font-sans ${thread.isResolved ? 'border-white/[0.06] bg-white/[0.02]' : 'border-white/[0.10] bg-ink-900'}`}>
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[11.5px]">
+    <div className={`rounded-[14px] border font-sans ${thread.isResolved ? 'border-white/[0.05] bg-white/[0.02]' : 'border-white/[0.08] bg-ink-950'}`}>
+      <div className="flex items-center gap-2 px-3.5 py-2 text-[12px]">
         <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open} className="flex min-w-0 items-center gap-2 text-left text-ink-300 hover:text-ink-100">
           <Avatar login={first?.author?.login ?? null} size={16} />
           <span className="truncate font-semibold">{first?.author?.login ?? 'ghost'}</span>
@@ -62,7 +63,7 @@ export function ReviewThread({ thread, actions }: { thread: GithubReviewThread; 
         </button>
       </div>
       {open && (
-        <div className="space-y-3 border-t border-white/[0.06] px-3 py-2.5">
+        <div className="space-y-4 border-t border-white/[0.06] px-3.5 py-3">
           {thread.comments.map((comment) => (
             <div key={comment.id} className="space-y-1">
               <p className="flex items-center gap-2 text-[11.5px] text-ink-400">
@@ -163,18 +164,27 @@ export function ThreadsList({ threads, error, onRetry, actions, onShow }: { thre
       </div>
       {groups.length === 0 && <p className="text-[13.5px] text-ink-400">{threads.length === 0 ? 'No review threads on this pull request.' : 'Every thread is resolved.'}</p>}
       {groups.map(([path, list]) => (
-        <section key={path} className="space-y-2">
-          <h3 className="truncate font-mono text-[12.5px] text-ink-200" title={path}>
-            {path}
-          </h3>
-          {list.map((thread) => (
-            <div key={thread.id} className="space-y-1">
-              <button type="button" onClick={() => onShow({ path: thread.path, line: thread.line, side: thread.side })} className="text-[11.5px] font-semibold text-accent hover:underline">
-                {thread.line === null ? 'Show the file' : `Show line ${thread.line}${thread.side === 'LEFT' ? ' (old side)' : ''}`}
-              </button>
-              <ReviewThread thread={thread} actions={actions} />
-            </div>
-          ))}
+        <section key={path} className="overflow-hidden rounded-[18px] border border-white/[0.07] bg-ink-900">
+          <header className="flex items-center gap-2.5 border-b border-white/[0.05] px-4 py-2.5">
+            <span className="text-ink-400">
+              <FileIcon size={14} />
+            </span>
+            <h3 className="min-w-0 truncate font-mono text-[12.5px] text-ink-200" title={path}>
+              {path}
+            </h3>
+            <span className="ml-auto shrink-0 text-[11.5px] text-ink-500 tabular-nums">{list.length === 1 ? '1 thread' : `${list.length} threads`}</span>
+          </header>
+          <div className="space-y-3 p-3">
+            {list.map((thread) => (
+              <div key={thread.id} className="space-y-1.5">
+                <button type="button" onClick={() => onShow({ path: thread.path, line: thread.line, side: thread.side })} className="inline-flex h-6 items-center gap-1 rounded-full bg-accent/[0.10] px-2.5 font-mono text-[11.5px] font-semibold text-accent transition-colors duration-[var(--motion-enter)] hover:bg-accent/[0.18]">
+                  {thread.line === null ? 'Show the file' : `Line ${thread.line}${thread.side === 'LEFT' ? ' (old side)' : ''}`}
+                  <ArrowRightIcon size={11} />
+                </button>
+                <ReviewThread thread={thread} actions={actions} />
+              </div>
+            ))}
+          </div>
         </section>
       ))}
     </div>

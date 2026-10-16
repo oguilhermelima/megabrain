@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState, type ImgHTMLAttributes } from 'react'
+import { isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ImgHTMLAttributes, type ReactNode } from 'react'
+import type { Components } from 'react-markdown'
 import { api } from '@/api'
-import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest } from '@/api/schema'
+import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, GithubReviewers } from '@/api/schema'
 import { httpsUrl } from '@/lib/external'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { avatarUrl, checkSummary, isRepositoryFileLink, labelStyle, pullRequestVisualState, stateColors, type CheckSummary, type PullRequestVisualState } from '@/github/github-model'
 import { projectColor } from '@/advanced/picture-model'
+import { reviewVerb, timeline } from '@/github/timeline-model'
 import {
   CheckFailIcon,
   CheckPassIcon,
@@ -13,6 +15,8 @@ import {
   CheckSkippedIcon,
   ClosedIssueIcon,
   ClosedPullRequestIcon,
+  CommentIcon,
+  CopyIcon,
   DraftPullRequestIcon,
   IssueIcon,
   LinkIcon,
@@ -150,19 +154,22 @@ export function useNow(intervalMs: number): number {
   return now
 }
 
+/** Opens a GitHub address in the system's browser; when that fails, the address is copied instead. */
+export function openOnGithub(url: string): Promise<'opened' | 'copied' | 'failed'> {
+  const address = httpsUrl(url)
+  const copy = () =>
+    navigator.clipboard.writeText(url).then(
+      () => 'copied' as const,
+      () => 'failed' as const,
+    )
+  if (address === null) return copy()
+  return api.openUrl(address).then(() => 'opened' as const, copy)
+}
+
 /** "Open on GitHub" in the system's browser; when that fails, the address is copied instead. */
 export function OpenLink({ url }: { url: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const open = () => {
-    const address = httpsUrl(url)
-    const copy = () =>
-      navigator.clipboard.writeText(url).then(
-        () => setState('copied'),
-        () => setState('failed'),
-      )
-    if (address === null) void copy()
-    else api.openUrl(address).then(() => setState('idle'), copy)
-  }
+  const open = () => void openOnGithub(url).then((result) => setState(result === 'opened' ? 'idle' : result))
   return (
     <div className="flex flex-col items-end gap-1">
       <button
@@ -180,8 +187,11 @@ export function OpenLink({ url }: { url: string }) {
 }
 
 const checkOrder: Record<GithubCheck['state'], number> = { failure: 0, pending: 1, success: 2, neutral: 3, skipped: 4 }
+const checkStateLabel: Record<GithubCheck['state'], string> = { failure: 'Failing', pending: 'Running', success: 'Passed', neutral: 'Neutral', skipped: 'Skipped' }
+const checkBadge: Record<GithubCheck['state'], string> = { success: 'bg-ok/[0.12] text-ok', neutral: 'bg-white/[0.07] text-ink-300', failure: 'bg-bad/[0.14] text-bad', pending: 'bg-warn/[0.12] text-warn', skipped: 'bg-white/[0.05] text-ink-500' }
+const summaryTone: Record<CheckSummary['state'], string> = { passing: 'text-ok', failing: 'text-bad', pending: 'text-warn', none: 'text-ink-300' }
 
-/** A pull request's checks, failures first; the first few unless `limit` is null. */
+/** A pull request's checks as a status list, failures first; the first few unless `limit` is null. */
 export function ChecksList({ checks, limit = 6 }: { checks: GithubCheck[]; limit?: number | null }) {
   const [open, setOpen] = useState(false)
   const summary = checkSummary(checks)
@@ -189,25 +199,29 @@ export function ChecksList({ checks, limit = 6 }: { checks: GithubCheck[]; limit
   const sorted = [...checks].sort((left, right) => checkOrder[left.state] - checkOrder[right.state])
   const shown = open || limit === null ? sorted : sorted.slice(0, limit)
   return (
-    <section className="rounded-[20px] border border-white/[0.08] bg-ink-900">
-      <header className="flex items-center gap-2 px-4 pt-3 pb-1.5">
-        <h3 className="text-[11.5px] font-semibold tracking-[0.08em] text-ink-400 uppercase">Checks</h3>
-        <span className="text-[12px] text-ink-400">{checkTitle(summary)}</span>
+    <section className="overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900">
+      <header className="flex items-center gap-2.5 border-b border-white/[0.05] px-5 py-3.5">
+        <span className={summaryTone[summary.state]}>
+          <CheckGlyph state={summary.state} size={15} />
+        </span>
+        <h3 className="text-[13.5px] font-semibold text-ink-100">{summary.state === 'passing' ? 'All checks passed' : summary.state === 'failing' ? 'Some checks failed' : summary.state === 'pending' ? 'Checks are running' : 'Checks'}</h3>
+        <span className="ml-auto text-[12px] text-ink-400 tabular-nums">{checkTitle(summary)}</span>
       </header>
-      <ul className="px-2 pb-2">
+      <ul className="divide-y divide-white/[0.04]">
         {shown.map((check, index) => (
-          <li key={`${check.name}-${index}`} className="flex items-center gap-2.5 rounded-[10px] px-2 py-1 text-[12.5px]">
-            <span className={checkStateTone[check.state]}>
-              <CheckGlyph state={check.state} size={13} />
+          <li key={`${check.name}-${index}`} className="flex h-11 items-center gap-3 px-5 text-[13px]">
+            <span className={`grid size-6 shrink-0 place-items-center rounded-full ${checkBadge[check.state]}`}>
+              <CheckGlyph state={check.state} size={12} />
             </span>
-            <span className="min-w-0 truncate text-ink-200" title={check.name}>
+            <span className="min-w-0 truncate font-medium text-ink-200" title={check.name}>
               {check.name}
             </span>
+            <span className={`ml-auto shrink-0 text-[12px] ${checkStateTone[check.state]}`}>{checkStateLabel[check.state]}</span>
           </li>
         ))}
       </ul>
       {limit !== null && sorted.length > limit && (
-        <button type="button" onClick={() => setOpen((current) => !current)} className="w-full border-t border-white/[0.06] py-2 text-[12px] font-semibold text-ink-400 hover:text-ink-100">
+        <button type="button" onClick={() => setOpen((current) => !current)} className="w-full border-t border-white/[0.05] py-2.5 text-[12px] font-semibold text-ink-400 hover:text-ink-100">
           {open ? 'Show fewer' : `Show all ${sorted.length}`}
         </button>
       )}
@@ -275,39 +289,113 @@ function GithubPicture({ root, picture }: { root: string; picture: ImgHTMLAttrib
 }
 
 // The conversation spans the pane; only running text keeps a readable line length, while code,
-// tables and pictures take the whole width.
-const bodyText = 'text-ink-200 [&_li]:max-w-[90ch] [&_p]:max-w-[90ch] [&_img]:inline-block [&_img]:max-w-full'
+// tables and pictures take the whole width. Headings, lists and quotes get room to breathe.
+const bodyText = [
+  'text-[14px] leading-[1.65] text-ink-200 space-y-3',
+  '[&_li]:max-w-[90ch] [&_p]:max-w-[90ch] [&_li]:my-1',
+  '[&_h1]:mt-6 [&_h1]:text-[19px] [&_h2]:mt-6 [&_h2]:border-b [&_h2]:border-white/[0.06] [&_h2]:pb-2 [&_h2]:text-[17px] [&_h3]:mt-5 [&_h3]:text-[15px]',
+  '[&>:first-child]:mt-0 [&_h1]:tracking-[-0.01em] [&_h2]:tracking-[-0.01em]',
+  '[&_blockquote]:not-italic [&_blockquote]:border-white/[0.14] [&_hr]:my-6 [&_hr]:border-white/[0.08]',
+  '[&_img]:inline-block [&_img]:max-w-full [&_img]:rounded-[12px]',
+].join(' ')
 
-/** The description and the comments of a pull request or an issue, as markdown. */
-export function ConversationThread({ detail, now }: { detail: Pick<GithubDetail, 'body' | 'comments' | 'repository'>; now: number }) {
+/** A fenced code block: its language and a copy button over the code. */
+function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
+  const ref = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+  const child = isValidElement<{ className?: string }>(children) ? children : null
+  const language = /language-([\w+-]+)/.exec(child?.props.className ?? '')?.[1] ?? 'text'
+  const copy = () =>
+    void navigator.clipboard.writeText(ref.current?.textContent ?? '').then(
+      () => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1600)
+      },
+      () => {},
+    )
+  return (
+    <div className="my-3 overflow-hidden rounded-[14px] border border-white/[0.07] bg-white/[0.03]">
+      <div className="flex h-9 items-center border-b border-white/[0.06] pr-1.5 pl-4">
+        <span className="font-mono text-[11.5px] text-ink-400">{language}</span>
+        <button type="button" onClick={copy} aria-label="Copy code" className="ml-auto flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold text-ink-400 transition-colors duration-[var(--motion-enter)] hover:bg-white/[0.07] hover:text-ink-100">
+          {copied ? <CheckPassIcon size={13} /> : <CopyIcon size={13} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre ref={ref} {...props} className="overflow-x-auto px-4 py-3 text-[12.5px] leading-[1.6]">
+        {children}
+      </pre>
+    </div>
+  )
+}
+
+/** A table with a rounded frame that scrolls sideways on its own when it is wider than the pane. */
+function Table({ node: _node, ...props }: ComponentPropsWithoutRef<'table'> & { node?: unknown }) {
+  return (
+    <div className="my-3 max-w-full overflow-x-auto rounded-[12px] border border-white/[0.08]">
+      <table {...props} className="w-max min-w-full border-collapse text-[13px] [&_td]:border-t [&_td]:border-white/[0.06] [&_td]:px-3 [&_td]:py-2 [&_td]:text-ink-300 [&_th]:bg-white/[0.03] [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-ink-200 [&_td+td]:border-l [&_th+th]:border-l [&_th]:border-white/[0.06]" />
+    </div>
+  )
+}
+
+const bodyElements: Components = { pre: CodeBlock, table: Table }
+
+const reviewTone = { ok: 'bg-ok/[0.14] text-ok', bad: 'bg-bad/[0.14] text-bad', muted: 'bg-white/[0.07] text-ink-300' } as const
+
+function TimelineCard({ author, verb, at, now, children }: { author: string; verb: string; at: string | null; now: number; children: ReactNode }) {
+  return (
+    <div className="min-w-0 flex-1 overflow-hidden rounded-[18px] border border-white/[0.07] bg-ink-900">
+      <p className="flex flex-wrap items-center gap-x-1.5 border-b border-white/[0.05] bg-white/[0.015] px-5 py-2.5 text-[13px]">
+        <span className="font-semibold text-ink-100">{author}</span>
+        <span className="text-ink-400">{verb}</span>
+        <span className="text-ink-500">{ago(at, now)}</span>
+      </p>
+      <div className="px-5 py-4 select-text">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * The description, the comments and (for a pull request) the reviews as one timeline: each entry
+ * with its author's picture on a thin line that joins them, in the order they happened.
+ */
+export function ConversationThread({ detail, reviews, now }: { detail: Pick<GithubDetail, 'body' | 'comments' | 'repository' | 'author' | 'createdAt'>; reviews?: GithubReviewers['reviews']; now: number }) {
   const root = detail.repository.path
   const picture = useCallback((props: ImgHTMLAttributes<HTMLImageElement>) => <GithubPicture root={root} picture={props} />, [root])
+  const entries = useMemo(() => timeline(detail, reviews), [detail, reviews])
   return (
-    <>
-      <section className="rounded-[20px] border border-white/[0.08] bg-ink-900 px-5 py-4 select-text">
-        {detail.body.trim() === '' ? <p className="text-[13.5px] text-ink-400 italic">No description provided.</p> : <MarkdownText text={detail.body} className={bodyText} picture={picture} />}
-      </section>
-      {detail.comments.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="px-1 text-[11.5px] font-semibold tracking-[0.08em] text-ink-400 uppercase">
-            {detail.comments.length} {detail.comments.length === 1 ? 'comment' : 'comments'}
-          </h3>
-          {detail.comments.map((comment, index) => (
-            <article key={`${comment.url}-${index}`} className="flex gap-3">
-              <Avatar login={comment.author?.login ?? null} size={28} />
-              <div className="min-w-0 flex-1 rounded-[18px] border border-white/[0.06] bg-white/[0.03] px-4 py-3">
-                <p className="mb-1.5 flex items-center gap-1.5 text-[12.5px]">
-                  <span className="font-semibold text-ink-100">{comment.author?.login ?? 'ghost'}</span>
-                  <span className="text-ink-400">{ago(comment.createdAt, now)}</span>
-                </p>
-                <div className="select-text">
-                  <MarkdownText text={comment.body} className={bodyText} picture={picture} />
-                </div>
-              </div>
-            </article>
-          ))}
-        </section>
-      )}
-    </>
+    <ol className="relative space-y-5">
+      <li aria-hidden="true" className="absolute top-6 bottom-6 left-[17px] w-px bg-white/[0.08]" />
+      {entries.map((entry) => {
+        const login = entry.author?.login ?? null
+        const name = login ?? 'ghost'
+        if (entry.kind === 'review') {
+          const verb = reviewVerb(entry.state)
+          return (
+            <li key={entry.key} className="relative flex items-center gap-4 pl-[5px]">
+              <span className={`relative grid size-[26px] shrink-0 place-items-center rounded-full ring-4 ring-ink-950 ${reviewTone[verb.tone]}`}>
+                {verb.tone === 'bad' ? <CheckFailIcon size={13} /> : verb.tone === 'ok' ? <CheckPassIcon size={13} /> : <CommentIcon size={13} />}
+              </span>
+              <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] text-ink-400">
+                <Avatar login={login} size={18} />
+                <span className="font-semibold text-ink-200">{name}</span>
+                {verb.text}
+                <span className="text-ink-500">{ago(entry.at, now)}</span>
+              </p>
+            </li>
+          )
+        }
+        return (
+          <li key={entry.key} className="relative flex gap-4">
+            <span className="relative shrink-0 rounded-full ring-4 ring-ink-950">
+              <Avatar login={login} size={36} />
+            </span>
+            <TimelineCard author={name} verb={entry.kind === 'opened' ? 'opened this' : 'commented'} at={entry.at} now={now}>
+              {entry.body.trim() === '' ? <p className="text-[13.5px] text-ink-400 italic">No description provided.</p> : <MarkdownText text={entry.body} className={bodyText} picture={picture} elements={bodyElements} />}
+            </TimelineCard>
+          </li>
+        )
+      })}
+    </ol>
   )
 }

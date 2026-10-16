@@ -33,7 +33,7 @@ const primaryLabel: Record<PrimaryAction, string> = {
   'ready-for-review': 'Ready for review',
   'reopen': 'Reopen pull request',
 }
-const secondaryLabel: Record<SecondaryAction, string> = {
+export const secondaryLabel: Record<SecondaryAction, string> = {
   'rerun-failed': 'Re-run failed checks',
   'convert-to-draft': 'Convert to draft',
   'close': 'Close pull request',

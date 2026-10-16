@@ -172,3 +172,72 @@ export function ChevronIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.6" />
+      <path d="M10.5 3.5v-.3a1.2 1.2 0 0 0-1.2-1.2H3.7a1.2 1.2 0 0 0-1.2 1.2v5.6c0 .7.5 1.2 1.2 1.2H4" />
+    </Svg>
+  )
+}
+
+export function MoreIcon(props: IconProps) {
+  return (
+    <Svg {...props} filled>
+      <circle cx="3.5" cy="8" r="1.3" />
+      <circle cx="8" cy="8" r="1.3" />
+      <circle cx="12.5" cy="8" r="1.3" />
+    </Svg>
+  )
+}
+
+export function ArrowRightIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" />
+    </Svg>
+  )
+}
+
+export function FileIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 2.5h5l3 3v8H4v-11Z" />
+      <path d="M9 2.5v3h3" />
+    </Svg>
+  )
+}
+
+export function BranchIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="4.5" cy="3.5" r="1.5" />
+      <circle cx="4.5" cy="12.5" r="1.5" />
+      <circle cx="11.5" cy="5" r="1.5" />
+      <path d="M4.5 5v6M11.5 6.5c0 2.6-3.6 2.4-6.4 4.4" />
+    </Svg>
+  )
+}
+
+export function ReviewIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M1.8 8s2.3-4.3 6.2-4.3S14.2 8 14.2 8 11.9 12.3 8 12.3 1.8 8 1.8 8Z" />
+      <circle cx="8" cy="8" r="1.8" />
+    </Svg>
+  )
+}
+
+/** A changed file's status as GitHub draws it: a rounded square with a plus, dot, minus or arrow. */
+export function FileStatusIcon({ status, ...props }: IconProps & { status: 'added' | 'modified' | 'removed' | 'renamed' }) {
+  return (
+    <Svg {...props}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2.6" />
+      {status === 'added' && <path d="M8 5.5v5M5.5 8h5" />}
+      {status === 'modified' && <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none" />}
+      {status === 'removed' && <path d="M5.5 8h5" />}
+      {status === 'renamed' && <path d="M5.5 8h5M8.5 6l2 2-2 2" />}
+    </Svg>
+  )
+}

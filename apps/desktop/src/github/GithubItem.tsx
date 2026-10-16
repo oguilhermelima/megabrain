@@ -4,28 +4,34 @@ import type { GithubDetail, GithubMergeMethod, GithubReview, GithubReviewEvent }
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { DetailSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
+import type { MenuRow } from '@/components/ContextMenu'
 import { checkSummary } from '@/github/github-model'
-import { RefreshIcon } from '@/github/icons'
-import { Avatar, CheckGlyph, ChecksList, ConversationThread, OpenLink, LineCounts, ReviewChip, StatePill, ago, checkTitle, useNow } from '@/github/parts'
+import { CommentIcon, FileIcon, MergedIcon, ReviewIcon } from '@/github/icons'
+import { ItemHero, StatPill, type HeroButton } from '@/github/ItemHero'
+import { heroActions, type HeroPrimary } from '@/github/item-hero-model'
+import { CheckGlyph, ChecksList, ConversationThread, LineCounts, checkTitle, useNow } from '@/github/parts'
 import { PullRequestFiles, type PendingControls, type ReviewContext } from '@/github/PullRequestFiles'
 import { ReviewersSummary } from '@/github/ReviewSummary'
-import { MergeBox, mergeMethods, type MergeBoxRunning } from '@/github/MergeBox'
+import { MergeBox, mergeMethods, secondaryLabel, type MergeBoxRunning } from '@/github/MergeBox'
 import { mergeBox, type PrimaryAction, type SecondaryAction, type Tone } from '@/github/merge-box-model'
 import { ThreadsList, type ThreadActions, type ThreadFocus } from '@/github/ReviewThread'
 import { useReviewers, useReviewThreads } from '@/github/usePullRequestReview'
 import { usePullRequestFiles } from '@/github/usePullRequestFiles'
 import { addPending, editPending, issueStateActions, removePending, reviewPayload, unresolvedCount, type IssueStateAction, type PendingComment } from '@/github/review-model'
 
-// One pull request or issue maximised as a pane item: a header with its title, state, author,
-// branches, checks and where the merge stands, a bar with its reviewers, and tabs for the
-// conversation (ending in the merge box, which holds every merge and close action), the changed files
-// (with review threads under their lines and inline comments kept pending until a review submits
-// them), every review thread, and the checks. Every write goes through `megabrain github`
+// One pull request or issue maximised as a pane item: a hero with its state, title, author, branches,
+// stat pills and an action bar (see ItemHero), its reviewers, and tabs that stick under the top of the
+// pane for the conversation (ending in the merge box, which holds every merge and close action), the
+// changed files (with review threads under their lines and inline comments kept pending until a review
+// submits them), every review thread, and the checks. Every write goes through `megabrain github`
 // and shows gh's own message when it fails.
 
 type Tab = 'conversation' | 'files' | 'threads' | 'checks'
 
 const boxTone: Record<Tone, string> = { ok: 'text-ok', warn: 'text-warn', bad: 'text-bad', muted: 'text-ink-300' }
+type ReviewDecision = NonNullable<GithubDetail['reviewDecision']>
+const reviewTone: Record<ReviewDecision, string> = { approved: 'text-ok', changes_requested: 'text-bad', review_required: 'text-ink-300' }
+const reviewLabel: Record<ReviewDecision, string> = { approved: 'Approved', changes_requested: 'Changes requested', review_required: 'Review required' }
 
 /** One write at a time per control: running while it runs, its error kept until the next try. */
 function useAction() {
@@ -74,20 +80,23 @@ function useDetail(root: string, kind: 'pr' | 'issue', number: number) {
 
 function TabBar({ value, tabs, onChange }: { value: Tab; tabs: { value: Tab; label: string; count?: number }[]; onChange: (tab: Tab) => void }) {
   return (
-    <div role="tablist" className="flex gap-1 px-8">
-      {tabs.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          role="tab"
-          aria-selected={tab.value === value}
-          onClick={() => onChange(tab.value)}
-          className={`-mb-px flex h-10 items-center gap-2 border-b-2 px-3 text-[13px] font-semibold transition-colors ${tab.value === value ? 'border-accent text-ink-100' : 'border-transparent text-ink-400 hover:text-ink-200'}`}
-        >
-          {tab.label}
-          {tab.count !== undefined && <span className="rounded-full bg-white/[0.08] px-1.5 text-[11px] leading-[18px] text-ink-300 tabular-nums">{tab.count}</span>}
-        </button>
-      ))}
+    <div role="tablist" className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-white/[0.08] bg-white/[0.04] p-1">
+      {tabs.map((tab) => {
+        const selected = tab.value === value
+        return (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange(tab.value)}
+            className={`flex h-8 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] font-semibold transition-colors duration-[var(--motion-enter)] ${selected ? 'bg-white/[0.12] text-ink-100' : 'text-ink-400 hover:text-ink-200'}`}
+          >
+            {tab.label}
+            {tab.count !== undefined && <span className={`min-w-[20px] rounded-full px-1.5 text-center text-[11px] leading-[18px] tabular-nums ${selected ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.06] text-ink-400'}`}>{tab.count.toLocaleString()}</span>}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -146,7 +155,7 @@ function ReviewPanel({ pending, error, onSubmit, onConfirmChanges, onClose }: { 
       onKeyDown={(keyEvent) => {
         if (keyEvent.key === 'Escape' && !running) onClose()
       }}
-      className="absolute top-full right-8 z-20 mt-2 w-[min(460px,calc(100%-4rem))] space-y-3 rounded-[20px] border border-white/[0.12] bg-ink-900 p-4 shadow-2xl"
+      className="absolute top-full right-8 z-30 -mt-2 w-[min(460px,calc(100%-4rem))] space-y-3 rounded-[20px] border border-white/[0.12] bg-ink-900 p-4 shadow-2xl"
     >
       <Segmented value={event} options={reviewEvents} onChange={setEvent} disabled={running} />
       <textarea
@@ -383,75 +392,97 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
     requestAnimationFrame(() => mergeBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
 
+  const hero = heroActions({ state: currentState, isDraft: draft, box })
+  const writing = boxRunning !== null
+  const reviewButton = (tone: HeroButton['tone']): HeroButton => ({
+    label: pending.length > 0 ? `Review changes (${pending.length})` : 'Review changes',
+    tone,
+    icon: <ReviewIcon size={15} />,
+    onClick: () => setReviewing((current) => !current),
+  })
+  const heroButton = (action: HeroPrimary): HeroButton => {
+    if (action === 'review') return reviewButton('accent')
+    if (action === 'merge') return { label: 'Merge', tone: 'merge', icon: <MergedIcon size={15} />, disabled: writing, onClick: confirmMerge }
+    if (action === 'ready-for-review') return { label: 'Ready for review', tone: 'accent', running: boxRunning === action, disabled: writing, onClick: () => onBoxPrimary(action) }
+    return { label: 'Reopen', tone: 'quiet', running: boxRunning === action, disabled: writing, onClick: () => onBoxPrimary(action) }
+  }
+  const heroMore: MenuRow[] =
+    kind === 'pr'
+      ? hero.more.map((action) => ({ label: secondaryLabel[action], danger: action === 'close', disabled: writing, onSelect: () => onBoxSecondary(action) }))
+      : detail === null
+        ? []
+        : issueStateActions(currentState).map((action) => ({ label: action.state === 'open' ? 'Reopen issue' : action.label, danger: action.state === 'closed', disabled: state.running, onSelect: () => void changeIssueState(action) }))
+
+  const checkTone = summary.state === 'failing' ? 'text-bad' : summary.state === 'pending' ? 'text-warn' : summary.state === 'passing' ? 'text-ok' : 'text-ink-300'
+  const stats =
+    detail === null ? null : kind === 'pr' ? (
+      <>
+        {files.pages.total !== null && (
+          <StatPill onClick={() => setTab('files')} title="Show the changed files">
+            <FileIcon size={13} />
+            {files.pages.total.toLocaleString()} {files.pages.total === 1 ? 'file' : 'files'}
+          </StatPill>
+        )}
+        {detail.additions !== undefined && detail.deletions !== undefined && (
+          <StatPill>
+            <LineCounts additions={detail.additions} deletions={detail.deletions} />
+          </StatPill>
+        )}
+        <StatPill onClick={() => setTab('checks')} tone={checkTone} title="Show the checks">
+          <CheckGlyph state={summary.state} size={13} />
+          {checkTitle(summary)}
+        </StatPill>
+        {detail.reviewDecision !== undefined && detail.reviewDecision !== null && (
+          <StatPill tone={reviewTone[detail.reviewDecision]}>
+            <ReviewIcon size={13} />
+            {reviewLabel[detail.reviewDecision]}
+          </StatPill>
+        )}
+        {open && (
+          <StatPill onClick={showMergeBox} tone={boxTone[box.tone]} title="Show the merge box">
+            <MergedIcon size={13} />
+            {box.headline}
+          </StatPill>
+        )}
+      </>
+    ) : (
+      <StatPill>
+        <CommentIcon size={13} />
+        {detail.comments.length} {detail.comments.length === 1 ? 'comment' : 'comments'}
+      </StatPill>
+    )
+
   const header = (
-    <header className="relative space-y-2.5 px-8 pt-5 pb-3">
-      <div className="flex items-start gap-3">
-        <h1 className="min-w-0 flex-1 text-[22px] leading-snug font-semibold tracking-[-0.01em] text-ink-100 select-text">
-          {title} <span className="font-normal text-ink-500 tabular-nums">#{number}</span>
-        </h1>
-        <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
-          <button type="button" onClick={() => void reload()} aria-label="Refresh" title="Refresh" className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-300 hover:bg-white/[0.08] hover:text-ink-100">
-            <span className={loading && read !== null ? 'animate-spin' : ''}>
-              <RefreshIcon size={14} />
-            </span>
-          </button>
-          {detail !== null && <OpenLink url={detail.url} />}
-          {kind === 'pr' && detail !== null && open && (
-            <Pill tone="secondary" onClick={() => setReviewing((current) => !current)}>
-              Review{pending.length > 0 ? ` (${pending.length})` : ''}
-            </Pill>
-          )}
-        </div>
-      </div>
-      {detail !== null && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12.5px] text-ink-400">
-          <StatePill kind={kind} state={currentState} draft={detail.isDraft ?? false} />
-          <Avatar login={detail.author?.login ?? null} size={18} />
-          <span className="font-semibold text-ink-200">{detail.author?.login ?? 'ghost'}</span>
-          <span>opened {ago(detail.createdAt, now)}</span>
-          {detail.headRefName !== undefined && detail.baseRefName !== undefined && (
-            <>
-              <span className="text-ink-600">·</span>
-              <span className="rounded-[7px] bg-white/[0.06] px-1.5 font-mono text-[11.5px] text-ink-200">{detail.headRefName}</span>
-              <span className="text-ink-500">→</span>
-              <span className="rounded-[7px] bg-white/[0.06] px-1.5 font-mono text-[11.5px] text-ink-200">{detail.baseRefName}</span>
-            </>
-          )}
-          {detail.additions !== undefined && detail.deletions !== undefined && (
-            <>
-              <span className="text-ink-600">·</span>
-              <LineCounts additions={detail.additions} deletions={detail.deletions} />
-            </>
-          )}
-          {kind === 'pr' && (
-            <>
-              <span className="text-ink-600">·</span>
-              <button type="button" onClick={() => setTab('checks')} className={`flex items-center gap-1 hover:text-ink-100 ${summary.state === 'failing' ? 'text-bad' : summary.state === 'pending' ? 'text-warn' : summary.state === 'passing' ? 'text-ok' : ''}`}>
-                <CheckGlyph state={summary.state} size={13} />
-                {checkTitle(summary)}
-              </button>
-            </>
-          )}
-          <ReviewChip decision={detail.reviewDecision ?? null} />
-          {kind === 'pr' && open && (
-            <>
-              <span className="text-ink-600">·</span>
-              <button type="button" onClick={showMergeBox} title="Show the merge box" className={`flex items-center gap-1 font-semibold hover:underline ${boxTone[box.tone]}`}>
-                {box.headline}
-                <span aria-hidden="true">↓</span>
-              </button>
-            </>
-          )}
-        </div>
+    <ItemHero
+      kind={kind}
+      number={number}
+      detail={detail}
+      title={title}
+      state={currentState}
+      draft={draft}
+      now={now}
+      loading={loading}
+      onRefresh={() => void reload()}
+      primary={kind === 'pr' && hero.primary !== null && detail !== null ? heroButton(hero.primary) : null}
+      secondary={kind === 'pr' && hero.review && detail !== null ? [reviewButton('quiet')] : []}
+      more={heroMore}
+      stats={stats}
+      compact={tab === 'files'}
+    >
+      {kind === 'pr' && detail !== null && tab !== 'files' && <ReviewersSummary root={root} reviewers={reviewers.reviewers} error={reviewers.error} canRequest={open} onRequest={reviewers.request} />}
+      {reviewing && kind === 'pr' && (
+        <ReviewPanel
+          pending={pending}
+          error={review.error}
+          onSubmit={submitReview}
+          onConfirmChanges={confirmChanges}
+          onClose={() => {
+            review.clear()
+            setReviewing(false)
+          }}
+        />
       )}
-      {kind === 'pr' && detail !== null && (
-        <ReviewersSummary root={root} reviewers={reviewers.reviewers} error={reviewers.error} canRequest={open} onRequest={reviewers.request} />
-      )}
-      {reviewing && kind === 'pr' && <ReviewPanel pending={pending} error={review.error} onSubmit={submitReview} onConfirmChanges={confirmChanges} onClose={() => {
-        review.clear()
-        setReviewing(false)
-      }} />}
-    </header>
+    </ItemHero>
   )
 
   const tabs: { value: Tab; label: string; count?: number }[] =
@@ -464,17 +495,26 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
         ]
       : [{ value: 'conversation', label: 'Conversation', ...(detail === null ? {} : { count: detail.comments.length }) }]
 
+  const tabBar = (
+    <div className="px-8 pt-1 pb-3">
+      <TabBar value={tab} tabs={tabs} onChange={setTab} />
+    </div>
+  )
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-ink-950">
-      {header}
-      <div className="border-b border-white/[0.06]">
-        <TabBar value={tab} tabs={tabs} onChange={setTab} />
-      </div>
       {tab === 'files' && kind === 'pr' ? (
-        <PullRequestFiles files={files} review={reviewContext} />
+        <>
+          {header}
+          <div className="border-b border-white/[0.06]">{tabBar}</div>
+          <PullRequestFiles files={files} review={reviewContext} />
+        </>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="space-y-4 px-8 py-6">
+          {header}
+          {/* The tabs stay under the top of the pane once the hero scrolls away. */}
+          <div className="sticky top-0 z-20 border-b border-white/[0.06] bg-ink-950">{tabBar}</div>
+          <div className="space-y-4 px-8 pt-6 pb-10">
             {error !== null && (
               <div className="space-y-3">
                 <ErrorNote error={error} />
@@ -488,7 +528,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
             {detail === null && error === null && <DetailSkeleton />}
             {detail !== null && tab === 'conversation' && (
               <>
-                <ConversationThread detail={detail} now={now} />
+                <ConversationThread detail={detail} reviews={reviewers.reviewers?.reviews} now={now} />
                 {kind === 'pr' && (
                   <>
                     <MergeBox ref={mergeBoxRef} box={box} method={method} onMethod={setMethod} running={boxRunning} onPrimary={onBoxPrimary} onSecondary={onBoxSecondary} />
