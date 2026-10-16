@@ -192,6 +192,8 @@ export const usageReadingSchema = z.looseObject({
   resetsAt: z.string().nullable(),
   fetchedAt: z.number().nullable(),
   reason: z.string(),
+  /** Unix seconds of the next live attempt, when the status is stale; absent from an older CLI. */
+  retryAt: z.number().nullable().optional(),
 })
 export const settingsSchema = z.looseObject({
   /** Engine for embedded terminals; absent means native. */

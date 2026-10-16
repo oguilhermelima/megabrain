@@ -124,10 +124,12 @@ function isLimitAgent(agent: string): agent is LimitAgent {
   return agent === "codex" || agent === "claude" || agent === "agy" || agent === "grok";
 }
 
-async function readStepLimit(agent: string, model: string, window: string, config: ChainConfig, environment: ChainRunEnvironment, processAdapter: ProcessAdapter, root: string): Promise<LimitReading> {
+async function readStepLimit(agent: string, model: string, window: string, config: ChainConfig, environment: ChainRunEnvironment, processAdapter: ProcessAdapter, root: string): Promise<Exclude<LimitReading, { readonly status: "stale" }>> {
   if (window !== "5h" && window !== "weekly") return { status: "unknown", reason: `${agent} ${window} window unknown (unsupported window)` };
   if (!isLimitAgent(agent)) return { status: "unknown", reason: `${agent} ${window} window unknown (unsupported provider)` };
-  return readLimit(agent, window as LimitWindowName, config, environment, processAdapter, root, model);
+  const reading = await readLimit(agent, window as LimitWindowName, config, environment, processAdapter, root, model);
+  // A step is gated on a current reading; a stale one is the same as not knowing.
+  return reading.status === "stale" ? { status: "unknown", reason: reading.reason } : reading;
 }
 
 function buildSpawnArgs(options: Readonly<{

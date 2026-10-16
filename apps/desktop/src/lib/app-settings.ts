@@ -1,6 +1,7 @@
 import { api } from '@/api'
 import { settingsSchema, type Settings } from '@/api/schema'
 import { onFocus, onVisibility, windowShows } from '@/lib/app-events'
+import { keepKnownReadings } from '@/lib/known-readings'
 import { createLiveRead, type LiveRead } from '@/lib/live-read'
 import { storageCache } from '@/lib/shared-read'
 
@@ -11,7 +12,7 @@ let live: LiveRead<Settings> | null = null
 
 export function appSettings(): LiveRead<Settings> {
   if (live !== null) return live
-  const store = createLiveRead(() => api.settings(), {
+  const store = createLiveRead(async () => keepKnownReadings(live?.get() ?? null, await api.settings()), {
     cache: storageCache<Settings>(
       () => window.localStorage,
       'megabrain.composer.settings',

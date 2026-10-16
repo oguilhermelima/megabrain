@@ -1,10 +1,9 @@
-import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { useCallback, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import type { Settings } from '@/api/schema'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
 import {
-  agentLimits,
   agentModels,
   contextMeter,
   contextWindow,
@@ -12,12 +11,10 @@ import {
   effortLevels,
   effortName,
   findModel,
-  limitWindows,
   formatTokens,
-  highestLimit,
-  limitsLayout,
   providerUsage,
   readingAge,
+  staleNote,
   resetDistance,
   menuGroups,
   modelHint,
@@ -36,7 +33,6 @@ import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { appSettings } from '@/lib/app-settings'
 import { agentLabel } from '@/native-chat/empty-chat'
 import { isStale } from '@/lib/shared-read'
-import { usePaneChrome } from '@/panes/pane-chrome'
 
 const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
 const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
@@ -240,17 +236,7 @@ function ModelMenu({
   )
 }
 
-/** A bar with rounded ends, filled to a share and coloured by tone; `small` is the compact line's. */
-function Meter({ fraction, tone, small = false }: { fraction: number; tone: LimitTone; small?: boolean }) {
-  return (
-    <span className={`shrink-0 overflow-hidden rounded-full bg-white/[0.12] ${small ? 'h-1 w-6' : 'h-1.5 w-16'}`}>
-      <span className={`block h-full rounded-full ${toneBar[tone]}`} style={{ width: `${Math.max(3, Math.round(fraction * 100))}%` }} />
-    </span>
-  )
-}
-
 const windowNames: Record<string, string> = { '5h': '5-hour', weekly: 'Weekly' }
-const shortWindowNames: Record<string, string> = { '5h': '5h', weekly: 'Wk' }
 
 const resetClock = (at: Date) => at.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
 
@@ -258,29 +244,6 @@ const resetClock = (at: Date) => at.toLocaleString(undefined, { weekday: 'short'
 function limitTitle(agent: string, limit: AgentLimit): string {
   const when = limit.resetsAt === null ? 'reset time unknown' : `resets ${resetClock(limit.resetsAt)}`
   return `${agent} ${windowNames[limit.window] ?? limit.window} limit: ${Math.round(limit.usedPercent)}% used, ${when}`
-}
-
-function LimitMeter({ agent, limit }: { agent: string; limit: AgentLimit }) {
-  const percent = Math.round(limit.usedPercent)
-  return (
-    <span className="flex h-6 min-w-0 items-center gap-2" title={limitTitle(agent, limit)}>
-      <span className="shrink-0 font-medium text-ink-200">{windowNames[limit.window] ?? limit.window}</span>
-      <Meter fraction={limit.usedPercent / 100} tone={limit.tone} />
-      <span className={`shrink-0 font-semibold tabular-nums ${limit.tone === 'normal' ? 'text-ink-100' : toneText[limit.tone]}`}>{`${percent}%`}</span>
-      {limit.resets !== null && <span className="min-w-0 truncate text-ink-400">{limit.resets}</span>}
-    </span>
-  )
-}
-
-/** One window on the compact line: its short name, a tiny bar and the share; the reset is in the tooltip. */
-function CompactLimit({ agent, limit }: { agent: string; limit: AgentLimit }) {
-  return (
-    <span className="flex min-w-0 items-center gap-1.5" title={limitTitle(agent, limit)}>
-      <span className="shrink-0 text-ink-400">{shortWindowNames[limit.window] ?? limit.window}</span>
-      <Meter fraction={limit.usedPercent / 100} tone={limit.tone} small />
-      <span className={`shrink-0 tabular-nums ${limit.tone === 'normal' ? 'text-ink-300' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
-    </span>
-  )
 }
 
 const ringRadius = 6
@@ -335,16 +298,6 @@ function PickerSkeleton() {
   return (
     <span aria-hidden="true" className="flex h-8 w-[140px] shrink-0 items-center px-3">
       <span className={`h-3 w-full ${shimmer}`} />
-    </span>
-  )
-}
-
-function LimitSkeleton({ window }: { window: string }) {
-  return (
-    <span aria-hidden="true" className="flex h-6 min-w-0 items-center gap-2">
-      <span className="shrink-0 font-medium text-ink-200">{windowNames[window] ?? window}</span>
-      <span className={`h-1.5 w-16 shrink-0 ${shimmer}`} />
-      <span className={`h-2.5 w-[72px] shrink-0 ${shimmer}`} />
     </span>
   )
 }
@@ -454,21 +407,6 @@ export function ComposerStatus({
   )
 }
 
-/** The width of the element's parent, read before paint and again on every resize; null until it mounts. */
-function useParentWidth(ref: RefObject<HTMLElement | null>): number | null {
-  const [width, setWidth] = useState<number | null>(null)
-  useLayoutEffect(() => {
-    const element = ref.current?.parentElement ?? null
-    if (element === null) return
-    const measure = () => setWidth(element.getBoundingClientRect().width)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [ref])
-  return width
-}
-
 /** A limit as a ring and its share, coloured by tone: the compact readout a split and the sidebar show. */
 function RingShare({ limit }: { limit: AgentLimit }) {
   return (
@@ -476,126 +414,6 @@ function RingShare({ limit }: { limit: AgentLimit }) {
       <Ring fraction={limit.usedPercent / 100} tone={limit.tone} />
       <span className={`tabular-nums ${limit.tone === 'normal' ? 'text-ink-300' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
     </>
-  )
-}
-
-/** The highest limit as a ring and its share; a click opens both windows with their reset times. */
-function LimitRing({ agent, limits }: { agent: string; limits: AgentLimit[] }) {
-  const [open, setOpen] = useState<Open>(null)
-  const menu = usePresence(open)
-  const close = useRef(() => setOpen(null)).current
-  const trigger = useRef<HTMLButtonElement>(null)
-  const highest = highestLimit(limits)
-  if (highest === null) return null
-  const title = limits.map((limit) => limitTitle(agent, limit)).join('\n')
-  return (
-    <>
-      <button
-        ref={trigger}
-        type="button"
-        title={title}
-        aria-label={`Usage limits: ${Math.round(highest.usedPercent)}% used`}
-        aria-haspopup="menu"
-        aria-expanded={open !== null}
-        onMouseDown={(event) => {
-          // Lets a second click close the open popover.
-          event.preventDefault()
-          event.stopPropagation()
-        }}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect()
-          const anchor = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
-          setOpen((current) => (current === null ? anchor : null))
-        }}
-        className="flex h-6 shrink-0 items-center gap-1.5 rounded-full px-1.5 transition-colors duration-100 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 aria-expanded:bg-white/[0.08] motion-reduce:transition-none"
-      >
-        <RingShare limit={highest} />
-      </button>
-      {menu.shown !== null && (
-        <Popover {...menuLook} anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
-          <p className={`${heading} pt-1`}>Usage limits</p>
-          <div className="flex flex-col px-2 pb-1 text-[12.5px] text-ink-300">
-            {limits.map((limit) => (
-              <LimitMeter key={limit.window} agent={agent} limit={limit} />
-            ))}
-          </div>
-        </Popover>
-      )}
-    </>
-  )
-}
-
-/**
- * The agent's 5-hour and weekly limits under the composer, from its left edge, fitted to the pane:
- * two full rows from 1000px, one quiet line below that, a single ring under 560px (limitsLayout).
- */
-export function ComposerLimits({ agent }: { agent: string | null }) {
-  const { settings, stale, failed } = useSettings()
-  const box = useRef<HTMLDivElement>(null)
-  // The composer's footer spans the pane, so its width is the pane's.
-  const layout = limitsLayout(useParentWidth(box))
-  // A split shows the limits once for all its panes (SplitLimits), so none of its composers does.
-  const split = usePaneChrome() !== null
-  const limits = settings === null || agent === null ? [] : agentLimits(settings.limits.readings, agent)
-  const loading = settings === null
-  const hidden = split || agent === null || (!loading && limits.length === 0)
-  // The box stays mounted, empty when hidden, so the pane keeps being measured.
-  return (
-    <div
-      ref={box}
-      aria-busy={loading}
-      title={(stale || failed) && !hidden ? (failed ? 'Last known usage; retrying' : 'Last known usage; refreshing') : undefined}
-      className={`flex min-w-0 flex-wrap items-center justify-start whitespace-nowrap text-ink-300 transition-opacity duration-150 motion-reduce:transition-none ${hidden ? '' : layout === 'full' ? 'gap-x-5 px-3 pt-2 text-[12.5px]' : 'gap-x-2 px-3 pt-1.5 text-[11.5px]'} ${stale || failed ? 'opacity-60' : ''}`}
-    >
-      {hidden || agent === null ? null : loading ? (
-        layout === 'full' ? (
-          limitWindows.map((window) => <LimitSkeleton key={window} window={window} />)
-        ) : (
-          <span aria-hidden="true" className={`h-2.5 ${layout === 'ring' ? 'w-10' : 'w-32'} ${shimmer}`} />
-        )
-      ) : layout === 'full' ? (
-        limits.map((limit) => <LimitMeter key={limit.window} agent={agent} limit={limit} />)
-      ) : layout === 'compact' ? (
-        limits.map((limit, index) => (
-          <span key={limit.window} className="flex items-center gap-2">
-            {index > 0 && <span aria-hidden="true" className="text-ink-500">·</span>}
-            <CompactLimit agent={agent} limit={limit} />
-          </span>
-        ))
-      ) : (
-        <LimitRing agent={agent} limits={limits} />
-      )}
-    </div>
-  )
-}
-
-/**
- * A split's one readout of the limits (panes/group-bar's limitsPlace): a ring per agent working in
- * it, each marked by its agent when there are several, the details a click away.
- */
-export function SplitLimits({ agents }: { agents: readonly string[] }) {
-  const { settings, stale, failed } = useSettings()
-  const shown =
-    settings === null
-      ? []
-      : agents.flatMap((agent) => {
-          const limits = agentLimits(settings.limits.readings, agent)
-          return limits.length === 0 ? [] : [{ agent, limits }]
-        })
-  if (shown.length === 0) return null
-  return (
-    <div
-      data-split-limits=""
-      title={stale || failed ? (failed ? 'Last known usage; retrying' : 'Last known usage; refreshing') : undefined}
-      className={`flex shrink-0 items-center gap-1 text-[11.5px] whitespace-nowrap text-ink-300 ${stale || failed ? 'opacity-60' : ''}`}
-    >
-      {shown.map(({ agent, limits }) => (
-        <span key={agent} className="flex items-center">
-          {shown.length > 1 && <AgentIcon agent={agent} size={12} className="ml-1 shrink-0 text-ink-400" />}
-          <LimitRing agent={agent} limits={limits} />
-        </span>
-      ))}
-    </div>
   )
 }
 
@@ -676,6 +494,7 @@ export function SidebarUsage({ onOpenSettings }: { onOpenSettings: () => void })
 /** One provider in the usage details: its mark and name, how old its reading is, then a row per window. */
 function ProviderLimits({ usage }: { usage: ProviderUsage }) {
   const age = readingAge(usage.fetchedAt)
+  const note = staleNote(usage.stale)
   return (
     <section data-provider-limits={usage.agent} className="px-2 pt-1 pb-2">
       <div className="flex h-6 items-center gap-2">
@@ -683,6 +502,7 @@ function ProviderLimits({ usage }: { usage: ProviderUsage }) {
         <h3 className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ink-100">{agentLabel(usage.agent)}</h3>
         {age !== null && <span className="shrink-0 text-[11.5px] text-ink-500">{`updated ${age}`}</span>}
       </div>
+      {note !== null && <p className="pt-0.5 text-[11.5px] text-warn">{note}</p>}
       {usage.limits.map((limit) => (
         <div key={limit.window} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 pt-1.5" title={limitTitle(usage.agent, limit)}>
           <span className="min-w-0 truncate text-[12.5px] font-medium text-ink-200">{windowNames[limit.window] ?? limit.window}</span>

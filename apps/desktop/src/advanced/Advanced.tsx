@@ -62,7 +62,7 @@ import type { MenuIcon } from '@/components/menu-icons'
 import { arrangePane } from '@/panes/arrange'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { SplitFrame } from '@/panes/GroupBar'
-import { groupIdentity, limitAgents, sharedWorktree, splitCodeItem, splitCodeShown, type SplitMember } from '@/panes/group-bar'
+import { groupIdentity, sharedWorktree, splitCodeItem, splitCodeShown, type SplitMember } from '@/panes/group-bar'
 import { emptyStrip, navigate, type Strip } from '@/panes/strip'
 import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
@@ -1122,7 +1122,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
             <RunContext.Provider value={controlsFor(sharedRoot)}>
-              <SplitFrame split={splitMembers.length > 1} shared={sharedBar} agents={limitAgents(splitMembers)} inset={sharedJoined ? windowRowInset : null}>
+              <SplitFrame shared={sharedBar} inset={sharedJoined ? windowRowInset : null}>
                 {(covered) => (
                   <PaneArea
                     panes={panes}

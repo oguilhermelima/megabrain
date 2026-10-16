@@ -29,19 +29,6 @@ export function sharedWorktree(members: readonly SplitMember[]): string | null {
   return members.every((member) => member.kind !== null && sharedKinds.has(member.kind) && member.worktree === first) ? first : null
 }
 
-/** Where the usage limits show: under the one composer, in the shared bar, or once under a split across worktrees. */
-export type LimitsPlace = 'composer' | 'group-bar' | 'under-split'
-
-export function limitsPlace({ panes, shared }: { panes: number; shared: boolean }): LimitsPlace {
-  if (panes < 2) return 'composer'
-  return shared ? 'group-bar' : 'under-split'
-}
-
-/** The agents whose limits a split shows, each once, in pane order. */
-export function limitAgents(members: readonly SplitMember[]): string[] {
-  return [...new Set(members.flatMap((member) => (member.agent === null || member.agent === '' ? [] : [member.agent])))]
-}
-
 /** The split's own Code slot, named like an item so the code layer can hold a frame over it. */
 export const splitCodeItem = (groupId: string) => `split:${groupId}`
 

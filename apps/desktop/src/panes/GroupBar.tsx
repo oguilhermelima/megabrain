@@ -2,7 +2,6 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { ActionBar, useWorktreeChanges, WorktreeView } from '@/chat/ActionBar'
 import { changedFileCount, paneViewKey, segments, shownView, type PaneView, type WorktreeFacts } from '@/chat/action-bar-model'
-import { SplitLimits } from '@/chat/ComposerStatus'
 import { PullRequestIcon } from '@/github/icons'
 import type { GroupIdentity } from '@/panes/group-bar'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
@@ -22,12 +21,11 @@ export interface SharedBar {
 /**
  * The split area and what it shows once for all its panes. A split on one worktree gets one bar on
  * top: the worktree at its left, Agent, Code, PR and Diff in its true centre (Agent is the split
- * itself; the others lie over the whole area, the panes kept mounted beneath), and the usage limits,
- * Run and the run panel's toggle at its right. With the sidebar hidden it joins the window row, 44px
- * tall and inset past the lights. A split across worktrees keeps each pane's own bar and shows the
- * limits once, in a row under the panes. `children` is told whether a view covers them.
+ * itself; the others lie over the whole area, the panes kept mounted beneath), and Run and the
+ * run panel's toggle at its right. With the sidebar hidden it joins the window row, 44px
+ * tall and inset past the lights. A split across worktrees keeps each pane's own bar. `children` is told whether a view covers them.
  */
-export function SplitFrame({ split, shared, agents, inset, children }: { split: boolean; shared: SharedBar | null; agents: readonly string[]; inset: number | null; children: (covered: boolean) => ReactNode }) {
+export function SplitFrame({ shared, inset, children }: { shared: SharedBar | null; inset: number | null; children: (covered: boolean) => ReactNode }) {
   const facts = shared?.facts ?? null
   const changes = useWorktreeChanges(facts)
   const available = facts === null ? null : segments({ facts, changed: changes.read ? changedFileCount(changes.uncommitted, changes.branch) : null, codeAvailable: true })
@@ -76,7 +74,6 @@ export function SplitFrame({ split, shared, agents, inset, children }: { split: 
             </div>
             <ActionBar agent={null} segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
             <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">
-              <SplitLimits agents={agents} />
               <RunButton />
               <RunPanelToggle />
             </div>
@@ -91,11 +88,6 @@ export function SplitFrame({ split, shared, agents, inset, children }: { split: 
           </div>
         )}
       </div>
-      {bar === null && split && agents.length > 0 && (
-        <div data-split-footer="" className="flex h-8 shrink-0 items-center justify-end border-t border-white/[0.06] px-3">
-          <SplitLimits agents={agents} />
-        </div>
-      )}
     </>
   )
 }

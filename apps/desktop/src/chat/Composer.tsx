@@ -15,7 +15,7 @@ import { createCommandSource, menuNotice, mergeInitCommands, type CommandList } 
 import { CommandMenu, handleMenuKey, useRecentCommands } from '@/chat/CommandMenu'
 import { deleteRange, draftLength, draftText, insertText, insertToken, messagePartsFromText, moveToken, tokenAfter, tokenBefore, tokenIds, tokenOffset, toMessageParts, type Draft } from '@/chat/composer-parts'
 import { pickerLabel, sessionCommand, withContextWindow } from '@/chat/composer-status'
-import { ComposerLimits, ComposerStatus, type ModelPick } from '@/chat/ComposerStatus'
+import { ComposerStatus, type ModelPick } from '@/chat/ComposerStatus'
 import { composerBanner, sendState, type Banner, type Notice } from '@/chat/composer-look'
 import { Lightbox, type LightboxImage } from '@/chat/Lightbox'
 import { SkillMenu } from '@/chat/SkillMenu'
@@ -1076,7 +1076,6 @@ export function Composer({
           </div>
         </div>
       </div>
-      <ComposerLimits agent={agent} />
       <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
     </footer>
   )

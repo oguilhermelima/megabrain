@@ -34,7 +34,10 @@ export type LimitResult = Readonly<{
 
 export type LimitReading =
   | Readonly<{ readonly status: "current"; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "disk" | "cache" | "live"; readonly result: LimitResult; readonly fetchedAt: number }>
-  | Readonly<{ readonly status: "unknown"; readonly reason: string }>;
+  // The provider could not be asked just now (rate limited, timed out, in backoff); this is its last
+  // good snapshot, `fetchedAt` old, and `retryAt` (unix seconds) is the earliest the next live call may go out.
+  | Readonly<{ readonly status: "stale"; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "cache"; readonly result: LimitResult; readonly fetchedAt: number; readonly retryAt?: number }>
+  | Readonly<{ readonly status: "unknown"; readonly reason: string; readonly transient?: Readonly<{ readonly retryAfterSeconds?: number }> }>;
 
 export type ChainLimitEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -46,6 +49,12 @@ export function percentText(value: number): string {
 
 function unknownReading(agent: LimitAgent, window: LimitWindowName, reason: string): LimitReading {
   return { status: "unknown", reason: `${agent} ${window} window unknown (${reason})` };
+}
+
+// A failure that says nothing about the provider's state: asking again later may work, so the last
+// good snapshot stands and the next live call waits.
+function transientReading(agent: LimitAgent, window: LimitWindowName, reason: string, retryAfterSeconds?: number): LimitReading {
+  return { status: "unknown", reason: `${agent} ${window} window unknown (${reason})`, transient: retryAfterSeconds === undefined ? {} : { retryAfterSeconds } };
 }
 
 function windowMinutesFor(window: LimitWindowName): number {
@@ -226,13 +235,16 @@ function readCache(agent: Exclude<LimitAgent, "codex">, window: LimitWindowName,
 }
 
 function writeCache(agent: LimitAgent, result: LimitResult, stateDir: string): void {
+  writeStateFile(cachePath(stateDir, agent), result, stateDir);
+}
+
+function writeStateFile(path: string, value: unknown, stateDir: string): void {
   let temporaryDirectory: string | undefined;
   try {
     mkdirSync(stateDir, { recursive: true });
-    const path = cachePath(stateDir, agent);
     temporaryDirectory = mkdtempSync(resolve(stateDir, ".usage-limits-"));
     const temp = resolve(temporaryDirectory, "reading.json");
-    writeFileSync(temp, JSON.stringify(result), { mode: 0o600 });
+    writeFileSync(temp, JSON.stringify(value), { mode: 0o600 });
     renameSync(temp, path);
     chmodSync(path, 0o600);
   } catch { /* the cache is an optimization; a write failure just costs a re-fetch */ }
@@ -243,7 +255,15 @@ type CurlOutcome =
   | { readonly kind: "ok"; readonly body: string }
   | { readonly kind: "timeout" }
   | { readonly kind: "network-failed" }
-  | { readonly kind: "http-error"; readonly status: number };
+  | { readonly kind: "http-error"; readonly status: number; readonly retryAfterSeconds?: number };
+
+// Retry-After is a number of seconds or an HTTP date; anything else is no instruction.
+function parseRetryAfter(value: string | undefined): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (/^\d+$/.test(value)) return Number(value);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, Math.ceil((date - Date.now()) / 1000)) : undefined;
+}
 
 function parseCurlResult(result: Result<ProcessOutput>): CurlOutcome {
   if (result.kind !== "ok") {
@@ -253,11 +273,13 @@ function parseCurlResult(result: Result<ProcessOutput>): CurlOutcome {
   const stdout = result.value.stdout;
   const index = stdout.lastIndexOf(marker);
   if (index === -1) return { kind: "network-failed" };
-  const status = Number(stdout.slice(index + marker.length).trim());
+  const trailer = stdout.slice(index + marker.length);
+  const status = Number(trailer.split("\n")[0]?.trim());
+  const retryAfterSeconds = parseRetryAfter(trailer.match(/MEGABRAIN_RETRY_AFTER:(.*)/)?.[1]?.trim());
   let body = stdout.slice(0, index);
   if (body.endsWith("\n")) body = body.slice(0, -1);
   if (!Number.isFinite(status) || status === 0) return { kind: "network-failed" };
-  if (status < 200 || status >= 300) return { kind: "http-error", status };
+  if (status < 200 || status >= 300) return { kind: "http-error", status, ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) };
   return { kind: "ok", body };
 }
 
@@ -287,11 +309,11 @@ async function fetchClaudeUsage(window: LimitWindowName, processAdapter: Process
   }
   const url = environment.MEGABRAIN_CHAIN_CLAUDE_USAGE_URL ?? "https://api.anthropic.com/api/oauth/usage";
   const timeout = String(timeoutSeconds);
-  const result = await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, "-H", `Authorization: Bearer ${credentials.token}`, "-H", "anthropic-beta: oauth-2025-04-20", "-H", "anthropic-version: 2023-06-01", "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}", url]);
+  const result = await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, "-H", `Authorization: Bearer ${credentials.token}`, "-H", "anthropic-beta: oauth-2025-04-20", "-H", "anthropic-version: 2023-06-01", "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}\nMEGABRAIN_RETRY_AFTER:%header{retry-after}", url]);
   const parsed = parseCurlResult(result);
-  if (parsed.kind === "timeout") return unknownReading("claude", window, "request timed out");
-  if (parsed.kind === "network-failed") return unknownReading("claude", window, "network request failed");
-  if (parsed.kind === "http-error") return unknownReading("claude", window, `provider returned HTTP ${parsed.status}`);
+  if (parsed.kind === "timeout") return transientReading("claude", window, "request timed out");
+  if (parsed.kind === "network-failed") return transientReading("claude", window, "network request failed");
+  if (parsed.kind === "http-error") return transientReading("claude", window, `provider returned HTTP ${parsed.status}`, parsed.retryAfterSeconds);
   let body: JsonRecord;
   try { body = JSON.parse(parsed.body) as JsonRecord; } catch { return unknownReading("claude", window, "response body is unparseable or incomplete"); }
   const windows: LimitEntry[] = [];
@@ -384,9 +406,9 @@ async function fetchGrokUsage(window: LimitWindowName, processAdapter: ProcessAd
   const timeout = String(timeoutSeconds);
   const headers = ["-H", `Authorization: Bearer ${session.token}`, "-H", "X-XAI-Token-Auth: xai-grok-cli", "-H", "Accept: application/json", ...(session.userId === undefined ? [] : ["-H", `x-userid: ${session.userId}`])];
   const parsed = parseCurlResult(await processAdapter.run("curl", ["-sS", "--connect-timeout", timeout, "--max-time", timeout, ...headers, "-w", "\nMEGABRAIN_HTTP_STATUS:%{http_code}", url]));
-  if (parsed.kind === "timeout") return unknownReading("grok", window, "request timed out");
-  if (parsed.kind === "network-failed") return unknownReading("grok", window, "network request failed");
-  if (parsed.kind === "http-error") return unknownReading("grok", window, `provider returned HTTP ${parsed.status}`);
+  if (parsed.kind === "timeout") return transientReading("grok", window, "request timed out");
+  if (parsed.kind === "network-failed") return transientReading("grok", window, "network request failed");
+  if (parsed.kind === "http-error") return transientReading("grok", window, `provider returned HTTP ${parsed.status}`);
   let body: JsonRecord;
   try { body = JSON.parse(parsed.body) as JsonRecord; } catch { return unknownReading("grok", window, "response body is unparseable or incomplete"); }
   const config = isObject(body.config) ? body.config : body;
@@ -413,14 +435,119 @@ export async function readLimit(agent: LimitAgent, window: LimitWindowName, conf
   if (!liveProviders.includes(agent)) return unknownReading(agent, window, "live provider is not enabled");
   const cached = readCache(agent, window, config, environment, stateDir, now, model);
   if (cached !== undefined) return cached;
+  const claim = claimLiveCall(agent, stateDir, now);
+  if (claim.kind === "blocked") return staleReading(agent, window, stateDir, model, claim.reason, claim.retryAt) ?? unknownReading(agent, window, claim.reason);
   const timeoutSeconds = limitTimeout(config, environment);
   const reading = agent === "claude"
     ? await fetchClaudeUsage(window, processAdapter, timeoutSeconds, environment)
     : agent === "grok"
       ? await fetchGrokUsage(window, processAdapter, timeoutSeconds, environment)
       : await fetchAgyUsage(window, processAdapter, model);
-  if (reading.status === "current") writeCache(agent, reading.result, stateDir);
+  if (reading.status === "current") {
+    writeCache(agent, reading.result, stateDir);
+    settleLiveCall(agent, stateDir, { kind: "success" });
+    return reading;
+  }
+  if (reading.status === "unknown" && reading.transient !== undefined) {
+    const retryAt = settleLiveCall(agent, stateDir, { kind: "failure", reason: reading.reason, retryAfterSeconds: reading.transient.retryAfterSeconds });
+    return staleReading(agent, window, stateDir, model, innerReason(reading.reason), retryAt) ?? reading;
+  }
+  settleLiveCall(agent, stateDir, { kind: "neutral" });
   return reading;
+}
+
+// The wait after consecutive failures: the provider's Retry-After when it sent one, else 60 seconds
+// doubling to 15 minutes.
+const BACKOFF_FIRST_SECONDS = 60;
+const BACKOFF_CAP_SECONDS = 900;
+const CLAIM_SECONDS = 35;
+const CALL_LOG_LIMIT = 100;
+const LOCK_STALE_SECONDS = 10;
+
+// Shared by every caller through the state directory (the app, chain selection, every pane): when
+// the next live call may go out, whether one is in flight, and when each was made.
+type Backoff = { failures: number; retryAt: number; claimUntil: number; reason: string; calls: number[] };
+
+function backoffPath(stateDir: string, agent: LimitAgent): string {
+  return resolve(stateDir, `usage-backoff-${agent}.json`);
+}
+
+function readBackoff(stateDir: string, agent: LimitAgent): Backoff {
+  const empty: Backoff = { failures: 0, retryAt: 0, claimUntil: 0, reason: "", calls: [] };
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(backoffPath(stateDir, agent), "utf8"));
+    if (!isObject(parsed)) return empty;
+    const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : 0;
+    return { failures: number(parsed.failures), retryAt: number(parsed.retryAt), claimUntil: number(parsed.claimUntil), reason: typeof parsed.reason === "string" ? parsed.reason : "", calls: Array.isArray(parsed.calls) ? parsed.calls.filter((call): call is number => typeof call === "number") : [] };
+  } catch { return empty; }
+}
+
+// The read-modify-write runs under a directory lock (mkdir is atomic), so two processes cannot both
+// see "free" and both call out. A lock someone else holds just means a call is being claimed.
+function withBackoffLock<T>(agent: LimitAgent, stateDir: string, now: number, body: () => T, busy: T): T {
+  const lock = resolve(stateDir, `usage-backoff-${agent}.lock`);
+  try { mkdirSync(stateDir, { recursive: true }); } catch { return busy; }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(lock);
+      try { return body(); } finally { rmSync(lock, { recursive: true, force: true }); }
+    } catch (cause) {
+      const exists = typeof cause === "object" && cause !== null && (cause as { code?: string }).code === "EEXIST";
+      if (!exists) return body();
+      let age = 0;
+      try { age = now - Math.floor(statSync(lock).mtimeMs / 1000); } catch { continue; }
+      if (age < LOCK_STALE_SECONDS) return busy;
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+  return busy;
+}
+
+type Claim = { kind: "claimed" } | { kind: "blocked"; reason: string; retryAt: number | undefined };
+
+function claimLiveCall(agent: LimitAgent, stateDir: string, now: number): Claim {
+  const busy: Claim = { kind: "blocked", reason: "refresh in progress", retryAt: undefined };
+  return withBackoffLock(agent, stateDir, now, () => {
+    const state = readBackoff(stateDir, agent);
+    if (state.retryAt > now) return { kind: "blocked", reason: innerReason(state.reason) || "backing off", retryAt: state.retryAt } satisfies Claim;
+    if (state.claimUntil > now) return busy;
+    writeStateFile(backoffPath(stateDir, agent), { ...state, claimUntil: now + CLAIM_SECONDS, calls: [...state.calls, now].slice(-CALL_LOG_LIMIT) }, stateDir);
+    return { kind: "claimed" } satisfies Claim;
+  }, busy);
+}
+
+type Settlement = { kind: "success" } | { kind: "neutral" } | { kind: "failure"; reason: string; retryAfterSeconds: number | undefined };
+
+// Returns when the next live call may go out after a failure.
+function settleLiveCall(agent: LimitAgent, stateDir: string, settlement: Settlement): number | undefined {
+  const now = Math.floor(Date.now() / 1000);
+  return withBackoffLock<number | undefined>(agent, stateDir, now, () => {
+    const state = readBackoff(stateDir, agent);
+    if (settlement.kind === "failure") {
+      const failures = state.failures + 1;
+      const wait = settlement.retryAfterSeconds ?? Math.min(BACKOFF_CAP_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** (failures - 1));
+      const retryAt = now + Math.max(1, wait);
+      writeStateFile(backoffPath(stateDir, agent), { ...state, failures, retryAt, claimUntil: 0, reason: settlement.reason }, stateDir);
+      return retryAt;
+    }
+    writeStateFile(backoffPath(stateDir, agent), settlement.kind === "success" ? { ...state, failures: 0, retryAt: 0, claimUntil: 0, reason: "" } : { ...state, claimUntil: 0 }, stateDir);
+    return undefined;
+  }, undefined);
+}
+
+// "claude 5h window unknown (provider returned HTTP 429)" -> "provider returned HTTP 429".
+function innerReason(reason: string): string {
+  return reason.replace(/^.*window unknown \(/, "").replace(/\)$/, "");
+}
+
+// The last good snapshot, whatever its age: it outlives the cache's freshness window and a restart.
+function staleReading(agent: LimitAgent, window: LimitWindowName, stateDir: string, model: string | undefined, why: string, retryAt: number | undefined): LimitReading | undefined {
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(cachePath(stateDir, agent), "utf8")); } catch { return undefined; }
+  if (!isObject(parsed) || parsed.provider !== agent || typeof parsed.fetchedAt !== "number" || !Array.isArray(parsed.windows)) return undefined;
+  const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "cache", model);
+  if (reading.status !== "current") return undefined;
+  return { ...reading, status: "stale", source: "cache", reason: `${agent} ${window} window is stale (${why})`, ...(retryAt === undefined ? {} : { retryAt }) };
 }
 
 // Ports megabrain_chain_reset_display: codex's resetsAt is a stringified epoch
@@ -439,8 +566,8 @@ export async function usageNoticeReport(config: ChainConfig, environment: ChainL
   let report = "Usage limits:";
   for (const agent of ["codex", "claude", "agy", "grok"] as const) {
     const reading = await readLimit(agent, "5h", config, environment, processAdapter, stateDir);
-    const summary = reading.status === "current"
-      ? reading.result.windows.map((entry) => `${entry.bucket} ${entry.name} ${entry.usedPercent}% used, resets ${entry.resetsAt}`).join("; ")
+    const summary = reading.status !== "unknown"
+      ? reading.result.windows.map((entry) => `${entry.bucket} ${entry.name} ${entry.usedPercent}% used, resets ${entry.resetsAt}`).join("; ") + (reading.status === "stale" ? " (stale)" : "")
       : `unknown (${reading.reason.replace(/^.*window unknown \(/, "").replace(/\)$/, "")})`;
     report += ` ${agent} ${summary};`;
   }

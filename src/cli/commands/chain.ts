@@ -301,7 +301,7 @@ function formatList(config: ChainConfig, asJson: boolean): string {
   for (const [name, chain] of Object.entries(config.chains)) lines.push(`${name.padEnd(20)} ${JSON.stringify(chain.when ?? {}).padEnd(36)} ${chain.steps.length}`);
   return lines.join("\n") + "\n";
 }
-type LimitRow = { provider: string; window: string; status: string; usedPercent: number | null; resetsAt: string | null; source: string; fetchedAt: number | null; reason: string | null; bucket: string | null; reading: { kind: string; basis: string | null } | null };
+type LimitRow = { provider: string; window: string; status: string; usedPercent: number | null; resetsAt: string | null; source: string; fetchedAt: number | null; reason: string | null; retryAt: number | null; bucket: string | null; reading: { kind: string; basis: string | null } | null };
 const limitAgents = ["codex", "claude", "agy", "grok"] as const;
 const liveProviders = ["claude", "agy", "grok"] as const;
 const limitWindows = ["5h", "weekly"] as const;
@@ -315,12 +315,13 @@ const limitWindows = ["5h", "weekly"] as const;
 // one when no model is given.
 function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitReading): LimitRow {
   if (reading.status === "unknown") {
-    return { provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: reading.reason, bucket: null, reading: null };
+    return { provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: reading.reason, retryAt: null, bucket: null, reading: null };
   }
   const resultReading = reading.result.reading;
   return {
-    provider, window, status: "current", usedPercent: reading.usedPercent, resetsAt: reading.resetsAt,
+    provider, window, status: reading.status, usedPercent: reading.usedPercent, resetsAt: reading.resetsAt,
     source: reading.source, fetchedAt: reading.fetchedAt, reason: reading.reason,
+    retryAt: reading.status === "stale" ? reading.retryAt ?? null : null,
     bucket: reading.bucket,
     reading: resultReading ? { kind: resultReading.kind, basis: resultReading.basis } : null,
   };

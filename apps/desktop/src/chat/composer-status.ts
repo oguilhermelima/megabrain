@@ -338,19 +338,6 @@ export interface AgentLimit {
 /** The usage windows the row shows, in order. */
 export const limitWindows = ['5h', 'weekly']
 
-/** How a pane shows the limits: two full rows, one quiet line, or a single ring with the details on demand. */
-export type LimitsLayout = 'full' | 'compact' | 'ring'
-
-/**
- * The limits' layout for a pane this many pixels wide: full rows from 1000px, one compact line from
- * 560px, the ring below that. Before the pane is measured it keeps the full rows.
- */
-export function limitsLayout(paneWidth: number | null): LimitsLayout {
-  if (paneWidth === null || paneWidth >= 1000) return 'full'
-  if (paneWidth >= 560) return 'compact'
-  return 'ring'
-}
-
 /** The limit closest to running out, the first on a tie; the ring shows it. */
 export function highestLimit(limits: AgentLimit[]): AgentLimit | null {
   return limits.reduce<AgentLimit | null>((highest, limit) => (highest === null || limit.usedPercent > highest.usedPercent ? limit : highest), null)
@@ -363,15 +350,6 @@ function readingLimit(reading: UsageReading, now: Date): AgentLimit | null {
   return { window: reading.window, usedPercent: reading.usedPercent, tone: usageLimitTone(reading.usedPercent), resets: resetsAt === null ? null : resetText(resetsAt, now), resetsAt }
 }
 
-/** The agent's 5-hour and weekly usage, leaving out a window with no reading. */
-export function agentLimits(readings: UsageReading[], agent: string, now: Date = new Date()): AgentLimit[] {
-  return limitWindows.flatMap((window) => {
-    const reading = readings.find((item) => item.provider === agent && item.window === window)
-    const limit = reading === undefined ? null : readingLimit(reading, now)
-    return limit === null ? [] : [limit]
-  })
-}
-
 export interface ProviderUsage {
   agent: string
   /** Every window with a share: 5-hour, weekly, then any other in the order the readings give them. */
@@ -380,6 +358,8 @@ export interface ProviderUsage {
   highest: AgentLimit
   /** Unix seconds of the provider's newest reading, or null when none says. */
   fetchedAt: number | null
+  /** Set when the CLI could not ask the provider and shows its last good readings: why, and when it tries again. */
+  stale: { reason: string; retryAt: number | null } | null
 }
 
 const windowRank = (window: string) => {
@@ -402,7 +382,9 @@ export function providerUsage(readings: UsageReading[], now: Date = new Date()):
     const highest = highestLimit(limits)
     if (highest === null) return []
     const times = own.flatMap((reading) => (reading.fetchedAt === null ? [] : [reading.fetchedAt]))
-    return [{ agent, limits, highest, fetchedAt: times.length === 0 ? null : Math.max(...times) }]
+    const lapsed = own.find((reading) => reading.status === 'stale')
+    const stale = lapsed === undefined ? null : { reason: lapsed.reason, retryAt: lapsed.retryAt ?? null }
+    return [{ agent, limits, highest, fetchedAt: times.length === 0 ? null : Math.max(...times), stale }]
   })
 }
 
@@ -415,4 +397,13 @@ export function readingAge(fetchedAt: number | null, now: Date = new Date()): st
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ago`
   return `${Math.floor(hours / 24)}d ago`
+}
+
+/** What the usage details say of a provider whose readings are the last good ones: "rate limited, retrying in 4m". */
+export function staleNote(stale: ProviderUsage['stale'], now: Date = new Date()): string | null {
+  if (stale === null) return null
+  const cause = /\b429\b/.test(stale.reason) ? 'rate limited' : 'unavailable'
+  const seconds = stale.retryAt === null ? null : stale.retryAt - now.getTime() / 1000
+  if (seconds === null || seconds <= 0) return `${cause}, retrying`
+  return `${cause}, retrying in ${Math.ceil(seconds / 60)}m`
 }

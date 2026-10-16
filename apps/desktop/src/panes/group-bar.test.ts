@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Project } from '@/api/schema'
-import { groupIdentity, limitAgents, limitsPlace, sharedWorktree, splitCodeShown, type SplitMember } from '@/panes/group-bar'
+import { groupIdentity, sharedWorktree, splitCodeShown, type SplitMember } from '@/panes/group-bar'
 
 const member = (item: string, worktree: string | null, agent: string | null = 'claude'): SplitMember => {
   const kind = item.split(':', 1)[0]
@@ -38,31 +38,6 @@ describe('sharedWorktree', () => {
 
   test('an item that does not parse keeps per-pane headers', () => {
     expect(sharedWorktree([member('native:a', '/w/a'), { item: 'nonsense', kind: null, worktree: '/w/a', agent: null }])).toBeNull()
-  })
-})
-
-describe('limitsPlace', () => {
-  test('one pane keeps the limits under its composer', () => {
-    expect(limitsPlace({ panes: 1, shared: false })).toBe('composer')
-  })
-
-  test('a split on one worktree shows them once, in its bar', () => {
-    expect(limitsPlace({ panes: 4, shared: true })).toBe('group-bar')
-  })
-
-  test('a split across worktrees shows them once, under the split', () => {
-    expect(limitsPlace({ panes: 2, shared: false })).toBe('under-split')
-  })
-})
-
-describe('limitAgents', () => {
-  test('each agent once, in pane order, skipping members with no agent', () => {
-    const members = [member('native:a', '/w/a', 'claude'), member('terminal:t', '/w/a', null), member('native:b', '/w/a', 'codex'), member('session:c', '/w/a', 'claude')]
-    expect(limitAgents(members)).toEqual(['claude', 'codex'])
-  })
-
-  test('a split with no agent shows no limits', () => {
-    expect(limitAgents([member('terminal:t', '/w/a', null), member('launcher:l', '/w/a', null)])).toEqual([])
   })
 })
 

@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { Settings, UsageReading } from '@/api/schema'
 import {
-  agentLimits,
   providerUsage,
   readingAge,
+  staleNote,
   resetDistance,
   highestLimit,
-  limitsLayout,
   agentModels,
   contextChoice,
   contextMeter,
@@ -240,9 +239,9 @@ describe('usageLimitTone', () => {
     expect(usageLimitTone(100)).toBe('red')
   })
 
-  test('an agent limit takes its tone from the usage rule', () => {
-    const limits = agentLimits([reading('claude', '5h', 75, null), reading('claude', 'weekly', 92, null)], 'claude')
-    expect(limits.map((limit) => limit.tone)).toEqual(['amber', 'red'])
+  test('a provider limit takes its tone from the usage rule', () => {
+    const [usage] = providerUsage([reading('claude', '5h', 75, null), reading('claude', 'weekly', 92, null)])
+    expect(usage?.limits.map((limit) => limit.tone)).toEqual(['amber', 'red'])
   })
 })
 
@@ -282,53 +281,6 @@ describe('resetText', () => {
   test('a day or more away, the weekday', () => {
     expect(resetText(new Date(2026, 9, 16, 12, 0, 0), now)).toBe('resets Fri')
     expect(resetText(new Date(2026, 9, 18, 9, 30, 0), now)).toBe('resets Sun')
-  })
-})
-
-describe('agentLimits', () => {
-  const readings = [reading('claude', '5h', 4, '2026-10-15T12:16:00Z'), reading('claude', 'weekly', 88, '9000'), reading('codex', '5h', 17, 'soon'), reading('grok', '5h', null), reading('grok', 'weekly', null)]
-  const now = new Date(Date.UTC(2026, 9, 15, 12, 0, 0))
-
-  test("the agent's 5h and weekly readings, with tone and reset time from either form", () => {
-    const limits = agentLimits(readings, 'claude', now)
-    expect(limits.map(({ window, usedPercent, tone, resets }) => ({ window, usedPercent, tone, resets }))).toEqual([
-      { window: '5h', usedPercent: 4, tone: 'normal', resets: 'resets 16m' },
-      { window: 'weekly', usedPercent: 88, tone: 'amber', resets: 'resets now' },
-    ])
-    expect(limits[0]?.resetsAt?.getTime()).toBe(Date.UTC(2026, 9, 15, 12, 16))
-    expect(limits[1]?.resetsAt?.getTime()).toBe(9_000_000)
-  })
-
-  test('an unparsable reset hides the reset text', () => {
-    expect(agentLimits(readings, 'codex', now)).toEqual([{ window: '5h', usedPercent: 17, tone: 'normal', resets: null, resetsAt: null }])
-  })
-
-  test('a missing reading is left out', () => {
-    expect(agentLimits(readings, 'grok', now)).toEqual([])
-    expect(agentLimits(readings, 'agy', now)).toEqual([])
-  })
-})
-
-describe('limitsLayout', () => {
-  test('a wide pane keeps the full rows, from 1000px up', () => {
-    expect(limitsLayout(1400)).toBe('full')
-    expect(limitsLayout(1000)).toBe('full')
-  })
-
-  test('a pane under 1000px gets one compact line, down to 560px', () => {
-    expect(limitsLayout(999)).toBe('compact')
-    expect(limitsLayout(900)).toBe('compact')
-    expect(limitsLayout(560)).toBe('compact')
-  })
-
-  test('a pane under 560px gets the single ring', () => {
-    expect(limitsLayout(559)).toBe('ring')
-    expect(limitsLayout(420)).toBe('ring')
-    expect(limitsLayout(0)).toBe('ring')
-  })
-
-  test('an unmeasured pane keeps the full rows', () => {
-    expect(limitsLayout(null)).toBe('full')
   })
 })
 
@@ -642,5 +594,23 @@ describe('resetDistance', () => {
   })
   test('a reset already past is now', () => {
     expect(resetDistance(later(-5), now)).toBe('now')
+  })
+})
+
+describe('stale usage', () => {
+  const stale = (usedPercent: number | null, retryAt: number | null): UsageReading => ({ ...reading('claude', '5h', usedPercent), status: 'stale', reason: 'claude 5h window is stale (provider returned HTTP 429)', retryAt })
+
+  test('a stale provider keeps its readings and says why and when it retries', () => {
+    const [usage] = providerUsage([stale(5, 1_000_240)])
+    expect(usage?.highest.usedPercent).toBe(5)
+    expect(usage?.stale).toEqual({ reason: expect.stringContaining('429'), retryAt: 1_000_240 })
+    expect(staleNote(usage?.stale ?? null, new Date(1_000_000_000))).toBe('rate limited, retrying in 4m')
+  })
+
+  test('a current provider has no note, and a past or unknown retry just says retrying', () => {
+    expect(providerUsage([reading('claude', '5h', 5)])[0]?.stale).toBeNull()
+    expect(staleNote(null)).toBeNull()
+    expect(staleNote({ reason: 'claude 5h window is stale (provider returned HTTP 429)', retryAt: null })).toBe('rate limited, retrying')
+    expect(staleNote({ reason: 'x (request timed out)', retryAt: 10 }, new Date(20_000))).toBe('unavailable, retrying')
   })
 })
