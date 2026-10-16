@@ -236,12 +236,12 @@ describe('streamed chunks', () => {
     expect(state.cursor).toBe('3')
   })
 
-  test('thinking and assistant chunks with different ids stay apart, in arrival order', () => {
+  test('thinking chunks show no row of their own; the working indicator says Thinking', () => {
     let state = followState(chat)
     state = applyLine(state, delta('1', 't1', 'Reading the', 'thinking'))
     state = applyLine(state, delta('1', 'm1', 'Done'))
     state = applyLine(state, delta('1', 't1', ' steps', 'thinking'))
-    expect(tailTexts(state)).toEqual(['thinking:Reading the steps', 'assistant:Done'])
+    expect(tailTexts(state)).toEqual(['assistant:Done'])
   })
 
   test('the final event with the same messageId replaces its chunks', () => {
@@ -275,6 +275,56 @@ describe('streamed chunks', () => {
     state = applyLine(state, delta('1', 'm1', 'cut off'))
     state = applyLine(state, stateLine('2', 'idle'))
     expect(liveTail(state)).toEqual([])
+  })
+})
+
+describe('thinking', () => {
+  const started = '2026-10-15T12:00:00Z'
+  const call = (cursor: string, id: string): ChatEventLine => line(cursor, { event: { id, at: null, kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'ls' } } })
+  const result = (cursor: string, id: string): ChatEventLine => line(cursor, { event: { id, at: null, kind: 'tool-result', text: 'ok', tool: { name: 'Bash', status: 'ok' } } })
+  const thinkingRows = (state: FollowState) => liveTail(state).filter((row) => row.event.kind === 'thinking').length
+
+  test('a message streams its text after its thinking, even when both carry one message id', () => {
+    let state = applyLine(followState(chat), stateLine('1', 'working', started))
+    state = applyLine(state, delta('1', 'msg_1', 'Let me see', 'thinking'))
+    state = applyLine(state, delta('1', 'msg_1', 'Here it is'))
+    expect(tailTexts(state)).toEqual(['assistant:Here it is'])
+    expect(workingStatus(state)?.label).toBe('Writing')
+  })
+
+  test('the complete thinking event ends only the thinking of its message', () => {
+    let state = applyLine(followState(chat), stateLine('1', 'working', started))
+    state = applyLine(state, delta('1', 'msg_1', 'Let me see', 'thinking'))
+    state = applyLine(state, final('2', 'th1', 'msg_1', 'Let me see', 'thinking'))
+    state = applyLine(state, delta('2', 'msg_1', 'Here it is'))
+    expect(tailTexts(state)).toEqual(['assistant:Here it is'])
+  })
+
+  // Claude 5 streams thinking chunks but its complete message carries an empty thinking block (only a
+  // signature), so no complete thinking event ever comes, and its tool calls carry no message id.
+  test('a long turn whose thinking never completes leaves no rows and says what runs now', () => {
+    let state = applyLine(followState(chat), stateLine('1', 'working', started))
+    const lines: ChatEventLine[] = []
+    for (let cycle = 1; cycle <= 4; cycle++) {
+      lines.push(delta(String(cycle * 2), `msg_${cycle}`, `Checking ${cycle}`, 'thinking'))
+      lines.push(call(String(cycle * 2), `c${cycle}`))
+      lines.push(result(String(cycle * 2 + 1), `r${cycle}`))
+    }
+    lines.push(delta('9', 'msg_5', 'Wrapping up', 'thinking'))
+    // A follow that reconnects in the middle replays from an older cursor, starting with the chat state.
+    const replay = [stateLine('5', 'working', started), ...lines.slice(0, 6)]
+    for (const next of [...lines.slice(0, 6), ...replay, ...lines.slice(6)]) {
+      const replayed = replay.includes(next)
+      state = applyLine(state, next)
+      expect(thinkingRows(state)).toBe(0)
+      if (!replayed && next.event?.kind === 'tool-call') expect(workingStatus(state)?.label).toBe('Running Bash')
+      if (!replayed && next.event?.kind === 'delta') expect(workingStatus(state)?.label).toBe('Thinking')
+    }
+    expect(state.events.map((item) => item.id)).toEqual(['c1', 'r1', 'c2', 'r2', 'c3', 'r3', 'c4', 'r4'])
+    expect(liveTail(state)).toEqual([])
+    state = applyLine(state, stateLine('10', 'idle'))
+    expect(liveTail(state)).toEqual([])
+    expect(workingStatus(state)).toBeNull()
   })
 })
 

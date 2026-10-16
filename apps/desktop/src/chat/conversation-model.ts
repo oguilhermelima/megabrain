@@ -1,4 +1,5 @@
 import type { TranscriptEvent } from '@/api/schema'
+import { formatElapsed } from '@/native-chat/chat-model'
 
 // Pure logic for the conversation view: pairing tool calls with their results, merging polled
 // event batches without duplicates, and formatting assistant text into paragraphs, code fences
@@ -7,8 +8,9 @@ import type { TranscriptEvent } from '@/api/schema'
 export type ToolStatus = 'ok' | 'error' | 'running'
 
 export type ConversationItem =
-  // streaming: a message still being generated; pending: a sent message the chat has not echoed yet.
-  | { type: 'message'; event: TranscriptEvent; streaming?: boolean; pending?: boolean }
+  // streaming: a message still being generated; pending: a sent message the chat has not echoed yet;
+  // thoughtMs: on thinking, how long it took, from the event before it to its last part.
+  | { type: 'message'; event: TranscriptEvent; streaming?: boolean; pending?: boolean; thoughtMs?: number }
   | { type: 'tool'; id: string; call: TranscriptEvent; result: TranscriptEvent | null; status: ToolStatus }
   // A subagent where its call was: the steps it took, and the tool result that ended it once it has.
   | { type: 'subagent'; id: string; call: TranscriptEvent; steps: ConversationItem[]; end: TranscriptEvent | null }
@@ -25,11 +27,12 @@ const subagentId = (event: TranscriptEvent, kind: 'tool-call' | 'tool-result'): 
 /**
  * Pairs each tool-call with the tool-result event that immediately follows it (by position). A subagent's
  * steps and end come out of that flow and into the subagent, wherever they arrived; the ones whose
- * subagent is not among the events are dropped.
+ * subagent is not among the events are dropped. `before` is the event ahead of these, when they continue a
+ * conversation, so thinking at their start is timed as it would be in the whole of it.
  */
-export function buildConversationItems(events: TranscriptEvent[]): ConversationItem[] {
+export function buildConversationItems(events: TranscriptEvent[], before: TranscriptEvent | null = null): ConversationItem[] {
   const started = new Set(events.flatMap((event) => subagentId(event, 'tool-call') ?? []))
-  if (started.size === 0 && !events.some((event) => event.parentId !== undefined || subagentId(event, 'tool-result') !== null)) return pairTools(events, new Map(), new Map())
+  if (started.size === 0 && !events.some((event) => event.parentId !== undefined || subagentId(event, 'tool-result') !== null)) return pairTools(events, new Map(), new Map(), before)
   const steps = new Map<string, TranscriptEvent[]>()
   const ends = new Map<string, TranscriptEvent>()
   const main: TranscriptEvent[] = []
@@ -41,15 +44,43 @@ export function buildConversationItems(events: TranscriptEvent[]): ConversationI
       if (started.has(ended) && !ends.has(ended)) ends.set(ended, event)
     } else main.push(event)
   }
-  return pairTools(main, steps, ends)
+  return pairTools(main, steps, ends, before)
 }
 
-function pairTools(events: TranscriptEvent[], steps: Map<string, TranscriptEvent[]>, ends: Map<string, TranscriptEvent>): ConversationItem[] {
+const isThought = (event: TranscriptEvent) => event.kind === 'thinking' && event.origin === undefined
+
+function elapsedMs(from: string | null, to: string | null): number | undefined {
+  const ms = from === null || to === null ? Number.NaN : Date.parse(to) - Date.parse(from)
+  return Number.isFinite(ms) && ms >= 0 ? ms : undefined
+}
+
+/** The header of a thinking entry: how long it took when the events say, else just Thought. */
+export function thoughtLabel(ms: number | undefined): string {
+  return ms === undefined ? 'Thought' : `Thought for ${formatElapsed(Math.max(1000, Math.round(ms / 1000) * 1000))}`
+}
+
+function pairTools(events: TranscriptEvent[], steps: Map<string, TranscriptEvent[]>, ends: Map<string, TranscriptEvent>, before: TranscriptEvent | null = null): ConversationItem[] {
   const items: ConversationItem[] = []
+  // Thinking with no visible text (Claude 5 often keeps only its signature) is no row, and consecutive
+  // thinking reads as one entry, timed from the event before its first part.
+  let thoughtFrom: string | null = null
   for (let index = 0; index < events.length; index++) {
     const event = events[index]
     if (event === undefined) continue
     if (event.kind === 'tool-result') continue
+    if (isThought(event)) {
+      if (event.text.trim() === '') continue
+      const last = items.at(-1)
+      if (last?.type === 'message' && isThought(last.event)) {
+        const thoughtMs = elapsedMs(thoughtFrom, event.at)
+        items[items.length - 1] = { type: 'message', event: { ...last.event, text: `${last.event.text}\n\n${event.text}` }, ...(thoughtMs === undefined ? {} : { thoughtMs }) }
+        continue
+      }
+      thoughtFrom = (index === 0 ? before : events[index - 1])?.at ?? null
+      const thoughtMs = elapsedMs(thoughtFrom, event.at)
+      items.push({ type: 'message', event, ...(thoughtMs === undefined ? {} : { thoughtMs }) })
+      continue
+    }
     if (event.kind !== 'tool-call') {
       items.push({ type: 'message', event })
       continue

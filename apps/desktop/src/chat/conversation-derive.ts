@@ -24,7 +24,7 @@ function extendsKnown(previous: DerivedConversation, events: TranscriptEvent[]):
 
 function derive(events: TranscriptEvent[], start: number, settled: DisplayItem[]): DerivedConversation {
   const tailEvents = events.slice(start)
-  const items = buildConversationItems(tailEvents)
+  const items = buildConversationItems(tailEvents, events[start - 1] ?? null)
   const tail = groupToolRuns(items)
   let settledEvents = start
   let settledDisplay = settled

@@ -39,7 +39,7 @@ export interface FollowState {
   /** When the running turn started, from the last state event; null outside a turn. */
   turnStartedAt: string | null
   drafts: Draft[]
-  /** Message ids whose complete event arrived; a late chunk for one is dropped. */
+  /** The drafts (see draftKey) whose complete event arrived; a late chunk for one is dropped. */
   finished: string[]
   outgoing: Outgoing[]
   /** The next arrival order to hand out. */
@@ -64,9 +64,12 @@ export function compareCursors(a: string, b: string): number {
 
 const turnEnded = (state: NativeChat['state']) => state === 'idle' || state === 'suspended' || state === 'stopped' || state === 'error'
 
+// One message streams its thinking and its text under the same id, each a draft of its own.
+const draftKey = (messageId: string, stream: ChatDeltaEvent['stream']) => `${stream}:${messageId}`
+
 function applyDelta(state: FollowState, delta: ChatDeltaEvent): FollowState {
-  if (state.finished.includes(delta.messageId)) return state
-  const known = state.drafts.find((draft) => draft.messageId === delta.messageId)
+  if (state.finished.includes(draftKey(delta.messageId, delta.stream))) return state
+  const known = state.drafts.find((draft) => draft.messageId === delta.messageId && draft.stream === delta.stream)
   if (known !== undefined) {
     return { ...state, drafts: state.drafts.map((draft) => (draft === known ? { ...draft, text: draft.text + delta.text } : draft)) }
   }
@@ -112,10 +115,24 @@ export function applyLine(state: FollowState, line: ChatEventLine): FollowState 
   if (state.events.some((known) => known.id === event.id)) return next
   next.events = state.events.concat(event)
   if (line.approval !== undefined) next.approvals = { ...state.approvals, [event.id]: line.approval }
-  const messageId = event.messageId
-  if (messageId !== undefined) next = { ...next, drafts: next.drafts.filter((draft) => draft.messageId !== messageId), finished: next.finished.concat(messageId) }
+  next = finishDrafts(next, event)
   if (event.kind === 'user') next.outgoing = confirmOutgoing(next.outgoing, event)
   return next
+}
+
+/**
+ * The drafts a stored event completes: its own message's, and every thinking draft of the chat's own turn.
+ * Thinking comes before whatever its message does next, and Claude 5 completes it with no text at all, so
+ * no thinking event ever replaces its chunks; the next stored event is what says it ended.
+ */
+function finishDrafts(state: FollowState, event: TranscriptEvent): FollowState {
+  const messageId = event.messageId
+  const streams: ChatDeltaEvent['stream'][] = event.kind === 'assistant' || event.kind === 'thinking' ? [event.kind] : ['assistant', 'thinking']
+  const own = messageId === undefined ? [] : streams.map((stream) => draftKey(messageId, stream))
+  const ended = event.parentId === undefined ? state.drafts.filter((draft) => draft.stream === 'thinking').map((draft) => draftKey(draft.messageId, draft.stream)) : []
+  const keys = own.concat(ended)
+  if (keys.length === 0) return state
+  return { ...state, drafts: state.drafts.filter((draft) => !keys.includes(draftKey(draft.messageId, draft.stream))), finished: state.finished.concat(keys) }
 }
 
 /** Shows a message the person just sent, before the chat echoes it. */
@@ -128,10 +145,13 @@ export function dropOutgoing(state: FollowState, id: string): FollowState {
   return { ...state, outgoing: state.outgoing.filter((message) => message.id !== id) }
 }
 
-/** The live rows in the order they arrived. Each keeps the key its stored event will have. */
+/**
+ * The live rows in the order they arrived. Each keeps the key its stored event will have. Thinking still
+ * streaming has no row: the working indicator says Thinking, and the complete event brings its text.
+ */
 export function liveTail(state: FollowState): LiveRow[] {
   const rows: { order: number; item: LiveRow }[] = [
-    ...state.drafts.map((draft) => ({ order: draft.order, item: { event: { id: `draft-${draft.messageId}`, at: null, kind: draft.stream, text: draft.text, messageId: draft.messageId }, streaming: true } })),
+    ...state.drafts.filter((draft) => draft.stream !== 'thinking').map((draft) => ({ order: draft.order, item: { event: { id: `draft-${draft.messageId}`, at: null, kind: draft.stream, text: draft.text, messageId: draft.messageId }, streaming: true } })),
     ...state.outgoing.map((message) => ({ order: message.order ?? 0, item: { event: { id: `outgoing-${message.id}`, at: message.sentAt, kind: 'user' as const, text: message.text, ...(message.images === undefined ? {} : { images: message.images }), ...(message.parts === undefined ? {} : { parts: message.parts }) }, pending: true } })),
   ]
   return rows.sort((left, right) => left.order - right.order).map((row) => row.item)

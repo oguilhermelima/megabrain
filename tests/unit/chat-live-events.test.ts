@@ -9,16 +9,17 @@ import type { Chat, ChatEvent, ChatLine } from "../../src/chat/store.js";
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
-const stream = readFileSync(join(process.cwd(), "tests/fixtures/chat-claude-stream.jsonl"), "utf8").trim().split("\n");
+const recorded = (name: string) => readFileSync(join(process.cwd(), "tests/fixtures", name), "utf8").trim().split("\n");
+const stream = recorded("chat-claude-stream.jsonl");
 
-async function harness() {
+async function harness(rows = stream) {
   const root = mkdtempSync(join(tmpdir(), "megabrain-live-"));
   directories.push(root);
   const state = join(root, "state"), cwd = join(root, "project"), bin = join(root, "bin");
   mkdirSync(state, { recursive: true, mode: 0o700 }); mkdirSync(cwd); mkdirSync(bin);
   // Replays the recorded stream on the first user line; the init row is printed up front like Claude does.
   writeFileSync(join(bin, "claude"), `#!${process.execPath}
-const rows = ${JSON.stringify(stream)};
+const rows = ${JSON.stringify(rows)};
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", async () => { for (const row of rows) { process.stdout.write(row + "\\n"); await new Promise((r) => setTimeout(r, 5)); } });
@@ -49,8 +50,8 @@ async function until(check: () => boolean, label: string) {
   throw new Error(`timed out: ${label}`);
 }
 
-async function run() {
-  const h = await harness();
+async function run(rows = stream) {
+  const h = await harness(rows);
   const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
   const watcher = follow(h.state, chat.id);
   await until(() => watcher.events().some((e) => e.kind === "state"), "state event on follow start");
@@ -104,6 +105,20 @@ describe("live chat events", () => {
       expect(events[call]?.tool?.status).toBeUndefined();
       expect(result).toBeGreaterThan(call);
       expect(events[result]).toMatchObject({ text: "a.txt", tool: { name: "Bash", status: "ok" } });
+    } finally { watcher.close(); await h.daemon.close(); }
+  });
+
+  // Claude 5 streams thinking chunks but its complete message keeps only the block's signature.
+  test("a thinking block with only a signature stores no thinking, and its tool call names no message", async () => {
+    const { h, chat, watcher } = await run(recorded("chat-claude-empty-thinking-stream.jsonl"));
+    try {
+      const events = watcher.events();
+      expect(events.filter((e) => e.kind === "delta" && e.stream === "thinking").map((e) => [e.messageId, e.text])).toEqual([["msg_01", "Checking the folder."]]);
+      expect(events.some((e) => e.kind === "thinking")).toBe(false);
+      expect(events.find((e) => e.kind === "tool-call")?.messageId).toBeUndefined();
+      expect(events.find((e) => e.kind === "assistant")).toMatchObject({ messageId: "msg_02", text: "One file." });
+      const stored = await h.daemon.store.events(chat.id);
+      expect(stored.some((line) => line.event?.kind === "thinking")).toBe(false);
     } finally { watcher.close(); await h.daemon.close(); }
   });
 });

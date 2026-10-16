@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { TranscriptEvent } from '@/api/schema'
-import { buildConversationItems, formatText, mergeEvents, relayedPreview, relayedTarget } from '@/chat/conversation-model'
+import { buildConversationItems, formatText, mergeEvents, relayedPreview, relayedTarget, thoughtLabel } from '@/chat/conversation-model'
 import { MarkdownText } from '@/chat/markdown'
 
 function event(id: string, fields: Partial<TranscriptEvent> = {}): TranscriptEvent {
@@ -41,8 +41,52 @@ describe('buildConversationItems', () => {
   })
 
   test('user, assistant, thinking and system events pass through as messages', () => {
-    const items = buildConversationItems([event('u1', { kind: 'user' }), event('t1', { kind: 'thinking' }), event('s1', { kind: 'system' })])
+    const items = buildConversationItems([event('u1', { kind: 'user' }), event('t1', { kind: 'thinking', text: 'hmm' }), event('s1', { kind: 'system' })])
     expect(items.map((item) => item.type)).toEqual(['message', 'message', 'message'])
+  })
+
+  test('thinking with no visible text is no row', () => {
+    const items = buildConversationItems([event('u1', { kind: 'user' }), event('t1', { kind: 'thinking' }), event('t2', { kind: 'thinking', text: '  \n' }), event('a1', { text: 'Done' })])
+    expect(items.map((item) => (item.type === 'message' ? item.event.id : item.id))).toEqual(['u1', 'a1'])
+  })
+
+  test('consecutive thinking reads as one entry with all its text and how long it took', () => {
+    const items = buildConversationItems([
+      event('u1', { kind: 'user', at: '2026-10-15T12:00:00Z' }),
+      event('t1', { kind: 'thinking', text: 'First.', at: '2026-10-15T12:00:03Z' }),
+      event('t2', { kind: 'thinking', at: '2026-10-15T12:00:05Z' }),
+      event('t3', { kind: 'thinking', text: 'Second.', at: '2026-10-15T12:00:08Z' }),
+      event('a1', { text: 'Done', at: '2026-10-15T12:00:09Z' }),
+    ])
+    expect(items).toHaveLength(3)
+    expect(items[1]).toMatchObject({ type: 'message', event: { id: 't1', kind: 'thinking', text: 'First.\n\nSecond.' }, thoughtMs: 8000 })
+  })
+
+  test('thinking split by a tool call stays two entries', () => {
+    const items = buildConversationItems([event('t1', { kind: 'thinking', text: 'a' }), event('c1', { kind: 'tool-call', text: 'ls', tool: { name: 'Bash', input: 'ls' } }), event('t2', { kind: 'thinking', text: 'b' })])
+    expect(items.map((item) => item.type)).toEqual(['message', 'tool', 'message'])
+  })
+
+  // An imported session log: Claude 5 keeps thinking blocks with only a signature, Codex keeps reasoning summaries.
+  test('an imported transcript shows one thinking entry per pause, never an empty one', () => {
+    const items = buildConversationItems([
+      event('u1', { kind: 'user', text: 'go', at: '2026-10-15T12:00:00Z' }),
+      event('t1', { kind: 'thinking', text: 'Plan the change.', at: '2026-10-15T12:00:02Z' }),
+      event('t2', { kind: 'thinking', text: 'Check the tests.', at: '2026-10-15T12:00:04Z' }),
+      event('c1', { kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'ls' }, at: '2026-10-15T12:00:05Z' }),
+      event('r1', { kind: 'tool-result', text: 'a.ts', tool: { name: 'Bash', status: 'ok' }, at: '2026-10-15T12:00:06Z' }),
+      event('a1', { text: 'Done', at: '2026-10-15T12:00:07Z' }),
+    ])
+    const thoughts = items.filter((item) => item.type === 'message' && item.event.kind === 'thinking')
+    expect(thoughts).toHaveLength(1)
+    expect(thoughts[0]).toMatchObject({ event: { text: 'Plan the change.\n\nCheck the tests.' }, thoughtMs: 4000 })
+  })
+
+  test('a thinking entry reads Thought for its duration, or just Thought without one', () => {
+    expect(thoughtLabel(8000)).toBe('Thought for 8s')
+    expect(thoughtLabel(65_000)).toBe('Thought for 1m 05s')
+    expect(thoughtLabel(400)).toBe('Thought for 1s')
+    expect(thoughtLabel(undefined)).toBe('Thought')
   })
 
   test('a lone tool-result with no preceding call is dropped, never shown twice', () => {

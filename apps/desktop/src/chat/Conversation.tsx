@@ -8,7 +8,7 @@ import { TranscriptSkeleton } from '@/components/Skeleton'
 import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
 import { ErrorNote } from '@/components/ui'
 import { deriveConversation, type DerivedConversation } from '@/chat/conversation-derive'
-import { mergeEvents, relayedPreview, relayedTarget, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
+import { mergeEvents, relayedPreview, relayedTarget, thoughtLabel, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
 import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
@@ -116,15 +116,14 @@ function WorkMark({ size, working }: { size: number; working: boolean }) {
   )
 }
 
-/** Collapsed to its first line; while it streams the header reads Thinking… with a shimmer. */
-function ThinkingMessage({ event, streaming = false }: { event: TranscriptEvent; streaming?: boolean }) {
+/** Collapsed to how long the agent thought; opened, what it thought. Thinking still running has no row of its own. */
+function ThinkingMessage({ event, thoughtMs }: { event: TranscriptEvent; thoughtMs?: number }) {
   const [open, setOpen] = useState(false)
-  const firstLine = event.text.split('\n')[0] ?? ''
   return (
     <li>
       <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
-        <WorkMark size={10} working={streaming} />
-        {streaming ? <span className="shimmer">Thinking…</span> : open ? 'Thinking' : firstLine}
+        <WorkMark size={10} working={false} />
+        {thoughtLabel(thoughtMs)}
       </button>
       {open && (
         <p onContextMenu={markMessage(event.text)} className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">
@@ -333,7 +332,7 @@ const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem |
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
   if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
-  if (event.kind === 'thinking') return <ThinkingMessage event={event} streaming={item.streaming} />
+  if (event.kind === 'thinking') return <ThinkingMessage event={event} thoughtMs={item.thoughtMs} />
   if (event.kind === 'approval') return <ApprovalMessage event={event} />
   return <SystemMessage event={event} />
 })

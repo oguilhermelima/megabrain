@@ -39,8 +39,13 @@ describe('groupToolRuns', () => {
   })
 
   test('thinking before the first call or after the last stays outside the group', () => {
-    const items = display([event('t0', { kind: 'thinking' }), call('c1', 'Bash'), result('r1'), event('t1', { kind: 'thinking' }), event('m1')])
+    const items = display([event('t0', { kind: 'thinking', text: 'hmm' }), call('c1', 'Bash'), result('r1'), event('t1', { kind: 'thinking', text: 'ok' }), event('m1')])
     expect(shape(items)).toEqual(['t0', 'group:c1', 't1', 'm1'])
+  })
+
+  test('thinking with no visible text is no row, inside a run or out of it', () => {
+    const items = display([event('t0', { kind: 'thinking' }), call('c1', 'Bash'), result('r1'), event('t1', { kind: 'thinking', text: ' ' }), call('c2', 'Bash'), result('r2'), event('t2', { kind: 'thinking' }), event('m1')])
+    expect(shape(items)).toEqual(['group:c1,c2', 'm1'])
   })
 
   test('a message breaks the run into two groups', () => {
@@ -102,7 +107,7 @@ describe('toolGroupSummary', () => {
   })
 
   test('thinking inside the group is not counted as a tool', () => {
-    const summary = toolGroupSummary(onlyGroup(display([call('c1', 'Bash'), result('r1'), event('t1', { kind: 'thinking' }), call('c2', 'Read'), result('r2')])))
+    const summary = toolGroupSummary(onlyGroup(display([call('c1', 'Bash'), result('r1'), event('t1', { kind: 'thinking', text: 'hmm' }), call('c2', 'Read'), result('r2')])))
     expect(summary.total).toBe(2)
   })
 })
