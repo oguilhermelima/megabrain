@@ -23,6 +23,13 @@ const lightsGap = 12
 /** Where the traffic lights end, plus the gap: the left inset of anything sharing their row. */
 export const trafficLightsInset = lightsX + 2 * lightStep + lightWidth + lightsGap
 
+/** The show-sidebar button (size-8) and the gap after it. */
+const expandWidth = 32
+const expandGap = 12
+
+/** Where a pane header that joins the window row starts: past the lights and the show-sidebar button. */
+export const windowRowInset = trafficLightsInset + expandWidth + expandGap
+
 export function SidebarToggleIcon() {
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
@@ -87,10 +94,18 @@ export function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
   )
 }
 
-/** Shown in place of the sidebar when it is hidden: the lights' row with one button to bring it back. */
-export function CollapsedChrome({ onExpand }: { onExpand: () => void }) {
+/**
+ * Shown in place of the sidebar when it is hidden: the lights' band with one button to bring it back.
+ * With `joined` a pane header shares the band (panes/window-row), so this lies over that header's
+ * inset instead of taking a row of its own.
+ */
+export function CollapsedChrome({ onExpand, joined }: { onExpand: () => void; joined: boolean }) {
   return (
-    <div data-tauri-drag-region style={{ paddingLeft: trafficLightsInset }} className={`motion-fade flex ${lightsRow} shrink-0 items-center`}>
+    <div
+      data-tauri-drag-region
+      style={{ paddingLeft: trafficLightsInset, width: joined ? windowRowInset : undefined }}
+      className={`motion-fade flex ${lightsRow} shrink-0 items-center ${joined ? 'absolute top-0 left-0 z-50' : ''}`}
+    >
       <IconButton label="Show sidebar" title="Show sidebar (⌘B)" onClick={onExpand}>
         <SidebarToggleIcon />
       </IconButton>

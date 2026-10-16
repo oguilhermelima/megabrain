@@ -10,7 +10,7 @@ import { filterProjects, partitionHidden, type SidebarFilters } from '@/advanced
 import { applyOrder } from '@/advanced/project-order'
 import { flattenLayout, reconcileLayout } from '@/advanced/sidebar-folders'
 import { useSidebarLayout } from '@/advanced/useSidebarLayout'
-import { CollapsedChrome, SettingsIcon, SidebarHeader } from '@/advanced/chrome'
+import { CollapsedChrome, SettingsIcon, SidebarHeader, windowRowInset } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
@@ -48,8 +48,9 @@ import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, focusDirection, movePane, itemKey, openItem, paneList, paneOfItem, parseItem, parsePanes, pruneItems, removeItem, replaceItem, serialisePanes, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
+import { closePane, dropItem, focusDirection, movePane, itemKey, openItem, paneList, paneOfItem, paneRects, parseItem, parsePanes, pruneItems, removeItem, replaceItem, serialisePanes, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
+import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
 import { alreadyOpen } from '@/launcher/resume-model'
 
@@ -822,6 +823,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       />
     ) : null
 
+  const windowRow = windowRowJoin({ collapsed: sidebarCollapsed, covered: githubView !== null, panes: paneRects(panes.root).panes, hasTopBar: hasActionBar })
+
   return (
     <div className="relative flex h-full">
       <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
@@ -871,7 +874,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         </footer>
       </SlidePanel>
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
-        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
+        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} joined={windowRow !== null} />}
         {error !== null && (
           <div className="px-8 pt-4">
             <ErrorNote error={error} />
@@ -900,6 +903,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
               }}
               drag={drag}
               onClose={closePaneById}
+              windowRow={windowRow === null ? null : { join: windowRow, inset: windowRowInset }}
               overlay={
                 codeTargets.length > 0 && (
                   <Suspense fallback={null}>

@@ -1,6 +1,7 @@
 import { useRef, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { equaliseSplit, paneRects, resizeSplit, zonePreview, type Divider, type Panes, type Rect } from '@/panes/pane-model'
 import type { PaneDrag } from '@/panes/usePaneDrag'
+import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
 
 /** What a pane shows for its item: the title on its header, and the view. */
 export interface PaneContent {
@@ -28,6 +29,7 @@ export function PaneArea({
   drag,
   onClose,
   overlay,
+  windowRow = null,
 }: {
   panes: Panes
   onPanes: (change: (current: Panes) => Panes) => void
@@ -37,6 +39,8 @@ export function PaneArea({
   onClose: (paneId: string) => void
   /** Laid over the panes, under their focus ring, drop previews and dividers (the code layer). */
   overlay?: ReactNode
+  /** The pane header that shares the window's top row, and the room it leaves at its left (panes/window-row). */
+  windowRow?: { join: WindowRowJoin; inset: number } | null
 }) {
   const area = useRef<HTMLDivElement>(null)
   const { panes: rects, dividers } = paneRects(panes.root)
@@ -70,6 +74,7 @@ export function PaneArea({
         const content = render(item)
         const focused = pane !== null && split && pane.id === panes.focused
         if (pane === null) quiet.delete(item)
+        const joined = pane !== null && windowRow?.join.paneId === pane.id ? windowRow : null
         return (
           <section
             key={item}
@@ -79,9 +84,19 @@ export function PaneArea({
             style={pane === null ? undefined : percent(pane.rect)}
             className={pane === null ? 'hidden' : `absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${pane.rect.x > 0 ? 'border-l border-white/[0.07]' : ''} ${pane.rect.y > 0 ? 'border-t border-white/[0.07]' : ''}`}
           >
-            {split && pane !== null && <PaneHeader title={content.title} focused={pane.id === panes.focused} onDrag={(event) => drag.start(event, { kind: 'pane', paneId: pane.id, label: content.title })} onClose={() => onClose(pane.id)} />}
+            {split && pane !== null && (
+              <PaneHeader
+                title={content.title}
+                focused={pane.id === panes.focused}
+                inset={joined?.join.header === 'strip' ? joined.inset : null}
+                onDrag={(event) => drag.start(event, { kind: 'pane', paneId: pane.id, label: content.title })}
+                onClose={() => onClose(pane.id)}
+              />
+            )}
             {/* Positioned, so a PR or Diff view can lie over the item's own content below its top bar. */}
-            <div className={`relative flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>{content.node}</div>
+            <div className={`relative flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>
+              <WindowRowContext.Provider value={joined?.join.header === 'top-bar' ? joined.inset : null}>{content.node}</WindowRowContext.Provider>
+            </div>
             {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 ring-1 ring-accent/50 ring-inset" />}
             {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} replace={preview.zone === 'center'} />}
           </section>
@@ -108,10 +123,18 @@ function CloseIcon() {
   )
 }
 
-/** Shown on every pane once the area is split: drag it to move the pane, × to close it. */
-function PaneHeader({ title, focused, onDrag, onClose }: { title: string; focused: boolean; onDrag: (event: PointerEvent<HTMLElement>) => void; onClose: () => void }) {
+/**
+ * Shown on every pane once the area is split: drag it to move the pane, × to close it. With an
+ * `inset` it is the one in the window row: as tall as the lights' band, starting past them.
+ */
+function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string; focused: boolean; inset: number | null; onDrag: (event: PointerEvent<HTMLElement>) => void; onClose: () => void }) {
   return (
-    <div onPointerDown={onDrag} title={`${title}\nDrag to move this pane`} className={`flex h-7 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-1 pl-3 select-none active:cursor-grabbing ${focused ? 'bg-white/[0.04] text-ink-200' : 'text-ink-400'}`}>
+    <div
+      onPointerDown={onDrag}
+      title={`${title}\nDrag to move this pane`}
+      style={{ paddingLeft: inset ?? 12, transition: 'height var(--motion-panel) var(--motion-ease-panel), padding var(--motion-panel) var(--motion-ease-panel)' }}
+      className={`flex ${inset === null ? 'h-7' : 'h-[44px]'} shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-1 select-none active:cursor-grabbing ${focused ? 'bg-white/[0.04] text-ink-200' : 'text-ink-400'}`}
+    >
       <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium">{title}</span>
       <button
         type="button"

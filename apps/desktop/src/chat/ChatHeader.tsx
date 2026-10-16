@@ -1,7 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import { ActionBar, PaneViewBody, useWorktreeChanges } from '@/chat/ActionBar'
 import { changedFileCount, paneViewKey, segments, shownView, type PaneView } from '@/chat/action-bar-model'
 import { usePaneView } from '@/chat/pane-view-context'
+import { useWindowRowInset } from '@/panes/window-row'
 import type { AgentActivity } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
@@ -10,12 +11,14 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
  * The top bar every chat view and the launcher share: the agent's mark, live while it works (none on the launcher), one-line title and one small metadata line,
  * then the Run button and the run panel's toggle once anything ran on the right. An item with a worktree (a launcher once it has one) also gets the action bar in the
  * bar's true centre, Agent, Code, PR and Diff, each shown in the pane under the bar; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
- * below the window top; when the sidebar is hidden the window's own drag strip above it clears the traffic lights.
+ * below the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) it shrinks to the lights' 44px band, centred on their line, and leaves
+ * room at its left for them and the show-sidebar button; only the left side is inset, so the action bar keeps the true centre.
  */
 export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, actions }: { agent: string | null; activity?: AgentActivity; title: string; meta: string; metaTitle?: string; actions?: ReactNode }) {
   const pane = usePaneView()
   const changes = useWorktreeChanges(pane?.facts ?? null)
   const header = useRef<HTMLElement>(null)
+  const inset = useWindowRowInset()
   const available = pane === null ? null : segments({ facts: pane.facts, changed: changes.read ? changedFileCount(changes.uncommitted, changes.branch) : null, codeAvailable: true })
   const select = (view: PaneView) => pane?.setView(view)
   const latest = useRef({ available, select })
@@ -48,9 +51,13 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
     </>
   )
 
+  // In the window row: 4px above and below the 36px title make the 44px band; the padding slides between the two with the sidebar.
+  const band = inset === null ? 'pt-3 pb-2.5' : 'py-1'
+  const slide: CSSProperties = { transition: 'padding var(--motion-panel) var(--motion-ease-panel)' }
+
   if (pane === null || available === null) {
     return (
-      <header data-tauri-drag-region className="flex shrink-0 items-center gap-3 border-b border-white/[0.06] px-6 pt-3 pb-2.5">
+      <header data-tauri-drag-region style={{ ...slide, paddingLeft: inset ?? 24 }} className={`flex shrink-0 items-center gap-3 border-b border-white/[0.06] pr-6 ${band}`}>
         {identity}
         {actions}
         <RunButton />
@@ -64,8 +71,10 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
   // Equal side columns put the bar in the bar's true centre; each side truncates or clips inside its own half.
   return (
     <>
-      <header ref={header} data-tauri-drag-region className="@container grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-white/[0.06] px-6 pt-3 pb-2.5">
-        <div data-tauri-drag-region className="flex min-w-0 items-center gap-3">{identity}</div>
+      <header ref={header} data-tauri-drag-region style={slide} className={`@container grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-white/[0.06] px-6 ${band}`}>
+        <div data-tauri-drag-region style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-3">
+          {identity}
+        </div>
         <ActionBar agent={agent} segments={available} shown={shown} onSelect={select} />
         <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">
           {shown === 'agent' && actions}
