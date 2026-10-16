@@ -16,6 +16,7 @@ import { executeOrchestrateAdopt } from "./commands/orchestrate-adopt.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
 import { executeWorktreePrune } from "./commands/worktree-prune.js";
 import { executeWorktreeAdopt } from "./commands/worktree-adopt.js";
+import { executeWorktreeArchive, executeWorktreeArchived, executeWorktreeUnarchive } from "./commands/worktree-archive.js";
 import { executeWorktreeCreate, executeWorktreeFinish, executeWorktreePr } from "./commands/worktree-write.js";
 import { executeTerminalList } from "./commands/terminal-list.js";
 import { executeTerminalDefault, executeTerminalOpen } from "./commands/terminal-open.js";
@@ -271,6 +272,11 @@ async function routeCommand(
   }
   if (command === "terminal" && ["create", "restart", "close"].includes(commandArgs[0] ?? "")) {
     return executeTerminalLifecycle(commandArgs, dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "worktree" && (commandArgs[0] === "archive" || commandArgs[0] === "archived" || commandArgs[0] === "unarchive")) {
+    if (commandArgs.includes("-h") || commandArgs.includes("--help")) return Promise.resolve(ok(usageText(`worktree-${commandArgs[0]}`)));
+    const execute = commandArgs[0] === "archive" ? executeWorktreeArchive : commandArgs[0] === "archived" ? executeWorktreeArchived : executeWorktreeUnarchive;
+    return execute(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "worktree" && commandArgs[0] === "list") {
     return executeWorktreeList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

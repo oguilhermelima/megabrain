@@ -320,6 +320,9 @@ megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [-
 megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json] — recommended when you need to open a pull request for a worktree branch.
 megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab] — recommended when you need to manage dependent branches and pull or merge requests.
 megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json] — recommended when you need to remove a completed worktree after its safety checks pass.
+megabrain worktree archive <branch|path> [--repo <name|path>] [--force] [--json] — recommended when you need to put a branch away: folder removed, branch kept.
+megabrain worktree archived [--repo <name|path>] [--json] — recommended when you need to list archived branches.
+megabrain worktree unarchive <branch> [--repo <name|path>] [--json] — recommended when you need to restore an archived branch's worktree.
 megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json] — recommended when you need to find registered worktrees and inspect their parent relationships.
 megabrain worktree adopt <path|branch> [--json] — recommended when you need to register an existing worktree missing from one orchestrator.
 megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json] — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.

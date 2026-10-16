@@ -13,10 +13,13 @@ export const USAGE_LINES = {
   "send": "send --session <agent:id> --text <text> --operator [--json]",
   "session-own": "session own <agent:id> [--json]",
   "session-release": "session release <agent:id> [--json]",
-  "worktree": "worktree create|pr|finish|list|adopt|prune|hide|unhide ...",
+  "worktree": "worktree create|pr|finish|archive|archived|unarchive|list|adopt|prune|hide|unhide ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
   "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
   "worktree-finish": "worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
+  "worktree-archive": "worktree archive <branch|path> [--repo <name|path>] [--force] [--json]",
+  "worktree-archived": "worktree archived [--repo <name|path>] [--json]",
+  "worktree-unarchive": "worktree unarchive <branch> [--repo <name|path>] [--json]",
   "worktree-list": "worktree list [--repo <name|path>] [--tree|--flat] [--json]",
   "worktree-adopt": "worktree adopt <path|branch> [--json]",
   "worktree-prune": "worktree prune [--older-than <days>] [--repo <name|path>] [--dry-run] [--yes] [--json]",
@@ -67,7 +70,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json>",
+  "settings": "settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
   "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
@@ -194,6 +197,7 @@ Commands:
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open VS Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
+  worktree archive|archived|unarchive  Put a branch away (folder removed, branch kept) and bring it back
   worktree list [--repo <name|path>]   List shared-root worktrees with registry metadata
   worktree adopt <path|branch>         Register an existing worktree in Superset
   worktree prune ...                   Prune old, safe worktrees (dry-run unless --yes)
@@ -222,6 +226,7 @@ Commands:
   settings [--json]                    Read all settings shown in the desktop app
   settings set terminal-engine ...     Choose the embedded terminal engine
   settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
+  settings get|set project-appearance  Read or change a project's name, color and picture (megabrain only)
   resources [--json|--all]               Measure machine and open-dispatch resources
   proc start|list|status|stop|restart|logs ...  Run and inspect managed processes
   chain list|limits|add|save|edit|delete|run|explain|step ...  Manage ordered child-agent chains

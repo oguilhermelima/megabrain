@@ -19,6 +19,8 @@ import { ChatStore } from "../../chat/store.js";
 import { readProcessTable, sessionOrigin, type ProcessTable, type SessionOrigin } from "../../core/session-origin.js";
 import { loadModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { readArchivedWorktrees } from "../../core/archived-worktrees.js";
+import { readProjectAppearance } from "../../core/project-appearance.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -770,9 +772,11 @@ export async function executeProjects(args: readonly string[], environment: Envi
     const nativeChats = new Set((existsSync(join(stateDir, "chats")) ? await new ChatStore(stateDir).list().catch(() => []) : []).flatMap((chat) => chat.agentSessionId === null ? [] : [`${chat.agent}:${chat.agentSessionId}`]));
     const context: OriginContext = { owned: readOwnedSessions(stateDir), nativeChats, table, filter };
     const hiddenItems = new Set(listHiddenItems(opened.value.db).map((item) => `${item.kind}:${item.path}`));
+    const appearance = (await readProjectAppearance(environment)).projects;
+    const archived = new Set((await readArchivedWorktrees(environment)).map((item) => `${item.repo}\0${item.branch}`));
     const projects = await Promise.all(repositories.map(async (repository) => {
       const project = await repositoryProject(repository, found, dispatches, processAdapter, opened.value.db, home, environment, cache, context);
-      return { ...project, hidden: hiddenItems.has(`repo:${repository.path}`), worktrees: project.worktrees.map((tree) => ({ ...tree, hidden: hiddenItems.has(`worktree:${tree.path}`) })) };
+      return { ...project, appearance: appearance[repository.path] ?? {}, hidden: hiddenItems.has(`repo:${repository.path}`), worktrees: project.worktrees.filter((tree) => tree.branch === null || !archived.has(`${repository.path}\0${tree.branch}`)).map((tree) => ({ ...tree, hidden: hiddenItems.has(`worktree:${tree.path}`) })) };
     }));
     await writeProjectCache(environment, cache);
     return ok(`${JSON.stringify(projects, null, 2)}\n`);

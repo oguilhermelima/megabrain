@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { readProjectAppearance, setProjectAppearance, type AppearancePatch } from "../../core/project-appearance.js";
+import { writePrivateJson } from "../../core/private-json.js";
 import { readAdmissionPolicy, resourceHistoryEnabled, stateDatabase } from "../../adapters/state-db.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { detectTerminal, OPENERS, type Platform } from "../../core/terminal-openers.js";
@@ -86,13 +88,30 @@ async function readSidebarFolders(environment: Environment): Promise<SidebarFold
 }
 
 async function writeSidebarFolders(environment: Environment, value: SidebarFolders): Promise<void> {
-  const file = sidebarFoldersFile(environment);
-  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-  await rename(temporary, file);
+  await writePrivateJson(sidebarFoldersFile(environment), value);
 }
 
+const APPEARANCE_USAGE = "Usage: megabrain settings set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]";
+
+function parseAppearancePatch(args: readonly string[]): Result<AppearancePatch> {
+  const patch: AppearancePatch = {};
+  const fields = { "--name": "name", "--color": "color", "--picture": "picture" } as const;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] as string;
+    if (arg === "--json") continue;
+    const set = fields[arg as keyof typeof fields];
+    const clear = arg.startsWith("--no-") ? fields[`--${arg.slice(5)}` as keyof typeof fields] : undefined;
+    const field = set ?? clear;
+    if (field === undefined) return failed(`project-appearance: unknown option ${arg}`, 2);
+    if (patch[field] !== undefined) return failed(`project-appearance: ${field} is given more than once`, 2);
+    if (clear !== undefined) { patch[clear] = null; continue; }
+    const value = args[index + 1];
+    if (value === undefined) return failed(`project-appearance: ${arg} needs a value`, 2);
+    patch[field] = value;
+    index += 1;
+  }
+  return Object.keys(patch).length === 0 ? failed(APPEARANCE_USAGE, 2) : ok(patch);
+}
 function summary(value: SettingsValue): string {
   const providers = value.limits.enabledProviders.length === 0 ? "none" : value.limits.enabledProviders.join(", ");
   return [
@@ -181,8 +200,20 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
 }
 
 export async function executeSettings(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args[0] === "get" && args[1] === "project-appearance") {
+    if (args.slice(2).some((arg) => arg !== "--json")) return failed("Usage: megabrain settings get project-appearance [--json]", 2);
+    return ok(`${JSON.stringify(await readProjectAppearance(environment))}\n`);
+  }
+  if (args[0] === "set" && args[1] === "project-appearance") {
+    const project = args[2];
+    if (project === undefined || project.startsWith("--")) return failed(APPEARANCE_USAGE, 2);
+    const patch = parseAppearancePatch(args.slice(3));
+    if (patch.kind !== "ok") return patch;
+    const saved = await setProjectAppearance(environment, project, patch.value);
+    return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
+  }
   if (args[0] === "get") {
-    if (args.length !== 2 || args[1] !== "sidebar-folders") return failed("Usage: megabrain settings get sidebar-folders", 2);
+    if (args.length !== 2 || args[1] !== "sidebar-folders") return failed("Usage: megabrain settings get sidebar-folders|project-appearance", 2);
     return ok(`${JSON.stringify(await readSidebarFolders(environment))}\n`);
   }
   if (args[0] === "set" && args[1] === "sidebar-folders") {

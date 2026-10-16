@@ -13,6 +13,9 @@
 - Run megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]. — recommended when you need to open a pull request for a worktree branch.
 - Run megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab]. — recommended when you need to manage dependent branches and pull or merge requests.
 - Run megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]. — recommended when you need to remove a completed worktree after its safety checks pass.
+- Run megabrain worktree archive <branch|path> [--repo <name|path>] [--force] [--json]. — recommended when you need to put a branch away: its folder is removed, the branch kept, refusing uncommitted or unpushed work unless forced.
+- Run megabrain worktree archived [--repo <name|path>] [--json]. — recommended when you need to list archived branches.
+- Run megabrain worktree unarchive <branch> [--repo <name|path>] [--json]. — recommended when you need to recreate an archived branch's worktree at its old path.
 - Run megabrain worktree create|pr|finish|list|adopt|prune|hide|unhide .... — recommended when you need to find registered worktrees or hide and restore one in the project list.
 - Run megabrain worktree list [--repo <name|path>] [--tree|--flat] [--json]. — recommended when you need to find registered worktrees and inspect their parent relationships.
 - Run megabrain worktree hide|unhide <path>. — recommended when you need to hide or restore a worktree in the project list.
@@ -73,7 +76,7 @@
 - Run megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--operator] [--json]. — recommended when you need to release a finished dispatch and its pane after reading the child output.
 - Run megabrain supervise [--status|--stop]. — recommended when you need to check, or stop, the watcher that reports stuck or dead children to their parent.
 - Run megabrain status [--json]. — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
-- Run megabrain settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json>. — recommended when you need to read desktop settings, choose the embedded terminal engine, or read or replace the desktop sidebar's project folders.
+- Run megabrain settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]. — recommended when you need to read desktop settings, choose the embedded terminal engine, or read or replace the desktop sidebar's project folders.
 - Run megabrain settings set terminal-engine native|tmux. — choose the engine used for embedded terminals.
 - Run megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json. — recommended when you need to start or control a persistent Claude or Codex chat.
 - Use megabrain chat model <id> <model> [--effort <level>] [--json] to change the model for an idle chat.

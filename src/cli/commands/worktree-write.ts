@@ -34,7 +34,7 @@ import { insertWorktree, finishWorktree } from "../../db/queries/worktrees.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
-async function run(
+export async function run(
   process: ProcessAdapter,
   command: string,
   args: readonly string[],
@@ -44,7 +44,7 @@ async function run(
     ? ok(result.value)
     : failed(result.error, result.exitCode);
 }
-async function localBranchExists(
+export async function localBranchExists(
   process: ProcessAdapter,
   repo: string,
   branch: string,
@@ -88,7 +88,7 @@ async function removeCreatedBranch(
     ? ok(null)
     : failed(`could not remove branch ${branch} after worktree creation failed`);
 }
-async function root(
+export async function root(
   environment: Environment,
   tolerateMissing = false,
 ): Promise<Result<string>> {
@@ -114,7 +114,7 @@ async function root(
   const resolved = resolve(raw);
   return ok(await realpath(resolved).catch(() => resolved));
 }
-async function repositoryRoot(
+export async function repositoryRoot(
   process: ProcessAdapter,
   path: string,
 ): Promise<Result<string>> {
@@ -140,7 +140,7 @@ async function repositoryRoot(
     ? ok(canonical.value.stdout.trim())
     : failed(canonical.error, canonical.exitCode);
 }
-async function pathFor(
+export async function pathFor(
   process: ProcessAdapter,
   target: string,
   shared: string,
@@ -211,7 +211,7 @@ async function pathFor(
   }
   return failed(`worktree not found: ${target}`);
 }
-async function defaultBase(
+export async function defaultBase(
   process: ProcessAdapter,
   repo: string,
 ): Promise<string> {
@@ -303,7 +303,7 @@ async function createBase(
     ? ok({ ref, commit: resolved.value.stdout.trim(), source })
     : failed(`base does not exist: ${ref}`);
 }
-async function parentBranch(
+export async function parentBranch(
   process: ProcessAdapter,
   repo: string,
   branch: string,
@@ -351,7 +351,7 @@ type FinishBase = {
   readonly source: string;
   readonly warning?: string;
 };
-type Workspace = {
+export type Workspace = {
   readonly id?: string;
   readonly path: string;
 };
@@ -384,14 +384,14 @@ function stringField(
   }
   return undefined;
 }
-async function hasCommand(
+export async function hasCommand(
   process: ProcessAdapter,
   command: string,
 ): Promise<boolean> {
   const result = await run(process, "sh", ["-c", "command -v " + command]);
   return result.kind === "ok";
 }
-async function workspaceForTarget(
+export async function workspaceForTarget(
   process: ProcessAdapter,
   target: string,
 ): Promise<Result<Workspace | undefined>> {
@@ -599,7 +599,7 @@ async function registerSupersetWorkspace(
     tagError: tagSet ? null : `Superset workspace tag was not set for ${branch}`,
   });
 }
-function removalReason(error: string): string {
+export function removalReason(error: string): string {
   const compact = error.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
   try {
     const parsed: unknown = JSON.parse(error);
@@ -664,7 +664,7 @@ function finishRefusal(
     stderr: "megabrain: " + message + "\n",
   };
 }
-async function removeFinishWorktree(
+export async function removeFinishWorktree(
   process: ProcessAdapter,
   repo: string,
   path: string,
