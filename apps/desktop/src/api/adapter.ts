@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
+import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectAppearance, ProjectScripts, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -192,7 +192,7 @@ export interface DesktopApi {
   codeBranchDiff(root: string, mergeBase: string, path: string): Promise<CodeDiff>
   /** Native chats (megabrain chat ...). */
   chats(): Promise<NativeChat[]>
-  startChat(options: { agent: string; model?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
+  startChat(options: { agent: string; model?: string; effort?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
   /** `fresh` starts a new agent session when a suspended chat cannot resume its recorded one. */
   sendChat(chatId: string, parts: MessagePart[], options?: { fresh?: boolean }): Promise<void>
   interruptChat(chatId: string): Promise<void>
@@ -206,6 +206,8 @@ export interface DesktopApi {
   setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
   chatTerminalCommand(chatId: string): Promise<string[]>
+  /** Each agent's default model and effort from its own config, and the login shell's name (`agent defaults`). */
+  agentDefaults(): Promise<AgentDefaults>
   /** The argv that starts an agent's own interactive TUI, prompts skipped (`agent command`), or resumes one of its sessions; rejects when its CLI is not installed. */
   agentCommand(agent: string, options?: { resume?: string; model?: string; effort?: string }): Promise<string[]>
   /** Past sessions started in a folder, newest first, from each agent's own storage (`sessions history`). */
@@ -214,6 +216,8 @@ export interface DesktopApi {
   followChat(chatId: string, since: string | null, onLine: (line: ChatEventLine) => void, onEnd?: (error: string | null) => void): Promise<() => void>
   /** Appends one chat/terminal switch timing record to <state>/logs/desktop-switch.log. */
   logSwitchTrace(record: object): Promise<void>
+  /** Appends one chat start trace line to <state>/logs/desktop-chat-start.log. */
+  logChatStartTrace(record: object): Promise<void>
   /** Embedded terminals (native Tauri commands). */
   openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; cols: number; rows: number }): Promise<TerminalSession>
   writeTerminal(terminalId: string, data: string): Promise<void>

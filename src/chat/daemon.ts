@@ -156,7 +156,7 @@ export class ChatDaemon {
     const parts = request.parts === undefined ? [] : await this.normalizeParts(cwd, validateParts(request.parts));
     const now = new Date().toISOString();
     const chat: Chat = {
-      id: randomUUID(), agent, cwd, model: text(request.model) || null, ...(request.approvals === true ? { approvals: true } : {}),
+      id: randomUUID(), agent, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true ? { approvals: true } : {}),
       title: firstText(parts).slice(0, 120) || null, state: "starting", mode: "chat",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };

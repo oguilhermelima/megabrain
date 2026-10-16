@@ -71,6 +71,12 @@ fn switch_trace_log(record: serde_json::Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn chat_start_trace_log(record: serde_json::Value) -> Result<(), String> {
+    let state = app_terminals::state_dir().ok_or_else(|| "HOME is not set".to_string())?;
+    switch_trace::append_chat_start_trace(&state, &record).map(|_| ())
+}
+
+#[tauri::command]
 fn save_image(path: String, base64: String) -> Result<(), String> {
     attachment::save_image_to(Path::new(&path), &base64)
 }
@@ -415,6 +421,7 @@ pub fn run() {
             code_branch_diff,
             save_attachment,
             switch_trace_log,
+            chat_start_trace_log,
             save_image
         ])
         .build(tauri::generate_context!())

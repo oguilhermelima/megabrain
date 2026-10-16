@@ -1,4 +1,4 @@
-import type { MessagePart, TerminalEngine } from '@/api/schema'
+import type { AgentDefaults, MessagePart, TerminalEngine } from '@/api/schema'
 import { messagePartsToText } from '@/chat/composer-parts'
 
 // The launcher on the center screen: a tile per way to start work in a worktree, and what each does.
@@ -22,6 +22,24 @@ const tiles: { id: LaunchTileId; label: string }[] = [
   { id: 'grok', label: 'Grok' },
   { id: 'agy', label: 'agy' },
 ]
+
+const joined = (parts: (string | null)[]) => parts.filter((part) => part !== null).join(' · ')
+
+/**
+ * What an agent row says it will start with: the model picked in the composer for the selected
+ * agent, else the default its own config sets, else just its default.
+ */
+export function agentDetail(agent: LaunchTileId, picked: { model: string; effort: string | null } | null, defaults: AgentDefaults | null): string {
+  if (picked !== null) return joined([picked.model, picked.effort])
+  const configured = defaults?.agents.find((entry) => entry.agent === agent)
+  const text = configured === undefined ? '' : joined([configured.model, configured.effort])
+  return text === '' ? 'Default model' : text
+}
+
+/** The New terminal row: the shell it opens, before the report "Login shell", then the worktree. */
+export function terminalDetail(shell: string | null, worktree: string): string {
+  return `${shell ?? 'Login shell'} · ${worktree}`
+}
 
 /** Every tile in order; an agent the install report does not show as installed is disabled. null: no report yet, so nothing is. */
 export function launchTiles(agents: readonly { agent: string; installed: boolean }[] | null): LaunchTile[] {
@@ -70,21 +88,26 @@ export function launchPlan(tile: LaunchTileId, { cwd, parts, model, effort, engi
   return { kind: 'agent-terminal', agent: tile, engine: 'tmux', cwd, model, effort, firstInput }
 }
 
-export interface ChatCalls {
-  start: { agent: ChatAgent; cwd: string; model?: string; parts?: MessagePart[] }
-  /** `chat model` before the first turn, because `chat start` takes no effort. */
-  effort: { model: string; effort: string } | null
-  /** The first message, sent after the effort is set. */
-  send: MessagePart[] | null
+export interface ChatStart {
+  agent: ChatAgent
+  cwd: string
+  model?: string
+  effort?: string
+  parts?: MessagePart[]
 }
 
-/** The CLI calls a chat plan makes: one start, or start, effort and the first message in that order. */
-export function chatCalls(plan: Extract<LaunchPlan, { kind: 'chat' }>): ChatCalls {
-  const effort = plan.model !== null && plan.effort !== null ? { model: plan.model, effort: plan.effort } : null
-  const hasParts = plan.parts.length > 0
-  const start = { agent: plan.agent, cwd: plan.cwd, ...(plan.model === null ? {} : { model: plan.model }) }
-  if (effort === null) return { start: hasParts ? { ...start, parts: plan.parts } : start, effort: null, send: null }
-  return { start, effort, send: hasParts ? plan.parts : null }
+/**
+ * The one `chat start` a chat plan makes, carrying the model, the effort and the first message, so
+ * chatd spawns the agent once with all of them.
+ */
+export function chatStart(plan: Extract<LaunchPlan, { kind: 'chat' }>): ChatStart {
+  return {
+    agent: plan.agent,
+    cwd: plan.cwd,
+    ...(plan.model === null ? {} : { model: plan.model }),
+    ...(plan.effort === null ? {} : { effort: plan.effort }),
+    ...(plan.parts.length === 0 ? {} : { parts: plan.parts }),
+  }
 }
 
 /** The worktree the launcher opens on: the one clicked, else the last used, else the first listed. */

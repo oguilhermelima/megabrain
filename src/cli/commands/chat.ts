@@ -42,13 +42,14 @@ export async function executeChat(args: readonly string[], environment: Environm
     if (verb === "start") {
       const parsed = takeValue(rest, "--agent"); const agent = parsed.value;
       const modelArg = takeValue(parsed.rest, "--model");
-      const cwdArg = takeValue(modelArg.rest, "--cwd");
+      const effortArg = takeValue(modelArg.rest, "--effort");
+      const cwdArg = takeValue(effortArg.rest, "--cwd");
       const partsArg = takeValue(cwdArg.rest, "--parts");
       const approvals = partsArg.rest.includes("--approvals");
       partsArg.rest = partsArg.rest.filter((arg) => arg !== "--approvals");
-      if (agent === undefined || cwdArg.value === undefined || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json");
+      if (agent === undefined || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
       const parts = partsJson(partsArg.value);
-      value = await callChatd(dir, { operation: "start", agent, model: modelArg.value, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
+      value = await callChatd(dir, { operation: "start", agent, model: modelArg.value, effort: effortArg.value, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "send") {

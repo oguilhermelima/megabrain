@@ -46,6 +46,14 @@ describe('resetsIn', () => {
   test('null resetsAt has no text', () => {
     expect(resetsIn(null, now)).toBe(null)
   })
+  test('an ISO reset time counts down like Unix seconds', () => {
+    expect(resetsIn('2026-10-15T15:30:00.000Z', now)).toBe('resets in 1h 30m')
+  })
+  test('a missing or malformed reset time has no text, never NaN', () => {
+    for (const value of ['', '  ', 'soon', 'NaN', '2026-13-45T99:00:00Z']) {
+      expect(resetsIn(value, now)).toBe(null)
+    }
+  })
 })
 
 describe('groupReadingsByProvider', () => {

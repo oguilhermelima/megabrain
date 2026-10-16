@@ -629,6 +629,13 @@ export const chatEventLineSchema = z.looseObject({
   event: chatEventSchema.optional(),
   approval: chatApprovalSchema.optional(),
 })
+// `agent defaults --json`: each agent's default model and effort from its own config (null when it
+// sets none), and the shell a new terminal opens.
+export const agentDefaultsSchema = z.looseObject({
+  agents: z.array(z.looseObject({ agent: z.string(), model: z.string().nullable(), effort: z.string().nullable() })),
+  shell: z.string(),
+})
+export type AgentDefaults = z.infer<typeof agentDefaultsSchema>
 // `agent command --json`: the command line that starts an agent's own TUI.
 export const agentCommandSchema = z.looseObject({ agent: z.string(), argv: z.array(z.string()).min(1) })
 // `sessions history --cwd <path> --json`: past sessions started in a folder, newest first, read from

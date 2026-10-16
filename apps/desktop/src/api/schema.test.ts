@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
 const json = (name: string): unknown => JSON.parse(readFileSync(join(captured, name), 'utf8'))
@@ -139,6 +139,11 @@ describe('the staged CLI still speaks the schemas', () => {
     const result = run(['status', '--json'])
     expect(result.code).toBe(0)
     expect(statusSchema.safeParse(JSON.parse(result.stdout)).error).toBeUndefined()
+  })
+  test('agent defaults --json', () => {
+    const result = run(['agent', 'defaults', '--json'])
+    expect(result.code).toBe(0)
+    expect(agentDefaultsSchema.safeParse(JSON.parse(result.stdout)).error).toBeUndefined()
   })
   test('doctor --json', () => {
     const result = run(['doctor', '--json'])

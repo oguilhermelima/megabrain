@@ -50,7 +50,7 @@ describe("agent command", () => {
 
 describe("agent command line", () => {
   test("--json prints the agent and its argv", async () => {
-    const result = await executeAgent(["command", "codex", "--model", "m1", "--effort", "low", "--json"], all);
+    const result = await executeAgent(["command", "codex", "--model", "m1", "--effort", "low", "--json"], {}, all);
     expect(result.kind).toBe("ok");
     expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({
       agent: "codex",
@@ -59,14 +59,14 @@ describe("agent command line", () => {
   });
 
   test("a missing CLI exits 1 with a clear message", async () => {
-    const result = await executeAgent(["command", "agy", "--json"], fakeProcess([]));
+    const result = await executeAgent(["command", "agy", "--json"], {}, fakeProcess([]));
     expect(result).toMatchObject({ kind: "failed", exitCode: 1 });
     expect(result.kind === "failed" ? result.error : "").toContain("agy is not installed");
   });
 
   test("bad usage exits 2", async () => {
     for (const args of [["command"], ["command", "gemini"], ["command", "claude", "--model"], ["command", "claude", "--bogus"], ["other", "claude"]]) {
-      expect(await executeAgent(args, all)).toMatchObject({ kind: "failed", exitCode: 2 });
+      expect(await executeAgent(args, {}, all)).toMatchObject({ kind: "failed", exitCode: 2 });
     }
   });
 });

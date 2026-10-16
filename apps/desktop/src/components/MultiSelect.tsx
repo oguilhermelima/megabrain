@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { placeMenu, type AnchorRect } from '@/advanced/menu-placement'
+import { useCallback, useRef, useState } from 'react'
+import type { AnchorRect } from '@/advanced/menu-placement'
 import { Checkbox } from '@/components/Checkbox'
 import { chosenLabels, filterGroups, optionCount, selectionSummary, toggledValue, withUnknown, type PickGroup } from '@/components/multi-select-model'
+import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
 
 // A dropdown of checkboxes: the closed button says what is chosen in a few words, the open list has
@@ -73,67 +73,22 @@ function Panel({
   trigger: HTMLButtonElement | null
   onClose: () => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const searchable = optionCount(groups) >= searchFrom
   const shown = filterGroups(groups, query)
 
-  useEffect(() => {
-    if (leaving) return
-    const outside = (event: Event) => !(event.target instanceof Node) || (ref.current?.contains(event.target) !== true && trigger?.contains(event.target) !== true)
-    const onDown = (event: MouseEvent) => {
-      if (outside(event)) onClose()
-    }
-    // The settings page scrolls under it, which moves the button it hangs from.
-    const onScroll = (event: Event) => {
-      if (outside(event)) onClose()
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      trigger?.focus({ preventScroll: true })
-      onClose()
-    }
-    window.addEventListener('mousedown', onDown, true)
-    window.addEventListener('scroll', onScroll, true)
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('blur', onClose)
-    window.addEventListener('resize', onClose)
-    ref.current?.querySelector<HTMLElement>('input')?.focus({ preventScroll: true })
-    return () => {
-      window.removeEventListener('mousedown', onDown, true)
-      window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('blur', onClose)
-      window.removeEventListener('resize', onClose)
-    }
-  }, [onClose, leaving, trigger])
-
-  // Measured before paint and again when the list changes size, then flipped when it would leave the window.
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (element === null) return
-    const place = () => {
-      const rect = element.getBoundingClientRect()
-      setPosition(placeMenu(anchor, { width: rect.width, height: rect.height }, { width: window.innerWidth, height: window.innerHeight }, 4))
-    }
-    place()
-    const observer = new ResizeObserver(place)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [anchor])
-
-  return createPortal(
-    <div
-      ref={ref}
+  return (
+    <Popover
+      anchor={anchor}
+      label={label}
       role="dialog"
-      aria-label={label}
-      data-leaving={leaving || undefined}
-      inert={leaving}
-      style={position === null ? { left: 0, top: 0, visibility: 'hidden' } : position}
-      className="popover fixed z-[100] flex max-h-[min(420px,calc(100vh-16px))] w-[288px] max-w-[calc(100vw-16px)] flex-col overflow-hidden p-1.5"
+      leaving={leaving}
+      onClose={onClose}
+      trigger={trigger}
+      focus="input"
+      closeWhenMoved
+      gap={4}
+      className="flex max-h-[min(420px,calc(100vh-16px))] w-[288px] max-w-[calc(100vw-16px)] flex-col overflow-hidden p-1.5"
     >
       {searchable && (
         <input
@@ -158,8 +113,7 @@ function Panel({
           </button>
         </div>
       )}
-    </div>,
-    document.body,
+    </Popover>
   )
 }
 

@@ -184,7 +184,7 @@ async function routeCommand(
   if (command === "port") return executePort(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "code") return executeCode(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "sessions") return executeSessions(commandArgs, dependencies.environment);
-  if (command === "agent") return executeAgent(commandArgs, dependencies.processAdapter);
+  if (command === "agent") return executeAgent(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "commands") return executeCommands(commandArgs, dependencies.environment);
   if (command === "model") {
     return executeModel(commandArgs, dependencies.environment, dependencies.processAdapter);

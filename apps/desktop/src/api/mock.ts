@@ -343,6 +343,15 @@ export function createMockApi(): DesktopApi {
       command: mode === 'terminal' ? ['claude', '--resume', mockNativeChat.agentSessionId ?? ''] : null,
     }),
     chatTerminalCommand: async () => ['claude', '--resume', mockNativeChat.agentSessionId ?? ''],
+    agentDefaults: async () => ({
+      agents: [
+        { agent: 'claude', model: 'opus', effort: 'high' },
+        { agent: 'codex', model: 'gpt-6-luna', effort: 'medium' },
+        { agent: 'grok', model: null, effort: null },
+        { agent: 'agy', model: 'Gemini 3.8 Flash', effort: 'medium' },
+      ],
+      shell: 'zsh',
+    }),
     agentCommand: async (agent, options = {}) => {
       if (!mockInstallPlan.agents.some((entry) => entry.agent === agent && entry.installed)) throw new CliError(`${agent} is not installed`, 1)
       const resume = options.resume === undefined ? [] : agent === 'codex' ? ['resume', options.resume] : ['--resume', options.resume]
@@ -354,6 +363,7 @@ export function createMockApi(): DesktopApi {
     },
     followChat: async (chatId, since, onLine) => followMockChat(chatId, since, onLine),
     logSwitchTrace: async () => {},
+    logChatStartTrace: async () => {},
     openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),
     writeTerminal: async () => {},
     resizeTerminal: async () => {},

@@ -9,6 +9,7 @@ export const USAGE_LINES = {
   "context": "context [--json]",
   "sessions-history": "sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json]",
   "agent-command": "agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json",
+  "agent-defaults": "agent defaults [--json]",
   // The caller must opt into operator authority on the command itself.
   "send": "send --session <agent:id> --text <text> --operator [--json]",
   "session-own": "session own <agent:id> [--json]",
@@ -82,7 +83,7 @@ export const USAGE_LINES = {
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
   "settings": "settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
-  "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json",
+  "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
   "proc": "proc start|run|list|status|stop|restart|logs ...",

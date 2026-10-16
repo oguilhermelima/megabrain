@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
-import { createPortal } from 'react-dom'
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { api } from '@/api'
 import { settingsSchema, type Settings } from '@/api/schema'
-import { placeMenu, type AnchorRect } from '@/advanced/menu-placement'
+import type { AnchorRect } from '@/advanced/menu-placement'
+import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
 import {
   agentLimits,
@@ -80,59 +80,8 @@ function useSettings(): { settings: Settings | null; stale: boolean } {
 
 type Models = Settings['models']
 
-/** A menu on document.body, flipped inside the window; a click elsewhere, Escape or blur closes it. It is inert while `leaving`. */
-function Popover({ anchor, label, leaving, onClose, children }: { anchor: AnchorRect; label: string; leaving: boolean; onClose: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (leaving) return
-    const onDown = (event: MouseEvent) => {
-      if (!(event.target instanceof Node) || ref.current?.contains(event.target) !== true) onClose()
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('blur', onClose)
-    ref.current?.querySelector<HTMLElement>('[aria-checked="true"], button')?.focus()
-    return () => {
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('blur', onClose)
-    }
-  }, [onClose, leaving])
-  // Measured before paint and again when the content changes size, then flipped when it would leave the window.
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (element === null) return
-    const place = () => {
-      const rect = element.getBoundingClientRect()
-      setPosition(placeMenu(anchor, { width: rect.width, height: rect.height }, { width: window.innerWidth, height: window.innerHeight }, 6))
-    }
-    place()
-    const observer = new ResizeObserver(place)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [anchor])
-  return createPortal(
-    <div
-      ref={ref}
-      role="menu"
-      aria-label={label}
-      data-leaving={leaving || undefined}
-      inert={leaving}
-      style={position === null ? { left: 0, top: 0, visibility: 'hidden' } : position}
-      className="popover fixed z-[100] max-h-[calc(100vh-16px)] min-w-[240px] overflow-y-auto p-2"
-    >
-      {children}
-    </div>,
-    document.body,
-  )
-}
+/** The composer's menus: a click elsewhere, Escape or blur closes them. */
+const menuLook = { role: 'menu', focus: '[aria-checked="true"], button', className: 'max-h-[calc(100vh-16px)] min-w-[240px] overflow-y-auto p-2' } as const
 
 export interface ModelPick {
   /** The id to run, Claude's with [1m] for the 1M window. */
@@ -215,6 +164,7 @@ function ModelMenu({
   onAsk,
   leaving,
   onClose,
+  trigger,
 }: {
   anchor: AnchorRect
   agent: string | null
@@ -230,6 +180,7 @@ function ModelMenu({
   onAsk: (confirm: PendingConfirm) => void
   leaving: boolean
   onClose: () => void
+  trigger: HTMLElement | null
 }) {
   const groups = menuGroups(models, current)
   const entry = findModel(models, current)
@@ -258,7 +209,7 @@ function ModelMenu({
   const row = (item: Models[number]) => <ModelRow key={item.model} item={item} checked={item === entry} onPick={() => pickModel(item)} />
 
   return (
-    <Popover anchor={anchor} label="Model" leaving={leaving} onClose={onClose}>
+    <Popover {...menuLook} anchor={anchor} label="Model" leaving={leaving} onClose={onClose} trigger={trigger}>
       <div className="w-[304px] max-w-[calc(100vw-32px)]">
         <>
           <p className={`${heading} pt-1`}>Model</p>
@@ -415,9 +366,10 @@ function LimitSkeleton({ window }: { window: string }) {
 
 type Open = AnchorRect | null
 
-function Trigger({ agent, label, title, open, onToggle }: { agent: string | null; label: string; title: string; open: boolean; onToggle: (anchor: AnchorRect) => void }) {
+function Trigger({ ref, agent, label, title, open, onToggle }: { ref: RefObject<HTMLButtonElement | null>; agent: string | null; label: string; title: string; open: boolean; onToggle: (anchor: AnchorRect) => void }) {
   return (
     <button
+      ref={ref}
       type="button"
       title={title}
       onMouseDown={(event) => {
@@ -470,6 +422,7 @@ export function ComposerStatus({
 }) {
   const { settings } = useSettings()
   const [open, setOpen] = useState<Open>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
   const [asking, setAsking] = useState<PendingConfirm | null>(null)
   const registry = settings?.models ?? []
   const models = agentModels(registry, agent)
@@ -486,7 +439,7 @@ export function ComposerStatus({
   return (
     <div aria-busy={loading} className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
       {loading && <PickerSkeleton />}
-      {models.length > 0 && <Trigger agent={agent} label={label} title={known ? `${label}: ${model}${size?.derived === true ? ' (window from the model)' : ''}` : `${label}: the agent picks its default model`} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
+      {models.length > 0 && <Trigger ref={trigger} agent={agent} label={label} title={known ? `${label}: ${model}${size?.derived === true ? ' (window from the model)' : ''}` : `${label}: the agent picks its default model`} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
       <ContextGauge meter={meter} />
       {menu.shown !== null && (
         <ModelMenu
@@ -508,6 +461,7 @@ export function ComposerStatus({
             setAsking(confirm)
           }}
           onClose={close}
+          trigger={trigger.current}
         />
       )}
       <ConfirmDialog confirm={asking} onClose={() => setAsking(null)} />
@@ -535,12 +489,14 @@ function LimitRing({ agent, limits }: { agent: string; limits: AgentLimit[] }) {
   const [open, setOpen] = useState<Open>(null)
   const menu = usePresence(open)
   const close = useRef(() => setOpen(null)).current
+  const trigger = useRef<HTMLButtonElement>(null)
   const highest = highestLimit(limits)
   if (highest === null) return null
   const title = limits.map((limit) => limitTitle(agent, limit)).join('\n')
   return (
     <>
       <button
+        ref={trigger}
         type="button"
         title={title}
         aria-label={`Usage limits: ${Math.round(highest.usedPercent)}% used`}
@@ -562,7 +518,7 @@ function LimitRing({ agent, limits }: { agent: string; limits: AgentLimit[] }) {
         <span className={`tabular-nums ${highest.tone === 'normal' ? 'text-ink-300' : toneText[highest.tone]}`}>{`${Math.round(highest.usedPercent)}%`}</span>
       </button>
       {menu.shown !== null && (
-        <Popover anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close}>
+        <Popover {...menuLook} anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
           <p className={`${heading} pt-1`}>Usage limits</p>
           <div className="flex flex-col px-2 pb-1 text-[12.5px] text-ink-300">
             {limits.map((limit) => (

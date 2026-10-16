@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { MessagePart } from '@/api/schema'
-import { bracketedPaste, chatCalls, initialTile, launchPlan, launchTiles, launchWorktree, type LaunchTile } from '@/launcher/launch-model'
+import { agentDetail, bracketedPaste, chatStart, initialTile, launchPlan, launchTiles, launchWorktree, terminalDetail, type LaunchTile } from '@/launcher/launch-model'
 
 const installed = (...names: string[]) => ['claude', 'codex', 'grok', 'agy'].map((agent) => ({ agent, installed: names.includes(agent) }))
 const tile = (tiles: LaunchTile[], id: string) => tiles.find((item) => item.id === id)
@@ -88,24 +88,21 @@ describe('launchPlan', () => {
   })
 })
 
-describe('chatCalls', () => {
+describe('chatStart', () => {
   const plan = { kind: 'chat' as const, agent: 'claude' as const, cwd: '/w', model: 'opus', effort: null, parts: text('hi') }
 
-  test('without an effort one start carries the model and the message', () => {
-    expect(chatCalls(plan)).toEqual({ start: { agent: 'claude', cwd: '/w', model: 'opus', parts: text('hi') }, effort: null, send: null })
+  test('one start carries the model and the message', () => {
+    expect(chatStart(plan)).toEqual({ agent: 'claude', cwd: '/w', model: 'opus', parts: text('hi') })
   })
 
-  test('with an effort the chat starts empty, takes the effort, then gets the message', () => {
-    expect(chatCalls({ ...plan, effort: 'high' })).toEqual({ start: { agent: 'claude', cwd: '/w', model: 'opus' }, effort: { model: 'opus', effort: 'high' }, send: text('hi') })
-  })
-
-  test('an effort without a model cannot be set and is dropped', () => {
-    expect(chatCalls({ ...plan, model: null, effort: 'high' })).toEqual({ start: { agent: 'claude', cwd: '/w', parts: text('hi') }, effort: null, send: null })
+  test('an effort rides on the same start, so the agent is spawned once with it', () => {
+    expect(chatStart({ ...plan, effort: 'high' })).toEqual({ agent: 'claude', cwd: '/w', model: 'opus', effort: 'high', parts: text('hi') })
+    expect(chatStart({ ...plan, model: null, effort: 'high' })).toEqual({ agent: 'claude', cwd: '/w', effort: 'high', parts: text('hi') })
   })
 
   test('no message starts an empty chat', () => {
-    expect(chatCalls({ ...plan, parts: [] })).toEqual({ start: { agent: 'claude', cwd: '/w', model: 'opus' }, effort: null, send: null })
-    expect(chatCalls({ ...plan, parts: [], effort: 'low' })).toEqual({ start: { agent: 'claude', cwd: '/w', model: 'opus' }, effort: { model: 'opus', effort: 'low' }, send: null })
+    expect(chatStart({ ...plan, parts: [] })).toEqual({ agent: 'claude', cwd: '/w', model: 'opus' })
+    expect(chatStart({ ...plan, parts: [], effort: 'low' })).toEqual({ agent: 'claude', cwd: '/w', model: 'opus', effort: 'low' })
   })
 })
 
@@ -141,5 +138,38 @@ describe('bracketedPaste', () => {
 
   test('text cannot end the paste early', () => {
     expect(bracketedPaste('a\x1b[201~b')).toBe('\x1b[200~ab\x1b[201~')
+  })
+})
+
+describe('agentDetail', () => {
+  const defaults = {
+    agents: [
+      { agent: 'claude', model: 'opus', effort: 'high' },
+      { agent: 'codex', model: 'gpt-6-luna', effort: null },
+      { agent: 'grok', model: null, effort: null },
+    ],
+    shell: 'zsh',
+  }
+  test('a model picked for the selected agent wins over its default', () => {
+    expect(agentDetail('claude', { model: 'sonnet', effort: 'low' }, defaults)).toBe('sonnet · low')
+    expect(agentDetail('claude', { model: 'sonnet', effort: null }, defaults)).toBe('sonnet')
+  })
+  test("otherwise the agent's own configured default model and effort", () => {
+    expect(agentDetail('claude', null, defaults)).toBe('opus · high')
+    expect(agentDetail('codex', null, defaults)).toBe('gpt-6-luna')
+  })
+  test('an agent with nothing configured, or before the report arrives, reads as its default', () => {
+    expect(agentDetail('grok', null, defaults)).toBe('Default model')
+    expect(agentDetail('agy', null, defaults)).toBe('Default model')
+    expect(agentDetail('claude', null, null)).toBe('Default model')
+  })
+})
+
+describe('terminalDetail', () => {
+  test("names the shell a new terminal opens, then the worktree", () => {
+    expect(terminalDetail('zsh', 'megabrain')).toBe('zsh · megabrain')
+  })
+  test('before the report arrives it says login shell', () => {
+    expect(terminalDetail(null, 'megabrain')).toBe('Login shell · megabrain')
   })
 })

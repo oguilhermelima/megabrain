@@ -1,4 +1,5 @@
 import type { AdmissionPolicy, ChainStep, Settings, UsageReading } from '@/api/schema'
+import { parseResetsAt } from '@/chat/composer-status'
 
 export type ModelInfo = Settings['models'][number]
 
@@ -11,10 +12,11 @@ export function usageLevel(usedPercent: number | null): UsageLevel {
   return 'normal'
 }
 
-/** "resets in 2h 14m" from a Unix-seconds string, or null when there is nothing to reset. */
+/** "resets in 2h 14m" from a Unix-seconds or ISO string, or null when the time is missing or unreadable. */
 export function resetsIn(resetsAt: string | null, now: Date = new Date()): string | null {
-  if (resetsAt === null) return null
-  const seconds = Math.max(0, Number(resetsAt) - Math.floor(now.getTime() / 1000))
+  const at = parseResetsAt(resetsAt)
+  if (at === null) return null
+  const seconds = Math.max(0, Math.floor((at.getTime() - now.getTime()) / 1000))
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   return `resets in ${hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`}`

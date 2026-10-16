@@ -55,6 +55,7 @@ megabrain repo unhide <name|path> — recommended when you need to restore a hid
 megabrain worktree hide <path> — recommended when you need to hide a worktree from the project list.
 megabrain worktree unhide <path> — recommended when you need to restore a hidden worktree.
 megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json — recommended when you need the argv that starts, or resumes a past session in, an agent's interactive TUI.
+megabrain agent defaults [--json] — recommended when you need each agent's default model and effort from its own config, and the shell a new terminal opens.
 megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json] — recommended when you need the past sessions of a folder, newest first.
 megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
 megabrain repo github [--owner <login>] [--json] — recommended when you need to find repositories available through GitHub CLI.
@@ -171,8 +172,8 @@ megabrain supervise [--status|--stop] — recommended when you need to check, or
 megabrain status [--json] — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
 megabrain settings [--json] — recommended when you need one read of the settings shown in the desktop app.
 megabrain settings [--json] | set terminal-engine native|tmux | get sidebar-folders | set sidebar-folders <json> — recommended when you need to read desktop settings, choose the embedded terminal engine, or read or replace the desktop sidebar's project folders.
-megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json — recommended when you need to start or control a persistent Claude or Codex chat.
-megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--parts <json>] --json — start a persistent native chat in a project folder.
+megabrain chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--parts <json>] --json | send <id> --parts <json> | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json — recommended when you need to start or control a persistent Claude or Codex chat.
+megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--parts <json>] --json — start a persistent native chat in a project folder.
 megabrain chat send <id> --parts <json> — send ordered text and local image parts to a chat.
 megabrain chat interrupt <id> — interrupt the current turn.
 megabrain chat approve <id> <approvalId> --decision allow|allow-session|deny — answer a tool approval request.

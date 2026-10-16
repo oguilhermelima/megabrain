@@ -3,6 +3,7 @@ import { api } from '@/api'
 import type { NativeChat } from '@/api/schema'
 import { applyLine, followState, type FollowState } from '@/native-chat/chat-model'
 import { publishChatState } from '@/native-chat/live-state'
+import { startEvent, startStep } from '@/native-chat/start-trace'
 import { switchState } from '@/native-chat/switch-trace'
 
 // What each chat view has seen, kept for the app run: reopening a chat shows it at once and the
@@ -44,6 +45,7 @@ export function useFollowChat(chat: NativeChat): { state: FollowState; error: un
             setError(null)
             update((current) => applyLine(current, line))
             if (line.event?.kind === 'state') switchState(chat.id, line.event.text)
+            if (line.event !== undefined) startEvent(chat.id, line.event)
           },
           (ended) => {
             if (stopped) return
@@ -64,6 +66,7 @@ export function useFollowChat(chat: NativeChat): { state: FollowState; error: un
         )
     }
     setError(null)
+    startStep(chat.id, 'followCalled')
     follow()
     return () => {
       stopped = true

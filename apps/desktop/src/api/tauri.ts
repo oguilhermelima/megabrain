@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
+import { agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -308,8 +308,8 @@ export function createTauriApi(): DesktopApi {
     codeBranchChanges: async (root, parent) => branchChangesSchema.parse(await invoke('code_branch_changes', { root, parent })),
     codeBranchDiff: async (root, mergeBase, path) => codeDiffSchema.parse(await invoke('code_branch_diff', { root, mergeBase, path })),
     chats: () => cliJson(['chat', 'list', '--json'], nativeChatSchema.array()),
-    startChat: ({ agent, model, cwd, parts }) =>
-      cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
+    startChat: ({ agent, model, effort, cwd, parts }) =>
+      cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), ...(effort === undefined ? [] : ['--effort', effort]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
     sendChat: async (chatId, parts, options) => void (await cliText(['chat', 'send', chatId, '--parts', JSON.stringify(parts), ...(options?.fresh === true ? ['--fresh'] : [])])),
     interruptChat: async (chatId) => void (await cliText(['chat', 'interrupt', chatId])),
     answerApproval: async (chatId, approvalId, decision) => void (await cliText(['chat', 'approve', chatId, approvalId, '--decision', decision])),
@@ -319,6 +319,7 @@ export function createTauriApi(): DesktopApi {
     setChatMode: (chatId, mode) =>
       cliJson(['chat', 'mode', chatId, mode, '--json'], z.looseObject({ chat: nativeChatSchema, terminal: terminalSessionSchema.nullable(), command: z.array(z.string()).nullable().default(null) })),
     chatTerminalCommand: (chatId) => cliJson(['chat', 'terminal-command', chatId, '--json'], z.array(z.string())),
+    agentDefaults: () => cliJson(['agent', 'defaults', '--json'], agentDefaultsSchema),
     agentCommand: async (agent, options = {}) =>
       (await cliJson(['agent', 'command', agent, ...(options.resume === undefined ? [] : ['--resume', options.resume]), ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort]), '--json'], agentCommandSchema)).argv,
     sessionHistory: (cwd, agent) => cliJson(['sessions', 'history', '--cwd', cwd, ...(agent === undefined ? [] : ['--agent', agent]), '--json'], sessionHistorySchema),
@@ -337,6 +338,7 @@ export function createTauriApi(): DesktopApi {
       })
     },
     logSwitchTrace: async (record) => void (await invoke('switch_trace_log', { record })),
+    logChatStartTrace: async (record) => void (await invoke('chat_start_trace_log', { record })),
     openTerminal: async (options) => terminalSessionSchema.parse(await invoke('terminal_open', { options })),
     writeTerminal: async (terminalId, data) => void (await invoke('terminal_write', { terminalId, data })),
     resizeTerminal: async (terminalId, cols, rows) => void (await invoke('terminal_resize', { terminalId, cols, rows })),

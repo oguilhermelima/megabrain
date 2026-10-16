@@ -199,6 +199,51 @@ rl.on("line", (line) => {
     expect(requests.find((request) => request.method === "turn/start")?.params).toMatchObject({ model: "gpt-5.6-luna", effort: "low" });
   });
 
+  test("starts a chat with its effort in one call: Codex's first turn and Claude's argv carry it", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "codex", `
+const readline = require("node:readline");
+const { appendFileSync } = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
+  if (request.method === "initialize") process.stdout.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
+  if (request.method === "thread/start") process.stdout.write(JSON.stringify({ id: request.id, result: { thread: { id: "effort-thread" } } }) + "\\n");
+  if (request.method === "turn/start") process.stdout.write(JSON.stringify({ id: request.id, result: { turn: { id: "effort-turn" } } }) + "\\n");
+});
+`);
+    fakeAgent(env.bin, "claude", `
+const { appendFileSync } = require("node:fs");
+appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify({ argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+    const codex = await call(["chat", "start", "--agent", "codex", "--cwd", env.cwd, "--model", "gpt-6-luna", "--effort", "high", "--parts", JSON.stringify([{ type: "text", text: "first" }]), "--json"], env);
+    expect(codex.kind).toBe("ok");
+    if (codex.kind !== "ok") return;
+    expect(JSON.parse(codex.value)).toMatchObject({ model: "gpt-6-luna", effort: "high" });
+    const claude = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--effort", "low", "--json"], env);
+    expect(claude.kind).toBe("ok");
+    if (claude.kind !== "ok") return;
+    const claudeId = (JSON.parse(claude.value) as Chat).id;
+    await waitForChat(claudeId, "idle", env);
+    let captured: Array<{ method?: string; params?: Record<string, unknown>; argv?: string[] }> = [];
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      captured = existsSync(env.capture) ? readFileSync(env.capture, "utf8").trim().split("\n").map((line) => JSON.parse(line) as (typeof captured)[number]) : [];
+      if (captured.some((entry) => entry.method === "turn/start") && captured.some((entry) => entry.argv !== undefined)) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(captured.find((entry) => entry.method === "turn/start")?.params).toMatchObject({ model: "gpt-6-luna", effort: "high" });
+    expect(captured.find((entry) => entry.argv !== undefined)?.argv).toEqual(expect.arrayContaining(["--effort", "low"]));
+    await call(["chat", "stop", claudeId], env);
+  });
+
+  test("refuses an empty --effort on chat start", async () => {
+    const env = sandbox();
+    const result = await call(["chat", "start", "--agent", "codex", "--cwd", env.cwd, "--effort", "", "--json"], env);
+    expect(result.kind).toBe("failed");
+  });
+
   test("starts a Claude chat that stays silent until its first input line", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", `

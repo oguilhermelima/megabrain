@@ -1,15 +1,16 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { api } from '@/api'
-import type { HistorySession, MessagePart, NativeChat } from '@/api/schema'
+import type { AgentDefaults, HistorySession, MessagePart, NativeChat } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { Composer, type Notice } from '@/chat/Composer'
 import { AgentIcon } from '@/components/agent-icons'
 import { StartingCard } from '@/components/StartingCard'
 import { ErrorNote } from '@/components/ui'
-import { chatCalls, initialTile, launchPlan, launchTiles, launchWorktree, type LaunchTile, type LaunchTileId } from '@/launcher/launch-model'
+import { agentDetail, chatStart, initialTile, launchPlan, launchTiles, launchWorktree, terminalDetail, type LaunchTile, type LaunchTileId } from '@/launcher/launch-model'
 import { moveInColumn } from '@/launcher/launcher-keys'
 import { resumeLaunch } from '@/launcher/resume-model'
 import { ResumeList } from '@/launcher/ResumeList'
+import { beginStart, bindStart, endStart, startStep } from '@/native-chat/start-trace'
 import { usePendingActions } from '@/lib/usePendingActions'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 import type { TerminalLaunch } from '@/terminal/terminal-list'
@@ -59,6 +60,24 @@ function useInstalledAgents() {
   return agents
 }
 
+// Each agent's configured default and the login shell, read once per app run; without them the rows say "Default model" and "Login shell".
+let agentDefaults: Promise<AgentDefaults | null> | null = null
+
+function useAgentDefaults() {
+  const [defaults, setDefaults] = useState<AgentDefaults | null>(null)
+  useEffect(() => {
+    let stopped = false
+    agentDefaults ??= api.agentDefaults().catch(() => null)
+    void agentDefaults.then((report) => {
+      if (!stopped) setDefaults(report)
+    })
+    return () => {
+      stopped = true
+    }
+  }, [])
+  return defaults
+}
+
 /** A new id for a terminal: unique across app runs, so a layout saved by an earlier run never names it. */
 export function newTerminalId(): string {
   return `terminal-${crypto.randomUUID()}`
@@ -98,6 +117,7 @@ export function Launcher({
   onWorktree: (cwd: string | null) => void
 }) {
   const tiles = launchTiles(useInstalledAgents())
+  const defaults = useAgentDefaults()
   const [chosenTile, setChosenTile] = useState<LaunchTileId | null>(null)
   const tile = chosenTile ?? initialTile(remembered(tileKey), tiles)
   const [chosenPath, setChosenPath] = useState<string | null>(null)
@@ -142,12 +162,17 @@ export function Launcher({
       onLaunch({ ...plan, id: newTerminalId(), title: `${current?.label ?? tile} · ${worktree?.label ?? cwd}` })
       return { tone: 'ok', text: 'Started.' }
     }
-    const calls = chatCalls(plan)
+    const trace = beginStart(plan.agent, plan.parts.length > 0)
     const started = await actions.run(startKey, `Starting ${current?.label ?? tile} in ${worktree?.label ?? folder(cwd)}`, async () => {
-      const chat = await api.startChat(calls.start)
-      if (calls.effort !== null) await api.setChatModel(chat.id, calls.effort.model, calls.effort.effort)
-      if (calls.send !== null) await api.sendChat(chat.id, calls.send)
-      onChat(chat)
+      try {
+        startStep(trace, 'startSent')
+        const chat = await api.startChat(chatStart(plan))
+        bindStart(trace, chat.id)
+        onChat(chat)
+      } catch (caught) {
+        endStart(trace, 'error', caught)
+        throw caught
+      }
     })
     return started ? { tone: 'ok', text: 'Started.' } : { tone: 'bad', text: 'The chat did not start; your message is still here.' }
   }
@@ -213,7 +238,7 @@ export function Launcher({
               <span className="min-w-0">
                 <span className="block text-[13.5px] font-medium text-ink-100">New terminal</span>
                 <span className="block truncate text-[12px] text-ink-500" title={cwd ?? undefined}>
-                  Login shell · {worktree?.label ?? (cwd === null ? 'no worktree' : folder(cwd))}
+                  {terminalDetail(defaults?.shell ?? null, worktree?.label ?? (cwd === null ? 'no worktree' : folder(cwd)))}
                 </span>
               </span>
               <kbd className="font-sans text-[12px] text-ink-500">⌘T</kbd>
@@ -235,7 +260,7 @@ export function Launcher({
                       selected={item.id === tile}
                       tabbable={item.id === (tabbableAgent ?? tile)}
                       busy={starting}
-                      detail={item.id === tile && model !== null ? [model.model, model.effort].filter((part) => part !== null).join(' · ') : 'Default model'}
+                      detail={agentDetail(item.id, item.id === tile ? model : null, defaults)}
                       onSelect={() => {
                         if (item.id === tile) launchEmpty()
                         else pick(item.id)

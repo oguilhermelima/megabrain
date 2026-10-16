@@ -111,6 +111,13 @@ Print the command line that starts an agent's own TUI, permission prompts skippe
 megabrain agent command claude --model claude-opus-5-5 --effort high --json
 ```
 
+Show each agent's default model and effort, read from its own config without changing it, and the
+shell a new terminal opens (`null` when a config sets no default):
+
+```sh
+megabrain agent defaults --json
+```
+
 List the past sessions started in a folder, newest first, and print the command that resumes one
 (`messageCount` is `null` when an agent's log does not say; the scan is cached in the state dir):
 
@@ -270,7 +277,7 @@ The desktop app can keep Claude and Codex chats running in a local daemon, even 
 closes. Start a chat in a project folder, send text or local image parts, and follow its transcript:
 
 ```sh
-megabrain chat start --agent claude --cwd ~/code/api --model claude-haiku-5-5 --json
+megabrain chat start --agent claude --cwd ~/code/api --model claude-haiku-5-5 --effort low --json
 megabrain chat send <id> --parts '[{"type":"text","text":"Explain this project"}]'
 megabrain chat events <id> --follow --json
 ```
