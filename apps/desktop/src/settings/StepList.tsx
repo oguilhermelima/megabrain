@@ -142,6 +142,7 @@ export function StepList({
   onMove,
   onRemove,
   onAdd,
+  onRepair,
 }: {
   steps: ChainStep[]
   models: ModelInfo[]
@@ -151,6 +152,8 @@ export function StepList({
   onMove: (from: number, to: number) => void
   onRemove: (index: number) => void
   onAdd: (step: ChainStep) => void
+  /** Replaces a stale step's model with the suggested one; absent where the list is a draft. */
+  onRepair?: (index: number, suggested: { model: string; effort?: string }) => void
 }) {
   const [open, setOpen] = useState<number | 'new' | null>(null)
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
@@ -229,6 +232,16 @@ export function StepList({
                   {stepText(step)}
                   {step.when !== undefined && <span className="text-ink-500"> · {stepRuleSummary(step.when, models)}</span>}
                 </button>
+                {step.stale === true && (
+                  <span title={step.reason} className="shrink-0 rounded-full bg-bad/15 px-2 py-0.5 text-[11px] font-medium text-bad">
+                    Needs repair
+                  </span>
+                )}
+                {step.stale === true && onRepair !== undefined && step.suggested != null && (
+                  <button type="button" disabled={busy} onClick={() => step.suggested != null && onRepair(index, step.suggested)} className="shrink-0 rounded-[8px] bg-white/[0.08] px-2 py-1 text-[12px] text-ink-100 hover:bg-white/[0.14] disabled:opacity-50">
+                    Use {step.suggested.model}
+                  </button>
+                )}
                 <button type="button" aria-label="Move up" title="Move up" className={ghostIcon} disabled={busy || index === 0} onClick={() => moveBy(index, -1)}>
                   <Glyph>
                     <path d="m4 10 4-4 4 4" />

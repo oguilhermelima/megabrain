@@ -72,7 +72,7 @@ const chainSaveArgs = (name: string, chain: ChainBody): string[] => [
   '--when',
   JSON.stringify(chain.when),
   '--steps',
-  JSON.stringify(chain.steps),
+  JSON.stringify(chain.steps.map(({ stale: _stale, reason: _reason, suggested: _suggested, ...step }) => step)),
   ...(chain.priority === undefined || chain.priority === 0 ? [] : ['--priority', String(chain.priority)]),
   '--json',
 ]
@@ -169,6 +169,7 @@ export function createTauriApi(): DesktopApi {
     openInCode: (root, path, line) =>
       cliJson(['code', 'goto', root, path, ...(line === undefined ? [] : ['--line', String(line)]), '--json'], codeServerSchema),
     settings: () => cliJson(['settings', '--json'], settingsSchema),
+    settingsOnly: (keys) => cliJson(['settings', '--json', '--only', keys.join(',')], settingsSchema.partial()),
     setPolicy: async (policy) => {
       if (policy === null) return void (await cliText(['resources', 'policy', 'off']))
       const args = ['resources', 'policy', 'set']

@@ -85,7 +85,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
+  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
   "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> [--fresh] [--json] | queue list|add|edit|move|remove|clear|send-now|steer <id> [<item>] [--parts <json>] [--to <index>] --json | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json | rename <id> <title> [--json] | summarize <id> [--json] | summaries <id> --json | search <text> --json",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
@@ -238,7 +238,7 @@ Commands:
   orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
-  settings [--json]                    Read all settings shown in the desktop app
+  settings [--json [--only <keys>]]    Read the settings shown in the desktop app, or only some keys
   settings set terminal-engine ...     Choose the embedded terminal engine
   settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
   settings get|set sidebar-state       Read or replace what the desktop sidebar folded and its row order

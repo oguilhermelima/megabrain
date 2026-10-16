@@ -180,6 +180,7 @@ export function createMockApi(): DesktopApi {
     stopCodeServer: async () => {},
     openInCode: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     settings: async () => settings,
+    settingsOnly: async (keys) => Object.fromEntries(keys.map((key) => [key, settings[key]])),
     setPolicy: async (policy) => {
       settings = { ...settings, resources: { ...settings.resources, policy: policy === null ? null : { maxAgents: policy.maxAgents ?? null, minAvailableMib: policy.minAvailableMib ?? null, maxPressure: policy.maxPressure ?? null, maxContainerSuites: policy.maxContainerSuites ?? null } } }
     },

@@ -159,6 +159,7 @@ function SavedSteps({ chain, models, providers, run }: { chain: Chain; models: M
         onMove={(from, to) => void send(() => api.moveStep(chain.name, from, to))}
         onRemove={(index) => void saveSteps(withoutStep(chain.steps, index))}
         onAdd={(step) => void saveSteps(withStep(chain.steps, step))}
+        onRepair={(index, suggested) => void send(() => api.editStep(chain.name, index, { model: suggested.model, ...(suggested.effort === undefined ? {} : { effort: suggested.effort }) }))}
       />
     </div>
   )

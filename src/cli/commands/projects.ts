@@ -50,8 +50,10 @@ const PROJECT_CACHE_FILE = "projects-derived-cache.json";
 type ProjectCache = {
   version: 1;
   worktrees: Record<string, { headMtimeMs: number; indexMtimeMs: number; configMtimeMs: number; primary: boolean; parent: string | null }>;
-  sessions: Record<string, { path: string; size: number; mtimeMs: number; title: string | null }>;
+  sessions: Record<string, { path: string; size: number; mtimeMs: number; title: string | null; codex?: CodexRollout | null }>;
 };
+// What a Codex rollout's head and tail say; it only changes when the file does, so it is cached by path, size and mtime.
+type CodexRollout = Readonly<{ id: string; cwd: string; title: string | null; startedAt: string | null; model: string | null; contextWindow: number | null }>;
 
 function emptyProjectCache(): ProjectCache { return { version: 1, worktrees: {}, sessions: {} }; }
 
@@ -371,12 +373,12 @@ async function codexRolloutPaths(home: string, processAdapter: ProcessAdapter): 
   })();
 }
 
-async function codexSessions(home: string, processAdapter: ProcessAdapter, titles: ReadonlyMap<string, string>, table: ProcessTable): Promise<RawSession[]> {
+async function codexSessions(home: string, processAdapter: ProcessAdapter, titles: ReadonlyMap<string, string>, table: ProcessTable, cache: ProjectCache): Promise<RawSession[]> {
   const paths = await codexRolloutPaths(home, processAdapter);
   const cutoff = Date.now() - CODEX_WINDOW;
-  const eligible: Array<{ path: string; modified: number }> = [];
+  const eligible: Array<{ path: string; modified: number; size: number }> = [];
   await Promise.all(paths.map(async (path) => {
-    try { const info = await stat(path); if (info.mtimeMs >= cutoff) eligible.push({ path, modified: info.mtimeMs }); } catch { /* A rollout may be rotated while listing. */ }
+    try { const info = await stat(path); if (info.mtimeMs >= cutoff) eligible.push({ path, modified: info.mtimeMs, size: info.size }); } catch { /* A rollout may be rotated while listing. */ }
   }));
   // A rollout is live when a codex process holds it open; the folder says nothing about which conversation runs.
   const codexPids = [...table].filter(([, entry]) => /(?:^|\/)codex(?:\s|$)|Codex\.app/.test(entry.command)).map(([pid]) => String(pid));
@@ -394,40 +396,50 @@ async function codexSessions(home: string, processAdapter: ProcessAdapter, title
       }
     }
   }
-  const found = await Promise.all(eligible.map(async ({ path, modified }): Promise<RawSession | undefined> => {
-    try {
-      const file = await import("node:fs/promises").then(({ open }) => open(path, "r"));
-      let head: string;
-      let tail: string;
-      try {
-        const info = await file.stat();
-        const headBuffer = Buffer.alloc(Math.min(info.size, 256 * 1024));
-        const headRead = await file.read(headBuffer, 0, headBuffer.length, 0);
-        head = headBuffer.subarray(0, headRead.bytesRead).toString("utf8");
-        const tailStart = Math.max(0, info.size - 512 * 1024);
-        const tailBuffer = Buffer.alloc(info.size - tailStart);
-        const tailRead = await file.read(tailBuffer, 0, tailBuffer.length, tailStart);
-        tail = tailBuffer.subarray(0, tailRead.bytesRead).toString("utf8");
-      }
-      finally { await file.close(); }
-      for (const line of head.split("\n")) {
-        const value = record(JSON.parse(line) as unknown);
-        if (value?.type === "session_meta") {
-          const payload = record(value.payload);
-          const cwd = stringField(payload ?? {}, "cwd");
-          const id = stringField(payload ?? {}, "session_id", "id");
-          if (cwd === undefined || id === undefined) return undefined;
-          const pid = pidByRollout.get(id);
-          const startedAt = iso(payload?.timestamp) ?? iso(value.timestamp);
-          const firstUserMessage = codexUserTitle(head);
-          const details = codexModelDetails(tail);
-          return { agent: "codex", id, cwd: resolve(cwd), title: titles.get(id) ?? firstUserMessage ?? "Codex", status: pid === undefined ? "ended" : "working", startedAt, lastActivityAt: new Date(modified).toISOString(), model: details.model, contextWindow: details.contextWindow, ...(pid === undefined ? {} : { processId: pid }) };
-        }
-      }
-    } catch { /* Ignore malformed or unavailable rollout headers. */ }
-    return undefined;
+  const found = await Promise.all(eligible.map(async ({ path, modified, size }): Promise<RawSession | undefined> => {
+    const key = logCacheKey(path, size, modified);
+    let rollout = cache.sessions[key]?.codex;
+    if (rollout === undefined) {
+      rollout = await readCodexRollout(path);
+      for (const [oldKey, entry] of Object.entries(cache.sessions)) if (entry.path === path) delete cache.sessions[oldKey];
+      cache.sessions[key] = { path, size, mtimeMs: modified, title: null, codex: rollout ?? null };
+    }
+    if (rollout === null) return undefined;
+    const pid = pidByRollout.get(rollout.id);
+    return { agent: "codex", id: rollout.id, cwd: rollout.cwd, title: titles.get(rollout.id) ?? rollout.title ?? "Codex", status: pid === undefined ? "ended" : "working", startedAt: rollout.startedAt, lastActivityAt: new Date(modified).toISOString(), model: rollout.model, contextWindow: rollout.contextWindow, ...(pid === undefined ? {} : { processId: pid }) };
   }));
   return found.filter((value): value is RawSession => value !== undefined);
+}
+
+async function readCodexRollout(path: string): Promise<CodexRollout | null> {
+  try {
+    const file = await import("node:fs/promises").then(({ open }) => open(path, "r"));
+    let head: string;
+    let tail: string;
+    try {
+      const info = await file.stat();
+      const headBuffer = Buffer.alloc(Math.min(info.size, 256 * 1024));
+      const headRead = await file.read(headBuffer, 0, headBuffer.length, 0);
+      head = headBuffer.subarray(0, headRead.bytesRead).toString("utf8");
+      const tailStart = Math.max(0, info.size - 512 * 1024);
+      const tailBuffer = Buffer.alloc(info.size - tailStart);
+      const tailRead = await file.read(tailBuffer, 0, tailBuffer.length, tailStart);
+      tail = tailBuffer.subarray(0, tailRead.bytesRead).toString("utf8");
+    }
+    finally { await file.close(); }
+    for (const line of head.split("\n")) {
+      const value = record(JSON.parse(line) as unknown);
+      if (value?.type === "session_meta") {
+        const payload = record(value.payload);
+        const cwd = stringField(payload ?? {}, "cwd");
+        const id = stringField(payload ?? {}, "session_id", "id");
+        if (cwd === undefined || id === undefined) return null;
+        const details = codexModelDetails(tail);
+        return { id, cwd: resolve(cwd), title: codexUserTitle(head) ?? null, startedAt: iso(payload?.timestamp) ?? iso(value.timestamp), model: details.model, contextWindow: details.contextWindow };
+      }
+    }
+  } catch { /* Ignore malformed or unavailable rollout headers. */ }
+  return null;
 }
 
 function codexModelDetails(tail: string): Readonly<{ model: string | null; contextWindow: number | null }> {
@@ -474,19 +486,28 @@ async function agySessions(home: string, processAdapter: ProcessAdapter): Promis
   const locks = (await readdir(presence).catch(() => [])).flatMap((name) => /^[0-9a-f-]{36}\.lock$/i.test(name) ? [name] : []);
   if (locks.length === 0) return [];
   const index = await agyConversationIndex(home);
-  return (await Promise.all(locks.map(async (name): Promise<RawSession | undefined> => {
+  // One lsof for every lock: a call per lock cost ~25 ms each, seconds with a hundred stale locks. Exit 1 means nobody holds any.
+  const holders = await processAdapter.run("lsof", ["-Fpn", "--", ...locks.map((name) => join(presence, name))]);
+  const pidByLock = new Map<string, number>();
+  if (holders.kind === "ok") {
+    let holder: number | undefined;
+    for (const line of holders.value.stdout.split("\n")) {
+      if (line.startsWith("p")) holder = Number(line.slice(1));
+      else if (line.startsWith("n") && holder !== undefined && !pidByLock.has(line.slice(1))) pidByLock.set(line.slice(1), holder);
+    }
+  }
+  return (locks.flatMap((name): RawSession[] => {
     const id = name.slice(0, -".lock".length);
     const known = index.get(id);
-    const holders = await processAdapter.run("lsof", ["-t", join(presence, name)]);
-    const pid = holders.kind === "ok" ? Number(holders.value.stdout.split("\n")[0]) : Number.NaN;
-    if (known === undefined || !Number.isSafeInteger(pid) || pid <= 0) return undefined;
-    return { agent: "agy", id, cwd: known.workspace, title: known.title ?? "Antigravity", status: "working", startedAt: new Date(known.first).toISOString(), lastActivityAt: new Date(known.last).toISOString(), processId: pid };
-  }))).filter((value): value is RawSession => value !== undefined);
+    const pid = pidByLock.get(join(presence, name)) ?? Number.NaN;
+    if (known === undefined || !Number.isSafeInteger(pid) || pid <= 0) return [];
+    return [{ agent: "agy", id, cwd: known.workspace, title: known.title ?? "Antigravity", status: "working", startedAt: new Date(known.first).toISOString(), lastActivityAt: new Date(known.last).toISOString(), processId: pid }];
+  }));
 }
 
 export async function sessionsForMachine(home: string, processAdapter: ProcessAdapter, table?: ProcessTable, cache: ProjectCache = emptyProjectCache()): Promise<RawSession[]> {
   const [claude, grok, codexTitles, agy] = await Promise.all([claudeSessions(home, cache), grokSessions(home), codexSessionTitles(home), agySessions(home, processAdapter)]);
-  const codex = await codexSessions(home, processAdapter, codexTitles, table ?? await readProcessTable(processAdapter));
+  const codex = await codexSessions(home, processAdapter, codexTitles, table ?? await readProcessTable(processAdapter), cache);
   const unique = new Map<string, RawSession>();
   for (const session of [...claude, ...grok, ...codex, ...agy]) unique.set(`${session.agent}:${session.id}`, session);
   return [...unique.values()];

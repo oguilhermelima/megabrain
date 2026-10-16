@@ -155,6 +155,10 @@ export const chainStepSchema = z.looseObject({
   until: z.looseObject({ usedPercent: z.number(), window: z.string() }).optional(),
   /** The step is skipped unless this rule matches. */
   when: ruleSchema.optional(),
+  /** Set by `settings --json` when the model is no longer in the registry; never saved back. */
+  stale: z.boolean().optional(),
+  reason: z.string().optional(),
+  suggested: z.looseObject({ model: z.string(), effort: z.string().optional() }).nullable().optional(),
 })
 export const chainSchema = z.looseObject({
   name: z.string(),
@@ -752,6 +756,8 @@ export type Dispatch = Status['dispatches'][number]
 export type Worktree = z.infer<typeof worktreeListSchema>[number]
 export type Repository = z.infer<typeof repositorySchema>
 export type Settings = z.infer<typeof settingsSchema>
+/** The top-level keys of `settings --json`; `--only` reads some of them. */
+export type SettingsKey = 'terminalEngine' | 'supervisor' | 'resources' | 'limits' | 'chains' | 'models' | 'terminal'
 export type Chain = z.infer<typeof chainSchema>
 export type ChainStep = z.infer<typeof chainStepSchema>
 export type ChainExplain = z.infer<typeof chainExplainSchema>

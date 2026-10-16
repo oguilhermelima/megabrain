@@ -8,6 +8,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { detectTerminal, OPENERS, type Platform } from "../../core/terminal-openers.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
+import { staleChainSteps, suggestModel, type ChainConfig } from "../../core/chain.js";
 import { modelRegistry, readConfig, readLimitRows, validateConfig } from "./chain.js";
 import { storedDefault } from "./terminal-open.js";
 import { supervisorWatcher } from "./supervise.js";
@@ -242,24 +243,32 @@ type SettingsValue = {
   terminal: { default: string | null; detected: string | null; available: string[] };
 };
 
-async function readSettings(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<SettingsValue>> {
+const SETTINGS_KEYS = ["terminalEngine", "supervisor", "resources", "limits", "chains", "models", "terminal"] as const;
+type SettingsKey = typeof SETTINGS_KEYS[number];
+
+/** `only` limits the read to those top-level keys, so one page of the desktop window never pays for another's (limits go to the network). */
+async function readSettings(environment: Environment, processAdapter: ProcessAdapter, only: ReadonlySet<SettingsKey> | null = null): Promise<Result<Partial<SettingsValue>>> {
+  const want = (key: SettingsKey): boolean => only === null || only.has(key);
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
 
   const chainConfig = readConfig(environment);
   if (chainConfig.kind !== "ok") return chainConfig;
-  const validated = validateConfig(chainConfig.value, environment);
-  if (validated.kind !== "ok") return validated;
-
   const registry = modelRegistry(environment);
   if (registry.kind !== "ok") return registry;
+  // A step naming a model the registry dropped must not fail the whole read: it is flagged below and validation skips it.
+  const stale = staleChainSteps(chainConfig.value, registry.value);
+  const staleKeys = new Set(stale.map((entry) => `${entry.chain}/${entry.step}`));
+  const lenient: ChainConfig = { ...chainConfig.value, chains: Object.fromEntries(Object.entries(chainConfig.value.chains).map(([name, chain]) => [name, { ...chain, steps: chain.steps.map((step, index) => staleKeys.has(`${name}/${index + 1}`) ? { ...step, unvalidated: true } : step) }])) };
+  const validated = validateConfig(lenient, environment);
+  if (validated.kind !== "ok") return validated;
 
   const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine] = await Promise.all([
-    resourceHistoryEnabled(environment),
-    readAdmissionPolicy(environment),
-    storedDefault(environment),
-    readLimitRows(environment, validated.value, processAdapter),
-    readTerminalEngine(environment),
+    want("resources") ? resourceHistoryEnabled(environment) : false,
+    want("resources") ? readAdmissionPolicy(environment) : undefined,
+    want("terminal") ? storedDefault(environment) : undefined,
+    want("limits") ? readLimitRows(environment, validated.value, processAdapter) : [],
+    want("terminalEngine") ? readTerminalEngine(environment) : "native" as const,
   ]);
   const settingsPolicy = storedPolicy === undefined ? null : {
     maxAgents: storedPolicy.maxAgents ?? null,
@@ -277,10 +286,19 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
     reasoning: { levels: [...(model.reasoning?.levels ?? [])] },
   }));
   const watcher = supervisorWatcher(database.value);
-  const chains = Object.entries(validated.value.chains).map(([name, chain]) => ({ ...chain, name }));
+  const chains = Object.entries(chainConfig.value.chains).map(([name, chain]) => ({
+    ...chain,
+    name,
+    steps: chain.steps.map((step, index) => {
+      const entry = stale.find((candidate) => candidate.chain === name && candidate.step === index + 1);
+      if (entry === undefined) return step;
+      const effort = (step as { effort?: unknown }).effort;
+      return { ...step, stale: true, reason: `model '${entry.model}' is not registered for agent '${entry.agent}'`, suggested: suggestModel(registry.value, entry.agent, typeof effort === "string" ? effort : undefined) };
+    }),
+  }));
   const defaultNotice = validated.value.usageLimits?.notice;
   const enabledProviders = [...(validated.value.usageLimits?.liveProviders ?? [])];
-  return ok({
+  const full: SettingsValue = {
     terminalEngine,
     supervisor: { running: watcher.running, pid: watcher.pid },
     resources: { historyEnabled, policy: settingsPolicy },
@@ -296,7 +314,8 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
       detected: detectTerminal(environment) ?? null,
       available: OPENERS.filter((opener) => opener.platforms.includes(platform())).map((opener) => opener.name),
     },
-  });
+  };
+  return ok(only === null ? full : Object.fromEntries(Object.entries(full).filter(([key]) => only.has(key as SettingsKey))));
 }
 
 export async function executeSettings(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -327,12 +346,22 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return ok(`terminal engine: ${args[2]}\n`);
   }
   let asJson = false;
-  for (const arg of args) {
+  let only: Set<SettingsKey> | null = null;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
     if (arg === "--json") asJson = true;
+    else if (arg === "--only") {
+      const keys = (args[index + 1] ?? "").split(",").filter((key) => key.length > 0);
+      const bad = keys.find((key) => !(SETTINGS_KEYS as readonly string[]).includes(key));
+      if (keys.length === 0 || bad !== undefined) return failed(`settings --only needs a comma-separated list of: ${SETTINGS_KEYS.join(", ")}`, 2);
+      only = new Set(keys as SettingsKey[]);
+      index += 1;
+    }
     else if (arg === "-h" || arg === "--help") return ok(usageText("settings"));
     else return failed(`unknown settings option: ${arg}`, 2);
   }
-  const result = await readSettings(environment, processAdapter);
+  const result = await readSettings(environment, processAdapter, only);
   if (result.kind !== "ok") return result;
-  return ok(asJson ? `${JSON.stringify(result.value, null, 2)}\n` : summary(result.value));
+  if (only !== null && !asJson) return failed("settings --only needs --json", 2);
+  return ok(asJson ? `${JSON.stringify(result.value, null, 2)}\n` : summary(result.value as SettingsValue));
 }

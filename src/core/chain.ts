@@ -250,3 +250,23 @@ export function selectChain(
     : "no selector matched; using defaultSteps";
   return { kind: "default", name: "defaultSteps", steps: config.defaultSteps, reason };
 }
+
+export type StaleStep = Readonly<{ chain: string; step: number; agent: string; model: string }>;
+/** Steps naming a model the registry does not list for their agent; unvalidated steps opted out of the check. */
+export function staleChainSteps(config: ChainConfig, registry: readonly Model[]): readonly StaleStep[] {
+  const known = new Set(registry.map((entry) => `${entry.agent}/${entry.model}`));
+  return Object.entries(config.chains).flatMap(([chain, definition]) => definition.steps.flatMap((step, index) => {
+    const { agent, model } = step as { agent?: unknown; model?: unknown; unvalidated?: unknown };
+    if (typeof agent !== "string" || typeof model !== "string" || (step as { unvalidated?: unknown }).unvalidated === true || known.has(`${agent}/${model}`)) return [];
+    return [{ chain, step: index + 1, agent, model }];
+  }));
+}
+/** The newest registered model of the same agent (last listed, not retired), with the step's effort when that model takes it. */
+export function suggestModel(registry: readonly Model[], agent: string, effort: string | undefined): Readonly<{ model: string; effort?: string }> | null {
+  const candidate = registry.filter((entry) => entry.agent === agent && entry.status !== "retired" && entry.status !== "deprecated").at(-1);
+  if (candidate === undefined) return null;
+  if (!candidate.reasoning.separateAxis) return { model: candidate.model };
+  const levels = candidate.reasoning.levels;
+  const kept = effort !== undefined && levels.includes(effort) ? effort : levels.at(-1);
+  return kept === undefined ? { model: candidate.model } : { model: candidate.model, effort: kept };
+}

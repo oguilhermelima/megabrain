@@ -62,6 +62,9 @@ export function SummariesSection({ models, chat }: { models: Settings['models'];
         <SettingRow label="Summarize chats" description="Off by default. Each summary is one short call to the model below.">
           <Switch label="Summarize chats" checked={saved.enabled} onChange={(enabled) => save({ ...saved, enabled })} />
         </SettingRow>
+        <SettingRow label="Retitle chats" description="A summary may rename a chat. A title you set yourself is kept.">
+          <Switch label="Retitle chats" disabled={off} checked={saved.retitle} onChange={(retitle) => save({ ...saved, retitle })} />
+        </SettingRow>
       </SettingsGroup>
       <SettingsGroup title="Model">
         <SettingRow label="Agent" htmlFor="summaries-agent" description="The agent whose model writes the summaries.">
@@ -114,9 +117,6 @@ export function SummariesSection({ models, chat }: { models: Settings['models'];
         </SettingRow>
         <SettingRow label="Every M minutes" htmlFor="summaries-minutes" description="Or after this long, if the chat moved at all.">
           <input id="summaries-minutes" type="number" min={1} step={1} className={number} disabled={off} defaultValue={saved.everyMinutes} key={`n${saved.everyMinutes}`} onBlur={(event) => every('everyMinutes')(event.target.value)} />
-        </SettingRow>
-        <SettingRow label="Retitle chats" description="A summary may rename a chat. A title you set yourself is kept.">
-          <Switch label="Retitle chats" disabled={off} checked={saved.retitle} onChange={(retitle) => save({ ...saved, retitle })} />
         </SettingRow>
       </SettingsGroup>
       {chat !== null && (

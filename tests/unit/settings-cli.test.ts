@@ -428,3 +428,46 @@ describe("settings write errors", () => {
     expect(start.kind).toBe("ok");
   });
 });
+
+describe("megabrain settings with a stale chain model", () => {
+  const stale = { chains: { codex: { when: { parentAgent: "claude" }, steps: [{ agent: "codex", model: "model-known", effort: "high" }, { agent: "codex", model: "model-gone", effort: "xhigh" }] } }, defaultSteps: [] };
+
+  test("returns the chains with the stale step flagged instead of failing", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chains.json"), JSON.stringify(stale));
+    const value = await settings(env);
+    const steps = (value.chains as Array<{ steps: Array<Record<string, unknown>> }>)[0]?.steps ?? [];
+    expect(steps[0]?.stale).toBeUndefined();
+    expect(steps[1]).toMatchObject({ agent: "codex", model: "model-gone", stale: true });
+    expect(String(steps[1]?.reason)).toContain("model-gone");
+    expect(steps[1]?.suggested).toEqual({ model: "model-known", effort: "high" });
+  });
+
+  test("suggests nothing when the agent has no registered model", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chains.json"), JSON.stringify({ chains: { agy: { when: {}, steps: [{ agent: "agy", model: "gone" }] } }, defaultSteps: [] }));
+    const step = ((await settings(env)).chains as Array<{ steps: Array<Record<string, unknown>> }>)[0]?.steps[0];
+    expect(step).toMatchObject({ stale: true, suggested: null });
+  });
+
+  test("model refresh names the chain steps it made stale", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chains.json"), JSON.stringify({ chains: { agy: { when: {}, steps: [{ agent: "agy", model: "gemini-old", effort: "high" }] } }, defaultSteps: [] }));
+    const agy: ProcessAdapter = { ...processAdapter, async run(command) { return command === "agy" ? ok({ stdout: "gemini-new-high\tNew\n", stderr: "", exitCode: 0 }) : failed("unavailable"); } };
+    const result = await route(["model", "refresh", "agy", "--json"], { environment: { HOME: env.home, MEGABRAIN_STATE_DIR: env.state, MEGABRAIN_ROOT: env.root }, processAdapter: agy });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.stderr).toContain("agy/gemini-old");
+    expect(JSON.parse(result.value).staleSteps).toEqual([{ chain: "agy", step: 1, agent: "agy", model: "gemini-old" }]);
+  });
+
+  test("--only reads just the named keys and rejects unknown ones", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chains.json"), JSON.stringify(stale));
+    const only = await run(["settings", "--json", "--only", "models,chains"], env);
+    expect(only.kind).toBe("ok");
+    if (only.kind === "ok") expect(Object.keys(JSON.parse(only.value)).sort()).toEqual(["chains", "models"]);
+    expect((await run(["settings", "--json", "--only", "bogus"], env)).kind).toBe("failed");
+    expect((await run(["settings", "--only", "models"], env)).kind).toBe("failed");
+  });
+});

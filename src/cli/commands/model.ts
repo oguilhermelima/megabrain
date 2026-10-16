@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, refreshGrokModels, saveModelRegistry, validateReasoning } from "../../core/model.js";
+import { staleChainSteps, type StaleStep } from "../../core/chain.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { readConfig } from "./chain.js";
 import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -50,11 +52,24 @@ async function modelAdd(args: readonly string[], environment: Environment): Prom
   return ok(`model added: ${agent}/${model}\n`);
 }
 
+/** The refresh result; names the chain steps the new registry left pointing at a model it no longer lists. */
+function refreshResult(environment: Environment, agent: string, count: number, models: Parameters<typeof staleChainSteps>[1], asJson: boolean): Result<string> {
+  const config = readConfig(environment);
+  const stale: readonly StaleStep[] = config.kind === "ok" ? staleChainSteps(config.value, models).filter((entry) => entry.agent === agent) : [];
+  const text = `model registry refreshed: ${agent} (${count} models)\n`;
+  const result = ok(asJson ? `${JSON.stringify({ agent, models: count, staleSteps: stale })}\n` : text);
+  if (stale.length === 0) return result;
+  const lines = stale.map((entry) => `${entry.chain} step ${entry.step} (${entry.agent}/${entry.model})`).join(", ");
+  return { ...result, stderr: `megabrain: ${stale.length} chain step${stale.length === 1 ? "" : "s"} now stale: ${lines}. Repair with: megabrain chain repair <chain> --step <n> --model <id>\n` };
+}
+
 async function modelRefresh(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const agent = args[0] ?? "";
   if (agent === "-h" || agent === "--help") return ok(usage("model-refresh"));
   if (agent.length === 0) return errorResult(usage("model-refresh"), 2);
+  let asJson = false;
   for (const arg of args.slice(1)) {
+    if (arg === "--json") asJson = true;
     if (arg !== "--json" && arg !== "-h" && arg !== "--help") return errorResult(`unknown model refresh option: ${arg}`, 2);
     if (arg === "-h" || arg === "--help") return ok(usage("model-refresh"));
   }
@@ -70,7 +85,7 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
     if (refreshed.length === 0) return errorResult("could not refresh grok models: grok models returned no model ids");
     const stored = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "grok"), ...refreshed] });
     if (stored.kind !== "ok") return errorResult(stored.error, stored.exitCode);
-    return ok(`model registry refreshed: grok (${refreshed.length} models)\n`);
+    return refreshResult(environment, "grok", refreshed.length, [...loaded.registry.models.filter((model) => model.agent !== "grok"), ...refreshed], asJson);
   }
   const result = await processAdapter.run("agy", ["models"]);
   if (result.kind !== "ok") return errorResult("could not refresh agy models: agy models failed");
@@ -78,7 +93,7 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
   if (models.length === 0) return errorResult("could not refresh agy models: agy models returned no model ids");
   const saved = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models] });
   if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);
-  return ok(`model registry refreshed: agy (${models.length} models)\n`);
+  return refreshResult(environment, "agy", models.length, [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models], asJson);
 }
 
 export async function executeModel(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {

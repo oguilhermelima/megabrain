@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { api } from '@/api'
 import type { AdmissionPolicy, Project, Settings } from '@/api/schema'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { SettingsSkeleton } from '@/components/Skeleton'
-import { ErrorNote } from '@/components/ui'
+import { Button, ErrorNote } from '@/components/ui'
 import { ChainsSection } from '@/settings/ChainsSection'
 import { LimitsSection } from '@/settings/LimitsSection'
 import { ModelsSection } from '@/settings/ModelsSection'
 import { ProjectPage } from '@/settings/ProjectPage'
+import { createLoads, sectionKeys } from '@/settings/settings-load'
 import { groupReadingsByProvider } from '@/settings/settings-model'
-import { adjacentKey, initialKey, navGroups, navKeys, projectPathOf, sectionInfo, type NavKey } from '@/settings/settings-nav'
+import { adjacentKey, initialKey, navGroups, navKeys, projectPathOf, sectionInfo, type NavKey, type Section } from '@/settings/settings-nav'
 import { ghostIcon, SectionPage, SettingsIcon } from '@/settings/settings-ui'
 import { ShortcutsSection } from '@/settings/ShortcutsSection'
 import { SummariesSection } from '@/settings/SummariesSection'
@@ -20,7 +21,6 @@ import { UsageSection } from '@/settings/UsageCard'
 
 /** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
 export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null }) {
-  const [settings, setSettings] = useState<Settings | null>(null)
   const [section, setSection] = useState<NavKey>(initialKey(focusProject, []))
   const [error, setError] = useState<unknown>(null)
   // Every listed project but the missing ones, for the Projects group and its pages.
@@ -29,9 +29,17 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
   const nav = useRef<HTMLElement>(null)
   const content = useRef<HTMLElement>(null)
 
-  const reload = () => api.settings().then(setSettings, (caught: unknown) => setError(caught))
-
-  useEffect(() => void reload(), [])
+  // Every page loads only its own slice of the settings, once, and keeps it while the window is open.
+  const loads = useMemo(
+    () => createLoads(Object.fromEntries(Object.entries(sectionKeys).map(([key, keys]) => [key, () => (keys.length === 0 ? Promise.resolve({}) : api.settingsOnly(keys))]))),
+    [],
+  )
+  useSyncExternalStore(loads.subscribe, loads.snapshot)
+  const fixed = projectPathOf(section) === null ? (section as Section) : null
+  useEffect(() => {
+    if (fixed !== null) void loads.load(fixed)
+  }, [fixed, loads])
+  const reload = () => (fixed === null ? Promise.resolve() : loads.load(fixed, true))
 
   const reloadProjects = () =>
     api.projects('megabrain').then(
@@ -84,6 +92,9 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
   const projectPath = projectPathOf(section)
   const project = projectPath === null ? null : (listed.find((item) => item.path === projectPath) ?? null)
   const info = sectionInfo(section)
+  const entry = loads.get(section)
+  // The page's slice only: each section reads the keys sectionKeys names for it.
+  const settings = entry.value as Settings
 
   return (
     <div
@@ -155,8 +166,15 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
             ) : (
               <p className="px-1 text-[13px] text-ink-400">This project is no longer listed.</p>
             )
-          ) : settings === null ? (
-            <SettingsSkeleton />
+          ) : entry.value === undefined ? (
+            entry.status === 'error' ? (
+              <div className="grid justify-items-start gap-3">
+                <ErrorNote error={entry.error} />
+                <Button onClick={() => void loads.load(fixed ?? 'usage')}>Retry</Button>
+              </div>
+            ) : (
+              <SettingsSkeleton />
+            )
           ) : (
             <SectionPage icon={info.icon} title={info.label} description={info.description}>
               {section === 'usage' && (

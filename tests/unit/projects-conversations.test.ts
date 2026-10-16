@@ -233,7 +233,7 @@ describe("what is not ours stays out of the app's list", () => {
     mkdirSync(join(home, ".gemini", "antigravity-cli", "presence"), { recursive: true });
     writeFileSync(join(home, ".gemini", "antigravity-cli", "presence", `${conversation}.lock`), "");
     writeFileSync(join(home, ".gemini", "antigravity-cli", "history.jsonl"), `${JSON.stringify({ conversationId: conversation, workspace: project, timestamp: new Date().toISOString(), display: "Write the brief", type: "prompt" })}\n`);
-    const adapter = machine({ lsof: { [`${conversation}.lock`]: "4343\n" } });
+    const adapter = machine({ lsof: { [`${conversation}.lock`]: `p4343\nn${join(home, ".gemini", "antigravity-cli", "presence", `${conversation}.lock`)}\n` } });
     expect(await listed(adapter, "--include-foreign")).toMatchObject([{ sessionId: `agy:${conversation}`, agent: "agy", status: "working", title: "Write the brief", conversationOwner: "foreign" }]);
     expect(await listed(adapter)).toEqual([]);
   });
