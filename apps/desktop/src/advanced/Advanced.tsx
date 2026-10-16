@@ -49,10 +49,11 @@ import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, focusDirection, movePane, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
-import { arrangeGroup, changeShown, closeGroup, fits, focusGroup, layoutOf, minPaneHeight, minPaneWidth, openLayoutItem, parseLayout, presetsFor, presetTree, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shownPanes, splitBeside, splitItems, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
+import { activeGroup, addToGroup, arrangeGroup, changeShown, closeGroup, fits, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, minPaneHeight, minPaneWidth, moveMember, openLayoutItem, parseLayout, presetsFor, presetTree, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shownPanes, splitBeside, splitItems, swapMembers, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
 import { paneShortcut } from '@/panes/shortcuts'
 import { groupRows, groupsByPlace, type GroupRow, type MemberInfo } from '@/advanced/split-rows'
-import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
+import { SplitRowsContext, type SplitDrop, type SplitRowsValue } from '@/advanced/SplitRows'
+import type { JoinTarget } from '@/advanced/useRowDrag'
 import type { MenuItem } from '@/components/ContextMenu'
 import { Toast, type ToastMessage } from '@/components/Toast'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
@@ -612,7 +613,45 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       ...(picks.length > 0 && together.length >= 2 ? [{ label: `Open ${together.length} in split`, icon: 'splitGrid', group: 'open', onSelect: () => openInSplit(together) } satisfies MenuItem] : []),
       { label: 'Split right', icon: 'splitRight', group: 'open', onSelect: () => splitWith(item, 'right') },
       { label: 'Split down', icon: 'splitDown', group: 'open', onSelect: () => splitWith(item, 'bottom') },
+      ...joinChoices(item),
     ]
+  })
+  // Join with…, the keyboard's way to drop a row on another: every group the row is not in, and the
+  // item shown alone, when it is another one.
+  const joinChoices = (item: string): MenuItem[] => {
+    const own = groupOfItem(paneLayout, item)?.id ?? null
+    const alone = paneLayout.active === null ? (paneList(paneLayout.single.root)[0]?.item ?? null) : null
+    const groups = splitRowsValue.filter((row) => row.id !== own)
+    return [
+      ...groups.map((row): MenuItem => ({ label: `Join with ${row.title}`, icon: 'splitGrid', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'group', groupId: row.id } }) })),
+      ...(alone === null || alone === item || groupOfItem(paneLayout, alone) !== null ? [] : [{ label: `Join with ${describeItem(alone).title}`, icon: 'splitRight', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'item', item: alone } }) } satisfies MenuItem]),
+    ]
+  }
+  /** What a join from the sidebar makes of the layout: a row joins a row or a group, a group takes in a row. */
+  const joined = (current: Layout, source: JoinTarget, target: JoinTarget): Layout => {
+    if (source.kind === 'item' && target.kind === 'item') return joinItems(current, source.item, target.item, { pane: newPaneId(), group: newGroupId() })
+    if (source.kind === 'item' && target.kind === 'group') return addToGroup(current, target.groupId, source.item, newPaneId())
+    if (source.kind === 'group' && target.kind === 'item') return addToGroup(current, source.groupId, target.item, newPaneId())
+    return current
+  }
+  // A row dropped on another row's middle joins them; a member dragged out of its group leaves it; a
+  // group's members reorder or swap from its hover (see useRowDrag). A join that leaves a pane too small is refused.
+  const dropSplit = useStableCallback((drop: SplitDrop) => {
+    if (drop.kind === 'move') setLayout((current) => moveMember(current, drop.groupId, drop.item, drop.index))
+    else if (drop.kind === 'swap') setLayout((current) => swapMembers(current, drop.groupId, drop.a, drop.b))
+    else if (drop.kind === 'leave') setLayout((current) => leaveGroup(current, drop.item))
+    else {
+      const next = joined(paneLayout, drop.source, drop.target)
+      if (next === paneLayout) return
+      const group = activeGroup(next)
+      if (group !== null && !fits(group.panes.root, areaSize())) {
+        sayTooSmall(`joining ${paneList(group.panes.root).length} panes`)
+        return
+      }
+      setGithubPage(null)
+      setPicks([])
+      setLayout(next)
+    }
   })
   const pickSplitRow = useStableCallback((item: string, add: boolean) => setPicks((current) => (!add ? [] : current.includes(item) ? current.filter((entry) => entry !== item) : [...current, item])))
   // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header moves.
@@ -985,6 +1024,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       rowMenu: splitRowMenu,
       selected: new Set(picks),
       pick: pickSplitRow,
+      drop: dropSplit,
     }
   }, [splitRowsSignature, picks])
 
@@ -1022,6 +1062,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onRenameTerminal={stableRenameTerminal}
             onCloseRow={requestClose}
             onDragRow={dragRow}
+            onSplitDrop={dropSplit}
             creations={creations}
             onCreateWorktree={createWorktree}
             onRetryCreation={retryWorktree}

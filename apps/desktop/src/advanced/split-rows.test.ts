@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { dropItem, singlePane } from '@/panes/pane-model'
 import { changeShown, focusGroup, layoutOf, openLayoutItem, renameGroup, splitItems, type Layout } from '@/panes/split-groups'
-import { groupRows, groupsByPlace, joinedTitle, strongestState, visibleMarks, type MemberInfo } from '@/advanced/split-rows'
+import { groupRows, groupsByPlace, joinedTitle, memberDropIndex, memberMoveIndex, rowDropZone, strongestState, visibleMarks, type MemberInfo } from '@/advanced/split-rows'
 
 const info: Record<string, MemberInfo> = {
   'native:1': { title: 'teste teste', mark: { kind: 'agent', agent: 'claude' }, state: 'idle', worktree: '/wt/main' },
@@ -114,5 +114,65 @@ describe('many members', () => {
     const marks = visibleMarks(many(4)?.members ?? [], 4)
     expect(marks.shown).toHaveLength(4)
     expect(marks.more).toBe(0)
+  })
+})
+
+describe('where a row dropped on another row lands', () => {
+  const row = { top: 100, bottom: 132 }
+
+  test('the top quarter goes before the row and the bottom quarter after it', () => {
+    expect(rowDropZone(row, 100)).toBe('before')
+    expect(rowDropZone(row, 107)).toBe('before')
+    expect(rowDropZone(row, 126)).toBe('after')
+    expect(rowDropZone(row, 132)).toBe('after')
+  })
+
+  test('the middle band joins the two into a split', () => {
+    expect(rowDropZone(row, 108)).toBe('join')
+    expect(rowDropZone(row, 116)).toBe('join')
+    expect(rowDropZone(row, 124)).toBe('join')
+  })
+
+  test('above or below the row is still before or after it', () => {
+    expect(rowDropZone(row, 90)).toBe('before')
+    expect(rowDropZone(row, 140)).toBe('after')
+  })
+
+  test('a row that cannot be reordered against joins over all of it', () => {
+    expect(rowDropZone(row, 101, { reorder: false })).toBe('join')
+    expect(rowDropZone(row, 131, { reorder: false })).toBe('join')
+  })
+
+  test('a row that cannot be joined splits at its middle into before and after', () => {
+    expect(rowDropZone(row, 115, { join: false })).toBe('before')
+    expect(rowDropZone(row, 117, { join: false })).toBe('after')
+  })
+})
+
+describe('where a member dragged in the hover list lands', () => {
+  const lines = [
+    { top: 0, bottom: 28 },
+    { top: 30, bottom: 58 },
+    { top: 60, bottom: 88 },
+  ]
+
+  test('over the upper half of a line it takes that line place; over the lower half the next', () => {
+    expect(memberDropIndex(lines, 5)).toBe(0)
+    expect(memberDropIndex(lines, 20)).toBe(1)
+    expect(memberDropIndex(lines, 40)).toBe(1)
+    expect(memberDropIndex(lines, 50)).toBe(2)
+    expect(memberDropIndex(lines, 80)).toBe(3)
+  })
+
+  test('past either end it goes first or last', () => {
+    expect(memberDropIndex(lines, -40)).toBe(0)
+    expect(memberDropIndex(lines, 400)).toBe(3)
+    expect(memberDropIndex([], 10)).toBe(0)
+  })
+
+  test('as a final place for a member moved from `from`, the slots after it count one less', () => {
+    expect(memberMoveIndex(memberDropIndex(lines, 80), 0)).toBe(2)
+    expect(memberMoveIndex(memberDropIndex(lines, 5), 2)).toBe(0)
+    expect(memberMoveIndex(memberDropIndex(lines, 40), 1)).toBe(1)
   })
 })

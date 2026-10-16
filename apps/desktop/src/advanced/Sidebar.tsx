@@ -8,13 +8,13 @@ import { projectColor } from '@/advanced/picture-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { displayName, projectTint } from '@/advanced/appearance-model'
 import { archiveDone, archiveFailed, beginArchive, beginRestore, reconcileArchives, restoreDone, restoreFailed, withoutArchived, type ArchiveMap, type ArchiveTarget } from '@/advanced/archive-model'
-import { dropTarget, type Placement } from '@/advanced/project-order'
 import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, moveToFolder, renameFolder, sidebarEntries, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { applyRowOrder, moveRow, parseRowOrder, rowToOpen, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
-import { GroupRowView, SpanningSplits, useSplitRows } from '@/advanced/SplitRows'
+import { GroupRowView, SpanningSplits, useSplitRows, type SplitDrop } from '@/advanced/SplitRows'
+import { useRowDrag, type RowDragStart, type RowDragState } from '@/advanced/useRowDrag'
 import type { GroupRow } from '@/advanced/split-rows'
 import { ContextMenu, menuFrom, openMenuFromKeyboard, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { Collapse } from '@/components/Collapse'
@@ -39,6 +39,7 @@ import { rowStatus } from '@/native-chat/chat-model'
 import { useChatState } from '@/native-chat/live-state'
 import { nativeStateLabel } from '@/native-chat/parts'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
+import { MenuIconGlyph } from '@/components/menu-icons'
 import { closeNeedsConfirm, terminalLabel, type AppTerminal } from '@/terminal/terminal-list'
 
 const filtersKey = 'megabrain.sidebar.filters'
@@ -593,7 +594,7 @@ function WorktreeRow({
   const groupRowsAt = (key: string | null) =>
     (key === null ? loose : (anchored.get(key) ?? noGroups)).map((row) => (
       <div key={row.id} className="sidebar-row-in relative">
-        <GroupRowView row={row} indent="worktree" onMenu={onMenu} end={(items) => <MoreButton label={`Manage ${row.title}`} onClick={(event) => onMenu(event, items)} />} />
+        <GroupRowView row={row} indent="worktree" onMenu={onMenu} drag={rowControls} end={(items) => <MoreButton label={`Manage ${row.title}`} onClick={(event) => onMenu(event, items)} />} />
       </div>
     ))
   const keys = shown.map((item) => item.key)
@@ -709,20 +710,25 @@ function WorktreeRow({
         {ordered.map((item) => {
           const groups = groupRowsAt(item.key)
           if (!shown.includes(item)) return groups
+          const key = itemOfRow(item)
           const drag: RowDragger = (event, row) => {
             onDrag(event, row)
-            rowControls.start(event, worktree.path, item.key, keys)
+            rowControls.start(event, { kind: 'row', worktreePath: worktree.path, key: item.key, shown: keys, item: key, label: rowLabel(item) })
           }
+          const source = rowControls.drag?.source
+          const target = rowControls.drag?.target ?? null
           return [
             ...groups,
             <div
               key={item.key}
               data-row-key={item.key}
+              data-item={key ?? undefined}
               onClickCapture={pickRow(item)}
               aria-selected={picked(item) ? 'true' : undefined}
-              className={`sidebar-row-in relative rounded-[12px] ${rowControls.dragging === item.key ? 'opacity-50' : ''} ${picked(item) ? 'ring-1 ring-accent/60 ring-inset' : ''}`}
+              className={`sidebar-row-in relative rounded-[12px] ${source?.kind === 'row' && source.key === item.key ? 'opacity-50' : ''} ${picked(item) ? 'ring-1 ring-accent/60 ring-inset' : ''}`}
             >
-              {rowControls.edge?.key === item.key && <DropLine edge={rowControls.edge.placement} />}
+              {target?.kind === 'reorder' && target.key === item.key && <DropLine edge={target.placement} />}
+              {target?.kind === 'join' && target.at === item.key && <JoinMark />}
               {renderItem(item, drag)}
             </div>,
           ]
@@ -971,6 +977,32 @@ const ProjectSection = memo(function ProjectSection({
   )
 })
 
+/** What a dragged group or member carries, by the pointer; a row dragged out of its group says it leaves. */
+function DragGhost({ state }: { state: RowDragState }) {
+  const note = state.target?.kind === 'leave' ? 'Remove from split' : state.target?.kind === 'join' ? 'Join split' : state.target?.kind === 'swap' ? 'Swap panes' : null
+  return (
+    <div style={{ left: state.x + 12, top: state.y + 12 }} className="pointer-events-none fixed z-[70] max-w-64 rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
+      {note !== null && <div className="text-[11px] font-medium text-accent">{note}</div>}
+      <div className="truncate">{state.source.label}</div>
+    </div>
+  )
+}
+
+/** A row's title, for what a drag carries. */
+const rowLabel = (item: KeyedItem) => (item.kind === 'native' ? (item.chat.title ?? 'New chat') : item.kind === 'terminal' ? terminalLabel(item.terminal) : item.session.title)
+
+/** A row a dragged row would join into a split: ringed, with the split glyph at its right. */
+function JoinMark() {
+  return (
+    <span aria-hidden="true" className="motion-fade pointer-events-none absolute inset-0 z-10 flex items-center justify-end rounded-[12px] bg-accent/[0.12] pr-2 ring-2 ring-accent ring-inset">
+      <span className="flex items-center gap-1 rounded-[6px] bg-ink-850/90 px-1.5 py-0.5 text-[10.5px] font-semibold text-accent">
+        <MenuIconGlyph icon="splitRight" />
+        Split
+      </span>
+    </span>
+  )
+}
+
 /** The line that shows where a dragged project or folder lands; dropping into a folder rings its header. */
 function DropLine({ edge }: { edge: DropPlacement }) {
   if (edge === 'into') return <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[12px] ring-2 ring-accent ring-inset" />
@@ -1118,10 +1150,9 @@ interface ItemRows {
   close: (row: SidebarDrag) => void
   /** Each worktree's saved row order. */
   order: RowOrder
-  /** The row being dragged, and where it would land. */
-  dragging: string | null
-  edge: { key: string; placement: Placement } | null
-  start: (event: PointerEvent<HTMLElement>, worktreePath: string, key: string, shown: string[]) => void
+  /** A row, group or member being dragged in the sidebar, and where it would land. */
+  drag: RowDragState | null
+  start: RowDragStart
 }
 
 /** What the stacked rows need: details read from `stack show`, folds, and actions running; one object per change. */
@@ -1204,11 +1235,14 @@ export const Sidebar = memo(function Sidebar({
   onRenameTerminal,
   onCloseRow,
   onDragRow,
+  onSplitDrop,
   creations,
   onCreateWorktree,
   onRetryCreation,
   onDismissCreation,
 }: {
+  /** A row joined into a split, a member leaving its group, or a group's members reordered; see useRowDrag. */
+  onSplitDrop: (drop: SplitDrop) => void
   /** Worktrees being created, shown as pending rows under their project. */
   creations: PendingWorktree[]
   onCreateWorktree: (project: Project, branch: string, base: string) => void
@@ -1667,58 +1701,35 @@ export const Sidebar = memo(function Sidebar({
 
   // Rows keep the order the person dragged them into, per worktree; new ones show on top.
   const [rowOrder, setRowOrder] = useState<RowOrder>(readRowOrder)
-  const [rowDrag, setRowDrag] = useState<{ key: string; edge: { key: string; placement: Placement } | null } | null>(null)
-  const rowDragStart = useStableCallback((event: PointerEvent<HTMLElement>, worktreePath: string, key: string, shown: string[]) => {
-    if (event.button !== 0) return
-    const startY = event.clientY
-    let moving = false
-    const container = () => navRef.current?.querySelector<HTMLElement>(`[data-worktree-rows="${CSS.escape(worktreePath)}"]`) ?? null
-    // Only a pointer over this worktree's own rows reorders; anywhere else the pane drag decides.
-    const targetAt = (x: number, y: number) => {
-      const rows = container()
-      if (rows === null) return null
-      const box = rows.getBoundingClientRect()
-      if (x < box.left || x > box.right || y < box.top - 8 || y > box.bottom + 8) return null
-      const found = dropTarget(
-        [...rows.querySelectorAll<HTMLElement>(':scope > [data-row-key]')].map((element) => {
-          const rect = element.getBoundingClientRect()
-          return { path: element.dataset.rowKey ?? '', top: rect.top, bottom: rect.bottom }
-        }),
-        y,
-      )
-      return found === null || found.path === key ? null : { key: found.path, placement: found.placement }
-    }
-    const stop = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', stop)
-      setRowDrag(null)
-    }
-    const onMove = (move: globalThis.PointerEvent) => {
-      if (!moving && Math.abs(move.clientY - startY) < 4) return
-      moving = true
-      setRowDrag({ key, edge: targetAt(move.clientX, move.clientY) })
-    }
-    const onUp = (up: globalThis.PointerEvent) => {
-      stop()
-      if (!moving) return
-      const target = targetAt(up.clientX, up.clientY)
-      if (target === null) return
-      swallowNextClick()
-      captureRows()
-      setRowOrder((current) => {
-        const next = { ...current, [worktreePath]: moveRow(shown, key, target.key, target.placement) }
-        writeRowOrder(next)
-        return next
-      })
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', stop)
-  })
+  const rowDrag = useRowDrag(
+    navRef,
+    {
+      reorder: (worktreePath, next) => {
+        captureRows()
+        setRowOrder((current) => {
+          const order = { ...current, [worktreePath]: next }
+          writeRowOrder(order)
+          return order
+        })
+      },
+      join: (source, target) => {
+        const from = source.kind === 'group' ? ({ kind: 'group', groupId: source.groupId } as const) : source.kind === 'member' ? ({ kind: 'item', item: source.item } as const) : source.item === null ? null : ({ kind: 'item', item: source.item } as const)
+        if (from === null) return
+        captureRows()
+        onSplitDrop({ kind: 'join', source: from, target })
+      },
+      leave: (groupId, item) => {
+        captureRows()
+        onSplitDrop({ kind: 'leave', groupId, item })
+      },
+      slot: (groupId, item, index) => onSplitDrop({ kind: 'move', groupId, item, index }),
+      swap: (groupId, a, b) => onSplitDrop({ kind: 'swap', groupId, a, b }),
+    },
+    moveRow,
+  )
   const itemRows = useMemo<ItemRows>(
-    () => ({ close: closeRow, order: rowOrder, dragging: rowDrag?.key ?? null, edge: rowDrag?.edge ?? null, start: rowDragStart }),
-    [closeRow, rowOrder, rowDrag, rowDragStart],
+    () => ({ close: closeRow, order: rowOrder, drag: rowDrag.state, start: rowDrag.start }),
+    [closeRow, rowOrder, rowDrag.state, rowDrag.start],
   )
 
   const stackRows = useMemo<StackRows>(() => ({ details: stackDetails, folded: collapsed, fold: toggle, busy: stackBusy }), [stackDetails, collapsed, toggle, stackBusy])
@@ -1800,6 +1811,7 @@ export const Sidebar = memo(function Sidebar({
         </div>
         {searchOpen && partition.visible.length > 0 && <SearchField inputRef={searchRef} query={filters.query} onQuery={(query) => onFilters({ ...filters, query })} onClose={() => setSearchOpen(false)} />}
       </div>
+      {rowDrag.state !== null && rowDrag.state.source.kind !== 'row' && <DragGhost state={rowDrag.state} />}
       <div
         ref={listRef}
         onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
@@ -1819,7 +1831,7 @@ export const Sidebar = memo(function Sidebar({
           </div>
         )}
         {!loaded && loadError === null && projects.length === 0 && <SidebarSkeleton />}
-        <SpanningSplits onMenu={openMenu} end={(items) => <MoreButton label="Manage split" onClick={(event) => openMenu(event, items)} />} />
+        <SpanningSplits onMenu={openMenu} drag={itemRows} end={(items) => <MoreButton label="Manage split" onClick={(event) => openMenu(event, items)} />} />
         {layoutError !== null && (
           <div className="px-1">
             <ErrorNote error={layoutError} />

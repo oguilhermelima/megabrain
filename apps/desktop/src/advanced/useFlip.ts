@@ -4,8 +4,9 @@ import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 // to where they land instead of jumping: capture() records each row's position just before the
 // change, and the next commit plays the difference back over 180 ms. Reduced motion skips it.
 
-const rowSelector = '[data-entry-key], [data-row-key]'
-const keyOf = (element: HTMLElement) => element.dataset.entryKey ?? element.dataset.rowKey ?? ''
+// Projects, folders, rows and split group rows, so a join or a leave slides the rows around it.
+const rowSelector = '[data-entry-key], [data-row-key], [data-split-group]'
+const keyOf = (element: HTMLElement) => element.dataset.entryKey ?? element.dataset.rowKey ?? (element.dataset.splitGroup === undefined ? '' : `group:${element.dataset.splitGroup}`)
 
 export function useFlip(root: RefObject<HTMLElement | null>): () => void {
   const before = useRef<Map<string, number> | null>(null)

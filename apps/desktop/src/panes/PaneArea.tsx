@@ -1,8 +1,9 @@
-import { useRef, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { equaliseSplit, paneRects, resizeSplit, zonePreview, type Divider, type Panes, type Rect } from '@/panes/pane-model'
 import type { PaneDrag } from '@/panes/usePaneDrag'
 import { minPaneHeight, minPaneWidth } from '@/panes/split-groups'
 import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
+import { PaneChromeContext, type PaneChrome } from '@/panes/pane-chrome'
 
 /** What a pane shows for its item: the title on its header, and the view. */
 export interface PaneContent {
@@ -49,6 +50,33 @@ export function PaneArea({
   const targetItem = target === null ? null : (rects.find((pane) => pane.id === target.paneId)?.item ?? null)
   const preview = target !== null && source !== null && !(source.kind === 'pane' ? source.paneId === target.paneId : source.item === targetItem) ? target : null
 
+  // The panes whose item's own top bar is their header (panes/pane-chrome); the rest keep a strip.
+  const [headed, setHeaded] = useState<ReadonlySet<string>>(new Set())
+  const chromes = useRef(new Map<string, PaneChrome>())
+  const latest = useRef({ drag, onClose })
+  latest.current = { drag, onClose }
+  const chromeOf = (paneId: string, title: string): PaneChrome => {
+    const known = chromes.current.get(paneId)
+    // One object per pane and title, so a top bar's claim effect does not run again every render.
+    if (known !== undefined && known.title === title) return known
+    const made: PaneChrome = {
+      title,
+      onDrag: (event) => latest.current.drag.start(event, { kind: 'pane', paneId, label: title }),
+      onClose: () => latest.current.onClose(paneId),
+      claim: () => {
+        setHeaded((current) => new Set([...current, paneId]))
+        return () =>
+          setHeaded((current) => {
+            const next = new Set(current)
+            next.delete(paneId)
+            return next
+          })
+      },
+    }
+    chromes.current.set(paneId, made)
+    return made
+  }
+
   const focus = (paneId: string) => {
     if (paneId !== panes.focused) onPanes((current) => ({ ...current, focused: paneId }))
   }
@@ -72,6 +100,7 @@ export function PaneArea({
         const focused = pane !== null && split && pane.id === panes.focused
         if (pane === null) quiet.delete(item)
         const joined = pane !== null && windowRow?.join.paneId === pane.id ? windowRow : null
+        const chrome = split && pane !== null ? chromeOf(pane.id, content.title) : null
         return (
           <section
             key={item}
@@ -81,7 +110,7 @@ export function PaneArea({
             style={pane === null ? undefined : percent(pane.rect)}
             className={pane === null ? 'hidden' : `absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${pane.rect.x > 0 ? 'border-l border-white/[0.07]' : ''} ${pane.rect.y > 0 ? 'border-t border-white/[0.07]' : ''}`}
           >
-            {split && pane !== null && (
+            {split && pane !== null && !headed.has(pane.id) && (
               <PaneHeader
                 title={content.title}
                 focused={pane.id === panes.focused}
@@ -92,7 +121,9 @@ export function PaneArea({
             )}
             {/* Positioned, so a PR or Diff view can lie over the item's own content below its top bar. */}
             <div className={`relative flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>
-              <WindowRowContext.Provider value={joined?.join.header === 'top-bar' ? joined.inset : null}>{content.node}</WindowRowContext.Provider>
+              <WindowRowContext.Provider value={joined?.join.header === 'top-bar' ? joined.inset : null}>
+                <PaneChromeContext.Provider value={chrome}>{content.node}</PaneChromeContext.Provider>
+              </WindowRowContext.Provider>
             </div>
             {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 ring-1 ring-accent/50 ring-inset" />}
             {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} replace={preview.zone === 'center'} />}
@@ -121,8 +152,8 @@ function CloseIcon() {
 }
 
 /**
- * Shown on every pane once the area is split: drag it to move the pane, × to close it. With an
- * `inset` it is the one in the window row: as tall as the lights' band, starting past them.
+ * Shown on a split pane whose item draws no top bar of its own: drag it to move the pane, × to close
+ * it. With an `inset` it is the one in the window row: as tall as the lights' band, starting past them.
  */
 function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string; focused: boolean; inset: number | null; onDrag: (event: PointerEvent<HTMLElement>) => void; onClose: () => void }) {
   return (

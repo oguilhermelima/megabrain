@@ -89,3 +89,30 @@ export function groupsByPlace(rows: readonly GroupRow[]): { byWorktree: Map<stri
   }
   return { byWorktree, spanning }
 }
+
+/**
+ * Which part of a sidebar row a dragged row is over: its top quarter goes before it, its bottom
+ * quarter after, and the middle band joins the two into a split. A row the drag cannot reorder
+ * against joins over all of it; one it cannot join splits at its middle.
+ */
+export function rowDropZone(row: { top: number; bottom: number }, y: number, can: { reorder?: boolean; join?: boolean } = {}): 'before' | 'join' | 'after' {
+  const reorder = can.reorder ?? true
+  const join = can.join ?? true
+  if (!reorder) return 'join'
+  const height = row.bottom - row.top
+  if (!join) return y < row.top + height / 2 ? 'before' : 'after'
+  if (y < row.top + height / 4) return 'before'
+  if (y > row.bottom - height / 4) return 'after'
+  return 'join'
+}
+
+/** The slot, 0 to lines.length, a member dragged in the hover list would drop into: before the line whose lower half it has not passed. */
+export function memberDropIndex(lines: readonly { top: number; bottom: number }[], y: number): number {
+  const index = lines.findIndex((line) => y < (line.top + line.bottom) / 2)
+  return index === -1 ? lines.length : index
+}
+
+/** A slot as the place the member at `from` ends up in, once it has left its own. */
+export function memberMoveIndex(slot: number, from: number): number {
+  return slot > from ? slot - 1 : slot
+}

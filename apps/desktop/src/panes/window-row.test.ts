@@ -25,7 +25,15 @@ describe('windowRowJoin', () => {
     expect(windowRowJoin({ collapsed: true, covered: true, panes: [{ id: 'a', item: 'native:1', rect: whole }], hasTopBar: withBar })).toBeNull()
   })
 
-  test('split side by side, the left pane strip joins whatever its item', () => {
+  test('split side by side, the left pane joins with its own top bar, which is its only header', () => {
+    const panes = [
+      { id: 'b', item: 'github:x', rect: right },
+      { id: 'a', item: 'native:1', rect: left },
+    ]
+    expect(windowRowJoin({ collapsed: true, covered: false, panes, hasTopBar: withBar })).toEqual({ paneId: 'a', header: 'top-bar' })
+  })
+
+  test('split, a corner pane whose item draws no top bar joins with its strip', () => {
     const panes = [
       { id: 'b', item: 'native:2', rect: right },
       { id: 'a', item: 'github:x', rect: left },
@@ -38,7 +46,7 @@ describe('windowRowJoin', () => {
       { id: 'b', item: 'native:2', rect: bottom },
       { id: 'a', item: 'native:1', rect: top },
     ]
-    expect(windowRowJoin({ collapsed: true, covered: false, panes, hasTopBar: withBar })).toEqual({ paneId: 'a', header: 'strip' })
+    expect(windowRowJoin({ collapsed: true, covered: false, panes, hasTopBar: withBar })).toEqual({ paneId: 'a', header: 'top-bar' })
   })
 
   test('no pane at all joins nothing', () => {
