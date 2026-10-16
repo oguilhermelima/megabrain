@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import type { SlashCommand } from '@/api/schema'
 import { placeMenu, type AnchorRect } from '@/advanced/menu-placement'
 import { commandKey, menuKey, rememberPick, type MenuSection, type Range } from '@/chat/command-menu'
+import type { MenuNotice } from '@/chat/slash-commands'
+import { Spinner } from '@/components/ui'
 
 const sourceNames: Record<SlashCommand['source'], string> = { skill: 'Skill', plugin: 'Plugin', user: 'Personal command', project: 'Project command', builtin: 'Built-in' }
 
@@ -105,6 +107,7 @@ export function CommandMenu({
   sections,
   active,
   query,
+  status = null,
   width,
   inside,
   search,
@@ -118,6 +121,8 @@ export function CommandMenu({
   sections: MenuSection[]
   active: number
   query: string
+  /** What to say in place of rows: the list still loads, failed, or the agent has none. */
+  status?: MenuNotice | null
   /** Preferred width; the window can make it narrower. */
   width: number
   /** An element whose clicks do not close the menu, such as the composer it belongs to. */
@@ -197,7 +202,13 @@ export function CommandMenu({
       )}
       <div className="flex min-h-0 flex-1">
         <div ref={list} role="listbox" aria-label={label} className="min-h-0 min-w-0 flex-1 overflow-y-auto p-1.5">
-          {items.length === 0 && (
+          {items.length === 0 && status !== null && (
+            <div role="status" className={`flex items-center gap-2.5 px-2.5 py-2 text-[13px] ${status.tone === 'error' ? 'text-warn' : 'text-ink-300'}`}>
+              {status.tone === 'loading' ? <Spinner /> : <SourceIcon source="builtin" className="size-4 text-ink-500" />}
+              <span className="min-w-0 break-words">{status.text}</span>
+            </div>
+          )}
+          {items.length === 0 && status === null && (
             <div className="grid place-items-center gap-1.5 px-4 py-8 text-center">
               <SourceIcon source="skill" className="size-5 text-ink-500" />
               <p className="text-[13px] text-ink-300">{query.trim() === '' ? 'Nothing here yet.' : `Nothing matches “${query.trim()}”.`}</p>

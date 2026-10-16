@@ -291,6 +291,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
               onStop={stop}
               fill={fill}
               channel={compose}
+              initCommands={chat.slashCommands}
             />
           </div>
         </>

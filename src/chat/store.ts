@@ -9,6 +9,8 @@ export type Chat = {
   effort?: string | null;
   contextTokens?: number;
   contextWindow?: number;
+  /** The slash command names the agent reported at init (Claude's system/init), for the composer's menu. */
+  slashCommands?: string[];
   cwd: string;
   /** Ask for approvals instead of bypassing permission prompts. */
   approvals?: boolean;

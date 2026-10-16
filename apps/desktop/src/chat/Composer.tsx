@@ -11,6 +11,7 @@ import { usePresence } from '@/lib/usePresence'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { attachmentKind, insertSlashCommand, skillInvocation, slashQuery } from '@/chat/composer-model'
 import { commandSections } from '@/chat/command-menu'
+import { createCommandSource, menuNotice, mergeInitCommands, type CommandList } from '@/chat/slash-commands'
 import { CommandMenu, handleMenuKey, useRecentCommands } from '@/chat/CommandMenu'
 import { deleteRange, draftLength, draftText, insertText, insertToken, messagePartsFromText, moveToken, tokenAfter, tokenBefore, tokenIds, tokenOffset, toMessageParts, type Draft } from '@/chat/composer-parts'
 import { pickerLabel, sessionCommand, withContextWindow } from '@/chat/composer-status'
@@ -25,39 +26,55 @@ import { initialQueueState, queueReducer, type QueueAction, type QueueState } fr
 
 export type { Notice } from '@/chat/composer-look'
 
-// Slash commands per agent and folder, read once per app run.
-const commandCache = new Map<string, Promise<SlashCommand[]>>()
+// Slash commands per agent and folder for the whole app run, read as the composer mounts.
+const commandSource = createCommandSource((agent, cwd) => api.slashCommands(agent, cwd))
 
-function loadCommands(agent: string, cwd: string): Promise<SlashCommand[]> {
-  const key = `${agent}\n${cwd}`
-  const cached = commandCache.get(key)
-  if (cached !== undefined) return cached
-  const loading = api.slashCommands(agent, cwd).catch((error: unknown) => {
-    commandCache.delete(key)
-    throw error
-  })
-  commandCache.set(key, loading)
-  return loading
-}
-
-function useSlashCommands(agent: string | null, cwd: string | null): SlashCommand[] {
-  const [commands, setCommands] = useState<SlashCommand[]>([])
+/**
+ * The agent's slash commands for this folder, loaded as soon as both are known rather than from a
+ * chat event, so a chat that never sent a message lists them too. `refresh` asks again: on focus,
+ * and when / is typed after a failed or empty answer.
+ */
+function useSlashCommands(agent: string | null, cwd: string | null, initNames: readonly string[] | undefined): CommandList & { refresh: () => void } {
+  const [list, setList] = useState<CommandList>(() => ({ status: 'idle', commands: agent !== null && cwd !== null ? (commandSource.peek(agent, cwd) ?? []) : [], error: null }))
+  // Only the latest call writes the list, so a slow answer for another agent or folder never lands here.
+  const latest = useRef(0)
+  const asked = useRef(0)
+  const run = useCallback(
+    (refresh: boolean) => {
+      latest.current += 1
+      const call = latest.current
+      if (agent === null || agent === '' || cwd === null || cwd === '') {
+        setList({ status: 'idle', commands: [], error: null })
+        return
+      }
+      setList({ status: 'loading', commands: commandSource.peek(agent, cwd) ?? [], error: null })
+      commandSource.load(agent, cwd, { refresh }).then(
+        (commands) => {
+          if (latest.current === call) setList({ status: 'ready', commands, error: null })
+        },
+        (error: unknown) => {
+          if (latest.current === call) setList({ status: 'error', commands: commandSource.peek(agent, cwd) ?? [], error: error instanceof Error ? error.message : String(error) })
+        },
+      )
+    },
+    [agent, cwd],
+  )
   useEffect(() => {
-    if (agent === null || agent === '' || cwd === null || cwd === '') return
-    let stopped = false
-    loadCommands(agent, cwd).then(
-      (list) => {
-        if (!stopped) setCommands(list)
-      },
-      () => {
-        if (!stopped) setCommands([])
-      },
-    )
+    asked.current = Date.now()
+    run(false)
     return () => {
-      stopped = true
+      latest.current += 1
     }
-  }, [agent, cwd])
-  return commands
+  }, [run])
+  // Focus comes often (every pick puts it back), so a good list is asked again at most every half minute.
+  const refresh = useCallback(() => {
+    const now = Date.now()
+    if (list.status === 'loading' || (list.status === 'ready' && list.commands.length > 0 && now - asked.current < 30_000)) return
+    asked.current = now
+    run(true)
+  }, [run, list.status, list.commands.length])
+  const commands = mergeInitCommands(list.commands, initNames)
+  return { ...list, commands, refresh }
 }
 
 // An image or PDF going with the next message. Pasted and picked files are saved through
@@ -339,6 +356,7 @@ export function Composer({
   onStop,
   fill = null,
   channel,
+  initCommands,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
   fill?: { text: string } | null
@@ -361,6 +379,8 @@ export function Composer({
   onStop?: () => void
   /** Where the transcript's right-click menu puts quotes and code; the box fills it while it takes text. */
   channel?: ComposeChannel
+  /** The command names the running agent reported (Claude's init), merged into the discovered list. */
+  initCommands?: readonly string[]
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -386,7 +406,8 @@ export function Composer({
   const attachments = useRef(new Map<string, Attachment>())
   // The last selection inside the box, for what the buttons insert while focus is on them.
   const caret = useRef<[number, number]>([0, 0])
-  const commands = useSlashCommands(agent, cwd)
+  const commandList = useSlashCommands(agent, cwd, initCommands)
+  const commands = commandList.commands
   const [recent, rememberCommand] = useRecentCommands(agent)
   const [sentCount, setSentCount] = useState(0)
   const [queue, queueDispatch] = useChatQueue(dispatchId, sentCount)
@@ -486,8 +507,10 @@ export function Composer({
 
   // The slash menu opens while the message is a command word being typed; a second slash means a path.
   const query = draftSlashQuery(draft)
-  const menuOpen = query !== null && !menuClosed && commands.length > 0 && !query.includes('/')
+  // It opens before the list arrives, saying it loads, failed or that the agent has none, rather than staying shut.
+  const menuOpen = query !== null && !menuClosed && agent !== null && !query.includes('/')
   const sections = menuOpen ? commandSections(commands, query, recent) : []
+  const menuStatus = menuOpen && agent !== null ? menuNotice(commandList, agent) : null
   const matches = sections.flatMap((section) => section.items)
   const activeMatch = Math.min(active, Math.max(0, matches.length - 1))
   // Measured once as it opens: a command word never wraps, so the box keeps its size while it is typed.
@@ -502,7 +525,14 @@ export function Composer({
   }, [menuOpen])
   const closeMenu = useCallback(() => setMenuClosed(true), [])
   // A closing menu fades with what it last listed.
-  const slashMenu = usePresence(menuOpen && menuAnchor !== null && query !== null ? { anchor: menuAnchor, sections, active: activeMatch, query } : null)
+  // Typing / after a failed or empty answer asks again; the menu says it loads meanwhile.
+  const { status: commandStatus, refresh: refreshCommands } = commandList
+  const retryOnOpen = menuOpen && (commandStatus === 'error' || (commandStatus === 'ready' && commandList.commands.length === 0))
+  useEffect(() => {
+    if (retryOnOpen) refreshCommands()
+    // Only the menu opening retries; the answer landing must not ask again.
+  }, [menuOpen])
+  const slashMenu = usePresence(menuOpen && menuAnchor !== null && query !== null ? { anchor: menuAnchor, sections, active: activeMatch, query, status: menuStatus } : null)
 
   const pick = (command: SlashCommand) => {
     rememberCommand(command)
@@ -914,6 +944,7 @@ export function Composer({
             sections={slashMenu.shown.sections}
             active={slashMenu.shown.active}
             query={slashMenu.shown.query}
+            status={slashMenu.shown.status}
             width={Math.min(720, slashMenu.shown.anchor.right - slashMenu.shown.anchor.left)}
             inside={box}
             leaving={slashMenu.leaving}
@@ -938,6 +969,7 @@ export function Composer({
               aria-placeholder={placeholder}
               contentEditable={disabled ? false : 'plaintext-only'}
               onInput={onInput}
+              onFocus={refreshCommands}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               onContextMenu={onContextMenu}

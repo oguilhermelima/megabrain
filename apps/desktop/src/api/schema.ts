@@ -594,6 +594,8 @@ export const nativeChatSchema = z.looseObject({
   /** Tokens in the conversation's current context and the model's window, when the agent reports them. */
   contextTokens: z.number().nullable().optional(),
   contextWindow: z.number().nullable().optional(),
+  /** The slash command names the agent reported when it started (Claude's init), absent before. */
+  slashCommands: z.array(z.string()).optional(),
 })
 // A pending approval inside a native chat; it arrives as a transcript event of kind "approval".
 export const chatApprovalSchema = z.looseObject({

@@ -356,6 +356,7 @@ export class ChatDaemon {
     const chat = await this.requireChat(id);
     if (item.type === "system" && item.subtype === "init") {
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
+      if (Array.isArray(item.slash_commands)) chat.slashCommands = item.slash_commands.filter((name): name is string => typeof name === "string");
       if (chat.state === "starting") chat.state = "idle";
       await this.save(chat);
       await this.drain(id);
