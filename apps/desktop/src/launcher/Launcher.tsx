@@ -201,7 +201,7 @@ export function Launcher({
         title={worktree?.label ?? 'No worktree yet'}
         actions={
           worktrees.length > 1 && (
-            <label className="relative flex h-8 shrink-0 items-center rounded-[12px] px-2.5 text-[12.5px] text-ink-400 hover:bg-row-hover hover:text-ink-200">
+            <label className="bar-control relative px-3 text-[12px] font-semibold text-ink-300 transition-colors hover:bg-white/[0.08] hover:text-ink-100">
               <span>Switch</span>
               <select aria-label="Worktree" value={cwd ?? ''} onChange={(event) => setChosenPath(event.target.value)} className="absolute inset-0 cursor-pointer opacity-0">
                 {worktrees.map((entry) => (

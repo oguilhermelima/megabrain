@@ -102,6 +102,55 @@ html.native body {
   animation: motion-pop-in var(--motion-enter) var(--motion-ease-out);
 }
 
+/* The chat top bar's controls (chat/ChatHeader): every group and button there is one 30px pill with
+   the same border and fill, every segment inside a group a 24px pill, every icon 16px. In the
+   components layer, so a control's own utilities (padding, a pressed fill) still win. */
+@layer components {
+  .bar-control {
+    display: flex;
+    height: 30px;
+    flex-shrink: 0;
+    align-items: center;
+    border-radius: 9999px;
+    border: 1px solid rgb(255 255 255 / 0.1);
+    background: rgb(255 255 255 / 0.05);
+  }
+  .bar-group {
+    gap: 2px;
+    padding: 2px;
+  }
+  .bar-segment {
+    display: flex;
+    height: 24px;
+    min-width: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    padding-inline: 4px;
+    color: var(--color-ink-300);
+    font-size: 12px;
+    font-weight: 600;
+    transition:
+      color var(--motion-enter) var(--motion-ease-out),
+      background-color var(--motion-enter) var(--motion-ease-out);
+  }
+  .bar-segment:hover:not(:disabled) {
+    background: rgb(255 255 255 / 0.08);
+    color: var(--color-ink-100);
+  }
+  .bar-segment:disabled {
+    cursor: default;
+    color: var(--color-ink-600);
+  }
+  .bar-segment[aria-pressed='true'] {
+    background: rgb(255 255 255 / 0.14);
+    color: var(--color-ink-100);
+  }
+  .bar-segment:focus-visible {
+    outline: 2px solid var(--color-accent);
+  }
+}
+
 /* Something new in place: a pane's item, a chat's first rows, the working line. It fades and rises a
    few pixels. translate, not transform, so a translate it already has is kept. */
 @keyframes motion-rise-in {

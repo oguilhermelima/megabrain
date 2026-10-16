@@ -15,7 +15,7 @@ const ChangesDiff = lazy(() => import('@/code/ChangesDiff').then((module) => ({ 
 
 function DiffIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="2.5" y="1.5" width="11" height="13" rx="2" />
       <path d="M8 4.25v4M6 6.25h4M6 11h4" />
     </svg>
@@ -62,14 +62,14 @@ export function ActionBar({ agent, segments, shown, onSelect }: { agent: string 
   const [hovered, setHovered] = useState<PaneView | null>(null)
   const [focused, setFocused] = useState<PaneView | null>(null)
   const icons: Record<PaneView, ReactNode> = {
-    agent: agent === null || agent === '' ? <ChatGlyph /> : <AgentIcon agent={agent} size={14} />,
-    code: <CodeIcon />,
-    pr: <PullRequestIcon size={14} />,
+    agent: agent === null || agent === '' ? <ChatGlyph /> : <AgentIcon agent={agent} size={16} />,
+    code: <CodeIcon size={16} />,
+    pr: <PullRequestIcon size={16} />,
     diff: <DiffIcon />,
   }
   const grow = { transition: 'grid-template-columns var(--motion-enter) var(--motion-ease-out), opacity var(--motion-enter) var(--motion-ease-out)' }
   return (
-    <div role="group" aria-label="Views" onPointerLeave={() => setHovered(null)} className="flex shrink-0 gap-0.5 rounded-full border border-white/10 bg-white/[0.05] p-0.5">
+    <div role="group" aria-label="Views" onPointerLeave={() => setHovered(null)} className="bar-control bar-group">
       {segments.map((segment) => {
         const current = segment.view === shown
         const open = segmentExpanded(segment.view, { shown, hovered, focused })
@@ -85,9 +85,7 @@ export function ActionBar({ agent, segments, shown, onSelect }: { agent: string 
             onPointerEnter={() => setHovered(segment.view)}
             onFocus={(event) => setFocused(event.currentTarget.matches(':focus-visible') ? segment.view : null)}
             onBlur={() => setFocused(null)}
-            className={`flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default ${
-              current ? 'bg-white/[0.14] text-ink-100' : segment.enabled ? 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100' : 'text-ink-600'
-            }`}
+            className="bar-segment"
           >
             <span className="flex shrink-0 items-start">
               {icons[segment.view]}
@@ -98,7 +96,7 @@ export function ActionBar({ agent, segments, shown, onSelect }: { agent: string 
               )}
             </span>
             <span aria-hidden="true" style={grow} className={`grid ${open ? 'grid-cols-[1fr] opacity-100' : 'grid-cols-[0fr] opacity-0'}`}>
-              <span className="overflow-hidden pl-1.5 whitespace-nowrap">{segment.label}</span>
+              <span className="overflow-hidden pr-1 pl-1.5 whitespace-nowrap">{segment.label}</span>
             </span>
           </button>
         )
@@ -109,7 +107,7 @@ export function ActionBar({ agent, segments, shown, onSelect }: { agent: string 
 
 function ChatGlyph() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
       <path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7l-3 2.2v-2.2h0a1.5 1.5 0 0 1-1.5-1.5Z" />
     </svg>
   )

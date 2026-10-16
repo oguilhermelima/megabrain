@@ -31,7 +31,7 @@ function useProjectScripts(root: string | null): ProjectScripts | null {
 
 function PlayIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
       <path d="M4.5 2.8v10.4a.6.6 0 0 0 .9.5l8.2-5.2a.6.6 0 0 0 0-1L5.4 2.3a.6.6 0 0 0-.9.5Z" />
     </svg>
   )
@@ -39,7 +39,7 @@ function PlayIcon() {
 
 function Caret() {
   return (
-    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m4 6 4 4 4-4" />
     </svg>
   )
@@ -47,7 +47,7 @@ function Caret() {
 
 function PanelIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
       <rect x="2" y="2.75" width="12" height="10.5" rx="2" />
       <path d="M10 2.75v10.5" />
     </svg>
@@ -72,8 +72,8 @@ export function RunPanelToggle() {
       aria-pressed={open}
       aria-label={`${open ? 'Hide' : 'Show'} run panel (${state})`}
       title={open ? `Hide run panel (${state}; runs keep going)` : `Show run panel (${state})`}
-      className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
-        open ? 'border-white/15 bg-white/[0.12] text-ink-100' : 'border-white/10 bg-white/[0.05] text-ink-300 hover:bg-white/[0.1] hover:text-ink-100'
+      className={`bar-control gap-1.5 px-[6px] text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
+        open ? 'bg-white/[0.14] text-ink-100' : 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
       }`}
     >
       <PanelIcon />
@@ -133,27 +133,31 @@ export function RunButton() {
 
   return (
     <div ref={box} className="relative flex shrink-0">
-      <button
-        type="button"
-        onClick={() => choose(primary)}
-        title={primaryCommand ?? `Set up the ${runActionLabel[primary].toLowerCase()} command`}
-        aria-label={primaryLabel}
-        className="flex h-7 items-center gap-1.5 rounded-l-full border border-white/10 bg-white/[0.05] pr-2 pl-2.5 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.1] @3xl/header:pr-2.5 @3xl/header:pl-3"
-      >
-        <PlayIcon />
-        {/* In a narrow chat header only the icon shows, so the title keeps its room. */}
-        <span className="hidden @3xl/header:inline">{primaryLabel}</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-label="Run, build or install"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="flex h-7 w-7 items-center justify-center rounded-r-full border border-l-0 border-white/10 bg-white/[0.05] text-ink-300 hover:bg-white/[0.1] hover:text-ink-100"
-      >
-        <Caret />
-      </button>
+      {/* One quiet pill like the bar's segmented groups: the action and its caret, split by a hairline. */}
+      <div className="bar-control overflow-hidden text-[12px] font-semibold text-ink-200">
+        <button
+          type="button"
+          onClick={() => choose(primary)}
+          title={primaryCommand ?? `Set up the ${runActionLabel[primary].toLowerCase()} command`}
+          aria-label={primaryLabel}
+          className="flex h-full items-center gap-1.5 pr-1.5 pl-[6px] transition-colors hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent @3xl/header:pr-2.5 @3xl/header:pl-2"
+        >
+          <PlayIcon />
+          {/* In a narrow chat header only the icon shows, so the title keeps its room. */}
+          <span className="hidden @3xl/header:inline">{primaryLabel}</span>
+        </button>
+        <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/10" />
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          aria-label="Run, build or install"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className={`flex h-full w-7 items-center justify-center transition-colors hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${open ? 'bg-white/[0.08] text-ink-100' : 'text-ink-400'}`}
+        >
+          <Caret />
+        </button>
+      </div>
       {menu.shown !== null && (
         <div role="menu" data-leaving={menu.leaving || undefined} inert={menu.leaving} className="popover absolute top-full right-0 z-50 mt-1.5 w-[300px] max-w-[80vw] p-1.5">
           {runActions.map((action) => {

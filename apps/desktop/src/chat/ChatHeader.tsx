@@ -58,10 +58,11 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
   const tip = (value: string) => (chrome === null ? value : undefined)
   const identity = (
     <>
-      {agent !== null && <AgentIcon agent={agent} activity={activity} size={stacked ? 20 : 22} className="shrink-0 text-ink-300" />}
-      <div className="min-w-0 flex-1">
-        <h1 title={tip(text.title)} className={`truncate ${stacked ? 'text-[14px]' : 'text-[15px]'} leading-5 font-semibold tracking-[-0.01em] text-ink-100`}>{text.title}</h1>
-        {text.branch !== null && <p title={tip(pane?.facts.root ?? text.branch)} className="truncate text-[12px] leading-4 text-ink-400">{text.branch}</p>}
+      {agent !== null && <AgentIcon agent={agent} activity={activity} size={18} className="shrink-0 text-ink-300" />}
+      {/* At least 36px tall whatever the controls beside it, so the window row's 44px band holds. */}
+      <div className="flex min-h-9 min-w-0 flex-1 flex-col justify-center">
+        <h1 title={tip(text.title)} className="truncate text-[13px] leading-[18px] font-medium text-ink-100">{text.title}</h1>
+        {text.branch !== null && <p title={tip(pane?.facts.root ?? text.branch)} className="truncate text-[11px] leading-[14px] text-ink-400">{text.branch}</p>}
       </div>
     </>
   )
@@ -86,7 +87,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
     return (
       <header ref={header} data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
         {agent !== null && <AgentIcon agent={agent} activity={activity} size={16} className="shrink-0 text-ink-300" />}
-        <h1 className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
+        <h1 className="min-w-0 flex-1 truncate text-[13px] leading-5 font-medium text-ink-100">
           {text.title}
         </h1>
         {actions}
@@ -97,7 +98,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
 
   if (pane === null || available === null) {
     return (
-      <header ref={header} {...region} onPointerDown={grab} style={{ ...slide, paddingLeft: inset ?? 24 }} className={`@container/header group/pane flex shrink-0 items-center gap-3 border-b border-white/[0.06] ${chrome === null ? 'pr-6' : 'cursor-grab pr-3 active:cursor-grabbing'} ${band}`}>
+      <header ref={header} {...region} onPointerDown={grab} style={{ ...slide, paddingLeft: inset ?? 24 }} className={`@container/header group/pane flex shrink-0 items-center gap-2 border-b border-white/[0.06] ${chrome === null ? 'pr-6' : 'cursor-grab pr-3 active:cursor-grabbing'} ${band}`}>
         {identity}
         {actions}
         <RunButton />
@@ -117,7 +118,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
     return (
       <>
         <header ref={header} {...region} onPointerDown={grab} style={slide} className={`group/pane shrink-0 border-b border-white/[0.06] ${chrome === null ? 'px-4' : 'cursor-grab pr-2 pl-4 active:cursor-grabbing'} ${inset === null ? 'pt-2.5 pb-2' : 'py-1'}`}>
-          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 16 }} className="flex h-9 min-w-0 items-center gap-2.5">
+          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 16 }} className="flex h-9 min-w-0 items-center gap-2">
             {identity}
             {close}
           </div>
@@ -146,11 +147,11 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
         className={`@container/header group/pane shrink-0 border-b border-white/[0.06] ${chrome === null ? 'px-6' : 'cursor-grab pr-3 pl-6 active:cursor-grabbing'} ${band}`}
       >
         <div {...region} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
-          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-3">
+          <div {...region} style={{ ...slide, paddingLeft: inset === null ? 0 : inset - 24 }} className="flex min-w-0 items-center gap-2">
             {identity}
           </div>
           <ActionBar agent={agent} segments={available} shown={shown} onSelect={select} />
-          <div {...region} className="flex min-w-0 items-center justify-end gap-3">
+          <div {...region} className="flex min-w-0 items-center justify-end gap-2">
             {shown === 'agent' && actions}
             <RunButton />
             <RunPanelToggle />

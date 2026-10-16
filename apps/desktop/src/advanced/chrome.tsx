@@ -52,9 +52,9 @@ export function SettingsIcon() {
 }
 
 /** The Code view's mark: an editor window with brackets in it. */
-export function CodeIcon() {
+export function CodeIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
       <path d="M1.5 5.5h13M6.5 7.75 4.75 9.5l1.75 1.75M9.5 7.75l1.75 1.75-1.75 1.75" />
     </svg>
