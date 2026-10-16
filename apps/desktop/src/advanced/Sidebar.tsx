@@ -12,6 +12,7 @@ import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, move
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
+import { projectActivity, projectRowClick, projectRowKey } from '@/advanced/project-row-model'
 import { applyRowOrder, moveRow, rowToOpen, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { pruneSidebarState, type SidebarState } from '@/advanced/sidebar-state'
 import { useSidebarState } from '@/advanced/useSidebarLayout'
@@ -30,9 +31,8 @@ import { ErrorNote, Spinner } from '@/components/ui'
 import { activityOf } from '@/components/agent-activity'
 import { AgentIcon, AgentTint } from '@/components/agent-icons'
 import { codeTargetFor, type CodeTarget } from '@/code/code-pane-model'
-import { countBadge, githubRepository, stateColors, worktreePullRequestState } from '@/github/github-model'
-import { IssueIcon, PullRequestIcon } from '@/github/icons'
-import { useGithubCounts, type GithubCounts, type GithubKind } from '@/github/useGithubCounts'
+import { githubRepository, stateColors, worktreePullRequestState } from '@/github/github-model'
+import type { GithubKind } from '@/github/useGithubCounts'
 import { announceAction } from '@/lib/app-events'
 import { matchShortcut } from '@/lib/shortcuts'
 import { useShortcutBindings } from '@/lib/shortcut-store'
@@ -207,27 +207,6 @@ function RowEnd({ label, menuItems, onMenu, onClose }: { label: string; menuItem
       {menuItems.length > 0 && <MoreButton label={`Manage ${label}`} onClick={(event) => onMenu(event, menuItems)} />}
       {onClose !== null && <CloseButton label={`Close ${label}`} onClick={onClose} />}
     </span>
-  )
-}
-
-/** Opens the project's pull request or issue page; the badge is the open count. */
-function GithubButton({ kind, label, count, active, last, onClick }: { kind: GithubKind; label: string; count: number | null; active: boolean; last: boolean; onClick: () => void }) {
-  const badge = count === null ? null : countBadge(count)
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation()
-        onClick()
-      }}
-      aria-label={badge === null ? label : `${label}, ${count} open`}
-      title={badge === null ? label : `${label} · ${count} open`}
-      aria-pressed={active}
-      className={`flex h-6 shrink-0 items-center gap-1 rounded-full px-1.5 text-[11px] font-semibold tabular-nums transition-colors ${active ? 'bg-row-selected text-ink-100' : `text-ink-400 hover:bg-white/[0.08] hover:text-ink-100 ${last ? pillAtRest : ''}`}`}
-    >
-      {kind === 'prs' ? <PullRequestIcon size={14} /> : <IssueIcon size={14} />}
-      {badge !== null && <span className={active ? 'text-ink-200' : 'text-ink-400'}>{badge}</span>}
-    </button>
   )
 }
 
@@ -783,8 +762,8 @@ const ProjectSection = memo(function ProjectSection({
   drag,
   dragging,
   edge,
-  githubCounts,
-  githubActive,
+  selected,
+  onOpenProject,
   onGithub,
   chats,
   selectedChatId,
@@ -796,7 +775,6 @@ const ProjectSection = memo(function ProjectSection({
   itemRows,
   creations,
   creationRows,
-  onNewWorktree,
   listed,
   stacks,
 }: {
@@ -808,8 +786,6 @@ const ProjectSection = memo(function ProjectSection({
   /** Worktrees being created in this project. */
   creations: PendingWorktree[]
   creationRows: CreationRows
-  /** Opens the new worktree dialog for this project. */
-  onNewWorktree: (project: Project) => void
   project: Project
   now: number
   /** Terminals by worktree path. */
@@ -825,10 +801,9 @@ const ProjectSection = memo(function ProjectSection({
   dragging: boolean
   /** Where a dragged project would land against this row. */
   edge: DropPlacement | null
-  /** This project's open counts; undefined until read. */
-  githubCounts: GithubCounts[string] | undefined
-  /** The GitHub page of this project showing in the main area, if any. */
-  githubActive: GithubKind | null
+  /** The project's page is in the focused pane. */
+  selected: boolean
+  onOpenProject: (project: Project) => void
   onGithub: (project: Project, kind: GithubKind, focus?: number) => void
   collapsed: boolean
   /** Folds or unfolds the project by its path. */
@@ -912,41 +887,53 @@ const ProjectSection = memo(function ProjectSection({
         </div>
       )
     })
-  const running = project.worktrees.reduce((count, worktree) => count + worktree.sessions.filter(live).length, 0)
+  const activity = projectActivity(project, chats)
+  const name = displayName(project)
   return (
     <section data-entry-key={project.path} className={`relative ${dragging ? 'opacity-50' : ''}`}>
       {edge !== null && <DropLine edge={edge} />}
-      <div onContextMenu={(event) => onMenu(event, actions.project(project))} onPointerDown={(event) => drag.start(event, project.path)} className="group flex items-center gap-0.5 rounded-[12px] pr-1.5 transition-colors select-none hover:bg-row-hover">
+      <div
+        onContextMenu={(event) => onMenu(event, actions.project(project))}
+        onPointerDown={(event) => drag.start(event, project.path)}
+        className={`group flex items-center gap-0.5 rounded-[12px] pr-1.5 transition-colors select-none ${selected ? 'bg-row-selected' : 'hover:bg-row-hover'}`}
+      >
+        {/* One button, two zones (project-row-model): the picture, a chevron on hover, folds; the rest opens the page. */}
         <button
           type="button"
           data-entry-toggle={project.path}
-          onClick={() => onToggle(project.path)}
-          onKeyDown={(event) => drag.key(event, project.path)}
+          onClick={(event) => {
+            const action = projectRowClick(event.clientX - event.currentTarget.getBoundingClientRect().left, event.detail === 0)
+            if (action === 'collapse') onToggle(project.path)
+            else onOpenProject(project)
+          }}
+          onKeyDown={(event) => {
+            const action = projectRowKey(event.key, collapsed, event)
+            if (action === null) return drag.key(event, project.path)
+            event.preventDefault()
+            if (action === 'open') onOpenProject(project)
+            else onToggle(project.path)
+          }}
           aria-expanded={!collapsed}
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-          title={`${displayName(project)}\n${project.path}\nDrag or press ⌥↑ ⌥↓ to reorder`}
+          aria-current={selected ? 'page' : undefined}
+          aria-keyshortcuts="Enter ArrowLeft ArrowRight Alt+ArrowUp Alt+ArrowDown"
+          title={`${name}\n${project.path}\nClick to open its page; click the picture or press ← → to fold\nDrag or press ⌥↑ ⌥↓ to reorder`}
           className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left"
         >
-          <ProjectPicture project={project} />
-          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{displayName(project)}</h2>
-          {collapsed && running > 0 && (
-            <span title={`${running} running`} className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-ink-400 tabular-nums">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-ok" />
-              {running}
+          <span className="group/fold relative -ml-2.5 flex h-9 shrink-0 items-center pl-2.5">
+            <span className="transition-opacity duration-[120ms] group-hover/fold:opacity-0">
+              <ProjectPicture project={project} />
             </span>
+            <span aria-hidden="true" className="absolute inset-y-0 right-0 grid w-6 place-items-center text-ink-300 opacity-0 transition-opacity duration-[120ms] group-hover/fold:opacity-100">
+              <Chevron open={!collapsed} />
+            </span>
+          </span>
+          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{name}</h2>
+          {activity !== null && (
+            <span title={activity === 'working' ? 'A chat is working' : 'A chat is waiting for you'} className={`size-1.5 shrink-0 rounded-full ${activity === 'working' ? 'bg-ok shadow-[0_0_8px_#34d399] animate-pulse' : 'bg-warn'}`} />
           )}
         </button>
         <RowActions gap="0.5">
-          <NewChatButton label={`New worktree in ${displayName(project)}`} onClick={() => onNewWorktree(project)} />
-        </RowActions>
-        {githubRepository(project.remote) !== null && (
-          <>
-            <GithubButton kind="prs" label={`${displayName(project)} pull requests`} count={githubCounts?.prs ?? null} active={githubActive === 'prs'} last={false} onClick={() => onGithub(project, 'prs')} />
-            <GithubButton kind="issues" label={`${displayName(project)} issues`} count={githubCounts?.issues ?? null} active={githubActive === 'issues'} last onClick={() => onGithub(project, 'issues')} />
-          </>
-        )}
-        <RowActions gap="0.5">
-          <MoreButton label={`Manage ${displayName(project)}`} onClick={(event) => onMenu(event, actions.project(project))} />
+          <MoreButton label={`Manage ${name}`} onClick={(event) => onMenu(event, actions.project(project))} />
         </RowActions>
       </div>
       <Collapse open={!collapsed}>
@@ -1221,8 +1208,9 @@ export const Sidebar = memo(function Sidebar({
   layoutError,
   filters,
   onFilters,
-  activeGithub,
   onGithub,
+  onOpenProject,
+  selectedProject,
   chats,
   selectedChatId,
   onSelectChat,
@@ -1284,10 +1272,12 @@ export const Sidebar = memo(function Sidebar({
   layoutReady: boolean
   filters: SidebarFilters
   onFilters: (filters: SidebarFilters) => void
-  /** The GitHub page showing in the main area, if any. */
-  activeGithub: { path: string; kind: GithubKind } | null
   /** Opens a project's pull request or issue page. */
   onGithub: (project: Project, kind: GithubKind, focus?: number) => void
+  /** Opens a project's own page, its overview and actions, in the focused pane. */
+  onOpenProject: (project: Project) => void
+  /** The path of the project whose page is in the focused pane, if any. */
+  selectedProject: string | null
 }) {
   // What is folded and each worktree's row order, kept across restarts (useSidebarState); the list
   // waits for them so it never draws unfolded and then jumps.
@@ -1324,7 +1314,6 @@ export const Sidebar = memo(function Sidebar({
   const closeMenu = useCallback(() => setMenu(null), [])
   const now = useNow(30_000)
   const visible = useMemo(() => filterProjects(partition.visible, filters), [partition, filters])
-  const githubCounts = useGithubCounts(partition.visible)
   const filtered = hasFilters(filters)
   const [searchOpen, setSearchOpen] = useState(filters.query !== '')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -1662,8 +1651,15 @@ export const Sidebar = memo(function Sidebar({
   const actions = useMemo<RowActions>(() => ({
     code: onCode,
     project: (project) => [
+      { label: 'Open project page', icon: 'folder', group: 'open', onSelect: () => onOpenProject(project) },
+      { label: 'New chat', icon: 'chat', group: 'open', onSelect: () => onNewChat(project.path) },
       { label: 'Open in Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project)) },
-      ...(githubRepository(project.remote) === null ? [] : [{ label: 'Show on GitHub', icon: 'external', group: 'open', onSelect: () => onGithub(project, 'prs') } satisfies MenuItem]),
+      ...(githubRepository(project.remote) === null
+        ? []
+        : [
+            { label: 'Pull requests', icon: 'pullRequest', group: 'open', onSelect: () => onGithub(project, 'prs') } satisfies MenuItem,
+            { label: 'Issues', icon: 'external', group: 'open', onSelect: () => onGithub(project, 'issues') } satisfies MenuItem,
+          ]),
       { label: 'Reveal in Finder', icon: 'reveal', group: 'open', onSelect: () => reveal(project.path) },
       { label: 'New worktree…', icon: 'branch', group: 'git', onSelect: () => openNewWorktree(project) },
       { label: 'Copy path', icon: 'copy', group: 'copy', onSelect: () => copyText(project.path) },
@@ -1721,7 +1717,7 @@ export const Sidebar = memo(function Sidebar({
     },
     chat: (chat) => chatMenu(chat, rowMenuActions),
     session: (session) => sessionMenu(session, rowMenuActions, isHidden(hiddenSessions, session)),
-  }), [onCode, onGithub, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem, confirmArchive, rowMenuActions, hiddenSessions, toggleShowingHidden, showingHidden])
+  }), [onCode, onGithub, onOpenProject, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem, confirmArchive, rowMenuActions, hiddenSessions, toggleShowingHidden, showingHidden])
 
   const terminalRows = useMemo<TerminalRows>(() => ({
     selectedId: selectedTerminalId,
@@ -1779,8 +1775,8 @@ export const Sidebar = memo(function Sidebar({
       drag={drag}
       dragging={dragState?.key === project.path}
       edge={edgeOf(project.path)}
-      githubCounts={githubCounts[project.path]}
-      githubActive={activeGithub?.path === project.path ? activeGithub.kind : null}
+      selected={selectedProject === project.path}
+      onOpenProject={onOpenProject}
       onGithub={onGithub}
       chats={chats}
       selectedChatId={selectedChatId}
@@ -1792,7 +1788,6 @@ export const Sidebar = memo(function Sidebar({
       itemRows={itemRows}
       creations={creationsByProject[project.path] ?? noCreations}
       creationRows={creationRows}
-      onNewWorktree={openNewWorktree}
       listed={listedByPath.get(project.path) ?? project}
       stacks={stackRows}
     />

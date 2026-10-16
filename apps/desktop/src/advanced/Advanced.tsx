@@ -12,6 +12,9 @@ import { applyOrder } from '@/advanced/project-order'
 import { flattenLayout, reconcileLayout } from '@/advanced/sidebar-folders'
 import { useSidebarLayout } from '@/advanced/useSidebarLayout'
 import { CollapsedChrome, SidebarHeader, windowRowInset } from '@/advanced/chrome'
+import { displayName } from '@/advanced/appearance-model'
+import type { WorktreeOpen } from '@/advanced/project-page-model'
+import type { ProjectPageActions } from '@/advanced/ProjectPage'
 import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
@@ -73,6 +76,7 @@ import { alreadyOpen } from '@/launcher/resume-model'
 const CodeLayer = lazy(() => import('@/code/CodeLayer').then((module) => ({ default: module.CodeLayer })))
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
+const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
 function Loading() {
@@ -532,6 +536,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return keyOf(chatsInWorktrees, (chat) => chat.id === parsed.id)
       case 'terminal':
         return keyOf(terminalsInWorktrees, (terminal) => terminal.id === parsed.id)
+      // A project's page spans its worktrees, so its group sits with no one worktree.
+      case 'project':
+        return null
       default: {
         const root = rootOf(item)
         return root === null || root === '' ? null : root
@@ -570,6 +577,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       }
       case 'code':
         return { title: codeTargetForRoot(projects, parsed.id).title, mark: { kind: 'code' }, state: 'idle', worktree }
+      case 'project': {
+        const project = projects.find((entry) => entry.path === parsed.id)
+        return { title: project === undefined ? 'Project' : displayName(project), mark: { kind: 'project' }, state: 'idle', worktree }
+      }
     }
   }
   // A split never runs out of room: its columns scroll (panes/strip), so no layout is refused for size.
@@ -691,6 +702,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const openGithub = useStableCallback((project: Project, kind: GithubKind, focus?: number) => {
     setGithubPage({ path: project.path, kind, focus: focus ?? null })
   })
+  const openProject = useStableCallback((project: Project) => showItem(itemKey('project', project.path)))
+  /** A worktree or chat picked on a project's page: its chat, or the worktree's launcher. */
+  const openFromPage = (open: WorktreeOpen, path: string) => {
+    if (open.kind === 'launcher') openNewChat(path)
+    else if (open.kind === 'native') selectNativeChat(open.chat)
+    else openSession(open.session, path)
+  }
   // A pull request or issue maximised from its page takes the focused pane, like any other item.
   const maximiseGithub = (root: string, kind: 'pr' | 'issue', number: number) => showItem(itemKey('github', githubItemId(kind, number, root)))
 
@@ -719,6 +737,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'github':
         return parseGithubItemId(parsed.id)?.root ?? null
       case 'code':
+        return parsed.id
+      // The page runs the project's commands in its main checkout.
+      case 'project':
         return parsed.id
     }
   }
@@ -775,6 +796,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return parseGithubItemId(parsed.id) !== null
       case 'code':
         return true
+      case 'project':
+        return projects.some((project) => project.path === parsed.id)
     }
   }
 
@@ -862,6 +885,19 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'code': {
         const target = codeTargetForRoot(projects, parsed.id)
         return { title: target.title, node: <CodePane target={target} /> }
+      }
+      case 'project': {
+        const project = projects.find((entry) => entry.path === parsed.id)
+        if (project === undefined) return gone('Project')
+        const actions: ProjectPageActions = {
+          newChat: openNewChat,
+          createWorktree,
+          creating: creations.filter((creation) => creation.repo === project.path && creation.status !== 'failed').map((creation) => creation.branch),
+          code: showCode,
+          github: openGithub,
+          open: openFromPage,
+        }
+        return { title: displayName(project), node: <ProjectPage key={project.path} project={project} chats={chatsInWorktrees} actions={actions} /> }
       }
     }
   }
@@ -1099,8 +1135,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             layoutError={layoutError}
             filters={filters}
             onFilters={changeFilters}
-            activeGithub={githubPage}
             onGithub={openGithub}
+            onOpenProject={openProject}
+            selectedProject={focusedParsed?.kind === 'project' ? focusedParsed.id : null}
             chats={chatsInWorktrees}
             selectedChatId={nativeChatId}
             onSelectChat={selectNativeChat}

@@ -51,6 +51,10 @@ describe('item keys', () => {
     expect(parseItem(itemKey('code', '/wt/seek'))).toEqual({ kind: 'code', id: '/wt/seek' })
   })
 
+  test("a project's page is an item keyed by the project's path", () => {
+    expect(parseItem(itemKey('project', '/work/canto'))).toEqual({ kind: 'project', id: '/work/canto' })
+  })
+
   test('an unknown kind or a key without an id is not an item', () => {
     expect(parseItem('window:1')).toBeNull()
     expect(parseItem('terminal:')).toBeNull()

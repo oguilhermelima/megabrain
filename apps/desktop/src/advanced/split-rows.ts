@@ -7,7 +7,7 @@ import type { Layout } from '@/panes/split-groups'
 
 export type MemberState = 'waiting' | 'working' | 'idle' | 'ended'
 
-export type MemberMark = { kind: 'agent'; agent: string } | { kind: 'terminal' } | { kind: 'launcher' } | { kind: 'code' } | { kind: 'github' }
+export type MemberMark = { kind: 'agent'; agent: string } | { kind: 'terminal' } | { kind: 'launcher' } | { kind: 'code' } | { kind: 'github' } | { kind: 'project' }
 
 /** What the sidebar knows about an item a pane shows. */
 export interface MemberInfo {
