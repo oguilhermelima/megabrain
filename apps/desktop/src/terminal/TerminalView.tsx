@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
@@ -38,6 +39,8 @@ interface Sinks {
 interface Screen extends KeptTerminal {
   terminal: Terminal
   fit: FitAddon
+  /** The GPU renderer while a view shows the screen; null means xterm's DOM renderer draws. */
+  gpu: WebglAddon | null
   /** The element xterm draws into, moved into whichever view shows it. */
   mount: HTMLDivElement
   sinks: Sinks | null
@@ -49,10 +52,20 @@ function createScreen(): Screen {
   const mount = document.createElement('div')
   mount.style.width = '100%'
   mount.style.height = '100%'
-  const terminal = new Terminal({ theme: appTheme(), fontFamily: token('--font-mono', 'Menlo, monospace'), fontSize: 12.5, lineHeight: 1.2, cursorBlink: true, allowProposedApi: false })
+  // Line height 1 and no letter spacing keep cells flush, so block and box glyphs meet their neighbours.
+  const terminal = new Terminal({
+    theme: appTheme(),
+    fontFamily: token('--font-mono', "'SF Mono', Menlo, monospace"),
+    fontSize: 12.5,
+    lineHeight: 1,
+    letterSpacing: 0,
+    customGlyphs: true,
+    cursorBlink: true,
+    allowProposedApi: false,
+  })
   const fit = new FitAddon()
   terminal.loadAddon(fit)
-  const screen: Screen = { terminal, fit, mount, session: null, unlisten: undefined, sinks: null, disposed: false, dispose: () => {} }
+  const screen: Screen = { terminal, fit, gpu: null, mount, session: null, unlisten: undefined, sinks: null, disposed: false, dispose: () => {} }
   const input = terminal.onData((data) => {
     if (screen.session !== null) void api.writeTerminal(screen.session.id, data).catch((error: unknown) => screen.sinks?.error(error))
   })
@@ -67,6 +80,30 @@ function createScreen(): Screen {
     terminal.dispose()
   }
   return screen
+}
+
+/**
+ * Draws the screen on the GPU. The DOM renderer draws block elements, box drawing and powerline glyphs
+ * from the font, which leaves seams between cells (pixel art falls apart, rules come out dashed); the
+ * WebGL renderer draws them itself to fill their cells. A browser keeps only about 16 WebGL contexts,
+ * so only a shown screen holds one: a kept screen gives it back when its view leaves. Without WebGL, or
+ * once the context is lost, xterm's DOM renderer draws instead.
+ */
+function attachGpu(screen: Screen) {
+  if (screen.gpu !== null) return
+  try {
+    const gpu = new WebglAddon()
+    gpu.onContextLoss(() => detachGpu(screen))
+    screen.terminal.loadAddon(gpu)
+    screen.gpu = gpu
+  } catch {
+    // No WebGL here: the DOM renderer keeps drawing.
+  }
+}
+
+function detachGpu(screen: Screen) {
+  screen.gpu?.dispose()
+  screen.gpu = null
 }
 
 /** Shows a session on the screen: its bytes go to xterm and to the view that shows it, if any. */
@@ -145,6 +182,7 @@ export function TerminalView({
     element.appendChild(screen.mount)
     const { terminal, fit } = screen
     if (terminal.element === undefined) terminal.open(screen.mount)
+    attachGpu(screen)
     // A hidden view (a terminal no pane shows) measures zero; fitting then would shrink the terminal to
     // nothing. While a side panel slides the size changes every frame, so it fits once when it stops.
     const refit = () => {
@@ -209,7 +247,10 @@ export function TerminalView({
       stopSettled()
       screen.sinks = null
       if (keep === undefined) screen.dispose()
-      else screen.mount.remove()
+      else {
+        detachGpu(screen)
+        screen.mount.remove()
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attempt, keep])
