@@ -234,6 +234,123 @@ html.native body {
   }
 }
 
+/* The living orb (components/LivingOrb.tsx): megabrain's orb thinking. A slowly turning conic base,
+   four soft blobs of the brand colours that drift on desynchronised 8 to 14 s loops, a still sheen for
+   depth, and a glow that breathes. Only transform and opacity move, so the compositor does the work. */
+.living-orb {
+  position: relative;
+  flex-shrink: 0;
+}
+.living-orb-glow {
+  position: absolute;
+  inset: -38%;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgb(142 156 255 / 0.42), rgb(192 132 252 / 0.2) 55%, transparent);
+  animation: living-orb-breathe 8s ease-in-out infinite;
+}
+.living-orb-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 9999px;
+  isolation: isolate;
+  background: #11121f;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06) inset;
+}
+.living-orb-base {
+  position: absolute;
+  inset: -20%;
+  background: conic-gradient(from 0deg, #8e9cff, #c084fc, #34d399, #8e9cff);
+  opacity: 0.38;
+  animation: orb-spin 14s linear infinite;
+}
+.living-orb-blob {
+  position: absolute;
+  inset: -30%;
+  mix-blend-mode: screen;
+  will-change: transform;
+}
+.living-orb-blob-1 {
+  background: radial-gradient(circle at 34% 36%, #8e9cff 0, rgb(142 156 255 / 0.55) 16%, transparent 38%);
+  animation: living-orb-drift-1 11s ease-in-out infinite alternate;
+}
+.living-orb-blob-2 {
+  background: radial-gradient(circle at 66% 40%, #c084fc 0, rgb(192 132 252 / 0.5) 15%, transparent 36%);
+  animation: living-orb-drift-2 13s ease-in-out -4s infinite alternate;
+}
+.living-orb-blob-3 {
+  background: radial-gradient(circle at 48% 68%, #34d399 0, rgb(52 211 153 / 0.45) 14%, transparent 34%);
+  animation: living-orb-drift-3 9s ease-in-out -2s infinite alternate;
+}
+.living-orb-blob-4 {
+  background: radial-gradient(ellipse 30% 22% at 50% 50%, rgb(245 245 247 / 0.5), transparent);
+  opacity: 0.6;
+  animation: living-orb-drift-4 14s ease-in-out -7s infinite alternate;
+}
+/* Light from the upper left and shade at the lower right, so the circle reads as a sphere. */
+.living-orb-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 30% 24%, rgb(255 255 255 / 0.28), transparent 32%),
+    radial-gradient(circle at 70% 82%, rgb(0 0 0 / 0.35), transparent 55%);
+}
+@keyframes living-orb-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+@keyframes living-orb-drift-1 {
+  from {
+    transform: translate(-6%, -4%) rotate(0deg) scale(1);
+  }
+  to {
+    transform: translate(10%, 12%) rotate(80deg) scale(1.25, 0.9);
+  }
+}
+@keyframes living-orb-drift-2 {
+  from {
+    transform: translate(8%, -6%) rotate(0deg) scale(0.95, 1.15);
+  }
+  to {
+    transform: translate(-12%, 10%) rotate(-110deg) scale(1.2);
+  }
+}
+@keyframes living-orb-drift-3 {
+  from {
+    transform: translate(-8%, 8%) rotate(20deg) scale(1.1, 0.9);
+  }
+  to {
+    transform: translate(12%, -14%) rotate(-60deg) scale(0.9, 1.25);
+  }
+}
+@keyframes living-orb-drift-4 {
+  from {
+    transform: translate(-18%, -16%) rotate(-30deg) scale(0.8);
+  }
+  to {
+    transform: translate(14%, 16%) rotate(50deg) scale(1.3, 0.85);
+  }
+}
+.living-orb[data-paused] * {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .living-orb * {
+    animation: none;
+  }
+  .living-orb-glow {
+    opacity: 0.75;
+  }
+}
+
 /* An agent's mark while its chat works or waits (components/agent-icons.tsx). */
 .agent-mark-spin {
   animation: orb-spin 2.8s linear infinite;
