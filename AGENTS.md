@@ -37,12 +37,23 @@
 - Run megabrain port free [--from <port>] [--json]. — recommended when you need the next port nothing listens on.
 - Run megabrain port kill <port> [--json]. — recommended when you need to stop your own process tree that holds a port.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
-- Run megabrain github prs|issues|pr|issue|pr-files|review|comment|issue-state|pr-state .... — recommended when you need to read, review or manage a repository's GitHub pull requests and issues.
+- Run megabrain github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable .... — recommended when you need to read, review or manage a repository's GitHub pull requests and issues.
 - Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's pull requests a page at a time, with labels and every state's total.
 - Run megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's issues with labels, assignees, and milestones.
 - Run megabrain github pr <repo name|path> <number> [--json]. — recommended when you need one pull request's description, comments, checks, review decision and line counts.
 - Run megabrain github issue <repo name|path> <number> [--json]. — recommended when you need one issue's description and comments.
-- Run megabrain github pr-files <repo name|path> <number> [--json]. — recommended when you need a pull request's changed files with their patches.
+- Run megabrain github pr-files <repo name|path> <number> [--page <k>] [--per-page <m>] [--no-patch] [--json]. — recommended when you need a page of a pull request's changed files (100 by default), with or without their patches.
+- Run megabrain github pr-file <repo name|path> <number> <path> [--json]. — recommended when you need one changed file of a pull request with its patch.
+- Run megabrain github threads <repo name|path> <number> [--json]. — recommended when you need a pull request's review threads with their comments and whether each is resolved.
+- Run megabrain github thread-reply <repo name|path> <number> <thread id> --body <text> [--json]. — recommended when you need to reply to a review thread.
+- Run megabrain github thread-resolve <repo name|path> <number> <thread id> [--unresolve] [--json]. — recommended when you need to resolve a review thread, or reopen it with --unresolve.
+- Run megabrain github reviewers <repo name|path> <number> [--json]. — recommended when you need a pull request's requested and past reviewers, review decision, merge state and required checks.
+- Run megabrain github request-review <repo name|path> <number> --user <login>[,<login>...] [--remove] [--json]. — recommended when you need to request a review from people, or withdraw the request with --remove.
+- Run megabrain github pr-ready <repo name|path> <number> [--draft] [--json]. — recommended when you need to mark a pull request ready for review, or turn it back into a draft with --draft.
+- Run megabrain github auto-merge <repo name|path> <number> --method merge|squash|rebase [--disable] [--json]. — recommended when you need to turn auto-merge on for a pull request, or off with --disable.
+- Run megabrain github rerun-checks <repo name|path> <number> [--failed] [--json]. — recommended when you need to rerun a pull request's finished workflow runs, or only the failed jobs with --failed.
+- Run megabrain github file-viewed <repo name|path> <number> <path> [--unviewed] [--json]. — recommended when you need to mark a changed file viewed in a pull request, or clear the mark with --unviewed.
+- Run megabrain github assignable <repo name|path> [--query <text>] [--json]. — recommended when you need the people and organization teams a repository can assign or ask for review, optionally filtered by text.
 - Run megabrain github review <repo name|path> <number> --event approve|request-changes|comment --body <text> [--comments <json>] [--json]. — recommended when you need to submit a pull request review, optionally with inline comments.
 - Run megabrain github comment <repo name|path> <number> --body <text> [--json]. — recommended when you need to comment on a pull request or issue conversation.
 - Run megabrain github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]. — recommended when you need to close or reopen an issue.

@@ -81,7 +81,18 @@ megabrain github prs api --state open --json
 megabrain github issues ~/code/api --state all --limit 100 --json
 megabrain github pr api 42 --json
 megabrain github issue api 7 --json
-megabrain github pr-files api 42 --json
+megabrain github pr-files api 42 --page 2 --per-page 50 --no-patch --json
+megabrain github pr-file api 42 src/a.ts --json
+megabrain github threads api 42 --json
+megabrain github thread-reply api 42 PRRT_kwDOabc --body "fixed" --json
+megabrain github thread-resolve api 42 PRRT_kwDOabc --json
+megabrain github reviewers api 42 --json
+megabrain github request-review api 42 --user alice,bob --json
+megabrain github pr-ready api 42 --json
+megabrain github auto-merge api 42 --method squash --json
+megabrain github rerun-checks api 42 --failed --json
+megabrain github file-viewed api 42 src/a.ts --json
+megabrain github assignable api --query ali --json
 megabrain github review api 42 --event request-changes --body "see inline" --comments '[{"path":"src/a.ts","line":3,"side":"RIGHT","body":"why?"}]' --json
 megabrain github comment api 42 --body "thanks" --json
 megabrain github issue-state api 7 closed --reason "not planned" --json
