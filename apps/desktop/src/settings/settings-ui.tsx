@@ -60,6 +60,11 @@ const iconPaths: Record<SectionIcon, ReactNode> = {
       <circle cx="11" cy="11.5" r="1.5" />
     </>
   ),
+  folder: (
+    <>
+      <path d="M1.5 4.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 1.8H13a1.5 1.5 0 0 1 1.5 1.5v5.7a1.5 1.5 0 0 1-1.5 1.5H3a1.5 1.5 0 0 1-1.5-1.5Z" />
+    </>
+  ),
   terminal: (
     <>
       <rect x="1.5" y="2.5" width="13" height="11" rx="2" />

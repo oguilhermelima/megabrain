@@ -26,6 +26,7 @@ export function createMockApi(): DesktopApi {
   let shortcuts: unknown = { version: 1, bindings: {} }
   let usageOrder: unknown = { version: 1, order: [], hidden: [] }
   let chatSummaries: unknown = null
+  let worktreeLocation: unknown = null
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
   const githubStates = new Map<string, string>()
@@ -402,6 +403,8 @@ export function createMockApi(): DesktopApi {
     sidebarState: async () => sidebarState,
     setSidebarState: async (json) => void (sidebarState = JSON.parse(json) as unknown),
     usageOrder: async () => usageOrder,
+    worktreeLocation: async () => worktreeLocation,
+    setWorktreeLocation: async (json) => void (worktreeLocation = JSON.parse(json) as unknown),
     chatSummaries: async () => chatSummaries,
     setChatSummaries: async (json) => void (chatSummaries = JSON.parse(json) as unknown),
     setUsageOrder: async (json) => void (usageOrder = JSON.parse(json) as unknown),

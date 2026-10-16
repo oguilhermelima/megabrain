@@ -265,6 +265,9 @@ export interface DesktopApi {
   /** Who summarizes native chats and how often (`settings get chat-summaries`); settings/summaries-model.ts reads the shape. */
   chatSummaries(): Promise<unknown>
   setChatSummaries(json: string): Promise<void>
+  /** Where new worktrees are created (`settings get worktree-location`); settings/worktrees-model.ts reads the shape. */
+  worktreeLocation(): Promise<unknown>
+  setWorktreeLocation(json: string): Promise<void>
   /** The shortcut keys the person changed (`settings get shortcuts`); lib/shortcuts.ts reads the shape. */
   shortcuts(): Promise<unknown>
   setShortcuts(json: string): Promise<void>

@@ -304,6 +304,13 @@ session log stays, so it can still be resumed),
 and `chat mode <id> terminal --json` to hand an idle chat to the app's terminal. The app gets the
 agent's resume arguments from `chat terminal-command <id> --json`.
 
+Where new worktrees go is `settings get|set worktree-location <json>`: `mode` is `megabrain`
+(`~/.megabrain/worktrees/<repo>/<branch>`), `repo` (`<repo>/.worktrees/<branch>`, hidden through the
+repository's `.git/info/exclude`, never a tracked `.gitignore`) or `custom` (`customRoot`, flat or
+`layout: "nested"` by repo). `projects` maps a repository path to its own `{mode, customRoot, layout}`.
+The default is `custom` with the shared `worktree-root` file and a flat layout, so nothing moves;
+existing worktrees stay where they are and `worktree list` still reads them from Git.
+
 Chat summaries are off until `settings set chat-summaries '{"enabled":true,"agent":"agy","model":"<model>","effort":"low"}'`
 (`everyMessages` default 6, `everyMinutes` default 10, `retitle` default true). After a turn ends, once
 enough user turns or minutes have passed, the configured agent runs once, headless and with tools off in

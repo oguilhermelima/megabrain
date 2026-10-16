@@ -1,4 +1,5 @@
 import {
+  appendFile,
   chmod,
   copyFile,
   lstat,
@@ -31,6 +32,13 @@ import { resolveCaller } from "./queue-write.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { openDatabase, withWrite } from "../../db/db.js";
 import { insertWorktree, finishWorktree } from "../../db/queries/worktrees.js";
+import {
+  defaultWorktreeLocation,
+  parseWorktreeLocation,
+  placementFor,
+  worktreeParent,
+  type WorktreeLocation,
+} from "../../core/worktree-location.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -113,6 +121,33 @@ export async function root(
         );
   const resolved = resolve(raw);
   return ok(await realpath(resolved).catch(() => resolved));
+}
+function stateDirectory(environment: Environment): string {
+  return environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? "", ".megabrain");
+}
+async function readWorktreeLocation(environment: Environment): Promise<WorktreeLocation> {
+  try {
+    const parsed = parseWorktreeLocation(await readFile(join(stateDirectory(environment), "worktree-location.json"), "utf8"));
+    return parsed.kind === "ok" ? parsed.value : defaultWorktreeLocation;
+  } catch {
+    return defaultWorktreeLocation;
+  }
+}
+// Repo mode hides its folder through the repository's own info/exclude, never a tracked .gitignore.
+async function excludeWorktreesFolder(process: ProcessAdapter, repo: string): Promise<Result<null>> {
+  const common = await run(process, "git", ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (common.kind !== "ok") return failed("could not locate the repository's git directory");
+  const file = join(common.value.stdout.trim(), "info", "exclude");
+  const entry = ".worktrees/";
+  try {
+    const current = await readFile(file, "utf8").catch(() => "");
+    if (current.split("\n").includes(entry)) return ok(null);
+    await mkdir(dirname(file), { recursive: true });
+    await appendFile(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}${entry}\n`);
+  } catch {
+    return failed(`could not add ${entry} to ${file}`);
+  }
+  return ok(null);
 }
 export async function repositoryRoot(
   process: ProcessAdapter,
@@ -835,10 +870,12 @@ export async function executeWorktreeCreate(
   const options = parseCreateOptions(args);
   if (options.kind !== "ok") return options;
   const value: CreateOptions = options.value;
-  const shared = await root(environment);
-  if (shared.kind !== "ok") return shared;
   const repo = await repoFromOrca(process, value.repo as string, environment);
   if (repo.kind !== "ok") return repo;
+  const placement = placementFor(await readWorktreeLocation(environment), repo.value);
+  // Only the default placement needs the shared root file; the other modes must work without it.
+  const shared = await root(environment, placement.mode !== "custom" || placement.customRoot !== null);
+  if (shared.kind !== "ok") return shared;
   const branch = value.branch as string;
   // Validated before anything is created: an unresolvable --parent must refuse with nothing left
   // behind, not fail after `git worktree add` has already created the branch and worktree.
@@ -853,12 +890,22 @@ export async function executeWorktreeCreate(
   const base = resolvedBase.value.ref;
   const name = value.name ?? createName(branch);
   if (!name) return failed("branch cannot produce a safe slug");
-  const path = join(shared.value, name);
+  const folder = worktreeParent(placement, {
+    repoPath: repo.value,
+    repoName: basename(repo.value),
+    stateDir: stateDirectory(environment),
+    sharedRoot: shared.value,
+  });
+  const path = join(folder, name);
   // WHY: only a branch absent before this invocation may be removed on add failure.
   const branchBefore = await localBranchExists(process, repo.value, branch);
   if (branchBefore.kind !== "ok")
     return failed(`could not check whether branch exists: ${branch}`);
-  await mkdir(shared.value, { recursive: true });
+  if (placement.mode === "repo") {
+    const excluded = await excludeWorktreesFolder(process, repo.value);
+    if (excluded.kind !== "ok") return excluded;
+  }
+  await mkdir(folder, { recursive: true });
   const added = await run(process, "git", [
     "-C",
     repo.value,

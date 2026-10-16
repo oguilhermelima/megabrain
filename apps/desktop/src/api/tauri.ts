@@ -371,6 +371,8 @@ export function createTauriApi(): DesktopApi {
     sidebarState: () => cliJson(['settings', 'get', 'sidebar-state'], z.unknown()),
     setSidebarState: async (json) => void (await cliText(['settings', 'set', 'sidebar-state', json])),
     usageOrder: () => cliJson(['settings', 'get', 'usage-order'], z.unknown()),
+    worktreeLocation: () => cliJson(['settings', 'get', 'worktree-location'], z.unknown()),
+    setWorktreeLocation: async (json) => void (await cliText(['settings', 'set', 'worktree-location', json])),
     chatSummaries: () => cliJson(['settings', 'get', 'chat-summaries'], z.unknown()),
     setChatSummaries: async (json) => void (await cliText(['settings', 'set', 'chat-summaries', json])),
     setUsageOrder: async (json) => void (await cliText(['settings', 'set', 'usage-order', json])),

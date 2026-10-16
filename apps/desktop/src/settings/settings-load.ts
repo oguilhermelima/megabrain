@@ -11,6 +11,7 @@ export const sectionKeys: Record<Section, SettingsKey[]> = {
   supervisor: ['supervisor'],
   limits: ['resources'],
   terminal: ['terminalEngine', 'terminal'],
+  worktrees: [],
 }
 
 export interface LoadEntry {

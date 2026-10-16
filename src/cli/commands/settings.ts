@@ -12,6 +12,7 @@ import { staleChainSteps, suggestModel, type ChainConfig } from "../../core/chai
 import { modelRegistry, readConfig, readLimitRows, validateConfig } from "./chain.js";
 import { storedDefault } from "./terminal-open.js";
 import { supervisorWatcher } from "./supervise.js";
+import { defaultWorktreeLocation, parseWorktreeLocation } from "../../core/worktree-location.js";
 import { defaultSummarySettings, parseSummarySettings } from "../../chat/summaries.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -169,6 +170,7 @@ const desktopSettings = {
   "hidden-sessions": desktopFileOf("hidden-sessions.json", parseHiddenSessions, emptyHiddenSessions, (value) => `hidden sessions: ${Object.keys(value.sessions).length}`),
   "sidebar-state": desktopFileOf("sidebar-state.json", parseSidebarState, emptySidebarState, (value) => `sidebar state: ${value.collapsed.length} collapsed, ${Object.keys(value.rows).length} ordered worktrees`),
   "chat-summaries": desktopFileOf("chat-summaries.json", parseSummarySettings, defaultSummarySettings, (value) => `chat summaries: ${value.enabled ? `on, ${value.agent} ${value.model}` : "off"}`),
+  "worktree-location": desktopFileOf("worktree-location.json", parseWorktreeLocation, defaultWorktreeLocation, (value) => `worktree location: ${value.mode}${value.layout === "nested" ? " (by project)" : ""}, ${Object.keys(value.projects).length} project overrides`),
   "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
 } as const;
 
@@ -332,7 +334,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|worktree-location|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

@@ -10,7 +10,7 @@ import { ModelsSection } from '@/settings/ModelsSection'
 import { ProjectPage } from '@/settings/ProjectPage'
 import { createLoads, sectionKeys } from '@/settings/settings-load'
 import { groupReadingsByProvider } from '@/settings/settings-model'
-import { adjacentKey, initialKey, navGroups, navKeys, projectPathOf, sectionInfo, type NavKey, type Section } from '@/settings/settings-nav'
+import { adjacentKey, initialKey, navGroups, navKeys, projectKey, projectPathOf, sectionInfo, type NavKey, type Section } from '@/settings/settings-nav'
 import { ghostIcon, SectionPage, SettingsIcon } from '@/settings/settings-ui'
 import { ShortcutsSection } from '@/settings/ShortcutsSection'
 import { SummariesSection } from '@/settings/SummariesSection'
@@ -18,6 +18,7 @@ import { SupervisorSection } from '@/settings/SupervisorSection'
 import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
 import { UsageSection } from '@/settings/UsageCard'
+import { WorktreesSection } from '@/settings/WorktreesSection'
 
 /** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
 export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null }) {
@@ -221,6 +222,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                   onToggleHistory={(enabled) => void act(() => api.setResourceHistory(enabled))}
                 />
               )}
+              {section === 'worktrees' && <WorktreesSection projects={listed} onOpenProject={(path) => go(projectKey(path))} />}
               {section === 'shortcuts' && <ShortcutsSection />}
               {section === 'models' && <ModelsSection models={settings.models} error={error} onRefresh={async (agent) => void (await act(() => api.refreshModels(agent)))} />}
               {section === 'terminal' && (

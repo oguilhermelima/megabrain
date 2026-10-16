@@ -4,12 +4,12 @@
 import { compareByDisplayName, displayName } from '@/advanced/appearance-model'
 import type { ProjectAppearance } from '@/api/schema'
 
-export type Section = 'usage' | 'shortcuts' | 'models' | 'chains' | 'summaries' | 'supervisor' | 'limits' | 'terminal'
+export type Section = 'usage' | 'shortcuts' | 'models' | 'chains' | 'summaries' | 'supervisor' | 'limits' | 'terminal' | 'worktrees'
 
 /** A section, or one project's page by its repository path. */
 export type NavKey = Section | `project:${string}`
 
-export type SectionIcon = 'gauge' | 'keyboard' | 'cpu' | 'link' | 'note' | 'eye' | 'sliders' | 'terminal'
+export type SectionIcon = 'gauge' | 'keyboard' | 'cpu' | 'link' | 'note' | 'eye' | 'sliders' | 'terminal' | 'folder'
 
 export interface SectionInfo {
   key: Section
@@ -30,6 +30,7 @@ export const settingsSections: SectionInfo[] = [
   { key: 'supervisor', label: 'Supervisor', description: 'The watcher that reports stuck, finished or dead children, and setup.', icon: 'eye', group: 'Agents' },
   { key: 'limits', label: 'Limits', description: 'When a new agent may start, by machine load, and resource history.', icon: 'sliders', group: 'System' },
   { key: 'terminal', label: 'Terminal', description: 'The terminal engine inside the app and the one opened outside it.', icon: 'terminal', group: 'System' },
+  { key: 'worktrees', label: 'Worktrees', description: 'Where new worktrees are created, for every project or one at a time.', icon: 'folder', group: 'System' },
 ]
 
 /** What the navigation needs of a project. */
