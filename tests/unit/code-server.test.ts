@@ -74,12 +74,12 @@ describe("code server", () => {
     expect(selectCodeServerAsset("win32", "x64")).toBeUndefined();
   });
 
-  test("enforces every setting the web workbench checks before hiding its title bar", () => {
+  test("puts the activity bar on top and keeps the title bar it forces at its fixed height", () => {
     expect(CODE_ENFORCED_SETTINGS).toMatchObject({
       "window.commandCenter": false,
       "workbench.layoutControl.enabled": false,
       "window.menuBarVisibility": "hidden",
-      "workbench.activityBar.location": "default",
+      "workbench.activityBar.location": "top",
     });
   });
 
@@ -127,7 +127,7 @@ describe("code server", () => {
     const settingsPath = join(profile, "User", "settings.json");
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       "security.workspace.trust.enabled": false,
-      "workbench.activityBar.location": "default",
+      "workbench.activityBar.location": "top",
       "workbench.statusBar.visible": false,
       "workbench.colorTheme": "megabrain-dark",
       "workbench.preferredDarkColorTheme": "megabrain-dark",
@@ -149,7 +149,7 @@ describe("code server", () => {
     await manager.open(path);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       "workbench.colorTheme": "Default Light Modern",
-      "workbench.activityBar.location": "default",
+      "workbench.activityBar.location": "top",
       "security.workspace.trust.enabled": false,
     });
     expect(JSON.parse(readFileSync(join(profile, "extensions", "extensions.json"), "utf8"))).toContainEqual(expect.objectContaining({

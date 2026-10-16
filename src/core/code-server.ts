@@ -19,13 +19,16 @@ const CODE_SERVER_PORT_COUNT = 8000;
 export type CodeServerAsset = Readonly<{ name: string; url: string; sha256: string }>;
 export type CodeServerInfo = Readonly<{ root: string; url: string; port: number; pid: number; codeServerPid: number }>;
 
-// The web workbench always draws its own title bar and ignores window.customTitleBarVisibility
-// and window.titleBarStyle. It hides the bar only when nothing needs it: no command center,
-// no layout control, a hidden menu bar, and an activity bar in its default place (top or bottom
-// moves the account and manage buttons into the title bar and forces it visible).
+// The activity bar sits on top of the side bar, above the explorer. The web workbench then forces
+// its title bar visible (it moves the account and manage buttons there) and ignores
+// window.customTitleBarVisibility and window.titleBarStyle, so the desktop app's frame crops that
+// bar off instead (titleBarCrop in apps/desktop/src/code/CodeFrame.tsx); the workbench lays out at full height and nothing below
+// it moves. The bar holds only the window title and those two buttons: with no command center, no
+// layout control and a hidden menu bar, its height is fixed. Accounts and settings stay in the
+// command palette (and Settings on Cmd+, inside VS Code).
 export const CODE_ENFORCED_SETTINGS = {
   "security.workspace.trust.enabled": false,
-  "workbench.activityBar.location": "default",
+  "workbench.activityBar.location": "top",
   "workbench.statusBar.visible": false,
   "window.menuBarVisibility": "hidden",
   "window.commandCenter": false,

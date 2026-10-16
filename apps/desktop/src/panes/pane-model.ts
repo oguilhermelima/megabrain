@@ -32,8 +32,9 @@ export interface Panes {
   focused: string
 }
 
-export type ItemKind = 'dispatch' | 'session' | 'native' | 'terminal' | 'launcher' | 'github'
-const itemKinds: readonly string[] = ['dispatch', 'session', 'native', 'terminal', 'launcher', 'github']
+/** A code item is a worktree shown only in Code, keyed by its root. */
+export type ItemKind = 'dispatch' | 'session' | 'native' | 'terminal' | 'launcher' | 'github' | 'code'
+const itemKinds: readonly string[] = ['dispatch', 'session', 'native', 'terminal', 'launcher', 'github', 'code']
 
 /** An item key is its kind and its id; the id may hold colons (agent session ids do). */
 export function itemKey(kind: ItemKind, id: string): string {

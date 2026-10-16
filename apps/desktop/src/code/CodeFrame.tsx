@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/api'
 import { Button, ErrorNote, Spinner } from '@/components/ui'
-import { frameFadeMs, frameRevealDelay, type CodeTarget } from '@/code/code-mode-model'
+import { frameFadeMs, frameRevealDelay, type CodeTarget } from '@/code/code-pane-model'
 
-// One root's VS Code, edge to edge. The frame and everything behind it paint the app's dark
-// surface, and the frame fades in only after its workbench has had time to paint its theme
-// (see frameRevealDelay), so starting never flashes white. It stays
-// mounted, hidden, while the person is in chats or another root; the server is stopped only when
-// the root is closed (see closeCode), never when the frame goes out of sight.
-/** A file to show once VS Code is up; a new request object asks again for the same file. */
+// One root's VS Code, filling the box the code layer gives it. The frame and everything behind it
+// paint the app's dark surface, and the frame fades in only after its workbench has had time to
+// paint its theme (see frameRevealDelay), so starting never flashes white. It stays mounted,
+// hidden, while no pane shows it in Code; its server stops only after its grace (see
+// expiredServers), never when the frame goes out of sight.
 // The roots whose workbench has painted in this app session: a later open reveals sooner.
 const painted = new Set<string>()
 
+/** The workbench's title bar, in CSS pixels: with the activity bar on top code-server 4.138.0
+ * always draws it, 30px tall with no command center (see CODE_ENFORCED_SETTINGS). The frame is
+ * that much taller than its box and starts that much above it, so the bar is cropped off while the
+ * workbench still lays out at full height: nothing below it moves and no band is left empty.
+ * Measured headlessly against the real workbench; re-measure when the pinned version changes. */
+const titleBarCrop = 30
+
+/** A file to show once VS Code is up; a new request object asks again for the same file. */
 export interface CodeGoto {
   path: string
   line: number | null
@@ -65,14 +72,14 @@ export function CodeFrame({ target, visible, goto }: { target: CodeTarget; visib
   }, [root, goto, loaded])
 
   return (
-    <div hidden={!visible} className="absolute inset-0 bg-transparent">
+    <div hidden={!visible} className="absolute inset-0 overflow-hidden bg-transparent">
       {url !== null && (
         <iframe
           title={`VS Code for ${title}`}
           src={url}
           onLoad={() => setLoaded(true)}
-          style={{ transitionDuration: `${frameFadeMs}ms` }}
-          className={`size-full border-0 bg-transparent transition-opacity ${revealed ? 'opacity-100' : 'opacity-0'}`}
+          style={{ transitionDuration: `${frameFadeMs}ms`, top: -titleBarCrop, height: `calc(100% + ${titleBarCrop}px)` }}
+          className={`absolute inset-x-0 w-full border-0 bg-transparent transition-opacity ${revealed ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
       {error !== null ? (

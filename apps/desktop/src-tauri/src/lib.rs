@@ -1,6 +1,7 @@
 mod app_terminals;
 pub mod cli;
 pub mod code;
+mod code_servers;
 mod cli_stream;
 #[cfg(test)]
 mod cli_stream_tests;
@@ -66,10 +67,11 @@ fn save_image(path: String, base64: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn run_cli(cli: State<'_, Cli>, args: Vec<String>) -> Result<CliOutput, String> {
+async fn run_cli(app: tauri::AppHandle, cli: State<'_, Cli>, args: Vec<String>) -> Result<CliOutput, String> {
     let mut command = cli.command(&args);
     tauri::async_runtime::spawn_blocking(move || {
         let output = command.output().map_err(|error| format!("could not run megabrain: {error}"))?;
+        app.state::<code_servers::CodeServers>().note(&args, output.status.success());
         Ok(CliOutput {
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -307,6 +309,20 @@ async fn code_branch_diff(cli: State<'_, Cli>, root: String, merge_base: String,
     .await
 }
 
+/// Quitting stops every VS Code server the app started, all at once, and waits for them.
+fn stop_code_servers(app: &tauri::AppHandle) {
+    let cli = app.state::<Cli>();
+    let stops: Vec<_> = app
+        .state::<code_servers::CodeServers>()
+        .take()
+        .into_iter()
+        .filter_map(|root| cli.command(&["code".to_string(), "stop".to_string(), root]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok())
+        .collect();
+    for mut stop in stops {
+        let _ = stop.wait();
+    }
+}
+
 fn sidecar(current_exe: &Path) -> PathBuf {
     current_exe.parent().unwrap_or(Path::new(".")).join("megabrain-cli")
 }
@@ -331,6 +347,7 @@ pub fn run() {
             app.manage(Cli { executable, root, path });
             app.manage(cli_stream::CliStreams::default());
             app.manage(terminal::TerminalManager::default());
+            app.manage(code_servers::CodeServers::default());
             tray::create(app.handle())?;
             pill::setup(app.handle())?;
             Ok(())
@@ -396,6 +413,7 @@ pub fn run() {
         if matches!(&event, RunEvent::Exit) {
             handle.state::<cli_stream::CliStreams>().stop_all();
             handle.state::<terminal::TerminalManager>().close_all();
+            stop_code_servers(handle);
         }
         #[cfg(target_os = "macos")]
         if let RunEvent::Reopen { .. } = &event {

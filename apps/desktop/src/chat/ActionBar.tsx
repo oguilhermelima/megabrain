@@ -99,11 +99,11 @@ function ChatGlyph() {
 }
 
 /**
- * The PR or Diff view, laid over the pane below its top bar so the bar stays and the Agent view
- * under it keeps its draft, scroll and terminal. The pane's content box is the positioned
+ * The Code, PR or Diff view, laid over the pane below its top bar so the bar stays and the Agent
+ * view under it keeps its draft, scroll and terminal. The pane's content box is the positioned
  * ancestor; the top follows the header's height.
  */
-export function PaneViewBody({ view, facts, changes, header }: { view: 'pr' | 'diff'; facts: WorktreeFacts; changes: WorktreeChanges; header: RefObject<HTMLElement | null> }) {
+export function PaneViewBody({ view, facts, changes, code, header }: { view: Exclude<PaneView, 'agent'>; facts: WorktreeFacts; changes: WorktreeChanges; code: ReactNode; header: RefObject<HTMLElement | null> }) {
   const [top, setTop] = useState<number | null>(null)
   useLayoutEffect(() => {
     const element = header.current
@@ -117,7 +117,9 @@ export function PaneViewBody({ view, facts, changes, header }: { view: 'pr' | 'd
   return (
     <div style={{ top: top ?? 0 }} className={`absolute inset-x-0 bottom-0 z-30 flex min-h-0 flex-col bg-ink-950 ${top === null ? 'invisible' : ''}`}>
       <Suspense fallback={<PaneSkeleton />}>
-        {view === 'pr' && facts.pullRequest !== null ? (
+        {view === 'code' ? (
+          code
+        ) : view === 'pr' && facts.pullRequest !== null ? (
           <GithubItemView key={facts.pullRequest} root={facts.repo} kind="pr" number={facts.pullRequest} />
         ) : (
           <ChangesDiff root={facts.root} uncommitted={changes.uncommitted} branch={changes.branch} />

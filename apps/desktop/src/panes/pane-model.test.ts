@@ -47,6 +47,10 @@ describe('item keys', () => {
     expect(parseItem('session:claude:abc')).toEqual({ kind: 'session', id: 'claude:abc' })
   })
 
+  test('a worktree shown only in Code is an item keyed by its root', () => {
+    expect(parseItem(itemKey('code', '/wt/seek'))).toEqual({ kind: 'code', id: '/wt/seek' })
+  })
+
   test('an unknown kind or a key without an id is not an item', () => {
     expect(parseItem('window:1')).toBeNull()
     expect(parseItem('terminal:')).toBeNull()

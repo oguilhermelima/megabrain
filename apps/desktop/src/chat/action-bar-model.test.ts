@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Project } from '@/api/schema'
-import { changedFileCount, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
+import { changedFileCount, chooseView, initialView, paneViewKey, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
 
 const project: Project = {
   name: 'canto',
@@ -71,8 +71,33 @@ describe('shown view', () => {
     expect(shownView('pr', empty)).toBe('agent')
     expect(shownView('diff', empty)).toBe('agent')
   })
-  test('Code never shows inside the pane', () => {
-    expect(shownView('code', live)).toBe('agent')
+  test('Code shows in the pane like the other views', () => {
+    expect(shownView('code', live)).toBe('code')
+  })
+  test('Code where it cannot open falls back to Agent', () => {
+    expect(shownView('code', segments({ facts: facts(42), changed: 2, codeAvailable: false }))).toBe('agent')
+  })
+})
+
+describe('views per item', () => {
+  test('a chat, a session or a terminal opens on Agent', () => {
+    expect(initialView('native')).toBe('agent')
+    expect(initialView('session')).toBe('agent')
+    expect(initialView('terminal')).toBe('agent')
+  })
+  test('a code item opens on Code', () => {
+    expect(initialView('code')).toBe('code')
+  })
+  test('choosing a view on a chat switches its pane to that view', () => {
+    expect(chooseView('native', 'code')).toEqual({ kind: 'view', view: 'code' })
+    expect(chooseView('session', 'agent')).toEqual({ kind: 'view', view: 'agent' })
+  })
+  test('Agent on a code item opens the launcher for its worktree in that pane', () => {
+    expect(chooseView('code', 'agent')).toEqual({ kind: 'launcher' })
+  })
+  test('PR and Diff on a code item stay in the pane', () => {
+    expect(chooseView('code', 'pr')).toEqual({ kind: 'view', view: 'pr' })
+    expect(chooseView('code', 'diff')).toEqual({ kind: 'view', view: 'diff' })
   })
 })
 
@@ -87,5 +112,14 @@ describe('view keys', () => {
     expect(viewForKey(key('1', { shiftKey: true }))).toBeNull()
     expect(viewForKey(key('1', { altKey: true }))).toBeNull()
     expect(viewForKey(key('1', { ctrlKey: true }))).toBeNull()
+  })
+  test('the focused pane takes ⌘1 to ⌘4 while the keyboard is outside VS Code, Code view included', () => {
+    expect(['1', '2', '3', '4'].map((value) => paneViewKey(key(value), { focused: true, inEditor: false }))).toEqual(['agent', 'code', 'pr', 'diff'])
+  })
+  test('inside VS Code ⌘1 to ⌘4 stay with VS Code', () => {
+    expect(['1', '2', '3', '4'].map((value) => paneViewKey(key(value), { focused: true, inEditor: true }))).toEqual([null, null, null, null])
+  })
+  test('a pane without focus never takes them', () => {
+    expect(paneViewKey(key('2'), { focused: false, inEditor: false })).toBeNull()
   })
 })

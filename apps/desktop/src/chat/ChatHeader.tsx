@@ -1,7 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { ActionBar, PaneViewBody, useWorktreeChanges } from '@/chat/ActionBar'
-import { changedFileCount, segments, shownView, viewForKey, type PaneView } from '@/chat/action-bar-model'
-import { useOpenCode } from '@/chat/code-context'
+import { changedFileCount, paneViewKey, segments, shownView, type PaneView } from '@/chat/action-bar-model'
 import { usePaneView } from '@/chat/pane-view-context'
 import type { AgentActivity } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
@@ -9,30 +8,26 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
 
 /**
  * The top bar every chat view and the launcher share: the agent's mark, live while it works (none on the launcher), one-line title and one small metadata line,
- * then the Run button and the run panel's toggle once anything ran on the right. An item with a worktree (not the launcher) also gets the action bar in the
- * bar's true centre, Agent, Code, PR and Diff; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
+ * then the Run button and the run panel's toggle once anything ran on the right. An item with a worktree (a launcher once it has one) also gets the action bar in the
+ * bar's true centre, Agent, Code, PR and Diff, each shown in the pane under the bar; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
  * below the window top; when the sidebar is hidden the window's own drag strip above it clears the traffic lights.
  */
 export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, actions }: { agent: string | null; activity?: AgentActivity; title: string; meta: string; metaTitle?: string; actions?: ReactNode }) {
   const pane = usePaneView()
-  const openCode = useOpenCode()
   const changes = useWorktreeChanges(pane?.facts ?? null)
   const header = useRef<HTMLElement>(null)
-  const available = pane === null ? null : segments({ facts: pane.facts, changed: changes.read ? changedFileCount(changes.uncommitted, changes.branch) : null, codeAvailable: openCode !== null })
-  const select = (view: PaneView) => {
-    if (pane === null) return
-    if (view === 'code') openCode?.(pane.facts.root)
-    else pane.setView(view)
-  }
+  const available = pane === null ? null : segments({ facts: pane.facts, changed: changes.read ? changedFileCount(changes.uncommitted, changes.branch) : null, codeAvailable: true })
+  const select = (view: PaneView) => pane?.setView(view)
   const latest = useRef({ available, select })
   latest.current = { available, select }
 
   // ⌘1 to ⌘4 in the capture phase, so a terminal or an editor in the pane does not keep them; a disabled view ignores its key.
+  // Inside VS Code they never reach this window, and they are left alone should one arrive while it has the keyboard.
   const focused = pane?.focused === true
   useEffect(() => {
     if (!focused) return
     const onKey = (event: KeyboardEvent) => {
-      const view = viewForKey(event)
+      const view = paneViewKey(event, { focused: true, inEditor: document.activeElement instanceof HTMLIFrameElement })
       if (view === null) return
       event.preventDefault()
       event.stopPropagation()
@@ -78,7 +73,7 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
           <RunPanelToggle />
         </div>
       </header>
-      {shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} header={header} />}
+      {shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} header={header} />}
     </>
   )
 }

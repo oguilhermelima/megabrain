@@ -24,7 +24,7 @@ import { reuse } from '@/lib/reuse'
 const noLive: LiveRow[] = []
 
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
-/** Opens a file under a chat's worktree in Code mode, at a line when one was named. */
+/** Opens a file under a chat's worktree in Code, at a line when one was named. */
 export type OpenPath = (root: string, path: string, line: number | null) => void
 
 /** A row's right click offers its message: the markdown as sent, and the element it renders as. */

@@ -41,7 +41,7 @@ export function SettingsIcon() {
   )
 }
 
-/** Code mode's mark: an editor window with brackets in it. */
+/** The Code view's mark: an editor window with brackets in it. */
 export function CodeIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

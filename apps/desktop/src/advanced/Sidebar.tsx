@@ -13,7 +13,7 @@ import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, move
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
-import { applyRowOrder, moveRow, parseRowOrder, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
+import { applyRowOrder, moveRow, parseRowOrder, rowToOpen, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { ContextMenu, menuFrom, openMenuFromKeyboard, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
@@ -24,7 +24,7 @@ import { SidebarSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
 import { activityOf } from '@/components/agent-activity'
 import { AgentIcon, AgentTint } from '@/components/agent-icons'
-import { codeTargetFor, type CodeTarget } from '@/code/code-mode-model'
+import { codeTargetFor, type CodeTarget } from '@/code/code-pane-model'
 import { countBadge, githubRepository, stateColors, worktreePullRequestState } from '@/github/github-model'
 import { IssueIcon, PullRequestIcon } from '@/github/icons'
 import { useGithubCounts, type GithubCounts, type GithubKind } from '@/github/useGithubCounts'
@@ -156,7 +156,7 @@ function RowActions({ gap, children }: { gap: keyof typeof restingGap; children:
   return <span className={`flex shrink-0 items-center ${restingGap[gap]}`}>{children}</span>
 }
 
-/** Opens a worktree in Code mode; shown on hover like the … button beside it. */
+/** Opens a worktree in Code; shown on hover like the … button beside it. */
 function CodeButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -570,6 +570,17 @@ function WorktreeRow({
   const running = worktree.sessions.some(live)
   const shown = applyRowOrder(worktreeItems(chats, terminals, worktree.sessions), rowControls.order[worktree.path] ?? [])
   const keys = shown.map((item) => item.key)
+  const openItem = (item: KeyedItem) => {
+    if (item.kind === 'native') onSelectChat(item.chat)
+    else if (item.kind === 'terminal') terminalRows.select(item.terminal)
+    else onSelectSession(item.session)
+  }
+  // The branch opens its most recent row, or the launcher for a worktree with nothing in it yet.
+  const openWorktree = () => {
+    const item = rowToOpen(shown)
+    if (item === null) onNewChat(worktree.path)
+    else openItem(item)
+  }
   const renderItem = (item: KeyedItem, drag: RowDragger) => {
     if (item.kind === 'native') {
       const { chat } = item
@@ -629,9 +640,14 @@ function WorktreeRow({
         <span style={prColor === null ? undefined : { color: prColor }} className={`shrink-0 ${running ? 'text-ink-300' : 'text-ink-400'}`}>
           <BranchIcon />
         </span>
-        <span title={`${name}\n${worktree.path}`} className={`min-w-0 flex-1 truncate text-[13.5px] ${running ? 'font-medium text-ink-100' : 'text-ink-300'}`}>
+        <button
+          type="button"
+          onClick={openWorktree}
+          title={`${name}\n${worktree.path}`}
+          className={`min-w-0 flex-1 truncate text-left text-[13.5px] focus-visible:outline-2 focus-visible:outline-accent ${running ? 'font-medium text-ink-100' : 'text-ink-300'}`}
+        >
           {name}
-        </span>
+        </button>
         {worktree.primary && <span className="shrink-0 rounded-[6px] bg-white/[0.06] px-1.5 text-[10.5px] leading-4 font-medium text-ink-400">primary</span>}
         {worktree.pullRequest !== null && prState !== null && prColor !== null && (
           <PullRequestNumber pullRequest={worktree.pullRequest} color={prColor} title={pullRequestTitle(worktree.pullRequest, prState)} onOpen={onPullRequest} />
@@ -1167,7 +1183,7 @@ export const Sidebar = memo(function Sidebar({
   projects: Project[]
   selectedSessionId: string | null
   onSelectSession: (session: ProjectSession) => void
-  /** Opens a root in Code mode, the embedded VS Code. */
+  /** Shows a root in Code, the embedded VS Code, in a pane. */
   onCode: (target: CodeTarget) => void
   onImport: () => void
   /** The folders and top-level order, reconciled with the listed projects; drags, ⌥↑ ⌥↓ and the folder menus send the next one. */

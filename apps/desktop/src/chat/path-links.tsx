@@ -9,7 +9,7 @@ export interface PathLinks {
 
 export const PathLinksContext = createContext<PathLinks | null>(null)
 
-/** Text with every path under the chat's worktree turned into a link that opens it in Code mode. */
+/** Text with every path under the chat's worktree turned into a link that opens it in Code. */
 export function LinkedText({ text }: { text: string }) {
   const links = useContext(PathLinksContext)
   if (links === null) return <>{text}</>

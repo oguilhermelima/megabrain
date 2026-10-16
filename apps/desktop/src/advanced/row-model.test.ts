@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { NativeChat, ProjectSession } from '@/api/schema'
 import type { AppTerminal } from '@/terminal/terminal-list'
-import { applyRowOrder, moveRow, parseRowOrder, rowKey, saveRowOrder, worktreeItems, type RowOrder } from '@/advanced/row-model'
+import { applyRowOrder, moveRow, parseRowOrder, rowKey, rowToOpen, saveRowOrder, worktreeItems, type RowOrder } from '@/advanced/row-model'
 
 const session = (sessionId: string, extra: Partial<ProjectSession> = {}): ProjectSession => ({
   agent: 'claude',
@@ -144,5 +144,27 @@ describe('row order persistence', () => {
 
   test('keeps only the string ids of each worktree', () => {
     expect(parseRowOrder(JSON.stringify({ version: 1, worktrees: { '/a': ['x', 3, null, 'y'], '/b': 'nope' } }))).toEqual({ '/a': ['x', 'y'] })
+  })
+})
+
+describe('rowToOpen', () => {
+  test('a worktree with nothing in it opens nothing, so its launcher opens instead', () => {
+    expect(rowToOpen([])).toBeNull()
+  })
+
+  test('the most recently active row opens, whatever its kind', () => {
+    const older = { ...chat('c1', 'claude', null), lastActivityAt: '2026-10-15T09:00:00.000Z' }
+    const newer = session('claude:new', { lastActivityAt: '2026-10-15T12:00:00.000Z' })
+    expect(rowToOpen(worktreeItems([older], [], [newer]))?.key).toBe('session:claude:new')
+  })
+
+  test('a terminal counts by its session, and a row with no activity loses to one with some', () => {
+    const resumed = session('claude:r1', { lastActivityAt: '2026-10-15T13:00:00.000Z' })
+    const rows = worktreeItems([], [terminal('t1'), terminal('t2', { agent: 'claude', id: 'r1' })], [resumed])
+    expect(rowToOpen(rows)?.key).toBe('terminal:t2')
+  })
+
+  test('with no activity anywhere the top row opens', () => {
+    expect(rowToOpen(worktreeItems([], [terminal('t1'), terminal('t2')], []))?.key).toBe('terminal:t1')
   })
 })

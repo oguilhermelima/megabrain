@@ -12,14 +12,16 @@ import { flattenLayout, reconcileLayout } from '@/advanced/sidebar-folders'
 import { useSidebarLayout } from '@/advanced/useSidebarLayout'
 import { CollapsedChrome, SettingsIcon, SidebarHeader } from '@/advanced/chrome'
 import { ChatView } from '@/chat/ChatView'
-import { worktreeFacts, type PaneView } from '@/chat/action-bar-model'
-import { OpenCodeContext } from '@/chat/code-context'
+import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenChat, OpenPath } from '@/chat/Conversation'
 import { DispatchesContext } from '@/chat/NoticeCard'
 import { SessionView } from '@/chat/SessionView'
 import type { CodeGoto } from '@/code/CodeFrame'
-import { closeCode, codeTargetForRoot, emptyCodeMode, enterCode, isToggleChatsKey, leaveCode, type CodeModeState, type CodeTarget } from '@/code/code-mode-model'
+import { CodePane } from '@/code/CodePane'
+import { CodeSlot } from '@/code/CodeSlot'
+import { codeTargetForRoot, expiredServers, frameHolders, idleServers, serverGraceMs, type CodeShown, type CodeTarget } from '@/code/code-pane-model'
+import { createCodeSlots } from '@/code/code-slots'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { githubItemId, parseGithubItemId } from '@/github/review-model'
 import { ImportProject } from '@/import/ImportProject'
@@ -46,15 +48,14 @@ import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, focusDirection, movePane, itemKey, openItem, paneList, paneOfItem, parseItem, parsePanes, pruneItems, removeItem, replaceItem, serialisePanes, singlePane, type Direction, type Panes } from '@/panes/pane-model'
+import { closePane, dropItem, focusDirection, movePane, itemKey, openItem, paneList, paneOfItem, parseItem, parsePanes, pruneItems, removeItem, replaceItem, serialisePanes, singlePane, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { usePaneDrag } from '@/panes/usePaneDrag'
 import { alreadyOpen } from '@/launcher/resume-model'
 
-// Code mode, the GitHub pages and settings load the first time they open,
+// VS Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
-const CodeFrame = lazy(() => import('@/code/CodeFrame').then((module) => ({ default: module.CodeFrame })))
-const CodeRail = lazy(() => import('@/code/CodeRail').then((module) => ({ default: module.CodeRail })))
+const CodeLayer = lazy(() => import('@/code/CodeLayer').then((module) => ({ default: module.CodeLayer })))
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
@@ -145,13 +146,16 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The main area's panes, each showing one item; the sidebar follows the focused one.
   const [panes, setPanes] = useState<Panes>(storedPanes)
   const [pruned, setPruned] = useState(false)
-  // The view each item's pane shows (see the action bar); an item not listed shows Agent.
+  // The view each item's pane shows (see the action bar); an item not listed shows its initialView.
   const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
   // A project's pull request or issue page, shown in the main area over chats and the launcher.
   const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
-  const [codeMode, setCodeMode] = useState<CodeModeState>(emptyCodeMode)
-  // The last root shown in Code mode, so the toggle key returns to it from chats.
-  const [lastCode, setLastCode] = useState<CodeTarget | null>(null)
+  // The roots whose VS Code runs, in opening order: one frame each, kept mounted until its server stops.
+  const [codeTargets, setCodeTargets] = useState<CodeTarget[]>([])
+  // When each running root stopped being used by any pane (see idleServers).
+  const [idleCode, setIdleCode] = useState<Readonly<Record<string, number>>>({})
+  const codeHolders = useRef<Readonly<Record<string, string>>>({})
+  const [codeSlots] = useState(createCodeSlots)
   // The file each open root was last asked to show from a chat.
   const [gotos, setGotos] = useState<Record<string, CodeGoto>>({})
   const [importing, setImporting] = useState(false)
@@ -277,23 +281,50 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const nativeChatId = focusedParsed?.kind === 'native' ? focusedParsed.id : null
   const focusedTerminalId = focusedParsed?.kind === 'terminal' ? focusedParsed.id : null
 
-  const openCode = (target: CodeTarget) => {
-    setLastCode(target)
-    setCodeMode((current) => enterCode(current, target).state)
+  const viewOf = (item: string): PaneView => {
+    const kind = parseItem(item)?.kind
+    return paneViews[item] ?? (kind === undefined ? 'agent' : initialView(kind))
+  }
+
+  const focusItem = (item: string) =>
+    setPanes((current) => {
+      const pane = paneOfItem(current, item)
+      return pane === null || pane.id === current.focused ? current : { ...current, focused: pane.id }
+    })
+
+  // A worktree's VS Code shows in a pane: the focused pane when it works there, else another pane
+  // that does, else a code item of its own in the focused pane.
+  const showCode = (root: string) => {
+    setGithubPage(null)
+    const leaves = paneList(panes.root).filter((leaf) => hasActionBar(leaf.item) && rootOf(leaf.item) === root)
+    const leaf = leaves.find((candidate) => candidate.id === panes.focused) ?? leaves[0]
+    const item = leaf?.item ?? itemKey('code', root)
+    if (leaf === undefined) setPanes((current) => openItem(current, item))
+    else focusItem(item)
+    setPaneViews((current) => ({ ...current, [item]: 'code' }))
   }
 
   const openPath: OpenPath = useStableCallback((root, path, line) => {
     setGotos((current) => ({ ...current, [root]: { path, line } }))
-    openCode(codeTargetForRoot(projects, root))
+    showCode(root)
   })
 
-  // Leaving Code mode keeps every server running; only closing a root stops its own.
-  const closeCodeRoot = (root: string) => {
-    const { state, stop } = closeCode(codeMode, root)
-    setCodeMode(state)
-    if (lastCode?.root === root) setLastCode(state.open.at(-1) ?? null)
-    if (stop !== null) void api.stopCodeServer(stop).catch(() => {})
-    setGotos(({ [root]: _closed, ...rest }) => rest)
+  /** A view picked on an item's action bar; Agent on a code item puts the worktree's launcher in its pane. */
+  const chooseItemView = (item: string, view: PaneView) => {
+    const kind = parseItem(item)?.kind
+    if (kind === undefined) return
+    const action = chooseView(kind, view)
+    if (action.kind === 'view') {
+      setPaneViews((current) => ({ ...current, [item]: action.view }))
+      return
+    }
+    const launcher = newLauncher()
+    const root = rootOf(item)
+    if (root !== null) setLauncherClicked((current) => ({ ...current, [launcher]: root }))
+    setPanes((current) => {
+      const pane = paneOfItem(current, item)
+      return pane === null ? openItem(current, launcher) : replaceItem(current, pane.id, launcher)
+    })
   }
 
   // The sidebar is memoised; these keep their identity so a status poll does not re-render it.
@@ -301,8 +332,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     const worktree = projects.flatMap((project) => project.worktrees).find((candidate) => candidate.sessions.some((item) => item.sessionId === session.sessionId))
     openSession(session, worktree?.path ?? '')
   })
-  const stableOpenCode = useStableCallback(openCode)
-  const openCodeRoot = useStableCallback((root: string) => openCode(codeTargetForRoot(projects, root)))
+  const stableShowCode = useStableCallback((target: CodeTarget) => showCode(target.root))
   const startImport = useStableCallback(() => setImporting(true))
   const stableLayout = useStableCallback(changeLayout)
   const changeFilters = useStableCallback((next: SidebarFilters) => {
@@ -468,11 +498,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // A pull request or issue maximised from its page takes the focused pane, like any other item.
   const maximiseGithub = (root: string, kind: 'pr' | 'issue', number: number) => showItem(itemKey('github', githubItemId(kind, number, root)))
 
-  const toggleCode = () => {
-    if (codeMode.active !== null) setCodeMode(leaveCode)
-    else if (lastCode !== null) openCode(lastCode)
-  }
-
   const repositoryOf = (dispatchId: string) =>
     grouped.repositories.find((repository) => repository.worktrees.some((worktree) => worktree.chats.some((item) => item.dispatchId === dispatchId)))?.name ?? null
 
@@ -497,6 +522,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return launcherRoots[item] ?? null
       case 'github':
         return parseGithubItemId(parsed.id)?.root ?? null
+      case 'code':
+        return parsed.id
     }
   }
 
@@ -544,6 +571,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return true
       case 'github':
         return parseGithubItemId(parsed.id) !== null
+      case 'code':
+        return true
     }
   }
 
@@ -627,6 +656,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           ),
         }
       }
+      case 'code': {
+        const target = codeTargetForRoot(projects, parsed.id)
+        return { title: target.title, node: <CodePane target={target} /> }
+      }
     }
   }
   // Every terminal stays mounted, shown or not, so it keeps running and reports its exit; a restored
@@ -648,7 +681,41 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     </Suspense>
   )
 
-  const inCode = codeMode.active !== null
+  // Each root shown in Code has one frame, held by one pane (see frameHolders); a running root no
+  // pane item works in stops after its grace (see idleServers).
+  const leaves = paneList(panes.root)
+  const codeShown: CodeShown[] = leaves.flatMap((leaf) => {
+    const root = rootOf(leaf.item)
+    return root !== null && root !== '' && hasActionBar(leaf.item) && viewOf(leaf.item) === 'code' ? [{ item: leaf.item, root }] : []
+  })
+  codeHolders.current = frameHolders(codeHolders.current, codeShown)
+  const holders = codeHolders.current
+  const shownRoots = codeShown.map((entry) => entry.root).join('\n')
+  const usedRoots = [...new Set(leaves.map((leaf) => rootOf(leaf.item)).filter((root): root is string => root !== null && root !== ''))].sort().join('\n')
+  useEffect(() => {
+    const missing = codeShown.filter((entry, index) => codeShown.findIndex((other) => other.root === entry.root) === index && !codeTargets.some((target) => target.root === entry.root))
+    if (missing.length > 0) setCodeTargets((current) => [...current, ...missing.map((entry) => codeTargetForRoot(projects, entry.root))])
+  }, [shownRoots, codeTargets])
+  useEffect(() => {
+    setIdleCode((current) => idleServers(current, codeTargets.map((target) => target.root), new Set(usedRoots.split('\n')), Date.now()))
+  }, [usedRoots, codeTargets])
+  useEffect(() => {
+    const since = Object.values(idleCode)
+    if (since.length === 0) return
+    const timer = setTimeout(() => {
+      const expired = expiredServers(idleCode, Date.now())
+      if (expired.length === 0) return
+      setCodeTargets((current) => current.filter((target) => !expired.includes(target.root)))
+      setGotos((current) => Object.fromEntries(Object.entries(current).filter(([root]) => !expired.includes(root))))
+      for (const root of expired) void api.stopCodeServer(root).catch(() => {})
+    }, Math.max(0, Math.min(...since) + serverGraceMs - Date.now()))
+    return () => clearTimeout(timer)
+  }, [idleCode])
+  const focusCodeRoot = useStableCallback((root: string) => {
+    const holder = codeHolders.current[root]
+    if (holder !== undefined) focusItem(holder)
+  })
+
   const controlsFor = (root: string | null): RunControls | null =>
     root === null || root === ''
       ? null
@@ -662,16 +729,18 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             setSettingsOpen(true)
           },
         }
-  // The action bar is on every item with a worktree but the launcher and a maximised GitHub item.
+  // The action bar is on every item with a worktree but a maximised GitHub item: a launcher gets it
+  // once it starts in a worktree, so Agent there is the launcher and Code the worktree's VS Code.
   const paneViewFor = (item: string, root: string | null): PaneViewControls | null => {
-    const kind = parseItem(item)?.kind
-    if (root === null || root === '' || kind === undefined || kind === 'launcher' || kind === 'github') return null
+    if (root === null || root === '' || !hasActionBar(item)) return null
+    const holder = holders[root] ?? null
     return {
       facts: worktreeFacts(projects, root),
-      view: paneViews[item] ?? 'agent',
-      // Code mode and Settings keep ⌘1 to ⌘4 for themselves (VS Code's editor groups among them).
-      focused: item === focusedItem && !inCode && !settingsOpen && githubPage === null,
-      setView: (view) => setPaneViews((current) => ({ ...current, [item]: view })),
+      view: viewOf(item),
+      // Settings and a GitHub page keep ⌘1 to ⌘4 from the panes under them.
+      focused: item === focusedItem && !settingsOpen && githubPage === null,
+      setView: (view) => chooseItemView(item, view),
+      code: <CodeSlot item={item} holder={holder} slots={codeSlots} onShowHolder={() => holder !== null && focusItem(holder)} />,
     }
   }
   // The focused pane's worktree: its run panel shows, and ⌘T opens a terminal there.
@@ -684,14 +753,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         setSettingsOpen(true)
         return
       }
-      if (isToggleChatsKey(event)) {
-        event.preventDefault()
-        toggleCode()
-        return
-      }
-      // Code mode owns the window: walking chats or folding the sidebar would change what is
-      // behind it. Escape is never handled here, so VS Code keeps it.
-      if (codeMode.active !== null) return
+      // Escape is never handled here, so VS Code keeps it.
       if (event.metaKey && event.key.toLowerCase() === 'n' && !event.shiftKey && !event.altKey) {
         event.preventDefault()
         openNewChat(null)
@@ -710,13 +772,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [sessionRows, selectedSessionId, codeMode, lastCode])
+  }, [sessionRows, selectedSessionId])
 
   // ⌘T opens a terminal in the focused pane's worktree and ⌘⌥ arrows move the focus between panes.
   // They listen in the capture phase, so a terminal or an editor in a pane does not keep them.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (codeMode.active !== null || !event.metaKey || event.shiftKey || event.ctrlKey) return
+      if (!event.metaKey || event.shiftKey || event.ctrlKey) return
       if (event.key.toLowerCase() === 'w' && !event.altKey) {
         event.preventDefault()
         event.stopPropagation()
@@ -742,10 +804,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [codeMode, runRoot, projects, panes])
+  }, [runRoot, projects, panes])
 
   const runPanelRoots = Object.keys(runs.panels).filter((root) => runs.panels[root]?.tabs.length !== 0)
-  const runPanelShown = !inCode && runControls !== null && runControls.panel.open
+  const runPanelShown = runControls !== null && runControls.panel.open
   const githubProject = githubPage === null ? null : (projects.find((project) => project.path === githubPage.path) ?? null)
   const githubView =
     githubPage !== null && githubProject !== null ? (
@@ -762,105 +824,99 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
   return (
     <div className="relative flex h-full">
-      {inCode && <Suspense fallback={null}><CodeRail state={codeMode} projects={projects} onSelect={openCode} onClose={closeCodeRoot} onChats={() => setCodeMode(leaveCode)} onSettings={() => setSettingsOpen(true)} /></Suspense>}
-      {!inCode && (
-        <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
-          <SidebarHeader onCollapse={toggleSidebarCollapsed} />
-          <Sidebar
-            loaded={projectsLoaded}
-            loadError={projectsError}
-            onRetryLoad={retryProjects}
-            projects={projects}
-            selectedSessionId={selectedSessionId}
-            onSelectSession={selectSidebarSession}
-            onCode={stableOpenCode}
-            onImport={startImport}
-            layout={layout}
-            onLayout={stableLayout}
-            layoutError={layoutError}
-            filters={filters}
-            onFilters={changeFilters}
-            activeGithub={githubPage}
-            onGithub={openGithub}
-            chats={chatsInWorktrees}
-            selectedChatId={nativeChatId}
-            onSelectChat={selectNativeChat}
-            onNewChat={openNewChat}
-            onNewTerminal={openWorktreeTerminal}
-            terminals={terminalsInWorktrees}
-            selectedTerminalId={focusedTerminalId}
-            onSelectTerminal={selectTerminal}
-            onRenameTerminal={stableRenameTerminal}
-            onCloseRow={requestClose}
-            onDragRow={dragRow}
-            creations={creations}
-            onCreateWorktree={createWorktree}
-            onRetryCreation={retryWorktree}
-            onDismissCreation={dismissWorktree}
-          />
-          <footer className="shrink-0 border-t border-white/[0.07] px-2.5 py-2">
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              title="Settings (⌘,)"
-              className="flex h-8 w-full items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left text-[13px] font-medium text-ink-300 transition-colors hover:bg-row-hover hover:text-ink-100"
-            >
-              <SettingsIcon />
-              Settings
-            </button>
-          </footer>
-        </SlidePanel>
-      )}
+      <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
+        <SidebarHeader onCollapse={toggleSidebarCollapsed} />
+        <Sidebar
+          loaded={projectsLoaded}
+          loadError={projectsError}
+          onRetryLoad={retryProjects}
+          projects={projects}
+          selectedSessionId={selectedSessionId}
+          onSelectSession={selectSidebarSession}
+          onCode={stableShowCode}
+          onImport={startImport}
+          layout={layout}
+          onLayout={stableLayout}
+          layoutError={layoutError}
+          filters={filters}
+          onFilters={changeFilters}
+          activeGithub={githubPage}
+          onGithub={openGithub}
+          chats={chatsInWorktrees}
+          selectedChatId={nativeChatId}
+          onSelectChat={selectNativeChat}
+          onNewChat={openNewChat}
+          onNewTerminal={openWorktreeTerminal}
+          terminals={terminalsInWorktrees}
+          selectedTerminalId={focusedTerminalId}
+          onSelectTerminal={selectTerminal}
+          onRenameTerminal={stableRenameTerminal}
+          onCloseRow={requestClose}
+          onDragRow={dragRow}
+          creations={creations}
+          onCreateWorktree={createWorktree}
+          onRetryCreation={retryWorktree}
+          onDismissCreation={dismissWorktree}
+        />
+        <footer className="shrink-0 border-t border-white/[0.07] px-2.5 py-2">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings (⌘,)"
+            className="flex h-8 w-full items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left text-[13px] font-medium text-ink-300 transition-colors hover:bg-row-hover hover:text-ink-100"
+          >
+            <SettingsIcon />
+            Settings
+          </button>
+        </footer>
+      </SlidePanel>
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
-        {/* Chats stay mounted under Code mode so a draft or a scroll position survives the trip. */}
-        <div className={inCode ? 'hidden' : 'contents'}>
-          {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
-          {error !== null && (
-            <div className="px-8 pt-4">
-              <ErrorNote error={error} />
-            </div>
-          )}
-          <OpenCodeContext.Provider value={openCodeRoot}>
-            <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
-              {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                <PaneArea
-                  panes={panes}
-                  onPanes={setPanes}
-                  background={backgroundTerminals}
-                  render={(item) => {
-                    const content = render(item)
-                    const root = rootOf(item)
-                    return {
-                      ...content,
-                      node: (
-                        <RunContext.Provider value={controlsFor(root)}>
-                          <PaneViewContext.Provider value={paneViewFor(item, root)}>
-                            <Suspense fallback={<Loading />}>{content.node}</Suspense>
-                          </PaneViewContext.Provider>
-                        </RunContext.Provider>
-                      ),
-                    }
-                  }}
-                  drag={drag}
-                  onClose={closePaneById}
-                />
-                {githubView !== null && (
-                  <div className="absolute inset-0 z-40 flex flex-col bg-ink-950">
-                    <RunContext.Provider value={null}>
-                      <Suspense fallback={<Loading />}>{githubView}</Suspense>
+        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} />}
+        {error !== null && (
+          <div className="px-8 pt-4">
+            <ErrorNote error={error} />
+          </div>
+        )}
+        <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
+          {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <PaneArea
+              panes={panes}
+              onPanes={setPanes}
+              background={backgroundTerminals}
+              render={(item) => {
+                const content = render(item)
+                const root = rootOf(item)
+                return {
+                  ...content,
+                  node: (
+                    <RunContext.Provider value={controlsFor(root)}>
+                      <PaneViewContext.Provider value={paneViewFor(item, root)}>
+                        <Suspense fallback={<Loading />}>{content.node}</Suspense>
+                      </PaneViewContext.Provider>
                     </RunContext.Provider>
-                  </div>
-                )}
+                  ),
+                }
+              }}
+              drag={drag}
+              onClose={closePaneById}
+              overlay={
+                codeTargets.length > 0 && (
+                  <Suspense fallback={null}>
+                    <CodeLayer targets={codeTargets} holders={holders} slots={codeSlots} gotos={gotos} dragging={drag.state !== null} onFocus={focusCodeRoot} />
+                  </Suspense>
+                )
+              }
+            />
+            {githubView !== null && (
+              <div className="absolute inset-0 z-40 flex flex-col bg-ink-950">
+                <RunContext.Provider value={null}>
+                  <Suspense fallback={<Loading />}>{githubView}</Suspense>
+                </RunContext.Provider>
               </div>
-            </DispatchesContext.Provider>
-          </OpenCodeContext.Provider>
-        </div>
-        <Suspense fallback={inCode ? <Loading /> : null}>
-          {codeMode.open.map((target) => (
-            <CodeFrame key={target.root} target={target} visible={target.root === codeMode.active} goto={gotos[target.root] ?? null} />
-          ))}
-        </Suspense>
+            )}
+          </div>
+        </DispatchesContext.Provider>
       </main>
       {/* Every worktree's runs stay mounted; only the open chat's panel shows. */}
       {runPanelRoots.length > 0 && (
@@ -890,6 +946,14 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 }
 
 const noDispatches: readonly Dispatch[] = []
+
+/** The items whose top bar carries the action bar, and so can show Code: all but a GitHub item. */
+const paneViewKinds: ReadonlySet<ItemKind> = new Set<ItemKind>(['dispatch', 'session', 'native', 'terminal', 'launcher', 'code'])
+
+function hasActionBar(item: string): boolean {
+  const kind = parseItem(item)?.kind
+  return kind !== undefined && paneViewKinds.has(kind)
+}
 
 const arrowDirections: Partial<Record<string, Direction>> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 

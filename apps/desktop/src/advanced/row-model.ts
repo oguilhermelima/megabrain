@@ -61,6 +61,23 @@ export function worktreeItems(
   return items.map((item) => ({ ...item, key: rowKey(item) }));
 }
 
+const lastActivity = (item: WorktreeItem): string | null => {
+  if (item.kind === "native") return item.chat.lastActivityAt ?? item.session?.lastActivityAt ?? null;
+  return item.session?.lastActivityAt ?? null;
+};
+
+/** The row a click on its worktree opens: the most recently active, the top one on a tie or when
+ * none has any activity; null for an empty worktree, which opens its launcher instead. */
+export function rowToOpen<T extends WorktreeItem>(rows: T[]): T | null {
+  let best: T | null = null;
+  for (const row of rows) {
+    const at = lastActivity(row);
+    const bestAt = best === null ? null : lastActivity(best);
+    if (best === null || (at !== null && (bestAt === null || at > bestAt))) best = row;
+  }
+  return best;
+}
+
 /** Rows by the saved order; ones it does not know yet go on top in their default order, gone ids are skipped. */
 export function applyRowOrder<T extends { key: string }>(
   rows: T[],

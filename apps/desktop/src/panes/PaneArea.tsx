@@ -27,6 +27,7 @@ export function PaneArea({
   render,
   drag,
   onClose,
+  overlay,
 }: {
   panes: Panes
   onPanes: (change: (current: Panes) => Panes) => void
@@ -34,6 +35,8 @@ export function PaneArea({
   render: (item: string) => PaneContent
   drag: PaneDrag
   onClose: (paneId: string) => void
+  /** Laid over the panes, under their focus ring, drop previews and dividers (the code layer). */
+  overlay?: ReactNode
 }) {
   const area = useRef<HTMLDivElement>(null)
   const { panes: rects, dividers } = paneRects(panes.root)
@@ -79,11 +82,12 @@ export function PaneArea({
             {split && pane !== null && <PaneHeader title={content.title} focused={pane.id === panes.focused} onDrag={(event) => drag.start(event, { kind: 'pane', paneId: pane.id, label: content.title })} onClose={() => onClose(pane.id)} />}
             {/* Positioned, so a PR or Diff view can lie over the item's own content below its top bar. */}
             <div className={`relative flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>{content.node}</div>
-            {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 ring-1 ring-accent/50 ring-inset" />}
+            {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 ring-1 ring-accent/50 ring-inset" />}
             {pane !== null && preview?.paneId === pane.id && <DropPreview rect={zonePreview(preview.zone)} replace={preview.zone === 'center'} />}
           </section>
         )
       })}
+      {overlay}
       {dividers.map((divider) => (
         <DividerHandle key={`${divider.splitId}:${divider.index}`} divider={divider} panes={panes} area={area} onPanes={onPanes} />
       ))}
@@ -126,7 +130,7 @@ function PaneHeader({ title, focused, onDrag, onClose }: { title: string; focuse
 /** Where the drop lands: tinted half of the pane for a split, the whole pane to replace it. */
 function DropPreview({ rect, replace }: { rect: Rect; replace: boolean }) {
   return (
-    <span aria-hidden="true" style={percent(rect)} className="pointer-events-none absolute z-20 p-1.5">
+    <span aria-hidden="true" style={percent(rect)} className="pointer-events-none absolute z-40 p-1.5">
       <span className={`flex size-full items-center justify-center rounded-[14px] border-2 border-accent/70 bg-accent/[0.14] text-[12px] font-medium text-ink-100`}>{replace ? 'Replace' : 'Split here'}</span>
     </span>
   )
@@ -174,7 +178,7 @@ function DividerHandle({ divider, panes, area, onPanes }: { divider: Divider; pa
       style={style}
       onPointerDown={start}
       onDoubleClick={() => onPanes((current) => equaliseSplit(current, divider.splitId))}
-      className={`absolute z-30 ${row ? 'cursor-col-resize' : 'cursor-row-resize'} transition-colors hover:bg-accent/30`}
+      className={`absolute z-40 ${row ? 'cursor-col-resize' : 'cursor-row-resize'} transition-colors hover:bg-accent/30`}
     />
   )
 }
