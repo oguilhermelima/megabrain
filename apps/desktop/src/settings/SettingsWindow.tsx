@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
-import type { AdmissionPolicy, Chain, Settings } from '@/api/schema'
+import type { AdmissionPolicy, Settings } from '@/api/schema'
 import { SettingsSkeleton } from '@/components/Skeleton'
 import { ChainsSection } from '@/settings/ChainsSection'
 import { LimitsSection } from '@/settings/LimitsSection'
@@ -36,14 +36,18 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
 
   useEffect(() => content.current?.scrollTo({ top: 0 }), [section])
 
-  const act = async (run: () => Promise<void>) => {
+  /** Runs a write, shows its error if it fails, re-reads settings either way; true when it worked. */
+  const act = async (run: () => Promise<void>): Promise<boolean> => {
+    let ok = false
     try {
       await run()
       setError(null)
+      ok = true
     } catch (caught) {
       setError(caught)
     }
     await reload()
+    return ok
   }
 
   // Up and down walk the sections while the navigation has focus, the way a sidebar list does.
@@ -128,9 +132,9 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
                 <ChainsSection
                   chains={settings.chains}
                   models={settings.models}
+                  providers={groupReadingsByProvider(settings.limits.readings).map((group) => group.provider)}
                   error={error}
-                  onSave={(chain: Chain) => void act(() => api.saveChain(chain))}
-                  onDelete={(name: string) => void act(() => api.deleteChain(name))}
+                  run={act}
                 />
               )}
               {section === 'supervisor' && (
@@ -155,7 +159,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null }: { onCl
                   onToggleHistory={(enabled) => void act(() => api.setResourceHistory(enabled))}
                 />
               )}
-              {section === 'models' && <ModelsSection models={settings.models} error={error} onRefresh={(agent) => act(() => api.refreshModels(agent))} />}
+              {section === 'models' && <ModelsSection models={settings.models} error={error} onRefresh={async (agent) => void (await act(() => api.refreshModels(agent)))} />}
               {section === 'terminal' && (
                 <TerminalSection
                   engine={settings.terminalEngine ?? 'native'}

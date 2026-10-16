@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentCommandSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, projectScriptsSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -59,6 +59,29 @@ async function terminalListen(terminalId: string, onData: (base64: string) => vo
 
 // `github pr-files` answers with the list, or with an object that holds it under `files`.
 const pullRequestFilesSchema = z.union([githubPullRequestFileSchema.array(), z.looseObject({ files: githubPullRequestFileSchema.array() }).transform((value) => value.files)])
+
+// Priority travels as its own flag and is left out at 0, the default. Step numbers are 1-based on the
+// command line and array positions in the app; the conversion happens here and nowhere else.
+const chainSaveArgs = (name: string, chain: ChainBody): string[] => [
+  'chain',
+  'save',
+  name,
+  '--when',
+  JSON.stringify(chain.when),
+  '--steps',
+  JSON.stringify(chain.steps),
+  ...(chain.priority === undefined || chain.priority === 0 ? [] : ['--priority', String(chain.priority)]),
+  '--json',
+]
+
+const explainFlags: Record<keyof ChainExplainInput, string> = {
+  parentAgent: '--parent-agent',
+  parentModel: '--parent-model',
+  parentEffort: '--parent-effort',
+  repo: '--repo',
+  branch: '--branch',
+  label: '--label',
+}
 
 let streams = 0
 
@@ -156,7 +179,28 @@ export function createTauriApi(): DesktopApi {
     setLimitNotice: async (enabled, intervalSeconds) =>
       void (await cliText(['chain', 'limits', enabled ? '--notice-on' : '--notice-off', ...(intervalSeconds === undefined ? [] : ['--notice-interval', String(intervalSeconds)])])),
     setLimitProvider: async (provider, enabled) => void (await cliText(['chain', 'limits', enabled ? '--enable' : '--disable', provider])),
-    saveChain: async (chain) => void (await cliText(['chain', 'save', chain.name, '--when', JSON.stringify(chain.when), '--steps', JSON.stringify(chain.steps), '--json'])),
+    saveChain: async (name, chain) => void (await cliText(chainSaveArgs(name, chain))),
+    validateChain: (name, chain) => cliJson([...chainSaveArgs(name, chain), '--dry-run'], chainValidationSchema),
+    chainExplain: async (input) => {
+      const flags = Object.entries(explainFlags).flatMap(([field, flag]) => {
+        const value = input[field as keyof ChainExplainInput]
+        return value === undefined || value === '' ? [] : [flag, value]
+      })
+      const explained = await cliJson(['chain', 'explain', ...flags, '--json'], chainExplainSchema)
+      return { ...explained, steps: explained.steps.map((step) => ({ ...step, index: step.index - 1 })) }
+    },
+    editStep: async (name, index, patch) => {
+      const args = ['chain', 'step', 'edit', name, String(index + 1)]
+      if (patch.agent !== undefined) args.push('--agent', patch.agent)
+      if (patch.model !== undefined) args.push('--model', patch.model)
+      if (patch.effort !== undefined) args.push('--effort', patch.effort)
+      if (patch.until === null) args.push('--no-until')
+      else if (patch.until !== undefined) args.push('--until', JSON.stringify(patch.until))
+      if (patch.when === null) args.push('--no-when')
+      else if (patch.when !== undefined) args.push('--when', JSON.stringify(patch.when))
+      void (await cliText([...args, '--json']))
+    },
+    moveStep: async (name, from, to) => void (await cliText(['chain', 'step', 'move', name, String(from + 1), String(to + 1), '--json'])),
     deleteChain: async (name) => void (await cliText(['chain', 'delete', name, '--json'])),
     refreshModels: async (agent) => void (await cliText(['model', 'refresh', agent])),
     setTerminalDefault: async (name) => void (await cliText(['terminal', 'default', name ?? '--clear'])),

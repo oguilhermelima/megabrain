@@ -415,12 +415,37 @@ export const mockSettings: Settings = {
     ],
   },
   chains: [
+    // Old-style rules, as every chains.json written before rules had groups.
     { name: 'claude', when: { parentAgent: 'claude' }, steps: [{ agent: 'codex', model: 'gpt-6-luna', effort: 'medium', until: { usedPercent: 95, window: '5h' } }, { agent: 'claude', model: 'claude-sonnet-5', effort: 'medium' }] },
     { name: 'codex', when: { parentAgent: 'codex' }, steps: [{ agent: 'claude', model: 'claude-sonnet-5', effort: 'high' }, { agent: 'agy', model: 'gemini-3.1-pro-high' }] },
+    // Nested groups, usage, a step rule and a priority.
+    {
+      name: 'big-parents-to-luna',
+      priority: 10,
+      when: {
+        all: [
+          {
+            any: [
+              { parentAgent: 'claude', parentModel: 'claude-opus-5-5', parentEffort: ['low', 'medium', 'high'] },
+              { parentAgent: 'codex', parentModel: 'gpt-6-astra', parentEffort: ['medium', 'high'] },
+            ],
+          },
+          { usage: { provider: 'codex', window: 'weekly', below: 90 } },
+        ],
+      },
+      steps: [
+        { agent: 'codex', model: 'gpt-6-luna', effort: 'high', until: { usedPercent: 95, window: '5h' } },
+        { agent: 'claude', model: 'claude-sonnet-5', effort: 'medium', when: { time: { days: ['mon', 'tue', 'wed', 'thu', 'fri'], from: '09:00', to: '19:00' } } },
+        { agent: 'agy', model: 'gemini-3.1-pro-high' },
+      ],
+    },
+    { name: 'docs-on-megabrain', when: { repo: 'megabrain', label: 'docs*' }, steps: [{ agent: 'codex', model: 'gpt-6-luna', effort: 'low' }] },
   ],
   models: [
-    { agent: 'codex', model: 'gpt-6-luna', reasoning: { levels: ['low', 'medium', 'high', 'xhigh'] } },
-    { agent: 'claude', model: 'claude-sonnet-5', reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'codex', model: 'gpt-6-luna', name: 'luna 6', reasoning: { levels: ['low', 'medium', 'high', 'xhigh'] } },
+    { agent: 'codex', model: 'gpt-6-astra', name: 'astra 6', reasoning: { levels: ['low', 'medium', 'high', 'xhigh'] } },
+    { agent: 'claude', model: 'claude-sonnet-5', name: 'Sonnet 5', reasoning: { levels: ['low', 'medium', 'high'] } },
+    { agent: 'claude', model: 'claude-opus-5-5', name: 'Opus 5.5', reasoning: { levels: ['low', 'medium', 'high'] } },
     { agent: 'claude', model: 'claude-opus-5', reasoning: { levels: ['low', 'medium', 'high'] } },
     { agent: 'agy', model: 'gemini-3.1-pro-high', reasoning: { levels: ['high'] } },
   ],

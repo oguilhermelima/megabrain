@@ -115,16 +115,73 @@ export const statusSchema = z.looseObject({
 // the existing verbs (resources policy set|off, resources enable|disable, supervise, chain limits
 // --notice-on|--notice-off|--notice-interval|--enable|--disable, chain save|delete, model refresh,
 // terminal default) and the window re-reads settings afterwards.
+// A chain's `when` and a step's `when` are rules (chains.json, backward compatible): a Condition, whose
+// fields must all hold and each take one value or a list meaning any of them, or {all}, {any} or {not}
+// of further rules. The app reads them loosely; the CLI (chain save --dry-run) is the authority on
+// whether one is valid, and settings/chain-rules.ts checks the grammar locally for instant feedback.
+export type RuleValues = string | string[]
+export interface UsageCondition {
+  provider: string
+  window: '5h' | 'weekly'
+  below?: number
+  above?: number
+}
+export interface TimeCondition {
+  /** mon, tue, wed, thu, fri, sat, sun. */
+  days?: string[]
+  /** Local time, HH:MM. */
+  from?: string
+  to?: string
+}
+export interface Condition {
+  parentAgent?: RuleValues
+  parentModel?: RuleValues
+  parentEffort?: RuleValues
+  /** Repository name or path; a glob. */
+  repo?: RuleValues
+  branch?: RuleValues
+  /** A glob on the dispatch label. */
+  label?: RuleValues
+  usage?: UsageCondition
+  time?: TimeCondition
+}
+export type Rule = Condition | { all: Rule[] } | { any: Rule[] } | { not: Rule }
+const ruleSchema = z.custom<Rule>((value) => typeof value === 'object' && value !== null && !Array.isArray(value), 'expected a rule object')
+
 export const chainStepSchema = z.looseObject({
   agent: z.string(),
-  model: z.string(),
+  model: z.string().optional(),
   effort: z.string().optional(),
   until: z.looseObject({ usedPercent: z.number(), window: z.string() }).optional(),
+  /** The step is skipped unless this rule matches. */
+  when: ruleSchema.optional(),
 })
 export const chainSchema = z.looseObject({
   name: z.string(),
-  when: z.record(z.string(), z.unknown()),
+  when: ruleSchema,
   steps: z.array(chainStepSchema),
+  /** Higher wins among matching chains; absent means 0. */
+  priority: z.number().optional(),
+})
+// `chain explain --json`: every chain with whether it matched and why, the chosen one, and its steps.
+// Step indexes are 1-based on the command line; the adapter turns them into array positions.
+export const chainExplainSchema = z.looseObject({
+  candidates: z.array(
+    z.looseObject({
+      name: z.string(),
+      matched: z.boolean(),
+      specificity: z.number(),
+      priority: z.number(),
+      reasons: z.union([z.string().transform((reason) => [reason]), z.array(z.string())]),
+    }),
+  ),
+  chosen: z.string().nullable(),
+  steps: z.array(z.looseObject({ index: z.number(), step: chainStepSchema, skipped: z.boolean(), reason: z.string().nullable().optional() })),
+})
+// `chain save ... --dry-run --json`: exit 0 when ok, 2 when invalid, nothing written either way.
+export const chainValidationSchema = z.looseObject({
+  ok: z.boolean(),
+  errors: z.array(z.looseObject({ path: z.string(), message: z.string() })),
 })
 export const usageReadingSchema = z.looseObject({
   provider: z.string(),
@@ -584,6 +641,31 @@ export type Repository = z.infer<typeof repositorySchema>
 export type Settings = z.infer<typeof settingsSchema>
 export type Chain = z.infer<typeof chainSchema>
 export type ChainStep = z.infer<typeof chainStepSchema>
+export type ChainExplain = z.infer<typeof chainExplainSchema>
+export type ChainValidation = z.infer<typeof chainValidationSchema>
+/** A chain as chains.json stores it, without its name. */
+export interface ChainBody {
+  when: Rule
+  steps: ChainStep[]
+  priority?: number
+}
+/** The dispatch `chain explain` imagines; every field optional. */
+export interface ChainExplainInput {
+  parentAgent?: string
+  parentModel?: string
+  parentEffort?: string
+  repo?: string
+  branch?: string
+  label?: string
+}
+/** One step's changes for `chain step edit`; null removes until or when. */
+export interface StepPatch {
+  agent?: string
+  model?: string
+  effort?: string
+  until?: ChainStep['until'] | null
+  when?: Rule | null
+}
 export type UsageReading = z.infer<typeof usageReadingSchema>
 export interface AdmissionPolicy {
   maxAgents?: number

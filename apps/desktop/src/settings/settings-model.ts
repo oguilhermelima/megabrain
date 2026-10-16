@@ -1,4 +1,4 @@
-import type { AdmissionPolicy, Chain, ChainStep, Settings, UsageReading } from '@/api/schema'
+import type { AdmissionPolicy, ChainStep, Settings, UsageReading } from '@/api/schema'
 
 export type ModelInfo = Settings['models'][number]
 
@@ -43,16 +43,8 @@ export function groupReadingsByProvider(readings: UsageReading[]): ProviderReadi
   return order.map((provider) => byProvider.get(provider) as ProviderReadings)
 }
 
-/** Reads a chain's `when` condition in plain language. Only `parentAgent` is known; anything else falls back to its JSON. */
-export function conditionText(when: Record<string, unknown>): string {
-  const keys = Object.keys(when)
-  if (keys.length === 0) return 'always'
-  if (keys.length === 1 && keys[0] === 'parentAgent' && typeof when.parentAgent === 'string') return `when the parent is ${when.parentAgent}`
-  return JSON.stringify(when)
-}
-
 export function stepText(step: ChainStep): string {
-  const parts = [step.agent, step.model]
+  const parts = step.model === undefined ? [step.agent] : [step.agent, step.model]
   if (step.effort !== undefined) parts.push(step.effort)
   const text = parts.join(' · ')
   if (step.until === undefined) return text
@@ -115,8 +107,4 @@ export function policyToForm(policy: { maxAgents: number | null; minAvailableMib
     maxPressure: policy?.maxPressure ?? '',
     maxContainerSuites: policy?.maxContainerSuites?.toString() ?? '',
   }
-}
-
-export function emptyChain(name: string, parentAgent: string): Chain {
-  return { name, when: parentAgent === '' ? {} : { parentAgent }, steps: [] }
 }

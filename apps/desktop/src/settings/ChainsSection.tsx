@@ -1,136 +1,179 @@
-import { useState, type ReactNode } from 'react'
-import type { Chain, ChainStep } from '@/api/schema'
+import { useEffect, useState } from 'react'
+import { api } from '@/api'
+import type { Chain, ChainBody, ChainStep } from '@/api/schema'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { Button, ErrorNote } from '@/components/ui'
-import { conditionText, emptyChain, moveStep, stepText, withoutStep, withStep, type ModelInfo } from '@/settings/settings-model'
-import { field, ghostIcon, quiet, SettingsGroup } from '@/settings/settings-ui'
+import { Button, ErrorNote, Spinner } from '@/components/ui'
+import { builderFromRule, moveStepTo, ruleFromBuilder, ruleSummary, stepEdit, type RuleIssue } from '@/settings/chain-rules'
+import { ChainTest } from '@/settings/ChainTest'
+import { RuleEditor } from '@/settings/RuleBuilder'
+import { withoutStep, withStep, type ModelInfo } from '@/settings/settings-model'
+import { StepList } from '@/settings/StepList'
+import { field, quiet, SettingsGroup } from '@/settings/settings-ui'
 
-function Glyph({ children }: { children: ReactNode }) {
-  return (
-    <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {children}
-    </svg>
-  )
+const priorityValue = (text: string): number | undefined => {
+  const parsed = Number(text)
+  return text.trim() === '' || !Number.isFinite(parsed) || parsed === 0 ? undefined : parsed
 }
 
-function StepEditor({ models, onAdd }: { models: ModelInfo[]; onAdd: (step: ChainStep) => void }) {
-  const agents = [...new Set(models.map((model) => model.agent))]
-  const [agent, setAgent] = useState(agents[0] ?? '')
-  const agentModels = models.filter((model) => model.agent === agent)
-  const [model, setModel] = useState(agentModels[0]?.model ?? '')
-  const levels = models.find((item) => item.agent === agent && item.model === model)?.reasoning.levels ?? []
-  const [effort, setEffort] = useState(levels[0] ?? '')
-
-  const changeAgent = (nextAgent: string) => {
-    setAgent(nextAgent)
-    const firstModel = models.find((item) => item.agent === nextAgent)
-    setModel(firstModel?.model ?? '')
-    setEffort(firstModel?.reasoning.levels[0] ?? '')
-  }
-  const changeModel = (nextModel: string) => {
-    setModel(nextModel)
-    setEffort(models.find((item) => item.agent === agent && item.model === nextModel)?.reasoning.levels[0] ?? '')
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <select aria-label="Agent" value={agent} onChange={(event) => changeAgent(event.target.value)} className={field}>
-        {agents.map((item) => (
-          <option key={item} value={item}>
-            {item}
-          </option>
-        ))}
-      </select>
-      <select aria-label="Model" value={model} onChange={(event) => changeModel(event.target.value)} className={`${field} max-w-56`}>
-        {agentModels.map((item) => (
-          <option key={item.model} value={item.model}>
-            {item.model}
-          </option>
-        ))}
-      </select>
-      {levels.length > 0 && (
-        <select aria-label="Effort" value={effort} onChange={(event) => setEffort(event.target.value)} className={field}>
-          {levels.map((level) => (
-            <option key={level} value={level}>
-              {level}
-            </option>
-          ))}
-        </select>
-      )}
-      <button
-        type="button"
-        className={`${quiet} border border-white/[0.1] bg-white/[0.04]`}
-        onClick={() => {
-          if (agent === '' || model === '') return
-          onAdd({ agent, model, effort: effort === '' ? undefined : effort })
-        }}
-      >
-        Add step
-      </button>
-    </div>
-  )
+/** Checks the chain with the CLI (`chain save --dry-run`) 400 ms after the last change. */
+function useChainValidation(name: string, body: ChainBody): { issues: RuleIssue[]; checking: boolean } {
+  const [issues, setIssues] = useState<RuleIssue[]>([])
+  const [checking, setChecking] = useState(false)
+  const key = JSON.stringify(body)
+  useEffect(() => {
+    let cancelled = false
+    setChecking(true)
+    const timer = setTimeout(() => {
+      api.validateChain(name, JSON.parse(key) as ChainBody).then(
+        (result) => {
+          if (cancelled) return
+          setIssues(result.errors)
+          setChecking(false)
+        },
+        (caught: unknown) => {
+          if (cancelled) return
+          setIssues([{ path: 'chain', message: caught instanceof Error ? caught.message : String(caught) }])
+          setChecking(false)
+        },
+      )
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [name, key])
+  return { issues, checking }
 }
 
-function ChainEditor({ chain, models, onChange, onSave, onCancel }: { chain: Chain; models: ModelInfo[]; onChange: (chain: Chain) => void; onSave: () => void; onCancel: () => void }) {
+function ChainEditor({ chain, models, providers, onSave, onCancel }: { chain: Chain; models: ModelInfo[]; providers: string[]; onSave: (name: string, body: ChainBody) => Promise<void>; onCancel: () => void }) {
+  const [builder, setBuilder] = useState(() => builderFromRule(chain.when))
+  const [steps, setSteps] = useState(chain.steps)
+  const [priority, setPriority] = useState(chain.priority?.toString() ?? '')
+  const [saving, setSaving] = useState(false)
+  const [saveIssues, setSaveIssues] = useState<RuleIssue[] | null>(null)
+  const body: ChainBody = { when: ruleFromBuilder(builder), steps, ...(priorityValue(priority) === undefined ? {} : { priority: priorityValue(priority) }) }
+  const { issues, checking } = useChainValidation(chain.name, body)
+  const shown = saveIssues ?? issues
+  const ruleIssues = shown.filter((issue) => issue.path === 'when' || issue.path.startsWith('when.') || issue.path.startsWith('when['))
+  const otherIssues = shown.filter((issue) => !ruleIssues.includes(issue))
+
+  const changeSteps = (next: ChainStep[]) => {
+    setSaveIssues(null)
+    setSteps(next)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      // The CLI is the authority: a chain it refuses is not saved, and its reasons stay on screen.
+      const checked = await api.validateChain(chain.name, body)
+      if (!checked.ok) return setSaveIssues(checked.errors)
+      await onSave(chain.name, body)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <div className="grid gap-3 px-4 py-3">
-      {chain.steps.length === 0 ? (
-        <p className="text-[12.5px] text-ink-400">No steps yet. Add the first agent below.</p>
-      ) : (
-        <ol className="grid gap-1">
-          {chain.steps.map((step, index) => (
-            <li key={`${step.agent}-${step.model}-${index}`} className="flex items-center gap-2 rounded-[10px] bg-white/[0.04] py-1 pr-1 pl-3">
-              <span className="w-4 shrink-0 text-[12px] text-ink-500 tabular-nums">{index + 1}</span>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-ink-100">{stepText(step)}</span>
-              <button type="button" aria-label="Move up" title="Move up" className={ghostIcon} disabled={index === 0} onClick={() => onChange({ ...chain, steps: moveStep(chain.steps, index, -1) })}>
-                <Glyph>
-                  <path d="m4 10 4-4 4 4" />
-                </Glyph>
-              </button>
-              <button type="button" aria-label="Move down" title="Move down" className={ghostIcon} disabled={index === chain.steps.length - 1} onClick={() => onChange({ ...chain, steps: moveStep(chain.steps, index, 1) })}>
-                <Glyph>
-                  <path d="m4 6 4 4 4-4" />
-                </Glyph>
-              </button>
-              <button type="button" aria-label="Remove" title="Remove" className={`${ghostIcon} hover:text-bad`} onClick={() => onChange({ ...chain, steps: withoutStep(chain.steps, index) })}>
-                <Glyph>
-                  <path d="M4 4l8 8M12 4l-8 8" />
-                </Glyph>
-              </button>
+    <div className="grid gap-4 px-4 py-3">
+      <label className="flex items-center gap-2 text-[12.5px] text-ink-400">
+        Priority
+        <input aria-label="Priority" inputMode="numeric" value={priority} onChange={(event) => setPriority(event.target.value)} placeholder="0" className={`${field} w-20`} />
+        <span className="text-[12px] text-ink-500">When several chains match, the highest wins.</span>
+      </label>
+      <section className="grid gap-2">
+        <h4 className="text-[12px] font-semibold text-ink-300">When</h4>
+        <RuleEditor
+          builder={builder}
+          models={models}
+          providers={providers}
+          issues={ruleIssues}
+          onChange={(next) => {
+            setSaveIssues(null)
+            setBuilder(next)
+          }}
+        />
+      </section>
+      <section className="grid gap-2">
+        <h4 className="text-[12px] font-semibold text-ink-300">Steps</h4>
+        <StepList
+          steps={steps}
+          models={models}
+          providers={providers}
+          onEdit={(index, step) => changeSteps(steps.map((item, at) => (at === index ? step : item)))}
+          onMove={(from, to) => changeSteps(moveStepTo(steps, from, to))}
+          onRemove={(index) => changeSteps(withoutStep(steps, index))}
+          onAdd={(step) => changeSteps(withStep(steps, step))}
+        />
+      </section>
+      {otherIssues.length > 0 && (
+        <ul className="grid gap-0.5 text-[12px] text-bad">
+          {otherIssues.map((issue) => (
+            <li key={`${issue.path}:${issue.message}`}>
+              <span className="font-mono">{issue.path}</span>: {issue.message}
             </li>
           ))}
-        </ol>
+        </ul>
       )}
-      <StepEditor models={models} onAdd={(step) => onChange({ ...chain, steps: withStep(chain.steps, step) })} />
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {checking && <span className="mr-auto text-[12px] text-ink-500">Checking…</span>}
         <Button variant="ghost" className="h-8 px-4 text-[13px]" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="primary" className="h-8 px-4 text-[13px]" onClick={onSave}>
-          Save
+        <Button variant="primary" className="h-8 px-4 text-[13px]" disabled={saving || shown.length > 0} onClick={() => void save()}>
+          {saving ? <Spinner /> : 'Save'}
         </Button>
       </div>
     </div>
   )
 }
 
-export function ChainsSection({
-  chains,
-  models,
-  error,
-  onSave,
-  onDelete,
-}: {
-  chains: Chain[]
-  models: ModelInfo[]
-  error: unknown
-  onSave: (chain: Chain) => void
-  onDelete: (name: string) => void
-}) {
+/** A saved chain's steps, each change sent to the CLI at once: an edit or a move in place, anything else as the whole chain. */
+function SavedSteps({ chain, models, providers, run }: { chain: Chain; models: ModelInfo[]; providers: string[]; run: (task: () => Promise<void>) => Promise<boolean> }) {
+  const [busy, setBusy] = useState(false)
+  const send = async (task: () => Promise<void>) => {
+    setBusy(true)
+    try {
+      await run(task)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const saveSteps = (steps: ChainStep[]) => send(() => api.saveChain(chain.name, { when: chain.when, steps, ...(chain.priority === undefined ? {} : { priority: chain.priority }) }))
+  return (
+    <div className="px-4 pt-2 pb-3">
+      <StepList
+        steps={chain.steps}
+        models={models}
+        providers={providers}
+        busy={busy}
+        onEdit={(index, step) => {
+          const before = chain.steps[index]
+          if (before === undefined) return
+          const edit = stepEdit(before, step)
+          if (edit.kind === 'patch') void send(() => api.editStep(chain.name, index, edit.patch))
+          else if (edit.kind === 'replace') void saveSteps(chain.steps.map((item, at) => (at === index ? step : item)))
+        }}
+        onMove={(from, to) => void send(() => api.moveStep(chain.name, from, to))}
+        onRemove={(index) => void saveSteps(withoutStep(chain.steps, index))}
+        onAdd={(step) => void saveSteps(withStep(chain.steps, step))}
+      />
+    </div>
+  )
+}
+
+export function ChainsSection({ chains, models, providers, error, run }: { chains: Chain[]; models: ModelInfo[]; providers: string[]; error: unknown; run: (task: () => Promise<void>) => Promise<boolean> }) {
   const [editing, setEditing] = useState<Chain | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [creatingName, setCreatingName] = useState('')
-  const [creatingParent, setCreatingParent] = useState('')
+  const [creatingPriority, setCreatingPriority] = useState('')
+  const nameTaken = chains.some((chain) => chain.name === creatingName.trim())
+
+  const save = async (name: string, body: ChainBody) => {
+    // A refused save keeps the editor open with the person's changes; the error shows below.
+    if (await run(() => api.saveChain(name, body))) setEditing(null)
+  }
+  const editor = (chain: Chain) => <ChainEditor key={chain.name} chain={chain} models={models} providers={providers} onSave={save} onCancel={() => setEditing(null)} />
 
   return (
     <>
@@ -142,7 +185,7 @@ export function ChainsSection({
                 title: `Delete ${confirmDelete}?`,
                 body: 'The chain is removed for good; a dispatch that names it no longer finds it.',
                 action: 'Delete chain',
-                run: async () => onDelete(confirmDelete),
+                run: async () => void (await run(() => api.deleteChain(confirmDelete))),
               }
         }
         onClose={() => setConfirmDelete(null)}
@@ -150,7 +193,12 @@ export function ChainsSection({
       {chains.map((chain) => (
         <SettingsGroup
           key={chain.name}
-          title={chain.name}
+          title={
+            <span className="flex items-center gap-2">
+              {chain.name}
+              {chain.priority !== undefined && chain.priority !== 0 && <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] tracking-normal text-ink-300 normal-case">priority {chain.priority}</span>}
+            </span>
+          }
           aside={
             editing?.name === chain.name ? undefined : (
               <span className="flex gap-1">
@@ -164,65 +212,31 @@ export function ChainsSection({
             )
           }
         >
-          <p className="px-4 pt-3 text-[12.5px] text-ink-400">{conditionText(chain.when)}</p>
-          {editing?.name === chain.name ? (
-            <ChainEditor
-              chain={editing}
-              models={models}
-              onChange={setEditing}
-              onSave={() => {
-                onSave(editing)
-                setEditing(null)
-              }}
-              onCancel={() => setEditing(null)}
-            />
-          ) : (
-            <ol className="flex flex-wrap items-center gap-1.5 px-4 pt-2 pb-3">
-              {chain.steps.map((step, index) => (
-                <li key={`${step.agent}-${index}`} className="flex items-center gap-1.5">
-                  {index > 0 && (
-                    <svg viewBox="0 0 16 16" className="size-3 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="m6 4 4 4-4 4" />
-                    </svg>
-                  )}
-                  <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[12px] text-ink-200">{stepText(step)}</span>
-                </li>
-              ))}
-            </ol>
-          )}
+          <p className="px-4 pt-3 text-[12.5px] text-ink-400">{ruleSummary(chain.when, models)}</p>
+          {editing?.name === chain.name ? editor(editing) : <SavedSteps chain={chain} models={models} providers={providers} run={run} />}
         </SettingsGroup>
       ))}
-      {editing !== null && !chains.some((chain) => chain.name === editing.name) && (
-        <SettingsGroup title={editing.name}>
-          <p className="px-4 pt-3 text-[12.5px] text-ink-400">{conditionText(editing.when)}</p>
-          <ChainEditor
-            chain={editing}
-            models={models}
-            onChange={setEditing}
-            onSave={() => {
-              onSave(editing)
-              setEditing(null)
-            }}
-            onCancel={() => setEditing(null)}
-          />
-        </SettingsGroup>
-      )}
+      {editing !== null && !chains.some((chain) => chain.name === editing.name) && <SettingsGroup title={editing.name}>{editor(editing)}</SettingsGroup>}
+      <ChainTest models={models} />
       <SettingsGroup title="New chain">
         <form
           className="flex flex-wrap items-center gap-2 px-4 py-3"
           onSubmit={(event) => {
             event.preventDefault()
-            if (creatingName.trim() === '') return
-            setEditing(emptyChain(creatingName.trim(), creatingParent.trim()))
+            const name = creatingName.trim()
+            if (name === '' || nameTaken) return
+            const priority = priorityValue(creatingPriority)
+            setEditing({ name, when: {}, steps: [], ...(priority === undefined ? {} : { priority }) })
             setCreatingName('')
-            setCreatingParent('')
+            setCreatingPriority('')
           }}
         >
           <input aria-label="Chain name" value={creatingName} onChange={(event) => setCreatingName(event.target.value)} placeholder="Name" className={`${field} flex-1`} />
-          <input aria-label="Parent agent" value={creatingParent} onChange={(event) => setCreatingParent(event.target.value)} placeholder="Parent agent (optional)" className={`${field} flex-1`} />
-          <button type="submit" disabled={creatingName.trim() === ''} className={`${quiet} border border-white/[0.1] bg-white/[0.04]`}>
+          <input aria-label="New chain priority" inputMode="numeric" value={creatingPriority} onChange={(event) => setCreatingPriority(event.target.value)} placeholder="Priority (0)" className={`${field} w-28`} />
+          <button type="submit" disabled={creatingName.trim() === '' || nameTaken} className={`${quiet} border border-white/[0.1] bg-white/[0.04]`}>
             Create
           </button>
+          {nameTaken && <span className="w-full text-[12px] text-bad">A chain named {creatingName.trim()} already exists.</span>}
         </form>
       </SettingsGroup>
       {error !== null && <ErrorNote error={error} />}

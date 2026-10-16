@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { AdmissionPolicy, Chain, ChainStep, UsageReading } from '@/api/schema'
 import {
-  conditionText,
   groupReadingsByProvider,
   moveStep,
   policyFromForm,
@@ -65,18 +64,6 @@ describe('groupReadingsByProvider', () => {
   })
   test('no readings is an empty list', () => {
     expect(groupReadingsByProvider([])).toEqual([])
-  })
-})
-
-describe('conditionText', () => {
-  test('reads a parentAgent condition in plain language', () => {
-    expect(conditionText({ parentAgent: 'claude' })).toBe('when the parent is claude')
-  })
-  test('an empty condition always applies', () => {
-    expect(conditionText({})).toBe('always')
-  })
-  test('an unrecognised condition falls back to its JSON', () => {
-    expect(conditionText({ foo: 'bar' })).toBe('{"foo":"bar"}')
   })
 })
 

@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Chain, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree } from '@/api/schema'
+import type { NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubReview, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, Project, ProjectScripts, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -86,7 +86,15 @@ export interface DesktopApi {
   setLimitNotice(enabled: boolean, intervalSeconds?: number): Promise<void>
   setLimitProvider(provider: string, enabled: boolean): Promise<void>
   /** Create or replace a chain. */
-  saveChain(chain: Chain): Promise<void>
+  saveChain(name: string, chain: ChainBody): Promise<void>
+  /** Checks a chain without saving it (`chain save --dry-run`). */
+  validateChain(name: string, chain: ChainBody): Promise<ChainValidation>
+  /** Which chain a dispatch like this would get, and which of its steps run. Step indexes are array positions. */
+  chainExplain(input: ChainExplainInput): Promise<ChainExplain>
+  /** Changes one step in place; `index` is its array position. */
+  editStep(name: string, index: number, patch: StepPatch): Promise<void>
+  /** Moves a step from one array position to another. */
+  moveStep(name: string, from: number, to: number): Promise<void>
   deleteChain(name: string): Promise<void>
   refreshModels(agent: string): Promise<void>
   /** null clears the default. */

@@ -1,8 +1,10 @@
 import { answerMockApproval, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { GithubDetail, Project, ProjectScripts } from '@/api/schema'
+import type { GithubDetail, Project, ProjectScripts, Chain, ChainStep } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
+import { explainChains } from '@/api/fixtures/chain-explain'
+import { validateRule } from '@/settings/chain-rules'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const pillListeners = new Set<(expanded: boolean) => void>()
@@ -154,7 +156,50 @@ export function createMockApi(): DesktopApi {
     setLimitNotice: async (enabled, intervalSeconds) => void (settings = { ...settings, limits: { ...settings.limits, notice: { enabled, intervalSeconds: intervalSeconds ?? settings.limits.notice.intervalSeconds } } }),
     setLimitProvider: async (provider, enabled) =>
       void (settings = { ...settings, limits: { ...settings.limits, enabledProviders: enabled ? [...new Set([...settings.limits.enabledProviders, provider])] : settings.limits.enabledProviders.filter((item) => item !== provider) } }),
-    saveChain: async (chain) => void (settings = { ...settings, chains: [...settings.chains.filter((item) => item.name !== chain.name), chain] }),
+    saveChain: async (name, chain) => {
+      await wait(150)
+      const saved = { name, ...chain }
+      const index = settings.chains.findIndex((item) => item.name === name)
+      settings = { ...settings, chains: index === -1 ? [...settings.chains, saved] : settings.chains.map((item) => (item.name === name ? saved : item)) }
+    },
+    validateChain: async (_name, chain) => {
+      await wait(120)
+      const errors = [...validateRule(chain.when, settings.models), ...chain.steps.flatMap((step, index) => (step.when === undefined ? [] : validateRule(step.when, settings.models, `steps[${index}].when`)))]
+      return { ok: errors.length === 0, errors }
+    },
+    chainExplain: async (input) => {
+      await wait(150)
+      return explainChains(settings.chains, input, settings.limits.readings)
+    },
+    editStep: async (name, index, patch) => {
+      await wait(150)
+      const editChain = (chain: Chain): Chain => {
+        const step = chain.steps[index]
+        if (step === undefined) throw new CliError(`chain ${name} has no step ${index + 1}`, 1)
+        const { until, when, ...fields } = patch
+        const next: ChainStep = { ...step, ...fields }
+        if (until === null) delete next.until
+        else if (until !== undefined) next.until = until
+        if (when === null) delete next.when
+        else if (when !== undefined) next.when = when
+        return { ...chain, steps: chain.steps.map((item, position) => (position === index ? next : item)) }
+      }
+      settings = { ...settings, chains: settings.chains.map((chain) => (chain.name === name ? editChain(chain) : chain)) }
+    },
+    moveStep: async (name, from, to) => {
+      await wait(150)
+      settings = {
+        ...settings,
+        chains: settings.chains.map((chain) => {
+          if (chain.name !== name) return chain
+          const steps = [...chain.steps]
+          const [moved] = steps.splice(from, 1)
+          if (moved === undefined || to < 0 || to >= chain.steps.length) throw new CliError(`chain ${name} cannot move step ${from + 1} to ${to + 1}`, 1)
+          steps.splice(to, 0, moved)
+          return { ...chain, steps }
+        }),
+      }
+    },
     deleteChain: async (name) => void (settings = { ...settings, chains: settings.chains.filter((item) => item.name !== name) }),
     refreshModels: async () => {},
     setTerminalDefault: async (name) => void (settings = { ...settings, terminal: { ...settings.terminal, default: name } }),
