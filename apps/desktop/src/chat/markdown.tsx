@@ -3,20 +3,43 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { AnchorHTMLAttributes } from 'react'
+import { api } from '@/api'
 import { Linked } from '@/chat/path-links'
+import { httpsUrl } from '@/lib/external'
 
-// Links aren't wired to open anywhere yet, so a markdown link renders as inert text that only
-// shows its target on hover, through the title attribute, rather than as something clickable.
-function InertLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+// An https link opens in the system's browser; any other target stays inert text that only shows
+// where it points on hover.
+function ExternalLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const address = href === undefined ? null : httpsUrl(href)
+  if (address === null) {
+    return (
+      <span title={href} className="cursor-default text-accent underline decoration-dotted underline-offset-2">
+        {children}
+      </span>
+    )
+  }
+  // No href: a click on a real anchor would navigate the web view itself.
+  const open = () => void api.openUrl(address).catch(() => {})
   return (
-    <span title={href} className="cursor-default text-accent underline decoration-dotted underline-offset-2">
+    <span
+      role="link"
+      tabIndex={0}
+      title={address}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        open()
+      }}
+      className="cursor-pointer text-accent underline underline-offset-2 hover:decoration-2"
+    >
       {children}
     </span>
   )
 }
 
 const components = {
-  a: InertLink,
+  a: ExternalLink,
   // Text-bearing elements link the file paths in their text (see path-links.tsx).
   p: ({ children, ...props }: React.ComponentPropsWithoutRef<'p'>) => (
     <p className="whitespace-pre-wrap" {...props}>

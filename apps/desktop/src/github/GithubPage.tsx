@@ -21,7 +21,7 @@ import {
 } from '@/github/github-model'
 import { CloseIcon, CommentIcon, IssueIcon, MaximiseIcon, MilestoneIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
-import { Avatar, ChecksList, ConversationThread, CopyLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
+import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
 
@@ -363,7 +363,7 @@ function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onC
           <StatePill kind={kind === 'prs' ? 'pr' : 'issue'} state={state} draft={pullRequest?.isDraft ?? detail?.isDraft ?? false} />
           <span className="text-[13px] font-semibold text-ink-400 tabular-nums">#{number}</span>
           <span className="ml-auto" />
-          {url !== '' && <CopyLink url={url} />}
+          {url !== '' && <OpenLink url={url} />}
           <IconButton label="Maximise" onClick={onMaximise}>
             <MaximiseIcon size={14} />
           </IconButton>

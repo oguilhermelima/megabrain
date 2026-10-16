@@ -34,6 +34,9 @@ export function ProjectPicture({ project }: { project: Project }) {
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
+    // A row that now shows another project must not keep the last one's picture.
+    setUrl(null)
+    setFailed(false)
     if (project.missing) return
     let stopped = false
     void resolvePicture(project).then((value) => !stopped && setUrl(value))

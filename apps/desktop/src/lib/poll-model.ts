@@ -16,6 +16,12 @@ export const quickViewPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, 
 // The CLI caches each GitHub answer for 60 s; the badges can wait twice that.
 export const githubCountsPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 
+/** How long to wait after `failures` failed reads in a row: 1 s, doubling, never past the interval. */
+export function retryDelay(failures: number, interval: number | null): number | null {
+  if (interval === null) return null
+  return Math.min(1_000 * 2 ** Math.max(0, failures - 1), interval)
+}
+
 export type PollTrigger = 'start' | 'timer' | 'action' | 'focus' | 'visibility'
 
 export interface PollPlan {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, statusPolicy, type PollPolicy } from '@/lib/poll-model'
+import { githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
 
 const policy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 const hiddenToo: PollPolicy = { visibleMs: 5_000, hiddenMs: 30_000, refreshOn: { action: true, focus: true } }
@@ -91,5 +91,16 @@ describe('mapLimited', () => {
 
   test('an empty list resolves to an empty list', async () => {
     expect(await mapLimited([], 3, async () => 1)).toEqual([])
+  })
+})
+
+describe('retryDelay', () => {
+  test('backs off from 1 s, doubling, up to the interval', () => {
+    expect([1, 2, 3, 4, 5, 6, 7].map((failures) => retryDelay(failures, 30_000))).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000])
+  })
+
+  test('never waits longer than the interval, and pauses with it', () => {
+    expect(retryDelay(1, 500)).toBe(500)
+    expect(retryDelay(3, null)).toBeNull()
   })
 })

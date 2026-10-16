@@ -4,14 +4,15 @@ import type { NativeChat, Project, ProjectSession, ProjectWorktree } from '@/api
 import { relativeAge } from '@/advanced/projects-model'
 import { memberStatus, memberStatusLabel, stackActions, stackChain, visibleTree, worktreeTree, type MemberStatus, type StackAction, type StackDetail, type StackPlace, type WorktreeNode } from '@/advanced/stacks'
 import { useStackDetails, type StackDetails } from '@/advanced/useStackDetails'
+import { projectColor } from '@/advanced/picture-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { dropTarget, type Placement } from '@/advanced/project-order'
-import { createFolder, deleteFolder, folderOf, isFolderId, layoutDropTarget, moveEntry, moveToFolder, renameFolder, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
+import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, moveToFolder, renameFolder, sidebarEntries, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
 import { CodeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { applyRowOrder, moveRow, parseRowOrder, saveRowOrder, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
-import { RowMenu, type MenuItem, type OpenMenu } from '@/advanced/RowMenu'
+import { ContextMenu, menuFrom, openMenuFromKeyboard, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { FilterMenu, HeaderButton, SearchField, SearchIcon } from '@/advanced/SidebarTools'
@@ -25,6 +26,7 @@ import { countBadge, githubRepository, stateColors, worktreePullRequestState } f
 import { IssueIcon, PullRequestIcon } from '@/github/icons'
 import { useGithubCounts, type GithubCounts, type GithubKind } from '@/github/useGithubCounts'
 import { announceAction } from '@/lib/app-events'
+import { insideRoots } from '@/lib/external'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { useFlip } from '@/advanced/useFlip'
 import { ownership } from '@/chat/session-ownership'
@@ -761,7 +763,8 @@ const ProjectSection = memo(function ProjectSection({
   githubActive: GithubKind | null
   onGithub: (project: Project, kind: GithubKind, focus?: number) => void
   collapsed: boolean
-  onToggle: (name: string) => void
+  /** Folds or unfolds the project by its path. */
+  onToggle: (path: string) => void
   selectedSessionId: string | null
   onSelectSession: (session: ProjectSession) => void
   actions: RowActions
@@ -849,7 +852,7 @@ const ProjectSection = memo(function ProjectSection({
         <button
           type="button"
           data-entry-toggle={project.path}
-          onClick={() => onToggle(project.name)}
+          onClick={() => onToggle(project.path)}
           onKeyDown={(event) => drag.key(event, project.path)}
           aria-expanded={!collapsed}
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
@@ -898,9 +901,18 @@ function DropLine({ edge }: { edge: DropPlacement }) {
 
 function FolderIcon({ open }: { open: boolean }) {
   return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
       {open ? <path d="M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.1c.6 0 1 .4 1 1v.8H4.6c-.5 0-.9.3-1 .7L1.8 12.3Zm1.9 2.9c.1-.4.5-.6.9-.6h9.6c.6 0 1 .6.8 1.1l-1.4 4.2c-.1.4-.5.7-1 .7H2.8" /> : <path d="M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1Z" />}
     </svg>
+  )
+}
+
+/** A folder's tile: the size and tint of a project's letter badge, so the two kinds of row line up. */
+function FolderTile({ folder, open }: { folder: SidebarFolder; open: boolean }) {
+  return (
+    <span aria-hidden="true" style={{ backgroundColor: projectColor(folder.name) }} className="grid size-6 shrink-0 place-items-center rounded-[8px] text-white">
+      <FolderIcon open={open} />
+    </span>
   )
 }
 
@@ -950,8 +962,8 @@ function FolderSection({
       >
         {edge !== null && <DropLine edge={edge} />}
         {renaming ? (
-          <div className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-ink-300">
-            <FolderIcon open={open} />
+          <div className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5">
+            <FolderTile folder={folder} open={open} />
             <input
               aria-label={`Rename ${folder.name}`}
               defaultValue={folder.name}
@@ -963,7 +975,7 @@ function FolderSection({
                 if (event.key === 'Escape') onRename(null)
               }}
               onBlur={(event) => onRename(event.currentTarget.value)}
-              className="min-w-0 flex-1 bg-transparent text-[14px] font-semibold text-ink-100 outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[15px] font-semibold tracking-[-0.01em] text-ink-100 outline-none"
             />
           </div>
         ) : (
@@ -976,12 +988,13 @@ function FolderSection({
             aria-expanded={open}
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
             title={`${folder.name}\nDrag or press ⌥↑ ⌥↓ to reorder; drop projects on it to group them`}
-            className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left text-ink-300"
+            className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left"
           >
-            <FolderIcon open={open} />
-            <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em] text-ink-200">{folder.name}</h2>
-            <span className="shrink-0 text-[11px] font-medium text-ink-400 tabular-nums">{count}</span>
-            <Chevron open={open} />
+            <FolderTile folder={folder} open={open} />
+            <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{folder.name}</h2>
+            <span title={`${count} ${count === 1 ? 'project' : 'projects'}`} className="shrink-0 text-[11px] font-medium text-ink-400 tabular-nums">
+              {count}
+            </span>
           </button>
         )}
         {!renaming && (
@@ -1088,11 +1101,12 @@ function HiddenSection({ hidden, onShow }: { hidden: HiddenPartition; onShow: (t
 // menu (right click or …) to hide it, remove it or open its code; hidden ones wait at the bottom.
 export const Sidebar = memo(function Sidebar({
   loaded,
+  loadError,
+  onRetryLoad,
   projects,
   selectedSessionId,
   onSelectSession,
   onCode,
-  onQuickView,
   onImport,
   layout,
   onLayout,
@@ -1141,13 +1155,14 @@ export const Sidebar = memo(function Sidebar({
   onNewChat: (worktreePath: string) => void
   /** The first projects read has answered; until then an empty list is still loading. */
   loaded: boolean
+  /** The last projects read's error; shown with Retry while nothing has loaded yet. */
+  loadError: unknown
+  onRetryLoad: () => void
   projects: Project[]
   selectedSessionId: string | null
   onSelectSession: (session: ProjectSession) => void
   /** Opens a root in Code mode, the embedded VS Code. */
   onCode: (target: CodeTarget) => void
-  /** The read-only file browser, without VS Code. */
-  onQuickView: (target: CodeTarget) => void
   onImport: () => void
   /** The folders and top-level order, reconciled with the listed projects; drags, ⌥↑ ⌥↓ and the folder menus send the next one. */
   layout: SidebarLayout
@@ -1189,11 +1204,12 @@ export const Sidebar = memo(function Sidebar({
     setSearchOpen(true)
     searchRef.current?.focus()
   }
-  const toggle = useCallback((name: string) => {
+  // Projects fold by path (two can share a name); stacks fold by `stack:<worktree path>`.
+  const toggle = useCallback((key: string) => {
     setCollapsed((current) => {
       const next = new Set(current)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       writeCollapsed(next)
       return next
     })
@@ -1274,10 +1290,11 @@ export const Sidebar = memo(function Sidebar({
     if (name !== null) applyLayout(renameFolder(layout, id, name))
   }
   const folderItems = (folder: SidebarFolder): MenuItem[] => [
-    { label: 'Rename…', onSelect: () => setRenamingFolder(folder.id) },
+    { label: 'Rename…', icon: 'rename', group: 'organise', onSelect: () => setRenamingFolder(folder.id) },
     {
       label: 'Delete folder…',
-      danger: true,
+      icon: 'trash',
+      group: 'danger',
       onSelect: () =>
         setConfirm({
           title: `Delete ${folder.name}?`,
@@ -1290,9 +1307,9 @@ export const Sidebar = memo(function Sidebar({
   const moveItems = useStableCallback((project: Project): MenuItem[] => {
     const current = folderOf(layout, project.path)
     return [
-      ...layout.folders.filter((folder) => folder.id !== current?.id).map((folder) => ({ label: `Move to ${folder.name}`, onSelect: () => applyLayout(moveToFolder(layout, project.path, folder.id)) })),
-      { label: 'Move to new folder', onSelect: () => newFolder(project.path) },
-      ...(current === null ? [] : [{ label: `Move out of ${current.name}`, onSelect: () => applyLayout(moveToFolder(layout, project.path, null)) }]),
+      ...layout.folders.filter((folder) => folder.id !== current?.id).map((folder): MenuItem => ({ label: `Move to ${folder.name}`, icon: 'folder', group: 'organise', onSelect: () => applyLayout(moveToFolder(layout, project.path, folder.id)) })),
+      { label: 'Move to new folder', icon: 'newFolder', group: 'organise', onSelect: () => newFolder(project.path) },
+      ...(current === null ? [] : [{ label: `Move out of ${current.name}`, icon: 'moveOut', group: 'organise', onSelect: () => applyLayout(moveToFolder(layout, project.path, null)) } satisfies MenuItem]),
     ]
   })
 
@@ -1311,13 +1328,7 @@ export const Sidebar = memo(function Sidebar({
     event.preventDefault()
     event.stopPropagation()
     menuRow.current = event.currentTarget.closest<HTMLElement>('.group')
-    // A right click opens at the pointer; the … button opens the menu under itself.
-    if (event.type === 'contextmenu') {
-      setMenu({ anchor: { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY }, gap: 0, items })
-      return
-    }
-    const { left, top, right, bottom } = event.currentTarget.getBoundingClientRect()
-    setMenu({ anchor: { left, top, right, bottom }, gap: 4, items })
+    setMenu(menuFrom(event, items))
   }, [])
 
   const setHidden = useCallback((target: { project: string } | { worktree: string }, hidden: boolean) => {
@@ -1357,10 +1368,12 @@ export const Sidebar = memo(function Sidebar({
     const chainOf = () => stackChain(worktreeTree(projects.find((item) => item.path === project.path) ?? project), worktree.path)
     switch (action.kind) {
       case 'new-stacked':
-        return { label: 'New stacked branch…', onSelect: () => setNewWorktreeFor({ project, base: branch }) }
+        return { label: 'New stacked branch…', icon: 'stack', group: 'git', onSelect: () => setNewWorktreeFor({ project, base: branch }) }
       case 'sync':
         return {
           label: 'Sync stack…',
+          icon: 'sync',
+          group: 'git',
           onSelect: () => {
             const names = chainOf()?.members.flatMap((member) => (member.branch === null ? [] : [member.branch])) ?? [branch]
             setConfirm({
@@ -1375,12 +1388,15 @@ export const Sidebar = memo(function Sidebar({
       case 'pr':
         return {
           label: action.draft ? 'Open draft PRs for stack' : 'Open PRs for stack',
+          icon: 'pullRequest',
+          group: 'git',
           onSelect: () => void runStack(project, worktree, 'pr', 'opening PRs', action.draft).catch(setActionError),
         }
       case 'merge':
         return {
           label: 'Merge stack…',
-          danger: true,
+          icon: 'merge',
+          group: 'git',
           onSelect: () =>
             setConfirm({
               title: 'Merge this stack?',
@@ -1390,20 +1406,51 @@ export const Sidebar = memo(function Sidebar({
             }),
         }
       case 'show-github':
-        return { label: 'Show on GitHub', onSelect: () => onGithub(project, 'prs', worktree.pullRequest?.number) }
+        return { label: 'Show on GitHub', icon: 'external', group: 'open', onSelect: () => onGithub(project, 'prs', worktree.pullRequest?.number) }
     }
   })
+
+  const copyText = useStableCallback((text: string) => {
+    setActionError(null)
+    navigator.clipboard.writeText(text).catch(setActionError)
+  })
+  // Only a listed project or worktree (or a folder inside one) is handed to Finder.
+  const reveal = useStableCallback((path: string) => {
+    setActionError(null)
+    const roots = projects.flatMap((project) => [project.path, ...project.worktrees.map((worktree) => worktree.path)])
+    if (!insideRoots(path, roots)) {
+      setActionError(new Error(`${path} is not a listed project or worktree.`))
+      return
+    }
+    api.revealPath(path).catch(setActionError)
+  })
+  // Reads the projects again now, and this project's stacks with them.
+  const refreshProject = useStableCallback((path: string | null) => {
+    if (path !== null) forgetStack(path)
+    announceAction()
+  })
+  // The header's + menu, and the list's own menu for a right click between rows.
+  const addItems = (): MenuItem[] => [
+    { label: 'Import project…', icon: 'import', group: 'open', onSelect: onImport },
+    { label: 'New folder', icon: 'newFolder', group: 'organise', onSelect: () => newFolder() },
+  ]
+  const listItems = (): MenuItem[] => [...addItems(), { label: 'Refresh', icon: 'refresh', group: 'copy', onSelect: () => refreshProject(null) }]
 
   const actions = useMemo<RowActions>(() => ({
     code: onCode,
     project: (project) => [
-      { label: 'Open Code', onSelect: () => onCode(codeTargetFor(project)) },
-      { label: 'Quick view', onSelect: () => onQuickView(codeTargetFor(project)) },
+      { label: 'Open in VS Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project)) },
+      ...(githubRepository(project.remote) === null ? [] : [{ label: 'Show on GitHub', icon: 'external', group: 'open', onSelect: () => onGithub(project, 'prs') } satisfies MenuItem]),
+      { label: 'Reveal in Finder', icon: 'reveal', group: 'open', onSelect: () => reveal(project.path) },
+      { label: 'New worktree…', icon: 'branch', group: 'git', onSelect: () => openNewWorktree(project) },
+      { label: 'Copy path', icon: 'copy', group: 'copy', onSelect: () => copyText(project.path) },
+      { label: 'Refresh', icon: 'refresh', group: 'copy', onSelect: () => refreshProject(project.path) },
       ...moveItems(project),
-      { label: 'Hide', onSelect: () => setHidden({ project: project.path }, true) },
+      { label: 'Hide', icon: 'hide', group: 'organise', onSelect: () => setHidden({ project: project.path }, true) },
       {
         label: 'Remove from megabrain…',
-        danger: true,
+        icon: 'trash',
+        group: 'danger',
         onSelect: () =>
           setConfirm({
             title: `Remove ${project.name} from megabrain?`,
@@ -1417,17 +1464,21 @@ export const Sidebar = memo(function Sidebar({
       const { worktree } = node
       const name = worktreeName(worktree)
       const items: MenuItem[] = [
-        { label: 'New terminal', onSelect: () => onNewTerminal(worktree.path) },
-        { label: 'Open Code', onSelect: () => onCode(codeTargetFor(project, worktree)) },
-        { label: 'Quick view', onSelect: () => onQuickView(codeTargetFor(project, worktree)) },
+        { label: 'New chat', icon: 'chat', group: 'open', onSelect: () => onNewChat(worktree.path) },
+        { label: 'New terminal', icon: 'terminal', group: 'open', onSelect: () => onNewTerminal(worktree.path) },
+        { label: 'Open in VS Code', icon: 'code', group: 'open', onSelect: () => onCode(codeTargetFor(project, worktree)) },
+        { label: 'Reveal in Finder', icon: 'reveal', group: 'open', onSelect: () => reveal(worktree.path) },
         ...stackActions(project, tree, node).map((action) => stackItem(project, worktree, action)),
-        { label: 'Hide', onSelect: () => setHidden({ worktree: worktree.path }, true) },
+        { label: 'Copy path', icon: 'copy', group: 'copy', onSelect: () => copyText(worktree.path) },
+        ...(worktree.branch === null ? [] : [{ label: 'Copy branch name', icon: 'copy', group: 'copy', onSelect: () => copyText(worktree.branch ?? '') } satisfies MenuItem]),
+        { label: 'Hide', icon: 'hide', group: 'organise', onSelect: () => setHidden({ worktree: worktree.path }, true) },
       ]
       // The main checkout is the project itself; it is removed with the project, not as a worktree.
       if (!worktree.primary) {
         items.push({
           label: 'Remove worktree…',
-          danger: true,
+          icon: 'trash',
+          group: 'danger',
           onSelect: () =>
             setConfirm({
               title: `Remove ${name}?`,
@@ -1441,12 +1492,13 @@ export const Sidebar = memo(function Sidebar({
     },
     chat: (chat) => {
       const title = chat.title ?? 'New chat'
-      const close: MenuItem = { label: 'Close chat', danger: true, onSelect: () => closeRow({ kind: 'native', chat }) }
+      const close: MenuItem = { label: 'Close chat', icon: 'close', group: 'danger', onSelect: () => closeRow({ kind: 'native', chat }) }
       if (rowStatus(chat.state) === 'ended') return [close]
       return [
         {
           label: 'Stop chat…',
-          danger: true,
+          icon: 'stop',
+          group: 'danger',
           onSelect: () =>
             setConfirm({
               title: `Stop ${title}?`,
@@ -1460,9 +1512,9 @@ export const Sidebar = memo(function Sidebar({
     },
     session: (session) => {
       if (!ownership(session).owned) return []
-      return [{ label: 'Release from megabrain…', danger: true, onSelect: () => closeRow({ kind: 'session', session }) }]
+      return [{ label: 'Release from megabrain…', icon: 'release', group: 'danger', onSelect: () => closeRow({ kind: 'session', session }) }]
     },
-  }), [onCode, onQuickView, setHidden, onNewTerminal, closeRow, moveItems, stackItem])
+  }), [onCode, onGithub, onNewChat, openNewWorktree, reveal, copyText, refreshProject, setHidden, onNewTerminal, closeRow, moveItems, stackItem])
 
   const [renamingTerminal, setRenamingTerminal] = useState<string | null>(null)
   const terminalRows = useMemo<TerminalRows>(() => ({
@@ -1474,8 +1526,8 @@ export const Sidebar = memo(function Sidebar({
       if (name !== null) onRenameTerminal(terminal, name)
     },
     items: (terminal) => [
-      { label: 'Rename…', onSelect: () => setRenamingTerminal(terminal.id) },
-      { label: closeNeedsConfirm(terminal) ? 'Close terminal…' : 'Close terminal', danger: true, onSelect: () => closeRow({ kind: 'terminal', terminal }) },
+      { label: 'Rename…', icon: 'rename', group: 'organise', onSelect: () => setRenamingTerminal(terminal.id) },
+      { label: closeNeedsConfirm(terminal) ? 'Close terminal…' : 'Close terminal', icon: 'close', group: 'danger', onSelect: () => closeRow({ kind: 'terminal', terminal }) },
     ],
   }), [selectedTerminalId, renamingTerminal, onSelectTerminal, onRenameTerminal, closeRow])
 
@@ -1538,12 +1590,11 @@ export const Sidebar = memo(function Sidebar({
   const stackRows = useMemo<StackRows>(() => ({ details: stackDetails, folded: collapsed, fold: toggle, busy: stackBusy }), [stackDetails, collapsed, toggle, stackBusy])
   const listedByPath = new Map(projects.map((project) => [project.path, project]))
   const shownByPath = new Map(visible.map((project) => [project.path, project]))
-  const foldersById = new Map(layout.folders.map((folder) => [folder.id, folder]))
   const renderProject = (project: Project) => (
     <ProjectSection
-      key={project.name}
+      key={project.path}
       project={project}
-      collapsed={collapsed.has(project.name)}
+      collapsed={collapsed.has(project.path)}
       onToggle={toggle}
       selectedSessionId={selectedSessionId}
       onSelectSession={onSelectSession}
@@ -1598,10 +1649,7 @@ export const Sidebar = memo(function Sidebar({
             <button
               type="button"
               onClick={(event) =>
-                openMenu(event, [
-                  { label: 'Import project…', onSelect: onImport },
-                  { label: 'New folder', onSelect: () => newFolder() },
-                ])
+                openMenu(event, addItems())
               }
               aria-label="Add project or folder"
               title="Import a project or make a folder"
@@ -1615,47 +1663,59 @@ export const Sidebar = memo(function Sidebar({
         {searchOpen && partition.visible.length > 0 && <SearchField inputRef={searchRef} query={filters.query} onQuery={(query) => onFilters({ ...filters, query })} onClose={() => setSearchOpen(false)} />}
       </div>
       {/* The gutter the scrollbar keeps (6px) plus pr-1 matches the header's px-2.5, so rows and header actions share one right edge. */}
-      <div onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)} className={`sidebar-scroll min-h-0 flex-1 space-y-4 overflow-y-scroll pt-1 pr-1 pb-6 pl-2.5 ${scrolled ? 'sidebar-fade' : ''}`}>
+      <div
+        onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+        onContextMenu={(event) => {
+          // Rows open their own menu; a row with none shows nothing rather than the list's.
+          if (event.target instanceof Element && event.target.closest('.group') !== null) {
+            event.preventDefault()
+            return
+          }
+          openMenu(event, listItems())
+        }}
+        onKeyDown={openMenuFromKeyboard}
+        className={`sidebar-scroll min-h-0 flex-1 space-y-4 overflow-y-scroll pt-1 pr-1 pb-6 pl-2.5 ${scrolled ? 'sidebar-fade' : ''}`}>
         {actionError !== null && (
           <div className="px-1">
             <ErrorNote error={actionError} />
           </div>
         )}
-        {!loaded && projects.length === 0 && <SidebarSkeleton />}
+        {!loaded && loadError === null && projects.length === 0 && <SidebarSkeleton />}
         {layoutError !== null && (
           <div className="px-1">
             <ErrorNote error={layoutError} />
           </div>
         )}
-        {layout.order.map((key) => {
-          if (!isFolderId(key)) {
-            const project = shownByPath.get(key)
-            return project === undefined ? null : renderProject(project)
-          }
-          const folder = foldersById.get(key)
-          if (folder === undefined) return null
-          const inside = folder.projects.flatMap((path) => shownByPath.get(path) ?? [])
-          // Filtering hides folders with nothing that passes; without filters an empty folder still shows.
-          if (filtered && inside.length === 0) return null
-          return (
+        {!loaded && loadError !== null && (
+          <div className="space-y-2 px-1">
+            <ErrorNote error={loadError} />
+            <button type="button" onClick={onRetryLoad} className="rounded-full bg-white/[0.08] px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.14]">
+              Retry
+            </button>
+          </div>
+        )}
+        {sidebarEntries(layout, shownByPath, filtered).map((entry) =>
+          entry.kind === 'project' ? (
+            renderProject(entry.project)
+          ) : (
             <FolderSection
-              key={folder.id}
-              folder={folder}
-              count={inside.length}
-              renaming={renamingFolder === folder.id}
-              onStartRename={() => setRenamingFolder(folder.id)}
-              onRename={(name) => renameTo(folder.id, name)}
-              onToggle={() => applyLayout(toggleFolder(layout, folder.id))}
+              key={entry.key}
+              folder={entry.folder}
+              count={entry.projects.length}
+              renaming={renamingFolder === entry.key}
+              onStartRename={() => setRenamingFolder(entry.key)}
+              onRename={(name) => renameTo(entry.key, name)}
+              onToggle={() => applyLayout(toggleFolder(layout, entry.key))}
               drag={drag}
-              dragging={dragState?.key === folder.id}
-              edge={edgeOf(folder.id)}
-              menuItems={folderItems(folder)}
+              dragging={dragState?.key === entry.key}
+              edge={edgeOf(entry.key)}
+              menuItems={folderItems(entry.folder)}
               onMenu={openMenu}
             >
-              {inside.map(renderProject)}
+              {entry.projects.map(renderProject)}
             </FolderSection>
-          )
-        })}
+          ),
+        )}
         {filtered && visible.length === 0 && partition.visible.length > 0 && (
           <div className="mx-1 rounded-[18px] border border-dashed border-white/[0.12] px-4 py-5 text-center">
             <p className="text-[13.5px] text-ink-300">Nothing matches {activeFilterLabels(filters).join(' + ')}.</p>
@@ -1680,7 +1740,7 @@ export const Sidebar = memo(function Sidebar({
         )}
         <HiddenSection hidden={partition} onShow={(target) => setHidden(target, false)} />
       </div>
-      <RowMenu menu={menu} onClose={closeMenu} />
+      <ContextMenu menu={menu} onClose={closeMenu} />
       <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
       <NewWorktreeDialog
         request={newWorktreeFor}
@@ -1688,7 +1748,7 @@ export const Sidebar = memo(function Sidebar({
         onCreate={(project, branch, base) => {
           setNewWorktreeFor(null)
           // The pending row shows under the project, so a folded project opens.
-          if (collapsed.has(project.name)) toggle(project.name)
+          if (collapsed.has(project.path)) toggle(project.path)
           onCreateWorktree(project, branch, base)
         }}
         onClose={() => setNewWorktreeFor(null)}

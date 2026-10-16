@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type PointerEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
@@ -32,6 +32,7 @@ import { RunContext, type RunControls } from '@/run-panel/run-context'
 import { panelFor } from '@/run-panel/run-model'
 import { RunPanel } from '@/run-panel/RunPanel'
 import { useRunPanels } from '@/run-panel/useRunPanels'
+import { initialLoad, settleLoad, type LatestLoad } from '@/lib/latest-load'
 import { projectsPolicy } from '@/lib/poll-model'
 import { reuse } from '@/lib/reuse'
 import { announceAction } from '@/lib/app-events'
@@ -48,11 +49,10 @@ import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { usePaneDrag } from '@/panes/usePaneDrag'
 import { alreadyOpen } from '@/launcher/resume-model'
 
-// Code mode, Quick view (CodeMirror), the GitHub pages and settings load the first time they open,
+// Code mode, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
 const CodeFrame = lazy(() => import('@/code/CodeFrame').then((module) => ({ default: module.CodeFrame })))
 const CodeRail = lazy(() => import('@/code/CodeRail').then((module) => ({ default: module.CodeRail })))
-const QuickView = lazy(() => import('@/code/QuickView').then((module) => ({ default: module.QuickView })))
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
@@ -61,27 +61,36 @@ function Loading() {
   return <PaneSkeleton />
 }
 
-function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean; dropChat: (id: string) => void } {
-  const [projects, setProjects] = useState<Project[]>([])
+function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean; error: unknown; retry: () => void; dropChat: (id: string) => void } {
+  const [load, setLoad] = useState<LatestLoad<Project[]>>(initialLoad)
   const [chats, setChats] = useState<NativeChat[]>([])
-  const [loaded, setLoaded] = useState(false)
-  usePoll(
+  const seq = useRef(0)
+  const retry = usePoll(
     projectsPolicy,
     async (current) => {
-      // Native chats ride the projects poll; a CLI without them leaves the list empty.
-      const [next, nextChats] = await Promise.all([api.projects('megabrain'), api.chats().catch(() => null)])
-      if (!current()) return
-      // Only sessions megabrain started; one opened in Orca or a plain terminal belongs there.
-      setProjects((previous) => reuse(previous, sessionsOfOrigin(next, 'megabrain')))
-      if (nextChats !== null) setChats((previous) => reuse(previous, nextChats))
-      setLoaded(true)
+      const at = ++seq.current
+      try {
+        // Native chats ride the projects poll; a CLI without them leaves the list empty.
+        const [next, nextChats] = await Promise.all([api.projects('megabrain'), api.chats().catch(() => null)])
+        if (!current()) return
+        // Only sessions megabrain started; one opened in Orca or a plain terminal belongs there.
+        const mine = sessionsOfOrigin(next, 'megabrain')
+        setLoad((previous) => settleLoad(previous, { seq: at, ok: true, value: reuse(previous.value ?? [], mine) }))
+        if (nextChats !== null) setChats((previous) => reuse(previous, nextChats))
+      } catch (error) {
+        // The last good list stays; usePoll tries again sooner.
+        if (current()) setLoad((previous) => settleLoad(previous, { seq: at, ok: false, error }))
+        throw error
+      }
     },
     [],
   )
   // A removed chat leaves the list at once instead of at the next poll.
   const dropChat = useStableCallback((id: string) => setChats((previous) => previous.filter((chat) => chat.id !== id)))
-  return { projects, chats, loaded, dropChat }
+  return { projects: load.value ?? noProjects, chats, loaded: load.value !== null, error: load.error, retry, dropChat }
 }
+
+const noProjects: Project[] = []
 
 const panesKey = 'megabrain.panes'
 
@@ -124,7 +133,7 @@ function storedSidebarCollapsed(): boolean {
 // live, and each project's code.
 export function Advanced({ onSetup }: { onSetup: () => void }) {
   const { status, error } = useStatus()
-  const { projects: listed, chats: nativeChats, loaded: projectsLoaded, dropChat } = useProjects()
+  const { projects: listed, chats: nativeChats, loaded: projectsLoaded, error: projectsError, retry: retryProjects, dropChat } = useProjects()
   const { layout: savedLayout, change: changeLayout, error: layoutError } = useSidebarLayout()
   // The folders and order the person dragged the projects into; ⌘[ and ⌘] walk them the same way.
   const layout = useMemo(() => reconcileLayout(savedLayout, listed.map((project) => project.path)), [savedLayout, listed])
@@ -134,7 +143,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The main area's panes, each showing one item; the sidebar follows the focused one.
   const [panes, setPanes] = useState<Panes>(storedPanes)
   const [pruned, setPruned] = useState(false)
-  const [quick, setQuick] = useState<CodeTarget | null>(null)
   // A project's pull request or issue page, shown in the main area over chats and the launcher.
   const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
   const [codeMode, setCodeMode] = useState<CodeModeState>(emptyCodeMode)
@@ -204,7 +212,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
   /** Shows an item: the pane that has it gets focus, else the focused pane shows it. */
   const showItem = (item: string) => {
-    setQuick(null)
     setGithubPage(null)
     setPanes((current) => openItem(current, item))
   }
@@ -215,7 +222,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   }
 
   const openRelatedChat: OpenChat = useStableCallback((target) => {
-    setQuick(null)
     setGithubPage(null)
     if ('dispatchId' in target) {
       const dispatch = status?.dispatches.find((item) => item.dispatchId === target.dispatchId)
@@ -268,7 +274,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const focusedTerminalId = focusedParsed?.kind === 'terminal' ? focusedParsed.id : null
 
   const openCode = (target: CodeTarget) => {
-    setQuick(null)
     setLastCode(target)
     setCodeMode((current) => enterCode(current, target).state)
   }
@@ -294,10 +299,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   })
   const stableOpenCode = useStableCallback(openCode)
   const openCodeRoot = useStableCallback((root: string) => openCode(codeTargetForRoot(projects, root)))
-  const openQuickView = useStableCallback((target: CodeTarget) => {
-    setGithubPage(null)
-    setQuick(target)
-  })
   const startImport = useStableCallback(() => setImporting(true))
   const stableLayout = useStableCallback(changeLayout)
   const changeFilters = useStableCallback((next: SidebarFilters) => {
@@ -312,7 +313,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   })
   /** What a launcher started takes the launcher's own pane, whichever pane is focused. */
   const replaceLauncher = (launcher: string | null, item: string) => {
-    setQuick(null)
     setGithubPage(null)
     setPanes((current) => {
       const pane = launcher === null ? null : paneOfItem(current, launcher)
@@ -446,7 +446,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   })
   // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header moves.
   const drag = usePaneDrag((source, target) => {
-    setQuick(null)
     setGithubPage(null)
     if (source.kind === 'pane') setPanes((current) => movePane(current, source.paneId, target.paneId, target.zone))
     else setPanes((current) => dropItem(current, source.item, target.paneId, target.zone, newPaneId()))
@@ -460,7 +459,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     else drag.start(event, { kind: 'item', item: itemKey('terminal', row.terminal.id), label: terminalLabel(row.terminal) })
   })
   const openGithub = useStableCallback((project: Project, kind: GithubKind, focus?: number) => {
-    setQuick(null)
     setGithubPage({ path: project.path, kind, focus: focus ?? null })
   })
   // A pull request or issue maximised from its page takes the focused pane, like any other item.
@@ -661,7 +659,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           },
         }
   // The focused pane's worktree: its run panel shows, and ⌘T opens a terminal there.
-  const runRoot = quick !== null || githubPage !== null || focusedItem === null ? null : rootOf(focusedItem)
+  const runRoot = githubPage !== null || focusedItem === null ? null : rootOf(focusedItem)
   const runControls = controlsFor(runRoot)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -690,7 +688,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       }
       if (!event.metaKey || (event.key !== '[' && event.key !== ']')) return
       event.preventDefault()
-      setQuick(null)
       const step = event.key === ']' ? 1 : -1
       const next = neighbourSession(sessionRows, selectedSessionId, step)
       if (next !== null) openSession(next.session, next.worktreePath)
@@ -755,11 +752,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           <SidebarHeader onCollapse={toggleSidebarCollapsed} />
           <Sidebar
             loaded={projectsLoaded}
+            loadError={projectsError}
+            onRetryLoad={retryProjects}
             projects={projects}
             selectedSessionId={selectedSessionId}
             onSelectSession={selectSidebarSession}
             onCode={stableOpenCode}
-            onQuickView={openQuickView}
             onImport={startImport}
             layout={layout}
             onLayout={stableLayout}
@@ -808,7 +806,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           )}
           <OpenCodeContext.Provider value={openCodeRoot}>
             <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
-              {/* The panes stay mounted under a GitHub page or Quick view, so nothing in them is lost. */}
+              {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <PaneArea
                   panes={panes}
@@ -821,10 +819,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
                   drag={drag}
                   onClose={closePaneById}
                 />
-                {(githubView !== null || quick !== null) && (
+                {githubView !== null && (
                   <div className="absolute inset-0 z-40 flex flex-col bg-ink-950">
                     <RunContext.Provider value={null}>
-                      <Suspense fallback={<Loading />}>{githubView ?? (quick === null ? null : <QuickView key={quick.root} root={quick.root} title={quick.title} onClose={() => setQuick(null)} />)}</Suspense>
+                      <Suspense fallback={<Loading />}>{githubView}</Suspense>
                     </RunContext.Provider>
                   </div>
                 )}

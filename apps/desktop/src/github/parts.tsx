@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { api } from '@/api'
 import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest } from '@/api/schema'
+import { httpsUrl } from '@/lib/external'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { avatarUrl, checkSummary, labelStyle, pullRequestVisualState, stateColors, type CheckSummary, type PullRequestVisualState } from '@/github/github-model'
@@ -148,27 +150,31 @@ export function useNow(intervalMs: number): number {
   return now
 }
 
-/** "Open on GitHub": links do not open from the app yet, so this copies the address instead. */
-export function CopyLink({ url }: { url: string }) {
-  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const copy = () => {
-    navigator.clipboard.writeText(url).then(
-      () => setCopied('copied'),
-      () => setCopied('failed'),
-    )
+/** "Open on GitHub" in the system's browser; when that fails, the address is copied instead. */
+export function OpenLink({ url }: { url: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const open = () => {
+    const address = httpsUrl(url)
+    const copy = () =>
+      navigator.clipboard.writeText(url).then(
+        () => setState('copied'),
+        () => setState('failed'),
+      )
+    if (address === null) void copy()
+    else api.openUrl(address).then(() => setState('idle'), copy)
   }
   return (
     <div className="flex flex-col items-end gap-1">
       <button
         type="button"
-        onClick={copy}
-        title="Links don't open from the app yet; this copies the address so you can paste it in your browser."
+        onClick={open}
+        title={url}
         className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.06] px-3 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.12]"
       >
         <LinkIcon size={13} />
-        {copied === 'copied' ? 'Link copied' : 'Copy GitHub link'}
+        {state === 'copied' ? 'Link copied' : 'Open on GitHub'}
       </button>
-      {copied === 'failed' && <span className="max-w-[260px] truncate text-[11.5px] text-ink-400 select-text">{url}</span>}
+      {state === 'failed' && <span className="max-w-[260px] truncate text-[11.5px] text-ink-400 select-text">{url}</span>}
     </div>
   )
 }

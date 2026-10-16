@@ -10,6 +10,7 @@ import {
   parseLayout,
   reconcileLayout,
   renameFolder,
+  sidebarEntries,
   stepEntry,
   toggleFolder,
   type SidebarLayout,
@@ -204,5 +205,58 @@ describe('layoutDropTarget', () => {
 
   test('over itself there is no target', () => {
     expect(layoutDropTarget(rows, 20, '/a')).toBeNull()
+  })
+})
+
+describe('sidebarEntries', () => {
+  const project = (path: string, name: string) => ({ path, name })
+  const twins = [project('/w/local/userscripts', 'userscripts'), project('/w/userscripts', 'userscripts'), project('/w/qs-tiles', 'qs-tiles'), project('/w/megabrain', 'megabrain')]
+  const shown = new Map(twins.map((item) => [item.path, item]))
+  const saved = layout(['/w/megabrain', 'local'], [folder('local', ['/w/qs-tiles', '/w/local/userscripts', '/w/userscripts'])])
+
+  test('two projects with the same name in a folder are two entries, keyed by path', () => {
+    const entries = sidebarEntries(saved, shown, false)
+    expect(entries.map((entry) => entry.key)).toEqual(['/w/megabrain', 'local'])
+    const inside = entries[1]?.kind === 'folder' ? entries[1].projects : []
+    expect(inside.map((item) => item.path)).toEqual(['/w/qs-tiles', '/w/local/userscripts', '/w/userscripts'])
+  })
+
+  test('a folder counts the projects it shows', () => {
+    const partial = new Map([...shown].filter(([path]) => path !== '/w/qs-tiles'))
+    const entries = sidebarEntries(saved, partial, false)
+    expect(entries[1]?.kind === 'folder' ? entries[1].projects.length : -1).toBe(2)
+  })
+
+  test('filtering drops a folder with nothing shown; without filters it stays', () => {
+    const none = new Map([['/w/megabrain', project('/w/megabrain', 'megabrain')]])
+    expect(sidebarEntries(saved, none, true).map((entry) => entry.key)).toEqual(['/w/megabrain'])
+    expect(sidebarEntries(saved, none, false).map((entry) => entry.key)).toEqual(['/w/megabrain', 'local'])
+  })
+
+  test('every project shows exactly once after a run of moves', () => {
+    const paths = twins.map((item) => item.path)
+    let current = reconcileLayout(saved, paths)
+    const moves: Array<[string, { key: string; placement: 'before' | 'after' | 'into' }]> = [
+      ['/w/userscripts', { key: '/w/megabrain', placement: 'before' }],
+      ['/w/userscripts', { key: 'local', placement: 'into' }],
+      ['/w/local/userscripts', { key: '/w/megabrain', placement: 'after' }],
+      ['local', { key: '/w/userscripts', placement: 'before' }],
+      ['/w/qs-tiles', { key: '/w/userscripts', placement: 'after' }],
+    ]
+    for (const [source, target] of moves) {
+      current = reconcileLayout(moveEntry(current, source, target), paths)
+      const rendered = sidebarEntries(current, shown, false).flatMap((entry) => (entry.kind === 'folder' ? entry.projects.map((item) => item.path) : [entry.key]))
+      expect([...rendered].sort()).toEqual([...paths].sort())
+    }
+  })
+})
+
+describe('reconcileLayout is idempotent', () => {
+  test('reconciling twice changes nothing, and each path is placed once', () => {
+    const messy = layout(['/a', 'f', '/a', '/b', 'g', '/gone'], [folder('f', ['/b', '/c', '/b']), folder('g', ['/c', '/d'])])
+    const paths = ['/a', '/b', '/c', '/d', '/e']
+    const once = reconcileLayout(messy, paths)
+    expect(reconcileLayout(once, paths)).toEqual(once)
+    expect(flattenLayout(once).sort()).toEqual(paths)
   })
 })

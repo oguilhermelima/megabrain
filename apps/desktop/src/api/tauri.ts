@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
@@ -131,6 +132,8 @@ export function createTauriApi(): DesktopApi {
     },
     saveAttachment: (base64, extension) => invoke<string>('save_attachment', { base64, extension }),
     sendToSession: (sessionId, text) => cliJson(['send', '--session', sessionId, '--text', text, '--operator', '--json'], sendResultSchema),
+    openUrl: (url) => openUrl(url),
+    revealPath: (path) => revealItemInDir(path),
     releaseSession: async (sessionId) => void (await cliText(['session', 'release', sessionId, '--json'])),
     openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
     stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),

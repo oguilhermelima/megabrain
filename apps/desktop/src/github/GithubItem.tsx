@@ -6,7 +6,7 @@ import { DetailSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
 import { checkSummary } from '@/github/github-model'
 import { RefreshIcon } from '@/github/icons'
-import { Avatar, CheckGlyph, ChecksList, ConversationThread, CopyLink, LineCounts, ReviewChip, StatePill, ago, checkTitle, useNow } from '@/github/parts'
+import { Avatar, CheckGlyph, ChecksList, ConversationThread, OpenLink, LineCounts, ReviewChip, StatePill, ago, checkTitle, useNow } from '@/github/parts'
 import { PullRequestFiles, type PendingControls } from '@/github/PullRequestFiles'
 import { addPending, editPending, issueStateActions, removePending, reviewPayload, type IssueStateAction, type PendingComment } from '@/github/review-model'
 
@@ -305,7 +305,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
             <RefreshIcon size={14} />
           </span>
         </button>
-        {detail !== null && <CopyLink url={detail.url} />}
+        {detail !== null && <OpenLink url={detail.url} />}
         {kind === 'pr' && detail !== null && open && (
           <>
             <Pill tone="secondary" onClick={() => setReviewing((current) => !current)}>

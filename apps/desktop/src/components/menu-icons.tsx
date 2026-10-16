@@ -1,0 +1,37 @@
+// The glyphs at the start of each row-menu item: the 16-unit grid, 1.5 stroke and 14 px size of the
+// sidebar's other icons (chrome.tsx, github/icons.tsx).
+
+const paths = {
+  chat: 'M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11a1.5 1.5 0 0 1-1.5-1.5Z',
+  terminal: 'm3 4.5 3.5 3.5L3 11.5M8.5 12h4.5',
+  code: 'M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5',
+  external: 'M9 3h4v4M13 3 7.5 8.5M11.5 9.5V12a1 1 0 0 1-1 1h-6.5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5',
+  reveal: 'M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1ZM8 7.5v3M6.5 9 8 7.5 9.5 9',
+  branch: 'M4 1.6a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M4 11.2a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M12 5.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M4 4.8v6.4M4 7.5c0 2.5 2 2.5 6.4 2.5',
+  stack: 'm8 2 6 3-6 3-6-3Zm-6 6 6 3 6-3m-12 3 6 3 6-3',
+  sync: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3',
+  pullRequest: 'M4 1.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M4 10.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M12 10.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M4 5.1v5.8M12 10.9V6.5a2 2 0 0 0-2-2H7.5',
+  merge: 'M4 1.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M4 10.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M12 6.4a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 1 0 0-3.2M4 5.1v5.8M4 5.1c0 2.4 2.5 2.9 6.4 2.9',
+  copy: 'M5.5 5.5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2M3.5 5.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z',
+  refresh: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3',
+  rename: 'M10.5 2.5 13.5 5.5 6 13H3v-3ZM9 4l3 3',
+  folder: 'M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1Z',
+  newFolder: 'M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1ZM8 7v4M6 9h4',
+  moveOut: 'M1.8 4.2c0-.6.4-1 1-1h3.1l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1ZM6 9h4M8.5 7.5 10 9l-1.5 1.5',
+  import: 'M8 2.5v7M5 6.5l3 3 3-3M3 11.5v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1',
+  hide: 'M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4ZM8 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 1 0 0-3M3 13 13 3',
+  close: 'm4 4 8 8M12 4l-8 8',
+  stop: 'M4.5 3.5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z',
+  release: 'M6.5 9.5 9.5 6.5M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1',
+  trash: 'M2.5 4.5h11M6 4.5V3a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1',
+} as const
+
+export type MenuIcon = keyof typeof paths
+
+export function MenuIconGlyph({ icon }: { icon: MenuIcon }) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+      <path d={paths[icon]} />
+    </svg>
+  )
+}

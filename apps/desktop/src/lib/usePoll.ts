@@ -1,27 +1,31 @@
-import { useEffect, useRef, type DependencyList } from 'react'
+import { useCallback, useEffect, useRef, type DependencyList } from 'react'
 import { onAction, onFocus, onVisibility, windowShows } from '@/lib/app-events'
-import { planPoll, pollInterval, type PollPolicy, type PollTrigger } from '@/lib/poll-model'
+import { planPoll, pollInterval, retryDelay, type PollPolicy, type PollTrigger } from '@/lib/poll-model'
 
 /**
  * Runs `read` on the policy's schedule (see poll-model.ts), one read at a time; a refresh asked for
  * during a read runs once it ends. `current()` turns false once the deps changed or the component
- * left, so a late answer is dropped.
+ * left, so a late answer is dropped. A read that throws is tried again sooner (see retryDelay).
+ * Returns a function that reads again now.
  */
-export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Promise<void>, deps: DependencyList) {
+export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Promise<void>, deps: DependencyList): () => void {
   const latest = useRef(read)
   latest.current = read
+  const now = useRef<() => void>(() => {})
 
   useEffect(() => {
     let stopped = false
     let running = false
     let pending = false
     let lastRunAt: number | null = null
+    let failures = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     const current = () => !stopped
 
-    const schedule = (ms: number | null) => {
+    // A retry after a failed read is forced: the timer's own plan would wait out the full interval.
+    const schedule = (ms: number | null, kind: PollTrigger = 'timer') => {
       clearTimeout(timer)
-      timer = ms === null ? undefined : setTimeout(() => trigger('timer'), ms)
+      timer = ms === null ? undefined : setTimeout(() => trigger(kind), ms)
     }
 
     const trigger = (kind: PollTrigger) => {
@@ -39,7 +43,14 @@ export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Pr
       clearTimeout(timer)
       lastRunAt = Date.now()
       latest.current(current)
-        .catch(() => {})
+        .then(
+          () => {
+            failures = 0
+          },
+          () => {
+            failures += 1
+          },
+        )
         .finally(() => {
           running = false
           if (stopped) return
@@ -48,11 +59,14 @@ export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Pr
             trigger('start')
             return
           }
-          schedule(pollInterval(policy, windowShows()))
+          const interval = pollInterval(policy, windowShows())
+          if (failures === 0) schedule(interval)
+          else schedule(retryDelay(failures, interval), 'start')
         })
     }
 
     const stops = [onVisibility(() => trigger('visibility')), onFocus(() => trigger('focus')), onAction(() => trigger('action'))]
+    now.current = () => trigger('start')
     trigger('start')
     return () => {
       stopped = true
@@ -61,4 +75,6 @@ export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Pr
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [policy, ...deps])
+
+  return useCallback(() => now.current(), [])
 }

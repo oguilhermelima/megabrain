@@ -61,8 +61,12 @@ export function reconcileLayout(layout: SidebarLayout, paths: string[]): Sidebar
   const present = new Set(paths)
   const placed = new Set<string>()
   const folders = layout.folders.map((folder) => {
-    const projects = folder.projects.filter((path) => present.has(path) && !placed.has(path))
-    for (const path of projects) placed.add(path)
+    // A path listed twice, here or in an earlier folder, keeps only its first place.
+    const projects = folder.projects.filter((path) => {
+      if (!present.has(path) || placed.has(path)) return false
+      placed.add(path)
+      return true
+    })
     return projects.length === folder.projects.length ? folder : { ...folder, projects }
   })
   const ids = new Set(folders.map((folder) => folder.id))
@@ -219,4 +223,27 @@ export function layoutDropTarget(rows: LayoutRow[], y: number, dragged: string):
     return first === undefined ? null : result({ key: first.key, placement: 'before' })
   }
   return result({ key: above.key, placement: 'after' })
+}
+
+export type SidebarEntry<T extends { path: string }> =
+  | { kind: 'project'; key: string; project: T }
+  | { kind: 'folder'; key: string; folder: SidebarFolder; projects: T[] }
+
+/**
+ * What the sidebar draws, top to bottom: each entry keyed by its project path or folder id (never a
+ * name, which two projects can share), a folder with the projects it shows. With filters on, a folder
+ * with nothing that passes is left out; without filters an empty folder still shows.
+ */
+export function sidebarEntries<T extends { path: string }>(layout: SidebarLayout, shown: ReadonlyMap<string, T>, filtered: boolean): SidebarEntry<T>[] {
+  const byId = new Map(layout.folders.map((folder) => [folder.id, folder]))
+  return layout.order.flatMap((key): SidebarEntry<T>[] => {
+    if (!isFolderId(key)) {
+      const project = shown.get(key)
+      return project === undefined ? [] : [{ kind: 'project', key, project }]
+    }
+    const folder = byId.get(key)
+    if (folder === undefined) return []
+    const projects = folder.projects.flatMap((path) => shown.get(path) ?? [])
+    return filtered && projects.length === 0 ? [] : [{ kind: 'folder', key, folder, projects }]
+  })
 }

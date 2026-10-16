@@ -139,6 +139,8 @@ export function createMockApi(): DesktopApi {
     unqueue: async () => 'Use the new scrubber, and keep the old bar behind a flag.',
     saveAttachment: async (_base64, extension) => `/Users/operator/.megabrain/attachments/mock.${extension}`,
     sendToSession: async (sessionId) => ({ delivered: true, channel: ownedSession(sessionId) ? 'tmux' : 'claude-peer' }),
+    openUrl: async (url) => void window.open(url, '_blank', 'noopener'),
+    revealPath: async () => {},
     releaseSession: async (sessionId) => void released.add(sessionId),
     openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     stopCodeServer: async () => {},

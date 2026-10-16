@@ -68,6 +68,10 @@ export interface DesktopApi {
   sendToSession(sessionId: string, text: string): Promise<SendResult>
   /** Forget ownership and kill megabrain's tmux session for it (`session release`). */
   releaseSession(sessionId: string): Promise<void>
+  /** Open an https address in the system's browser. */
+  openUrl(url: string): Promise<void>
+  /** Show a folder or file in Finder (the file manager on Linux). */
+  revealPath(path: string): Promise<void>
   /** A local VS Code for a worktree or repository; started on demand and reused. */
   openCodeServer(root: string): Promise<CodeServer>
   stopCodeServer(root: string): Promise<void>
