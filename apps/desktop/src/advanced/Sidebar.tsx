@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { NativeChat, Project, ProjectSession, ProjectWorktree } from '@/api/schema'
 import { relativeAge } from '@/advanced/projects-model'
@@ -1220,6 +1220,15 @@ export const Sidebar = memo(function Sidebar({
   // below it: no tint or blur of its own, which inside the glass would stack a second, darker layer.
   // Rows that scroll up fade out under its edge, and a hairline shows once they do.
   const [scrolled, setScrolled] = useState(false)
+  // The list keeps a scrollbar gutter the header has not got; the header pads by the measured width,
+  // so its right edge is the list's whatever width the webview gives the scrollbar (6px, or 0 when
+  // it overlays).
+  const listRef = useRef<HTMLDivElement>(null)
+  const [gutter, setGutter] = useState(6)
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (list !== null) setGutter(list.offsetWidth - list.clientWidth)
+  }, [])
   // Rows that change place slide there (useFlip); every layout change goes through here.
   const captureRows = useFlip(navRef)
   const applyLayout = (next: SidebarLayout) => {
@@ -1634,10 +1643,14 @@ export const Sidebar = memo(function Sidebar({
         openSearch()
       }}
     >
-      <div className={`shrink-0 space-y-2 border-b px-2.5 py-2 transition-colors ${scrolled ? 'border-white/[0.07]' : 'border-transparent'}`}>
+      {/* Padded like the list (pl-2.5, pr-1 plus its gutter), and the row inside like a project row, so
+          the title starts on the project pictures' column and the actions end on the rows' right padding. */}
+      <div style={{ paddingRight: 4 + gutter }} className={`shrink-0 space-y-2 border-b py-2 pl-2.5 transition-colors ${scrolled ? 'border-white/[0.07]' : 'border-transparent'}`}>
         <div className="flex items-center justify-between pr-1.5 pl-2.5">
-          <h3 className="text-[13px] font-semibold tracking-[-0.005em] text-ink-300">Projects</h3>
-          <span className="flex items-center gap-0.5">
+          <h3 className="text-[13.5px] font-semibold tracking-[-0.01em] text-ink-300">Projects</h3>
+          {/* A 14px glyph centred in a 28px button ends 9px inside it; the buttons overhang by that much,
+              keeping their size, so the + itself ends where the badges and counts below end at rest. */}
+          <span className="-mr-[9px] flex items-center gap-0.5">
             {partition.visible.length > 0 && (
               <>
                 <HeaderButton label="Search (⌘F)" on={searching} expanded={searchOpen} keepFocus onClick={() => (searchOpen && filters.query === '' ? setSearchOpen(false) : openSearch())}>
@@ -1662,8 +1675,8 @@ export const Sidebar = memo(function Sidebar({
         </div>
         {searchOpen && partition.visible.length > 0 && <SearchField inputRef={searchRef} query={filters.query} onQuery={(query) => onFilters({ ...filters, query })} onClose={() => setSearchOpen(false)} />}
       </div>
-      {/* The gutter the scrollbar keeps (6px) plus pr-1 matches the header's px-2.5, so rows and header actions share one right edge. */}
       <div
+        ref={listRef}
         onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
         onContextMenu={(event) => {
           // Rows open their own menu; a row with none shows nothing rather than the list's.
