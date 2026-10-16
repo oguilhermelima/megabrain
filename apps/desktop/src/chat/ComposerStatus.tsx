@@ -1,6 +1,5 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
-import { api } from '@/api'
-import { settingsSchema, type Settings } from '@/api/schema'
+import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import type { Settings } from '@/api/schema'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
@@ -30,52 +29,29 @@ import {
 import { ringOffset } from '@/chat/composer-look'
 import { AgentIcon } from '@/components/agent-icons'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
-import { onVisibility, windowShows } from '@/lib/app-events'
-import { createSharedRead, isStale, storageCache, type SharedRead } from '@/lib/shared-read'
+import { appSettings } from '@/lib/app-settings'
+import { isStale } from '@/lib/shared-read'
 
 const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
 const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
 
-// Settings for the limits and the model list, read once for every composer in the app: at most
-// every minute while the window shows, paused while it is hidden. The 5-hour and weekly limits are
-// the agent's, not the chat's, so one reading serves them all. The last good reading is kept in
-// local storage so the row paints from it at once while the first read runs.
-let settingsRead: SharedRead<Settings> | null = null
-
-const settingsCache = storageCache<Settings>(
-  () => window.localStorage,
-  'megabrain.composer.settings',
-  1,
-  (raw) => {
-    const parsed = settingsSchema.safeParse(raw)
-    return parsed.success ? parsed.data : null
-  },
-)
-
-function sharedSettings(): SharedRead<Settings> {
-  if (settingsRead !== null) return settingsRead
-  const read = createSharedRead(() => api.settings(), {
-    intervalMs: 60_000,
-    cache: settingsCache,
-    clock: {
-      now: () => Date.now(),
-      visible: windowShows,
-      setTimer: (run, ms) => {
-        const timer = setTimeout(run, ms)
-        return () => clearTimeout(timer)
-      },
+/** The settings, whether they are older than a fresh read would be, and whether the last read failed. */
+function useSettings(): { settings: Settings | null; stale: boolean; failed: boolean } {
+  const store = appSettings()
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      const stopRead = store.subscribe(notify)
+      const stopChange = store.onChange(notify)
+      return () => {
+        stopRead()
+        stopChange()
+      }
     },
-  })
-  onVisibility(() => read.visibilityChanged())
-  settingsRead = read
-  return read
-}
-
-/** The settings and whether they are older than a fresh read would be, as when only the cache has answered. */
-function useSettings(): { settings: Settings | null; stale: boolean } {
-  const store = sharedSettings()
-  const settings = useSyncExternalStore(store.subscribe, store.get)
-  return { settings, stale: isStale(store.readAt(), Date.now()) }
+    [store],
+  )
+  const settings = useSyncExternalStore(subscribe, store.get)
+  const failed = useSyncExternalStore(subscribe, store.failed)
+  return { settings, stale: isStale(store.readAt(), Date.now()), failed }
 }
 
 type Models = Settings['models']
@@ -536,7 +512,7 @@ function LimitRing({ agent, limits }: { agent: string; limits: AgentLimit[] }) {
  * two full rows from 1000px, one quiet line below that, a single ring under 560px (limitsLayout).
  */
 export function ComposerLimits({ agent }: { agent: string | null }) {
-  const { settings, stale } = useSettings()
+  const { settings, stale, failed } = useSettings()
   const box = useRef<HTMLDivElement>(null)
   // The composer's footer spans the pane, so its width is the pane's.
   const layout = limitsLayout(useParentWidth(box))
@@ -548,8 +524,8 @@ export function ComposerLimits({ agent }: { agent: string | null }) {
     <div
       ref={box}
       aria-busy={loading}
-      title={stale && !hidden ? 'Last known usage; refreshing' : undefined}
-      className={`flex min-w-0 flex-wrap items-center justify-start whitespace-nowrap text-ink-300 transition-opacity duration-150 motion-reduce:transition-none ${hidden ? '' : layout === 'full' ? 'gap-x-5 px-3 pt-2 text-[12.5px]' : 'gap-x-2 px-3 pt-1.5 text-[11.5px]'} ${stale ? 'opacity-60' : ''}`}
+      title={(stale || failed) && !hidden ? (failed ? 'Last known usage; retrying' : 'Last known usage; refreshing') : undefined}
+      className={`flex min-w-0 flex-wrap items-center justify-start whitespace-nowrap text-ink-300 transition-opacity duration-150 motion-reduce:transition-none ${hidden ? '' : layout === 'full' ? 'gap-x-5 px-3 pt-2 text-[12.5px]' : 'gap-x-2 px-3 pt-1.5 text-[11.5px]'} ${stale || failed ? 'opacity-60' : ''}`}
     >
       {hidden || agent === null ? null : loading ? (
         layout === 'full' ? (

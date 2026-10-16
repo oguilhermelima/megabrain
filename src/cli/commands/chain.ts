@@ -327,17 +327,19 @@ function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitRea
 }
 export async function readLimitRows(environment: ChainEnvironment, config: ChainConfig, processAdapter: ProcessAdapter): Promise<LimitRow[]> {
   const root = resolveStateDirectory(environment);
-  const rows: LimitRow[] = [];
-  // Sequential, not parallel: a provider's two windows share one on-disk cache
-  // (chain-limits.ts writes it after the first live fetch), and running them
-  // concurrently would race two live requests instead of reusing the cache for
-  // the second, the same way chain run's own walk reads limits one at a time.
-  for (const provider of limitAgents) {
-    for (const window of limitWindows) {
-      rows.push(rowFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
-    }
-  }
-  return rows;
+  // Providers read in parallel, each one's two windows in order: the windows share that provider's
+  // on-disk cache (chain-limits.ts writes it after the first live fetch), so the second reuses the
+  // first's fetch, while different providers share nothing and each can wait on its own network call.
+  const perProvider = await Promise.all(
+    limitAgents.map(async (provider) => {
+      const rows: LimitRow[] = [];
+      for (const window of limitWindows) {
+        rows.push(rowFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
+      }
+      return rows;
+    }),
+  );
+  return perProvider.flat();
 }
 async function limits(environment: ChainEnvironment, asJson: boolean, config: ChainConfig, processAdapter: ProcessAdapter): Promise<string> {
   const rows = await readLimitRows(environment, config, processAdapter);

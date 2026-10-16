@@ -69,13 +69,17 @@ export interface SharedRead<T> {
   subscribe(listener: (value: T) => void): () => void
   /** Reads now unless a read ran within the interval or is running. */
   refresh(): void
+  /** True while the last read failed; the value `get` returns is then the one from before. */
+  failed(): boolean
+  /** Listens for any change a view shows: a new value, or a read failing or recovering. */
+  onChange(listener: () => void): () => void
   /** Call when the window shows or hides: hidden stops the timer, shown reads if the last read is stale. */
   visibilityChanged(): void
 }
 
 export function createSharedRead<T>(
   read: () => Promise<T>,
-  { intervalMs, clock, cache }: { intervalMs: number; clock: SharedReadClock; cache?: SharedReadCache<T> },
+  { intervalMs, retryMs = intervalMs, clock, cache }: { intervalMs: number; retryMs?: number; clock: SharedReadClock; cache?: SharedReadCache<T> },
 ): SharedRead<T> {
   // A cached value shows at once but does not count as a read, so the first listener still reads.
   const cached = cache?.load() ?? null
@@ -83,6 +87,11 @@ export function createSharedRead<T>(
   let valueAt: number | null = cached?.savedAt ?? null
   let lastRunAt: number | null = null
   let running = false
+  let failedLast = false
+  const changes = new Set<() => void>()
+  const changed = () => {
+    for (const listener of changes) listener()
+  }
   let cancel: (() => void) | null = null
   const listeners = new Set<(value: T) => void>()
 
@@ -91,18 +100,20 @@ export function createSharedRead<T>(
     cancel = null
   }
   const elapsed = () => (lastRunAt === null ? Infinity : clock.now() - lastRunAt)
+  // After a failure the next read comes sooner, so a blip does not leave the row empty for a minute.
+  const gap = () => (failedLast ? retryMs : intervalMs)
   const active = () => listeners.size > 0 && clock.visible()
 
   const schedule = () => {
     stopTimer()
     if (!active() || running) return
-    cancel = clock.setTimer(tick, Math.max(0, intervalMs - elapsed()))
+    cancel = clock.setTimer(tick, Math.max(0, gap() - elapsed()))
   }
 
   function tick() {
     cancel = null
     if (!active() || running) return
-    if (elapsed() < intervalMs) {
+    if (elapsed() < gap()) {
       schedule()
       return
     }
@@ -115,9 +126,14 @@ export function createSharedRead<T>(
           value = next
           valueAt = startedAt
           cache?.save({ value: next, savedAt: startedAt })
+          failedLast = false
           for (const listener of listeners) listener(next)
+          changed()
         },
-        () => {},
+        () => {
+          failedLast = true
+          changed()
+        },
       )
       .finally(() => {
         running = false
@@ -135,6 +151,11 @@ export function createSharedRead<T>(
         listeners.delete(listener)
         if (listeners.size === 0) stopTimer()
       }
+    },
+    failed: () => failedLast,
+    onChange(listener) {
+      changes.add(listener)
+      return () => changes.delete(listener)
     },
     refresh: tick,
     visibilityChanged() {
