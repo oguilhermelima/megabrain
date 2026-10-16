@@ -31,6 +31,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { appSettings } from '@/lib/app-settings'
 import { isStale } from '@/lib/shared-read'
+import { usePaneChrome } from '@/panes/pane-chrome'
 
 const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
 const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
@@ -517,9 +518,11 @@ export function ComposerLimits({ agent }: { agent: string | null }) {
   const box = useRef<HTMLDivElement>(null)
   // The composer's footer spans the pane, so its width is the pane's.
   const layout = limitsLayout(useParentWidth(box))
+  // A split shows the limits once for all its panes (SplitLimits), so none of its composers does.
+  const split = usePaneChrome() !== null
   const limits = settings === null || agent === null ? [] : agentLimits(settings.limits.readings, agent)
   const loading = settings === null
-  const hidden = agent === null || (!loading && limits.length === 0)
+  const hidden = split || agent === null || (!loading && limits.length === 0)
   // The box stays mounted, empty when hidden, so the pane keeps being measured.
   return (
     <div
@@ -546,6 +549,36 @@ export function ComposerLimits({ agent }: { agent: string | null }) {
       ) : (
         <LimitRing agent={agent} limits={limits} />
       )}
+    </div>
+  )
+}
+
+/**
+ * A split's one readout of the limits (panes/group-bar's limitsPlace): a ring per agent working in
+ * it, each marked by its agent when there are several, the details a click away.
+ */
+export function SplitLimits({ agents }: { agents: readonly string[] }) {
+  const { settings, stale, failed } = useSettings()
+  const shown =
+    settings === null
+      ? []
+      : agents.flatMap((agent) => {
+          const limits = agentLimits(settings.limits.readings, agent)
+          return limits.length === 0 ? [] : [{ agent, limits }]
+        })
+  if (shown.length === 0) return null
+  return (
+    <div
+      data-split-limits=""
+      title={stale || failed ? (failed ? 'Last known usage; retrying' : 'Last known usage; refreshing') : undefined}
+      className={`flex shrink-0 items-center gap-1 text-[11.5px] whitespace-nowrap text-ink-300 ${stale || failed ? 'opacity-60' : ''}`}
+    >
+      {shown.map(({ agent, limits }) => (
+        <span key={agent} className="flex items-center">
+          {shown.length > 1 && <AgentIcon agent={agent} size={12} className="ml-1 shrink-0 text-ink-400" />}
+          <LimitRing agent={agent} limits={limits} />
+        </span>
+      ))}
     </div>
   )
 }

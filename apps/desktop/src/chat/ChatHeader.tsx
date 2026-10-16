@@ -4,6 +4,7 @@ import { changedFileCount, headerMode, paneViewKey, segments, shownView, type Pa
 import { usePaneView } from '@/chat/pane-view-context'
 import { useWindowRowInset } from '@/panes/window-row'
 import { usePaneChrome, type PaneChrome } from '@/panes/pane-chrome'
+import { RemoveFromSplitIcon } from '@/panes/PaneArea'
 import type { AgentActivity } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
@@ -14,8 +15,9 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
  * bar's true centre, Agent, Code, PR and Diff, each shown in the pane under the bar; the view's own controls (the chat or terminal switch) belong to Agent and show only there. It sits about 12px
  * below the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) it shrinks to the lights' 44px band, centred on their line, and leaves
  * room at its left for them and the show-sidebar button; only the left side is inset, so the action bar keeps the true centre. In a split it is also the pane's
- * header (panes/pane-chrome): its empty space drags the pane instead of the window, and × at its right end, shown on hover, closes the pane. Narrower than 640px
- * (action-bar-model's headerMode) it stacks: the mark, title and × on the first row, the action bar and the view's controls on the second.
+ * header (panes/pane-chrome): its empty space drags the pane instead of the window, and the button at its right end takes the pane out of the split. Narrower than 640px
+ * (action-bar-model's headerMode) it stacks: the mark, title and Remove from split on the first row, the action bar and the view's controls on the second. Under a split's
+ * shared bar (panes/group-bar) it is slim instead: one 36px row of the mark, the title, the view's controls and that button.
  */
 export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, actions }: { agent: string | null; activity?: AgentActivity; title: string; meta: string; metaTitle?: string; actions?: ReactNode }) {
   const pane = usePaneView()
@@ -72,6 +74,20 @@ export function ChatHeader({ agent, activity = 'idle', title, meta, metaTitle, a
   // In the window row: 4px above and below the 36px title make the 44px band; the padding slides between the two with the sidebar.
   const band = inset === null ? 'pt-3 pb-2.5' : 'py-1'
   const slide: CSSProperties = { transition: 'padding var(--motion-panel) var(--motion-ease-panel)' }
+
+  // Under a split's shared bar (panes/group-bar) the pane keeps only what is its own: no action bar, no Run, one short row.
+  if (chrome?.slim === true) {
+    return (
+      <header ref={header} data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
+        {agent !== null && <AgentIcon agent={agent} activity={activity} size={16} className="shrink-0 text-ink-300" />}
+        <h1 title={`${title}\n${metaTitle ?? meta}`} className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
+          {title}
+        </h1>
+        {actions}
+        {close}
+      </header>
+    )
+  }
 
   if (pane === null || available === null) {
     return (
@@ -162,19 +178,17 @@ function usePaneWidth(ref: RefObject<HTMLElement | null>, shape: unknown): numbe
   return width
 }
 
-/** A split pane's close button at the bar's right end: shown while the pointer is over the bar or the button has focus. */
+/** A split pane's button at the bar's right end, always shown: it takes the pane out of the split; the chat stays open in the sidebar. */
 function PaneClose({ chrome }: { chrome: PaneChrome }) {
   return (
     <button
       type="button"
-      aria-label={`Close ${chrome.title} pane`}
-      title="Close pane"
+      aria-label={`Remove ${chrome.title} from split`}
+      title="Remove from split"
       onClick={chrome.onClose}
-      className="-ml-1.5 flex size-6 shrink-0 items-center justify-center rounded-full text-ink-400 opacity-0 transition-[opacity,background-color,color] duration-[var(--motion-enter)] group-hover/pane:opacity-100 hover:bg-white/[0.1] hover:text-ink-100 focus-visible:opacity-100"
+      className="-ml-1.5 flex size-6 shrink-0 items-center justify-center rounded-full text-ink-400 transition-colors duration-[var(--motion-enter)] hover:bg-white/[0.1] hover:text-ink-100"
     >
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-        <path d="m4 4 8 8M12 4l-8 8" />
-      </svg>
+      <RemoveFromSplitIcon />
     </button>
   )
 }

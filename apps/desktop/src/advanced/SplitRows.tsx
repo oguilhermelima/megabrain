@@ -338,7 +338,7 @@ function SplitMap({ row, drag, onMenu, onName }: { row: GroupRow; drag: GroupDra
   const cellMenu = (member: GroupMember): MenuItem[] => [
     { label: 'Focus pane', icon: 'select', group: 'open', onSelect: () => splits.focusMember(row.id, member.item) },
     ...sideMoves.map(({ side: edge, label, icon }): MenuItem => ({ label, icon, group: 'organise', onSelect: () => arrange(member, { kind: 'side', side: edge }) })),
-    { label: 'Remove from group', icon: 'unsplit', group: 'danger', onSelect: () => splits.drop({ kind: 'leave', groupId: row.id, item: member.item }) },
+    { label: 'Remove from split', icon: 'unsplit', group: 'danger', onSelect: () => splits.drop({ kind: 'leave', groupId: row.id, item: member.item }) },
   ]
   const onKey = (event: KeyboardEvent<HTMLButtonElement>, member: GroupMember) => {
     const direction = arrowDirections[event.key]

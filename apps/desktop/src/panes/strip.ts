@@ -12,6 +12,9 @@ import { focusDirection, normalise, paneList, paneRects, type Direction, type Di
 export const minPaneWidth = 280
 export const minPaneHeight = 160
 
+/** The width a column is comfortable at, in pixels: as many columns as fit at it share the area. */
+export const comfortableColumnWidth = 420
+
 export interface Strip {
   /** A column's own width, as a share of the area's width, by column id; the rest take the default. */
   widths: Readonly<Record<string, number>>
@@ -72,15 +75,23 @@ function minimumOf(node: PaneNode): Area {
 }
 
 /**
- * Every column's place in pixels. A column takes its own width, else its share of the root row
- * spread over at most three columns' worth of area: two or three columns fit side by side, more
- * take a third each and scroll. Never under the minimum its panes need. A root that is not a row
- * is one column exactly as wide as the area, so it never scrolls sideways.
+ * How many columns' worth of area the strip spreads over: all of them while each can be at least
+ * comfortableColumnWidth wide, else as many as fit at that width (one at least), the rest scrolling.
+ */
+export function visibleColumns(count: number, areaWidth: number): number {
+  return Math.min(count, Math.max(1, Math.floor(areaWidth / comfortableColumnWidth)))
+}
+
+/**
+ * Every column's place in pixels. A column takes its own width (a share of the area the person set
+ * by hand), else its share of the root row spread over the columns that fit (visibleColumns): on a
+ * wide area every column shows, on a narrow one the rest scroll. Never under the minimum its panes
+ * need. A root that is not a row is one column exactly as wide as the area, so it never scrolls sideways.
  */
 export function stripLayout(root: PaneNode, strip: Strip, area: Area): StripLayout {
   const strips = root.type === 'split' && root.direction === 'row'
   const columns = stripColumns(root)
-  const visible = Math.min(columns.length, 3)
+  const visible = visibleColumns(columns.length, area.width)
   let x = 0
   const placed = columns.map(({ id, node, share }): StripColumn => {
     const minimum = minimumOf(node)

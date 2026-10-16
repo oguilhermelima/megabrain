@@ -18,6 +18,7 @@ import {
   stripEdges,
   columnAt,
   stripLayout,
+  visibleColumns,
 } from '@/panes/strip'
 
 const leaf = (item: string): PaneLeaf => ({ type: 'pane', id: `p-${item}`, item })
@@ -158,10 +159,45 @@ describe('widths, and fit or scroll', () => {
   })
 
   test('a column never goes under the minimum width; the strip scrolls instead', () => {
-    const layout = stripLayout(presetTree(leaves(3), 'row', 'g'), emptyStrip, { width: 700, height: 600 })
+    const root = presetTree(leaves(3), 'row', 'g')
+    const narrow = Object.fromEntries(stripColumns(root).map((column) => [column.id, 0.1]))
+    const layout = stripLayout(root, { widths: narrow, scroll: 0 }, { width: 700, height: 600 })
     expect(layout.columns.map((column) => column.width)).toEqual([minPaneWidth, minPaneWidth, minPaneWidth])
     expect(layout.width).toBe(3 * minPaneWidth)
     expect(layout.overflowX).toBe(true)
+  })
+
+  test('every column that fits at a comfortable width shows; only the rest scroll', () => {
+    const four = presetTree(leaves(4), 'row', 'g')
+    const at = (root: PaneNode, width: number) => stripLayout(root, emptyStrip, { width, height: 982 })
+    expect(at(four, 2000).columns.map((column) => column.width)).toEqual([500, 500, 500, 500])
+    expect(at(four, 2000).overflowX).toBe(false)
+    expect(at(four, 1512).columns.map((column) => column.width)).toEqual([504, 504, 504, 504])
+    expect(at(four, 1512).overflowX).toBe(true)
+    expect(at(four, 1000).columns.map((column) => column.width)).toEqual([500, 500, 500, 500])
+    expect(at(four, 1000).overflowX).toBe(true)
+    const six = at(presetTree(leaves(6), 'row', 'g'), 2560)
+    expect(six.columns.every((column) => Math.abs(column.width - 2560 / 6) < 1e-6)).toBe(true)
+    expect(six.overflowX).toBe(false)
+  })
+
+  test('visibleColumns: as many as fit at the comfortable width, at least one, never more than there are', () => {
+    expect(visibleColumns(4, 2000)).toBe(4)
+    expect(visibleColumns(4, 1512)).toBe(3)
+    expect(visibleColumns(4, 1000)).toBe(2)
+    expect(visibleColumns(6, 2560)).toBe(6)
+    expect(visibleColumns(2, 3000)).toBe(2)
+    expect(visibleColumns(3, 300)).toBe(1)
+    expect(visibleColumns(3, 0)).toBe(1)
+  })
+
+  test('on a wide area the columns share it by their saved ratios, and a hand-set width keeps its share', () => {
+    const root = presetTree(leaves(4), 'row', 'g')
+    const first = columnOfPane(root, 'p-i1') ?? ''
+    const strip = resizeColumn(emptyStrip, root, first, 800, { width: 2000, height: 982 })
+    const layout = stripLayout(root, strip, { width: 2000, height: 982 })
+    expect(layout.columns[0]?.width).toBe(800)
+    expect(layout.columns.slice(1).map((column) => column.width)).toEqual([500, 500, 500])
   })
 
   test('a stack taller than the area scrolls its column, every pane at least the minimum height', () => {
@@ -339,12 +375,12 @@ describe('edge arrows', () => {
     expect(stripEdges(layout, 250, 1512)).toEqual({ left: { columnId: first ?? '', scroll: 0 }, right: { columnId: fourth ?? '', scroll: 504 } })
   })
 
-  test('narrow panes: in a 900 px view of 280 px columns a right arrow moves by one column', () => {
+  test('narrow area: in a 900 px view of two 450 px columns a right arrow moves by one column', () => {
     const layout = stripLayout(presetTree(leaves(4), 'row', 'g'), emptyStrip, { width: 900, height: 600 })
     const [first, second, third, fourth] = layout.columns
-    expect(layout.columns.map((column) => column.width)).toEqual([300, 300, 300, 300])
-    expect(stripEdges(layout, 0, 900)).toEqual({ left: null, right: { columnId: third?.id ?? '', scroll: 300 } })
-    expect(stripEdges(layout, 300, 900)).toEqual({ left: { columnId: second?.id ?? '', scroll: 0 }, right: null })
+    expect(layout.columns.map((column) => column.width)).toEqual([450, 450, 450, 450])
+    expect(stripEdges(layout, 0, 900)).toEqual({ left: null, right: { columnId: second?.id ?? '', scroll: 450 } })
+    expect(stripEdges(layout, 450, 900)).toEqual({ left: { columnId: second?.id ?? '', scroll: 0 }, right: { columnId: third?.id ?? '', scroll: 900 } })
     expect(first?.id).not.toBe(fourth?.id)
   })
 

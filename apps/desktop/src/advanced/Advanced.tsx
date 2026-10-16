@@ -60,6 +60,8 @@ import type { MenuItem } from '@/components/ContextMenu'
 import type { MenuIcon } from '@/components/menu-icons'
 import { arrangePane } from '@/panes/arrange'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
+import { SplitFrame } from '@/panes/GroupBar'
+import { groupIdentity, limitAgents, sharedWorktree, splitCodeItem, splitCodeShown, type SplitMember } from '@/panes/group-bar'
 import { emptyStrip, navigate, type Strip } from '@/panes/strip'
 import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
@@ -165,6 +167,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [pruned, setPruned] = useState(false)
   // The view each item's pane shows (see the action bar); an item not listed shows its initialView.
   const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
+  // The view each split on one worktree shows from its shared bar, by group (see panes/group-bar).
+  const [splitViews, setSplitViews] = useState<Record<string, PaneView>>({})
   // A project's pull request or issue page, shown in the main area over chats and the launcher.
   const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
   // The roots whose Code runs, in opening order: one frame each, kept mounted until its server stops.
@@ -313,6 +317,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // that does, else a code item of its own in the focused pane.
   const showCode = (root: string) => {
     setGithubPage(null)
+    // A split on that worktree shows Code over the whole split, from its shared bar.
+    if (sharedRoot === root && shownGroupId !== null) {
+      setSplitViews((current) => ({ ...current, [shownGroupId]: 'code' }))
+      return
+    }
     const leaves = paneList(panes.root).filter((leaf) => hasActionBar(leaf.item) && rootOf(leaf.item) === root)
     const leaf = leaves.find((candidate) => candidate.id === panes.focused) ?? leaves[0]
     const item = leaf?.item ?? itemKey('code', root)
@@ -695,6 +704,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return parsed.id
     }
   }
+  // The shown split's members, and the worktree they all work in when it shares one bar.
+  const splitMembers: SplitMember[] = paneList(panes.root).map((leaf) => {
+    const mark = describeItem(leaf.item).mark
+    return { item: leaf.item, kind: parseItem(leaf.item)?.kind ?? null, worktree: rootOf(leaf.item), agent: mark.kind === 'agent' ? mark.agent : null }
+  })
+  const sharedRoot = sharedWorktree(splitMembers)
 
   // The tmux terminals a past run left come back once, at launch; a failed list restores none.
   useEffect(() => {
@@ -853,10 +868,17 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // Each root shown in Code has one frame, held by one pane (see frameHolders); a running root no
   // pane item works in stops after its grace (see idleServers).
   const leaves = paneList(panes.root)
-  const codeShown: CodeShown[] = leaves.flatMap((leaf) => {
-    const root = rootOf(leaf.item)
-    return root !== null && root !== '' && hasActionBar(leaf.item) && viewOf(leaf.item) === 'code' ? [{ item: leaf.item, root }] : []
-  })
+  // Under a shared bar the panes show no views of their own; the split's Code is held by the split.
+  const splitCode = sharedRoot === null || shownGroupId === null ? null : splitCodeShown({ groupId: shownGroupId, root: sharedRoot, view: splitViews[shownGroupId] ?? 'agent' })
+  const codeShown: CodeShown[] = [
+    ...(sharedRoot !== null
+      ? []
+      : leaves.flatMap((leaf) => {
+          const root = rootOf(leaf.item)
+          return root !== null && root !== '' && hasActionBar(leaf.item) && viewOf(leaf.item) === 'code' ? [{ item: leaf.item, root }] : []
+        })),
+    ...(splitCode === null ? [] : [splitCode]),
+  ]
   codeHolders.current = frameHolders(codeHolders.current, codeShown)
   const holders = codeHolders.current
   const shownRoots = codeShown.map((entry) => entry.root).join('\n')
@@ -901,7 +923,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The action bar is on every item with a worktree but a maximised GitHub item: a launcher gets it
   // once it starts in a worktree, so Agent there is the launcher and Code the worktree's Code view.
   const paneViewFor = (item: string, root: string | null): PaneViewControls | null => {
-    if (root === null || root === '' || !hasActionBar(item)) return null
+    if (root === null || root === '' || !hasActionBar(item) || sharedRoot !== null) return null
     const holder = holders[root] ?? null
     return {
       facts: worktreeFacts(projects, root),
@@ -1022,7 +1044,21 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   }, [splitRowsSignature, picks])
 
   // A strip that scrolls moves its top-left pane away from the lights, so then they keep a row of their own.
-  const windowRow = windowRowJoin({ collapsed: sidebarCollapsed, covered: githubView !== null || stripScrolls, panes: paneRects(panes.root).panes, hasTopBar: hasActionBar })
+  // A shared bar sits above the strip, so it joins the row whether the strip scrolls or not.
+  const windowRow = sharedRoot !== null ? null : windowRowJoin({ collapsed: sidebarCollapsed, covered: githubView !== null || stripScrolls, panes: paneRects(panes.root).panes, hasTopBar: hasActionBar })
+  const sharedJoined = sharedRoot !== null && sidebarCollapsed && githubView === null
+  const sharedHolder = sharedRoot === null ? null : (holders[sharedRoot] ?? null)
+  const sharedBar =
+    sharedRoot === null || shownGroupId === null
+      ? null
+      : {
+          facts: worktreeFacts(projects, sharedRoot),
+          identity: groupIdentity(projects, sharedRoot),
+          view: splitViews[shownGroupId] ?? 'agent',
+          setView: (view: PaneView) => setSplitViews((current) => ({ ...current, [shownGroupId]: view })),
+          focused: !settingsOpen && githubPage === null,
+          code: <CodeSlot item={splitCodeItem(shownGroupId)} holder={sharedHolder} slots={codeSlots} onShowHolder={() => sharedHolder !== null && focusItem(sharedHolder)} />,
+        }
 
   return (
     <div className="relative flex h-full">
@@ -1076,7 +1112,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         </footer>
       </SlidePanel>
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
-        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} joined={windowRow !== null} />}
+        {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} joined={windowRow !== null || sharedJoined} />}
         {error !== null && (
           <div className="px-8 pt-4">
             <ErrorNote error={error} />
@@ -1085,39 +1121,47 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
           {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
-            <PaneArea
-              panes={panes}
-              onPanes={setPanes}
-              background={backgroundTerminals}
-              render={(item) => {
-                const content = render(item)
-                const root = rootOf(item)
-                return {
-                  ...content,
-                  node: (
-                    <RunContext.Provider value={controlsFor(root)}>
-                      <PaneViewContext.Provider value={paneViewFor(item, root)}>
-                        <Suspense fallback={<Loading />}>{content.node}</Suspense>
-                      </PaneViewContext.Provider>
-                    </RunContext.Provider>
-                  ),
-                }
-              }}
-              drag={drag}
-              strip={activeGroup(paneLayout)?.strip ?? emptyStrip}
-              stripKey={shownGroupId}
-              onStrip={changeStrip}
-              onOverflow={setStripScrolls}
-              onClose={closePaneById}
-              windowRow={windowRow === null ? null : { join: windowRow, inset: windowRowInset }}
-              overlay={
-                codeTargets.length > 0 && (
-                  <Suspense fallback={null}>
-                    <CodeLayer targets={codeTargets} holders={holders} slots={codeSlots} gotos={gotos} dragging={drag.state !== null} onFocus={focusCodeRoot} />
-                  </Suspense>
-                )
-              }
-            />
+            <RunContext.Provider value={controlsFor(sharedRoot)}>
+              <SplitFrame split={splitMembers.length > 1} shared={sharedBar} agents={limitAgents(splitMembers)} inset={sharedJoined ? windowRowInset : null}>
+                {(covered) => (
+                  <PaneArea
+                    panes={panes}
+                    onPanes={setPanes}
+                    background={backgroundTerminals}
+                    render={(item) => {
+                      const content = render(item)
+                      const root = rootOf(item)
+                      return {
+                        ...content,
+                        node: (
+                          <RunContext.Provider value={controlsFor(root)}>
+                            <PaneViewContext.Provider value={paneViewFor(item, root)}>
+                              <Suspense fallback={<Loading />}>{content.node}</Suspense>
+                            </PaneViewContext.Provider>
+                          </RunContext.Provider>
+                        ),
+                      }
+                    }}
+                    drag={drag}
+                    strip={activeGroup(paneLayout)?.strip ?? emptyStrip}
+                    stripKey={shownGroupId}
+                    onStrip={changeStrip}
+                    onOverflow={setStripScrolls}
+                    onClose={closePaneById}
+                    shared={sharedRoot !== null}
+                    covered={covered}
+                    windowRow={windowRow === null ? null : { join: windowRow, inset: windowRowInset }}
+                    overlay={
+                      codeTargets.length > 0 && (
+                        <Suspense fallback={null}>
+                          <CodeLayer targets={codeTargets} holders={holders} slots={codeSlots} gotos={gotos} dragging={drag.state !== null} onFocus={focusCodeRoot} />
+                        </Suspense>
+                      )
+                    }
+                  />
+                )}
+              </SplitFrame>
+            </RunContext.Provider>
             {githubView !== null && (
               <div className="absolute inset-0 z-40 flex flex-col bg-ink-950">
                 <RunContext.Provider value={null}>

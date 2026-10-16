@@ -1,0 +1,101 @@
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import { ProjectPicture } from '@/advanced/ProjectPicture'
+import { ActionBar, useWorktreeChanges, WorktreeView } from '@/chat/ActionBar'
+import { changedFileCount, paneViewKey, segments, shownView, type PaneView, type WorktreeFacts } from '@/chat/action-bar-model'
+import { SplitLimits } from '@/chat/ComposerStatus'
+import { PullRequestIcon } from '@/github/icons'
+import type { GroupIdentity } from '@/panes/group-bar'
+import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
+
+/** The bar a split on one worktree shares (panes/group-bar): its worktree, the view the split shows and how to choose another. */
+export interface SharedBar {
+  facts: WorktreeFacts
+  identity: GroupIdentity
+  view: PaneView
+  setView: (view: PaneView) => void
+  /** The split takes ⌘1 to ⌘4 (nothing covers it). */
+  focused: boolean
+  /** What the Code view shows: the slot the worktree's Code is laid over. */
+  code: ReactNode
+}
+
+/**
+ * The split area and what it shows once for all its panes. A split on one worktree gets one bar on
+ * top: the worktree at its left, Agent, Code, PR and Diff in its true centre (Agent is the split
+ * itself; the others lie over the whole area, the panes kept mounted beneath), and the usage limits,
+ * Run and the run panel's toggle at its right. With the sidebar hidden it joins the window row, 44px
+ * tall and inset past the lights. A split across worktrees keeps each pane's own bar and shows the
+ * limits once, in a row under the panes. `children` is told whether a view covers them.
+ */
+export function SplitFrame({ split, shared, agents, inset, children }: { split: boolean; shared: SharedBar | null; agents: readonly string[]; inset: number | null; children: (covered: boolean) => ReactNode }) {
+  const facts = shared?.facts ?? null
+  const changes = useWorktreeChanges(facts)
+  const available = facts === null ? null : segments({ facts, changed: changes.read ? changedFileCount(changes.uncommitted, changes.branch) : null, codeAvailable: true })
+  const shown = shared === null || available === null ? 'agent' : shownView(shared.view, available)
+  const latest = useRef({ available, setView: shared?.setView })
+  latest.current = { available, setView: shared?.setView }
+
+  // ⌘1 to ⌘4 in the capture phase, as a pane's own bar takes them; never while the keyboard is in Code.
+  const focused = shared?.focused === true
+  useEffect(() => {
+    if (!focused) return
+    const onKey = (event: KeyboardEvent) => {
+      const view = paneViewKey(event, { focused: true, inEditor: document.activeElement instanceof HTMLIFrameElement })
+      if (view === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      const { available: now, setView } = latest.current
+      if (now?.find((segment) => segment.view === view)?.enabled === true) setView?.(view)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [focused])
+
+  // One tree whether the bar shows or not, so the panes under it never remount when a split starts or stops sharing one worktree.
+  const bar = shared !== null && facts !== null && available !== null ? { shared, facts, available } : null
+  // In the window row: 4px above and below the 36px row make the lights' 44px band.
+  const slide: CSSProperties = { transition: 'padding var(--motion-panel) var(--motion-ease-panel)', paddingLeft: inset ?? 24 }
+  return (
+    <>
+      {bar !== null && (
+        <header data-tauri-drag-region data-group-bar="" style={slide} className={`@container/header shrink-0 border-b border-white/[0.06] pr-6 ${inset === null ? 'pt-3 pb-2.5' : 'py-1'}`}>
+          <div data-tauri-drag-region className="grid h-9 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+            <div data-tauri-drag-region className="flex min-w-0 items-center gap-2.5">
+              {bar.shared.identity.project !== null && <ProjectPicture project={bar.shared.identity.project} />}
+              <div className="min-w-0">
+                <h1 title={bar.facts.root} className="truncate text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
+                  {bar.shared.identity.name}
+                </h1>
+                {bar.shared.identity.branch !== null && <p className="truncate text-[12px] leading-4 text-ink-400">{bar.shared.identity.branch}</p>}
+              </div>
+              {bar.shared.identity.pullRequest !== null && (
+                <span title={`Pull request #${bar.shared.identity.pullRequest}`} className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.07] px-2 text-[11.5px] leading-5 text-ink-300 tabular-nums">
+                  <PullRequestIcon size={12} />#{bar.shared.identity.pullRequest}
+                </span>
+              )}
+            </div>
+            <ActionBar agent={null} segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
+            <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">
+              <SplitLimits agents={agents} />
+              <RunButton />
+              <RunPanelToggle />
+            </div>
+          </div>
+        </header>
+      )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {children(shown !== 'agent')}
+        {bar !== null && shown !== 'agent' && (
+          <div data-group-view={shown} className="absolute inset-0 z-30 flex min-h-0 flex-col bg-ink-950">
+            <WorktreeView view={shown} facts={bar.facts} changes={changes} code={bar.shared.code} />
+          </div>
+        )}
+      </div>
+      {bar === null && split && agents.length > 0 && (
+        <div data-split-footer="" className="flex h-8 shrink-0 items-center justify-end border-t border-white/[0.06] px-3">
+          <SplitLimits agents={agents} />
+        </div>
+      )}
+    </>
+  )
+}

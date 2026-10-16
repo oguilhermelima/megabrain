@@ -116,15 +116,22 @@ export function PaneViewBody({ view, facts, changes, code, header }: { view: Exc
   }, [header])
   return (
     <div style={{ top: top ?? 0 }} className={`absolute inset-x-0 bottom-0 z-30 flex min-h-0 flex-col bg-ink-950 ${top === null ? 'invisible' : ''}`}>
-      <Suspense fallback={<PaneSkeleton />}>
-        {view === 'code' ? (
-          code
-        ) : view === 'pr' && facts.pullRequest !== null ? (
-          <GithubItemView key={facts.pullRequest} root={facts.repo} kind="pr" number={facts.pullRequest} />
-        ) : (
-          <ChangesDiff root={facts.root} uncommitted={changes.uncommitted} branch={changes.branch} />
-        )}
-      </Suspense>
+      <WorktreeView view={view} facts={facts} changes={changes} code={code} />
     </div>
+  )
+}
+
+/** The Code, PR or Diff view itself, filling its box: a pane's under its top bar, or a whole split's under the shared bar. */
+export function WorktreeView({ view, facts, changes, code }: { view: Exclude<PaneView, 'agent'>; facts: WorktreeFacts; changes: WorktreeChanges; code: ReactNode }) {
+  return (
+    <Suspense fallback={<PaneSkeleton />}>
+      {view === 'code' ? (
+        code
+      ) : view === 'pr' && facts.pullRequest !== null ? (
+        <GithubItemView key={facts.pullRequest} root={facts.repo} kind="pr" number={facts.pullRequest} />
+      ) : (
+        <ChangesDiff root={facts.root} uncommitted={changes.uncommitted} branch={changes.branch} />
+      )}
+    </Suspense>
   )
 }

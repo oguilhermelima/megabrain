@@ -36,6 +36,8 @@ export function PaneArea({
   stripKey,
   onStrip,
   onOverflow,
+  shared = false,
+  covered = false,
 }: {
   panes: Panes
   onPanes: (change: (current: Panes) => Panes) => void
@@ -53,6 +55,10 @@ export function PaneArea({
   onStrip: ((change: (strip: Strip) => Strip) => void) | null
   /** Told whether the strip scrolls, so the window row knows the top-left pane can move away. */
   onOverflow?: (scrolls: boolean) => void
+  /** The split has one bar over it (panes/group-bar), so each pane keeps a slim header. */
+  shared?: boolean
+  /** The shared bar's Code, PR or Diff lies over the whole split (GroupBar), so the panes' own rings, dividers and strip controls hide. */
+  covered?: boolean
 }) {
   const scroll = useStripScroll({ root: panes.root, focused: panes.focused, strip, stripKey, onStrip, onOverflow })
   const { layout, size } = scroll
@@ -79,10 +85,11 @@ export function PaneArea({
   latest.current = { drag, onClose }
   const chromeOf = (paneId: string, title: string): PaneChrome => {
     const known = chromes.current.get(paneId)
-    // One object per pane and title, so a top bar's claim effect does not run again every render.
-    if (known !== undefined && known.title === title) return known
+    // One object per pane, title and shape, so a top bar's claim effect does not run again every render.
+    if (known !== undefined && known.title === title && known.slim === shared) return known
     const made: PaneChrome = {
       title,
+      slim: shared,
       onDrag: (event) => latest.current.drag.start(event, { kind: 'pane', paneId, label: title }),
       onClose: () => latest.current.onClose(paneId),
       claim: () => {
@@ -130,7 +137,7 @@ export function PaneArea({
         <div className="relative h-full" style={{ width: Math.max(layout.width, size.width) }}>
           {slots.map(({ item, pane }) => {
             const content = contents.get(item) ?? render(item)
-            const focused = pane !== null && split && pane.id === panes.focused
+            const focused = pane !== null && split && !covered && pane.id === panes.focused
             if (pane === null) quiet.delete(item)
             const joined = pane !== null && windowRow?.join.paneId === pane.id ? windowRow : null
             const chrome = split && pane !== null ? chromeOf(pane.id, content.title) : null
@@ -164,17 +171,17 @@ export function PaneArea({
             )
           })}
           {overlay}
-          {layout.columns.map((column) => {
+          {!covered && layout.columns.map((column) => {
             const offset = scroll.offsetOf(column)
             return column.dividers.map((divider) => <DividerHandle key={`${divider.splitId}:${divider.index}`} divider={divider} column={column} offset={offset} panes={panes} onPanes={onPanes} />)
           })}
-          {layout.columns.length > 1 && onStrip !== null && layout.columns.map((column) => <ColumnEdge key={`edge:${column.id}`} column={column} layout={layout} root={panes.root} strip={strip} area={size} onStrip={onStrip} />)}
+          {!covered && layout.columns.length > 1 && onStrip !== null && layout.columns.map((column) => <ColumnEdge key={`edge:${column.id}`} column={column} layout={layout} root={panes.root} strip={strip} area={size} onStrip={onStrip} />)}
           {layout.columns.map((column) => column.height > size.height + 1 && <ColumnScrollbar key={`bar:${column.id}`} column={column} offset={scroll.offsetOf(column)} view={size.height} />)}
         </div>
       </div>
       {sides && (['top', 'bottom', 'left', 'right'] as const).map((edge) => <SideBand key={edge} edge={edge} lit={side === edge} />)}
       {side !== null && <DropPreview rect={zonePreview(side)} label={side === 'top' || side === 'bottom' ? 'Span the width' : 'Span the height'} />}
-      {layout.overflowX && <StripNav layout={layout} focused={panes.focused} titles={titles} area={scroll.area} scroller={scroll.scroller} view={size.width} onScroll={scroll.scrollTo} />}
+      {!covered && layout.overflowX && <StripNav layout={layout} focused={panes.focused} titles={titles} area={scroll.area} scroller={scroll.scroller} view={size.width} onScroll={scroll.scrollTo} />}
       {dragging !== null && (
         <div style={{ left: dragging.x + 12, top: dragging.y + 12 }} className="pointer-events-none fixed z-50 max-w-64 truncate rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
           {dragging.source.label}
@@ -184,17 +191,19 @@ export function PaneArea({
   )
 }
 
-function CloseIcon() {
+/** Taking a pane out of its split: the pane, and an arrow leaving it. The chat itself stays open in the sidebar. */
+export function RemoveFromSplitIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-      <path d="m4 4 8 8M12 4l-8 8" />
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.75" y="3" width="8" height="10" rx="1.5" />
+      <path d="M6.5 8h7.75M12 5.75 14.25 8 12 10.25" />
     </svg>
   )
 }
 
 /**
- * Shown on a split pane whose item draws no top bar of its own: drag it to move the pane, × to close
- * it. With an `inset` it is the one in the window row: as tall as the lights' band, starting past them.
+ * Shown on a split pane whose item draws no top bar of its own: drag it to move the pane, the button
+ * at its end to take it out of the split. With an `inset` it is the one in the window row: as tall as the lights' band, starting past them.
  */
 function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string; focused: boolean; inset: number | null; onDrag: (event: PointerEvent<HTMLElement>) => void; onClose: () => void }) {
   return (
@@ -206,13 +215,13 @@ function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string;
       <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium">{title}</span>
       <button
         type="button"
-        aria-label={`Close ${title} pane`}
-        title="Close pane"
+        aria-label={`Remove ${title} from split`}
+        title="Remove from split"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={onClose}
-        className="flex size-5 shrink-0 items-center justify-center rounded-full text-ink-400 transition-colors hover:bg-white/[0.1] hover:text-ink-100"
+        className="flex size-6 shrink-0 items-center justify-center rounded-full text-ink-400 transition-colors hover:bg-white/[0.1] hover:text-ink-100"
       >
-        <CloseIcon />
+        <RemoveFromSplitIcon />
       </button>
     </div>
   )
