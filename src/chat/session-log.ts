@@ -210,10 +210,48 @@ async function codexRolloutPath(home: string, sessionId: string): Promise<string
   } catch { return null; }
 }
 
+/** Where the agent keeps this chat's session log; null without a session or a rollout. */
+export async function sessionLogPath(chat: Pick<Chat, "agent" | "cwd" | "agentSessionId">, home: string): Promise<string | null> {
+  if (chat.agentSessionId === null) return null;
+  return chat.agent === "claude" ? claudeLogPath(home, chat.cwd, chat.agentSessionId) : await codexRolloutPath(home, chat.agentSessionId);
+}
+
+const CLAUDE_INTERRUPTED = "[Request interrupted by user";
+const LOCAL_COMMAND = /^<(?:command-name|command-message|local-command-[a-z]+)>/;
+
+/**
+ * Whether the log ends inside a turn: a prompt the agent has not finished answering. Claude ends a turn with an
+ * assistant message that stops for any reason but a tool call, a turn_duration line, or an interruption note;
+ * Codex brackets each turn with task_started and task_complete or turn_aborted.
+ */
+export function sessionTurnOpen(agent: Chat["agent"], content: string): boolean {
+  let open = false;
+  for (const row of records(content)) {
+    if (agent === "codex") {
+      const kind = text(object(row.payload).type);
+      if (row.type === "event_msg" && (kind === "task_started" || kind === "turn_started")) open = true;
+      else if (row.type === "event_msg" && (kind === "task_complete" || kind === "turn_complete" || kind === "turn_aborted")) open = false;
+      continue;
+    }
+    if (row.isSidechain === true || row.isMeta === true) continue;
+    const message = object(row.message);
+    if (row.type === "system" && row.subtype === "turn_duration") open = false;
+    else if (row.type === "assistant") {
+      const stop = text(message.stop_reason);
+      if (stop !== "" && stop !== "tool_use") open = false;
+    } else if (row.type === "user") {
+      const typed = typeof message.content === "string" ? message.content : blocks(message.content).filter((block) => block.type === "text").map((block) => text(block.text)).join("");
+      // A slash command the TUI ran itself is no prompt: nothing answers it.
+      if (typed.startsWith(CLAUDE_INTERRUPTED)) open = false;
+      else if (typed !== "" && !LOCAL_COMMAND.test(typed)) open = true;
+    }
+  }
+  return open;
+}
+
 /** Every turn the agent's own log holds for this chat's session; a missing log is no turns. */
 export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agentSessionId">, home: string): Promise<LoggedTurn[]> {
-  if (chat.agentSessionId === null) return [];
-  const path = chat.agent === "claude" ? claudeLogPath(home, chat.cwd, chat.agentSessionId) : await codexRolloutPath(home, chat.agentSessionId);
+  const path = await sessionLogPath(chat, home);
   if (path === null) return [];
   let main: LoggedTurn[];
   try { main = (chat.agent === "claude" ? parseClaudeLog : parseCodexRollout)(await readFile(path, "utf8")); }

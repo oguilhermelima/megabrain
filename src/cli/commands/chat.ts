@@ -5,7 +5,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 import { loadModelRegistry } from "../../core/model.js";
 import { readModelSettings, startModel } from "../../core/model-settings.js";
-import { callChatd, callPermissionServer } from "../../chat/daemon.js";
+import { callChatd, callPermissionServer, chatdStatus, drainChatd } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
 import { readSummaries, searchSummaries } from "../../chat/summaries.js";
 
@@ -57,6 +57,18 @@ export async function executeChat(args: readonly string[], environment: Environm
   try {
     const dir = stateDir(environment);
     let value: unknown;
+    if (verb === "daemon") {
+      const [action, ...tail] = rest;
+      const json = tail.includes("--json");
+      if ((action !== "status" && action !== "drain") || tail.some((arg) => arg !== "--json")) throw new Error("Usage: megabrain chat daemon status|drain [--json]");
+      // Neither starts a daemon: status reads the running one, drain waits for its turns and then for it to exit.
+      if (action === "status") {
+        const status = await chatdStatus(dir);
+        return ok(json ? argsJson(status) : status.running ? `chatd ${status.pid}: ${status.draining ? "draining" : "running"}, ${status.working.length} working\n` : "chatd is not running\n");
+      }
+      const drained = await drainChatd(dir);
+      return ok(json ? argsJson(drained) : drained.running ? `chatd drained after ${Math.round(drained.waitedMs / 1000)} s; ${drained.resumes.length} queued for the next daemon\n` : "chatd is not running\n");
+    }
     if (verb === "list") {
       if (rest.length !== 1 || rest[0] !== "--json") throw new Error("chat list requires --json");
       // Listing must never block on a daemon: the records are plain files.

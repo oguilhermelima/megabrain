@@ -195,6 +195,7 @@ megabrain chat events <id> [--since <cursor>] [--follow] --json — read or foll
 megabrain chat model <id> <model> [--effort <level>] [--json] — choose the model and reasoning effort for a chat.
 megabrain chat mode <id> chat|terminal --json — hand an idle chat to the terminal or resume it in chat mode.
 megabrain chat terminal-command <id> --json — return the argv for resuming a chat in the terminal.
+megabrain chat daemon status|drain [--json] — report the chat daemon, or drain it before an upgrade: running turns finish, queued messages wait for the next daemon, then it exits.
 megabrain chat rename <id> <title> [--json] — name a chat by hand; automatic titles stop for it.
 megabrain chat summarize <id> [--json] — write a summary of a chat now with the configured model.
 megabrain chat summaries <id> --json — a chat's summaries, newest first.

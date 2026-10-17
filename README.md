@@ -298,7 +298,11 @@ A chat whose agent process is gone (daemon restart, app update, reboot, crash, `
 agent with resume. If that resume fails the chat stays suspended with the error;
 `chat send <id> --parts <json> --fresh` then starts a new agent session in the same folder. A newer
 app asks a running chatd of another protocol version to hand over, so an update never ends a turn
-mid-flight without saying so in the transcript.
+mid-flight without saying so in the transcript. A newer build of the same protocol asks the running
+chatd to drain instead: running turns finish, messages sent meanwhile wait in their queues, and the
+next call starts the new daemon, which sends them. `chat daemon status [--json]` reports the running
+chatd without starting one, and `chat daemon drain [--json]` drains it and waits until it has exited,
+which is the safe step before replacing the binary. A turn cut by a crash ends with `Interrupted`.
 
 Chats run without permission prompts. Add `--approvals` to `chat start` to be asked instead.
 
@@ -313,7 +317,11 @@ message, and `chat queue steer <id> <item> --json` puts it into a running Codex 
 session log stays, so it can still be resumed),
 `chat approve <id> <approvalId> --decision allow|allow-session|deny` to answer a permission request,
 and `chat mode <id> terminal --json` to hand an idle chat to the app's terminal. The app gets the
-agent's resume arguments from `chat terminal-command <id> --json`.
+agent's resume arguments from `chat terminal-command <id> --json`. A session has one live agent
+process: reopening the terminal after an app restart attaches to the TUI still running it, switching
+back to chat ends the app's TUIs on that session before the agent resumes, and a resume is refused
+while a process outside the app holds the session. While the TUI owns it, the chat shows the TUI's
+state from the session log.
 
 Where new worktrees go is `settings get|set worktree-location <json>`: `mode` is `megabrain`
 (`~/.megabrain/worktrees/<repo>/<branch>`), `repo` (`<repo>/.worktrees/<branch>`, hidden through the

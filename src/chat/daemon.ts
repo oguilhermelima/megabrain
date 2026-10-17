@@ -4,14 +4,16 @@ import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createProcessAdapter, type ProcessAdapter } from "../adapters/proc.js";
 import { chatKey, promoteConversation, readConversations, removeConversation, sessionKey, setConversationAlias, upsertConversation, type Conversation } from "../core/conversations.js";
-import { OWNED_TMUX_SERVER, ownedTmuxProcess } from "../core/session-ownership.js";
+import { OWNED_TMUX_SERVER, ownedTmuxProcess, readOwnedSessions, writeOwnedSessions } from "../core/session-ownership.js";
+import { liveSessionHolders, type SessionHolder } from "../core/session-holders.js";
+import { APP_SESSION_PREFIX, forgetAppTerminal } from "../core/app-terminals.js";
 import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
-import { discoverSessionId, readSessionTurns } from "./session-log.js";
+import { discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } from "./session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from "./subagents.js";
 import { selfInvocation } from "../core/self-invocation.js";
 import { ChatSummarizer } from "./summaries.js";
@@ -27,8 +29,24 @@ const instances = new Map<string, ChatDaemon>();
 function chatSocket(stateDir: string): string { return join(stateDir, "chatd", "s"); }
 function chatPid(stateDir: string): string { return join(stateDir, "chatd", "chatd.pid"); }
 function chatLock(stateDir: string): string { return join(stateDir, "chatd", "start.lock"); }
+/** Chats whose queued messages a drained chatd left for its successor to send. */
+function chatResumes(stateDir: string): string { return join(stateDir, "chatd", "resume.json"); }
 /** Bumped whenever the socket contract changes in a way an older chatd cannot serve; a client that finds another number asks that chatd to hand over. */
 export const CHAT_PROTOCOL_VERSION = 2;
+const DRAINING = "chatd is draining for an upgrade";
+const DEFAULT_TERMINAL_POLL_MS = 1500;
+
+/**
+ * Which build of megabrain this is: the modification time of the script or binary running it. A newer CLI
+ * finding an older chatd asks it to drain, so an upgrade never stops a working agent.
+ */
+export function chatBuild(argv: readonly string[] = process.argv, execPath: string = process.execPath): number {
+  for (const path of [argv[1], execPath]) {
+    if (path === undefined || path.startsWith("/$bunfs/")) continue;
+    try { return Math.floor(statSync(path).mtimeMs); } catch { /* not a file: the next candidate */ }
+  }
+  return 0;
+}
 const DEFAULT_HANDOVER_TIMEOUT_MS = 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
@@ -60,6 +78,17 @@ async function socketAccepts(stateDir: string, timeout: number): Promise<boolean
 async function discardStaleState(stateDir: string, options: { pid: boolean }): Promise<void> {
   try { await unlink(chatSocket(stateDir)); } catch { /* no stale socket */ }
   if (options.pid) { try { await unlink(chatPid(stateDir)); } catch { /* no stale pid */ } }
+}
+function heldMessage(chat: Chat, holders: readonly SessionHolder[]): string {
+  const where = holders.map((holder) => holder.tmuxSession === null ? `pid ${holder.pid}` : `tmux session ${holder.tmuxSession}, pid ${holder.pid}`).join("; ");
+  return `${chat.agent} session ${chat.agentSessionId ?? ""} is already open in another process (${where}); close it there, or start fresh`;
+}
+/** Stops an agent this daemon ran and waits (bounded) until it is gone, so nothing checks for holders while it still runs. */
+async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const gone = new Promise<void>((resolve) => { child.once("close", () => resolve()); });
+  child.kill("SIGTERM");
+  await Promise.race([gone, new Promise((resolve) => setTimeout(resolve, 2000).unref?.())]);
 }
 function object(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null ? value as Record<string, unknown> : {}; }
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
@@ -134,10 +163,16 @@ export class ChatDaemon {
   /** The registry key each chat was last written under, so a save only touches the file when the key changes. */
   private readonly tracked = new Map<string, string>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Set by a drain: running turns finish, no new one starts, and the queue waits for the next daemon. */
+  private draining = false;
+  private readonly resumeOnStart = new Set<string>();
+  private terminalTimer: ReturnType<typeof setInterval> | undefined;
+  /** Each terminal-mode chat's log as last read (size and mtime), so an unchanged idle log is not parsed again. */
+  private readonly terminalLogs = new Map<string, string>();
   private clients = 0;
   private closed = false;
   private readonly sockets = new Set<Socket>();
-  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION) { this.store = new ChatStore(stateDir); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
+  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.store = new ChatStore(stateDir); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
   async start(): Promise<void> {
     const dir = join(this.stateDir, "chatd");
@@ -152,6 +187,23 @@ export class ChatDaemon {
     await this.suspendActive();
     await writeFile(chatPid(this.stateDir), `${process.pid}\n`, { mode: 0o600 });
     await chmod(chatPid(this.stateDir), 0o600);
+    await this.resumeDrained();
+  }
+
+  /** The messages a drained predecessor took but left unsent go out now, one per chat, as that chat's next turn. */
+  private async resumeDrained(): Promise<void> {
+    let ids: unknown;
+    try { ids = JSON.parse(await readFile(chatResumes(this.stateDir), "utf8")); } catch { return; }
+    try { await unlink(chatResumes(this.stateDir)); } catch { /* already taken */ }
+    for (const id of Array.isArray(ids) ? ids.filter((value): value is string => typeof value === "string") : []) {
+      const chat = await this.store.get(id);
+      if (!chat || chat.mode !== "chat") continue;
+      const items = await this.loadQueue(id);
+      const item = items.shift();
+      if (item === undefined) continue;
+      await this.persistQueue(id);
+      await this.deliver(chat, item.parts);
+    }
   }
 
   async handle(request: Request, socket?: Socket): Promise<unknown> {
@@ -162,7 +214,9 @@ export class ChatDaemon {
         case "list":
           await Promise.all([...this.eventChains.values(), ...this.appendChains.values()]);
           return await this.store.list();
-        case "hello": return { protocol: this.protocol, pid: process.pid };
+        case "hello": return { protocol: this.protocol, pid: process.pid, build: this.build };
+        case "daemon-status": return await this.daemonStatus();
+        case "drain": return request.wait === false ? (void this.drainDaemon().catch(() => undefined), await this.daemonStatus()) : await this.drainDaemon();
         case "handover": return await this.handover();
         case "start": return await this.startChat(request);
         case "send": return await this.send(text(request.id), validateParts(request.parts), request.fresh === true);
@@ -187,6 +241,7 @@ export class ChatDaemon {
   }
 
   private async startChat(request: Request): Promise<Chat> {
+    if (this.draining) throw new Error(DRAINING);
     const agent = text(request.agent);
     if (agent !== "claude" && agent !== "codex") throw new Error("--agent must be claude or codex");
     const cwd = text(request.cwd);
@@ -234,19 +289,47 @@ export class ChatDaemon {
   private async handover(): Promise<{ handedOver: true; waitedMs: number; interrupted: string[] }> {
     const bound = timeoutMs(this.environment.MEGABRAIN_CHATD_HANDOVER_TIMEOUT_MS, DEFAULT_HANDOVER_TIMEOUT_MS);
     const started = Date.now();
-    const busy = async () => (await this.store.list()).some((chat) => chat.state === "working" || chat.state === "waiting-approval");
-    while (await busy() && Date.now() - started < bound) await new Promise((resolve) => setTimeout(resolve, 50));
+    while (await this.busy() && Date.now() - started < bound) await new Promise((resolve) => setTimeout(resolve, 50));
     const interrupted = await this.suspendActive();
     await Promise.all([...this.eventChains.values(), ...this.appendChains.values()]);
     await this.close();
     return { handedOver: true, waitedMs: Date.now() - started, interrupted };
   }
 
-  /** A send while a turn runs waits in the queue; otherwise it goes out at once. */
+  /** Whether one of this daemon's agents is in a turn; a terminal's TUI does not depend on chatd. */
+  private async busy(): Promise<boolean> {
+    return (await this.store.list()).some((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval"));
+  }
+
+  private async daemonStatus(): Promise<{ pid: number; protocol: number; build: number; draining: boolean; working: string[] }> {
+    const working = (await this.store.list()).filter((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval")).map((chat) => chat.id);
+    return { pid: process.pid, protocol: this.protocol, build: this.build, draining: this.draining, working };
+  }
+
+  /**
+   * Gets out of the way of a newer chatd without stopping anyone's turn: every running turn finishes (however long
+   * it takes), no new turn starts, the queued messages are left for the successor, and then the daemon exits.
+   */
+  private async drainDaemon(): Promise<{ drained: true; waitedMs: number; resumes: string[] }> {
+    this.draining = true;
+    const started = Date.now();
+    while (await this.busy()) await new Promise((resolve) => setTimeout(resolve, 50));
+    await Promise.all([...this.eventChains.values(), ...this.appendChains.values(), ...this.queueWrites.values()]);
+    for (const chat of await this.store.list()) if (chat.mode === "chat" && (await this.loadQueue(chat.id)).length > 0) this.resumeOnStart.add(chat.id);
+    const resumes = [...this.resumeOnStart];
+    if (resumes.length > 0) await writeFile(chatResumes(this.stateDir), `${JSON.stringify(resumes)}\n`, { mode: 0o600 });
+    await this.suspendActive();
+    await Promise.all([...this.eventChains.values(), ...this.appendChains.values()]);
+    await this.close();
+    return { drained: true, waitedMs: Date.now() - started, resumes };
+  }
+
+  /** A send while a turn runs waits in the queue; otherwise it goes out at once. While draining every send waits, for the next daemon. */
   private async send(id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> {
     const chat = await this.requireChat(id);
     const parts = await this.normalizeParts(chat.cwd, inputParts);
     if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
+    if (this.draining) { this.resumeOnStart.add(id); return { queued: await this.enqueue(chat, parts) }; }
     if (chat.state === "working" || chat.state === "waiting-approval") return { queued: await this.enqueue(chat, parts) };
     await this.deliver(chat, parts, { fresh });
     return { queued: null };
@@ -323,6 +406,7 @@ export class ChatDaemon {
         return await this.persistQueue(id);
       case "send-now": {
         if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
+        if (this.draining) throw new Error(DRAINING);
         const item = take();
         await this.persistQueue(id);
         if (chat.state === "working" || chat.state === "waiting-approval") await this.interrupt(id);
@@ -390,7 +474,14 @@ export class ChatDaemon {
     await this.publish(chat, event("system", chat.error));
   }
 
-  private async runAgent(chat: Chat): Promise<void> {
+  /** `checked`: the caller already made sure nothing else holds the session (a switch back from the terminal ends the TUIs itself). */
+  private async runAgent(chat: Chat, checked = false): Promise<void> {
+    // One agent per chat: one this daemon still runs for it goes before the next starts, never left behind unowned.
+    const previous = this.children.get(chat.id);
+    if (previous) { this.children.delete(chat.id); await stopChild(previous); }
+    // Resuming next to another live process would give the session two writers answering different turns.
+    const holders = checked ? [] : await this.foreignHolders(chat);
+    if (holders.length > 0) throw new Error(heldMessage(chat, holders));
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, this.stateDir);
     const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: scrubAgentEnvironment({ ...process.env, ...this.environment }), stdio: ["pipe", "pipe", "pipe"] });
     this.children.set(chat.id, child);
@@ -435,9 +526,12 @@ export class ChatDaemon {
           await this.publishInterrupted(current);
           return;
         }
+        // A turn the agent died in is over: its end says so, so no view keeps showing it run.
+        const cut = current.state === "working" || current.state === "waiting-approval";
         current.state = code === 0 ? "idle" : "suspended";
         current.error = code === 0 ? null : `${signal ?? "agent exited"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`;
         if (code !== 0) this.queues.delete(chat.id);
+        if (cut) await this.publishInterrupted(current);
         await this.save(current);
         await this.publish(current, event("system", current.error ?? "Agent process stopped"));
       });
@@ -731,7 +825,7 @@ export class ChatDaemon {
       if (outbox.length === 0) this.queues.delete(id);
       this.queueHeld.delete(id);
     } else {
-      if (chat.state !== "idle" || chat.mode !== "chat" || this.queueHeld.has(id)) return;
+      if (chat.state !== "idle" || chat.mode !== "chat" || this.queueHeld.has(id) || this.draining) return;
       const items = await this.loadQueue(id);
       const item = items.shift();
       if (item === undefined) return;
@@ -841,9 +935,14 @@ export class ChatDaemon {
   private async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> {
     const chat = await this.requireChat(id);
     if (mode !== "chat" && mode !== "terminal") throw new Error("mode must be chat or terminal");
-    if (mode === "terminal") {
+    if (mode === "terminal" && chat.mode === "terminal") {
+      // Already the terminal's: reopening it after an app restart changes nothing, the app attaches to the TUI that runs.
+    } else if (mode === "terminal") {
       const child = this.children.get(id);
-      if (child) { child.kill("SIGTERM"); this.children.delete(id); }
+      if (child) { this.children.delete(id); await stopChild(child); }
+      // The app attaches to a TUI already on its own tmux server; one anywhere else would be a second writer.
+      const elsewhere = (await this.foreignHolders(chat)).filter((holder) => holder.tmuxSession === null);
+      if (elsewhere.length > 0) throw new Error(heldMessage(chat, elsewhere));
       this.clearStartTimer(id);
       for (const map of [this.queues, this.activeTurns]) map.delete(id);
       if (chat.state === "working" || chat.state === "waiting-approval") await this.publish(chat, event("system", "Interrupted"));
@@ -853,14 +952,19 @@ export class ChatDaemon {
       chat.terminalSince = new Date().toISOString();
       await this.save(chat);
     } else if (chat.mode === "terminal") {
+      if (this.draining) throw new Error(DRAINING);
       // A TUI opened without a session writes its own; adopt it so the chat resumes where the terminal left off.
       if (chat.agentSessionId === null) chat.agentSessionId = await this.sessionOfTerminal(chat);
+      // The chat's agent becomes the session's one process: every TUI the app still runs on it ends first.
+      const ended = await this.endAppTerminals(chat);
+      const elsewhere = (await this.foreignHolders(chat)).filter((holder) => !ended.has(holder.pid));
+      if (elsewhere.length > 0) throw new Error(heldMessage(chat, elsewhere));
       await this.importTerminalTurns(chat);
       chat.mode = "chat";
       chat.state = "starting";
       await this.save(chat);
       // runAgent owns the record from here: saving this copy again could land after its idle and undo it.
-      void this.runAgent(chat).catch((error) => this.fail(id, error));
+      void this.runAgent(chat, true).catch((error) => this.fail(id, error));
     }
     // The terminal's command rides along, so opening it costs no second round trip.
     return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
@@ -870,10 +974,92 @@ export class ChatDaemon {
   private async importTerminalTurns(chat: Chat): Promise<void> {
     const known = new Set((await this.store.events(chat.id)).flatMap((line) => line.event?.sourceId === undefined ? [] : [line.event.sourceId]));
     const since = chat.terminalSince ?? "";
-    for (const turn of await readSessionTurns(chat, this.environment.HOME ?? homedir())) {
+    const turns = await readSessionTurns(chat, this.environment.HOME ?? homedir());
+    for (const turn of turns) {
       if (turn.at <= since || known.has(turn.sourceId)) continue;
       const { kind, text: value, at, tool, messageId, parentId, subagent, sourceId } = turn;
       await this.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), ...(parentId === undefined ? {} : { parentId }), ...(subagent === undefined ? {} : { subagent }), sourceId });
+    }
+    // The TUIs are gone by now, so a turn the log leaves open was cut and nobody will finish it.
+    const last = turns.filter((turn) => turn.at > since).at(-1);
+    const marker = last === undefined ? "" : `${last.sourceId}:interrupted`;
+    if (last === undefined || known.has(marker) || !await this.logTurnOpen(chat)) return;
+    await this.publish(chat, { ...event("system", "Interrupted"), at: last.at, sourceId: marker });
+  }
+
+  private async logTurnOpen(chat: Chat): Promise<boolean> {
+    const path = await sessionLogPath(chat, this.environment.HOME ?? homedir());
+    if (path === null) return false;
+    try { return sessionTurnOpen(chat.agent, await readFile(path, "utf8")); } catch { return false; }
+  }
+
+  /** Every process holding the chat's session other than this daemon's own agents. */
+  private async foreignHolders(chat: Chat, panes?: ReadonlyMap<number, string>): Promise<SessionHolder[]> {
+    if (chat.agentSessionId === null) return [];
+    const own = new Set([...this.children.values()].flatMap((child) => child.pid === undefined ? [] : [child.pid]));
+    return liveSessionHolders(chat.agent, chat.agentSessionId, { home: this.environment.HOME ?? homedir(), processes: this.processes(), exclude: own, cwd: chat.cwd, ...(panes === undefined ? {} : { panes }) });
+  }
+
+  /** The pane processes of one session on the app's tmux server, as pane pid to session name. */
+  private async panesOf(session: string): Promise<ReadonlyMap<number, string>> {
+    const listed = await ownedTmuxProcess(this.processes()).run("tmux", ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_pid}"]);
+    const pids = listed.kind === "ok" ? listed.value.stdout.split("\n").map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 1) : [];
+    return new Map(pids.map((pid) => [pid, session]));
+  }
+
+  /**
+   * Ends the chat's own terminal and any other session megabrain runs on the app's tmux server that resumes the chat's
+   * session. Returns the pids of the holders it ended, which may take a moment more to exit.
+   */
+  private async endAppTerminals(chat: Chat): Promise<ReadonlySet<number>> {
+    const alias = this.entryOf(chat.id)?.[1].aliases.tmux ?? null;
+    const [server, aliased] = (alias ?? "").split(":");
+    const own = server === OWNED_TMUX_SERVER && aliased !== undefined && aliased.startsWith("mb-") ? aliased : null;
+    const panes = own === null ? undefined : await this.panesOf(own);
+    const ended = (await this.foreignHolders(chat, panes)).filter((holder) => holder.tmuxSession?.startsWith("mb-") === true);
+    const sessions = new Set(ended.flatMap((holder) => holder.tmuxSession === null ? [] : [holder.tmuxSession]));
+    if (own !== null) sessions.add(own);
+    const pids = new Set(ended.map((holder) => holder.pid));
+    if (sessions.size === 0) return pids;
+    const tmux = ownedTmuxProcess(this.processes());
+    for (const session of sessions) {
+      await tmux.run("tmux", ["kill-session", "-t", `=${session}`]);
+      try { if (session.startsWith(APP_SESSION_PREFIX)) forgetAppTerminal(this.stateDir, session); } catch { /* a listing aid */ }
+    }
+    try {
+      const owned = readOwnedSessions(this.stateDir);
+      const kept = Object.fromEntries(Object.entries(owned).filter(([, entry]) => !(entry.tmuxServer === OWNED_TMUX_SERVER && sessions.has(entry.tmuxSession))));
+      if (Object.keys(kept).length !== Object.keys(owned).length) writeOwnedSessions(this.stateDir, kept);
+      const key = this.entryOf(chat.id)?.[0];
+      if (key !== undefined && aliased !== undefined && sessions.has(aliased)) setConversationAlias(this.stateDir, key, { tmux: null });
+    } catch { /* a listing aid */ }
+    // tmux returns before the pane's process has gone; the next holder check must not see it.
+    for (let attempt = 0; attempt < 20 && (await this.foreignHolders(chat)).some((holder) => pids.has(holder.pid)); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    return pids;
+  }
+
+  /** A terminal-mode chat shows its TUI's state: working while the session log holds an unfinished turn and a process still runs it. */
+  private async refreshTerminalChats(): Promise<void> {
+    for (const listed of await this.store.list()) {
+      if (listed.mode !== "terminal" || listed.agentSessionId === null) continue;
+      const path = await sessionLogPath(listed, this.environment.HOME ?? homedir());
+      let content: string;
+      let key: string;
+      try {
+        const info = await stat(path ?? "");
+        key = `${info.size}:${info.mtimeMs}`;
+        if (key === this.terminalLogs.get(listed.id) && listed.state !== "working") continue;
+        content = await readFile(path ?? "", "utf8");
+      } catch { content = ""; key = ""; }
+      this.terminalLogs.set(listed.id, key);
+      const working = sessionTurnOpen(listed.agent, content) && (await this.foreignHolders(listed)).length > 0;
+      const state: Chat["state"] = working ? "working" : "idle";
+      // The record may have moved on while the log was read: only a chat still in the same terminal stint changes.
+      const chat = await this.store.get(listed.id);
+      if (!chat || chat.mode !== "terminal" || chat.terminalSince !== listed.terminalSince || chat.state === state) continue;
+      chat.state = state;
+      if (!working) chat.lastActivityAt = new Date().toISOString();
+      await this.save(chat);
     }
   }
 
@@ -1119,11 +1305,14 @@ export class ChatDaemon {
   async close(): Promise<void> {
     this.closed = true;
     this.idleTimer && clearTimeout(this.idleTimer);
+    if (this.terminalTimer !== undefined) clearInterval(this.terminalTimer);
     this.server?.close();
     this.server = undefined;
-    // An agent left running here would outlive the daemon, reparented to init with nobody to stop it.
-    for (const child of this.children.values()) child.kill("SIGTERM");
+    // An agent left running here would outlive the daemon, reparented to init with nobody to stop it; the next
+    // daemon must not find it still holding its session either.
+    const children = [...this.children.values()];
     this.children.clear();
+    await Promise.all(children.map(stopChild));
     // The caller of a handover still has its answer in flight; everything else is dropped shortly after so the process can leave.
     const open = [...this.sockets];
     setTimeout(() => { for (const socket of open) socket.destroy(); }, 100).unref?.();
@@ -1160,6 +1349,14 @@ export class ChatDaemon {
       });
       this.server.once("error", reject);
       this.server.listen(socketPath, () => { void chmod(socketPath, 0o600).then(resolve, reject); });
+      const poll = timeoutMs(this.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
+      let refreshing = false;
+      this.terminalTimer = setInterval(() => {
+        if (refreshing) return;
+        refreshing = true;
+        void this.refreshTerminalChats().catch(() => undefined).finally(() => { refreshing = false; });
+      }, poll);
+      this.terminalTimer.unref?.();
     });
   }
 }
@@ -1221,18 +1418,69 @@ export async function runChatd(stateDir: string): Promise<void> {
  * cannot be asked, and is used as it is.
  */
 async function ensureProtocol(stateDir: string, timeouts: Timeouts): Promise<void> {
-  let protocol: unknown;
-  try { protocol = object(await socketRequest(stateDir, { operation: "hello" }, timeouts)).protocol; }
+  let hello: Record<string, unknown> = {};
+  try { hello = object(await socketRequest(stateDir, { operation: "hello" }, timeouts)); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ECONNREFUSED" || code === "ENOENT") throw error;
+  }
+  const protocol = hello.protocol;
+  // Same protocol, older build: it drains in the background, still answering, and this call goes on with it.
+  if (protocol === CHAT_PROTOCOL_VERSION && typeof hello.build === "number" && chatBuild() > hello.build) {
+    try { await socketRequest(stateDir, { operation: "drain", wait: false }, timeouts); } catch { /* a chatd without drain keeps serving */ }
+    return;
   }
   if (protocol === CHAT_PROTOCOL_VERSION || protocol === undefined) return;
   await socketRequest(stateDir, { operation: "handover" }, { connect: timeouts.connect, request: undefined });
   for (let attempt = 0; attempt < 100 && await socketAccepts(stateDir, 200); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
-export async function callChatd(stateDir: string, request: Request, environment: Environment, processAdapter: { startDetached(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<{ kind: string; error?: string }> }, onLine?: (line: ChatLine) => void): Promise<unknown> {
+type Starter = { startDetached(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<{ kind: string; error?: string }> };
+
+/**
+ * A request a draining chatd refuses (a new turn it cannot start) waits until that chatd has gone, then goes to
+ * the next one, which this call starts.
+ */
+export async function callChatd(stateDir: string, request: Request, environment: Environment, processAdapter: Starter, onLine?: (line: ChatLine) => void): Promise<unknown> {
+  try { return await callChatdOnce(stateDir, request, environment, processAdapter, onLine); }
+  catch (error) {
+    if (!(error instanceof Error) || !error.message.includes(DRAINING)) throw error;
+    await untilChatdGone(stateDir);
+    return callChatdOnce(stateDir, request, environment, processAdapter, onLine);
+  }
+}
+
+async function untilChatdGone(stateDir: string): Promise<void> {
+  for (;;) {
+    const local = instances.get(stateDir);
+    if (local === undefined && !await socketAccepts(stateDir, 200)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+export type ChatdStatus = Readonly<{ running: false } | { running: true; pid: number; protocol: number; build: number; draining: boolean; working: string[] }>;
+
+/** The running chatd as it reports itself; never starts one. */
+export async function chatdStatus(stateDir: string): Promise<ChatdStatus> {
+  const local = instances.get(stateDir);
+  if (local !== undefined) return { running: true, ...await local.handle({ operation: "daemon-status" }) as Omit<Extract<ChatdStatus, { running: true }>, "running"> };
+  if (!existsSync(chatSocket(stateDir)) || !await socketAccepts(stateDir, DEFAULT_CONNECT_TIMEOUT_MS)) return { running: false };
+  const status = object(await socketRequest(stateDir, { operation: "daemon-status" }, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: DEFAULT_REQUEST_TIMEOUT_MS }));
+  return { running: true, pid: Number(status.pid), protocol: Number(status.protocol), build: Number(status.build), draining: status.draining === true, working: Array.isArray(status.working) ? status.working.filter((id): id is string => typeof id === "string") : [] };
+}
+
+/** Drains the running chatd and waits until it has exited: every turn finished, queued messages left for the next one. */
+export async function drainChatd(stateDir: string): Promise<Readonly<{ running: false } | { running: true; drained: true; waitedMs: number; resumes: string[] }>> {
+  const local = instances.get(stateDir);
+  if (local === undefined && (!existsSync(chatSocket(stateDir)) || !await socketAccepts(stateDir, DEFAULT_CONNECT_TIMEOUT_MS))) return { running: false };
+  const result = object(local === undefined
+    ? await socketRequest(stateDir, { operation: "drain" }, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: undefined })
+    : await local.handle({ operation: "drain" }));
+  await untilChatdGone(stateDir);
+  return { running: true, drained: true, waitedMs: Number(result.waitedMs), resumes: Array.isArray(result.resumes) ? result.resumes.filter((id): id is string => typeof id === "string") : [] };
+}
+
+async function callChatdOnce(stateDir: string, request: Request, environment: Environment, processAdapter: Starter, onLine?: (line: ChatLine) => void): Promise<unknown> {
   const local = instances.get(stateDir);
   if (local) return local.handle(request);
   const timeouts = timeoutsFor(environment);
@@ -1255,7 +1503,7 @@ export async function callChatd(stateDir: string, request: Request, environment:
     if (!ownerAlive) {
       try { await unlink(chatLock(stateDir)); } catch { /* another client cleaned it */ }
       await discardStaleState(stateDir, { pid: true });
-      return callChatd(stateDir, request, environment, processAdapter, onLine);
+      return callChatdOnce(stateDir, request, environment, processAdapter, onLine);
     }
     throw new Error("chatd did not become ready in time");
   };

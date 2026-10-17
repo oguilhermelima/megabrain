@@ -168,6 +168,16 @@ fn conversation(owner: &str, cwd: &str, chat_id: Option<&str>, tmux: &str, creat
     json!({ "owner": owner, "cwd": cwd, "aliases": { "chatId": chat_id, "tmux": tmux, "pid": null, "dispatchId": null }, "createdAt": created_at, "hidden": false })
 }
 
+/// The session on the app's tmux server the chat's terminal mode last ran in, from the chat's registry entry.
+pub fn chat_tmux_alias(state_dir: &Path, chat_id: &str) -> Option<String> {
+    let text = std::fs::read_to_string(state_dir.join(REGISTRY)).ok()?;
+    let registry = serde_json::from_str::<Value>(&text).ok()?;
+    let entry = registry["conversations"].as_object()?.values().find(|entry| entry["aliases"]["chatId"] == json!(chat_id))?;
+    let tmux = entry["aliases"]["tmux"].as_str()?;
+    let (server, session) = tmux.split_once(':')?;
+    (server == "megabrain-app" && !session.is_empty()).then(|| session.to_string())
+}
+
 /// Records a tmux terminal the app created (`server:session`). A chat's terminal mode adds the alias
 /// to the chat's own entry, so the chat and its TUI stay one conversation.
 pub fn record_terminal_conversation(state_dir: &Path, tmux: &str, cwd: &str, created_at: &str, chat_id: Option<&str>) -> Result<(), String> {

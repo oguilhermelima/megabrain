@@ -111,6 +111,57 @@ pub fn tmux_create_argv(
     args
 }
 
+/// The agent session a TUI command resumes: `claude --resume <id>` or `codex resume <id>`.
+pub fn resumed_session(command: &[String]) -> Option<&str> {
+    command
+        .windows(2)
+        .find(|pair| pair[0] == "--resume" || pair[0] == "resume")
+        .map(|pair| pair[1].as_str())
+        .filter(|id| !id.is_empty() && !id.starts_with('-'))
+}
+
+/// From `list-panes -a -F "#{session_name}\t#{session_created}\t#{pane_start_command}"`: the session that holds a
+/// chat's agent session. The chat's own terminal (its alias) first, else the newest one whose command resumes it.
+pub fn holder_in_listing(listing: &str, session_id: Option<&str>, alias: Option<&str>) -> Option<String> {
+    let panes: Vec<(&str, u64, &str)> = listing
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, '\t');
+            let name = fields.next()?;
+            let created = fields.next()?.parse().unwrap_or(0);
+            Some((name, created, fields.next().unwrap_or("")))
+        })
+        .collect();
+    if let Some(alias) = alias.filter(|alias| panes.iter().any(|(name, _, _)| name == alias)) {
+        return Some(alias.to_string());
+    }
+    let session_id = session_id?;
+    let resumes = |command: &str| {
+        let words: Vec<String> = command.split_whitespace().map(|word| word.trim_matches(|c| c == '"' || c == '\'').to_string()).collect();
+        resumed_session(&words) == Some(session_id)
+    };
+    panes
+        .iter()
+        .filter(|(_, _, command)| resumes(command))
+        .max_by_key(|(_, created, _)| *created)
+        .map(|(name, _, _)| name.to_string())
+}
+
+/// The live tmux session on `server` that holds the chat's agent session, if any; no server, no holder.
+pub fn live_chat_holder(tmux: &Path, server: &str, session_id: Option<&str>, alias: Option<&str>) -> Option<String> {
+    let output = Command::new(tmux)
+        .args(["-L", server, "list-panes", "-a", "-F", "#{session_name}\t#{session_created}\t#{pane_start_command}"])
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    holder_in_listing(&String::from_utf8_lossy(&output.stdout), session_id, alias)
+}
+
 pub fn tmux_attach_argv(server: Option<&str>, session: &str) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(server) = server {
@@ -295,7 +346,22 @@ impl TerminalManager {
         if !cwd.is_dir() {
             return Err("terminal cwd must be a directory".into());
         }
-        let engine = Engine::from_name(&options.engine)?;
+        let mut engine = Engine::from_name(&options.engine)?;
+        let mut options = options;
+        // A chat's terminal outlives the app: reopening it attaches to the TUI still running its session instead of
+        // resuming that session in a second process.
+        let mut reattached = false;
+        if let (Some(chat_id), None) = (options.chat_id.as_deref(), options.tmux_session.as_deref()) {
+            let alias = app_terminals::state_dir().and_then(|state| app_terminals::chat_tmux_alias(&state, chat_id));
+            let session_id = options.command.as_deref().and_then(resumed_session);
+            let holder = find_on_path("tmux", cli_path).and_then(|tmux| live_chat_holder(&tmux, TMUX_SERVER, session_id, alias.as_deref()));
+            if let Some(holder) = holder {
+                options.tmux_session = Some(format!("{TMUX_SERVER}:{holder}"));
+                options.engine = "tmux".into();
+                engine = Engine::Tmux;
+                reattached = true;
+            }
+        }
         let id = Uuid::new_v4().to_string();
         let login_shell = std::env::var("SHELL")
             .ok()
@@ -388,6 +454,15 @@ impl TerminalManager {
             .master
             .take_writer()
             .map_err(|error| format!("could not write terminal PTY: {error}"))?;
+        if let (true, Some(target), Some(state)) = (reattached, tmux_target.as_ref(), app_terminals::state_dir()) {
+            let _ = app_terminals::record_terminal_conversation(
+                &state,
+                &format!("{TMUX_SERVER}:{}", target.session),
+                &cwd.to_string_lossy(),
+                &app_terminals::now_iso(),
+                options.chat_id.as_deref(),
+            );
+        }
         if let Some(session) = &created_session {
             // The record only labels the session for the next start; a failed write loses a label,
             // not the terminal.

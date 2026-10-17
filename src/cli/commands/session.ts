@@ -9,6 +9,7 @@ import { createTmuxSession, getTmux } from "../../hosts/tmux.js";
 import { appHost, appTarget, readAppPanes, readProcessTable } from "../../core/session-origin.js";
 import { findMachineSession } from "./projects.js";
 import { readConversations, removeConversation, setConversationAlias, upsertConversation } from "../../core/conversations.js";
+import { liveSessionHolders } from "../../core/session-holders.js";
 import { APP_SESSION_PREFIX, forgetAppTerminal } from "../../core/app-terminals.js";
 import { join } from "node:path";
 
@@ -63,8 +64,10 @@ async function own(target: Readonly<{ agent: string; id: string; key: string; js
   const found = await findMachineSession(environment.HOME ?? "", process, target.agent, target.id);
   if (found === undefined) return failed(`no ${agent} session ${target.id} was found on this machine`);
   const tmuxProcess = ownedTmuxProcess(process);
-  const name = ownedSessionName(agent, target.id);
   const command = resumeCommand(agent, target.id, found.model ?? undefined);
+  // A session the app already runs on its tmux server (a chat's terminal) is the one taken, never resumed twice.
+  const running = (await liveSessionHolders(agent, target.id, { home: environment.HOME ?? "", processes: process, cwd: found.cwd })).find((holder) => holder.tmuxSession !== null)?.tmuxSession;
+  const name = running ?? ownedSessionName(agent, target.id);
   const alive = await getTmux().sessionExists(name, tmuxProcess);
   if (alive.kind !== "ok") return failed(alive.error);
   if (!alive.value) {

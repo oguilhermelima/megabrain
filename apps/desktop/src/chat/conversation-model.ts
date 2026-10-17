@@ -63,7 +63,13 @@ export function thoughtLabel(ms: number | undefined): string {
   return ms === undefined ? 'Thought' : `Thought for ${formatElapsed(Math.max(1000, Math.round(ms / 1000) * 1000))}`
 }
 
+const endsTurn = (event: TranscriptEvent) => event.kind === 'user' || event.kind === 'assistant' || event.kind === 'system'
+
 function pairTools(events: TranscriptEvent[], steps: Map<string, TranscriptEvent[]>, ends: Map<string, TranscriptEvent>, before: TranscriptEvent | null = null): ConversationItem[] {
+  let lastEnd = -1
+  events.forEach((event, index) => {
+    if (endsTurn(event)) lastEnd = index
+  })
   const items: ConversationItem[] = []
   // Thinking with no visible text (Claude 5 often keeps only its signature) is no row, and consecutive
   // thinking reads as one entry, timed from the event before its first part.
@@ -96,7 +102,9 @@ function pairTools(events: TranscriptEvent[], steps: Map<string, TranscriptEvent
     }
     const next = events[index + 1]
     const result = next !== undefined && next.kind === 'tool-result' ? next : null
-    const status: ToolStatus = result === null ? 'running' : (result.tool?.status ?? 'ok')
+    // A call with no result runs only while its turn does: a message, a prompt or an Interrupted after it ended that turn.
+    const cut = result === null && index < lastEnd
+    const status: ToolStatus = result === null ? (cut ? 'error' : 'running') : (result.tool?.status ?? 'ok')
     items.push({ type: 'tool', id: event.id, call: event, result, status })
   }
   return items

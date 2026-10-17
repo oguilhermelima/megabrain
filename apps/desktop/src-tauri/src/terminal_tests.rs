@@ -1,8 +1,9 @@
 use crate::app_terminals::{forget_terminal_conversation, iso_utc, record_app_terminal, record_terminal_conversation};
+use crate::app_terminals::chat_tmux_alias;
 use crate::terminal::{
-    app_owned_session, close_action, encode_output, native_argv, tmux_attach_argv,
-    tmux_create_argv, tmux_kill_session_argv, tmux_server_name, CloseAction, CloseReason, Engine,
-    OutputBatcher, PendingOutput, PtyProcess,
+    app_owned_session, close_action, encode_output, holder_in_listing, live_chat_holder, native_argv,
+    resumed_session, tmux_attach_argv, tmux_create_argv, tmux_kill_session_argv, tmux_server_name,
+    CloseAction, CloseReason, Engine, OutputBatcher, PendingOutput, PtyProcess,
 };
 use std::io::Read;
 use std::process::Command;
@@ -227,6 +228,60 @@ fn tmux_argv_runs_against_a_private_server_created_and_killed_by_the_test() {
 
     let attached = Command::new("tmux").args(tmux_attach_argv(Some(&server), session)).get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
     assert_eq!(attached, ["-L", server.as_str(), "attach-session", "-t", session]);
+}
+
+#[test]
+fn a_tui_command_names_the_session_it_resumes() {
+    let claude = ["claude", "--resume", "3968e673", "--dangerously-skip-permissions"].map(String::from);
+    let codex = ["codex", "resume", "019a-thread", "--dangerously-bypass-approvals-and-sandbox"].map(String::from);
+    assert_eq!(resumed_session(&claude), Some("3968e673"));
+    assert_eq!(resumed_session(&codex), Some("019a-thread"));
+    assert_eq!(resumed_session(&["claude".to_string()]), None);
+    assert_eq!(resumed_session(&["claude".to_string(), "--resume".to_string()]), None);
+}
+
+#[test]
+fn the_chat_keeps_its_own_terminal_else_the_newest_one_resuming_its_session() {
+    // Measured on 2026-10-16: three app sessions resumed one chat's session after three relaunches.
+    let listing = "mb-app-4b67\t1792203534\tclaude --resume 3968e673 --dangerously-skip-permissions --model \"claude-opus-5-5[1m]\"\n\
+mb-app-9d71\t1792204137\tclaude --resume 3968e673 --dangerously-skip-permissions\n\
+mb-app-other\t1792204999\tclaude --resume 11111111\n\
+mb-app-shell\t1792205000\t/bin/zsh\n";
+    assert_eq!(holder_in_listing(listing, Some("3968e673"), Some("mb-app-4b67")), Some("mb-app-4b67".into()));
+    assert_eq!(holder_in_listing(listing, Some("3968e673"), Some("mb-app-gone")), Some("mb-app-9d71".into()));
+    assert_eq!(holder_in_listing(listing, Some("3968e673"), None), Some("mb-app-9d71".into()));
+    // A TUI opened without a session is found only through the chat's own alias.
+    assert_eq!(holder_in_listing(listing, None, Some("mb-app-shell")), Some("mb-app-shell".into()));
+    assert_eq!(holder_in_listing(listing, None, None), None);
+    assert_eq!(holder_in_listing(listing, Some("22222222"), None), None);
+}
+
+#[test]
+fn restore_reattaches_to_the_live_tmux_session_instead_of_resuming_again() {
+    let server = format!("mb-desktop-test-{}", uuid::Uuid::new_v4());
+    let _server = PrivateTmuxServer(server.clone());
+    let id = uuid::Uuid::new_v4().to_string();
+    let created = Command::new("tmux")
+        .args(["-L", &server, "new-session", "-d", "-s", "mb-app-live", "/bin/sh", "-c", "sleep 30", "--resume", &id])
+        .status()
+        .expect("tmux must be installed for the private-server test");
+    assert!(created.success());
+    let tmux = std::path::PathBuf::from(String::from_utf8_lossy(&Command::new("sh").args(["-c", "command -v tmux"]).output().unwrap().stdout).trim().to_string());
+
+    assert_eq!(live_chat_holder(&tmux, &server, Some(&id), None), Some("mb-app-live".into()));
+    assert_eq!(live_chat_holder(&tmux, &server, Some("not-running"), None), None);
+    // With the server gone nothing holds the session, and a resume is the only way back.
+    let _ = Command::new("tmux").args(["-L", &server, "kill-server"]).status();
+    assert_eq!(live_chat_holder(&tmux, &server, Some(&id), None), None);
+}
+
+#[test]
+fn the_chat_alias_is_read_back_from_the_conversation_registry() {
+    let state = std::env::temp_dir().join(format!("mb-app-alias-{}", uuid::Uuid::new_v4()));
+    record_terminal_conversation(&state, "megabrain-app:mb-app-first", "/work", "2026-10-15T10:00:00.000Z", Some("chat-1")).unwrap();
+    assert_eq!(chat_tmux_alias(&state, "chat-1"), Some("mb-app-first".into()));
+    assert_eq!(chat_tmux_alias(&state, "chat-2"), None);
+    let _ = std::fs::remove_dir_all(&state);
 }
 
 struct PrivateTmuxServer(String);

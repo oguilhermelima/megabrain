@@ -42,6 +42,16 @@ describe('buildConversationItems', () => {
     expect(items[0]).toMatchObject({ type: 'tool', status: 'running', result: null })
   })
 
+  test('a tool-call whose turn ended without a result is no longer running', () => {
+    const call = event('c1', { kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'megabrain port kill 8081' } })
+    for (const end of [event('s1', { kind: 'system', text: 'Interrupted' }), event('u2', { kind: 'user', text: 'next' }), event('a2', { kind: 'assistant', text: 'done' })]) {
+      const items = buildConversationItems([call, end])
+      expect(items[0]).toMatchObject({ type: 'tool', status: 'error', result: null })
+    }
+    // Thinking and further calls are the same turn going on.
+    expect(buildConversationItems([call, event('t1', { kind: 'thinking', text: 'hmm' })])[0]).toMatchObject({ status: 'running' })
+  })
+
   test('a failed result carries error status', () => {
     const items = buildConversationItems([
       event('c1', { kind: 'tool-call', tool: { name: 'shell', input: 'bad' } }),

@@ -19,7 +19,7 @@ type Fake = ProcessAdapter & Readonly<{ calls: Call[]; sessions: Set<string>; se
 
 // A tmux that knows sessions by name. Every tmux call must name the -L server first; a call that
 // does not is recorded as-is so the test sees the default server being touched.
-function fakeTmux(options: Readonly<{ ready?: boolean; noServer?: string }> = {}): Fake {
+function fakeTmux(options: Readonly<{ ready?: boolean; noServer?: string; ps?: string; appPanes?: string }> = {}): Fake {
   const calls: Call[] = [];
   const sessions = new Set<string>();
   let ready = options.ready ?? true;
@@ -33,6 +33,7 @@ function fakeTmux(options: Readonly<{ ready?: boolean; noServer?: string }> = {}
     pasted: () => calls.filter((call) => call.args.includes("paste-buffer")).map((call) => call.args.join(" ")),
     async run(command, args) {
       calls.push({ command, args: [...args] });
+      if (command === "ps") return done(options.ps ?? "");
       if (command !== "tmux") return done();
       const rest = args[0] === "-L" ? args.slice(2) : args;
       const target = rest[rest.indexOf("-t") + 1] ?? "";
@@ -42,7 +43,7 @@ function fakeTmux(options: Readonly<{ ready?: boolean; noServer?: string }> = {}
         case "new-session": serverMessage = undefined; sessions.add(rest[rest.indexOf("-s") + 1] ?? ""); return done();
         case "kill-session": sessions.delete(target); return done();
         case "list-panes":
-          if (rest.includes("-a")) return done("%9|$1\n");
+          if (rest.includes("-a")) return done(rest.includes("#{pane_pid} #{session_name}") ? options.appPanes ?? "" : "%9|$1\n");
           return sessions.has(target) ? done("%9\n") : failed("can't find session: " + target, 1);
         case "capture-pane": {
           if (!ready) return done("loading...\n");
@@ -120,6 +121,15 @@ describe("session own and release", () => {
     const again = await executeSession(["own", key, "--json"], environment, tmux, fast);
     expect(again.kind).toBe("ok");
     expect(tmux.calls.filter((call) => call.args.includes("new-session")).length).toBe(1);
+  });
+
+  test("takes the app terminal already resuming the session instead of resuming it a second time", async () => {
+    const tmux = fakeTmux({ ps: `  4242     1 claude --resume ${sessionId} --dangerously-skip-permissions\n`, appPanes: "4242 mb-app-chat\n" });
+    tmux.sessions.add("mb-app-chat");
+    const result = await executeSession(["own", key, "--json"], environment, tmux, fast);
+    expect(result.kind).toBe("ok");
+    expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ tmuxSession: "mb-app-chat" });
+    expect(tmux.calls.some((call) => call.args.includes("new-session"))).toBe(false);
   });
 
   for (const stderr of [
