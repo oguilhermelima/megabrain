@@ -5,7 +5,7 @@ import type { MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/sc
 // (the Device tab's empty state). A run queues briefly, then prints a step about every second; a flow
 // whose path names "login" fails on its third step.
 
-type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot'>
+type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot' | 'inputStart' | 'inputStop' | 'inputTap' | 'inputSwipe' | 'inputScroll' | 'inputType' | 'inputKey' | 'inputButton' | 'inputFrame'>
 
 const seedFlows: MaestroFlow[] = [
   { path: '.maestro/smoke.yaml', name: 'Smoke', appId: 'com.megabrain.desktop' },
@@ -24,10 +24,24 @@ const steps = (flow: string): string[] => [
 ]
 
 /** A phone screen as an SVG data URL, the size of an iPhone's screenshot, so the frame keeps its aspect. */
-export function mockScreen(title: string, line: string, hue = 220): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1206" height="2622" viewBox="0 0 1206 2622"><rect width="1206" height="2622" fill="hsl(${hue} 30% 12%)"/><rect x="0" y="0" width="1206" height="180" fill="hsl(${hue} 30% 16%)"/><text x="80" y="130" font-family="-apple-system,Helvetica" font-size="44" fill="#ddd">9:41</text><text x="80" y="420" font-family="-apple-system,Helvetica" font-size="96" font-weight="700" fill="#fff">${title}</text><text x="80" y="540" font-family="-apple-system,Helvetica" font-size="48" fill="#aab">${line}</text>${[0, 1, 2, 3].map((row) => `<rect x="80" y="${700 + row * 260}" width="1046" height="200" rx="40" fill="hsl(${hue} 25% 20%)"/>`).join('')}<rect x="80" y="2260" width="1046" height="160" rx="80" fill="hsl(${hue} 80% 60%)"/></svg>`
+export function mockScreen(title: string, line: string, hue = 220, overlay = ''): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1206" height="2622" viewBox="0 0 1206 2622"><rect width="1206" height="2622" fill="hsl(${hue} 30% 12%)"/><rect x="0" y="0" width="1206" height="180" fill="hsl(${hue} 30% 16%)"/><text x="80" y="130" font-family="-apple-system,Helvetica" font-size="44" fill="#ddd">9:41</text><text x="80" y="420" font-family="-apple-system,Helvetica" font-size="96" font-weight="700" fill="#fff">${title}</text><text x="80" y="540" font-family="-apple-system,Helvetica" font-size="48" fill="#aab">${line}</text>${[0, 1, 2, 3].map((row) => `<rect x="80" y="${700 + row * 260}" width="1046" height="200" rx="40" fill="hsl(${hue} 25% 20%)"/>`).join('')}<rect x="80" y="2260" width="1046" height="160" rx="80" fill="hsl(${hue} 80% 60%)"/>${overlay}</svg>`
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
+
+/** An Apple TV home screen, 1920×1080, with the remote's focus on one of eight tiles. */
+function mockTvScreen(focus: number, line: string, overlay: string): string {
+  const tiles = [0, 1, 2, 3, 4, 5, 6, 7].map((tile) => {
+    const x = 160 + (tile % 4) * 410
+    const y = 360 + Math.floor(tile / 4) * 300
+    const focused = tile === focus
+    return `<rect x="${focused ? x - 16 : x}" y="${focused ? y - 10 : y}" width="${focused ? 392 : 360}" height="${focused ? 236 : 216}" rx="24" fill="hsl(${200 + tile * 18} 45% ${focused ? 52 : 28}%)"/>`
+  })
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"><rect width="1920" height="1080" fill="#0b0d12"/><text x="160" y="220" font-family="-apple-system,Helvetica" font-size="64" font-weight="700" fill="#fff">Apple TV</text><text x="160" y="290" font-family="-apple-system,Helvetica" font-size="32" fill="#8890a0">${line}</text>${tiles.join('')}${overlay}</svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+const escapeXml = (text: string) => text.replace(/[<>&"]/g, (char) => `&#${char.charCodeAt(0)};`)
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
@@ -53,6 +67,20 @@ export function createMockMaestroApi(): MaestroApi {
   }
   // What the booted phone shows: the last step a run reached.
   let screen = mockScreen('Welcome', 'megabrain on the simulator')
+  let face = { title: 'Welcome', line: 'megabrain on the simulator', hue: 220 }
+  // What the person's input did: the last action, the last touch and what they typed, per device.
+  const touched = new Map<string, { action: string; x: number; y: number; at: number; typed: string; focus: number }>()
+  const sessions = new Set<string>()
+  const act = async (udid: string, action: string, at?: { x: number; y: number }) => {
+    await wait(60)
+    if (deviceOf(udid).state !== 'Booted') throw new CliError(`simulator ${udid} is not booted`, 1)
+    if (!sessions.has(udid)) throw new CliError(`no input session for ${udid}; start one first`, 1)
+    const last = touched.get(udid) ?? { action: '', x: -1, y: -1, at: 0, typed: '', focus: 0 }
+    touched.set(udid, { ...last, action, ...(at === undefined ? {} : { ...at, at: Date.now() }) })
+    console.info(`[mock input] ${udid.slice(0, 8)} ${action}`)
+    return { ok: true, ms: 60 }
+  }
+  const remoteMoves: Record<string, number> = { left: -1, right: 1, up: -4, down: 4 }
   const flowsOf = (root: string) => {
     if (!flows.has(root)) flows.set(root, root.includes('megabrain') || root.includes('feat-desktop') || root.includes('fix-queue') ? [...seedFlows] : [])
     return flows.get(root) ?? []
@@ -112,12 +140,14 @@ export function createMockMaestroApi(): MaestroApi {
         index += 1
         const command = commands[index - 1] ?? ''
         if (index === failAt) {
-          screen = mockScreen('Sign in', 'The button is missing', 0)
+          face = { title: 'Sign in', line: 'The button is missing', hue: 0 }
+          screen = mockScreen(face.title, face.line, face.hue)
           onEvent({ type: 'step', index, command, status: 'failed', durationMs: 2_400, screenshot: screen, error: 'Element not found: Text matching regex: Sign in\n\nThe element was not visible within 7000 ms.' })
           timers.push(setTimeout(() => finish('failed'), 400))
           return
         }
-        screen = mockScreen(index < 3 ? 'Welcome' : 'Projects', command, 220 + index * 12)
+        face = { title: index < 3 ? 'Welcome' : 'Projects', line: command, hue: 220 + index * 12 }
+        screen = mockScreen(face.title, face.line, face.hue)
         onEvent({ type: 'step', index, command, status: 'passed', durationMs: 600 + index * 130, screenshot: command.startsWith('Take screenshot') ? screen : null, error: null })
         if (index === commands.length) timers.push(setTimeout(() => finish('passed'), 300))
         else timers.push(setTimeout(next, 1100))
@@ -192,6 +222,57 @@ export function createMockMaestroApi(): MaestroApi {
       await wait(120)
       if (devices.find((entry) => entry.udid === udid)?.state !== 'Booted') throw new CliError(`could not capture simulator ${udid}; is it booted?`, 1)
       return screen
+    },
+    inputStart: async (udid) => {
+      await wait(400)
+      if (deviceOf(udid).state !== 'Booted') throw new CliError(`simulator ${udid} must be booted to take input`, 1)
+      sessions.add(udid)
+      return { udid, session: `mock-session-${udid.slice(0, 8)}`, port: 8100 }
+    },
+    inputStop: async (udid) => {
+      sessions.delete(udid)
+    },
+    inputTap: (udid, x, y) => act(udid, `tap ${x},${y}`, { x, y }),
+    inputSwipe: (udid, x1, y1, x2, y2, durationMs) => act(udid, `swipe ${x1},${y1} to ${x2},${y2} in ${durationMs} ms`, { x: x2, y: y2 }),
+    inputScroll: (udid, x, y, dx, dy) => act(udid, `scroll ${dx},${dy} at ${x},${y}`),
+    inputType: async (udid, text) => {
+      const done = await act(udid, `type "${text}"`)
+      const last = touched.get(udid)
+      if (last !== undefined) touched.set(udid, { ...last, typed: (last.typed + text).slice(-28) })
+      return done
+    },
+    inputKey: async (udid, name) => {
+      const done = await act(udid, `key ${name}`)
+      const last = touched.get(udid)
+      if (last !== undefined && name === 'delete') touched.set(udid, { ...last, typed: last.typed.slice(0, -1) })
+      return done
+    },
+    inputButton: async (udid, name) => {
+      const done = await act(udid, `button ${name}`)
+      const last = touched.get(udid)
+      const move = remoteMoves[name]
+      if (last !== undefined && move !== undefined) touched.set(udid, { ...last, focus: (last.focus + move + 8) % 8 })
+      return done
+    },
+    inputFrame: async (udid) => {
+      await wait(40)
+      const device = deviceOf(udid)
+      if (device.state !== 'Booted') throw new CliError(`could not capture simulator ${udid}; is it booted?`, 1)
+      const last = touched.get(udid)
+      const now = Date.now()
+      const clock = new Date(now).toLocaleTimeString('en-GB')
+      if (device.kind === 'tv') {
+        const overlay = `<rect x="${160 + ((now / 20) % 1600)}" y="1000" width="160" height="6" rx="3" fill="#4f7cff"/><text x="1760" y="120" text-anchor="end" font-family="-apple-system,Helvetica" font-size="36" fill="#aab">${clock}</text>`
+        return { image: mockTvScreen(last?.focus ?? 0, escapeXml(last?.action ?? 'Use the remote to move the focus'), overlay), width: 1920, height: 1080, scale: 1, ms: 40 }
+      }
+      const fresh = last !== undefined && last.x >= 0 && now - last.at < 700
+      const overlay = [
+        `<rect x="${80 + ((now / 4) % 900)}" y="190" width="140" height="10" rx="5" fill="hsl(${face.hue} 80% 60%)"/>`,
+        `<text x="1126" y="130" text-anchor="end" font-family="-apple-system,Helvetica" font-size="44" fill="#ddd">${clock}</text>`,
+        last === undefined ? '' : `<text x="140" y="815" font-family="-apple-system,Helvetica" font-size="56" fill="#fff">${escapeXml(last.typed === '' ? last.action : last.typed)}</text>`,
+        fresh ? `<circle cx="${last.x * 3}" cy="${last.y * 3}" r="70" fill="none" stroke="#fff" stroke-width="8" opacity="0.7"/>` : '',
+      ].join('')
+      return { image: mockScreen(face.title, face.line, face.hue, overlay), width: 1206, height: 2622, scale: 3, ms: 40 }
     },
   }
 }

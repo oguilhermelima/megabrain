@@ -108,6 +108,20 @@ export interface DesktopApi {
   simulatorsAsleep(): Promise<string[]>
   /** A fresh screenshot of a booted simulator (`native sim screenshot`); resolves to the file's path. */
   simulatorScreenshot(udid: string): Promise<string>
+  /** Opens an input session on a booted simulator; the other input calls need one. */
+  inputStart(udid: string): Promise<InputSession>
+  inputStop(udid: string): Promise<void>
+  /** Taps, swipes and scrolls take device points. */
+  inputTap(udid: string, x: number, y: number): Promise<InputResult>
+  inputSwipe(udid: string, x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<InputResult>
+  inputScroll(udid: string, x: number, y: number, dx: number, dy: number): Promise<InputResult>
+  inputType(udid: string, text: string): Promise<InputResult>
+  /** A named key: return, delete, tab, escape, up, down, left, right, space. */
+  inputKey(udid: string, name: string): Promise<InputResult>
+  /** A hardware button: home, lock, volume-up, volume-down, siri; on a TV the remote's up, down, left, right, select, menu, play-pause, home. */
+  inputButton(udid: string, name: string): Promise<InputResult>
+  /** The screen now: width and height in image pixels, scale in pixels per point. */
+  inputFrame(udid: string): Promise<InputFrame>
   /** Everything the Settings window shows. */
   settings(): Promise<Settings>
   /** Only some top-level keys (`settings --json --only`), so one page never waits on another's work. */
@@ -357,3 +371,9 @@ export class CliError extends Error {
     super(message)
   }
 }
+
+/** An input session on a simulator (`native input start`). */
+export type InputSession = { udid: string; session: string; port: number }
+export type InputResult = { ok: boolean; ms: number }
+/** One frame of the screen: a PNG as base64 or a file path, its size in pixels and the device's pixels per point. */
+export type InputFrame = { image: string; width: number; height: number; scale: number; ms: number }

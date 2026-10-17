@@ -1,0 +1,158 @@
+import { describe, expect, test } from 'bun:test'
+import { idleRun, reduceRun } from '@/device/device-model'
+import { blurGraceMs, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, screenPoint, tapSlop } from '@/device/screen-model'
+
+const UDID = '401F3DA8-E4C1-48B7-9BB9-2C8416115E1A'
+const OTHER = '110E1BF2-99F9-4475-916E-32FBA7CED248'
+
+// An iPhone screenshot: 1206×2622 pixels at 3 pixels per point, so 402×874 points.
+const phone = { width: 1206, height: 2622 }
+
+describe('a point on the rendered screen maps to the device', () => {
+  test('a box of the image’s own aspect maps corner to corner, in points', () => {
+    const box = { left: 100, top: 50, width: 402, height: 874 }
+    expect(screenPoint({ x: 100, y: 50 }, box, phone, 3)).toEqual({ x: 0, y: 0 })
+    expect(screenPoint({ x: 100 + 201, y: 50 + 437 }, box, phone, 3)).toEqual({ x: 201, y: 437 })
+    expect(screenPoint({ x: 100 + 402, y: 50 + 874 }, box, phone, 3)).toEqual({ x: 402, y: 874 })
+  })
+
+  test('the device scale divides the pixels: the same box at scale 2 reads 1.5 times the points', () => {
+    const box = { left: 0, top: 0, width: 402, height: 874 }
+    expect(screenPoint({ x: 201, y: 437 }, box, phone, 2)).toEqual({ x: 302, y: 656 })
+  })
+
+  test('a box wider than the image letterboxes left and right, and the bars map to nothing', () => {
+    // 874 tall fits the image at 1/3 scale: 402 wide, centred in 802, so 200 px bars at each side.
+    const box = { left: 0, top: 0, width: 802, height: 874 }
+    expect(screenPoint({ x: 200, y: 0 }, box, phone, 3)).toEqual({ x: 0, y: 0 })
+    expect(screenPoint({ x: 401, y: 437 }, box, phone, 3)).toEqual({ x: 201, y: 437 })
+    expect(screenPoint({ x: 602, y: 874 }, box, phone, 3)).toEqual({ x: 402, y: 874 })
+    expect(screenPoint({ x: 199, y: 437 }, box, phone, 3)).toBeNull()
+    expect(screenPoint({ x: 603, y: 437 }, box, phone, 3)).toBeNull()
+  })
+
+  test('a box taller than the image letterboxes top and bottom', () => {
+    // A 1920×1080 TV frame at scale 1 in a 960×740 box: 960×540 drawn, 100 px bars above and below.
+    const tv = { width: 1920, height: 1080 }
+    const box = { left: 10, top: 20, width: 960, height: 740 }
+    expect(screenPoint({ x: 10, y: 120 }, box, tv, 1)).toEqual({ x: 0, y: 0 })
+    expect(screenPoint({ x: 10 + 480, y: 20 + 370 }, box, tv, 1)).toEqual({ x: 960, y: 540 })
+    expect(screenPoint({ x: 10 + 480, y: 119 }, box, tv, 1)).toBeNull()
+    expect(screenPoint({ x: 10 + 480, y: 20 + 641 }, box, tv, 1)).toBeNull()
+  })
+
+  test('an image not decoded yet, or a box with no size, maps nothing', () => {
+    expect(screenPoint({ x: 1, y: 1 }, { left: 0, top: 0, width: 0, height: 0 }, phone, 3)).toBeNull()
+    expect(screenPoint({ x: 1, y: 1 }, { left: 0, top: 0, width: 400, height: 800 }, { width: 0, height: 0 }, 3)).toBeNull()
+  })
+
+  test('a missing or nonsense scale counts as 1', () => {
+    const box = { left: 0, top: 0, width: 402, height: 874 }
+    expect(screenPoint({ x: 201, y: 437 }, box, phone, 0)).toEqual({ x: 603, y: 1311 })
+  })
+})
+
+describe('a pointer gesture is a tap or a swipe', () => {
+  test('down and up within the slop is a tap, however long it took', () => {
+    expect(gestureOf({ x: 50, y: 50, at: 0 }, { x: 50, y: 50, at: 80 })).toEqual({ kind: 'tap' })
+    expect(gestureOf({ x: 50, y: 50, at: 0 }, { x: 50 + tapSlop - 1, y: 50, at: 900 })).toEqual({ kind: 'tap' })
+  })
+
+  test('moving past the slop is a swipe that keeps the gesture’s duration', () => {
+    expect(gestureOf({ x: 50, y: 50, at: 1000 }, { x: 50, y: 50 + tapSlop + 1, at: 1320 })).toEqual({ kind: 'swipe', durationMs: 320 })
+  })
+
+  test('the slop is a distance, so a diagonal counts both axes', () => {
+    const leg = Math.ceil(tapSlop / Math.SQRT2) + 1
+    expect(gestureOf({ x: 0, y: 0, at: 0 }, { x: leg, y: leg, at: 200 }).kind).toBe('swipe')
+  })
+
+  test('a flick faster than the device can swipe still takes a minimal duration', () => {
+    const swipe = gestureOf({ x: 0, y: 0, at: 0 }, { x: 0, y: 300, at: 5 })
+    expect(swipe.kind).toBe('swipe')
+    expect(swipe.kind === 'swipe' && swipe.durationMs).toBeGreaterThanOrEqual(50)
+  })
+})
+
+describe('input pauses while Maestro drives the device', () => {
+  const running = reduceRun(idleRun, { type: 'request', flow: '.maestro/smoke.yaml', device: UDID })
+
+  test('a run on this device pauses input, and says so', () => {
+    expect(inputPaused(running, UDID)).toBe(true)
+    expect(pausedNote).toBe('Maestro is running: input paused')
+  })
+
+  test('a run on another device leaves this one free', () => {
+    expect(inputPaused(running, OTHER)).toBe(false)
+  })
+
+  test('input comes back once the run ends, however it ended', () => {
+    expect(inputPaused(idleRun, UDID)).toBe(false)
+    expect(inputPaused(reduceRun(running, { type: 'end', error: 'boom' }), UDID)).toBe(false)
+    const stopping = reduceRun(running, { type: 'stop' })
+    expect(inputPaused(stopping, UDID)).toBe(true)
+    expect(inputPaused(reduceRun(stopping, { type: 'end', error: null }), UDID)).toBe(false)
+  })
+
+  test('no device selected is never paused', () => {
+    expect(inputPaused(running, null)).toBe(false)
+  })
+})
+
+describe('the live screen refreshes only while someone can watch it', () => {
+  const watching = { visible: true, focused: true, blurredAt: null, now: 10_000, booted: true }
+
+  test('a visible, focused tab on a booted device refreshes about four times a second', () => {
+    expect(frameMs).toBe(250)
+    expect(frameDelay(watching)).toBe(frameMs)
+  })
+
+  test('a hidden tab pauses', () => {
+    expect(frameDelay({ ...watching, visible: false })).toBeNull()
+  })
+
+  test('a device asleep, shut down or busy pauses', () => {
+    expect(frameDelay({ ...watching, booted: false })).toBeNull()
+  })
+
+  test('the window losing focus keeps refreshing for a few seconds, then pauses', () => {
+    expect(blurGraceMs).toBeGreaterThanOrEqual(2_000)
+    expect(blurGraceMs).toBeLessThanOrEqual(10_000)
+    const blurred = { ...watching, focused: false, blurredAt: 10_000 }
+    expect(frameDelay({ ...blurred, now: 10_000 + blurGraceMs - 1 })).toBe(frameMs)
+    expect(frameDelay({ ...blurred, now: 10_000 + blurGraceMs })).toBeNull()
+  })
+
+  test('unfocused with no blur time known pauses rather than guessing', () => {
+    expect(frameDelay({ ...watching, focused: false, blurredAt: null })).toBeNull()
+  })
+})
+
+describe('keys typed on the focused screen', () => {
+  const key = (value: string, mods: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean }> = {}) => keyAction({ key: value, metaKey: false, ctrlKey: false, altKey: false, ...mods })
+
+  test('a printable character is text', () => {
+    expect(key('a')).toEqual({ type: 'text', text: 'a' })
+    expect(key('É')).toEqual({ type: 'text', text: 'É' })
+    expect(key(' ')).toEqual({ type: 'text', text: ' ' })
+  })
+
+  test('editing and arrow keys are named keys', () => {
+    expect(key('Enter')).toEqual({ type: 'key', name: 'return' })
+    expect(key('Backspace')).toEqual({ type: 'key', name: 'delete' })
+    expect(key('Tab')).toEqual({ type: 'key', name: 'tab' })
+    expect(key('ArrowUp')).toEqual({ type: 'key', name: 'up' })
+    expect(key('ArrowLeft')).toEqual({ type: 'key', name: 'left' })
+  })
+
+  test('Esc releases the screen instead of reaching the device', () => {
+    expect(key('Escape')).toEqual({ type: 'release' })
+  })
+
+  test('app shortcuts and lone modifiers stay with the app', () => {
+    expect(key('w', { metaKey: true })).toBeNull()
+    expect(key('c', { ctrlKey: true })).toBeNull()
+    expect(key('Shift')).toBeNull()
+    expect(key('F5')).toBeNull()
+  })
+})

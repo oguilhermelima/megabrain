@@ -63,6 +63,10 @@ async function nativeJson<T>(args: string[], schema: z.ZodType<T>): Promise<T> {
   return schema.parse(answer)
 }
 
+const inputUnavailable = async (): Promise<never> => {
+  throw new CliError('Device input needs a megabrain with native input; update the CLI', 1)
+}
+
 // `github pr-file` answers with the file under `file`, beside the repository and number.
 const pullRequestFileSchema = z.looseObject({ file: githubPullRequestFileSchema })
 
@@ -196,6 +200,16 @@ export function createTauriApi(): DesktopApi {
     simRestart: async (udid) => void (await nativeJson(['native', 'sim', 'restart', udid, '--json'], simulatorRestartSchema)),
     simulatorsAsleep: async () => (await nativeJson(['native', 'sim', 'idle', '--touch', '--json'], z.looseObject({ asleep: z.array(z.string()) }))).asleep,
     simulatorScreenshot: async (udid) => (await nativeJson(['native', 'sim', 'screenshot', udid, '--json'], z.looseObject({ path: z.string() }))).path,
+    // Device input comes with the CLI's native input commands; until then each call says so.
+    inputStart: inputUnavailable,
+    inputStop: inputUnavailable,
+    inputTap: inputUnavailable,
+    inputSwipe: inputUnavailable,
+    inputScroll: inputUnavailable,
+    inputType: inputUnavailable,
+    inputKey: inputUnavailable,
+    inputButton: inputUnavailable,
+    inputFrame: inputUnavailable,
     openInCode: (root, path, line) =>
       cliJson(['code', 'goto', root, path, ...(line === undefined ? [] : ['--line', String(line)]), '--json'], codeServerSchema),
     settings: () => cliJson(['settings', '--json'], settingsSchema),

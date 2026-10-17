@@ -3,14 +3,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { BootedSimulator, MaestroFlow, MaestroRun } from '@/api/schema'
 import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, isActive, panelPlaces, openDevices, pickerChoices, screenSource, selectDevice, stepRows, type DeviceChoice, type DevicePanel, type OpenDevice, type ProjectRef } from '@/device/device-model'
-import { PanelIcon } from '@/advanced/WikiShell'
 import { readPanelOpen, writePanelOpen } from '@/advanced/wiki-shell-model'
 import { SlidePanel } from '@/components/SlidePanel'
+import { DeviceScreen } from '@/device/DeviceScreen'
+import { inputPaused } from '@/device/screen-model'
 import { DevicesSidebar, type DeviceBusy } from '@/device/DevicesSidebar'
 import { FlowsRunPanel, type Load } from '@/device/FlowsRunPanel'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
-import { changesPolicy, projectsPolicy, screenPolicy } from '@/lib/poll-model'
-import { sidePanelButton } from '@/lib/side-panel'
+import { changesPolicy, projectsPolicy } from '@/lib/poll-model'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
 
@@ -34,9 +34,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * the selected one's screen framed like a device in the middle, and its Maestro flows and the run at
  * the right (FlowsRunPanel), the steps filling in as the CLI prints them. The panels never merge: when
  * the pane is narrow they fold to their toggles, and one reopened overlays the screen (device-model's
- * panelPlaces). The run itself lives in
- * run-store, so leaving the tab keeps it going. The screen is the chosen step's screenshot, else a
- * capture taken every 2 s while a run goes on (once otherwise), else the run's latest screenshot.
+ * panelPlaces). The run itself lives in run-store, so leaving the tab keeps it going. The screen
+ * (DeviceScreen) is the chosen step's screenshot, else the simulator's live screen, else the run's
+ * latest screenshot.
  */
 export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (path: string) => void }) {
   const box = useRef<HTMLDivElement>(null)
@@ -78,8 +78,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const [lifecycleError, setLifecycleError] = useState<string | null>(null)
   const [chosenFlow, setChosenFlow] = useState<string | null>(null)
   const [chosenDevice, setChosenDevice] = useState<string | null>(null)
-  const [capture, setCapture] = useState<{ udid: string; path: string; at: number } | null>(null)
-  const [captureError, setCaptureError] = useState<string | null>(null)
+  const [playError, setPlayError] = useState<string | null>(null)
   const [selectedStep, setSelectedStep] = useState<number | null>(null)
   const [asleep, setAsleep] = useState<string[]>([])
   const [waking, setWaking] = useState(false)
@@ -147,7 +146,6 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const restart = (target: OpenDevice) => {
     setLifecycleError(null)
     markBusy(target.udid, 'restarting')
-    setCapture((current) => (current?.udid === target.udid ? null : current))
     api
       .simRestart(target.udid)
       .then(() => {
@@ -165,7 +163,6 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       await api.simShutdown(target.udid)
       setChosenDevice((chosen) => afterShutdown(open, chosen, target.udid).selected)
       setBooted((current) => (current.kind === 'ready' ? { kind: 'ready', value: current.value.filter((row) => row.udid !== target.udid) } : current))
-      setCapture((current) => (current?.udid === target.udid ? null : current))
       refreshDevices()
     } finally {
       markBusy(target.udid, null)
@@ -218,37 +215,19 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const flowList = flows.kind === 'ready' ? flows.value : []
   const flow = active && run.flow !== null ? run.flow : (flowList.find((entry) => entry.path === chosenFlow)?.path ?? flowList[0]?.path ?? null)
 
-  // A fresh capture every 2 s while a run goes on; otherwise one, when the device has none yet.
-  const hasCapture = capture !== null && capture.udid === udid
-  usePoll(
-    screenPolicy,
-    async (current) => {
-      if (udid === null || !isBooted || (!active && hasCapture)) return
-      try {
-        const path = await api.simulatorScreenshot(udid)
-        if (!current()) return
-        setCapture({ udid, path, at: Date.now() })
-        setCaptureError(null)
-      } catch (error) {
-        if (current()) setCaptureError(message(error))
-      }
-    },
-    [udid, isBooted, active, hasCapture],
-  )
-
   const rows = stepRows(run)
-  const liveCapture = hasCapture && capture !== null ? (toAsset === null ? capture.path : `${toAsset(capture.path)}?v=${capture.at}`) : null
-  const screen = screenSource({ selected: selectedStep, rows, capture: liveCapture })
-  const src = screen === null ? null : screen.step === null || toAsset === null ? screen.path : toAsset(screen.path)
+  const screen = screenSource({ selected: selectedStep, rows, capture: null })
+  const still = screen === null ? null : { src: toAsset === null ? screen.path : toAsset(screen.path), step: screen.step }
+  const pinned = still !== null && still.step !== null && still.step === selectedStep ? { src: still.src, step: still.step } : null
 
   const play = () => {
     if (flow === null || udid === null || waking) return
     setSelectedStep(null)
     // A simulator that went to sleep (or was never booted) boots first, through the same call as the Boot button.
     setWaking(true)
-    setCaptureError(null)
+    setPlayError(null)
     bootThenRun(!isBooted, () => api.bootSimulator(udid, device?.kind, root).then(refreshDevices), () => startRun(root, flow, udid))
-      .catch((error: unknown) => setCaptureError(message(error)))
+      .catch((error: unknown) => setPlayError(message(error)))
       .finally(() => setWaking(false))
   }
 
@@ -277,11 +256,13 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
     />
   )
   const screenPanel = (
-    <ScreenPanel
+    <DeviceScreen
       device={device}
-      src={src}
-      step={screen?.step ?? null}
-      note={waking ? `Booting ${device?.name ?? 'the simulator'}…` : device !== null && busy[device.udid] !== undefined ? `${device.name} is ${busy[device.udid] === 'restarting' ? 'restarting' : 'shutting down'}…` : isBooted ? captureError : device?.state === 'Asleep' ? 'Asleep: boots when you run a flow' : null}
+      booted={isBooted}
+      paused={inputPaused(run, udid)}
+      pinned={pinned}
+      still={still}
+      note={waking ? `Booting ${device?.name ?? 'the simulator'}…` : device !== null && busy[device.udid] !== undefined ? `${device.name} is ${busy[device.udid] === 'restarting' ? 'restarting' : 'shutting down'}…` : isBooted ? playError : device?.state === 'Asleep' ? 'Asleep: boots when you run a flow' : null}
       showDevices={places.devices === 'hidden' ? () => showPanel('devices') : null}
       showFlows={places.flows === 'hidden' ? () => showPanel('flows') : null}
     />
@@ -334,43 +315,3 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
 
 // A folded panel reopened in a narrow pane: over the screen at its own edge, casting a shadow onto it.
 const panelOverlay = 'absolute inset-y-0 z-20 flex max-w-full flex-col shadow-[0_0_48px_-12px_rgba(0,0,0,0.9)]'
-
-/** The screen fills the middle: the device centred and scaled to fit, the hidden panels' toggles in its top corners. */
-function ScreenPanel({ device, src, step, note, showDevices, showFlows }: { device: OpenDevice | null; src: string | null; step: number | null; note: string | null; showDevices: (() => void) | null; showFlows: (() => void) | null }) {
-  const [aspect, setAspect] = useState(1206 / 2622)
-  return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-ink-950">
-      {showDevices !== null && (
-        <button type="button" onClick={showDevices} aria-label="Show devices" title="Show devices" className={`${sidePanelButton} absolute top-3 left-3 z-10`}>
-          <PanelIcon />
-        </button>
-      )}
-      {showFlows !== null && (
-        <button type="button" onClick={showFlows} aria-label="Show flows" title="Show flows" className={`${sidePanelButton} absolute top-3 right-3 z-10`}>
-          <PanelIcon />
-        </button>
-      )}
-      {step !== null && <span className="absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] text-ink-300 tabular-nums">Step {step}</span>}
-      {/* A size container, so the frame takes the largest box of the screenshot's aspect that fits. */}
-      <div style={{ containerType: 'size' }} className="m-12 flex min-h-0 flex-1 items-center justify-center">
-        <div data-device-frame="" style={{ aspectRatio: String(aspect), width: `min(100cqw, calc(100cqh * ${aspect}))` }} className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${aspect > 1 ? 'rounded-[20px] p-[8px]' : 'rounded-[44px] p-[10px]'}`}>
-          <div className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-ink-900 ${aspect > 1 ? 'rounded-[12px]' : 'rounded-[34px]'}`}>
-            {src !== null ? (
-              <img
-                src={src}
-                alt={step === null ? 'The simulator’s screen' : `The screen at step ${step}`}
-                onLoad={(event) => {
-                  const image = event.currentTarget
-                  if (image.naturalWidth > 0 && image.naturalHeight > 0) setAspect(image.naturalWidth / image.naturalHeight)
-                }}
-                className="h-full w-full object-contain"
-              />
-            ) : (
-              <p className="px-6 text-center text-[12px] leading-5 text-ink-500">{note ?? (device === null ? 'Open a device with + to see its screen' : 'Waiting for the screen…')}</p>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
